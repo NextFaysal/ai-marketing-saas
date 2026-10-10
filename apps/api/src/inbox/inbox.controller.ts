@@ -1,5 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, StreamableFile, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, MessageEvent, Param, Patch, Post, Query, Sse, StreamableFile, UseGuards } from "@nestjs/common";
+import { Observable } from "rxjs";
 import { InboxService } from "./inbox.service";
+import { RealtimeService } from "./realtime.service";
 import { AddNoteDto, CodConfirmationDto, ConnectMessagingDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMessageDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, SendDraftDto, WhatsAppTemplateDto } from "./inbox.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -8,7 +10,14 @@ import { RolesGuard } from "../common/roles.guard";
 @Controller("organizations/:organizationId/inbox")
 @UseGuards(TenantGuard)
 export class InboxController {
-  constructor(private readonly inbox: InboxService) {}
+  constructor(private readonly inbox: InboxService, private readonly realtime: RealtimeService) {}
+
+  /** Unified Inbox U1: realtime event stream (SSE) for this org's
+   * inbox — new messages, conversation updates, thread presence. */
+  @Sse("conversations/stream")
+  stream(@Param("organizationId") orgId: string): Observable<MessageEvent> {
+    return this.realtime.stream(orgId);
+  }
 
   @Post("connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   connect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectMessagingDto) {

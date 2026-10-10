@@ -113,6 +113,7 @@ export class WebchatService {
         content: text.slice(0, 2000), status: "received", externalId: `web-in-${randomUUID()}`,
       },
     });
+    try { this.inbox.emitInboxEvent(session.organizationId ?? (site as any).organizationId, { type: "message.created", conversationId: session.conversationId, message }); } catch { /* realtime is best-effort */ }
     await (this.prisma as any).channelConversation.update({
       where: { id: session.conversationId },
       data: {

@@ -11,6 +11,7 @@ import { parseMetaWebhook } from "./webhook.parser";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
+import { RealtimeService } from "./realtime.service";
 import { classifyIntent, parseCodReply, type Classification } from "./intent";
 import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
@@ -36,7 +37,21 @@ export class InboxService {
     private readonly audit: AuditService,
     private readonly llm: LlmFactory,
     @Optional() private readonly events?: EventsService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
+
+  // ----- Realtime fan-out (Unified Inbox U1) -----
+  private rtMessage(organizationId: string, conversationId: string, message: unknown) {
+    try { this.realtime?.emit(organizationId, { type: "message.created", conversationId, message }); } catch { /* realtime never breaks messaging */ }
+  }
+  private rtConversation(organizationId: string, conversationId: string, patch?: Record<string, unknown>) {
+    try { this.realtime?.emit(organizationId, { type: "conversation.updated", conversationId, patch }); } catch { /* ditto */ }
+  }
+  /** Public hook for sibling services (webchat) in the same module. */
+  emitInboxEvent(organizationId: string, event: { type: "message.created" | "conversation.updated"; conversationId: string; message?: unknown }) {
+    if (event.type === "message.created") this.rtMessage(organizationId, event.conversationId, event.message);
+    else this.rtConversation(organizationId, event.conversationId);
+  }
 
   // ----- Connection management -----
   async connectMessaging(organizationId: string, actorId: string, dto: {
@@ -161,6 +176,7 @@ export class InboxService {
           lastMessagePreview: (event.content ?? `[${event.type}]`).slice(0, 120), status: "open",
         },
       });
+      this.rtMessage(organizationId, conversation.id, stored);
       received++;
       // Intelligence layer: classification, COD replies, workflow events,
       // grounded auto-reply. Each step is isolated - a failure here must
@@ -758,6 +774,7 @@ export class InboxService {
     try {
       const messageId = await this.deliverText(conversation, composed.content);
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "sent", externalId: messageId } });
+      this.rtMessage(organizationId, conversation.id, { ...message, status: "sent", externalId: messageId });
       await (this.prisma as any).channelConversation.update({
         where: { id: conversation.id },
         data: {
@@ -991,6 +1008,7 @@ export class InboxService {
         organizationId, userId: "system", action: "inbox.automated_message.sent", entityType: "ChannelConversation",
         entityId: conversationId, metadata: { source: sourceTag },
       });
+      this.rtMessage(organizationId, conversationId, sent);
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Platform send failed";
@@ -1302,6 +1320,7 @@ export class InboxService {
    * conversation and returns OTHER agents active within 45 seconds. */
   async heartbeatPresence(organizationId: string, userId: string, conversationId: string, typing: boolean) {
     await this.getConversationOrThrow(organizationId, conversationId);
+    try { this.realtime?.notePresence(organizationId, conversationId, userId, typing); } catch { /* ephemeral */ }
     const existing = await (this.prisma as any).agentPresence?.findFirst({ where: { conversationId, userId } }).catch(() => null);
     if (existing) {
       await (this.prisma as any).agentPresence.update({ where: { id: existing.id }, data: { typing, lastSeenAt: new Date() } });
@@ -1450,7 +1469,9 @@ export class InboxService {
 
   async markRead(organizationId: string, conversationId: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
-    return (this.prisma as any).channelConversation.update({ where: { id: conversationId }, data: { unreadCount: 0 } });
+    const updated = await (this.prisma as any).channelConversation.update({ where: { id: conversationId }, data: { unreadCount: 0 } });
+    this.rtConversation(organizationId, conversationId, { unreadCount: 0 });
+    return updated;
   }
 
   async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; tags?: string[]; spamFlag?: boolean }) {
@@ -1487,6 +1508,7 @@ export class InboxService {
         } catch { /* window closed or platform error: no CSAT this time */ }
       }
     }
+    this.rtConversation(organizationId, conversationId, { status: updated.status, assignedUserId: updated.assignedUserId, tags: updated.tags });
     if (dto.assignedUserId && dto.assignedUserId !== actorId && dto.assignedUserId !== beforeAssignee) {
       await this.notify(organizationId, dto.assignedUserId, "assigned",
         `নতুন কথোপকথন অ্যাসাইন হয়েছে: ${updated.contactName ?? updated.externalContactId ?? "গ্রাহক"}`,
@@ -1547,6 +1569,7 @@ export class InboxService {
       if (opts.viaDraftId) {
         await (this.prisma as any).messageDraft.update({ where: { id: opts.viaDraftId }, data: { status: "sent" } });
       }
+      this.rtMessage(organizationId, conversationId, sent);
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Send failed";
@@ -1626,6 +1649,7 @@ export class InboxService {
       await (this.prisma as any).channelConversation.update({
         where: { id: conversationId }, data: { lastMessageAt: new Date(), lastMessagePreview: preview.slice(0, 120) },
       });
+      this.rtMessage(organizationId, conversationId, sent);
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Template send failed";
@@ -1654,6 +1678,7 @@ export class InboxService {
       await (this.prisma as any).channelConversation.update({
         where: { id: conversationId }, data: { lastMessageAt: new Date(), lastMessagePreview: (caption ?? "[image]").slice(0, 120) },
       });
+      this.rtMessage(organizationId, conversationId, sent);
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Image send failed";

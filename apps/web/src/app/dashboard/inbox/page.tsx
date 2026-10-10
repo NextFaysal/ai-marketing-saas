@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL, apiFetch, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { subscribeInboxStream } from "@/lib/inbox-stream";
 import { EmptyState } from "@repo/ui";
 
 interface WaWindow { open: boolean; expiresAt: string | null }
@@ -37,6 +38,29 @@ interface ContextData {
 
 const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+// ---- Unified Inbox U1: channel identity + day separators ----
+const CHANNEL_META: Record<string, { label: string; emoji: string; cls: string }> = {
+  whatsapp: { label: "WhatsApp", emoji: "🟢", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  messenger: { label: "Messenger", emoji: "🔵", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
+  instagram: { label: "Instagram", emoji: "🟣", cls: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200" },
+  webchat: { label: "Live Chat", emoji: "🌐", cls: "bg-slate-100 text-slate-600 ring-slate-200" },
+  tiktok: { label: "TikTok", emoji: "⚫", cls: "bg-slate-900 text-white ring-slate-700" },
+  telegram: { label: "Telegram", emoji: "✈️", cls: "bg-cyan-50 text-cyan-700 ring-cyan-200" },
+  email: { label: "Email", emoji: "✉️", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+};
+function ChannelChip({ channel, lg }: { channel: string; lg?: boolean }) {
+  const m = CHANNEL_META[channel] ?? { label: channel, emoji: "💬", cls: "bg-slate-100 text-slate-600 ring-slate-200" };
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ring-1 ${m.cls} ${lg ? "text-xs" : "text-[10px]"}`}>{m.emoji} {m.label}</span>;
+}
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yday = new Date(); yday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "আজ";
+  if (d.toDateString() === yday.toDateString()) return "গতকাল";
+  return d.toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric" });
+}
 
 function renderQuick(content: string, conv: Conversation): string {
   const name = conv.contactName ?? "";
@@ -131,6 +155,18 @@ export default function InboxPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [mobileChat, setMobileChat] = useState(false);
+  // U1: realtime + command-center state
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(40);
+  const [focusedIdx, setFocusedIdx] = useState(0);
+  const [myId, setMyId] = useState<string | null>(null);
+  const [liveOthers, setLiveOthers] = useState<Record<string, { typing: boolean; at: number }>>({});
+  const activeRef = useRef<Conversation | null>(null);
+  const listTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { activeRef.current = active; }, [active]);
+  useEffect(() => { apiFetch<any>("/auth/me").then((j) => setMyId(j?.id ?? j?.user?.id ?? null)).catch(() => undefined); }, []);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadConversations = useCallback(async (f = filters) => {
@@ -150,6 +186,60 @@ export default function InboxPage() {
   }, [filters]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+  // U1: realtime stream — instant messages/updates/presence, with a
+  // slow safety poll if the stream silently drops.
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const scheduleList = () => {
+      if (listTimer.current) clearTimeout(listTimer.current);
+      listTimer.current = setTimeout(() => loadConversations(), 400);
+    };
+    const unsub = subscribeInboxStream(orgId, (ev) => {
+      if (ev.type === "message.created" && ev.message) {
+        const msg = ev.message as unknown as Message;
+        if (activeRef.current && ev.conversationId === activeRef.current.id) {
+          setMessages((prev) => {
+            const i = prev.findIndex((m) => m.id === msg.id);
+            if (i >= 0) { const copy = [...prev]; copy[i] = { ...copy[i], ...msg }; return copy; }
+            return [...prev, msg];
+          });
+        }
+        scheduleList();
+      } else if (ev.type === "conversation.updated") {
+        scheduleList();
+      } else if (ev.type === "presence" && ev.userId && ev.conversationId === activeRef.current?.id) {
+        setLiveOthers((prev) => ({ ...prev, [ev.userId as string]: { typing: Boolean(ev.typing), at: Date.now() } }));
+      }
+    });
+    const fallback = setInterval(() => loadConversations(), 60000);
+    return () => { unsub(); clearInterval(fallback); };
+  }, [loadConversations]);
+  // U1: progressive list rendering
+  useEffect(() => {
+    const el = sentinelRef.current; if (!el) return;
+    const ob = new IntersectionObserver((es) => { if (es[0]?.isIntersecting) setVisibleCount((c) => c + 40); }, { rootMargin: "240px" });
+    ob.observe(el);
+    return () => ob.disconnect();
+  }, [conversations.length]);
+  // U1: keyboard-first operation
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = Boolean(target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable));
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); return; }
+      if (typing) return;
+      if (e.key === "j") { e.preventDefault(); setFocusedIdx((i) => { const n = Math.min(conversations.length - 1, i + 1); document.getElementById(`conv-${conversations[n]?.id}`)?.scrollIntoView({ block: "nearest" }); return n; }); }
+      else if (e.key === "k") { e.preventDefault(); setFocusedIdx((i) => { const n = Math.max(0, i - 1); document.getElementById(`conv-${conversations[n]?.id}`)?.scrollIntoView({ block: "nearest" }); return n; }); }
+      else if (e.key === "Enter") { const c = conversations[focusedIdx]; if (c) void openConversation(c); }
+      else if (e.key === "/") { e.preventDefault(); document.getElementById("inbox-search")?.focus(); }
+      else if (e.key === "e") { if (active && myId) void patchConversation({ assignedUserId: myId }); }
+      else if (e.key === "r") { e.preventDefault(); document.getElementById("inbox-reply")?.focus(); }
+      else if (e.key === "?") setShowShortcuts((v) => !v);
+      else if (e.key === "Escape") { setPaletteOpen(false); setShowShortcuts(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [conversations, focusedIdx, active, myId]);
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<QuickReply[]>(`/organizations/${orgId}/inbox/quick-replies`).then(setQuickReplies).catch(() => undefined);
@@ -181,12 +271,14 @@ export default function InboxPage() {
   }
 
   function onSearch(q: string) {
+    setVisibleCount(40); setFocusedIdx(0);
     const next = { ...filters, q };
     setFilters(next);
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => loadConversations(next), 350);
   }
   function onFilter(patch: Partial<typeof filters>) {
+    setVisibleCount(40); setFocusedIdx(0);
     const next = { ...filters, ...patch };
     setFilters(next);
     loadConversations(next);
@@ -403,7 +495,7 @@ export default function InboxPage() {
       <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_320px]">
         {/* ---- Conversation list + filters ---- */}
         <div className={`${mobileChat ? "hidden lg:block" : "block"} space-y-2`}>
-          <input className="input" placeholder="নাম, ফোন বা বার্তা খুঁজুন..." value={filters.q} onChange={(e) => onSearch(e.target.value)} />
+          <input id="inbox-search" className="input" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
           <div className="flex flex-wrap gap-1.5">
             <select className="input !w-auto flex-1" value={filters.channel} onChange={(e) => onFilter({ channel: e.target.value })}>
               <option value="">সব চ্যানেল</option><option value="whatsapp">WhatsApp</option><option value="messenger">Messenger</option><option value="instagram">Instagram</option><option value="webchat">ওয়েবসাইট চ্যাট</option>
@@ -419,15 +511,15 @@ export default function InboxPage() {
           <div className="space-y-2 pt-1">
             {conversations.length === 0 ? (
               <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
-            ) : conversations.map((c) => (
-              <button key={c.id} onClick={() => openConversation(c)} className={`block w-full rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow ${active?.id === c.id ? "border-brand-500 ring-1 ring-brand-500/40" : ""}`}>
+            ) : conversations.slice(0, visibleCount).map((c, ci) => (
+              <button key={c.id} id={`conv-${c.id}`} onClick={() => { setFocusedIdx(ci); openConversation(c); }} className={`block w-full rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow ${active?.id === c.id ? "border-brand-500 ring-1 ring-brand-500/40" : ""} ${focusedIdx === ci ? "ring-2 ring-indigo-300" : ""}`}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium">{c.contactName ?? c.contactPhone ?? "(নাম নেই)"}</span>
                   {c.unreadCount > 0 ? <span className="rounded-full bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">{c.unreadCount}</span> : null}
                 </div>
                 <div className="truncate text-xs text-slate-500">{c.lastMessagePreview ?? ""}</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
-                  <span className="capitalize">{c.channel}</span><span>· {c.status}</span>
+                  <ChannelChip channel={c.channel} /><span>· {c.status}</span>
                   {c.channel === "whatsapp" && c.whatsappWindow ? (c.whatsappWindow.open ? <span className="text-emerald-600">· Window খোলা</span> : <span className="text-amber-600">· Window বন্ধ</span>) : null}
                   {c.spamFlag ? <span className="font-semibold text-amber-600">· 🚫 Spam সন্দেহ</span> : null}
                   {c.priority === "high" ? <span className="font-semibold text-red-600">· 🔥 অগ্রাধিকার</span> : null}
@@ -437,6 +529,7 @@ export default function InboxPage() {
                 </div>
               </button>
             ))}
+            {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">আরও কথোপকথন লোড হচ্ছে… ({conversations.length - visibleCount} বাকি)</div> : null}
           </div>
         </div>
 
@@ -447,13 +540,20 @@ export default function InboxPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <button className="rounded-lg border px-2 py-1 text-xs lg:hidden" onClick={() => setMobileChat(false)}>← তালিকা</button>
-                  <div className="font-semibold">{active.contactName ?? active.contactPhone} <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs capitalize">{active.channel}</span></div>
+                  <div className="font-semibold">{active.contactName ?? active.contactPhone} <ChannelChip channel={active.channel} lg /></div>
                 </div>
                 <div className="flex gap-1.5 text-xs">
                   {(["open", "pending", "closed"] as const).map((s) => (
                     <button key={s} className={`rounded-lg px-2 py-1 font-medium ${active.status === s ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => patchConversation({ status: s })}>{s}</button>
                   ))}
                 </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 lg:hidden">
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
+                {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}>{active.status === "closed" ? "↩️ আবার খুলুন" : "✓ বন্ধ করুন"}</button>
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
               </div>
 
               {active.channel === "whatsapp" ? (
@@ -475,14 +575,28 @@ export default function InboxPage() {
                 )
               ) : null}
 
-              {presence.length > 0 ? (
-                <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 ring-1 ring-amber-100">
-                  ⚠️ {presence.map((o) => o.typing ? `${o.name} উত্তর লিখছেন` : `${o.name} এই কথোপকথনটি দেখছেন`).join(" · ")} — ডুপ্লিকেট উত্তর এড়াতে সমন্বয় করুন।
-                </p>
-              ) : null}
+              {(() => {
+                const merged = [...presence];
+                for (const [uid, lo] of Object.entries(liveOthers)) {
+                  if (Date.now() - lo.at > 20000) continue;
+                  if (!merged.some((p) => p.userId === uid)) merged.push({ userId: uid, name: memberName(uid), typing: lo.typing });
+                  else { const found = merged.find((p) => p.userId === uid); if (found) found.typing = lo.typing; }
+                }
+                if (!merged.length) return null;
+                return (
+                  <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 ring-1 ring-amber-100">
+                    ⚠️ {merged.map((o) => o.typing ? `${o.name} উত্তর লিখছেন ✍️` : `${o.name} এই কথোপকথনটি দেখছেন 👁`).join(" · ")} — ডুপ্লিকেট উত্তর এড়াতে সমন্বয় করুন।
+                  </p>
+                );
+              })()}
               <div className="max-h-[28rem] space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
-                {messages.map((m) => (
-                  <div key={m.id} className={m.direction === "in" ? "flex justify-start" : "flex justify-end"}>
+                {messages.map((m, i) => {
+                  const prevDay = i > 0 ? new Date(messages[i - 1].createdAt).toDateString() : null;
+                  const thisDay = new Date(m.createdAt).toDateString();
+                  return (
+                    <React.Fragment key={m.id}>
+                      {prevDay !== thisDay ? <div className="py-1 text-center text-[11px] font-semibold text-slate-400">{dayLabel(m.createdAt)}</div> : null}
+                      <div className={m.direction === "in" ? "flex justify-start" : "flex justify-end"}>
                     <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.direction === "in" ? "border bg-white" : m.status === "failed" ? "bg-red-100" : "bg-gradient-to-br from-brand-500 to-violet-500 text-white shadow"}`}>
                       {(m.mediaId || m.mediaUrl) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
                       {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl) ? null : <div>[{m.type}]</div>}
@@ -519,9 +633,11 @@ export default function InboxPage() {
                           }}>💳 পেমেন্ট স্ক্রিনশট যাচাই করুন</button>
                         );
                       })() : null}
-                    </div>
-                  </div>
-                ))}
+                      </div>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
                 {messages.length === 0 ? <p className="text-sm text-slate-400">কোনো বার্তা নেই</p> : null}
               </div>
 
@@ -550,7 +666,7 @@ export default function InboxPage() {
                   </div>
                 ) : null}
                 <div className="flex gap-2">
-                  <input className="input flex-1" placeholder="উত্তর লিখুন... ( / চাপলে Quick Reply )" value={reply}
+                  <input id="inbox-reply" className="input flex-1" placeholder="উত্তর লিখুন... ( / চাপলে Quick Reply )" value={reply}
                     onChange={(e) => { setReply(e.target.value); setShowQuick(e.target.value.startsWith("/")); setIAmTyping(e.target.value.length > 0); }}
                     onBlur={() => setIAmTyping(false)}
                     onFocus={() => { if (reply.startsWith("/")) setShowQuick(true); }}
@@ -880,6 +996,50 @@ export default function InboxPage() {
         </div>
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট করুন"}</button>
       </form>
+
+      {paletteOpen ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-4 pt-24" onClick={() => setPaletteOpen(false)}>
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b px-4 py-3 text-sm font-semibold">⌘K — দ্রুত কাজ ও লাফ</div>
+            <div className="max-h-80 overflow-y-auto p-2">
+              {conversations.filter((c) => c.unreadCount > 0).slice(0, 5).map((c) => (
+                <button key={c.id} className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); void openConversation(c); }}>
+                  <span className="truncate">{c.contactName ?? c.contactPhone ?? "গ্রাহক"}</span>
+                  <span className="shrink-0"><ChannelChip channel={c.channel} /> <span className="badge-slate">{c.unreadCount} অপঠিত</span></span>
+                </button>
+              ))}
+              <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); onFilter({ unreadOnly: !filters.unreadOnly }); }}>🔵 {filters.unreadOnly ? "সব কথোপকথন দেখুন" : "শুধু অপঠিত দেখুন"}</button>
+              {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                <button key={ch} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); onFilter({ channel: filters.channel === ch ? "" : ch }); }}>
+                  <ChannelChip channel={ch} /> {filters.channel === ch ? "ফিল্টার সরান" : "শুধু এই চ্যানেল"}
+                </button>
+              ))}
+              {active && myId ? <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); void patchConversation({ assignedUserId: myId }); }}>👤 বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন (E)</button> : null}
+              <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); setShowShortcuts(true); }}>⌨️ কীবোর্ড Shortcut তালিকা</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showShortcuts ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setShowShortcuts(false)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 text-sm font-semibold">⌨️ কীবোর্ড Shortcut</div>
+            <ul className="space-y-1.5 text-sm text-slate-600">
+              <li><b>⌘K / Ctrl+K</b> — Command Palette</li>
+              <li><b>J / K</b> — তালিকায় নিচে / ওপরে</li>
+              <li><b>Enter</b> — বেছে নেওয়া কথোপকথন খুলুন</li>
+              <li><b>/</b> — খোঁজার ঘরে যান</li>
+              <li><b>R</b> — উত্তরের ঘরে যান</li>
+              <li><b>E</b> — বর্তমান কথোপকথন নিজেকে অ্যাসাইন</li>
+              <li><b>?</b> — এই তালিকা</li>
+              <li><b>Esc</b> — প্যানেল বন্ধ</li>
+            </ul>
+            <p className="mt-3 text-xs text-slate-400">লেখার ঘরে থাকলে Shortcut কাজ করবে না (⌘K ছাড়া)।</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
+
