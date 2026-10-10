@@ -8,6 +8,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
     title: "প্রধান",
     items: [
       { label: "Command Center", icon: "📊", href: "/" },
+      { label: "Analytics", icon: "💹", href: "/analytics" },
     ],
   },
   {

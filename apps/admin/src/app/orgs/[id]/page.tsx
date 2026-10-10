@@ -156,7 +156,38 @@ export default function OrgDetailPage() {
             </>
           )}
         </div>
+
+        <OrgHistory orgId={id} />
       </div>
     </AdminShell>
+  );
+}
+
+function OrgHistory({ orgId }: { orgId: string }) {
+  const [events, setEvents] = React.useState<{ at: string; kind: string; title: string; detail: string | null }[] | null>(null);
+  React.useEffect(() => {
+    apiFetch<{ events: { at: string; kind: string; title: string; detail: string | null }[] }>(`/admin/orgs/${orgId}/history`)
+      .then((h) => setEvents(h.events))
+      .catch(() => setEvents([]));
+  }, [orgId]);
+  const icon = (kind: string) => (kind === "payment" ? "💳" : kind === "subscription" ? "📦" : "🧾");
+  return (
+    <div className="acard mt-4">
+      <div className="mb-3 font-semibold">📜 ইতিহাস (Audit + পেমেন্ট + সাবস্ক্রিপশন)</div>
+      {events === null ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+        : events.length === 0 ? <p className="text-sm text-slate-500">কোনো ইভেন্ট নেই।</p> : (
+          <ol className="relative border-l border-slate-800 pl-5">
+            {events.slice(0, 30).map((e, i) => (
+              <li key={i} className="relative pb-3.5 last:pb-0">
+                <span className="absolute -left-[25px] top-0 flex h-4 w-4 items-center justify-center text-[10px]">{icon(e.kind)}</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-sm">{e.title}{e.detail ? <span className="ml-1.5 text-slate-500">{e.detail}</span> : null}</span>
+                  <span className="text-xs text-slate-500">{new Date(e.at).toLocaleString("bn-BD")}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+    </div>
   );
 }

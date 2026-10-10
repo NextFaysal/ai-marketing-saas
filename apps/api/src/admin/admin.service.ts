@@ -777,4 +777,219 @@ export class AdminService {
       throw new BadRequestException(`SMS test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
     }
   }
+
+  // ---------------- Phase A1 (Milestone 37): Operator Visibility++ ----------------
+  // Every number below is computed from stored rows. Where a
+  // figure is a snapshot or a heuristic, the response says so
+  // in its shape (inputs are returned alongside scores).
+
+  private monthKey(d: Date): string {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+
+  private async latestSubscriptions(): Promise<Map<string, any>> {
+    const subs = await (this.prisma as any).subscription.findMany({ orderBy: { createdAt: "desc" } }).catch(() => []);
+    const latest = new Map<string, any>();
+    for (const s of subs as any[]) if (!latest.has(s.organizationId)) latest.set(s.organizationId, s);
+    return latest;
+  }
+
+  async analyticsSeries(monthsRaw?: number) {
+    const months = Math.min(24, Math.max(3, Number(monthsRaw ?? 12) || 12));
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1));
+    const keys: string[] = [];
+    for (let i = 0; i < months; i++) keys.push(this.monthKey(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1))));
+    const blank = () => ({ collectedMinor: 0n, newOrgs: 0, newUsers: 0, newSubscriptions: 0, orders: 0, orderRevenueMinor: 0n });
+    const buckets = new Map<string, ReturnType<typeof blank>>(keys.map((k) => [k, blank()]));
+    const add = (at: Date, fn: (b: ReturnType<typeof blank>) => void) => {
+      const b = buckets.get(this.monthKey(at));
+      if (b) fn(b);
+    };
+    const since = { createdAt: { gte: start } };
+    const [payments, orgs, users, subs, orders] = await Promise.all([
+      (this.prisma as any).saasPayment.findMany({ where: since }).catch(() => []),
+      (this.prisma as any).organization.findMany({ where: since }).catch(() => []),
+      (this.prisma as any).user.findMany({ where: since }).catch(() => []),
+      (this.prisma as any).subscription.findMany({ where: since }).catch(() => []),
+      (this.prisma as any).order.findMany({ where: since, take: 20000 }).catch(() => []),
+    ]);
+    for (const p of payments as any[]) add(new Date(p.createdAt), (b) => { b.collectedMinor += BigInt(p.amountMinor ?? 0); });
+    for (const o of orgs as any[]) add(new Date(o.createdAt), (b) => { b.newOrgs += 1; });
+    for (const u of users as any[]) add(new Date(u.createdAt), (b) => { b.newUsers += 1; });
+    for (const s of subs as any[]) add(new Date(s.createdAt), (b) => { b.newSubscriptions += 1; });
+    for (const o of orders as any[]) {
+      if (o.status === "cancelled" || o.status === "refunded") continue;
+      add(new Date(o.createdAt), (b) => { b.orders += 1; b.orderRevenueMinor += BigInt(o.totalMinor ?? 0); });
+    }
+    const prices = await planPrices(this.prisma as any);
+    const latest = await this.latestSubscriptions();
+    let mrr = 0n, activeSubs = 0, trialing = 0, pastDue = 0, paidOrgs = 0;
+    for (const s of latest.values()) {
+      if (s.status === "ACTIVE") { activeSubs += 1; mrr += BigInt(prices[s.plan] ?? 0); }
+      if (s.status === "TRIALING") trialing += 1;
+      if (s.status === "PAST_DUE") pastDue += 1;
+      if (s.plan !== "FREE" && (s.status === "ACTIVE" || s.status === "PAST_DUE")) paidOrgs += 1;
+    }
+    const totalOrgs = latest.size;
+    return {
+      months: keys.map((k) => {
+        const b = buckets.get(k)!;
+        return { month: k, collectedMinor: b.collectedMinor.toString(), newOrgs: b.newOrgs, newUsers: b.newUsers, newSubscriptions: b.newSubscriptions, orders: b.orders, orderRevenueMinor: b.orderRevenueMinor.toString() };
+      }),
+      current: {
+        mrrMinor: mrr.toString(), activeSubscriptions: activeSubs, trialing, pastDue,
+        organizationsWithSubscription: totalOrgs,
+        paidOrganizations: paidOrgs,
+        // Snapshot ratio (orgs on a paid plan today / orgs with
+        // any subscription) — labelled as such in the UI; it is
+        // NOT a cohort conversion rate.
+        paidSharePercent: totalOrgs > 0 ? Math.round((paidOrgs / totalOrgs) * 1000) / 10 : null,
+      },
+    };
+  }
+
+  async analyticsTopTenants(limitRaw?: number) {
+    const limit = Math.min(25, Math.max(1, Number(limitRaw ?? 10) || 10));
+    const since30 = new Date(Date.now() - 30 * 86400000);
+    const orgs = await (this.prisma as any).organization.findMany({ take: 200, orderBy: { createdAt: "asc" } }).catch(() => []);
+    const latest = await this.latestSubscriptions();
+    const rows: any[] = [];
+    for (const org of orgs as any[]) {
+      const [orders, usage, payments, members] = await Promise.all([
+        (this.prisma as any).order.findMany({ where: { organizationId: org.id, createdAt: { gte: since30 } }, take: 5000 }).catch(() => []),
+        (this.prisma as any).aIUsageRecord.findMany({ where: { organizationId: org.id, createdAt: { gte: since30 } } }).catch(() => []),
+        (this.prisma as any).saasPayment.findMany({ where: { organizationId: org.id } }).catch(() => []),
+        (this.prisma as any).membership.count({ where: { organizationId: org.id, status: "ACTIVE" } }).catch(() => 0),
+      ]);
+      let revenue = 0n, orderCount = 0;
+      for (const o of orders as any[]) {
+        if (o.status === "cancelled" || o.status === "refunded") continue;
+        orderCount += 1; revenue += BigInt(o.totalMinor ?? 0);
+      }
+      let tokens = 0;
+      for (const u of usage as any[]) tokens += Number(u.inputTokens ?? 0) + Number(u.outputTokens ?? 0);
+      let collected = 0n;
+      for (const p of payments as any[]) collected += BigInt(p.amountMinor ?? 0);
+      const sub = latest.get(org.id);
+      rows.push({
+        organizationId: org.id, name: org.name, status: org.status,
+        plan: sub?.plan ?? null, subscriptionStatus: sub?.status ?? null,
+        members, orders30d: orderCount, orderRevenue30dMinor: revenue.toString(),
+        aiTokens30d: tokens, collectedTotalMinor: collected.toString(),
+      });
+    }
+    rows.sort((a, b) => Number(BigInt(b.orderRevenue30dMinor) - BigInt(a.orderRevenue30dMinor)) || Number(BigInt(b.collectedTotalMinor) - BigInt(a.collectedTotalMinor)));
+    return rows.slice(0, limit);
+  }
+
+  /** Heuristic triage score. Deductions are returned verbatim
+   * so the operator sees exactly why a tenant scored low. */
+  async analyticsHealthScores() {
+    const since24 = new Date(Date.now() - 24 * 3600000);
+    const orgs = await (this.prisma as any).organization.findMany({ take: 100, orderBy: { createdAt: "asc" } }).catch(() => []);
+    const latest = await this.latestSubscriptions();
+    const out: any[] = [];
+    for (const org of orgs as any[]) {
+      const deductions: { reason: string; points: number }[] = [];
+      const sub = latest.get(org.id);
+      if (sub?.status === "PAST_DUE") deductions.push({ reason: "সাবস্ক্রিপশন PAST_DUE", points: 40 });
+      if (sub?.status === "CANCELLED") deductions.push({ reason: "সাবস্ক্রিপশন CANCELLED", points: 60 });
+      if (!sub) deductions.push({ reason: "কোনো সাবস্ক্রিপশন নেই", points: 20 });
+      const [errRuns, lastOrder, lastUsage, integrations] = await Promise.all([
+        (this.prisma as any).automationRun.count({ where: { organizationId: org.id, status: "error", createdAt: { gte: since24 } } }).catch(() => 0),
+        (this.prisma as any).order.findFirst({ where: { organizationId: org.id }, orderBy: { createdAt: "desc" } }).catch(() => null),
+        (this.prisma as any).aIUsageRecord.findFirst({ where: { organizationId: org.id }, orderBy: { createdAt: "desc" } }).catch(() => null),
+        (this.prisma as any).integration.count({ where: { organizationId: org.id } }).catch(() => 0),
+      ]);
+      if (errRuns > 0) deductions.push({ reason: `গত ২৪ ঘণ্টায় ${errRuns}টি Automation Error`, points: Math.min(24, errRuns * 8) });
+      const lastActivity = [lastOrder?.createdAt, lastUsage?.createdAt, org.updatedAt ?? org.createdAt]
+        .filter(Boolean).map((d: any) => new Date(d).getTime());
+      const daysIdle = lastActivity.length ? Math.floor((Date.now() - Math.max(...lastActivity)) / 86400000) : 999;
+      if (daysIdle >= 30) deductions.push({ reason: `${daysIdle} দিন কোনো কার্যকলাপ নেই`, points: 25 });
+      else if (daysIdle >= 14) deductions.push({ reason: `${daysIdle} দিন কোনো কার্যকলাপ নেই`, points: 15 });
+      else if (daysIdle >= 7) deductions.push({ reason: `${daysIdle} দিন কোনো কার্যকলাপ নেই`, points: 8 });
+      if (integrations === 0) deductions.push({ reason: "কোনো ইন্টিগ্রেশন কানেক্ট নেই", points: 10 });
+      const score = Math.max(0, Math.min(100, 100 - deductions.reduce((a, d) => a + d.points, 0)));
+      out.push({
+        organizationId: org.id, name: org.name, score,
+        band: score >= 75 ? "good" : score >= 45 ? "watch" : "risk",
+        plan: sub?.plan ?? null, subscriptionStatus: sub?.status ?? null,
+        daysIdle, automationErrors24h: errRuns, deductions,
+      });
+    }
+    out.sort((a, b) => a.score - b.score);
+    return { heuristic: true, scores: out };
+  }
+
+  async analyticsAiCost() {
+    const ratesRow = await this.rawConfigRow("aiCostRates");
+    const rates: Record<string, number> = (ratesRow?.ratesMinorPerMillion ?? {}) as Record<string, number>;
+    const since30 = new Date(Date.now() - 30 * 86400000);
+    const usage = await (this.prisma as any).aIUsageRecord.findMany({ where: { createdAt: { gte: since30 } }, take: 20000 }).catch(() => []);
+    const orgs = await (this.prisma as any).organization.findMany({ take: 500 }).catch(() => []);
+    const nameOf = new Map((orgs as any[]).map((o) => [o.id, o.name]));
+    const groups = new Map<string, any>();
+    for (const u of usage as any[]) {
+      const key = `${u.organizationId}|${u.provider}`;
+      const g = groups.get(key) ?? { organizationId: u.organizationId, organizationName: nameOf.get(u.organizationId) ?? u.organizationId, provider: u.provider, calls: 0, tokens: 0, estimatedTokens: 0 };
+      g.calls += 1;
+      const t = Number(u.inputTokens ?? 0) + Number(u.outputTokens ?? 0);
+      if (u.estimated) g.estimatedTokens += t; else g.tokens += t;
+      groups.set(key, g);
+    }
+    const rows = [...groups.values()].map((g) => {
+      const rate = rates[g.provider];
+      return {
+        ...g,
+        rateMinorPerMillion: rate ?? null,
+        // Money exists ONLY when the operator set a rate; the
+        // UI labels it an estimate. Dev-adapter (estimated)
+        // tokens never enter the cost.
+        estimatedCostMinor: rate != null ? Math.round((g.tokens / 1_000_000) * rate) : null,
+      };
+    }).sort((a, b) => b.tokens - a.tokens);
+    return { rates, rows, note: "Costs are estimates from operator-set rates × real (non-estimated) token counts." };
+  }
+
+  async updateAiCostRates(actor: any, ratesRaw: Record<string, unknown>, ip?: string) {
+    const rates: Record<string, number> = {};
+    for (const [provider, value] of Object.entries(ratesRaw ?? {})) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) throw new BadRequestException(`Rate for ${provider} must be a non-negative number (minor units per 1M tokens)`);
+      if (n > 0) rates[provider] = Math.round(n);
+    }
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "aiCostRates" },
+      create: { key: "aiCostRates", value: { ratesMinorPerMillion: rates }, updatedById: actor.id },
+      update: { value: { ratesMinorPerMillion: rates }, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "ai_cost_rates_updated", "SystemSetting", "aiCostRates", { providers: Object.keys(rates) }, ip);
+    return this.analyticsAiCost();
+  }
+
+  async orgHistory(organizationId: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const [audit, payments, sub] = await Promise.all([
+      (this.prisma as any).auditLog.findMany({
+        where: { OR: [{ organizationId }, { entityType: "Organization", entityId: organizationId }] },
+        orderBy: { createdAt: "desc" }, take: 100,
+      }).catch(() => []),
+      (this.prisma as any).saasPayment.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 50 }).catch(() => []),
+      (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }).catch(() => null),
+    ]);
+    const events: any[] = [];
+    for (const a of audit as any[]) {
+      events.push({ at: a.createdAt, kind: "audit", title: a.action, detail: a.entityType ? `${a.entityType}${a.entityId ? ` · ${String(a.entityId).slice(0, 8)}…` : ""}` : null });
+    }
+    for (const p of payments as any[]) {
+      events.push({ at: p.createdAt, kind: "payment", title: `পেমেন্ট গৃহীত (${p.method})`, detail: `${BigInt(p.amountMinor ?? 0).toString()} minor${p.reference ? ` · ${p.reference}` : ""}` });
+    }
+    if (sub) {
+      events.push({ at: sub.updatedAt ?? sub.createdAt, kind: "subscription", title: `সাবস্ক্রিপশন: ${sub.plan} · ${sub.status}`, detail: sub.currentPeriodEnd ? `মেয়াদ শেষ ${new Date(sub.currentPeriodEnd).toISOString().slice(0, 10)}` : null });
+    }
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    return { organizationId, organizationName: org.name, events: events.slice(0, 100) };
+  }
 }

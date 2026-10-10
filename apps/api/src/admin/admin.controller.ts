@@ -76,6 +76,7 @@ class SslcommerzConfigDto {
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
+class AiRatesDto { @IsObject() rates!: Record<string, number>; }
 class TestSendDto { @IsString() @MinLength(3) to!: string; }
 class SubscriptionDto {
   @IsOptional() @IsIn(["FREE", "STARTER", "GROWTH", "AGENCY"]) plan?: string;
@@ -203,6 +204,15 @@ export class AdminController {
   }
 
   @Get("usage") usage() { return this.admin.usageBoard(); }
+
+  // ---- Phase A1 (Milestone 37): Operator Visibility++ ----
+  @Get("analytics/series") analyticsSeries(@Query("months") months?: string) { return this.admin.analyticsSeries(months ? Number(months) : undefined); }
+  @Get("analytics/top-tenants") analyticsTopTenants(@Query("limit") limit?: string) { return this.admin.analyticsTopTenants(limit ? Number(limit) : undefined); }
+  @Get("analytics/health-scores") analyticsHealthScores() { return this.admin.analyticsHealthScores(); }
+  @Get("analytics/ai-cost") analyticsAiCost() { return this.admin.analyticsAiCost(); }
+  @Patch("analytics/ai-rates") @AdminTier("SUPER")
+  updateAiRates(@Req() req: any, @Body() dto: AiRatesDto) { return this.admin.updateAiCostRates(req.adminUser, dto.rates as Record<string, unknown>, req.ip); }
+  @Get("orgs/:id/history") orgHistory(@Param("id") id: string) { return this.admin.orgHistory(id); }
 
   @Get("orgs/:id/support-view") supportView(@Param("id") id: string) { return this.admin.supportView(id); }
   @Post("orgs/:id/support-view/conversations/:cid/messages") @AdminTier("SUPER", "SUPPORT")
