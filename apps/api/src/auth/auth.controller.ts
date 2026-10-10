@@ -24,4 +24,16 @@ export class AuthController {
   }
   @Get("me")
   me(@CurrentUser() user: AuthUser) { return this.auth.me(user.userId); }
+  @Get("totp/status")
+  totpStatus(@CurrentUser() user: AuthUser) { return this.auth.totpStatus(user.userId); }
+  @Post("totp/enroll")
+  totpEnroll(@CurrentUser() user: AuthUser, @Req() req: Request) { return this.auth.totpEnroll(user.userId, req.ip); }
+  @Post("totp/confirm")
+  totpConfirm(@CurrentUser() user: AuthUser, @Body() body: { code: string }, @Req() req: Request) {
+    return this.auth.totpConfirm(user.userId, body?.code ?? "", req.ip);
+  }
+  @Post("totp/disable")
+  totpDisable(@CurrentUser() user: AuthUser, @Body() body: { code: string }, @Req() req: Request) {
+    return this.auth.totpDisable(user.userId, body?.code ?? "", req.ip);
+  }
 }

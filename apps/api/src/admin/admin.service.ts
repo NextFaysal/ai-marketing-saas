@@ -616,9 +616,10 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
+      this.rawConfigRow("sslcommerzConfig"),
     ]);
     return {
       llm: {
@@ -648,6 +649,12 @@ export class AdminService {
         apiUrl: sms?.apiUrl ?? (process.env.SMS_API_URL || "https://smsplus.sslwireless.com"),
         secretConfigured: Boolean(sms?.apiTokenEncrypted || process.env.SMS_API_TOKEN),
       },
+      sslcommerz: {
+        source: ssl?.storeId ? "admin" : (process.env.SSLCOMMERZ_STORE_ID ? "env" : "none"),
+        storeId: ssl?.storeId ?? (process.env.SSLCOMMERZ_STORE_ID || null),
+        sandbox: ssl ? ssl.sandbox !== false : process.env.SSLCOMMERZ_SANDBOX !== "false",
+        secretConfigured: Boolean(ssl?.storePassEncrypted || process.env.SSLCOMMERZ_STORE_PASS),
+      },
       note: "Boot secrets (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY) stay in the server environment by design — the encryption key cannot be stored inside what it encrypts.",
     };
   }
@@ -658,7 +665,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -709,6 +716,10 @@ export class AdminService {
       setField("senderId", patch.senderId === undefined ? undefined : String(patch.senderId));
       setField("apiUrl", patch.apiUrl === undefined ? undefined : String(patch.apiUrl));
       setSecret("apiToken", "apiTokenEncrypted", patch.apiToken, patch.clearSecret);
+    } else if (area === "sslcommerz") {
+      setField("storeId", patch.storeId === undefined ? undefined : String(patch.storeId));
+      if (patch.sandbox !== undefined) setField("sandbox", patch.sandbox === true);
+      setSecret("storePass", "storePassEncrypted", patch.storePass, patch.clearSecret);
     }
     await (this.prisma as any).systemSetting.upsert({
       where: { key }, create: { key, value: next, updatedById: actor.id }, update: { value: next, updatedById: actor.id },

@@ -35,10 +35,11 @@ function NavContent({ pathname, onNavigate }: { pathname: string; onNavigate?: (
               if (!item) return null;
               const active = href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
               if (!item.ready) {
+                const phase = (item as { phase?: string }).phase ?? "শীঘ্রই";
                 return (
-                  <div key={href} className="flex items-center justify-between rounded-xl px-3 py-2 text-[13.5px] font-medium text-slate-500/80" title={`আসছে: ${item.phase}`}>
+                  <div key={href} className="flex items-center justify-between rounded-xl px-3 py-2 text-[13.5px] font-medium text-slate-500/80" title={`আসছে: ${phase}`}>
                     <span>{item.label}</span>
-                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">{item.phase}</span>
+                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">{phase}</span>
                   </div>
                 );
               }
@@ -145,6 +146,48 @@ function PlatformBanner() {
   );
 }
 
+interface BillingLite { subscription: { plan: string; status: string; currentPeriodEnd: string | null } | null }
+
+function SubscriptionBanner() {
+  const [sub, setSub] = useState<BillingLite["subscription"]>(null);
+  useEffect(() => {
+    let tries = 0;
+    let cancelled = false;
+    const attempt = () => {
+      const orgId = getOrganizationId();
+      if (!orgId) { if (++tries <= 3) setTimeout(attempt, 700); return; }
+      // OWNER/ADMIN only endpoint — members get a refusal and simply
+      // see no banner.
+      apiFetch<BillingLite>(`/organizations/${orgId}/billing`)
+        .then((b) => { if (!cancelled) setSub(b.subscription); })
+        .catch(() => undefined);
+    };
+    attempt();
+    return () => { cancelled = true; };
+  }, []);
+  if (!sub) return null;
+  const daysLeft = sub.currentPeriodEnd ? Math.ceil((new Date(sub.currentPeriodEnd).getTime() - Date.now()) / 86400000) : null;
+  if (sub.status === "PAST_DUE") {
+    return (
+      <div className="px-4 pt-4 sm:px-6 lg:px-8">
+        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          ⛔ <b>সাবস্ক্রিপশনের মেয়াদ পেরিয়ে গেছে (Past Due):</b> ওয়ার্কস্পেস এখন <b>শুধু দেখার</b> মোডে আছে — নতুন কিছু তৈরি/বদল করা যাবে না। পেমেন্ট বা প্ল্যানের জন্য <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজে</a> যান।
+        </div>
+      </div>
+    );
+  }
+  if (sub.status === "TRIALING" && daysLeft !== null && daysLeft <= 7) {
+    return (
+      <div className="px-4 pt-4 sm:px-6 lg:px-8">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          ⏳ <b>ট্রায়াল শেষ হতে {daysLeft > 0 ? `${daysLeft} দিন` : "আজই"} বাকি</b> ({sub.plan} প্ল্যান)। চালিয়ে যেতে <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজ</a> থেকে প্ল্যান বেছে নিন।
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "/dashboard";
@@ -236,6 +279,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         <PlatformBanner />
+        <SubscriptionBanner />
         <main className="mx-auto w-full max-w-[1440px] animate-rise px-4 py-5 sm:px-6 sm:py-7 lg:px-8">{children}</main>
       </div>
     </div>

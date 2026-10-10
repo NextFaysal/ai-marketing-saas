@@ -10,12 +10,19 @@ const HIGHLIGHTS = [
   { title: "বানানো সংখ্যা নয়, প্রমাণিত সংখ্যা", text: "Platform এর রিপোর্ট আর আপনার আসল Order ডেটা আলাদা ও যাচাইযোগ্য।" },
 ];
 
+interface LoginResponse { accessToken?: string; requiresTotp?: boolean; challengeToken?: string }
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Milestone 35: two-factor challenge step. The API verifies the
+  // password first and only then asks for the authenticator code;
+  // no access token exists until the code checks out.
+  const [challengeToken, setChallengeToken] = useState("");
+  const [code, setCode] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,10 +31,29 @@ export default function LoginPage() {
     if (!parsed.success) { setError("সঠিক ইমেইল ও পাসওয়ার্ড দিন"); return; }
     setLoading(true);
     try {
-      const data = await apiFetch<{ accessToken: string }>("/auth/login", { method: "POST", body: JSON.stringify(parsed.data) });
+      const data = await apiFetch<LoginResponse>("/auth/login", { method: "POST", body: JSON.stringify(parsed.data) });
+      if (data.requiresTotp && data.challengeToken) {
+        setChallengeToken(data.challengeToken);
+        return;
+      }
+      if (!data.accessToken) throw new Error("Login failed");
       localStorage.setItem("accessToken", data.accessToken);
       router.push("/dashboard");
     } catch (err) { setError(err instanceof Error ? err.message : "Login failed"); }
+    finally { setLoading(false); }
+  }
+
+  async function onVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const data = await apiFetch<{ accessToken: string }>("/auth/totp/verify", {
+        method: "POST", body: JSON.stringify({ challengeToken, code }),
+      });
+      localStorage.setItem("accessToken", data.accessToken);
+      router.push("/dashboard");
+    } catch (err) { setError(err instanceof Error ? err.message : "কোড যাচাই করা যায়নি"); }
     finally { setLoading(false); }
   }
 
@@ -70,6 +96,21 @@ export default function LoginPage() {
           </div>
           <h1 className="page-title">লগইন করুন</h1>
           <p className="page-sub mt-1">আপনার মার্কেটিং ড্যাশবোর্ডে স্বাগতম</p>
+          {challengeToken ? (
+            <form onSubmit={onVerifyCode} className="card mt-6 space-y-4 p-6 sm:p-7">
+              <p className="text-sm text-slate-600">🔐 পাসওয়ার্ড মিলেছে। এখন আপনার <b>Authenticator অ্যাপের ৬ সংখ্যার কোড</b> দিন — কোড যাচাই হলেই লগইন সম্পূর্ণ হবে।</p>
+              <label className="block text-sm font-medium text-slate-700">প্রমাণীকরণ কোড
+                <input className="input mt-1.5 tracking-[0.4em]" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} required placeholder="123456" />
+              </label>
+              {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-200">{error}</p> : null}
+              <button className="btn-primary w-full py-2.5 text-[15px]" disabled={loading || code.length !== 6}>
+                {loading ? "যাচাই হচ্ছে..." : "যাচাই করে লগইন করুন"}
+              </button>
+              <button type="button" className="w-full text-center text-sm text-slate-500 hover:text-slate-700" onClick={() => { setChallengeToken(""); setCode(""); setError(""); }}>
+                ← আবার শুরু করুন
+              </button>
+            </form>
+          ) : (
           <form onSubmit={onSubmit} className="card mt-6 space-y-4 p-6 sm:p-7">
             <label className="block text-sm font-medium text-slate-700">ইমেইল
               <input className="input mt-1.5" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
@@ -83,6 +124,7 @@ export default function LoginPage() {
             </button>
             <p className="text-center text-sm text-slate-500">অ্যাকাউন্ট নেই? <a className="font-semibold text-brand-600 hover:text-brand-700" href="/register">রেজিস্টার করুন</a></p>
           </form>
+          )}
           <p className="mt-4 rounded-2xl bg-brand-50 px-4 py-3 text-center text-[13px] text-brand-700 ring-1 ring-inset ring-brand-100">
             Demo: <span className="font-semibold">owner@demo.local</span> / <span className="font-semibold">ChangeMe123!</span>
           </p>

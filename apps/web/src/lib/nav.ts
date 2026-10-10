@@ -24,7 +24,7 @@ export const NAV_ITEMS = [
   { label: "Messaging", href: "/dashboard/messaging", ready: true },
   { label: "Workflows", href: "/dashboard/workflows", ready: true },
   { label: "Reports", href: "/dashboard/reports", ready: true },
-  { label: "Wallet & Billing", href: "/dashboard/billing", ready: false, phase: "Phase 9" },
+  { label: "সাবস্ক্রিপশন ও বিলিং", href: "/dashboard/billing", ready: true },
   { label: "Team Settings", href: "/dashboard/team", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", ready: true },
 ] as const;

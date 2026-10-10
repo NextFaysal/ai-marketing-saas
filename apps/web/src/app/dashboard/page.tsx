@@ -9,6 +9,34 @@ import type { Overview } from "@/components/analytics-shared";
 
 interface ReportLite { id: string; title: string; provider: string; createdAt: string }
 interface AnomalyResult { anomalies: { severity: string; message: string }[]; sufficientData: boolean }
+interface OnboardingState { steps: { key: string; label: string; done: boolean; href: string }[]; completed: number; total: number; allDone: boolean }
+
+function OnboardingCard() {
+  const [state, setState] = useState<OnboardingState | null>(null);
+  useEffect(() => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    apiFetch<OnboardingState>(`/organizations/${orgId}/onboarding`).then(setState).catch(() => undefined);
+  }, []);
+  if (!state || state.allDone) return null;
+  return (
+    <div className="card border-indigo-200 bg-indigo-50/60 p-5">
+      <div className="flex items-center justify-between">
+        <div className="font-semibold">🚀 শুরু করার চেকলিস্ট</div>
+        <span className="badge-brand">{state.completed}/{state.total} সম্পন্ন</span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {state.steps.map((s) => (
+          <a key={s.key} href={s.href} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ring-1 ${s.done ? "bg-white/60 text-slate-500 ring-emerald-200" : "bg-white font-medium text-slate-800 ring-indigo-100 hover:ring-indigo-300"}`}>
+            <span>{s.done ? "✅" : "⬜"}</span>
+            <span className={s.done ? "line-through decoration-slate-300" : ""}>{s.label}</span>
+          </a>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-slate-500">প্রতিটি ধাপ আসল ডেটা থেকে যাচাই করা — কাজ শেষ হলেই টিক নিজে নিজে পড়ে।</p>
+    </div>
+  );
+}
 
 export default function OverviewPage() {
   const [data, setData] = useState<Overview | null>(null);
@@ -34,6 +62,7 @@ export default function OverviewPage() {
         <p className="text-sm text-slate-500">শেষ ৭ দিনের সারসংক্ষেপ, আসল ডেটা থেকে। ডেটা না থাকলে সংখ্যার বদলে সেটাই দেখানো হয়।</p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      <OnboardingCard />
       {data ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <KpiCard label="Revenue (৭ দিন)" value={money(data.totals.revenueMinor)} hint={`${data.totals.orders}টি অর্ডার`} />

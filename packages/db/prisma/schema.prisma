@@ -1764,3 +1764,49 @@ model SaasPayment {
 
   @@index([organizationId])
 }
+
+// Milestone 34 (Phase N1): email-based member invitations. Only the
+// SHA-256 hash of the invite token is stored; the raw token exists
+// solely in the emailed / copied link. Expiry is computed from
+// expiresAt (status stays "pending" until accepted or revoked).
+model MemberInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  role           Role      @default(VIEWER)
+  tokenHash      String    @unique
+  status         String    @default("pending") // pending | accepted | revoked
+  invitedById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  acceptedUserId String?
+  emailSent      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+// Milestone 36 (Phase N1): one SSLCommerz checkout attempt for a
+// subscription plan. A checkout becomes "success" ONLY through a
+// signature-verified IPN whose val_id the gateway's validation
+// API confirms for the exact amount — never via the browser
+// return. The resulting SaasPayment row is written at activation.
+model PlanCheckout {
+  id             String    @id @default(cuid())
+  organizationId String
+  plan           String
+  amountMinor    BigInt
+  currency       String    @default("BDT")
+  tranId         String    @unique
+  status         String    @default("initiated") // initiated | success | failed | cancelled
+  valId          String?
+  gatewayDetail  Json?
+  createdById    String
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId])
+}

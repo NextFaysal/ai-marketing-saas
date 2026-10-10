@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { compareSync, hashSync } from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
@@ -88,6 +88,62 @@ export class AuthService {
     await (this.prisma as any).user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
     await this.audit.log({ userId: user.id, action: user.isSuperAdmin ? "admin.login" : "auth.login", entityType: "User", entityId: user.id, metadata: { totp: true }, ipAddress: ip });
     return this.issueToken(user);
+  }
+
+  // ---- Milestone 35 (Phase N1): self-service TOTP for ANY user ----
+  // The challenge machinery (login + verify) has existed since M28
+  // but enrolment was admin-surface only. These endpoints give
+  // tenant users the same enrol/confirm/disable lifecycle, storing
+  // the secret AES-GCM encrypted exactly like the admin flow.
+
+  async totpStatus(userId: string) {
+    const user = await (this.prisma as any).user.findUnique({
+      where: { id: userId }, select: { totpEnabled: true, totpSecretEncrypted: true },
+    });
+    if (!user) throw new NotFoundException("User not found");
+    return { totpEnabled: user.totpEnabled === true, enrolmentInProgress: Boolean(user.totpSecretEncrypted) && user.totpEnabled !== true };
+  }
+
+  async totpEnroll(userId: string, ip?: string) {
+    const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    if (user.totpEnabled) throw new BadRequestException("Two-factor authentication is already enabled. Disable it first to re-enrol.");
+    const { generateTotpSecret, otpauthUrl } = await import("../common/totp");
+    const { encryptJson } = await import("../integrations/crypto");
+    const secret = generateTotpSecret();
+    await (this.prisma as any).user.update({
+      where: { id: userId },
+      data: { totpSecretEncrypted: encryptJson({ secret }), totpEnabled: false },
+    });
+    await this.audit.log({ userId, action: "auth.totp_enroll_started", entityType: "User", entityId: userId, ipAddress: ip });
+    // Returned ONCE, to the owner, for authenticator entry; stored
+    // encrypted and never returned again.
+    return { secret, otpauthUrl: otpauthUrl(secret, user.email), note: "Add this to your authenticator app, then confirm with a 6-digit code. Two-factor stays OFF until confirmation." };
+  }
+
+  private async ownTotpSecret(userId: string): Promise<string> {
+    const { decryptJson } = await import("../integrations/crypto");
+    const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
+    if (!user?.totpSecretEncrypted) throw new BadRequestException("No two-factor enrolment in progress. Start enrolment first.");
+    return (decryptJson(user.totpSecretEncrypted) as { secret: string }).secret;
+  }
+
+  async totpConfirm(userId: string, code: string, ip?: string) {
+    const { verifyTotp } = await import("../common/totp");
+    const secret = await this.ownTotpSecret(userId);
+    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect — check the time on your device and try again");
+    await (this.prisma as any).user.update({ where: { id: userId }, data: { totpEnabled: true } });
+    await this.audit.log({ userId, action: "auth.totp_enabled", entityType: "User", entityId: userId, ipAddress: ip });
+    return { totpEnabled: true };
+  }
+
+  async totpDisable(userId: string, code: string, ip?: string) {
+    const { verifyTotp } = await import("../common/totp");
+    const secret = await this.ownTotpSecret(userId);
+    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect");
+    await (this.prisma as any).user.update({ where: { id: userId }, data: { totpEnabled: false, totpSecretEncrypted: null } });
+    await this.audit.log({ userId, action: "auth.totp_disabled", entityType: "User", entityId: userId, ipAddress: ip });
+    return { totpEnabled: false };
   }
 
   async me(userId: string) {

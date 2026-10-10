@@ -69,6 +69,13 @@ class SmsConfigDto {
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
+class SslcommerzConfigDto {
+  @IsOptional() @IsString() storeId?: string;
+  @IsOptional() @IsString() storePass?: string;
+  @IsOptional() @IsBoolean() sandbox?: boolean;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
 class TestSendDto { @IsString() @MinLength(3) to!: string; }
 class SubscriptionDto {
   @IsOptional() @IsIn(["FREE", "STARTER", "GROWTH", "AGENCY"]) plan?: string;
@@ -152,6 +159,8 @@ export class AdminController {
   updateSmtpConfig(@Req() req: any, @Body() dto: SmtpConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "smtp", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/sms") @AdminTier("SUPER")
   updateSmsConfig(@Req() req: any, @Body() dto: SmsConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "sms", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/sslcommerz") @AdminTier("SUPER")
+  updateSslcommerzConfig(@Req() req: any, @Body() dto: SslcommerzConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "sslcommerz", dto as unknown as Record<string, unknown>, req.ip); }
   @Post("platform-config/test-llm") @AdminTier("SUPER")
   testLlm() { return this.admin.testLlm(); }
   @Post("platform-config/test-email") @AdminTier("SUPER")

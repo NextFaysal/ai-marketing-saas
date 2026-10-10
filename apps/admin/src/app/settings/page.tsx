@@ -15,6 +15,7 @@ interface PlatformConfigView {
   metaApp: { source: string; appId: string | null; graphVersion: string | null; appSecretConfigured: boolean; adLibraryTokenConfigured: boolean };
   smtp: { source: string; host: string | null; port: number; user: string | null; from: string | null; secretConfigured: boolean };
   sms: { source: string; senderId: string | null; apiUrl: string | null; secretConfigured: boolean };
+  sslcommerz: { source: string; storeId: string | null; sandbox: boolean; secretConfigured: boolean };
   note: string;
 }
 
@@ -106,6 +107,20 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sms", { clear: true }, "SMS Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-500">{cfg.note}</p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">💳 SSLCommerz (সাবস্ক্রিপশন পেমেন্ট)</span>{srcBadge(cfg.sslcommerz.source)}</div>
+          <label className="block text-sm">Store ID<input id="pc-ssl-store" className="ainput mt-1" defaultValue={cfg.sslcommerz.storeId ?? ""} placeholder="যেমন: qosprey_live / sandbox demo store" /></label>
+          <label className="block text-sm">Store Password<input id="pc-ssl-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sslcommerz.secretConfigured)} /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-ssl-sandbox" type="checkbox" defaultChecked={cfg.sslcommerz.sandbox} />
+            Sandbox Mode (পরীক্ষামূলক — আসল টাকা কাটবে না)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("sslcommerz", { storeId: val("pc-ssl-store"), storePass: val("pc-ssl-pass") || undefined, sandbox: (document.getElementById("pc-ssl-sandbox") as HTMLInputElement)?.checked ?? true }, "SSLCommerz সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sslcommerz", { clear: true }, "SSLCommerz Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
         </div>
       </div>
     </div>

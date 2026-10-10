@@ -29,26 +29,30 @@ export interface LlmConfig { provider: string; model?: string; apiKey: string }
 export interface MetaAppConfig { appId?: string; appSecret?: string; adLibraryToken?: string; graphVersion?: string }
 export interface SmtpConfig { host: string; port: number; user?: string; pass?: string; from?: string }
 export interface SmsConfig { apiToken: string; senderId: string; apiUrl?: string }
+export interface SslcommerzConfig { storeId: string; storePass: string; sandbox: boolean }
 
 export interface PlatformConfigSnapshot {
   llm: LlmConfig | null;
   metaApp: MetaAppConfig | null;
   smtp: SmtpConfig | null;
   sms: SmsConfig | null;
+  sslcommerz: SslcommerzConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
 }
 
-/** Test hook + admin-write hook: replace the snapshot directly. */
-export function setPlatformConfigSnapshot(next: PlatformConfigSnapshot) {
-  snapshot = next;
+/** Test hook + admin-write hook: replace the snapshot directly.
+ * Newer areas are optional for callers so older test setups keep
+ * working when the snapshot grows (sslcommerz arrived in M36). */
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz"> & { sslcommerz?: SslcommerzConfig | null }) {
+  snapshot = { sslcommerz: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -75,11 +79,12 @@ async function readKey(prisma: any, key: string): Promise<any> {
   }
 }
 
-/** Load + decrypt all four areas from the store into the snapshot. */
+/** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
+    readKey(prisma, "sslcommerzConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -103,7 +108,10 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
   const sms: SmsConfig | null = smsRaw?.senderId
     ? { apiToken: unseal(smsRaw.apiTokenEncrypted) ?? "", senderId: String(smsRaw.senderId), apiUrl: smsRaw.apiUrl ? String(smsRaw.apiUrl) : undefined }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, loadedAt: Date.now() };
+  const sslcommerz: SslcommerzConfig | null = sslRaw?.storeId
+    ? { storeId: String(sslRaw.storeId), storePass: unseal(sslRaw.storePassEncrypted) ?? "", sandbox: sslRaw.sandbox !== false }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -151,6 +159,28 @@ export function effectiveSmsConfig(): (SmsConfig & { source: "admin" | "env" }) 
     return { apiToken: process.env.SMS_API_TOKEN, senderId: process.env.SMS_SENDER_ID, apiUrl: process.env.SMS_API_URL || undefined, source: "env" };
   }
   return null;
+}
+
+/** Milestone 36: SSLCommerz merchant config — admin snapshot
+ * wins, env is the fallback. Null means online payment is not
+ * configured and checkout must refuse honestly. */
+export function effectiveSslcommerzConfig(): (SslcommerzConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.sslcommerz?.storeId && snapshot.sslcommerz.storePass) {
+    return { ...snapshot.sslcommerz, source: "admin" };
+  }
+  if (process.env.SSLCOMMERZ_STORE_ID && process.env.SSLCOMMERZ_STORE_PASS) {
+    return {
+      storeId: process.env.SSLCOMMERZ_STORE_ID,
+      storePass: process.env.SSLCOMMERZ_STORE_PASS,
+      sandbox: process.env.SSLCOMMERZ_SANDBOX !== "false",
+      source: "env",
+    };
+  }
+  return null;
+}
+
+export function sslcommerzBase(cfg: SslcommerzConfig): string {
+  return cfg.sandbox ? "https://sandbox.sslcommerz.com" : "https://securepay.sslcommerz.com";
 }
 
 /** The app secret a messaging webhook should be verified against:

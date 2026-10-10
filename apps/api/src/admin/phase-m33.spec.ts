@@ -31,11 +31,11 @@ function prismaFake() {
 }
 
 beforeEach(() => {
-  setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, loadedAt: 0 });
+  setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 });
   delete process.env.LLM_PROVIDER; delete process.env.LLM_API_KEY; delete process.env.LLM_MODEL;
   delete process.env.SMTP_HOST; delete process.env.SMS_API_TOKEN; delete process.env.SMS_SENDER_ID;
 });
-afterAll(() => setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, loadedAt: 0 }));
+afterAll(() => setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 }));
 
 describe("Milestone 33 — dynamic platform config (AdminService)", () => {
   it("stores the LLM key sealed, the safe view never contains it, and the snapshot decrypts it", async () => {
@@ -111,7 +111,7 @@ describe("Milestone 33 — consumers honor the dynamic config", () => {
     expect(factory.getProvider().name).toBe("openai");
     setPlatformConfigSnapshot({ llm: { provider: "anthropic", apiKey: "sk-ant" }, metaApp: null, smtp: null, sms: null, loadedAt: Date.now() });
     expect(factory.getProvider().name).toBe("anthropic");
-    setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, loadedAt: 0 });
+    setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 });
     expect(factory.getProvider().name).toBe("dev-template");
   });
 
@@ -127,7 +127,7 @@ describe("Milestone 33 — consumers honor the dynamic config", () => {
     expect(resolveMessagingAppSecret("own-secret")).toBe("own-secret");
     expect(resolveMessagingAppSecret("")).toBe("platform-secret");
     expect(resolveMessagingAppSecret(undefined)).toBe("platform-secret");
-    setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, loadedAt: 0 });
+    setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 });
     expect(resolveMessagingAppSecret("")).toBeNull();
   });
 });

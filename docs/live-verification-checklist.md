@@ -284,3 +284,25 @@ correctly judging credentials.
       set, publish it to Meta, and confirm the set appears in
       Commerce Manager with the expected filter; delete it and
       confirm metaDeleted: true in the response.
+
+## 23. Phase N1 — Commercial Readiness (needs owner accounts)
+- [ ] Invitation email actually DELIVERED: configure real SMTP
+      in Admin Console -> Dynamic Platform Config, invite a
+      real address from Team page, confirm the email arrives
+      (M34 sandbox runs had SMTP unconfigured — emailSent false
+      was the honest sandbox result).
+- [ ] SSLCommerz full sandbox payment: set the demo/your
+      sandbox store in Admin Console -> Dynamic Platform
+      Config -> SSLCommerz (sandbox ON), buy a plan from the
+      tenant Billing page with a sandbox test card, and
+      confirm: billing shows the plan ACTIVE with +30 days
+      and a payments row with method "sslcommerz".
+      (Init + forged-IPN refusal are already live-proven in
+      the sandbox; this closes the successful-payment leg.)
+- [ ] SSLCommerz live: merchant onboarding done, real store
+      id/password set, sandbox OFF, IPN URL registered in the
+      gateway panel (https://api.qosprey.com/public/payments/
+      sslcommerz/ipn), one small real payment verified.
+- [ ] Tenant 2FA: enrol from Settings, log out, confirm the
+      login asks for the authenticator code; lose-access drill:
+      OWNER resets the member's 2FA from the Team page.

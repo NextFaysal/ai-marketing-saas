@@ -10,6 +10,13 @@ export class InviteMemberDto {
   @IsEmail() email!: string;
   @IsString() role!: string; // validated against invitable roles in the service
 }
+export class PlanChangeRequestDto {
+  @IsString() @MaxLength(20) requestedPlan!: string; // validated against PLAN_TIERS in the service
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+export class AcceptInviteDto {
+  @IsString() @MinLength(10) @MaxLength(200) token!: string;
+}
 export class UpdateBusinessProfileDto {
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
   @IsOptional() @IsString() @MaxLength(100) industry?: string;
