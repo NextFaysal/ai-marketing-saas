@@ -95,7 +95,7 @@ export default function BillingPage() {
           </div>
           <div className="acard mt-4 overflow-hidden p-0">
             <div className="border-b border-slate-800 p-4 font-semibold">সাম্প্রতিক পেমেন্ট</div>
-            <table className="w-full">
+            <table className="atable">
               <thead className="bg-slate-900"><tr><th className="ath">তারিখ</th><th className="ath">Organization</th><th className="ath">পরিমাণ</th><th className="ath">মাধ্যম</th><th className="ath">রেফারেন্স</th><th className="ath"></th></tr></thead>
               <tbody>{payments.map((p) => (
                 <tr key={p.id} className="border-t border-slate-800">

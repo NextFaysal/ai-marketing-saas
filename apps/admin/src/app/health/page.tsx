@@ -54,7 +54,7 @@ export default function HealthPage() {
       </div>
       <div className="acard mt-4 overflow-hidden p-0">
         <div className="border-b border-slate-800 p-4 font-semibold">Scheduled Jobs (সব Tenant)</div>
-        <table className="w-full">
+        <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">Job</th><th className="ath">ধরন</th><th className="ath">অবস্থা</th><th className="ath">পরের Run</th><th className="ath"></th></tr></thead>
           <tbody>{(jobs?.scheduledJobs ?? []).map((j) => (
             <tr key={j.id} className="border-t border-slate-800">

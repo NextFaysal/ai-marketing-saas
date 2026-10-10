@@ -21,7 +21,7 @@ export default function UsersPage() {
           <input className="ainput max-w-sm" placeholder="ইমেইল বা নাম দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
         </div>
-        <table className="w-full">
+        <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">User</th><th className="ath">Org</th><th className="ath">অবস্থা</th><th className="ath">শেষ লগইন</th><th className="ath">যোগ দিয়েছেন</th></tr></thead>
           <tbody>{rows.map((u) => (
             <tr key={u.id} className="border-t border-slate-800 hover:bg-slate-800/40">

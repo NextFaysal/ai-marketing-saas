@@ -19,7 +19,7 @@ export default function OrgsPage() {
           <input className="ainput max-w-sm" placeholder="নাম বা slug দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
         </div>
-        <table className="w-full">
+        <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">Plan</th><th className="ath">সদস্য</th><th className="ath">Order</th><th className="ath">অবস্থা</th><th className="ath">তৈরি</th></tr></thead>
           <tbody>{rows.map((o) => (
             <tr key={o.id} className="border-t border-slate-800 hover:bg-slate-800/40">

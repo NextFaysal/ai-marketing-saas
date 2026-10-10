@@ -24,7 +24,7 @@ export default function AuditPage() {
             <option value="audience.">Audience</option>
           </select>
         </div>
-        <table className="w-full">
+        <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Actor</th><th className="ath">IP</th><th className="ath">বিস্তারিত</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-800">

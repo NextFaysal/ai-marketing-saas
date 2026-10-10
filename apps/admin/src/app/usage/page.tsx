@@ -11,7 +11,7 @@ export default function UsagePage() {
   return (
     <AdminShell title="📈 Usage & Cost (শেষ ৩০ দিন)">
       <div className="acard overflow-hidden p-0">
-        <table className="w-full">
+        <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">AI কল</th><th className="ath">AI টোকেন</th><th className="ath">Message Delivery</th><th className="ath">Broadcast</th><th className="ath">Workflow Run</th><th className="ath">Courier</th><th className="ath">Order</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.organizationId} className="border-t border-slate-800">

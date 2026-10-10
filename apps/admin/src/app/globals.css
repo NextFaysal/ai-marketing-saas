@@ -2,18 +2,101 @@
 @tailwind components;
 @tailwind utilities;
 
-body { @apply bg-slate-950 text-slate-100 antialiased; }
-.acard { @apply rounded-2xl border border-slate-800 bg-slate-900 p-5; }
-.abtn { @apply inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50; }
-.abtn-secondary { @apply inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700 disabled:opacity-50; }
-.abtn-danger { @apply inline-flex items-center gap-1.5 rounded-lg bg-red-600/90 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-50; }
-.ainput { @apply w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none; }
-.abadge { @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold; }
-.abadge-green { @apply abadge bg-emerald-500/15 text-emerald-300; }
-.abadge-red { @apply abadge bg-red-500/15 text-red-300; }
-.abadge-amber { @apply abadge bg-amber-500/15 text-amber-300; }
-.abadge-slate { @apply abadge bg-slate-500/15 text-slate-300; }
-.ath { @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-400; }
-.atd { @apply px-4 py-3 text-sm; }
-.anav { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white; }
-.anav-off { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600; }
+/* ============================================================
+   Qosprey Admin — Design System v2 (2026-10-10 redesign)
+   Dark operator theme: deep slate surfaces, indigo→violet
+   brand accents, dense-but-breathable data UI. Every legacy
+   class name (.acard/.abtn/.ainput/.abadge/.ath/.atd/.anav)
+   keeps working — all pages inherit the upgrade.
+   ============================================================ */
+
+:root {
+  --a-border: rgb(30 41 59 / 0.9);          /* slate-800 */
+  --a-surface: rgb(15 23 42 / 0.72);        /* slate-900 glass */
+  --a-surface-solid: #0f172a;               /* slate-900 */
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+  font-family: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background-image:
+    radial-gradient(56rem 34rem at 85% -10%, rgb(99 102 241 / 0.13), transparent 60%),
+    radial-gradient(44rem 30rem at -10% 110%, rgb(217 70 239 / 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection { @apply bg-indigo-500/40 text-white; }
+
+/* Slim, theme-matched scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgb(51 65 85) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-700; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- Surfaces & cards ---------- */
+.acard {
+  @apply rounded-2xl border p-5 shadow-[0_10px_36px_-18px_rgb(0_0_0/0.8)];
+  border-color: var(--a-border);
+  background: linear-gradient(180deg, rgb(30 41 59 / 0.34), rgb(15 23 42 / 0.6)), var(--a-surface-solid);
+}
+.acard-hover { @apply transition duration-200 hover:-translate-y-0.5 hover:border-slate-600/80 hover:shadow-[0_18px_44px_-18px_rgb(0_0_0/0.9)]; }
+
+/* KPI / stat card: accent edge + icon chip (Command Center v2) */
+.astat { @apply acard relative overflow-hidden p-5; }
+.astat::before {
+  content: ""; @apply absolute inset-y-0 left-0 w-1;
+  background: linear-gradient(180deg, rgb(99 102 241), rgb(168 85 247), rgb(217 70 239));
+}
+.astat-icon { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-lg ring-1 ring-inset ring-indigo-400/25; }
+.astat-value { @apply mt-2 text-[26px] font-bold leading-none tracking-tight; }
+
+/* ---------- Buttons & inputs ---------- */
+.abtn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-b from-indigo-500 to-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-[0_8px_20px_-8px_rgb(99_102_241/0.8)] transition hover:from-indigo-400 hover:to-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50; }
+.abtn-secondary { @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-600 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 disabled:opacity-50; }
+.abtn-danger { @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600/90 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-50; }
+.ainput { @apply w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30; }
+select.ainput { @apply appearance-none pr-8; }
+
+/* ---------- Badges ---------- */
+.abadge { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset; }
+.abadge-green { @apply abadge bg-emerald-500/15 text-emerald-300 ring-emerald-400/25; }
+.abadge-red { @apply abadge bg-red-500/15 text-red-300 ring-red-400/25; }
+.abadge-amber { @apply abadge bg-amber-500/15 text-amber-300 ring-amber-400/25; }
+.abadge-slate { @apply abadge bg-slate-500/15 text-slate-300 ring-slate-400/25; }
+.abadge-indigo { @apply abadge bg-indigo-500/15 text-indigo-300 ring-indigo-400/25; }
+
+/* ---------- Tables (responsive by default) ---------- */
+.ath { @apply whitespace-nowrap px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-400; }
+.atd { @apply px-4 py-3 text-sm text-slate-200; }
+table.atable { @apply w-full border-collapse; }
+table.atable thead th { @apply border-b border-slate-800 bg-slate-900/70; }
+table.atable tbody tr { @apply border-b border-slate-800/70 transition hover:bg-slate-800/40; }
+table.atable tbody tr:last-child { border-bottom: 0; }
+/* On narrow screens every admin table becomes a smooth
+   horizontal scroller instead of crushing columns. */
+@media (max-width: 920px) {
+  table.atable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+  .acard { @apply p-4; }
+}
+
+/* ---------- Navigation ---------- */
+.anav { @apply flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800/80 hover:text-white; }
+.anav-active { @apply bg-gradient-to-r from-indigo-600/85 to-violet-600/70 text-white shadow-[0_10px_24px_-10px_rgb(99_102_241/0.9)] hover:from-indigo-600 hover:to-violet-600 hover:text-white; }
+.anav-off { @apply flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-600; }
+.anav-group { @apply px-3 pb-1.5 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-slate-500; }
+
+/* Glass topbar / drawer surfaces */
+.aglass { background: rgb(2 6 23 / 0.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.adrawer { transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
+.aoverlay { transition: opacity 200ms ease; }
+
+/* Loading shimmer for stat placeholders */
+.askel { @apply relative overflow-hidden rounded-xl bg-slate-800/70; }
+.askel::after { content: ""; @apply absolute inset-0; background: linear-gradient(100deg, transparent 20%, rgb(148 163 184 / 0.14) 50%, transparent 80%); animation: askel-wave 1.4s infinite; }
+@keyframes askel-wave { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .adrawer, .aoverlay, .askel::after { transition: none; animation: none; }
+}
