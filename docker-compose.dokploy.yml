@@ -1,0 +1,69 @@
+# AI Marketing SaaS — Dokploy Compose stack.
+# Guide: docs/deployment-dokploy.md
+# Variables come from the Dokploy Environment tab (see
+# .env.dokploy.example). Domains are attached per service in the
+# Dokploy Domains tab (web -> 3000, admin -> 3001, api -> 4000);
+# no host ports are published on purpose.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the Dokploy Environment tab}
+      POSTGRES_DB: marketing_saas
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing -d marketing_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    # Test inbox for platform SMTP (Admin Console -> SMTP host
+    # "mailpit", port 1025). Optional in real production.
+    image: axllent/mailpit:latest
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-marketing-saas:latest
+    command: >
+      sh -c "pnpm --filter @repo/db exec prisma migrate deploy
+      && node apps/api/dist/main.js"
+    environment:
+      DATABASE_URL: postgresql://marketing:${POSTGRES_PASSWORD}@postgres:5432/marketing_saas?schema=public
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the Dokploy Environment tab}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in the Dokploy Environment tab}
+      API_PORT: "4000"
+      WEB_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in the Dokploy Environment tab}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose: ["4000"]
+
+  web:
+    image: ai-marketing-saas:latest
+    command: pnpm --filter @repo/web exec next start -p 3000
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3000"]
+
+  admin:
+    image: ai-marketing-saas:latest
+    command: pnpm --filter @repo/admin exec next start -p 3001
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3001"]
+
+volumes:
+  postgres_data:
+  redis_data:

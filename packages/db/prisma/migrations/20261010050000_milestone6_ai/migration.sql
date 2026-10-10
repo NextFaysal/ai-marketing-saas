@@ -1,0 +1,20 @@
+-- Milestone 6: AI conversations, actions, reports, recommendations, usage
+CREATE TABLE "AIConversation" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "userId" TEXT NOT NULL, "title" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "AIConversation_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "AIConversation_organizationId_userId_updatedAt_idx" ON "AIConversation"("organizationId","userId","updatedAt");
+CREATE TABLE "AIMessage" ("id" TEXT NOT NULL, "conversationId" TEXT NOT NULL, "role" TEXT NOT NULL, "content" TEXT NOT NULL, "toolCalls" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AIMessage_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "AIMessage_conversationId_createdAt_idx" ON "AIMessage"("conversationId","createdAt");
+CREATE TABLE "AIAction" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "userId" TEXT, "conversationId" TEXT, "toolName" TEXT NOT NULL, "args" JSONB, "status" TEXT NOT NULL, "error" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AIAction_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "AIAction_organizationId_createdAt_idx" ON "AIAction"("organizationId","createdAt");
+CREATE TABLE "AIReport" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "type" TEXT NOT NULL, "periodStart" TIMESTAMP(3) NOT NULL, "periodEnd" TIMESTAMP(3) NOT NULL, "title" TEXT NOT NULL, "content" TEXT NOT NULL, "structured" JSONB, "provider" TEXT NOT NULL, "model" TEXT, "version" INTEGER NOT NULL DEFAULT 1, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "AIReport_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "AIReport_organizationId_type_periodStart_periodEnd_key" ON "AIReport"("organizationId","type","periodStart","periodEnd");
+CREATE INDEX "AIReport_organizationId_createdAt_idx" ON "AIReport"("organizationId","createdAt");
+CREATE TABLE "AIRecommendation" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "reportId" TEXT, "title" TEXT NOT NULL, "detail" TEXT, "priority" TEXT NOT NULL DEFAULT 'medium', "status" TEXT NOT NULL DEFAULT 'open', "evidence" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "AIRecommendation_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "AIRecommendation_organizationId_status_idx" ON "AIRecommendation"("organizationId","status");
+CREATE TABLE "AIUsageRecord" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "userId" TEXT, "feature" TEXT NOT NULL, "provider" TEXT NOT NULL, "model" TEXT, "inputTokens" INTEGER NOT NULL DEFAULT 0, "outputTokens" INTEGER NOT NULL DEFAULT 0, "estimated" BOOLEAN NOT NULL DEFAULT false, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AIUsageRecord_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "AIUsageRecord_organizationId_createdAt_idx" ON "AIUsageRecord"("organizationId","createdAt");
+ALTER TABLE "AIConversation" ADD CONSTRAINT "AIConversation_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AIMessage" ADD CONSTRAINT "AIMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "AIConversation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AIAction" ADD CONSTRAINT "AIAction_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AIReport" ADD CONSTRAINT "AIReport_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AIRecommendation" ADD CONSTRAINT "AIRecommendation_reportId_fkey" FOREIGN KEY ("reportId") REFERENCES "AIReport"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "AIUsageRecord" ADD CONSTRAINT "AIUsageRecord_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

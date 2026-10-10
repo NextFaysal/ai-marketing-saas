@@ -1,0 +1,1766 @@
+// Milestone 1 foundation schema.
+// Money is always integer minor units or Decimal - never Float.
+// Every tenant-owned model carries organizationId and is indexed on it.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  ADMIN
+  MARKETING_MANAGER
+  ADVERTISER
+  SUPPORT_AGENT
+  ANALYST
+  VIEWER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  GROWTH
+  AGENCY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  isSuperAdmin Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  memberships  Membership[]
+  auditLogs    AuditLog[]
+  status              String    @default("ACTIVE") // ACTIVE | SUSPENDED | DELETED
+  adminTier           String? // SUPER | SUPPORT | FINANCE (null = not an admin even if flag legacy)
+  lastLoginAt         DateTime?
+  tokenVersion        Int       @default(0)
+  totpSecretEncrypted String?
+  totpEnabled         Boolean   @default(false)
+}
+
+model Organization {
+  id             String          @id @default(uuid())
+  name           String
+  slug           String          @unique
+  country        String          @default("BD")
+  attributionWindowDays Int       @default(30)
+  timezone       String          @default("Asia/Dhaka")
+  currency       String          @default("BDT")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  memberships    Membership[]
+  businessProfile BusinessProfile?
+  subscriptions  Subscription[]
+  usageRecords   UsageRecord[]
+  auditLogs      AuditLog[]
+  products       Product[]
+  policies       BusinessPolicy[]
+  importJobs     ImportJob[]
+  knowledgeDocs  KnowledgeDocument[]
+  stores         Store[]
+  integrations   Integration[]
+  customers      Customer[]
+  orders         Order[]
+  visitors       Visitor[]
+  trackingEvents TrackingEvent[]
+  touchpoints    Touchpoint[]
+  adAccounts     AdAccount[]
+  dailyAdMetrics DailyAdMetric[]
+  dailyAggregates DailyMetricAggregate[]
+  aiConversations AIConversation[]
+  aiReports      AIReport[]
+  aiActions      AIAction[]
+  aiUsageRecords AIUsageRecord[]
+  channelConversations ChannelConversation[]
+  leads          Lead[]
+  competitors    Competitor[]
+  competitorInsights CompetitorInsight[]
+  campaignPlans  CampaignPlan[]
+  messageTemplates MessageTemplate[]
+  broadcasts     Broadcast[]
+  workflows      Workflow[]
+  scheduledJobs  ScheduledJob[]
+  automationRules AutomationRule[]
+  automationRuns AutomationRun[]
+  status                String @default("ACTIVE") // ACTIVE | SUSPENDED | DELETED
+  aiDailyLimitOverride  Int?
+  broadcastCapOverride  Int?
+  seatLimit             Int?
+}
+
+model Membership {
+  id             String           @id @default(uuid())
+  userId         String
+  organizationId String
+  role           Role             @default(VIEWER)
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model BusinessProfile {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  description     String?
+  industry        String?
+  businessModel   String?
+  websiteUrl      String?
+  goals           String?
+  targetCustomers Json?
+  brandVoice      String?
+  uniqueSellingPoints String?
+  monthlyBudgetMinor BigInt?
+  budgetCurrency  String       @default("BDT")
+  contactEmail    String?
+  contactPhone    String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id               String             @id @default(uuid())
+  organizationId   String
+  plan             SubscriptionPlan   @default(FREE)
+  status           SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model UsageRecord {
+  id             String       @id @default(uuid())
+  organizationId String
+  metric         String
+  quantity       Int          @default(1)
+  recordedAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, metric, recordedAt])
+}
+
+model AuditLog {
+  id             String        @id @default(uuid())
+  organizationId String?
+  userId         String?
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json?
+  ipAddress      String?
+  createdAt      DateTime      @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// ---------- Milestone 2: Business data ----------
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ImportJobStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Product {
+  id             String        @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String?
+  description    String?
+  category       String?
+  sku            String?
+  status         ProductStatus @default(ACTIVE)
+  // Selling price in integer minor units (e.g. poisha for BDT, cents for USD)
+  priceMinor     BigInt
+  compareAtMinor BigInt?
+  currency       String        @default("BDT")
+  stockQuantity  Int?
+  imageUrl       String?
+  source         String        @default("manual") // manual | csv | woocommerce | shopify
+  externalId     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  variants       ProductVariant[]
+  costs          ProductCost[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, status])
+  @@index([organizationId, category])
+}
+
+model ProductVariant {
+  id            String  @id @default(uuid())
+  productId     String
+  name          String // e.g. "Red / XL"
+  sku           String?
+  priceMinor    BigInt?
+  stockQuantity Int?
+  attributes    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sku])
+  @@index([productId])
+}
+
+model ProductCost {
+  id             String   @id @default(uuid())
+  productId      String
+  variantId      String?
+  // Unit cost in integer minor units, same currency as the product price
+  costMinor      BigInt
+  currency       String   @default("BDT")
+  effectiveFrom  DateTime @default(now())
+  note           String?
+  createdAt      DateTime @default(now())
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, effectiveFrom])
+}
+
+model BusinessPolicy {
+  id             String       @id @default(uuid())
+  organizationId String
+  // shipping | delivery | refund | return | cancellation | payment | custom
+  type           String
+  title          String
+  content        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, type])
+}
+
+model KnowledgeDocument {
+  id             String       @id @default(uuid())
+  organizationId String
+  title          String
+  content        String
+  kind           String       @default("faq") // faq | note | claim | template
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, kind])
+}
+
+model ImportJob {
+  id             String          @id @default(uuid())
+  organizationId String
+  kind           String          @default("products") // products (orders in a later milestone)
+  status         ImportJobStatus @default(PENDING)
+  fileName       String?
+  totalRows      Int             @default(0)
+  successRows    Int             @default(0)
+  failedRows     Int             @default(0)
+  skippedRows    Int             @default(0)
+  errors         Json?
+  createdById    String?
+  createdAt      DateTime        @default(now())
+  completedAt    DateTime?
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// ---------- Milestone 3: Stores, integrations, ecommerce ----------
+
+enum StorePlatform {
+  WOOCOMMERCE
+  SHOPIFY
+  CUSTOM
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum SyncJobStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Store {
+  id             String        @id @default(uuid())
+  organizationId String
+  platform       StorePlatform @default(WOOCOMMERCE)
+  name           String
+  url            String
+  currency       String        @default("BDT")
+  timezone       String        @default("Asia/Dhaka")
+  isActive       Boolean       @default(true)
+  trackingKey    String?       @unique // public key used by tracker.js, not a secret
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrations   Integration[]
+  orders         Order[]
+
+  @@index([organizationId])
+}
+
+model Integration {
+  id             String            @id @default(uuid())
+  organizationId String
+  storeId        String?
+  provider       String // woocommerce | meta | google_ads | tiktok | whatsapp
+  status         IntegrationStatus @default(DISCONNECTED)
+  externalAccountId String?
+  lastSyncAt     DateTime?
+  productsCursor DateTime?
+  ordersCursor   DateTime?
+  lastError      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store          Store?            @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  credential     IntegrationCredential?
+  syncJobs       SyncJob[]
+  webhookEvents  WebhookEvent[]
+
+  @@index([organizationId, provider])
+  @@index([storeId])
+}
+
+// Secrets are stored ONLY as AES-256-GCM ciphertext (see integrations/crypto.ts).
+// Plaintext consumer keys/secrets never touch the database or API responses.
+model IntegrationCredential {
+  id            String      @id @default(uuid())
+  integrationId String      @unique
+  encryptedData String // JSON payload, encrypted
+  keyVersion    Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+model SyncJob {
+  id            String        @id @default(uuid())
+  integrationId String
+  kind          String // products | orders
+  status        SyncJobStatus @default(RUNNING)
+  fetched       Int           @default(0)
+  created       Int           @default(0)
+  updated       Int           @default(0)
+  skipped       Int           @default(0)
+  error         String?
+  startedAt     DateTime      @default(now())
+  completedAt   DateTime?
+  integration   Integration   @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, startedAt])
+}
+
+model WebhookEvent {
+  id            String      @id @default(uuid())
+  integrationId String
+  provider      String
+  topic         String?
+  deliveryId    String? // provider delivery id, used for deduplication
+  payload       Json
+  signatureValid Boolean    @default(false)
+  processedAt   DateTime?
+  error         String?
+  receivedAt    DateTime    @default(now())
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, deliveryId])
+  @@index([integrationId, receivedAt])
+}
+
+model Customer {
+  id             String       @id @default(uuid())
+  organizationId String
+  externalId     String? // id in the source store, when available
+  source         String       @default("woocommerce")
+  firstName      String?
+  lastName       String?
+  email          String?
+  phone          String?
+  address        Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orders         Order[]
+
+  // Set when this record was merged into another customer.
+  mergedIntoId String?
+  @@index([organizationId, email])
+  @@index([organizationId, phone])
+  @@index([organizationId, externalId])
+}
+
+model Order {
+  id             String       @id @default(uuid())
+  organizationId String
+  storeId        String?
+  customerId     String?
+  externalId     String // order id in the source store
+  externalNumber String? // human-facing order number
+  source         String       @default("woocommerce")
+  status         String // raw platform status, e.g. processing, completed, cancelled, refunded
+  paymentMethod  String? // e.g. cod, bacs, sslcommerz
+  isCod          Boolean      @default(false)
+  // Chat-based COD confirmation: awaiting -> confirmed | declined,
+  // driven by the customer's actual reply in the linked conversation.
+  codConfirmationStatus String?
+  codConfirmationSentAt DateTime?
+  codConversationId     String?
+  // For orders created from chat: how the store sync went.
+  storeSyncStatus String? // synced | failed | local_only
+  storeSyncError  String?
+  // Conversation this order was created from (chat / bot orders), so
+  // courier updates can be sent back into the same thread.
+  conversationId  String?
+  currency       String       @default("BDT")
+  subtotalMinor  BigInt       @default(0)
+  shippingMinor  BigInt       @default(0)
+  discountMinor  BigInt       @default(0)
+  taxMinor       BigInt       @default(0)
+  totalMinor     BigInt       @default(0)
+  refundedMinor  BigInt       @default(0)
+  placedAt       DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store          Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+
+  @@unique([organizationId, source, externalId])
+  @@index([organizationId, status])
+  @@index([organizationId, placedAt])
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String
+  productId   String? // linked internal product when a reliable match exists
+  externalProductId String?
+  externalVariationId String?
+  name        String
+  sku         String?
+  quantity    Int
+  priceMinor  BigInt  @default(0)
+  totalMinor  BigInt  @default(0)
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+// ---------- Milestone 4: Tracking & attribution ----------
+// First-party, consent-aware tracking. Identifiers are pseudonymous:
+// anonymousId is a random browser id, never a name/email by itself.
+
+model Visitor {
+  id             String           @id @default(uuid())
+  organizationId String
+  anonymousId    String
+  firstSeenAt    DateTime         @default(now())
+  lastSeenAt     DateTime         @default(now())
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions       TrackingSession[]
+  events         TrackingEvent[]
+  touchpoints    Touchpoint[]
+
+  @@unique([organizationId, anonymousId])
+  @@index([organizationId, lastSeenAt])
+}
+
+model TrackingSession {
+  id            String       @id @default(uuid())
+  organizationId String
+  visitorId     String
+  sessionKey    String // id generated by tracker.js for this visit session
+  landingPage   String?
+  referrer      String?
+  utmSource     String?
+  utmMedium     String?
+  utmCampaign   String?
+  utmContent    String?
+  utmTerm       String?
+  fbclid        String?
+  gclid         String?
+  ttclid        String?
+  startedAt     DateTime     @default(now())
+  lastActivityAt DateTime    @default(now())
+  visitor       Visitor      @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  touchpoint    Touchpoint?
+
+  @@unique([organizationId, sessionKey])
+  @@index([visitorId])
+}
+
+model Touchpoint {
+  id             String          @id @default(uuid())
+  organizationId String
+  visitorId      String
+  sessionId      String?         @unique
+  source         String          @default("direct") // utm_source or platform, "direct" when none
+  medium         String?
+  campaign       String?
+  content        String?
+  term           String?
+  clickIdType    String? // fbclid | gclid | ttclid
+  clickId        String?
+  landingPage    String?
+  referrer       String?
+  isDirect       Boolean         @default(true)
+  occurredAt     DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  visitor        Visitor         @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  session        TrackingSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  credits        AttributionCredit[]
+
+  @@index([organizationId, visitorId, occurredAt])
+  @@index([organizationId, source, campaign])
+}
+
+model TrackingEvent {
+  id              String       @id @default(uuid())
+  organizationId  String
+  storeId         String?
+  visitorId       String?
+  sessionKey      String?
+  clientEventId   String // idempotency key generated by tracker.js per event
+  type            String // page_view | product_view | add_to_cart | checkout_started | lead | purchase | refund | custom
+  url             String?
+  referrer        String?
+  properties      Json?
+  orderExternalId String?
+  orderId         String?
+  valueMinor      BigInt?
+  currency        String?
+  occurredAt      DateTime
+  receivedAt      DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  visitor         Visitor?     @relation(fields: [visitorId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, clientEventId])
+  @@index([organizationId, type, occurredAt])
+  @@index([organizationId, orderExternalId])
+}
+
+enum AttributionModel {
+  FIRST_TOUCH
+  LAST_TOUCH
+  LAST_NON_DIRECT
+  LINEAR
+}
+
+model AttributionCredit {
+  id            String           @id @default(uuid())
+  organizationId String
+  orderId       String
+  model         AttributionModel
+  touchpointId  String? // null = unattributed credit row
+  revenueMinor  BigInt // allocated revenue for this touchpoint under this model
+  createdAt     DateTime         @default(now())
+  touchpoint    Touchpoint?      @relation(fields: [touchpointId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, model])
+  @@index([orderId, model])
+  @@index([touchpointId])
+}
+
+// ---------- Milestone 5: Advertising analytics & profit ----------
+
+model AdAccount {
+  id             String       @id @default(uuid())
+  organizationId String
+  integrationId  String?
+  platform       String // meta | google | tiktok | manual
+  sourceType     String       @default("api") // api | csv | manual
+  externalId     String? // e.g. act_123456789 for Meta
+  name           String
+  currency       String       @default("BDT")
+  status         String       @default("ACTIVE")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaigns      AdCampaign[]
+  metrics        DailyAdMetric[]
+
+  @@unique([organizationId, platform, externalId])
+  @@index([organizationId, platform])
+}
+
+model AdCampaign {
+  id          String       @id @default(uuid())
+  organizationId String
+  adAccountId String
+  externalId  String
+  name        String
+  objective   String?
+  status      String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  adAccount   AdAccount    @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  metrics     DailyAdMetric[]
+
+  @@unique([adAccountId, externalId])
+  @@index([organizationId])
+}
+
+// One row per account + campaign + day + source.
+// campaignExternalId is "" (never null) for account-level/manual rows so the
+// unique constraint can deduplicate them in Postgres.
+model DailyAdMetric {
+  id                   String      @id @default(uuid())
+  organizationId       String
+  adAccountId          String
+  adCampaignId         String?
+  platform             String
+  source               String // api | csv | manual
+  campaignExternalId   String      @default("")
+  // Ad-level rows (Phase G): empty for campaign-level rows.
+  adSetExternalId      String      @default("")
+  adSetName            String?
+  adExternalId         String      @default("")
+  adName               String?
+  reach                Int         @default(0)
+  videoViews           Int         @default(0)
+  campaignName         String?
+  date                 DateTime // UTC midnight of the reporting day
+  currency             String      @default("BDT")
+  spendMinor           BigInt      @default(0)
+  impressions          Int         @default(0)
+  clicks               Int         @default(0)
+  // Platform-reported conversions. Kept strictly separate from the SaaS's
+  // own tracked conversions (attribution credits); they will not match.
+  platformConversions  Int         @default(0)
+  platformConversionValueMinor BigInt @default(0)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  adAccount            AdAccount   @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  adCampaign           AdCampaign? @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, adAccountId, campaignExternalId, adSetExternalId, adExternalId, date, source])
+  @@index([organizationId, date])
+  @@index([organizationId, platform, date])
+}
+
+model DailyMetricAggregate {
+  id              String       @id @default(uuid())
+  organizationId  String
+  date            DateTime // UTC midnight
+  orders          Int          @default(0)
+  revenueMinor    BigInt       @default(0) // revenue-bearing orders (excl. cancelled/refunded/failed)
+  refundedMinor   BigInt       @default(0)
+  cogsMinor       BigInt       @default(0) // estimated from known product costs
+  cogsKnownOrders Int          @default(0) // orders where every item had a known cost
+  adSpendMinor    BigInt       @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, date])
+  @@index([organizationId, date])
+}
+
+// ---------- Milestone 6: AI intelligence ----------
+
+model AIConversation {
+  id             String      @id @default(uuid())
+  organizationId String
+  userId         String
+  title          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messages       AIMessage[]
+
+  @@index([organizationId, userId, updatedAt])
+}
+
+model AIMessage {
+  id             String         @id @default(uuid())
+  conversationId String
+  role           String // user | assistant
+  content        String
+  // Tool calls that produced this assistant message, for transparency.
+  toolCalls      Json?
+  createdAt      DateTime       @default(now())
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+// Every AI tool execution is logged here (who, which org, what tool,
+// sanitized args, status). This is the audit trail for AI actions.
+model AIAction {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String?
+  conversationId String?
+  toolName       String
+  args           Json?
+  status         String // success | error | denied
+  error          String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model AIReport {
+  id             String       @id @default(uuid())
+  organizationId String
+  type           String // daily | weekly | monthly
+  periodStart    DateTime
+  periodEnd      DateTime
+  title          String
+  content        String // rendered report text (markdown)
+  structured     Json? // sections, evidence, metrics snapshot used
+  provider       String // openai | anthropic | gemini | dev-template
+  model          String?
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recommendations AIRecommendation[]
+
+  @@unique([organizationId, type, periodStart, periodEnd])
+  @@index([organizationId, createdAt])
+}
+
+model AIRecommendation {
+  id             String   @id @default(uuid())
+  organizationId String
+  reportId       String?
+  title          String
+  detail         String?
+  priority       String   @default("medium") // low | medium | high
+  status         String   @default("open") // open | done | dismissed
+  evidence       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  report         AIReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+}
+
+model AIUsageRecord {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String?
+  feature        String // chat | report
+  provider       String
+  model          String?
+  inputTokens    Int          @default(0)
+  outputTokens   Int          @default(0)
+  estimated      Boolean      @default(false) // true when token counts are estimates (dev adapter)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// ---------- Milestone 7: unified inbox + leads/CRM ----------
+
+model ChannelConversation {
+  id             String   @id @default(uuid())
+  organizationId String
+  integrationId  String?
+  channel        String // whatsapp | messenger
+  // Who the customer is on the platform: WhatsApp wa_id (phone) or
+  // Messenger PSID. Unique per (organization, channel).
+  externalContactId String
+  contactName    String?
+  contactPhone   String?
+  customerId     String?
+  leadId         String?
+  status         String   @default("open") // open | pending | closed
+  assignedUserId String?
+  tags           String[] @default([])
+  // Last time the CUSTOMER messaged us. Drives the WhatsApp 24h
+  // customer-service window (window = lastCustomerMessageAt + 24h).
+  lastCustomerMessageAt DateTime?
+  priority       String   @default("normal") // normal | high (complaint/angry)
+  sentimentFlag  String?  // negative | null
+  // Rule-based spam suspicion (repeated identical messages, promo-link
+  // first contact). Flagged for a human - never auto-deleted.
+  spamFlag       Boolean  @default(false)
+  spamReason     String?
+  // CSAT: rating question sent when a conversation is closed; the
+  // customer's 1-5 reply is recorded here.
+  csatSentAt     DateTime?
+  csatRating     Int?
+  csatRatedAt    DateTime?
+  // Latest thread summary (LLM when configured, otherwise a clearly
+  // labeled data digest) with its provider for honesty.
+  summaryText    String?
+  summaryProvider String?
+  summaryAt      DateTime?
+  // SLA clocks: first outbound reply time, and when it was resolved.
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  unreadCount    Int      @default(0)
+  lastMessageAt  DateTime?
+  lastMessagePreview String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  notes          ConversationNote[]
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messages       ChannelMessage[]
+  drafts         MessageDraft[]
+
+  @@unique([organizationId, channel, externalContactId])
+  @@index([organizationId, status, lastMessageAt])
+  ctwaSourceId         String? // originating ad id when the chat came from a Click-to-WhatsApp ad
+}
+
+model ChannelMessage {
+  id             String   @id @default(uuid())
+  conversationId String
+  direction      String // in | out
+  // Platform message id (WhatsApp wamid / Messenger mid). Unique so
+  // webhook retries are idempotent.
+  externalId     String?
+  type           String   @default("text") // text | image | audio | video | document | template | other
+  content        String?
+  mediaUrl       String?
+  // WhatsApp media id (Messenger attachments carry a direct mediaUrl).
+  // Bytes are fetched through the API media proxy, never exposed raw.
+  mediaId        String?
+  // Rule-based intent classification at ingest (price | stock | delivery
+  // | order_status | payment | complaint | greeting | other) with a
+  // 0-100 confidence. A heuristic label, shown to agents as an estimate.
+  intent           String?
+  intentConfidence Int?
+  // Voice-note transcription (provider recorded; never fabricated -
+  // stays null when no speech provider is configured).
+  transcription    String?
+  transcriptionProvider String?
+  // True when this outbound message was sent by the grounded auto-reply
+  // engine (still only "sent" with a platform message id).
+  autoReply        Boolean @default(false)
+  // JSON evidence the auto-reply was grounded in (product id + price,
+  // policy id, order id + status) - auditable, never invented data.
+  autoReplyEvidence String?
+  // in: received. out: queued -> sent -> delivered -> read, or failed.
+  status         String   @default("received")
+  error          String?
+  sentByUserId   String?
+  sentByAiDraft  Boolean  @default(false)
+  platformTimestamp DateTime?
+  createdAt      DateTime @default(now())
+  conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, externalId])
+  @@index([conversationId, createdAt])
+  referral             Json? // CTWA ad referral (source id/type/url) when Meta sends it
+}
+
+// AI-suggested replies. A draft is NEVER sent by the AI itself: a human
+// approves (optionally after editing) and only then does it go out
+// through the normal send path, which records the API confirmation.
+model MessageDraft {
+  id             String   @id @default(uuid())
+  organizationId String
+  conversationId String
+  content        String
+  status         String   @default("suggested") // suggested | sent | dismissed
+  provider       String // openai | anthropic | gemini | dev-template
+  createdByUserId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, conversationId, status])
+}
+
+model Lead {
+  id             String   @id @default(uuid())
+  organizationId String
+  customerId     String?
+  name           String
+  phone          String?
+  email          String?
+  source         String   @default("manual") // manual | whatsapp | messenger | woocommerce | website | facebook_lead_ads
+  externalId     String? // platform-side id (e.g. Meta leadgen id) for idempotent sync
+  mergedIntoId String? // set when this lead was merged into another
+  stage          String   @default("new") // new | contacted | qualified | proposal | won | lost
+  tags           String[] @default([])
+  valueMinor     BigInt?
+  currency       String   @default("BDT")
+  ownerUserId    String?
+  notes          String?
+  nextFollowUpAt DateTime?
+  lastContactedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  activities     LeadActivity[]
+
+  @@index([organizationId, stage])
+  @@index([organizationId, phone])
+}
+
+model LeadActivity {
+  id        String   @id @default(uuid())
+  leadId    String
+  userId    String?
+  type      String // note | stage_change | created | converted | message
+  content   String
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
+}
+
+// ---------- Milestone 8: competitor intelligence (public data only) ----------
+
+model Competitor {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  facebookPageId String?
+  facebookPageUrl String?
+  websiteUrl     String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ads            CompetitorAd[]
+  priceObservations CompetitorPriceObservation[]
+
+  @@index([organizationId])
+}
+
+model CompetitorAd {
+  id             String   @id @default(uuid())
+  competitorId   String
+  // Ad Library archive id. Unique per competitor so re-syncs update rows.
+  externalAdId   String
+  pageId         String?
+  pageName       String?
+  startedAt      DateTime?
+  stoppedAt      DateTime?
+  isActive       Boolean  @default(false)
+  platforms      String[] // publisher_platforms from the Ad Library
+  creativeText   String?
+  linkUrl        String?
+  snapshotUrl    String?
+  firstSeenAt    DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+  raw            Json?
+  competitor     Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@unique([competitorId, externalAdId])
+  @@index([competitorId, startedAt])
+}
+
+model CompetitorPriceObservation {
+  id             String   @id @default(uuid())
+  competitorId   String
+  productName    String
+  priceMinor     BigInt
+  currency       String   @default("BDT")
+  // Evidence is mandatory: every observation carries where it was seen.
+  sourceUrl      String
+  sourceType     String // website_scan | manual | ad_library
+  observedAt     DateTime @default(now())
+  competitor     Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([competitorId, observedAt])
+}
+
+// An insight may only exist with evidence. The service enforces this:
+// insights without at least one valid evidence reference are dropped.
+model CompetitorInsight {
+  id             String   @id @default(uuid())
+  organizationId String
+  competitorId   String?
+  kind           String // pricing | creative | positioning | activity
+  title          String
+  detail         String?
+  evidence       Json // [{ ref, label, url? }]
+  provider       String
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// ---------- Milestone 9: campaign builder + publishing ----------
+// Workflow: draft -> pending_approval -> approved -> publishing ->
+// published | publish_failed; rejected returns to editable.
+// NOTHING reaches Meta before "approved". Published objects are created
+// PAUSED; activation is a separate, explicit human action.
+
+model CampaignPlan {
+  id             String   @id @default(uuid())
+  organizationId String
+  adAccountId    String // our AdAccount record (must be a Meta API account)
+  name           String
+  objective      String // OUTCOME_SALES | OUTCOME_TRAFFIC | OUTCOME_LEADS | OUTCOME_ENGAGEMENT | OUTCOME_AWARENESS
+  status         String   @default("draft")
+  isTemplate     Boolean  @default(false)
+  externalCampaignId String?
+  metaStatus     String? // PAUSED | ACTIVE as last confirmed by the API
+  createdById    String
+  approvedById   String?
+  approvedAt     DateTime?
+  rejectionReason String?
+  publishedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  adSets         CampaignAdSet[]
+  publishLogs    CampaignPublishLog[]
+
+  @@index([organizationId, status])
+  metaEffectiveStatus  String? // ACTIVE | PAUSED | DISAPPROVED | WITH_ISSUES ... as Meta reports it
+  lastStatusSyncAt     DateTime?
+  abGroupId            String?
+  abVariant            String?
+  abMetric             String?
+  advantagePlus Boolean @default(false)
+}
+
+model CampaignAdSet {
+  id             String   @id @default(uuid())
+  planId         String
+  name           String
+  externalAdSetId String?
+  dailyBudgetMinor BigInt?
+  lifetimeBudgetMinor BigInt?
+  billingEvent   String   @default("IMPRESSIONS")
+  optimizationGoal String // LINK_CLICKS | OFFSITE_CONVERSIONS | LEAD_GENERATION | REACH
+  pageId         String?
+  pixelId        String?
+  targeting      Json // { countries: string[], ageMin?, ageMax?, genders?: number[] }
+  startTime      DateTime?
+  endTime        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  plan           CampaignPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  ads            CampaignAd[]
+
+  @@index([planId])
+  effectiveStatus String?
+  daypart              Json?
+  daypartTz            String?
+  daypartState         String?
+}
+
+model CampaignAd {
+  id             String   @id @default(uuid())
+  adSetId        String
+  name           String
+  externalAdId   String?
+  productId      String?
+  primaryText    String
+  headline       String?
+  description    String?
+  linkUrl        String
+  callToAction   String   @default("SHOP_NOW")
+  // Phase H formats: link | video | carousel
+  format         String   @default("link")
+  imageAssetId   String?
+  videoAssetId   String?
+  carouselCards  Json? // [{ title, description?, linkUrl, imageUrl?, imageAssetId? }]
+  imageUrl       String?
+  createdByAi    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  adSet          CampaignAdSet @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+
+  @@index([adSetId])
+  effectiveStatus String?
+  issuesInfo      Json?
+}
+
+// Every external API call attempted during publish/activate, with its
+// outcome. This is the evidence behind any "published" claim.
+model CampaignPublishLog {
+  id             String   @id @default(uuid())
+  planId         String
+  actorId        String?
+  step           String // campaign | adset | ad | activate | pause
+  entityRef      String? // local ad set / ad id the step belongs to
+  externalId     String?
+  status         String // success | error
+  error          String?
+  createdAt      DateTime @default(now())
+  plan           CampaignPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, createdAt])
+}
+
+// ---------- Milestone 10: scheduling + automation ----------
+
+model ScheduledJob {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  // woo_products | woo_orders | shopify_products | shopify_orders |
+  // meta_insights | google_insights | tiktok_insights |
+  // daily_report | competitor_ads | competitor_scan
+  type           String
+  targetId       String // integrationId | adAccountId | competitorId, per type
+  intervalMinutes Int
+  enabled        Boolean  @default(true)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime
+  lastStatus     String? // success | error
+  lastError      String?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled, nextRunAt])
+}
+
+model AutomationRule {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  campaignPlanId String? // null = all published plans of the org
+  metric         String // platform_cpa | platform_roas | spend_no_conversions
+  comparator     String // gt | lt
+  threshold      String // numeric, in account currency units for CPA / ratio for ROAS
+  windowDays     Int      @default(3)
+  action         String // pause_campaign | alert | activate_campaign | scale_budget
+  actionConfig   Json? // scale_budget: { percent, minDailyMinor?, maxDailyMinor?, cooldownHours? }
+  enabled        Boolean  @default(true)
+  lastEvaluatedAt DateTime?
+  lastTriggeredAt DateTime?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled])
+}
+
+model AutomationRun {
+  id             String   @id @default(uuid())
+  organizationId String
+  kind           String // schedule | rule
+  refId          String // scheduledJobId | automationRuleId
+  status         String // success | error | triggered | skipped
+  detail         String?
+  evidence       Json?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// ---------- Milestone 11: messaging + workflows ----------
+
+model MessageTemplate {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  channel        String // email | sms
+  subject        String? // email only
+  body           String // supports {{variable}} placeholders
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, channel])
+}
+
+model Broadcast {
+  id              String   @id @default(uuid())
+  organizationId  String
+  name            String
+  channel         String // email | sms | whatsapp
+  templateId      String?
+  // WhatsApp broadcasts send a registered Meta template instead.
+  whatsappTemplateId String?
+  templateParams     Json?
+  subject         String?
+  body            String
+  audienceType    String // customers | leads_stage | segment
+  audienceStage   String? // when audienceType = leads_stage
+  audienceSegment String?
+  // A/B test: two broadcasts share an abGroupId, one per variant.
+  abVariant      String? // A | B
+  abGroupId      String?
+  status          String   @default("draft") // draft | sending | sent | partial | failed
+  totalRecipients Int      @default(0)
+  sentCount       Int      @default(0)
+  failedCount     Int      @default(0)
+  createdById     String
+  sentAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries      MessageDelivery[]
+
+  @@index([organizationId, createdAt])
+}
+
+model MessageDelivery {
+  id                String   @id @default(uuid())
+  organizationId    String
+  broadcastId       String?
+  workflowRunId     String?
+  channel           String // email | sms
+  recipientType     String // customer | lead
+  recipientId       String?
+  address           String // email address or phone number actually used
+  status            String // sent | failed
+  providerMessageId String? // proof of acceptance by the provider; null = not sent
+  error             String?
+  createdAt         DateTime @default(now())
+  broadcast         Broadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, broadcastId])
+  @@index([organizationId, createdAt])
+}
+
+model Workflow {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  trigger        String // order_created | lead_created | lead_stage_changed
+  conditions     Json? // [{field, op, value}] - all must pass
+  steps          Json // [{type: send_email|send_sms|add_lead_activity, templateId?, text?}]
+  enabled        Boolean  @default(true)
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runs           WorkflowRun[]
+
+  @@index([organizationId, trigger, enabled])
+}
+
+model WorkflowRun {
+  id             String   @id @default(uuid())
+  organizationId String
+  workflowId     String
+  trigger        String
+  context        Json
+  status         String // completed | skipped | failed | waiting
+  stepsLog       Json? // [{step, status, detail}]
+  // Wait steps: a run pauses with status "waiting" and resumes when
+  // resumeAt passes, continuing at nextStepIndex with its stored context.
+  resumeAt       DateTime?
+  nextStepIndex  Int      @default(0)
+  error          String?
+  createdAt      DateTime @default(now())
+  workflow       Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// Internal note on a conversation. NEVER sent to the customer; there is
+// deliberately no code path from this model to any messaging client.
+model ConversationNote {
+  id             String   @id @default(uuid())
+  organizationId String
+  conversationId String
+  authorUserId   String
+  content        String
+  createdAt      DateTime @default(now())
+  conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId])
+}
+
+// Org-level quick reply library for the inbox. Content may contain
+// {{firstName}}, {{contactName}} and {{phone}} placeholders, rendered
+// with the conversation's real contact data before insertion.
+model QuickReply {
+  id             String   @id @default(uuid())
+  organizationId String
+  title          String
+  content        String
+  createdByUserId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// Registry of WhatsApp message templates that exist (approved) in the
+// business's Meta account. name + language must match Meta exactly;
+// sending surfaces Meta's own error if the template is not approved.
+model WhatsAppTemplate {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  language       String   @default("bn")
+  category       String?  // UTILITY | MARKETING | AUTHENTICATION (as in Meta)
+  bodyText       String?  // preview text for agents; Meta owns the real body
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, name, language])
+  @@index([organizationId])
+}
+
+// Per-organization inbox intelligence settings (one row per org).
+model InboxSetting {
+  id                     String   @id @default(uuid())
+  organizationId         String   @unique
+  // Auto-reply master mode: off | draft | auto. perIntent may override
+  // per intent: { "price": "auto", "complaint": "off", ... }.
+  autoReplyMode          String   @default("off")
+  confidenceThreshold    Int      @default(70)
+  perIntent              Json?
+  // Smart assignment for new conversations: off | round_robin | least_busy
+  smartAssign            String   @default("off")
+  lastAssignedUserId     String?
+  // Order-taking bot: collects product/qty/name/phone/address in chat
+  // and creates the order through the chat-order pipeline.
+  botEnabled             Boolean  @default(false)
+  // Delivery charge (minor units) the bot quotes + applies. Null =
+  // the bot does not quote a charge; the team confirms it later.
+  botDeliveryChargeMinor Int?
+  slaFirstResponseMinutes Int     @default(60)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+// One active order-taking bot session per conversation.
+model BotSession {
+  id             String   @id @default(uuid())
+  organizationId String
+  conversationId String   @unique
+  // ask_product | ask_quantity | ask_name | ask_phone | ask_address | confirm
+  state          String
+  data           Json? // collected answers (productId, quantity, name, phone, address)
+  status         String   @default("active") // active | completed | handed_off | expired
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, status])
+}
+
+// A parcel booked with a courier for one of our orders. Status is
+// always the courier's own reported status, refreshed via their API.
+model CourierShipment {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  orderId            String
+  provider           String // steadfast (Pathao/RedX slot into the same shape)
+  consignmentId      String?
+  trackingCode       String?
+  invoice            String
+  status             String   @default("in_review")
+  codAmountMinor     BigInt   @default(0)
+  recipientName      String
+  recipientPhone     String
+  recipientAddress   String
+  lastNotifiedStatus String?
+  lastCheckedAt      DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, status])
+}
+
+// Result of an AI-vision check on a payment screenshot sent in chat.
+// An aid for the agent - it never marks an order paid by itself.
+model PaymentVerification {
+  id                  String   @id @default(uuid())
+  organizationId      String
+  conversationId      String
+  messageId           String   @unique
+  provider            String? // bkash | nagad | rocket | bank | unknown
+  trxId               String?
+  amountMinor         BigInt?
+  expectedAmountMinor BigInt?
+  // matched | amount_mismatch | duplicate_trxid | no_expected_order | unverifiable
+  verdict             String
+  flags               Json?
+  rawExtraction       Json?
+  modelProvider       String
+  createdById         String?
+  createdAt           DateTime @default(now())
+
+  @@index([organizationId, trxId])
+}
+
+// A website live-chat installation. Each site owns a 'webchat'
+// integration row; the widget authenticates with the site key and a
+// per-visitor session token (only its hash is stored).
+model WidgetSite {
+  id             String   @id @default(uuid())
+  organizationId String
+  integrationId  String?
+  name           String
+  domain         String?
+  widgetKey      String   @unique
+  greeting       String?
+  color          String?
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model LiveChatSession {
+  id              String   @id @default(uuid())
+  widgetSiteId    String
+  conversationId  String   @unique
+  visitorId       String
+  visitorTokenHash String
+  visitorName     String?
+  createdAt       DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+
+  @@index([widgetSiteId, visitorId])
+}
+
+// Who is looking at / typing in a conversation right now (collision
+// detection). Rows are heartbeats; stale rows are ignored by age.
+model AgentPresence {
+  id             String   @id @default(uuid())
+  organizationId String
+  conversationId String
+  userId         String
+  typing         Boolean  @default(false)
+  lastSeenAt     DateTime @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([organizationId, conversationId])
+}
+
+// In-app agent notifications: assignments, @mentions, urgent chats.
+model AgentNotification {
+  id             String    @id @default(uuid())
+  organizationId String
+  userId         String
+  type           String // assigned | mention | urgent
+  title          String
+  body           String?
+  conversationId String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, userId, readAt])
+}
+
+// Daily breakdown aggregates from the Meta insights API (age/gender,
+// placement). Keys are the API's own breakdown values.
+model DailyAdBreakdown {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  adAccountId          String
+  platform             String   @default("meta")
+  source               String   @default("api")
+  date                 DateTime
+  dimension            String // age_gender | placement
+  key                  String // "25-34:male" | "facebook:feed"
+  campaignExternalId   String   @default("")
+  spendMinor           BigInt   @default(0)
+  impressions          Int      @default(0)
+  clicks               Int      @default(0)
+  platformConversions  Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([organizationId, adAccountId, date, dimension, key, campaignExternalId, source])
+  @@index([organizationId, dimension, date])
+}
+
+// Meta Conversions API configuration per organization. The token is
+// optional: when absent, the Meta ads integration token is used.
+model ConversionApiSetting {
+  id                   String   @id @default(uuid())
+  organizationId       String   @unique
+  pixelId              String // dataset / pixel id
+  accessTokenEncrypted String?
+  testEventCode        String?
+  // placed | cod_confirmed | delivered
+  purchaseTrigger      String   @default("placed")
+  enabled              Boolean  @default(true)
+  sendLeadEvents       Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// One row per event we attempted to send to the Conversions API.
+// status is "sent" ONLY when Meta answered with events_received >= 1.
+model ConversionEventLog {
+  id             String   @id @default(uuid())
+  organizationId String
+  eventName      String // Purchase | Lead | TestEvent
+  sourceType     String // order | lead | test
+  sourceId       String?
+  eventId        String
+  status         String // sent | failed
+  eventsReceived Int?
+  fbtraceId      String?
+  error          String?
+  payload        Json?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, eventId])
+  @@index([organizationId, createdAt])
+}
+
+// Creative library asset uploaded to (or registered with) a Meta ad
+// account. status is "ready" ONLY with a Meta-issued hash / video id;
+// video assets pass through "processing" until Meta reports ready.
+model CreativeAsset {
+  id              String   @id @default(uuid())
+  organizationId  String
+  adAccountId     String
+  kind            String // image | video
+  name            String
+  sourceUrl       String
+  externalHash    String?
+  externalVideoId String?
+  status          String   @default("pending") // pending | processing | ready | failed
+  error           String?
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, adAccountId])
+}
+
+// Custom / lookalike audience on Meta. approximateCount is Meta's own
+// reported number (from the API), never estimated locally.
+model AudienceRecord {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  adAccountId        String
+  name               String
+  kind               String // custom | lookalike
+  source             String // customers | leads | rfm_segment | meta
+  sourceDetail       String? // e.g. the RFM segment name
+  externalAudienceId String?
+  approximateCount   Int?
+  status             String   @default("building") // building | ready | failed
+  error              String?
+  lastSyncedAt       DateTime?
+  createdById        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([organizationId, adAccountId])
+  lastMembershipSyncAt DateTime?
+  lastMembershipCount  Int?
+}
+
+// Saved targeting preset an organization reuses in the builder.
+model SavedAudience {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  targeting      Json
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// Meta Commerce catalog the organization pushes products to.
+model CatalogRecord {
+  id               String   @id @default(uuid())
+  organizationId   String
+  name             String
+  externalCatalogId String
+  businessId       String?
+  status           String   @default("connected")
+  lastSyncAt       DateTime?
+  lastSyncSummary  Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// A campaign published directly to Google Ads or TikTok (Phase I).
+// status becomes "created_paused" ONLY when the platform returned ids
+// for the full chain; otherwise "failed" with the step's error.
+model PlatformPublication {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  platform           String // google | tiktok
+  adAccountId        String
+  name               String
+  status             String   @default("pending") // pending | created_paused | failed
+  externalCampaignId String?
+  detail             Json?
+  error              String?
+  createdById        String
+  createdAt          DateTime @default(now())
+
+  @@index([organizationId, platform])
+}
+
+// Public, read-only, expiring report link for clients (Phase I).
+// Shows spend/revenue/orders/platform metrics — never costs or profit.
+model ReportShare {
+  id             String   @id @default(uuid())
+  organizationId String
+  token          String   @unique
+  title          String
+  days           Int      @default(30)
+  expiresAt      DateTime
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+model ProductSet {
+  id              String   @id @default(cuid())
+  organizationId  String
+  catalogRecordId String
+  name            String
+  category        String?
+  maxPriceMinor   BigInt?
+  inStockOnly     Boolean  @default(true)
+  externalSetId   String?
+  status          String   @default("local") // local | created | failed
+  error           String?
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([catalogRecordId])
+}
+
+model OfflineConversionSetting {
+  id               String   @id @default(cuid())
+  organizationId   String
+  platform         String // google | tiktok
+  adAccountId      String
+  conversionAction String? // google: conversion action id
+  pixelCode        String? // tiktok: Events API pixel code
+  trigger          String   @default("cod_confirmed") // placed | cod_confirmed | delivered
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([organizationId, platform])
+  @@index([organizationId])
+}
+
+model OfflineConversionLog {
+  id              String   @id @default(cuid())
+  organizationId  String
+  platform        String
+  eventId         String
+  orderId         String?
+  status          String // sent | failed | skipped
+  detail          String?
+  createdAt       DateTime @default(now())
+
+  @@unique([organizationId, platform, eventId])
+  @@index([organizationId, platform])
+}
+
+model AdminNote {
+  id         String   @id @default(cuid())
+  targetType String // user | organization
+  targetId   String
+  body       String
+  authorId   String
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+}
+
+model SystemSetting {
+  key        String   @id
+  value      Json
+  updatedById String?
+  updatedAt  DateTime @updatedAt
+}
+
+model OrgFeatureFlag {
+  id             String  @id @default(cuid())
+  organizationId String
+  key            String
+  enabled        Boolean @default(true)
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+model Announcement {
+  id        String    @id @default(cuid())
+  title     String
+  body      String
+  startsAt  DateTime?
+  endsAt    DateTime?
+  active    Boolean   @default(true)
+  createdById String
+  createdAt DateTime  @default(now())
+}
+
+model SaasPayment {
+  id             String    @id @default(cuid())
+  organizationId String
+  amountMinor    BigInt
+  currency       String    @default("BDT")
+  method         String // bkash | bank | cash | card | other
+  reference      String?
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  recordedById   String
+  note           String?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId])
+}

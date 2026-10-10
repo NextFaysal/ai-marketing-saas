@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: marketing-postgres
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: marketing
+      POSTGRES_DB: marketing_saas
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: marketing-redis
+    ports: ["6379:6379"]
+    volumes: [redis_data:/data]
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: marketing-mailpit
+    ports: ["1025:1025", "8025:8025"]
+volumes:
+  postgres_data:
+  redis_data:

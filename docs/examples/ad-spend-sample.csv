@@ -1,0 +1,5 @@
+date,campaign_id,campaign_name,spend,impressions,clicks,conversions,conversion_value,currency
+2026-10-01,120210000001,Eid Sale - Broad,1250.50,50000,1000,25,43750.00,BDT
+2026-10-01,120210000002,Retargeting - Viewers,420.00,18000,640,18,27900.00,BDT
+2026-10-02,120210000001,Eid Sale - Broad,1310.00,52400,1055,27,46100.00,BDT
+2026-10-02,120210000002,Retargeting - Viewers,395.50,16900,590,15,23400.00,BDT

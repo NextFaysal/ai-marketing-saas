@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "paths": { "@repo/db": ["../../packages/db/dist"], "@repo/contracts": ["../../packages/contracts/dist"] } },
+  "exclude": ["**/*.spec.ts"]
+}

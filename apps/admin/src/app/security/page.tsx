@@ -1,0 +1,95 @@
+"use client";
+import React from "react";
+import AdminShell, { reasonPrompt } from "@/components/AdminShell";
+import { apiFetch, setAdminToken } from "@/lib/api";
+import { useRouter } from "next/navigation";
+
+interface SecurityData {
+  me: { id: string; email: string; tier: string; totpEnabled: boolean };
+  ipAllowlistConfigured: boolean;
+  admins: { id: string; email: string; name: string; adminTier?: string | null; status: string; totpEnabled: boolean; lastLoginAt?: string | null }[];
+}
+
+export default function SecurityPage() {
+  const router = useRouter();
+  const [data, setData] = React.useState<SecurityData | null>(null);
+  const [msg, setMsg] = React.useState("");
+  const [enroll, setEnroll] = React.useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [code, setCode] = React.useState("");
+  const load = React.useCallback(async () => { setData(await apiFetch<SecurityData>("/admin/security").catch(() => null)); }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  async function confirmEnroll() {
+    try {
+      await apiFetch("/admin/totp/confirm", { method: "POST", body: JSON.stringify({ code }) });
+      setMsg("✅ Two-Factor চালু হয়েছে। এখন থেকে লগইনে কোড লাগবে।");
+      setEnroll(null); setCode("");
+      await load();
+    } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+  }
+  if (!data) return <AdminShell title="🔐 Security"><p className="text-slate-400">লোড হচ্ছে…</p></AdminShell>;
+  return (
+    <AdminShell title="🔐 Security">
+      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="acard space-y-3">
+          <div className="font-semibold">আমার Two-Factor Authentication (TOTP)</div>
+          <p className="text-sm text-slate-400">অবস্থা: {data.me.totpEnabled ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-amber">বন্ধ</span>} · Tier: {data.me.tier}</p>
+          {!data.me.totpEnabled && !enroll ? (
+            <>
+              <p className="text-sm text-slate-400">SUPER Admin দের পরিবর্তন (mutation) করতে TOTP বাধ্যতামূলক। Authenticator অ্যাপ (Google Authenticator / Authy) দিয়ে চালু করুন।</p>
+              <button className="abtn" onClick={async () => { setEnroll(await apiFetch("/admin/totp/enroll", { method: "POST" })); }}>TOTP চালু শুরু করুন</button>
+            </>
+          ) : null}
+          {enroll ? (
+            <div className="space-y-2 rounded-lg bg-slate-800 p-3 text-sm">
+              <div>Secret (Authenticator এ হাতে লিখুন):</div>
+              <code className="block break-all rounded bg-slate-900 p-2 text-indigo-300">{enroll.secret}</code>
+              <div className="break-all text-xs text-slate-500">{enroll.otpauthUrl}</div>
+              <div className="flex gap-2">
+                <input className="ainput max-w-[160px]" placeholder="৬ সংখ্যার কোড" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" />
+                <button className="abtn" onClick={confirmEnroll}>নিশ্চিত করুন</button>
+              </div>
+            </div>
+          ) : null}
+          {data.me.totpEnabled ? (
+            <div className="flex gap-2">
+              <input className="ainput max-w-[160px]" placeholder="কোড (বন্ধ করতে)" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" />
+              <button className="abtn-danger" onClick={async () => {
+                try { await apiFetch("/admin/totp/disable", { method: "POST", body: JSON.stringify({ code }) }); setMsg("TOTP বন্ধ হয়েছে — SUPER হিসেবে পরিবর্তন আবার চালু করতে TOTP লাগবে।"); setCode(""); await load(); }
+                catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+              }}>TOTP বন্ধ করুন</button>
+            </div>
+          ) : null}
+          <div className="border-t border-slate-800 pt-3">
+            <div className="mb-1 font-medium">আমার সব Session বাতিল করুন</div>
+            <p className="mb-2 text-xs text-slate-500">ডিভাইস হারালে বা সন্দেহ হলে — সব লগইন (এটাসহ) বাতিল হয়ে যাবে, আবার লগইন করতে হবে।</p>
+            <button className="abtn-secondary" onClick={async () => {
+              const r = reasonPrompt("Revoke My Sessions");
+              if (!r) return;
+              await apiFetch("/admin/security/revoke-my-sessions", { method: "POST", body: JSON.stringify({ reason: r }) });
+              setAdminToken(null);
+              router.replace("/login");
+            }}>🚫 সব Session বাতিল</button>
+          </div>
+        </div>
+        <div className="acard space-y-3">
+          <div className="font-semibold">Platform Admin বৃন্দ</div>
+          <p className="text-sm text-slate-400">IP Allowlist: {data.ipAllowlistConfigured ? <span className="abadge-green">সেট করা আছে</span> : <span className="abadge-slate">সেট নেই (সব নেটওয়ার্ক থেকে প্রবেশ যায়)</span>}</p>
+          <ul className="space-y-2">
+            {data.admins.map((a) => (
+              <li key={a.id} className="flex items-center justify-between rounded-lg bg-slate-800 px-3 py-2 text-sm">
+                <span>{a.name}<span className="block text-xs text-slate-500">{a.email} · {a.adminTier ?? "SUPER"} · শেষ লগইন {a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString("bn-BD") : "—"}</span></span>
+                <span className="flex items-center gap-2">
+                  {a.totpEnabled ? <span className="abadge-green">2FA</span> : <span className="abadge-amber">2FA নেই</span>}
+                  {a.status !== "ACTIVE" ? <span className="abadge-red">{a.status}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500">সব Admin হারিয়ে গেলে একমাত্র উদ্ধার পথ: সার্ভার Shell থেকে <code>node scripts/grant-admin.mjs &lt;email&gt;</code> — এটি TOTP রিসেট করে দেয় (Break-Glass) এবং Audit এ রেকর্ড থাকে।</p>
+        </div>
+      </div>
+    </AdminShell>
+  );
+}

@@ -1,0 +1,14 @@
+-- Milestone 8: competitor intelligence (public data only)
+CREATE TABLE "Competitor" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "name" TEXT NOT NULL, "facebookPageId" TEXT, "facebookPageUrl" TEXT, "websiteUrl" TEXT, "notes" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Competitor_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "Competitor_organizationId_idx" ON "Competitor"("organizationId");
+CREATE TABLE "CompetitorAd" ("id" TEXT NOT NULL, "competitorId" TEXT NOT NULL, "externalAdId" TEXT NOT NULL, "pageId" TEXT, "pageName" TEXT, "startedAt" TIMESTAMP(3), "stoppedAt" TIMESTAMP(3), "isActive" BOOLEAN NOT NULL DEFAULT false, "platforms" TEXT[], "creativeText" TEXT, "linkUrl" TEXT, "snapshotUrl" TEXT, "firstSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "lastSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "raw" JSONB, CONSTRAINT "CompetitorAd_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "CompetitorAd_competitorId_externalAdId_key" ON "CompetitorAd"("competitorId","externalAdId");
+CREATE INDEX "CompetitorAd_competitorId_startedAt_idx" ON "CompetitorAd"("competitorId","startedAt");
+CREATE TABLE "CompetitorPriceObservation" ("id" TEXT NOT NULL, "competitorId" TEXT NOT NULL, "productName" TEXT NOT NULL, "priceMinor" BIGINT NOT NULL, "currency" TEXT NOT NULL DEFAULT 'BDT', "sourceUrl" TEXT NOT NULL, "sourceType" TEXT NOT NULL, "observedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "CompetitorPriceObservation_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "CompetitorPriceObservation_competitorId_observedAt_idx" ON "CompetitorPriceObservation"("competitorId","observedAt");
+CREATE TABLE "CompetitorInsight" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "competitorId" TEXT, "kind" TEXT NOT NULL, "title" TEXT NOT NULL, "detail" TEXT, "evidence" JSONB NOT NULL, "provider" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "CompetitorInsight_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "CompetitorInsight_organizationId_createdAt_idx" ON "CompetitorInsight"("organizationId","createdAt");
+ALTER TABLE "Competitor" ADD CONSTRAINT "Competitor_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CompetitorAd" ADD CONSTRAINT "CompetitorAd_competitorId_fkey" FOREIGN KEY ("competitorId") REFERENCES "Competitor"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CompetitorPriceObservation" ADD CONSTRAINT "CompetitorPriceObservation_competitorId_fkey" FOREIGN KEY ("competitorId") REFERENCES "Competitor"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CompetitorInsight" ADD CONSTRAINT "CompetitorInsight_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

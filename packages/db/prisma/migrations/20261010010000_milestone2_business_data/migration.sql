@@ -1,0 +1,24 @@
+-- Milestone 2: products, variants, costs, policies, knowledge, imports
+CREATE TYPE "ProductStatus" AS ENUM ('DRAFT','ACTIVE','ARCHIVED');
+CREATE TYPE "ImportJobStatus" AS ENUM ('PENDING','COMPLETED','FAILED');
+CREATE TABLE "Product" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "name" TEXT NOT NULL, "slug" TEXT, "description" TEXT, "category" TEXT, "sku" TEXT, "status" "ProductStatus" NOT NULL DEFAULT 'ACTIVE', "priceMinor" BIGINT NOT NULL, "compareAtMinor" BIGINT, "currency" TEXT NOT NULL DEFAULT 'BDT', "stockQuantity" INTEGER, "imageUrl" TEXT, "source" TEXT NOT NULL DEFAULT 'manual', "externalId" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Product_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "Product_organizationId_sku_key" ON "Product"("organizationId","sku");
+CREATE INDEX "Product_organizationId_status_idx" ON "Product"("organizationId","status");
+CREATE INDEX "Product_organizationId_category_idx" ON "Product"("organizationId","category");
+CREATE TABLE "ProductVariant" ("id" TEXT NOT NULL, "productId" TEXT NOT NULL, "name" TEXT NOT NULL, "sku" TEXT, "priceMinor" BIGINT, "stockQuantity" INTEGER, "attributes" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "ProductVariant_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "ProductVariant_productId_sku_key" ON "ProductVariant"("productId","sku");
+CREATE INDEX "ProductVariant_productId_idx" ON "ProductVariant"("productId");
+CREATE TABLE "ProductCost" ("id" TEXT NOT NULL, "productId" TEXT NOT NULL, "variantId" TEXT, "costMinor" BIGINT NOT NULL, "currency" TEXT NOT NULL DEFAULT 'BDT', "effectiveFrom" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "note" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ProductCost_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "ProductCost_productId_effectiveFrom_idx" ON "ProductCost"("productId","effectiveFrom");
+CREATE TABLE "BusinessPolicy" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "type" TEXT NOT NULL, "title" TEXT NOT NULL, "content" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "BusinessPolicy_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "BusinessPolicy_organizationId_type_idx" ON "BusinessPolicy"("organizationId","type");
+CREATE TABLE "KnowledgeDocument" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "title" TEXT NOT NULL, "content" TEXT NOT NULL, "kind" TEXT NOT NULL DEFAULT 'faq', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "KnowledgeDocument_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "KnowledgeDocument_organizationId_kind_idx" ON "KnowledgeDocument"("organizationId","kind");
+CREATE TABLE "ImportJob" ("id" TEXT NOT NULL, "organizationId" TEXT NOT NULL, "kind" TEXT NOT NULL DEFAULT 'products', "status" "ImportJobStatus" NOT NULL DEFAULT 'PENDING', "fileName" TEXT, "totalRows" INTEGER NOT NULL DEFAULT 0, "successRows" INTEGER NOT NULL DEFAULT 0, "failedRows" INTEGER NOT NULL DEFAULT 0, "skippedRows" INTEGER NOT NULL DEFAULT 0, "errors" JSONB, "createdById" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "completedAt" TIMESTAMP(3), CONSTRAINT "ImportJob_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "ImportJob_organizationId_createdAt_idx" ON "ImportJob"("organizationId","createdAt");
+ALTER TABLE "Product" ADD CONSTRAINT "Product_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProductVariant" ADD CONSTRAINT "ProductVariant_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProductCost" ADD CONSTRAINT "ProductCost_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "BusinessPolicy" ADD CONSTRAINT "BusinessPolicy_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ImportJob" ADD CONSTRAINT "ImportJob_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "KnowledgeDocument" ADD CONSTRAINT "KnowledgeDocument_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

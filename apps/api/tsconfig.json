@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs", "outDir": "dist", "baseUrl": ".",
+    "experimentalDecorators": true, "emitDecoratorMetadata": true,
+    "paths": { "@repo/db": ["../../packages/db/src"], "@repo/contracts": ["../../packages/contracts/src"] }
+  },
+  "include": ["src"]
+}

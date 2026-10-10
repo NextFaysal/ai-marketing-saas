@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply bg-slate-950 text-slate-100 antialiased; }
+.acard { @apply rounded-2xl border border-slate-800 bg-slate-900 p-5; }
+.abtn { @apply inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50; }
+.abtn-secondary { @apply inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700 disabled:opacity-50; }
+.abtn-danger { @apply inline-flex items-center gap-1.5 rounded-lg bg-red-600/90 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-50; }
+.ainput { @apply w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none; }
+.abadge { @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold; }
+.abadge-green { @apply abadge bg-emerald-500/15 text-emerald-300; }
+.abadge-red { @apply abadge bg-red-500/15 text-red-300; }
+.abadge-amber { @apply abadge bg-amber-500/15 text-amber-300; }
+.abadge-slate { @apply abadge bg-slate-500/15 text-slate-300; }
+.ath { @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-400; }
+.atd { @apply px-4 py-3 text-sm; }
+.anav { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white; }
+.anav-off { @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600; }
