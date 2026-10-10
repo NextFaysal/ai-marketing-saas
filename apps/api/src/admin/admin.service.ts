@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices } from "../common/platform-settings";
 import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
@@ -13,7 +14,12 @@ const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    // Milestone 38: view-as token signing (AuthModule's JwtModule).
+    @Optional() private readonly jwt?: JwtService,
+  ) {}
 
   private async logAdmin(actor: any, action: string, entityType: string, entityId: string, metadata?: Record<string, unknown>, ip?: string) {
     await this.audit.log({ userId: actor.id, action: `admin.${action}`, entityType, entityId, metadata, ipAddress: ip });
@@ -1191,5 +1197,235 @@ export class AdminService {
     }
     events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
     return { organizationId, organizationName: org.name, events: events.slice(0, 100) };
+  }
+
+  // ---------------- Milestone 38 (Phase A2): Support++ ----------------
+
+  /**
+   * View-as (impersonation), designed defensively: a 30-minute
+   * token for a REAL member of the org (OWNER preferred), bound
+   * to that one org, read-only unless a SUPER admin explicitly
+   * asks for a write session. Starting a session needs a reason
+   * and is audited. Ending = discarding the token client-side;
+   * sessions are short-lived by design (documented limitation).
+   */
+  async startViewAs(actor: any, tier: string | undefined, organizationId: string, dto: { mode?: string; reason?: string }, ip?: string) {
+    const why = this.requireReason(dto.reason);
+    const mode = dto.mode === "write" ? "write" : "read";
+    if (mode === "write" && tier !== "SUPER") {
+      throw new ForbiddenException("Write view-as sessions require a SUPER admin");
+    }
+    if (!this.jwt) throw new BadRequestException("View-as is unavailable in this deployment (token service missing)");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId, status: "ACTIVE" },
+    });
+    if (!memberships.length) throw new BadRequestException("This organization has no active members to view as");
+    const rank = (role: string) => (role === "OWNER" ? 0 : role === "ADMIN" ? 1 : 2);
+    const targetMembership = [...memberships].sort((a: any, b: any) => rank(a.role) - rank(b.role))[0];
+    const target = await (this.prisma as any).user.findUnique({ where: { id: targetMembership.userId } });
+    if (!target || target.status !== "ACTIVE") throw new BadRequestException("The target member account is not active");
+    const token = await this.jwt.signAsync(
+      {
+        sub: target.id, email: target.email, isSuperAdmin: false, tv: (target as any).tokenVersion ?? 0,
+        viewAs: { adminId: actor.id, adminEmail: actor.email, orgId: organizationId, mode },
+      },
+      { expiresIn: "30m" },
+    );
+    await this.logAdmin(actor, "view_as_started", "Organization", organizationId, {
+      mode, reason: why, targetUserId: target.id, targetEmail: target.email, targetRole: targetMembership.role,
+    }, ip);
+    const webBase = process.env.WEB_URL ?? "http://localhost:3000";
+    return {
+      token, mode, expiresInMinutes: 30,
+      organizationId, organizationName: org.name,
+      targetUser: { id: target.id, email: target.email, role: targetMembership.role },
+      url: `${webBase}/view-as?token=${encodeURIComponent(token)}&org=${organizationId}`,
+    };
+  }
+
+  /** Org 360: A1 history + orders, conversations, sync jobs, tickets. */
+  async orgTimeline360(organizationId: string) {
+    const base = await this.orgHistory(organizationId);
+    const events: any[] = [...base.events];
+    const [orders, conversations, integrations, tickets] = await Promise.all([
+      (this.prisma as any).order.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 20 }).catch(() => []),
+      (this.prisma as any).channelConversation.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 20 }).catch(() => []),
+      (this.prisma as any).integration.findMany({ where: { organizationId } }).catch(() => []),
+      (this.prisma as any).supportTicket.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 20 }).catch(() => []),
+    ]);
+    for (const o of orders as any[]) {
+      events.push({ at: o.createdAt ?? o.placedAt, kind: "order", title: `অর্ডার ${o.externalNumber ?? String(o.id).slice(0, 8)}`, detail: `${o.status} · ${BigInt(o.totalMinor ?? 0).toString()} minor` });
+    }
+    for (const c of conversations as any[]) {
+      events.push({ at: c.createdAt, kind: "conversation", title: `${c.channel} কথোপকথন`, detail: `${c.contactName ?? c.contactId ?? ""} · ${c.status}` });
+    }
+    const integrationIds = (integrations as any[]).map((i) => i.id);
+    if (integrationIds.length) {
+      const jobs = await (this.prisma as any).syncJob.findMany({
+        where: { integrationId: { in: integrationIds } }, orderBy: { startedAt: "desc" }, take: 20,
+      }).catch(() => []);
+      for (const j of jobs as any[]) {
+        events.push({ at: j.startedAt, kind: "sync", title: `${j.kind} sync · ${j.status}`, detail: j.error ? String(j.error).slice(0, 120) : `fetched ${j.fetched ?? 0}` });
+      }
+    }
+    for (const t of tickets as any[]) {
+      events.push({ at: t.createdAt, kind: "ticket", title: `🎫 ${t.subject}`, detail: `status: ${t.status}` });
+    }
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    return { organizationId, organizationName: base.organizationName, events: events.slice(0, 100) };
+  }
+
+  private async onboardingStepsFor(organizationId: string) {
+    const [profile, stores, products, integrations, adAccounts, members, campaigns] = await Promise.all([
+      (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null),
+      (this.prisma as any).store.count({ where: { organizationId } }).catch(() => 0),
+      (this.prisma as any).product.count({ where: { organizationId } }).catch(() => 0),
+      (this.prisma as any).integration.count({ where: { organizationId } }).catch(() => 0),
+      (this.prisma as any).adAccount.count({ where: { organizationId } }).catch(() => 0),
+      (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } }).catch(() => 0),
+      (this.prisma as any).campaignPlan.count({ where: { organizationId } }).catch(() => 0),
+    ]);
+    const steps = [
+      { key: "profile", label: "ব্যবসায়িক প্রোফাইল", done: !!(profile && (profile.description || profile.websiteUrl || profile.industry)) },
+      { key: "store", label: "স্টোর কানেক্ট", done: stores > 0 },
+      { key: "products", label: "পণ্য সিঙ্ক", done: products > 0 },
+      { key: "integration", label: "চ্যানেল/ইন্টিগ্রেশন", done: integrations > 0 },
+      { key: "meta", label: "Meta অ্যাড অ্যাকাউন্ট", done: adAccounts > 0 },
+      { key: "team", label: "টিম সদস্য আমন্ত্রণ", done: members > 1 },
+      { key: "campaign", label: "প্রথম ক্যাম্পেইন", done: campaigns > 0 },
+    ];
+    return { steps, completed: steps.filter((s) => s.done).length, total: steps.length };
+  }
+
+  async onboardingBoard() {
+    const orgs = await (this.prisma as any).organization.findMany({ orderBy: { createdAt: "asc" }, take: 100 });
+    const rows: any[] = [];
+    for (const org of orgs as any[]) {
+      const { steps, completed, total } = await this.onboardingStepsFor(org.id);
+      const sub = await (this.prisma as any).subscription.findFirst({
+        where: { organizationId: org.id }, orderBy: { createdAt: "desc" },
+      }).catch(() => null);
+      rows.push({
+        organizationId: org.id, organizationName: org.name, createdAt: org.createdAt,
+        plan: sub?.plan ?? null, subscriptionStatus: sub?.status ?? null,
+        steps, completed, total,
+        stuckAt: steps.find((s) => !s.done)?.label ?? null,
+      });
+    }
+    rows.sort((a, b) => a.completed - b.completed);
+    return rows;
+  }
+
+  /** Proactive alerts, all computed from real rows at read time. */
+  async alertsBoard() {
+    const now = Date.now();
+    const dayMs = 24 * 3600 * 1000;
+    const alerts: any[] = [];
+    const orgName = async (id: string) => {
+      const org = await (this.prisma as any).organization.findUnique({ where: { id } }).catch(() => null);
+      return org?.name ?? id;
+    };
+    // Broken integrations (status ERROR, from their own sync/connect flows).
+    const integrations = await (this.prisma as any).integration.findMany({ take: 500 }).catch(() => []);
+    for (const i of integrations as any[]) {
+      if (i.status === "ERROR") {
+        alerts.push({
+          kind: "integration_error", severity: "high",
+          organizationId: i.organizationId, organizationName: await orgName(i.organizationId),
+          detail: `${i.provider}: ${i.lastError ?? "সংযোগে ত্রুটি"}`,
+          at: i.updatedAt ?? i.createdAt,
+        });
+      }
+    }
+    // Sync jobs failing repeatedly in the last 24h (>= 2 per integration).
+    const jobs = await (this.prisma as any).syncJob.findMany({
+      where: { status: "FAILED", startedAt: { gte: new Date(now - dayMs) } }, take: 500,
+    }).catch(() => []);
+    const failByIntegration = new Map<string, number>();
+    for (const j of jobs as any[]) failByIntegration.set(j.integrationId, (failByIntegration.get(j.integrationId) ?? 0) + 1);
+    for (const [integrationId, count] of failByIntegration) {
+      if (count < 2) continue;
+      const integration = (integrations as any[]).find((i) => i.id === integrationId)
+        ?? await (this.prisma as any).integration.findUnique({ where: { id: integrationId } }).catch(() => null);
+      if (!integration) continue;
+      alerts.push({
+        kind: "sync_failing", severity: "high",
+        organizationId: integration.organizationId, organizationName: await orgName(integration.organizationId),
+        detail: `${integration.provider} sync গত ২৪ ঘণ্টায় ${count} বার ব্যর্থ`,
+        at: new Date(now),
+      });
+    }
+    // Subscription-driven alerts.
+    const subs = await (this.prisma as any).subscription.findMany({ orderBy: { createdAt: "desc" }, take: 1000 }).catch(() => []);
+    const seenOrg = new Set<string>();
+    for (const s of subs as any[]) {
+      if (seenOrg.has(s.organizationId)) continue;
+      seenOrg.add(s.organizationId);
+      if (s.status === "PAST_DUE") {
+        alerts.push({
+          kind: "past_due", severity: "high",
+          organizationId: s.organizationId, organizationName: await orgName(s.organizationId),
+          detail: `সাবস্ক্রিপশন PAST_DUE (${s.plan}) — ওয়ার্কস্পেস Read-only`,
+          at: s.updatedAt ?? s.createdAt,
+        });
+      } else if (s.status === "TRIALING" && s.currentPeriodEnd) {
+        const msLeft = new Date(s.currentPeriodEnd).getTime() - now;
+        if (msLeft > 0 && msLeft <= 3 * dayMs) {
+          alerts.push({
+            kind: "trial_expiring", severity: "medium",
+            organizationId: s.organizationId, organizationName: await orgName(s.organizationId),
+            detail: `ট্রায়াল শেষ হতে বাকি ${Math.ceil(msLeft / dayMs)} দিন (${new Date(s.currentPeriodEnd).toISOString().slice(0, 10)})`,
+            at: s.updatedAt ?? s.createdAt,
+          });
+        }
+      }
+    }
+    const order = { high: 0, medium: 1 } as Record<string, number>;
+    alerts.sort((a, b) => (order[a.severity] ?? 2) - (order[b.severity] ?? 2));
+    return alerts;
+  }
+
+  /**
+   * One-click nudge email for an alert kind. The text is built
+   * from the org's real state server-side (no admin free text);
+   * sends count only on provider confirmation.
+   */
+  async nudgeOrg(actor: any, organizationId: string, kind: string, ip?: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    let subject = "";
+    let text = "";
+    if (kind === "onboarding") {
+      const { steps } = await this.onboardingStepsFor(organizationId);
+      const missing = steps.filter((s) => !s.done).map((s) => s.label);
+      if (!missing.length) throw new BadRequestException("This organization has completed onboarding — nothing to nudge about");
+      subject = "আপনার ওয়ার্কস্পেস সেটআপ শেষ করুন";
+      text = `${org.name} — আপনার অ্যাকাউন্টে এখনও বাকি আছে: ${missing.join(", ")}।\n\nড্যাশবোর্ডের চেকলিস্ট থেকে ধাপগুলো শেষ করলেই সব ফিচার ব্যবহার করা যাবে। সাহায্য লাগলে এই ইমেইলের উত্তর দিন অথবা ওয়ার্কস্পেস থেকে Support Ticket খুলুন।`;
+    } else if (kind === "trial_expiring") {
+      subject = "আপনার ট্রায়াল শীঘ্রই শেষ হচ্ছে";
+      text = `${org.name} — আপনার ট্রায়ালের মেয়াদ প্রায় শেষ। সেবা নিরবচ্ছিন্ন রাখতে ড্যাশবোর্ডের Billing পেজ থেকে প্ল্যান সক্রিয় করুন।`;
+    } else if (kind === "past_due") {
+      subject = "সাবস্ক্রিপশন পেমেন্ট বকেয়া";
+      text = `${org.name} — আপনার সাবস্ক্রিপশন Past Due অবস্থায় আছে, তাই ওয়ার্কস্পেসটি বর্তমানে Read-only। Billing পেজ থেকে পেমেন্ট সম্পন্ন করলেই সব আবার চালু হবে।`;
+    } else if (kind === "sync_failing" || kind === "integration_error") {
+      subject = "আপনার ইন্টিগ্রেশনে সমস্যা ধরা পড়েছে";
+      text = `${org.name} — আপনার কোনো স্টোর/চ্যানেল ইন্টিগ্রেশনের Sync ব্যর্থ হচ্ছে। ড্যাশবোর্ডের Integrations পেজে গিয়ে সংযোগটি পরীক্ষা করুন।`;
+    } else {
+      throw new BadRequestException(`Unknown nudge kind: ${kind}`);
+    }
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
+    });
+    const recipients = [...new Set((memberships as any[]).map((m) => m.user?.email).filter(Boolean))] as string[];
+    const email = new EmailProvider();
+    let sent = 0;
+    for (const to of recipients) {
+      await email.send({ to, subject, text });
+      sent++;
+    }
+    await this.logAdmin(actor, "alert_nudged", "Organization", organizationId, { kind, recipients, sent }, ip);
+    return { organizationId, kind, sent, recipients };
   }
 }

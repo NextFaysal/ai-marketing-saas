@@ -157,23 +157,51 @@ export default function OrgDetailPage() {
           )}
         </div>
 
+        <ViewAsCard orgId={id} />
         <OrgHistory orgId={id} />
       </div>
     </AdminShell>
   );
 }
 
+function ViewAsCard({ orgId }: { orgId: string }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const start = async (mode: "read" | "write") => {
+    const reason = window.prompt(`View-As (${mode === "write" ? "WRITE" : "Read-only"}) শুরুর কারণ — Audit এ থাকবে:`);
+    if (!reason || reason.trim().length < 3) return;
+    if (mode === "write" && !window.confirm("Write মোডে Tenant ওয়ার্কস্পেসে পরিবর্তন করা যাবে। নিশ্চিত তো?")) return;
+    setBusy(true); setErr("");
+    try {
+      const out = await apiFetch<{ url: string; targetUser: { email: string; role: string } }>(`/admin/orgs/${orgId}/view-as`, { method: "POST", body: JSON.stringify({ mode, reason }) });
+      window.open(out.url, "_blank", "noopener");
+    } catch (e) { setErr(e instanceof Error ? e.message : "View-As শুরু হয়নি"); }
+    setBusy(false);
+  };
+  return (
+    <div className="acard mt-4">
+      <div className="mb-2 font-semibold">👁 View-As (Tenant ওয়ার্কস্পেস দেখুন)</div>
+      <p className="text-sm text-slate-500">৩০ মিনিটের সেশন, Org এর OWNER হিসেবে ঢুকবেন। Read-only ই ডিফল্ট; Write মোড শুধু SUPER Admin দের জন্য — দুটোই কারণসহ Audit হয়।</p>
+      {err ? <p className="mt-2 text-sm text-red-400">{err}</p> : null}
+      <div className="mt-3 flex gap-2">
+        <button className="abtn abtn-primary" disabled={busy} onClick={() => start("read")}>👁 Read-only View-As</button>
+        <button className="abtn" disabled={busy} onClick={() => start("write")}>✏️ Write View-As (SUPER)</button>
+      </div>
+    </div>
+  );
+}
+
 function OrgHistory({ orgId }: { orgId: string }) {
   const [events, setEvents] = React.useState<{ at: string; kind: string; title: string; detail: string | null }[] | null>(null);
   React.useEffect(() => {
-    apiFetch<{ events: { at: string; kind: string; title: string; detail: string | null }[] }>(`/admin/orgs/${orgId}/history`)
+    apiFetch<{ events: { at: string; kind: string; title: string; detail: string | null }[] }>(`/admin/orgs/${orgId}/timeline360`)
       .then((h) => setEvents(h.events))
       .catch(() => setEvents([]));
   }, [orgId]);
-  const icon = (kind: string) => (kind === "payment" ? "💳" : kind === "subscription" ? "📦" : "🧾");
+  const icon = (kind: string) => (kind === "payment" ? "💳" : kind === "subscription" ? "📦" : kind === "order" ? "🛒" : kind === "conversation" ? "💬" : kind === "sync" ? "🔄" : kind === "ticket" ? "🎫" : "🧾");
   return (
     <div className="acard mt-4">
-      <div className="mb-3 font-semibold">📜 ইতিহাস (Audit + পেমেন্ট + সাবস্ক্রিপশন)</div>
+      <div className="mb-3 font-semibold">📜 Org 360 ইতিহাস (Audit + পেমেন্ট + অর্ডার + কথোপকথন + Sync + Ticket)</div>
       {events === null ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
         : events.length === 0 ? <p className="text-sm text-slate-500">কোনো ইভেন্ট নেই।</p> : (
           <ol className="relative border-l border-slate-800 pl-5">

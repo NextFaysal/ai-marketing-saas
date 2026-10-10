@@ -10,7 +10,7 @@ const GROUPS: { title: string; hrefs: string[] }[] = [
   { title: "বিক্রি ও ডেটা", hrefs: ["/dashboard/products", "/dashboard/integrations", "/dashboard/orders", "/dashboard/attribution", "/dashboard/knowledge"] },
   { title: "বিজ্ঞাপন", hrefs: ["/dashboard/ad-accounts", "/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/analytics", "/dashboard/profit", "/dashboard/competitors"] },
   { title: "গ্রাহক ও অটোমেশন", hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/customers", "/dashboard/messaging", "/dashboard/workflows", "/dashboard/automations"] },
-  { title: "সেটিংস", hrefs: ["/dashboard/billing", "/dashboard/team", "/dashboard/settings"] },
+  { title: "সেটিংস", hrefs: ["/dashboard/billing", "/dashboard/support", "/dashboard/team", "/dashboard/settings"] },
 ];
 
 function userEmailFromToken(): string {
@@ -118,6 +118,38 @@ function NotificationBell() {
           <a href="/dashboard/inbox" className="block px-2 py-1.5 text-center text-xs font-semibold text-brand-600 hover:underline">ইনবক্সে যান</a>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Milestone 38 (Admin Phase A2): view-as banner. The token's
+ * payload is decoded client-side for display only (the API
+ * enforces everything server-side). Ending the session just
+ * discards the token — view-as tokens live 30 minutes max.
+ */
+function ViewAsBanner() {
+  const [info, setInfo] = useState<{ adminEmail: string; mode: string } | null>(null);
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem("accessToken");
+      if (!token) return;
+      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (payload?.viewAs) setInfo({ adminEmail: payload.viewAs.adminEmail ?? "admin", mode: payload.viewAs.mode ?? "read" });
+    } catch { /* not a view-as token */ }
+  }, []);
+  if (!info) return null;
+  const end = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("organizationId");
+    window.location.href = "/login";
+  };
+  return (
+    <div className="px-4 pt-4 sm:px-6 lg:px-8">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
+        <span>👁 <b>Admin View-As সেশন চলছে</b> — {info.adminEmail} এই ওয়ার্কস্পেসটি {info.mode === "write" ? "Write" : "Read-only"} মোডে দেখছেন। {info.mode !== "write" ? "কোনো পরিবর্তন করা যাবে না।" : "পরিবর্তনগুলো Audit Log এ রেকর্ড হয়।"}</span>
+        <button onClick={end} className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">সেশন শেষ করুন</button>
+      </div>
     </div>
   );
 }
@@ -278,6 +310,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
+        <ViewAsBanner />
         <PlatformBanner />
         <SubscriptionBanner />
         <main className="mx-auto w-full max-w-[1440px] animate-rise px-4 py-5 sm:px-6 sm:py-7 lg:px-8">{children}</main>

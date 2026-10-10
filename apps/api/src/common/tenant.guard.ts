@@ -56,6 +56,20 @@ export class TenantGuard implements CanActivate {
       if (e instanceof ForbiddenException) throw e;
       // subscription lookup unavailable (older fakes) — do not block
     }
+    // Milestone 38 (Admin Phase A2): view-as sessions are bound
+    // to ONE organization and, in read mode, cannot write at
+    // all. The claim comes from the signed token (JwtAuthGuard);
+    // the admin who started the session is in the audit trail.
+    const viewAs = (req.user as any)?.viewAs;
+    if (viewAs) {
+      if (viewAs.orgId !== organizationId) {
+        throw new ForbiddenException("This view-as session is limited to a single organization");
+      }
+      const method = (req.method ?? "GET").toUpperCase();
+      if (viewAs.mode !== "write" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+        throw new ForbiddenException("This is a read-only view-as session — changes are disabled. The admin can start a write session if a fix is needed.");
+      }
+    }
     req.membership = membership;
     req.organizationId = organizationId;
     return true;

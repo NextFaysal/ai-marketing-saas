@@ -104,6 +104,14 @@ class RefundDto {
   @IsOptional() @IsBoolean() revokeAccess?: boolean;
 }
 class AiRatesDto { @IsObject() rates!: Record<string, number>; }
+class ViewAsDto {
+  @IsOptional() @IsIn(["read", "write"]) mode?: string;
+  @IsString() @MinLength(3) reason!: string;
+}
+class NudgeDto {
+  @IsString() organizationId!: string;
+  @IsIn(["onboarding", "trial_expiring", "past_due", "sync_failing", "integration_error"]) kind!: string;
+}
 class TestSendDto { @IsString() @MinLength(3) to!: string; }
 class SubscriptionDto {
   @IsOptional() @IsIn(["FREE", "STARTER", "GROWTH", "AGENCY"]) plan?: string;
@@ -243,6 +251,26 @@ export class AdminController {
   @Patch("analytics/ai-rates") @AdminTier("SUPER")
   updateAiRates(@Req() req: any, @Body() dto: AiRatesDto) { return this.admin.updateAiCostRates(req.adminUser, dto.rates as Record<string, unknown>, req.ip); }
   @Get("orgs/:id/history") orgHistory(@Param("id") id: string) { return this.admin.orgHistory(id); }
+
+  // Milestone 38 (Phase A2): Support++.
+  @Post("orgs/:id/view-as") @AdminTier("SUPER", "SUPPORT")
+  viewAs(@Req() req: any, @Param("id") id: string, @Body() dto: ViewAsDto) {
+    return this.admin.startViewAs(req.adminUser, req.adminTier, id, dto, req.ip);
+  }
+
+  @Get("orgs/:id/timeline360")
+  timeline360(@Param("id") id: string) { return this.admin.orgTimeline360(id); }
+
+  @Get("alerts")
+  alerts() { return this.admin.alertsBoard(); }
+
+  @Post("alerts/nudge") @AdminTier("SUPER", "SUPPORT")
+  nudge(@Req() req: any, @Body() dto: NudgeDto) {
+    return this.admin.nudgeOrg(req.adminUser, dto.organizationId, dto.kind, req.ip);
+  }
+
+  @Get("onboarding-board")
+  onboardingBoard() { return this.admin.onboardingBoard(); }
 
   @Get("orgs/:id/support-view") supportView(@Param("id") id: string) { return this.admin.supportView(id); }
   @Post("orgs/:id/support-view/conversations/:cid/messages") @AdminTier("SUPER", "SUPPORT")

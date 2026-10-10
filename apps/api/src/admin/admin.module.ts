@@ -6,9 +6,10 @@ import { SuperAdminGuard } from "../common/super-admin.guard";
 import { AutomationModule } from "../automation/automation.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { PaymentsModule } from "../payments/payments.module";
+import { AuthModule } from "../auth/auth.module";
 
 @Module({
-  imports: [AutomationModule, IntegrationsModule, PaymentsModule],
+  imports: [AutomationModule, IntegrationsModule, PaymentsModule, AuthModule],
   controllers: [AdminController, PublicStatusController],
   providers: [AdminService, SuperAdminGuard],
   exports: [AdminService],

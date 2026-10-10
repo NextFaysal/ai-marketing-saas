@@ -1845,3 +1845,30 @@ model CouponRedemption {
   @@index([couponId])
   @@index([organizationId])
 }
+
+model SupportTicket {
+  id             String    @id @default(cuid())
+  organizationId String
+  createdById    String
+  subject        String
+  status         String    @default("open") // open | pending | resolved | closed
+  priority       String    @default("normal") // normal | high
+  assignedToId   String?
+  lastMessageAt  DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([status, lastMessageAt])
+}
+
+model SupportTicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorId   String
+  authorKind String // tenant | admin
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}

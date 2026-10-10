@@ -29,6 +29,7 @@ import { ConversionsModule } from "./conversions/conversions.module";
 import { OfflineConversionsModule } from "./offline-conversions/offline-conversions.module";
 import { PortfolioModule } from "./portfolio/portfolio.module";
 import { PaymentsModule } from "./payments/payments.module";
+import { SupportModule } from "./support/support.module";
 import { AdminModule } from "./admin/admin.module";
 import { CreativesModule } from "./creatives/creatives.module";
 import { AudiencesModule } from "./audiences/audiences.module";
@@ -38,7 +39,7 @@ import { ReportSharesModule } from "./reports/report-shares.module";
 import { JwtAuthGuard } from "./common/jwt-auth.guard";
 
 @Module({
-  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule],
+  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
 export class AppModule {}

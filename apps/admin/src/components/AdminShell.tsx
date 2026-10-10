@@ -17,6 +17,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
       { label: "Users", icon: "👤", href: "/users" },
       { label: "Organizations", icon: "🏢", href: "/orgs" },
       { label: "SaaS Billing", icon: "💳", href: "/billing" },
+      { label: "Support Tickets", icon: "🎫", href: "/tickets" },
       { label: "Audit Trail", icon: "🧾", href: "/audit" },
     ],
   },
@@ -25,6 +26,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
     items: [
       { label: "Settings & Config", icon: "⚙️", href: "/settings" },
       { label: "Platform Health", icon: "💚", href: "/health" },
+      { label: "Proactive Alerts", icon: "🚨", href: "/alerts" },
       { label: "Usage & Cost", icon: "📈", href: "/usage" },
       { label: "Security", icon: "🔐", href: "/security" },
     ],

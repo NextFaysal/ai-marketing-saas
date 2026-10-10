@@ -185,6 +185,51 @@ export default function AnalyticsPage() {
           </div>
         )}
       </div>
+
+      <OnboardingBoard />
     </AdminShell>
+  );
+}
+
+interface OnboardingRow {
+  organizationId: string; organizationName: string; plan: string | null; subscriptionStatus: string | null;
+  completed: number; total: number; stuckAt: string | null;
+  steps: { key: string; label: string; done: boolean }[];
+}
+
+function OnboardingBoard() {
+  const [rows, setRows] = React.useState<OnboardingRow[] | null>(null);
+  React.useEffect(() => {
+    apiFetch<OnboardingRow[]>("/admin/onboarding-board").then(setRows).catch(() => setRows([]));
+  }, []);
+  return (
+    <div className="acard">
+      <div className="mb-1 font-semibold">🚀 Onboarding Funnel — কোন Org কোন ধাপে আটকে আছে</div>
+      <p className="mb-3 text-sm text-slate-500">৭ ধাপের চেকলিস্ট (আসল ডেটা থেকে)। আটকে থাকা Org কে Org পেজ থেকে View-As করে সাহায্য করুন, অথবা Alerts পেজ থেকে Onboarding Nudge পাঠান।</p>
+      {rows === null ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+        : rows.length === 0 ? <p className="text-sm text-slate-500">কোনো Organization নেই।</p> : (
+          <div className="overflow-x-auto">
+            <table className="atable">
+              <thead><tr><th className="ath">Organization</th><th className="ath">প্ল্যান</th><th className="ath">অগ্রগতি</th><th className="ath">আটকে আছে</th><th className="ath">ধাপসমূহ</th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.organizationId}>
+                    <td className="atd font-medium"><a href={`/orgs/${r.organizationId}`}>{r.organizationName}</a></td>
+                    <td className="atd">{r.plan ?? "—"} {r.subscriptionStatus ? `· ${r.subscriptionStatus}` : ""}</td>
+                    <td className="atd">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded bg-slate-800"><div className="h-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${(r.completed / r.total) * 100}%` }} /></div>
+                        <span>{r.completed}/{r.total}</span>
+                      </div>
+                    </td>
+                    <td className="atd">{r.stuckAt ?? <span className="text-emerald-400">✅ সম্পূর্ণ</span>}</td>
+                    <td className="atd"><span className="flex flex-wrap gap-1">{r.steps.map((s) => <span key={s.key} className="abadge" style={s.done ? {} : { opacity: 0.45 }}>{s.done ? "✓" : "○"} {s.label}</span>)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </div>
   );
 }

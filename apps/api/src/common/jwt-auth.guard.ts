@@ -14,7 +14,12 @@ export class JwtAuthGuard implements CanActivate {
     if (!header?.startsWith("Bearer ")) throw new UnauthorizedException("Missing bearer token");
     try {
       const payload = await this.jwt.verifyAsync(header.slice(7));
-      req.user = { userId: payload.sub, email: payload.email, isSuperAdmin: !!payload.isSuperAdmin };
+      req.user = {
+        userId: payload.sub, email: payload.email, isSuperAdmin: !!payload.isSuperAdmin,
+        // Milestone 38: admin view-as sessions carry this claim;
+        // TenantGuard enforces its org binding + read-only mode.
+        viewAs: payload.viewAs ?? undefined,
+      };
       return true;
     } catch {
       throw new UnauthorizedException("Invalid or expired token");
