@@ -15,7 +15,7 @@ export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "competitor_ads", "competitor_scan", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
-  "subscription_sweep",
+  "subscription_sweep", "dunning_reminders",
 ] as const;
 
 export const RULE_METRICS = [
@@ -132,6 +132,7 @@ export class AutomationService implements OnModuleInit {
       case "competitor_ads": return this.competitors.syncAds(orgId, actor, job.targetId, {});
       case "competitor_scan": return this.competitors.scanWebsite(orgId, actor, job.targetId);
       case "weekly_ads_report": return this.sendWeeklyAdsReport(orgId);
+      case "dunning_reminders": return this.sendDunningReminder(orgId);
       case "subscription_sweep": {
         const { sweepSubscription } = await import("../common/platform-settings");
         const result = await sweepSubscription(this.prisma as any, orgId);
@@ -231,6 +232,55 @@ export class AutomationService implements OnModuleInit {
       sent++;
     }
     return { sent, recipients: recipients.length, spendMinor: spend.toString(), orders: revenueOrders.length };
+  }
+
+  /** Milestone 39 dunning: staged PAST_DUE reminders (stage 1 on
+   * the first run, then day 3 and day 7+). Each stage is sent
+   * ONCE per past-due episode — the audit log is the record, so
+   * re-runs are no-ops. Without a configured email provider the
+   * job fails honestly instead of pretending to remind anyone. */
+  async sendDunningReminder(organizationId: string) {
+    if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
+    const sub = await (this.prisma as any).subscription.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (!sub || sub.status !== "PAST_DUE") return { skipped: "subscription is not past due" };
+    const end = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : new Date();
+    const daysOverdue = Math.max(0, Math.floor((Date.now() - end.getTime()) / 86400000));
+    const stage = daysOverdue >= 7 ? 7 : daysOverdue >= 3 ? 3 : 1;
+    const prior = await (this.prisma as any).auditLog.findMany({
+      where: { organizationId, action: "billing.dunning_sent" }, take: 50,
+    }).catch(() => []);
+    const already = (prior as any[]).some((a) => {
+      const meta = typeof a.metadata === "string" ? JSON.parse(a.metadata) : a.metadata;
+      return meta?.stage === stage && meta?.periodEnd === (sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toISOString() : null);
+    });
+    if (already) return { skipped: "stage already sent", stage, daysOverdue };
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
+    });
+    const recipients = memberships.map((m: any) => m.user?.email).filter(Boolean) as string[];
+    if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found");
+    const text = [
+      `আসসালামু আলাইকুম,`,
+      ``,
+      `${org?.name ?? "আপনার"} ওয়ার্কস্পেসের ${sub.plan} সাবস্ক্রিপশনের মেয়াদ ${daysOverdue} দিন আগে শেষ হয়েছে (PAST_DUE)।`,
+      `মেয়াদ পেরিয়ে যাওয়ায় ওয়ার্কস্পেসটি এখন Read-only — নতুন ডেটা যোগ করা যাচ্ছে না, তবে সব ডেটা নিরাপদে আছে।`,
+      `পেমেন্ট সম্পন্ন হলেই সাবস্ক্রিপশন আবার সক্রিয় হবে। Billing পেজ থেকে অনলাইনে পেমেন্ট করতে পারবেন, অথবা প্ল্যাটফর্ম টিমের সাথে যোগাযোগ করুন।`,
+      ``,
+      `— Qosprey AI Marketing টিম`,
+    ].join("\n");
+    let sent = 0;
+    for (const to of recipients) {
+      await this.email.send({ to, subject: `সাবস্ক্রিপশন মেয়াদ শেষ — ${sub.plan} (দিন ${daysOverdue})`, text });
+      sent++;
+    }
+    await this.audit.log({
+      organizationId, action: "billing.dunning_sent", entityType: "Subscription", entityId: sub.id,
+      metadata: { stage, daysOverdue, recipients: sent, periodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toISOString() : null },
+    });
+    return { sent, stage, daysOverdue };
   }
 
   // ---------- Automation rules ----------

@@ -30,6 +30,7 @@ export interface MetaAppConfig { appId?: string; appSecret?: string; adLibraryTo
 export interface SmtpConfig { host: string; port: number; user?: string; pass?: string; from?: string }
 export interface SmsConfig { apiToken: string; senderId: string; apiUrl?: string }
 export interface SslcommerzConfig { storeId: string; storePass: string; sandbox: boolean }
+export interface BkashConfig { appKey: string; appSecret: string; username: string; password: string; sandbox: boolean }
 
 export interface PlatformConfigSnapshot {
   llm: LlmConfig | null;
@@ -37,12 +38,13 @@ export interface PlatformConfigSnapshot {
   smtp: SmtpConfig | null;
   sms: SmsConfig | null;
   sslcommerz: SslcommerzConfig | null;
+  bkash: BkashConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -51,8 +53,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz"> & { sslcommerz?: SslcommerzConfig | null }) {
-  snapshot = { sslcommerz: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -81,10 +83,10 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
-    readKey(prisma, "sslcommerzConfig"),
+    readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -111,7 +113,14 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
   const sslcommerz: SslcommerzConfig | null = sslRaw?.storeId
     ? { storeId: String(sslRaw.storeId), storePass: unseal(sslRaw.storePassEncrypted) ?? "", sandbox: sslRaw.sandbox !== false }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, loadedAt: Date.now() };
+  const bkash: BkashConfig | null = bkashRaw?.appKey
+    ? {
+        appKey: String(bkashRaw.appKey), appSecret: unseal(bkashRaw.appSecretEncrypted) ?? "",
+        username: bkashRaw.username ? String(bkashRaw.username) : "",
+        password: unseal(bkashRaw.passwordEncrypted) ?? "", sandbox: bkashRaw.sandbox !== false,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -181,6 +190,26 @@ export function effectiveSslcommerzConfig(): (SslcommerzConfig & { source: "admi
 
 export function sslcommerzBase(cfg: SslcommerzConfig): string {
   return cfg.sandbox ? "https://sandbox.sslcommerz.com" : "https://securepay.sslcommerz.com";
+}
+
+/** Milestone 39: bKash tokenized-checkout merchant config —
+ * same admin → env resolution as SSLCommerz. */
+export function effectiveBkashConfig(): (BkashConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.bkash?.appKey && snapshot.bkash.appSecret && snapshot.bkash.username && snapshot.bkash.password) {
+    return { ...snapshot.bkash, source: "admin" };
+  }
+  if (process.env.BKASH_APP_KEY && process.env.BKASH_APP_SECRET && process.env.BKASH_USERNAME && process.env.BKASH_PASSWORD) {
+    return {
+      appKey: process.env.BKASH_APP_KEY, appSecret: process.env.BKASH_APP_SECRET,
+      username: process.env.BKASH_USERNAME, password: process.env.BKASH_PASSWORD,
+      sandbox: process.env.BKASH_SANDBOX !== "false", source: "env",
+    };
+  }
+  return null;
+}
+
+export function bkashBase(cfg: BkashConfig): string {
+  return cfg.sandbox ? "https://tokenized.sandbox.bka.sh/v1.2.0-beta" : "https://tokenized.pay.bka.sh/v1.2.0-beta";
 }
 
 /** The app secret a messaging webhook should be verified against:

@@ -64,6 +64,7 @@ model Organization {
   name           String
   slug           String          @unique
   country        String          @default("BD")
+  creditMinor    BigInt          @default(0)
   attributionWindowDays Int       @default(30)
   timezone       String          @default("Asia/Dhaka")
   currency       String          @default("BDT")
@@ -1760,6 +1761,9 @@ model SaasPayment {
   periodEnd      DateTime?
   recordedById   String
   note           String?
+  refundedMinor  BigInt    @default(0)
+  refundedAt     DateTime?
+  refundReason   String?
   createdAt      DateTime  @default(now())
 
   @@index([organizationId])
@@ -1803,10 +1807,41 @@ model PlanCheckout {
   status         String    @default("initiated") // initiated | success | failed | cancelled
   valId          String?
   gatewayDetail  Json?
+  gateway        String    @default("sslcommerz") // sslcommerz | bkash
+  creditAppliedMinor BigInt @default(0)
+  discountMinor  BigInt    @default(0)
+  couponCode     String?
   createdById    String
   completedAt    DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  @@index([organizationId])
+}
+
+model Coupon {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  kind           String // percent | fixed
+  value          Int // percent 1-90 | fixed amount in minor units
+  planScope      String? // null = all plans
+  expiresAt      DateTime?
+  maxRedemptions Int?
+  redeemedCount  Int       @default(0)
+  active         Boolean   @default(true)
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model CouponRedemption {
+  id             String   @id @default(cuid())
+  couponId       String
+  organizationId String
+  checkoutId     String?
+  amountMinor    BigInt // discount actually given
+  createdAt      DateTime @default(now())
+
+  @@index([couponId])
   @@index([organizationId])
 }

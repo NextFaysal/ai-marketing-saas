@@ -16,6 +16,7 @@ interface PlatformConfigView {
   smtp: { source: string; host: string | null; port: number; user: string | null; from: string | null; secretConfigured: boolean };
   sms: { source: string; senderId: string | null; apiUrl: string | null; secretConfigured: boolean };
   sslcommerz: { source: string; storeId: string | null; sandbox: boolean; secretConfigured: boolean };
+  bkash: { source: string; appKey: string | null; username: string | null; sandbox: boolean; secretConfigured: boolean };
   note: string;
 }
 
@@ -121,6 +122,22 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sslcommerz", { clear: true }, "SSLCommerz Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-500">প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">📱 bKash (Tokenized Checkout)</span>{srcBadge(cfg.bkash.source)}</div>
+          <label className="block text-sm">App Key<input id="pc-bk-key" className="ainput mt-1" defaultValue={cfg.bkash.appKey ?? ""} placeholder="bKash Merchant App Key" /></label>
+          <label className="block text-sm">Username<input id="pc-bk-user" className="ainput mt-1" defaultValue={cfg.bkash.username ?? ""} placeholder="Merchant Username" /></label>
+          <label className="block text-sm">App Secret<input id="pc-bk-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
+          <label className="block text-sm">Password<input id="pc-bk-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.bkash.secretConfigured)} /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-bk-sandbox" type="checkbox" defaultChecked={cfg.bkash.sandbox} />
+            Sandbox Mode (পরীক্ষামূলক)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("bkash", { appKey: val("pc-bk-key"), username: val("pc-bk-user"), appSecret: val("pc-bk-secret") || undefined, password: val("pc-bk-pass") || undefined, sandbox: (document.getElementById("pc-bk-sandbox") as HTMLInputElement)?.checked ?? true }, "bKash সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("bkash", { clear: true }, "bKash Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
         </div>
       </div>
     </div>

@@ -21,7 +21,7 @@ const JOB_TYPES_BY_TARGET: Record<string, { value: string; label: string }[]> = 
     { value: "meta_insights", label: "Meta Insights Sync" }, { value: "google_insights", label: "Google Insights Sync" }, { value: "tiktok_insights", label: "TikTok Insights Sync" },
   ],
   competitor: [{ value: "competitor_ads", label: "Competitor Ads Sync" }, { value: "competitor_scan", label: "Competitor Website Scan" }],
-  org: [{ value: "daily_report", label: "Daily AI Report" }, { value: "weekly_ads_report", label: "Weekly Ads Report (ইমেইল)" }, { value: "meta_status_sync", label: "Meta Status Sync (সব Published Plan)" }, { value: "dayparting", label: "Dayparting (Ad Set সময়সূচি প্রয়োগ)" }, { value: "audience_refresh", label: "Audience Membership Refresh" }, { value: "subscription_sweep", label: "Subscription Sweep (মেয়াদ শেষ হলে Past Due)" }],
+  org: [{ value: "daily_report", label: "Daily AI Report" }, { value: "weekly_ads_report", label: "Weekly Ads Report (ইমেইল)" }, { value: "meta_status_sync", label: "Meta Status Sync (সব Published Plan)" }, { value: "dayparting", label: "Dayparting (Ad Set সময়সূচি প্রয়োগ)" }, { value: "audience_refresh", label: "Audience Membership Refresh" }, { value: "subscription_sweep", label: "Subscription Sweep (মেয়াদ শেষ হলে Past Due)" }, { value: "dunning_reminders", label: "Dunning Reminder (Past Due হলে ইমেইল)" }],
 };
 
 export default function AutomationsPage() {

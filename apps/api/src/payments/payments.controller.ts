@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
-import { IsString, MaxLength, MinLength } from "class-validator";
+import { Body, Controller, Get, Header, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { Request, Response } from "express";
 import { PaymentsService } from "./payments.service";
 import { TenantGuard } from "../common/tenant.guard";
@@ -9,6 +9,13 @@ import { CurrentUser, Public, Roles, type AuthUser } from "../common/decorators"
 class CheckoutDto {
   @IsString() @MaxLength(20) plan!: string;
   @IsString() @MinLength(11) @MaxLength(15) phone!: string;
+  @IsOptional() @IsString() @MaxLength(24) couponCode?: string;
+  @IsOptional() @IsIn(["sslcommerz", "bkash"]) gateway?: string;
+}
+
+class CouponPreviewDto {
+  @IsString() @MaxLength(24) code!: string;
+  @IsString() @MaxLength(20) plan!: string;
 }
 
 @Controller("organizations")
@@ -19,7 +26,20 @@ export class PaymentsController {
   @Post(":organizationId/billing/checkout")
   @Roles("OWNER", "ADMIN")
   checkout(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: CheckoutDto) {
-    return this.payments.createCheckout(id, { userId: user.userId, email: user.email }, dto.plan, dto.phone);
+    return this.payments.createCheckout(id, { userId: user.userId, email: user.email }, dto.plan, dto.phone, { couponCode: dto.couponCode, gateway: dto.gateway });
+  }
+
+  @Post(":organizationId/billing/coupon-preview")
+  @Roles("OWNER", "ADMIN")
+  couponPreview(@Param("organizationId") id: string, @Body() dto: CouponPreviewDto) {
+    return this.payments.previewCoupon(id, dto.code, dto.plan);
+  }
+
+  @Get(":organizationId/billing/payments/:paymentId/invoice")
+  @Roles("OWNER", "ADMIN")
+  @Header("Content-Type", "text/html; charset=utf-8")
+  invoice(@Param("organizationId") id: string, @Param("paymentId") paymentId: string) {
+    return this.payments.invoiceHtmlForOrgPayment(id, paymentId);
   }
 }
 
@@ -45,5 +65,21 @@ export class PaymentsPublicController {
   @Public() @Get("return")
   browserReturnGet(@Req() req: Request, @Res() res: Response) {
     return res.redirect(302, this.payments.returnRedirect((req.query ?? {}) as Record<string, any>));
+  }
+}
+
+/**
+ * bKash callback. The redirect itself proves nothing: the
+ * service executes the payment server-to-server and activates
+ * only on bKash's own Completed confirmation (see service).
+ */
+@Controller("public/payments/bkash")
+export class BkashPublicController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Public() @Get("callback")
+  async callback(@Req() req: Request, @Res() res: Response) {
+    const url = await this.payments.handleBkashCallback((req.query ?? {}) as Record<string, any>);
+    return res.redirect(302, url);
   }
 }

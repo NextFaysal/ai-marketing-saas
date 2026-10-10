@@ -4,6 +4,7 @@ import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices } from "..
 import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
 import { EmailProvider } from "../messaging/email.provider";
+import { buildInvoiceHtml } from "../payments/payments.service";
 import { SmsProvider, normalizeBdPhone } from "../messaging/sms.provider";
 import { AuditService } from "../audit/audit.service";
 import { issueAdminToken } from "../common/admin-token";
@@ -158,7 +159,7 @@ export class AdminService {
         (this.prisma as any).order.count({ where: { organizationId: org.id } }),
         (this.prisma as any).subscription.findFirst({ where: { organizationId: org.id }, orderBy: { createdAt: "desc" } }).catch(() => null),
       ]);
-      out.push({ ...org, memberCount: members, orderCount: orders, subscription: sub ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd } : null });
+      out.push({ ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString(), memberCount: members, orderCount: orders, subscription: sub ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd } : null });
     }
     return out;
   }
@@ -181,6 +182,7 @@ export class AdminService {
     ]);
     return {
       ...org,
+      creditMinor: BigInt(org.creditMinor ?? 0).toString(),
       members: memberships.map((m: any) => ({ ...m, user: users.find((u: any) => u.id === m.userId) ?? null })),
       integrations: integrations.map((i: any) => ({ id: i.id, provider: i.provider, status: i.status })),
       subscription,
@@ -351,7 +353,8 @@ export class AdminService {
     const before = { aiDailyLimitOverride: org.aiDailyLimitOverride ?? null, broadcastCapOverride: org.broadcastCapOverride ?? null, seatLimit: org.seatLimit ?? null };
     await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
     await this.logAdmin(actor, "org_limits", "Organization", organizationId, { before, after: { ...before, ...data } }, ip);
-    return (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    const updated = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    return { ...updated, creditMinor: BigInt(updated?.creditMinor ?? 0).toString() };
   }
 
   // ---------------- Platform health & usage ----------------
@@ -461,11 +464,38 @@ export class AdminService {
     if (dto.status !== undefined) data.status = dto.status;
     if (dto.currentPeriodEnd !== undefined) data.currentPeriodEnd = dto.currentPeriodEnd ? new Date(dto.currentPeriodEnd) : null;
     const before = existing ? { plan: existing.plan, status: existing.status, currentPeriodEnd: existing.currentPeriodEnd } : null;
+    // Milestone 39 proration: changing the plan of an ACTIVE
+    // subscription mid-period credits the unused fraction of
+    // the OLD plan's price (30-day periods) to the org's credit
+    // balance. The credit is real, recorded, and spent by the
+    // checkout flow — it is never a silent date adjustment.
+    let prorationCredit = 0n;
+    if (existing && dto.plan && dto.plan !== existing.plan && existing.status === "ACTIVE"
+      && existing.currentPeriodEnd && new Date(existing.currentPeriodEnd) > new Date()) {
+      const prices = await planPrices(this.prisma as any);
+      const oldPrice = BigInt(prices[existing.plan] ?? 0);
+      const remainingDays = Math.min(30, Math.ceil((new Date(existing.currentPeriodEnd).getTime() - Date.now()) / 86400000));
+      if (oldPrice > 0n && remainingDays > 0) prorationCredit = (oldPrice * BigInt(remainingDays)) / 30n;
+    }
     const row = existing
       ? await (this.prisma as any).subscription.update({ where: { id: existing.id }, data })
       : await (this.prisma as any).subscription.create({ data: { organizationId, plan: dto.plan ?? "FREE", status: dto.status ?? "TRIALING", currentPeriodEnd: data.currentPeriodEnd ?? null } });
-    await this.logAdmin(actor, "subscription_updated", "Organization", organizationId, { before, after: { plan: row.plan, status: row.status, currentPeriodEnd: row.currentPeriodEnd }, reason: why }, ip);
-    return row;
+    if (prorationCredit > 0n) {
+      const balance = BigInt(org.creditMinor ?? 0);
+      await (this.prisma as any).organization.update({
+        where: { id: organizationId }, data: { creditMinor: balance + prorationCredit },
+      }).catch(() => null);
+      try {
+        await (this.prisma as any).adminNote?.create({
+          data: {
+            targetType: "organization", targetId: organizationId, authorId: actor.id,
+            body: `Proration credit: ${prorationCredit.toString()} minor added for the mid-period plan change ${existing.plan} -> ${dto.plan} (reason: ${why}).`,
+          },
+        });
+      } catch { /* the note is explanatory; the credit + audit are the record */ }
+    }
+    await this.logAdmin(actor, "subscription_updated", "Organization", organizationId, { before, after: { plan: row.plan, status: row.status, currentPeriodEnd: row.currentPeriodEnd }, reason: why, prorationCreditMinor: prorationCredit.toString() }, ip);
+    return { ...row, prorationCreditMinor: prorationCredit.toString() };
   }
 
   async recordPayment(actor: any, dto: { organizationId: string; amountMinor: string | number; currency?: string; method: string; reference?: string; periodStart?: string; periodEnd?: string; note?: string }, ip?: string) {
@@ -483,7 +513,7 @@ export class AdminService {
       },
     });
     await this.logAdmin(actor, "payment_recorded", "SaasPayment", row.id, { organizationId: dto.organizationId, amountMinor: amount.toString(), method: dto.method, reference: dto.reference ?? null }, ip);
-    return { ...row, amountMinor: row.amountMinor.toString() };
+    return { ...row, amountMinor: row.amountMinor.toString(), refundedMinor: BigInt(row.refundedMinor ?? 0).toString() };
   }
 
   async listPayments(organizationId?: string, take = 50) {
@@ -491,7 +521,13 @@ export class AdminService {
       where: organizationId ? { organizationId } : {}, orderBy: { createdAt: "desc" }, take: Math.min(200, take),
     });
     const orgs = await (this.prisma as any).organization.findMany({ where: { id: { in: [...new Set((rows as any[]).map((r) => r.organizationId))] } } }).catch(() => []);
-    return (rows as any[]).map((r) => ({ ...r, amountMinor: r.amountMinor.toString(), organizationName: (orgs as any[]).find((o) => o.id === r.organizationId)?.name ?? null }));
+    return (rows as any[]).map((r) => ({
+      ...r,
+      amountMinor: r.amountMinor.toString(),
+      refundedMinor: BigInt(r.refundedMinor ?? 0).toString(),
+      netMinor: (BigInt(r.amountMinor ?? 0) - BigInt(r.refundedMinor ?? 0)).toString(),
+      organizationName: (orgs as any[]).find((o) => o.id === r.organizationId)?.name ?? null,
+    }));
   }
 
   async deletePayment(actor: any, id: string, reason: string, ip?: string) {
@@ -501,6 +537,156 @@ export class AdminService {
     await this.logAdmin(actor, "payment_deleted", "SaasPayment", id, { snapshot: { ...row, amountMinor: row.amountMinor.toString() }, reason: why }, ip);
     await (this.prisma as any).saasPayment.delete({ where: { id } });
     return { id, deleted: true };
+  }
+
+  // ---------------- Phase A3 (Milestone 39): Billing & Money++ ----------------
+
+  /** Record a refund against a payment. The refund itself is
+   * the operator's attestation that money went back through the
+   * original channel. Access consequences are EXPLICIT: only
+   * `revokeAccess: true` flips the subscription to PAST_DUE —
+   * a refund never silently rewrites period dates. */
+  async refundPayment(actor: any, id: string, dto: { amountMinor?: string | number; reason: string; revokeAccess?: boolean }, ip?: string) {
+    const why = this.requireReason(dto.reason);
+    const row = await (this.prisma as any).saasPayment.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("Payment not found");
+    const gross = BigInt(row.amountMinor ?? 0);
+    const already = BigInt(row.refundedMinor ?? 0);
+    const remaining = gross - already;
+    if (remaining <= 0n) throw new BadRequestException("This payment has already been fully refunded");
+    let amount: bigint;
+    if (dto.amountMinor !== undefined && dto.amountMinor !== null && String(dto.amountMinor) !== "") {
+      try { amount = BigInt(dto.amountMinor); } catch { throw new BadRequestException("amountMinor must be an integer in minor units"); }
+    } else {
+      amount = remaining;
+    }
+    if (amount <= 0n) throw new BadRequestException("Refund amount must be positive");
+    if (amount > remaining) throw new BadRequestException(`Refund exceeds the remaining refundable amount (${remaining.toString()} minor)`);
+    const updated = await (this.prisma as any).saasPayment.update({
+      where: { id },
+      data: { refundedMinor: already + amount, refundedAt: new Date(), refundReason: why },
+    });
+    let accessRevoked = false;
+    if (dto.revokeAccess === true) {
+      const sub = await (this.prisma as any).subscription.findFirst({
+        where: { organizationId: row.organizationId }, orderBy: { createdAt: "desc" },
+      }).catch(() => null);
+      if (sub && sub.status !== "PAST_DUE") {
+        await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { status: "PAST_DUE" } });
+        accessRevoked = true;
+      }
+    }
+    await this.logAdmin(actor, "payment_refunded", "SaasPayment", id, {
+      organizationId: row.organizationId, refundMinor: amount.toString(),
+      refundedTotalMinor: (already + amount).toString(), accessRevoked, reason: why,
+    }, ip);
+    return {
+      ...updated, amountMinor: gross.toString(),
+      refundedMinor: (already + amount).toString(),
+      netMinor: (gross - already - amount).toString(), accessRevoked,
+    };
+  }
+
+  private async paymentWithOrg(id: string) {
+    const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id } });
+    if (!payment) throw new NotFoundException("Payment not found");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: payment.organizationId } }).catch(() => null);
+    return { payment, org };
+  }
+
+  /** Printable invoice (HTML) built ONLY from the payment row. */
+  async paymentInvoiceHtml(id: string): Promise<string> {
+    const { payment, org } = await this.paymentWithOrg(id);
+    return buildInvoiceHtml({ payment, orgName: org?.name ?? payment.organizationId });
+  }
+
+  async sendInvoiceEmail(actor: any, id: string, ip?: string) {
+    const { payment, org } = await this.paymentWithOrg(id);
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId: payment.organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
+    }).catch(() => []);
+    const recipients = (memberships as any[]).map((m) => m.user?.email).filter(Boolean) as string[];
+    if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found for this organization");
+    const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+    const gross = BigInt(payment.amountMinor ?? 0);
+    const refunded = BigInt(payment.refundedMinor ?? 0);
+    const text = [
+      `Invoice — ${org?.name ?? payment.organizationId}`,
+      ``,
+      `Invoice no: INV-${String(payment.id).slice(-8).toUpperCase()}`,
+      `Date: ${new Date(payment.createdAt).toISOString().slice(0, 10)}`,
+      `Method: ${payment.method}${payment.reference ? ` · Ref: ${payment.reference}` : ""}`,
+      payment.periodEnd ? `Service period ends: ${new Date(payment.periodEnd).toISOString().slice(0, 10)}` : null,
+      `Amount: ${payment.currency} ${fmt(gross)}`,
+      refunded > 0n ? `Refunded: ${payment.currency} ${fmt(refunded)} (net ${fmt(gross - refunded)})` : null,
+      ``,
+      `Thank you. This invoice was generated from the platform's payment records.`,
+    ].filter(Boolean).join("\n");
+    const email = new EmailProvider();
+    let sent = 0;
+    for (const to of recipients) {
+      await email.send({ to, subject: `Invoice INV-${String(payment.id).slice(-8).toUpperCase()} — ${org?.name ?? "Subscription"}`, text });
+      sent++;
+    }
+    await this.logAdmin(actor, "invoice_emailed", "SaasPayment", id, { organizationId: payment.organizationId, recipients: sent }, ip);
+    return { sent, recipients };
+  }
+
+  /** Accounting export: payments with refunds netted, CSV. */
+  async exportPaymentsCsv(): Promise<string> {
+    const rows = await (this.prisma as any).saasPayment.findMany({ orderBy: { createdAt: "desc" }, take: 5000 });
+    const orgs = await (this.prisma as any).organization.findMany({ take: 5000 }).catch(() => []);
+    const nameOf = new Map((orgs as any[]).map((o) => [o.id, o.name]));
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = ["date,organization,method,reference,currency,gross_minor,refunded_minor,net_minor,period_end,note"];
+    for (const p of rows as any[]) {
+      const gross = BigInt(p.amountMinor ?? 0);
+      const refunded = BigInt(p.refundedMinor ?? 0);
+      lines.push([
+        new Date(p.createdAt).toISOString(), esc(nameOf.get(p.organizationId) ?? p.organizationId), esc(p.method),
+        esc(p.reference ?? ""), esc(p.currency ?? "BDT"), gross.toString(), refunded.toString(),
+        (gross - refunded).toString(), p.periodEnd ? new Date(p.periodEnd).toISOString().slice(0, 10) : "", esc(p.note ?? ""),
+      ].join(","));
+    }
+    return lines.join("\n");
+  }
+
+  /** PAST_DUE board with the dunning stages actually sent
+   * (from the audit record the dunning job writes). */
+  async dunningBoard() {
+    const subs = await (this.prisma as any).subscription.findMany({ orderBy: { createdAt: "desc" }, take: 5000 }).catch(() => []);
+    const latest = new Map<string, any>();
+    for (const s of subs as any[]) if (!latest.has(s.organizationId)) latest.set(s.organizationId, s);
+    const orgs = await (this.prisma as any).organization.findMany({ take: 5000 }).catch(() => []);
+    const nameOf = new Map((orgs as any[]).map((o) => [o.id, o.name]));
+    const entries = await (this.prisma as any).auditLog.findMany({
+      where: { action: "billing.dunning_sent" }, orderBy: { createdAt: "desc" }, take: 1000,
+    }).catch(() => []);
+    const byOrg = new Map<string, any[]>();
+    for (const e of entries as any[]) {
+      if (!e.organizationId) continue;
+      const list = byOrg.get(e.organizationId) ?? [];
+      list.push(e); byOrg.set(e.organizationId, list);
+    }
+    const now = Date.now();
+    const out: any[] = [];
+    for (const sub of latest.values()) {
+      if (sub.status !== "PAST_DUE") continue;
+      const sent = byOrg.get(sub.organizationId) ?? [];
+      const stages = [...new Set(sent.map((e: any) => {
+        const meta = typeof e.metadata === "string" ? JSON.parse(e.metadata) : e.metadata;
+        return meta?.stage;
+      }).filter(Boolean))].sort((a: number, b: number) => a - b);
+      out.push({
+        organizationId: sub.organizationId, organizationName: nameOf.get(sub.organizationId) ?? sub.organizationId,
+        plan: sub.plan, currentPeriodEnd: sub.currentPeriodEnd,
+        daysOverdue: sub.currentPeriodEnd ? Math.floor((now - new Date(sub.currentPeriodEnd).getTime()) / 86400000) : null,
+        dunningStagesSent: stages,
+        lastDunningAt: sent.length ? sent[0].createdAt : null,
+      });
+    }
+    out.sort((a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0));
+    return out;
   }
 
   async billingSummary() {
@@ -530,8 +716,9 @@ export class AdminService {
     const payments = await (this.prisma as any).saasPayment.findMany({ take: 10000 });
     let collectedMonth = 0n, collectedTotal = 0n;
     for (const p of payments as any[]) {
-      collectedTotal += BigInt(p.amountMinor ?? 0);
-      if (new Date(p.createdAt) >= monthStart) collectedMonth += BigInt(p.amountMinor ?? 0);
+      const net = BigInt(p.amountMinor ?? 0) - BigInt(p.refundedMinor ?? 0);
+      collectedTotal += net;
+      if (new Date(p.createdAt) >= monthStart) collectedMonth += net;
     }
     return {
       currency: "BDT", planPricesMinor: prices, mrrMinor: String(mrr), trialingCount: trialing,
@@ -616,10 +803,10 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
-      this.rawConfigRow("sslcommerzConfig"),
+      this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
     ]);
     return {
       llm: {
@@ -655,6 +842,13 @@ export class AdminService {
         sandbox: ssl ? ssl.sandbox !== false : process.env.SSLCOMMERZ_SANDBOX !== "false",
         secretConfigured: Boolean(ssl?.storePassEncrypted || process.env.SSLCOMMERZ_STORE_PASS),
       },
+      bkash: {
+        source: bk?.appKey ? "admin" : (process.env.BKASH_APP_KEY ? "env" : "none"),
+        appKey: bk?.appKey ?? (process.env.BKASH_APP_KEY || null),
+        username: bk?.username ?? (process.env.BKASH_USERNAME || null),
+        sandbox: bk ? bk.sandbox !== false : process.env.BKASH_SANDBOX !== "false",
+        secretConfigured: Boolean((bk?.appSecretEncrypted && bk?.passwordEncrypted) || (process.env.BKASH_APP_SECRET && process.env.BKASH_PASSWORD)),
+      },
       note: "Boot secrets (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY) stay in the server environment by design — the encryption key cannot be stored inside what it encrypts.",
     };
   }
@@ -665,7 +859,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -720,6 +914,12 @@ export class AdminService {
       setField("storeId", patch.storeId === undefined ? undefined : String(patch.storeId));
       if (patch.sandbox !== undefined) setField("sandbox", patch.sandbox === true);
       setSecret("storePass", "storePassEncrypted", patch.storePass, patch.clearSecret);
+    } else if (area === "bkash") {
+      setField("appKey", patch.appKey === undefined ? undefined : String(patch.appKey));
+      setField("username", patch.username === undefined ? undefined : String(patch.username));
+      if (patch.sandbox !== undefined) setField("sandbox", patch.sandbox === true);
+      setSecret("appSecret", "appSecretEncrypted", patch.appSecret, patch.clearSecret);
+      setSecret("password", "passwordEncrypted", patch.password, undefined);
     }
     await (this.prisma as any).systemSetting.upsert({
       where: { key }, create: { key, value: next, updatedById: actor.id }, update: { value: next, updatedById: actor.id },
@@ -814,7 +1014,7 @@ export class AdminService {
       (this.prisma as any).subscription.findMany({ where: since }).catch(() => []),
       (this.prisma as any).order.findMany({ where: since, take: 20000 }).catch(() => []),
     ]);
-    for (const p of payments as any[]) add(new Date(p.createdAt), (b) => { b.collectedMinor += BigInt(p.amountMinor ?? 0); });
+    for (const p of payments as any[]) add(new Date(p.createdAt), (b) => { b.collectedMinor += BigInt(p.amountMinor ?? 0) - BigInt(p.refundedMinor ?? 0); });
     for (const o of orgs as any[]) add(new Date(o.createdAt), (b) => { b.newOrgs += 1; });
     for (const u of users as any[]) add(new Date(u.createdAt), (b) => { b.newUsers += 1; });
     for (const s of subs as any[]) add(new Date(s.createdAt), (b) => { b.newSubscriptions += 1; });

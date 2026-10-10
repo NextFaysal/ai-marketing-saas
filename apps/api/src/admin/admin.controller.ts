@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
+import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
 import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
@@ -76,6 +77,32 @@ class SslcommerzConfigDto {
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
+class BkashConfigDto {
+  @IsOptional() @IsString() appKey?: string;
+  @IsOptional() @IsString() appSecret?: string;
+  @IsOptional() @IsString() username?: string;
+  @IsOptional() @IsString() password?: string;
+  @IsOptional() @IsBoolean() sandbox?: boolean;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+class CouponDto {
+  @IsString() @MinLength(3) code!: string;
+  @IsIn(["percent", "fixed"]) kind!: string;
+  @IsInt() value!: number;
+  @IsOptional() @IsString() planScope?: string;
+  @IsOptional() @IsString() expiresAt?: string;
+  @IsOptional() @IsInt() maxRedemptions?: number;
+}
+class CouponStatusDto {
+  @IsBoolean() active!: boolean;
+  @IsString() @MinLength(3) reason!: string;
+}
+class RefundDto {
+  @IsOptional() @IsString() amountMinor?: string;
+  @IsString() @MinLength(3) reason!: string;
+  @IsOptional() @IsBoolean() revokeAccess?: boolean;
+}
 class AiRatesDto { @IsObject() rates!: Record<string, number>; }
 class TestSendDto { @IsString() @MinLength(3) to!: string; }
 class SubscriptionDto {
@@ -107,6 +134,7 @@ export class AdminController {
     private readonly admin: AdminService,
     private readonly automation: AutomationService,
     private readonly integrations: IntegrationsService,
+    private readonly paymentsSvc: PaymentsService,
   ) {}
 
   @Get("health") health() { return this.admin.health(); }
@@ -162,6 +190,8 @@ export class AdminController {
   updateSmsConfig(@Req() req: any, @Body() dto: SmsConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "sms", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/sslcommerz") @AdminTier("SUPER")
   updateSslcommerzConfig(@Req() req: any, @Body() dto: SslcommerzConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "sslcommerz", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/bkash") @AdminTier("SUPER")
+  updateBkashConfig(@Req() req: any, @Body() dto: BkashConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "bkash", dto as unknown as Record<string, unknown>, req.ip); }
   @Post("platform-config/test-llm") @AdminTier("SUPER")
   testLlm() { return this.admin.testLlm(); }
   @Post("platform-config/test-email") @AdminTier("SUPER")
@@ -243,6 +273,32 @@ export class AdminController {
   recordPayment(@Req() req: any, @Body() dto: PaymentDto) { return this.admin.recordPayment(req.adminUser, dto, req.ip); }
   @Delete("payments/:id") @AdminTier("SUPER")
   deletePayment(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) { return this.admin.deletePayment(req.adminUser, id, dto.reason, req.ip); }
+
+  // ---- Phase A3 (Milestone 39): Billing & Money++ ----
+  @Post("payments/:id/refund") @AdminTier("SUPER", "FINANCE")
+  refundPayment(@Req() req: any, @Param("id") id: string, @Body() dto: RefundDto) {
+    return this.admin.refundPayment(req.adminUser, id, dto, req.ip);
+  }
+  @Get("payments/:id/invoice") @Header("Content-Type", "text/html; charset=utf-8")
+  paymentInvoice(@Param("id") id: string) { return this.admin.paymentInvoiceHtml(id); }
+  @Post("payments/:id/invoice-email") @AdminTier("SUPER", "FINANCE")
+  invoiceEmail(@Req() req: any, @Param("id") id: string) { return this.admin.sendInvoiceEmail(req.adminUser, id, req.ip); }
+  @Get("billing/checkouts")
+  checkouts(@Query("status") status?: string, @Query("organizationId") organizationId?: string, @Query("take") take?: string) {
+    return this.paymentsSvc.listCheckouts({ status, organizationId, take: take ? Number(take) : undefined });
+  }
+  @Post("billing/checkouts/:id/reconcile") @AdminTier("SUPER", "FINANCE")
+  reconcile(@Param("id") id: string) { return this.paymentsSvc.reconcileCheckout(id); }
+  @Get("billing/dunning") dunning() { return this.admin.dunningBoard(); }
+  @Get("billing/export.csv") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=payments-export.csv")
+  exportCsv() { return this.admin.exportPaymentsCsv(); }
+  @Get("coupons") coupons() { return this.paymentsSvc.listCoupons(); }
+  @Post("coupons") @AdminTier("SUPER", "FINANCE")
+  createCoupon(@Req() req: any, @Body() dto: CouponDto) { return this.paymentsSvc.createCoupon(req.adminUser, dto, req.ip); }
+  @Post("coupons/:id/status") @AdminTier("SUPER", "FINANCE")
+  couponStatus(@Req() req: any, @Param("id") id: string, @Body() dto: CouponStatusDto) {
+    return this.paymentsSvc.setCouponActive(req.adminUser, id, dto.active, dto.reason, req.ip);
+  }
 
   @Get("audit") audit(@Query("action") action?: string, @Query("userId") userId?: string, @Query("take") take?: string) {
     return this.admin.auditTrail({ action, userId, take: Number(take ?? 50) || 50 });

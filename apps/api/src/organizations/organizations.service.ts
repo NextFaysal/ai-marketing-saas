@@ -28,7 +28,7 @@ export class OrganizationsService {
       return created;
     });
     await this.audit.log({ organizationId: org.id, userId, action: "org.create", entityType: "Organization", entityId: org.id, ipAddress: ip });
-    return org;
+    return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }
 
   async listMine(userId: string) {
@@ -37,13 +37,13 @@ export class OrganizationsService {
       include: { organization: true },
       orderBy: { createdAt: "asc" },
     });
-    return memberships.map((m: any) => ({ ...m.organization, myRole: m.role }));
+    return memberships.map((m: any) => ({ ...m.organization, creditMinor: BigInt(m.organization?.creditMinor ?? 0).toString(), myRole: m.role }));
   }
 
   async getOne(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
-    return org;
+    return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }
 
   async listMembers(organizationId: string) {
@@ -109,10 +109,21 @@ export class OrganizationsService {
         where: { organizationId, createdAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } },
       }),
     ]);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const pc = await import("../common/platform-config");
+    await pc.ensurePlatformConfig(this.prisma as any).catch(() => null);
     return {
       subscription: sub
         ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd, priceMinor: String(prices[sub.plan] ?? 0), currency: "BDT" }
         : null,
+      // Milestone 39: credit balance + which gateways the
+      // platform team has actually configured (buttons in the
+      // UI follow these flags, never assumptions).
+      creditMinor: BigInt(org?.creditMinor ?? 0).toString(),
+      gateways: {
+        sslcommerz: pc.effectiveSslcommerzConfig() !== null,
+        bkash: pc.effectiveBkashConfig() !== null,
+      },
       limits,
       usage: { seatsUsed, aiCallsToday, broadcasts30d },
       plans: ps.PLAN_TIERS.map((tier) => ({
@@ -124,6 +135,7 @@ export class OrganizationsService {
       payments: (payments ?? []).map((p: any) => ({
         id: p.id,
         amountMinor: String(p.amountMinor),
+        refundedMinor: String(p.refundedMinor ?? 0),
         currency: p.currency,
         method: p.method,
         reference: p.reference ?? null,
