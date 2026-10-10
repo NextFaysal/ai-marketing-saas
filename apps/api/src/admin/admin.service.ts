@@ -1725,4 +1725,211 @@ export class AdminService {
     return { organizationId, organizationName: org.name, deleted: true, certificate };
   }
 
+  // ---------------- Milestone 42 (Phase A6): Reliability Panel ----------------
+
+  private static readonly BOOT_TIME = new Date();
+
+  /** Version & deploy facts — env-provided identity (GIT_SHA /
+   * APP_VERSION can be set by the deploy platform) plus LIVE
+   * migration state from the database itself. */
+  async systemVersion() {
+    const p = this.prisma as any;
+    let migrations: { applied: number; latest: string | null; recent: string[] } | null = null;
+    try {
+      const rows = await p.$queryRawUnsafe(
+        `SELECT migration_name, finished_at FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY finished_at DESC`,
+      );
+      const list = (rows as any[]) ?? [];
+      migrations = {
+        applied: list.length,
+        latest: list[0]?.migration_name ?? null,
+        recent: list.slice(0, 5).map((r: any) => r.migration_name),
+      };
+    } catch { /* not a Postgres-backed Prisma (tests) — reported as null */ }
+    let dbReachable = false;
+    let dbLatencyMs: number | null = null;
+    try {
+      const t0 = Date.now();
+      await p.organization.count();
+      dbReachable = true;
+      dbLatencyMs = Date.now() - t0;
+    } catch { /* unreachable — reported honestly */ }
+    return {
+      appVersion: process.env.APP_VERSION ?? "dev",
+      gitSha: process.env.GIT_SHA ?? process.env.APP_GIT_SHA ?? null,
+      nodeVersion: process.version,
+      environment: process.env.NODE_ENV ?? "development",
+      bootTime: AdminService.BOOT_TIME,
+      uptimeSeconds: Math.floor((Date.now() - AdminService.BOOT_TIME.getTime()) / 1000),
+      migrations,
+      database: { reachable: dbReachable, latencyMs: dbLatencyMs },
+    };
+  }
+
+  /** Work queues as they actually exist in this system: scheduled
+   * jobs, store syncs, message deliveries, workflow runs. */
+  async systemQueues() {
+    const p = this.prisma as any;
+    const now = new Date();
+    const dayAgo = new Date(Date.now() - 86400000);
+    const [jobs, syncRunning, syncFailed, deliveries, workflowRunning, workflowErrors] = await Promise.all([
+      p.scheduledJob?.findMany({ take: 1000 }).catch(() => []) ?? [],
+      p.syncJob?.count({ where: { status: "RUNNING" } }).catch(() => 0) ?? 0,
+      p.syncJob?.findMany({ where: { status: "FAILED", startedAt: { gte: dayAgo } }, orderBy: { startedAt: "desc" }, take: 5 }).catch(() => []) ?? [],
+      p.messageDelivery?.findMany({ where: { createdAt: { gte: dayAgo } }, take: 5000 }).catch(() => []) ?? [],
+      p.workflowRun?.count({ where: { status: "running" } }).catch(() => 0) ?? 0,
+      p.workflowRun?.findMany({ where: { status: "error" }, orderBy: { createdAt: "desc" }, take: 5 }).catch(() => []) ?? [],
+    ]);
+    const jobRows = (jobs as any[]) ?? [];
+    return {
+      scheduledJobs: {
+        total: jobRows.length,
+        enabled: jobRows.filter((j) => j.enabled).length,
+        dueNow: jobRows.filter((j) => j.enabled && j.nextRunAt && new Date(j.nextRunAt) <= now).length,
+        recentlyFailed: jobRows
+          .filter((j) => j.lastError && j.lastRunAt && new Date(j.lastRunAt) >= dayAgo)
+          .slice(0, 5)
+          .map((j) => ({ name: j.name, type: j.type, organizationId: j.organizationId, lastError: j.lastError, lastRunAt: j.lastRunAt })),
+      },
+      syncJobs: {
+        running: syncRunning,
+        failedLast24h: (syncFailed as any[]).length,
+        latestFailures: (syncFailed as any[]).map((j) => ({ kind: j.kind, error: j.error, startedAt: j.startedAt })),
+      },
+      deliveries: {
+        last24h: (deliveries as any[]).length,
+        failedLast24h: (deliveries as any[]).filter((d) => d.status === "failed").length,
+        pending: (deliveries as any[]).filter((d) => d.status === "queued" || d.status === "sending").length,
+      },
+      workflowRuns: {
+        running: workflowRunning,
+        latestErrors: (workflowErrors as any[]).map((r) => ({ organizationId: r.organizationId, error: r.error, createdAt: r.createdAt })),
+      },
+    };
+  }
+
+  /** Error summary across every subsystem that records failures. */
+  async systemErrors(hours = 24) {
+    const p = this.prisma as any;
+    const windowHours = Math.min(168, Math.max(1, hours));
+    const since = new Date(Date.now() - windowHours * 3600000);
+    const [automation, syncs, webhooks, deliveries, workflows] = await Promise.all([
+      p.automationRun?.findMany({ where: { status: "error", createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []) ?? [],
+      p.syncJob?.findMany({ where: { status: "FAILED", startedAt: { gte: since } }, orderBy: { startedAt: "desc" }, take: 100 }).catch(() => []) ?? [],
+      p.webhookEvent?.findMany({ where: { receivedAt: { gte: since } }, take: 500 }).catch(() => []) ?? [],
+      p.messageDelivery?.findMany({ where: { status: "failed", createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []) ?? [],
+      p.workflowRun?.findMany({ where: { status: "error", createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []) ?? [],
+    ]);
+    const webhookErrors = ((webhooks as any[]) ?? []).filter((w) => w.error);
+    const sources = [
+      { source: "automation_runs", count: (automation as any[]).length, latest: (automation as any[]).slice(0, 5).map((r) => ({ title: r.kind, detail: r.detail ?? null, at: r.createdAt })) },
+      { source: "sync_jobs", count: (syncs as any[]).length, latest: (syncs as any[]).slice(0, 5).map((r) => ({ title: `${r.kind} sync`, detail: r.error ?? null, at: r.startedAt })) },
+      { source: "webhooks", count: webhookErrors.length, latest: webhookErrors.slice(0, 5).map((r) => ({ title: `${r.provider}/${r.topic}`, detail: r.error ?? null, at: r.receivedAt })) },
+      { source: "message_deliveries", count: (deliveries as any[]).length, latest: (deliveries as any[]).slice(0, 5).map((r) => ({ title: `${r.channel} → ${r.address}`, detail: r.error ?? null, at: r.createdAt })) },
+      { source: "workflow_runs", count: (workflows as any[]).length, latest: (workflows as any[]).slice(0, 5).map((r) => ({ title: "workflow run", detail: r.error ?? null, at: r.createdAt })) },
+    ];
+    return { windowHours, totalErrors: sources.reduce((a, s) => a + s.count, 0), sources };
+  }
+
+  /** In-app activity log = the audit trail (process stdout is not
+   * reachable from inside the app — stated on the panel). */
+  async systemLogs(take = 100, q?: string, organizationId?: string) {
+    const where: any = {};
+    if (q) where.action = { contains: q };
+    if (organizationId) where.organizationId = organizationId;
+    const rows = await (this.prisma as any).auditLog.findMany({
+      where, orderBy: { createdAt: "desc" }, take: Math.min(200, Math.max(1, take)),
+    }).catch(() => []);
+    return (rows as any[]).map((r) => ({
+      at: r.createdAt, action: r.action, userId: r.userId, organizationId: r.organizationId,
+      entityType: r.entityType, entityId: r.entityId, ip: r.ipAddress,
+    }));
+  }
+
+  /** Database growth: real Postgres catalog stats when available,
+   * delegate counts as the honest fallback. */
+  async systemDbGrowth() {
+    const p = this.prisma as any;
+    try {
+      const rows = await p.$queryRawUnsafe(
+        `SELECT relname AS "table", n_live_tup::bigint AS "approxRows", pg_total_relation_size(relid)::bigint AS "bytes" FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 40`,
+      );
+      return {
+        source: "pg_stat_user_tables",
+        tables: (rows as any[]).map((r) => ({ table: r.table, approxRows: Number(r.approxRows), bytes: Number(r.bytes) })),
+        totalBytes: (rows as any[]).reduce((a, r) => a + Number(r.bytes), 0),
+      };
+    } catch { /* fall through to counts */ }
+    const core: [string, string][] = [
+      ["Organization", "organization"], ["User", "user"], ["Order", "order"], ["Product", "product"],
+      ["ChannelMessage", "channelMessage"], ["AuditLog", "auditLog"], ["AIUsageRecord", "aIUsageRecord"],
+      ["DailyAdMetric", "dailyAdMetric"], ["Customer", "customer"], ["Lead", "lead"],
+    ];
+    const tables: { table: string; approxRows: number; bytes: null }[] = [];
+    for (const [name, key] of core) {
+      try { tables.push({ table: name, approxRows: await p[key].count(), bytes: null }); } catch { /* skip */ }
+    }
+    tables.sort((a, b) => b.approxRows - a.approxRows);
+    return { source: "row counts (Postgres catalog unavailable)", tables, totalBytes: null };
+  }
+
+  // ---- Backup status (operator-recorded info + verifiable manifest) ----
+
+  async getBackupPanel() {
+    const [info, manifest] = await Promise.all([
+      platformSetting(this.prisma as any, "backupInfo"),
+      platformSetting(this.prisma as any, "backupManifest"),
+    ]);
+    return { info: (info as any) ?? null, manifest: (manifest as any) ?? null };
+  }
+
+  async setBackupInfo(actor: any, dto: { lastBackupAt?: string; location?: string; note?: string }, ip?: string) {
+    const info = {
+      lastBackupAt: dto.lastBackupAt ?? null,
+      location: String(dto.location ?? "").slice(0, 200),
+      note: String(dto.note ?? "").slice(0, 500),
+      recordedBy: actor.email,
+      recordedAt: new Date().toISOString(),
+    };
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "backupInfo" },
+      create: { key: "backupInfo", value: info as any, updatedById: actor.id },
+      update: { value: info as any, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "backup_info_updated", "SystemSetting", "backupInfo", { lastBackupAt: info.lastBackupAt }, ip);
+    return info;
+  }
+
+  /**
+   * One-click integrity manifest: live row counts across the core
+   * tables. This is what the app can actually verify about its
+   * own data — infra backups themselves live outside the app.
+   */
+  async verifyBackupManifest(actor: any, ip?: string) {
+    const p = this.prisma as any;
+    const core: [string, string][] = [
+      ["Organization", "organization"], ["User", "user"], ["Membership", "membership"],
+      ["Product", "product"], ["Order", "order"], ["Customer", "customer"], ["Lead", "lead"],
+      ["ChannelConversation", "channelConversation"], ["ChannelMessage", "channelMessage"],
+      ["CampaignPlan", "campaignPlan"], ["AuditLog", "auditLog"], ["SaasPayment", "saasPayment"],
+      ["Subscription", "subscription"], ["SupportTicket", "supportTicket"], ["AIUsageRecord", "aIUsageRecord"],
+    ];
+    const tables: Record<string, number> = {};
+    let totalRows = 0;
+    for (const [name, key] of core) {
+      try {
+        const n = await p[key].count();
+        tables[name] = n;
+        totalRows += n;
+      } catch { /* table unavailable in this deployment */ }
+    }
+    const manifest = { at: new Date().toISOString(), tables, totalRows, verifiedBy: actor.email };
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "backupManifest" },
+      create: { key: "backupManifest", value: manifest as any, updatedById: actor.id },
+      update: { value: manifest as any, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "backup_verified", "SystemSetting", "backupManifest", { totalRows }, ip);
+    return manifest;
+  }
 }

@@ -117,6 +117,11 @@ class DeletePermanentDto {
   @IsString() @MinLength(1) confirmName!: string;
   @IsString() @MinLength(3) reason!: string;
 }
+class BackupInfoDto {
+  @IsOptional() @IsString() lastBackupAt?: string;
+  @IsOptional() @IsString() location?: string;
+  @IsOptional() @IsString() note?: string;
+}
 class ViewAsDto {
   @IsOptional() @IsIn(["read", "write"]) mode?: string;
   @IsString() @MinLength(3) reason!: string;
@@ -319,6 +324,20 @@ export class AdminController {
   deletePermanent(@Req() req: any, @Param("id") id: string, @Body() dto: DeletePermanentDto) {
     return this.admin.deleteOrgPermanent(req.adminUser, id, dto.confirmName, dto.reason, req.ip);
   }
+
+  // ---- Milestone 42 (Phase A6): reliability panel ----
+  @Get("system/version") systemVersion() { return this.admin.systemVersion(); }
+  @Get("system/queues") systemQueues() { return this.admin.systemQueues(); }
+  @Get("system/errors") systemErrors(@Query("hours") hours?: string) { return this.admin.systemErrors(hours ? Number(hours) : 24); }
+  @Get("system/logs") systemLogs(@Query("take") take?: string, @Query("q") q?: string, @Query("organizationId") organizationId?: string) {
+    return this.admin.systemLogs(take ? Number(take) : 100, q, organizationId);
+  }
+  @Get("system/db-growth") systemDbGrowth() { return this.admin.systemDbGrowth(); }
+  @Get("system/backup") systemBackup() { return this.admin.getBackupPanel(); }
+  @Post("system/backup-verify") @AdminTier("SUPER", "SUPPORT")
+  backupVerify(@Req() req: any) { return this.admin.verifyBackupManifest(req.adminUser, req.ip); }
+  @Patch("system/backup-info") @AdminTier("SUPER")
+  backupInfo(@Req() req: any, @Body() dto: BackupInfoDto) { return this.admin.setBackupInfo(req.adminUser, dto, req.ip); }
 
   // ---- Phase C: SaaS billing ----
   @Patch("orgs/:id/subscription") @AdminTier("SUPER", "FINANCE")

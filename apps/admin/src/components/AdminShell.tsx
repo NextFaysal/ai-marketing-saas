@@ -27,6 +27,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
       { label: "Settings & Config", icon: "⚙️", href: "/settings" },
       { label: "Platform Health", icon: "💚", href: "/health" },
       { label: "Proactive Alerts", icon: "🚨", href: "/alerts" },
+      { label: "System & Reliability", icon: "🖥", href: "/system" },
       { label: "Usage & Cost", icon: "📈", href: "/usage" },
       { label: "Security", icon: "🔐", href: "/security" },
     ],
