@@ -10,12 +10,14 @@ import { CampaignsService } from "../campaigns/campaigns.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { AudiencesService } from "../audiences/audiences.service";
 import { refreshPlatformConfig } from "../common/platform-config";
+import { orgFlagEnabled } from "../common/feature-flags";
+import { platformSetting } from "../common/platform-settings";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "competitor_ads", "competitor_scan", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
-  "subscription_sweep", "dunning_reminders",
+  "subscription_sweep", "dunning_reminders", "audit_retention",
 ] as const;
 
 export const RULE_METRICS = [
@@ -142,7 +144,14 @@ export class AutomationService implements OnModuleInit {
         return result;
       }
       case "meta_status_sync": return this.campaigns.syncAllPublishedStatuses(orgId, actor);
-      case "dayparting": return this.campaigns.applyDayparting(orgId, actor);
+      case "dayparting": {
+        // Milestone 40: platform feature flag (dayparting).
+        if (!(await orgFlagEnabled(this.prisma as any, orgId, "dayparting"))) {
+          return { skipped: true, reason: "dayparting is disabled for this organization by the platform team" };
+        }
+        return this.campaigns.applyDayparting(orgId, actor);
+      }
+      case "audit_retention": return this.runAuditRetention();
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);
@@ -239,6 +248,29 @@ export class AutomationService implements OnModuleInit {
    * ONCE per past-due episode — the audit log is the record, so
    * re-runs are no-ops. Without a configured email provider the
    * job fails honestly instead of pretending to remind anyone. */
+  /**
+   * Milestone 40 (Phase A4): audit-log retention. Deletes audit
+   * rows older than the configured retention (platform setting
+   * auditRetentionDays, default 365, min 30) EXCEPT admin.*
+   * actions, which are kept indefinitely for operator
+   * accountability. Platform-wide — the job's org is ignored.
+   */
+  async runAuditRetention() {
+    const raw = await platformSetting(this.prisma as any, "auditRetentionDays").catch(() => null);
+    const days = Math.min(3650, Math.max(30, Number(raw ?? 365) || 365));
+    const cutoff = new Date(Date.now() - days * 86400000);
+    const old = await (this.prisma as any).auditLog?.findMany({
+      where: { createdAt: { lt: cutoff } }, take: 100000,
+    }).catch(() => []) ?? [];
+    const deletable = (old as any[]).filter((r) => !String(r.action ?? "").startsWith("admin."));
+    let deleted = 0;
+    for (const r of deletable) {
+      const res = await (this.prisma as any).auditLog.delete({ where: { id: r.id } }).catch(() => null);
+      if (res) deleted++;
+    }
+    return { retentionDays: days, cutoff: cutoff.toISOString(), candidates: (old as any[]).length, deleted, preservedAdminActions: (old as any[]).length - deletable.length };
+  }
+
   async sendDunningReminder(organizationId: string) {
     if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
     const sub = await (this.prisma as any).subscription.findFirst({

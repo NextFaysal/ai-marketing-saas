@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { graphGet, graphPost, metaTokenForAccount } from "../common/meta-graph";
+import { FLAG_DISABLED_MESSAGE, orgFlagEnabled } from "../common/feature-flags";
 
 @Injectable()
 export class CreativesService {
@@ -19,6 +20,10 @@ export class CreativesService {
    * upload is recorded as a failed asset with Meta's own error —
    * never presented as uploaded. */
   async upload(organizationId: string, actorId: string, adAccountId: string, dto: { kind: string; name: string; sourceUrl: string }) {
+    // Milestone 40: platform feature flag (creative_library).
+    if (!(await orgFlagEnabled(this.prisma as any, organizationId, "creative_library"))) {
+      throw new ForbiddenException(FLAG_DISABLED_MESSAGE("Creative Library"));
+    }
     if (!["image", "video"].includes(dto.kind)) throw new BadRequestException("kind must be image or video");
     if (!/^https:\/\//i.test(dto.sourceUrl)) throw new BadRequestException("sourceUrl must be an https URL Meta can fetch");
     const { account, token } = await metaTokenForAccount(this.prisma, organizationId, adAccountId).catch((e) => {

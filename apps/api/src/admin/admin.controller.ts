@@ -3,7 +3,7 @@ import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
-import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
 
@@ -24,6 +24,8 @@ class SettingsDto {
   @IsOptional() @IsString() supportContact?: string;
   @IsOptional() @IsObject() killSwitches?: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   @IsOptional() @IsObject() planPrices?: Record<string, number>;
+  @IsOptional() @IsObject() maintenanceWindow?: { startsAt: string; endsAt: string; message?: string; hardLockout?: boolean } | null;
+  @IsOptional() @IsInt() auditRetentionDays?: number;
 }
 class AnnouncementDto {
   @IsString() @MinLength(1) title!: string;
@@ -31,7 +33,7 @@ class AnnouncementDto {
   @IsOptional() @IsString() startsAt?: string;
   @IsOptional() @IsString() endsAt?: string;
 }
-class FlagDto { @IsString() @MinLength(1) key!: string; enabled!: boolean; }
+class FlagDto { @IsString() @MinLength(1) key!: string; @IsBoolean() enabled!: boolean; }
 class LimitsDto {
   @IsOptional() aiDailyLimitOverride?: number | null;
   @IsOptional() broadcastCapOverride?: number | null;
@@ -104,6 +106,17 @@ class RefundDto {
   @IsOptional() @IsBoolean() revokeAccess?: boolean;
 }
 class AiRatesDto { @IsObject() rates!: Record<string, number>; }
+class ApiKeyDto { @IsString() @MinLength(3) name!: string; }
+class IpAllowlistDto { @IsArray() entries!: string[]; }
+class BulkStatusDto {
+  @IsArray() organizationIds!: string[];
+  @IsIn(["ACTIVE", "SUSPENDED", "DELETED"]) status!: string;
+  @IsString() @MinLength(3) reason!: string;
+}
+class DeletePermanentDto {
+  @IsString() @MinLength(1) confirmName!: string;
+  @IsString() @MinLength(3) reason!: string;
+}
 class ViewAsDto {
   @IsOptional() @IsIn(["read", "write"]) mode?: string;
   @IsString() @MinLength(3) reason!: string;
@@ -287,6 +300,25 @@ export class AdminController {
   revokeMine(@Req() req: any, @Body() dto: ReasonDto) { return this.admin.revokeSessions(req.adminUser, req.adminUser.id, dto.reason, req.ip); }
   @Post("users/:id/revoke-sessions") @AdminTier("SUPER", "SUPPORT")
   revokeUserSessions(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) { return this.admin.revokeSessions(req.adminUser, id, dto.reason, req.ip); }
+
+  // ---- Milestone 40 (Phase A4): control & safety ----
+  @Get("security/api-keys") apiKeys() { return this.admin.listApiKeys(); }
+  @Post("security/api-keys") @AdminTier("SUPER")
+  createApiKey(@Req() req: any, @Body() dto: ApiKeyDto) { return this.admin.createApiKey(req.adminUser, dto.name, req.ip); }
+  @Post("security/api-keys/:id/revoke") @AdminTier("SUPER")
+  revokeApiKey(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) { return this.admin.revokeApiKey(req.adminUser, id, dto.reason, req.ip); }
+  @Get("security/ip-allowlist") ipAllowlist() { return this.admin.getIpAllowlist(); }
+  @Patch("security/ip-allowlist") @AdminTier("SUPER")
+  setIpAllowlist(@Req() req: any, @Body() dto: IpAllowlistDto) { return this.admin.setIpAllowlist(req.adminUser, dto.entries, req.ip); }
+  @Get("security/login-anomalies") loginAnomalies(@Query("hours") hours?: string) { return this.admin.loginAnomalies(hours ? Number(hours) : 24); }
+  @Post("orgs/bulk-status") @AdminTier("SUPER")
+  bulkStatus(@Req() req: any, @Body() dto: BulkStatusDto) { return this.admin.bulkOrgStatus(req.adminUser, dto.organizationIds, dto.status, dto.reason, req.ip); }
+  @Get("orgs/:id/export") @Header("Content-Disposition", "attachment; filename=org-export.json")
+  exportOrg(@Req() req: any, @Param("id") id: string) { return this.admin.exportOrgData(req.adminUser, id, req.ip); }
+  @Post("orgs/:id/delete-permanent") @AdminTier("SUPER")
+  deletePermanent(@Req() req: any, @Param("id") id: string, @Body() dto: DeletePermanentDto) {
+    return this.admin.deleteOrgPermanent(req.adminUser, id, dto.confirmName, dto.reason, req.ip);
+  }
 
   // ---- Phase C: SaaS billing ----
   @Patch("orgs/:id/subscription") @AdminTier("SUPER", "FINANCE")

@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { decryptJson } from "../integrations/crypto";
+import { orgFlagEnabled } from "../common/feature-flags";
 
 const TRIGGERS = ["placed", "cod_confirmed", "delivered"] as const;
 
@@ -79,6 +80,8 @@ export class OfflineConversionsService {
 
   private async handleTrigger(organizationId: string, orderId: string, trigger: string) {
     if (!organizationId || !orderId) return;
+    // Milestone 40: platform feature flag (offline_conversions).
+    if (!(await orgFlagEnabled(this.prisma as any, organizationId, "offline_conversions"))) return;
     for (const platform of ["google", "tiktok"] as const) {
       const setting = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } }).catch(() => null);
       if (!setting?.enabled || setting.trigger !== trigger) continue;

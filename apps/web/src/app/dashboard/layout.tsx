@@ -154,19 +154,33 @@ function ViewAsBanner() {
   );
 }
 
-interface PlatformStatus { maintenanceMode: boolean; signupOpen: boolean; supportContact: string; announcement: { title: string; body: string } | null }
+interface PlatformStatus {
+  maintenanceMode: boolean; signupOpen: boolean; supportContact: string;
+  announcement: { title: string; body: string } | null;
+  maintenanceWindow?: { startsAt: string; endsAt: string; message: string; hardLockout: boolean; active: boolean; upcoming: boolean } | null;
+}
 
 function PlatformBanner() {
   const [status, setStatus] = useState<PlatformStatus | null>(null);
   useEffect(() => {
     fetch(`${API_URL}/public/system-status`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setStatus(j); }).catch(() => undefined);
   }, []);
-  if (!status || (!status.maintenanceMode && !status.announcement)) return null;
+  if (!status || (!status.maintenanceMode && !status.announcement && !status.maintenanceWindow?.upcoming)) return null;
+  const w = status.maintenanceWindow;
   return (
     <div className="space-y-2 px-4 pt-4 sm:px-6 lg:px-8">
-      {status.maintenanceMode ? (
+      {w?.active ? (
+        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          🔧 <b>নির্ধারিত রক্ষণাবেক্ষণ চলছে</b> ({new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত)। {w.message || "কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।"}{w.hardLockout ? " এই সময়ে নতুন পরিবর্তন সংরক্ষণ করা যাবে না।" : ""}{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+        </div>
+      ) : status.maintenanceMode ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           🔧 <b>রক্ষণাবেক্ষণ চলছে:</b> প্ল্যাটফর্ম টিম একটি নির্ধারিত রক্ষণাবেক্ষণ চালাচ্ছে। কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+        </div>
+      ) : null}
+      {w?.upcoming ? (
+        <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          📅 <b>আসন্ন রক্ষণাবেক্ষণ:</b> {new Date(w.startsAt).toLocaleString("bn-BD")} থেকে {new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত। {w.message}
         </div>
       ) : null}
       {status.announcement ? (

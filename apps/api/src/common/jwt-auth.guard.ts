@@ -1,21 +1,56 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
+import { createHash } from "node:crypto";
 import { IS_PUBLIC_KEY } from "./decorators";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService, private readonly reflector: Reflector) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly reflector: Reflector,
+    // Milestone 40: admin API keys authenticate /admin/* without a
+    // browser session. Prisma is global; optional so unit tests
+    // that construct the guard with two args keep working.
+    @Optional() private readonly prisma?: PrismaService,
+  ) {}
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [ctx.getHandler(), ctx.getClass()]);
     if (isPublic) return true;
     const req = ctx.switchToHttp().getRequest();
     const header: string | undefined = req.headers?.authorization;
-    if (!header?.startsWith("Bearer ")) throw new UnauthorizedException("Missing bearer token");
+    if (!header?.startsWith("Bearer ")) {
+      // Admin API key path (Milestone 40): only for /admin routes.
+      const apiKey = req.headers?.["x-admin-api-key"];
+      const url = String(req.originalUrl ?? req.url ?? "");
+      if (apiKey && url.includes("/admin/") && this.prisma) {
+        const keyHash = createHash("sha256").update(String(apiKey)).digest("hex");
+        const row = await (this.prisma as any).adminApiKey?.findUnique({ where: { keyHash } }).catch(() => null);
+        if (row && !row.revokedAt) {
+          const creator = await (this.prisma as any).user.findUnique({ where: { id: row.createdById } }).catch(() => null);
+          if (creator) {
+            req.user = {
+              userId: creator.id, email: creator.email, isSuperAdmin: !!creator.isSuperAdmin,
+              tv: creator.tokenVersion ?? 0, viaApiKey: true, apiKeyId: row.id,
+            };
+            // Throttled last-used stamp.
+            if (!row.lastUsedAt || Date.now() - new Date(row.lastUsedAt).getTime() > 60000) {
+              void (this.prisma as any).adminApiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+            }
+            return true;
+          }
+        }
+      }
+      throw new UnauthorizedException("Missing or invalid Authorization header");
+    }
     try {
       const payload = await this.jwt.verifyAsync(header.slice(7));
       req.user = {
         userId: payload.sub, email: payload.email, isSuperAdmin: !!payload.isSuperAdmin,
+        // Token version must reach SuperAdminGuard — without it a
+        // revoked-then-relogged admin could never match again.
+        tv: payload.tv ?? 0,
         // Milestone 38: admin view-as sessions carry this claim;
         // TenantGuard enforces its org binding + read-only mode.
         viewAs: payload.viewAs ?? undefined,

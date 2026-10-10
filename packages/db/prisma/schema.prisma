@@ -1872,3 +1872,16 @@ model SupportTicketMessage {
 
   @@index([ticketId, createdAt])
 }
+
+model AdminApiKey {
+  id          String    @id @default(cuid())
+  name        String
+  keyPrefix   String // first chars, shown in the console
+  keyHash     String    @unique // SHA-256 of the full key; the key itself is never stored
+  createdById String
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([createdById])
+}

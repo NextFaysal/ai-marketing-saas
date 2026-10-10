@@ -222,6 +222,87 @@ export default function SettingsPage() {
         </div>
       </div>
       <PlatformConfigSection setMsg={setMsg} />
+      <MaintenanceAndSafety setMsg={setMsg} />
     </AdminShell>
+  );
+}
+
+interface MaintenanceWindow { startsAt: string; endsAt: string; message?: string; hardLockout?: boolean }
+
+function MaintenanceAndSafety({ setMsg }: { setMsg: (m: string) => void }) {
+  const [win, setWin] = React.useState<MaintenanceWindow | null>(null);
+  const [start, setStart] = React.useState("");
+  const [end, setEnd] = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [hard, setHard] = React.useState(false);
+  const [retention, setRetention] = React.useState(365);
+  const [entries, setEntries] = React.useState("");
+  const [envEntries, setEnvEntries] = React.useState<string[]>([]);
+
+  const load = React.useCallback(async () => {
+    const settings = await apiFetch<any>("/admin/settings").catch(() => null);
+    if (settings) {
+      setWin(settings.maintenanceWindow ?? null);
+      setRetention(settings.auditRetentionDays ?? 365);
+      if (settings.maintenanceWindow) {
+        setStart(String(settings.maintenanceWindow.startsAt).slice(0, 16));
+        setEnd(String(settings.maintenanceWindow.endsAt).slice(0, 16));
+        setMessage(settings.maintenanceWindow.message ?? "");
+        setHard(settings.maintenanceWindow.hardLockout === true);
+      }
+    }
+    const allow = await apiFetch<{ entries: string[]; envEntries: string[] }>("/admin/security/ip-allowlist").catch(() => null);
+    if (allow) { setEntries(allow.entries.join("\n")); setEnvEntries(allow.envEntries); }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const patch = async (patchBody: Record<string, unknown>, ok: string) => {
+    try { await apiFetch("/admin/settings", { method: "PATCH", body: JSON.stringify(patchBody) }); setMsg(ok); await load(); }
+    catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+  };
+
+  const active = win && new Date(win.startsAt).getTime() <= Date.now() && Date.now() <= new Date(win.endsAt).getTime();
+
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="acard space-y-3">
+        <div className="font-semibold">🛠 নির্ধারিত Maintenance Window {active ? <span className="abadge" style={{ background: "#fee2e2", color: "#991b1b" }}>এখন সক্রিয়</span> : null}</div>
+        <p className="text-xs text-slate-500">Window চলাকালে Tenant রা Banner দেখবে। Hard Lockout চালু থাকলে ওই সময়ে Tenant দের কোনো পরিবর্তন (POST/PUT/DELETE) সার্ভার থেকেই 503 দিয়ে ফিরিয়ে দেওয়া হবে — পড়া যাবে।</p>
+        <label className="block text-sm">শুরু <input type="datetime-local" className="ainput mt-1" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+        <label className="block text-sm">শেষ <input type="datetime-local" className="ainput mt-1" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+        <label className="block text-sm">বার্তা <input className="ainput mt-1" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="ডাটাবেস আপগ্রেড চলবে" /></label>
+        <label className="flex items-center justify-between text-sm">Hard Lockout (পরিবর্তন বন্ধ)
+          <input type="checkbox" checked={hard} onChange={(e) => setHard(e.target.checked)} /></label>
+        <div className="flex gap-2">
+          <button className="abtn" onClick={() => {
+            if (!start || !end) { setMsg("শুরু ও শেষ সময় দিন।"); return; }
+            patch({ maintenanceWindow: { startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(), message, hardLockout: hard } }, "Maintenance window সেভ হয়েছে।");
+          }}>Window সেভ করুন</button>
+          {win ? <button className="abtn-secondary" onClick={() => patch({ maintenanceWindow: null }, "Maintenance window মুছে ফেলা হয়েছে।")}>Window মুছুন</button> : null}
+        </div>
+        <div className="border-t border-slate-800 pt-3">
+          <div className="font-semibold">🗄 Audit Log Retention</div>
+          <p className="text-xs text-slate-500">Audit Retention Job এই মেয়াদের পুরনো Tenant Audit Row মুছবে — <b>Admin (admin.*) অ্যাকশন কখনোই মুছবে না</b>।</p>
+          <div className="mt-2 flex items-center gap-2 text-sm">
+            <input type="number" min={30} max={3650} className="ainput" style={{ width: 110 }} value={retention} onChange={(e) => setRetention(Number(e.target.value))} />
+            <span>দিন</span>
+            <button className="abtn-secondary" onClick={() => patch({ auditRetentionDays: retention }, "Retention সেভ হয়েছে।")}>সেভ করুন</button>
+          </div>
+        </div>
+      </div>
+      <div className="acard space-y-3">
+        <div className="font-semibold">🌐 Admin IP Allowlist (CIDR সমর্থিত)</div>
+        <p className="text-xs text-slate-500">প্রতি লাইনে একটি IP বা CIDR (যেমন 203.0.113.0/24)। খালি রাখলে কোনো নেটওয়ার্ক বাধা নেই। <b>সতর্কতা:</b> ভুল এন্ট্রি দিলে নিজেই Admin থেকে লকআউট হতে পারেন — সেক্ষেত্রে সার্ভারের env (ADMIN_IP_ALLOWLIST) বা CLI দিয়ে ঠিক করতে হবে। গার্ড ৩০ সেকেন্ড পর্যন্ত ক্যাশ করে।</p>
+        <textarea className="ainput" rows={5} value={entries} onChange={(e) => setEntries(e.target.value)} placeholder={"203.0.113.10\n198.51.100.0/24"} />
+        <button className="abtn" onClick={async () => {
+          try {
+            const list = entries.split("\n").map((x) => x.trim()).filter(Boolean);
+            await apiFetch("/admin/security/ip-allowlist", { method: "PATCH", body: JSON.stringify({ entries: list }) });
+            setMsg("IP Allowlist সেভ হয়েছে।"); await load();
+          } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+        }}>Allowlist সেভ করুন</button>
+        {envEntries.length ? <p className="text-xs text-slate-500">Env থেকে আসা এন্ট্রি (এখানে বদলানো যায় না): {envEntries.join(", ")}</p> : null}
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailProvider } from "../messaging/email.provider";
+import { orgFlagEnabled } from "../common/feature-flags";
 
 /**
  * Agency portfolio (Phase L): a cross-organization rollup for the
@@ -23,6 +24,10 @@ export class PortfolioService {
     for (const m of memberships as any[]) {
       const org = await (this.prisma as any).organization.findFirst({ where: { id: m.organizationId } });
       if (!org) continue;
+      // Milestone 40: platform feature flag (agency_portfolio;
+      // the legacy "portfolio" key disables it too).
+      if (!(await orgFlagEnabled(this.prisma as any, org.id, "agency_portfolio"))) continue;
+      if (!(await orgFlagEnabled(this.prisma as any, org.id, "portfolio"))) continue;
       const metrics = await (this.prisma as any).dailyAdMetric.findMany({
         where: { organizationId: org.id, date: { gte: monthStart } }, take: 20000,
       });

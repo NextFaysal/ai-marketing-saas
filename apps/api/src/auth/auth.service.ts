@@ -32,6 +32,13 @@ export class AuthService {
     const email = dto.email.toLowerCase().trim();
     const user = await (this.prisma as any).user.findUnique({ where: { email } });
     if (!user || user.status === "DELETED" || !compareSync(dto.password, user.passwordHash)) {
+      // Milestone 40: failed logins are audit-logged (email only,
+      // never the password) so the admin Security page can flag
+      // brute-force patterns. Same error either way — no oracle.
+      await this.audit.log({
+        userId: user?.id, action: "auth.login_failed", entityType: "User", entityId: user?.id,
+        metadata: { email }, ipAddress: ip,
+      }).catch(() => undefined);
       throw new UnauthorizedException("Invalid email or password");
     }
     if (user.status === "SUSPENDED") {

@@ -236,13 +236,14 @@ export class AdminService {
   }
 
   // ---------------- Platform settings, announcements, flags ----------------
-  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices"] as const;
+  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "maintenanceWindow", "auditRetentionDays"] as const;
 
   async getSettings() {
     const out: Record<string, unknown> = {
       maintenanceMode: false, signupOpen: true, supportContact: "",
       killSwitches: { aiDisabledOrgIds: [], broadcastsPaused: false },
       planPrices: await planPrices(this.prisma as any),
+      maintenanceWindow: null, auditRetentionDays: 365,
     };
     for (const key of AdminService.SETTING_KEYS) {
       const v = await platformSetting(this.prisma as any, key);
@@ -277,6 +278,24 @@ export class AdminService {
           }
         }
       }
+      if (key === "maintenanceWindow") {
+        if (value !== null) {
+          const w = value as any;
+          if (!w || typeof w !== "object" || !w.startsAt || !w.endsAt || Number.isNaN(Date.parse(w.startsAt)) || Number.isNaN(Date.parse(w.endsAt))) {
+            throw new BadRequestException("maintenanceWindow must be null or { startsAt, endsAt, message?, hardLockout? } with valid ISO dates");
+          }
+          if (new Date(w.endsAt).getTime() <= new Date(w.startsAt).getTime()) {
+            throw new BadRequestException("maintenanceWindow.endsAt must be after startsAt");
+          }
+          if (w.message !== undefined && typeof w.message !== "string") throw new BadRequestException("maintenanceWindow.message must be a string");
+          if (w.hardLockout !== undefined && typeof w.hardLockout !== "boolean") throw new BadRequestException("maintenanceWindow.hardLockout must be a boolean");
+        }
+      }
+      if (key === "auditRetentionDays") {
+        if (typeof value !== "number" || value < 30 || value > 3650) {
+          throw new BadRequestException("auditRetentionDays must be a number between 30 and 3650");
+        }
+      }
       await (this.prisma as any).systemSetting.upsert({
         where: { key }, create: { key, value: value as any, updatedById: actor.id }, update: { value: value as any, updatedById: actor.id },
       });
@@ -291,11 +310,18 @@ export class AdminService {
     const now = new Date();
     const announcements = await (this.prisma as any).announcement?.findMany?.({ where: { active: true }, orderBy: { createdAt: "desc" }, take: 10 }).catch(() => []) ?? [];
     const current = (announcements as any[]).find((a) => (!a.startsAt || new Date(a.startsAt) <= now) && (!a.endsAt || new Date(a.endsAt) >= now)) ?? null;
+    const w = (settings as any).maintenanceWindow as any;
+    const windowActive = !!w && new Date(w.startsAt) <= now && now <= new Date(w.endsAt);
+    const windowUpcoming = !!w && new Date(w.startsAt) > now;
     return {
-      maintenanceMode: settings.maintenanceMode === true,
+      maintenanceMode: settings.maintenanceMode === true || windowActive,
       signupOpen: settings.signupOpen !== false,
       supportContact: settings.supportContact ?? "",
       announcement: current ? { title: current.title, body: current.body } : null,
+      maintenanceWindow: w ? {
+        startsAt: w.startsAt, endsAt: w.endsAt, message: w.message ?? "",
+        hardLockout: w.hardLockout === true, active: windowActive, upcoming: windowUpcoming,
+      } : null,
     };
   }
 
@@ -1428,4 +1454,275 @@ export class AdminService {
     await this.logAdmin(actor, "alert_nudged", "Organization", organizationId, { kind, recipients, sent }, ip);
     return { organizationId, kind, sent, recipients };
   }
+
+  // ---------------- Milestone 40 (Phase A4): Control & Safety++ ----------------
+
+  /** Console-managed admin IP allowlist (env entries always apply too). */
+  async getIpAllowlist() {
+    const value = await platformSetting(this.prisma as any, "adminIpAllowlist");
+    const envEntries = (process.env.ADMIN_IP_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    return { entries: Array.isArray(value) ? value : [], envEntries };
+  }
+
+  async setIpAllowlist(actor: any, entriesRaw: unknown, ip?: string) {
+    if (!Array.isArray(entriesRaw)) throw new BadRequestException("entries must be an array of IPs or CIDR ranges");
+    const entries = entriesRaw.map((e) => String(e).trim()).filter(Boolean);
+    for (const entry of entries) {
+      const [base, bits] = entry.split("/");
+      const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(base) || /^[0-9a-fA-F:]+$/.test(base);
+      if (!isIp) throw new BadRequestException(`Invalid allowlist entry: ${entry}`);
+      if (bits !== undefined && (!/^\d+$/.test(bits) || Number(bits) > 32)) {
+        throw new BadRequestException(`Invalid CIDR range in entry: ${entry}`);
+      }
+    }
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "adminIpAllowlist" },
+      create: { key: "adminIpAllowlist", value: entries as any, updatedById: actor.id },
+      update: { value: entries as any, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "ip_allowlist_updated", "SystemSetting", "adminIpAllowlist", { entries }, ip);
+    return { entries };
+  }
+
+  // ---- Admin API keys (hashed at rest; raw key shown once) ----
+
+  async listApiKeys() {
+    const rows = await (this.prisma as any).adminApiKey.findMany({ orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []);
+    return (rows as any[]).map((r) => ({
+      id: r.id, name: r.name, keyPrefix: r.keyPrefix, createdById: r.createdById,
+      lastUsedAt: r.lastUsedAt, revokedAt: r.revokedAt, createdAt: r.createdAt,
+    }));
+  }
+
+  async createApiKey(actor: any, nameRaw: string, ip?: string) {
+    const name = String(nameRaw ?? "").trim();
+    if (name.length < 3) throw new BadRequestException("API key name is required (min 3 characters)");
+    const { randomBytes, createHash } = await import("node:crypto");
+    const raw = `qosa_${randomBytes(32).toString("hex")}`;
+    const keyHash = createHash("sha256").update(raw).digest("hex");
+    const row = await (this.prisma as any).adminApiKey.create({
+      data: { name, keyPrefix: raw.slice(0, 12), keyHash, createdById: actor.id },
+    });
+    await this.logAdmin(actor, "api_key_created", "AdminApiKey", row.id, { name }, ip);
+    return { id: row.id, name: row.name, keyPrefix: row.keyPrefix, key: raw, note: "This is the only time the full key is shown. Store it in a secrets manager." };
+  }
+
+  async revokeApiKey(actor: any, id: string, reasonRaw: string, ip?: string) {
+    const reason = this.requireReason(reasonRaw);
+    const row = await (this.prisma as any).adminApiKey.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("API key not found");
+    if (row.revokedAt) throw new BadRequestException("This API key is already revoked");
+    await (this.prisma as any).adminApiKey.update({ where: { id }, data: { revokedAt: new Date() } });
+    await this.logAdmin(actor, "api_key_revoked", "AdminApiKey", id, { name: row.name, reason }, ip);
+    return { id, revoked: true };
+  }
+
+  // ---- Bulk org status ----
+
+  async bulkOrgStatus(actor: any, organizationIds: string[], status: string, reason: string, ip?: string) {
+    if (!Array.isArray(organizationIds) || organizationIds.length === 0) throw new BadRequestException("organizationIds is required");
+    if (organizationIds.length > 50) throw new BadRequestException("Bulk actions are limited to 50 organizations at a time");
+    const results: { organizationId: string; ok: boolean; error?: string }[] = [];
+    for (const id of organizationIds) {
+      try {
+        await this.setOrgStatus(actor, id, status, reason, ip);
+        results.push({ organizationId: id, ok: true });
+      } catch (e) {
+        results.push({ organizationId: id, ok: false, error: e instanceof Error ? e.message : "failed" });
+      }
+    }
+    return { status, total: results.length, succeeded: results.filter((r) => r.ok).length, results };
+  }
+
+  // ---- Login anomalies (from auth.login_failed audit rows) ----
+
+  async loginAnomalies(hours = 24) {
+    const since = new Date(Date.now() - Math.min(168, Math.max(1, hours)) * 3600000);
+    const rows = await (this.prisma as any).auditLog.findMany({
+      where: { action: "auth.login_failed", createdAt: { gte: since } }, take: 5000,
+    }).catch(() => []);
+    const byEmail = new Map<string, { email: string; failures: number; lastAt: Date }>();
+    for (const r of rows as any[]) {
+      const email = String(r.metadata?.email ?? "unknown");
+      const cur = byEmail.get(email) ?? { email, failures: 0, lastAt: r.createdAt };
+      cur.failures++;
+      if (new Date(r.createdAt) > new Date(cur.lastAt)) cur.lastAt = r.createdAt;
+      byEmail.set(email, cur);
+    }
+    return [...byEmail.values()]
+      .filter((a) => a.failures >= 5)
+      .sort((a, b) => b.failures - a.failures)
+      .map((a) => ({ ...a, threshold: 5, note: "৫+ ব্যর্থ লগইন — অ্যাকাউন্টটি যাচাই করুন অথবা ব্যবহারকারীকে যোগাযোগ করুন" }));
+  }
+
+  // ---- Tenant data export & verified permanent deletion ----
+
+  /**
+   * Full data export for one org. Credential tables are NEVER
+   * included — integrations export as provider/status metadata
+   * only. Audited (admin.data_exported) with row counts.
+   */
+  async exportOrgData(actor: any, organizationId: string, ip?: string) {
+    const p = this.prisma as any;
+    const org = await p.organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const take = 5000;
+    const grab = (table: string, extra: Record<string, unknown> = {}) =>
+      p[table]?.findMany({ where: { organizationId, ...extra }, take }).catch(() => []) ?? Promise.resolve([]);
+    const [profile, memberships, products, orders, customers, leads, conversations, plans, integrations, subscription, payments, tickets] = await Promise.all([
+      p.businessProfile?.findUnique({ where: { organizationId } }).catch(() => null) ?? Promise.resolve(null),
+      grab("membership"),
+      grab("product"),
+      grab("order"),
+      grab("customer"),
+      grab("lead"),
+      grab("channelConversation"),
+      grab("campaignPlan"),
+      grab("integration"),
+      p.subscription?.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }).catch(() => null) ?? Promise.resolve(null),
+      grab("saasPayment"),
+      grab("supportTicket"),
+    ]);
+    const memberUsers = await p.user.findMany({
+      where: { id: { in: (memberships as any[]).map((m) => m.userId) } },
+      select: { id: true, email: true, name: true, status: true },
+    }).catch(() => []);
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: actor.email,
+      organization: { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() },
+      businessProfile: profile,
+      members: (memberships as any[]).map((m) => ({ ...m, user: (memberUsers as any[]).find((u) => u.id === m.userId) ?? null })),
+      products, orders, customers, leads, conversations, campaignPlans: plans,
+      integrations: (integrations as any[]).map((i) => ({ id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, lastSyncAt: i.lastSyncAt, createdAt: i.createdAt })),
+      subscription,
+      payments: (payments as any[]).map((pay) => ({ ...pay, amountMinor: BigInt(pay.amountMinor ?? 0).toString(), refundedMinor: BigInt(pay.refundedMinor ?? 0).toString() })),
+      supportTickets: tickets,
+    };
+    const counts = Object.fromEntries(Object.entries(bundle).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]));
+    await this.logAdmin(actor, "data_exported", "Organization", organizationId, { counts }, ip);
+    // Money columns are BigInt — the export must be plain JSON.
+    const jsonSafe = (v: any): any => {
+      if (typeof v === "bigint") return v.toString();
+      if (Array.isArray(v)) return v.map(jsonSafe);
+      if (v && typeof v === "object" && !(v instanceof Date)) {
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, jsonSafe(x)]));
+      }
+      return v;
+    };
+    return jsonSafe(bundle);
+  }
+
+  /**
+   * Permanent deletion with a certificate. The org must already
+   * be in DELETED status (soft state) and the caller must type
+   * the org's exact name. Children are deleted by parent ids
+   * first, then every org-keyed table, then membership/profile/
+   * org. Platform-level audit rows (organizationId null,
+   * including this certificate) survive; org-scoped audit rows
+   * are deleted with the org. Tables are attempted defensively
+   * and the certificate reports exactly what was deleted.
+   */
+  async deleteOrgPermanent(actor: any, organizationId: string, confirmName: string, reasonRaw: string, ip?: string) {
+    const reason = this.requireReason(reasonRaw);
+    const p = this.prisma as any;
+    const org = await p.organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (org.status !== "DELETED") {
+      throw new BadRequestException("Permanent deletion requires the organization to be in DELETED status first (soft-delete it, export its data, then delete permanently)");
+    }
+    if (String(confirmName ?? "") !== org.name) {
+      throw new BadRequestException("Confirmation failed: type the organization's exact name to delete it permanently");
+    }
+    const certificate: Record<string, number> = {};
+    const idsOf = async (table: string): Promise<string[]> => {
+      try {
+        const rows = await p[table]?.findMany({ where: { organizationId }, select: { id: true } });
+        return (rows ?? []).map((r: any) => r.id);
+      } catch { return []; }
+    };
+    const del = async (table: string, where: any) => {
+      try {
+        const res = await p[table]?.deleteMany({ where });
+        if (res && typeof res.count === "number" && res.count > 0) certificate[table] = (certificate[table] ?? 0) + res.count;
+      } catch { /* table/key absent in this schema version — skipped, not hidden: it simply has no rows here */ }
+    };
+    // Pass 1: children keyed by parent ids.
+    const [conversationIds, orderIds, integrationIds, leadIds, productIds, competitorIds, broadcastIds, workflowIds, aiConversationIds, ticketIds, planIds] = await Promise.all([
+      idsOf("channelConversation"), idsOf("order"), idsOf("integration"), idsOf("lead"), idsOf("product"),
+      idsOf("competitor"), idsOf("broadcast"), idsOf("workflow"), idsOf("aIConversation"), idsOf("supportTicket"), idsOf("campaignPlan"),
+    ]);
+    if (ticketIds.length) await del("supportTicketMessage", { ticketId: { in: ticketIds } });
+    if (conversationIds.length) {
+      await del("channelMessage", { conversationId: { in: conversationIds } });
+      await del("messageDraft", { conversationId: { in: conversationIds } });
+      await del("conversationNote", { conversationId: { in: conversationIds } });
+      await del("botSession", { conversationId: { in: conversationIds } });
+    }
+    if (orderIds.length) await del("orderItem", { orderId: { in: orderIds } });
+    if (integrationIds.length) {
+      await del("syncJob", { integrationId: { in: integrationIds } });
+      await del("webhookEvent", { integrationId: { in: integrationIds } });
+      await del("integrationCredential", { integrationId: { in: integrationIds } });
+    }
+    if (leadIds.length) await del("leadActivity", { leadId: { in: leadIds } });
+    if (productIds.length) {
+      await del("productVariant", { productId: { in: productIds } });
+      await del("productCost", { productId: { in: productIds } });
+    }
+    if (competitorIds.length) {
+      await del("competitorAd", { competitorId: { in: competitorIds } });
+      await del("competitorPriceObservation", { competitorId: { in: competitorIds } });
+    }
+    if (broadcastIds.length) await del("messageDelivery", { broadcastId: { in: broadcastIds } });
+    if (workflowIds.length) await del("workflowRun", { workflowId: { in: workflowIds } });
+    if (aiConversationIds.length) {
+      await del("aIMessage", { conversationId: { in: aiConversationIds } });
+      await del("aIAction", { conversationId: { in: aiConversationIds } });
+    }
+    if (planIds.length) {
+      // Ad sets hang off plans; ads hang off ad sets.
+      let adSetIds: string[] = [];
+      try {
+        const sets = await p.campaignAdSet?.findMany({ where: { planId: { in: planIds } }, select: { id: true } }).catch(() => null)
+          ?? await p.campaignAdSet?.findMany({ where: { campaignPlanId: { in: planIds } }, select: { id: true } }).catch(() => []);
+        adSetIds = (sets ?? []).map((r: any) => r.id);
+      } catch { /* none */ }
+      if (adSetIds.length) await del("campaignAd", { adSetId: { in: adSetIds } });
+      await del("campaignAdSet", { planId: { in: planIds } });
+      await del("campaignAdSet", { campaignPlanId: { in: planIds } });
+      await del("campaignPublishLog", { planId: { in: planIds } });
+      await del("campaignPublishLog", { campaignPlanId: { in: planIds } });
+    }
+    // Pass 2: every org-keyed table (models without an
+    // organizationId column throw inside Prisma and are skipped).
+    const directTables = [
+      "product", "productVariant", "productCost", "businessPolicy", "knowledgeDocument", "importJob",
+      "store", "integration", "customer", "order", "visitor", "trackingSession", "touchpoint",
+      "trackingEvent", "attributionCredit", "adAccount", "adCampaign", "dailyAdMetric", "dailyMetricAggregate",
+      "dailyAdBreakdown", "aIConversation", "aIReport", "aIRecommendation", "aIUsageRecord",
+      "channelConversation", "lead", "competitor", "competitorInsight", "campaignPlan",
+      "scheduledJob", "automationRule", "automationRun", "messageTemplate", "broadcast", "workflow",
+      "quickReply", "whatsAppTemplate", "inboxSetting", "botSession", "courierShipment",
+      "paymentVerification", "widgetSite", "liveChatSession", "agentPresence", "agentNotification",
+      "conversionApiSetting", "conversionEventLog", "creativeAsset", "audienceRecord", "savedAudience",
+      "catalogRecord", "platformPublication", "reportShare", "productSet", "offlineConversionSetting",
+      "offlineConversionLog", "adminNote", "orgFeatureFlag", "saasPayment", "memberInvitation",
+      "planCheckout", "couponRedemption", "supportTicket", "usageRecord", "subscription",
+    ];
+    for (const table of directTables) await del(table, { organizationId });
+    // Pass 3: org-scoped audit rows, membership, profile, the org.
+    await del("auditLog", { organizationId });
+    await del("membership", { organizationId });
+    try { await p.businessProfile?.deleteMany({ where: { organizationId } }); } catch { /* ignore */ }
+    await p.organization.delete({ where: { id: organizationId } });
+    certificate.organization = 1;
+    // The certificate lives in a PLATFORM audit row (no org) — it survives.
+    await this.audit.log({
+      userId: actor.id, action: "admin.org_deleted_permanently", entityType: "Organization", entityId: organizationId,
+      metadata: { organizationName: org.name, reason, certificate }, ipAddress: ip,
+    });
+    return { organizationId, organizationName: org.name, deleted: true, certificate };
+  }
+
 }

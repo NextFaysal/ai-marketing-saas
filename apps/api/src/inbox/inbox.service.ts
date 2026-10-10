@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 import { parseMetaWebhook } from "./webhook.parser";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
+import { orgFlagEnabled } from "../common/feature-flags";
 import { classifyIntent, parseCodReply, type Classification } from "./intent";
 import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
@@ -427,6 +428,9 @@ export class InboxService {
 
   /** Returns true when the bot consumed this message. */
   private async handleOrderBot(organizationId: string, conversation: any, text: string, classification: Classification): Promise<boolean> {
+    // Milestone 40: platform feature flag (order_bot) — when the
+    // admin has disabled it for this org the bot never engages.
+    if (!(await orgFlagEnabled(this.prisma as any, organizationId, "order_bot"))) return false;
     const prisma = this.prisma as any;
     let session = await prisma.botSession?.findFirst?.({ where: { conversationId: conversation.id, status: "active" } }).catch(() => null);
     if (session && Date.now() - new Date(session.updatedAt).getTime() > 30 * 60000) {

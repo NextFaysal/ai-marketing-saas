@@ -90,6 +90,73 @@ export default function SecurityPage() {
           <p className="text-xs text-slate-500">সব Admin হারিয়ে গেলে একমাত্র উদ্ধার পথ: সার্ভার Shell থেকে <code>node scripts/grant-admin.mjs &lt;email&gt;</code> — এটি TOTP রিসেট করে দেয় (Break-Glass) এবং Audit এ রেকর্ড থাকে।</p>
         </div>
       </div>
+      <ApiKeysAndAnomalies />
     </AdminShell>
+  );
+}
+
+interface ApiKeyRow { id: string; name: string; keyPrefix: string; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }
+interface Anomaly { email: string; failures: number; lastAt: string; note: string }
+
+function ApiKeysAndAnomalies() {
+  const [keys, setKeys] = React.useState<ApiKeyRow[]>([]);
+  const [anomalies, setAnomalies] = React.useState<Anomaly[]>([]);
+  const [name, setName] = React.useState("");
+  const [shownKey, setShownKey] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const load = React.useCallback(async () => {
+    setKeys(await apiFetch<ApiKeyRow[]>("/admin/security/api-keys").catch(() => []));
+    setAnomalies(await apiFetch<Anomaly[]>("/admin/security/login-anomalies").catch(() => []));
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="acard space-y-3">
+        <div className="font-semibold">🔑 Admin API Keys</div>
+        <p className="text-xs text-slate-500">Automation/Monitoring এর জন্য — Header <code>x-admin-api-key</code> দিয়ে /admin/* ডাকা যায়। Key শুধু তৈরির সময় একবারই দেখানো হয়; সার্ভারে থাকে শুধু Hash। Key এর ক্ষমতা = যিনি তৈরি করেছেন তাঁর বর্তমান Tier; অ্যাকাউন্ট Suspend হলে Key ও থেমে যাবে। TOTP গেট Key এর ক্ষেত্রে প্রযোজ্য নয়।</p>
+        {msg ? <p className="rounded-lg bg-indigo-500/10 p-2 text-sm text-indigo-200">{msg}</p> : null}
+        <div className="flex gap-2">
+          <input className="ainput" placeholder="Key এর নাম — যেমন: Uptime monitor" value={name} onChange={(e) => setName(e.target.value)} />
+          <button className="abtn" onClick={async () => {
+            if (name.trim().length < 3) { setMsg("নাম দিন (কমপক্ষে ৩ অক্ষর)।"); return; }
+            try {
+              const out = await apiFetch<{ key: string }>("/admin/security/api-keys", { method: "POST", body: JSON.stringify({ name }) });
+              setShownKey(out.key); setName(""); setMsg("Key তৈরি হয়েছে — নিচে থেকে এখনই কপি করে নিরাপদে রাখুন।"); await load();
+            } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+          }}>তৈরি করুন</button>
+        </div>
+        {shownKey ? <input className="ainput" readOnly value={shownKey} onFocus={(e) => e.target.select()} /> : null}
+        <ul className="space-y-2">
+          {keys.map((k) => (
+            <li key={k.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
+              <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}</span></span>
+              {k.revokedAt ? <span className="abadge-red">বাতিল</span> : (
+                <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
+                  const reason = window.prompt("Key বাতিলের কারণ (Audit এ থাকবে):");
+                  if (!reason || reason.trim().length < 3) return;
+                  await apiFetch(`/admin/security/api-keys/${k.id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
+                  setMsg("Key বাতিল হয়েছে।"); await load();
+                }}>বাতিল করুন</button>
+              )}
+            </li>
+          ))}
+          {keys.length === 0 ? <li className="text-sm text-slate-500">কোনো API Key নেই।</li> : null}
+        </ul>
+      </div>
+      <div className="acard space-y-3">
+        <div className="font-semibold">🕵 লগইন Anomaly (শেষ ২৪ ঘণ্টা, ৫+ ব্যর্থ চেষ্টা)</div>
+        {anomalies.length === 0 ? <p className="text-sm text-slate-500">কোনো Anomaly নেই — ভালো খবর।</p> : (
+          <ul className="space-y-2">
+            {anomalies.map((a) => (
+              <li key={a.email} className="rounded-lg bg-red-500/10 px-3 py-2 text-sm">
+                <b>{a.email}</b> — {a.failures} বার ব্যর্থ লগইন · সর্বশেষ {new Date(a.lastAt).toLocaleString("bn-BD")}
+                <span className="block text-xs text-slate-400">{a.note}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-slate-500">ব্যর্থ লগইন Audit Log এ রেকর্ড হয় (শুধু ইমেইল — পাসওয়ার্ড কখনোই নয়)।</p>
+      </div>
+    </div>
   );
 }

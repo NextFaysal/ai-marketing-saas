@@ -2,7 +2,7 @@
 import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonPrompt } from "@/components/AdminShell";
-import { apiFetch } from "@/lib/api";
+import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 
 interface OrgDetail {
   id: string; name: string; slug: string; status: string; country: string; currency: string; timezone: string; createdAt: string;
@@ -91,6 +91,38 @@ export default function OrgDetailPage() {
             {data.status !== "DELETED" ? <button className="abtn-danger" onClick={() => setStatus("DELETED", "Soft-Delete Organization")}>🗑 Soft-Delete</button> : null}
           </div>
           <p className="text-xs text-slate-500">Suspend করলে Tenant এর সব সদস্যের প্রবেশ বন্ধ থাকবে, কিন্তু কোনো ডেটা মুছবে না।</p>
+          <div className="border-t border-red-900/50 pt-3">
+            <div className="font-semibold text-red-300">☠ Danger Zone — Data Export ও স্থায়ী Deletion</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button className="abtn-secondary" onClick={async () => {
+                try {
+                  const res = await fetch(`${API_URL}/admin/orgs/${id}/export`, { headers: { Authorization: `Bearer ${getAdminToken()}` } });
+                  if (!res.ok) throw new Error("Export ব্যর্থ হয়েছে");
+                  const blob = await res.blob();
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `org-export-${data.slug}.json`;
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                  setMsg("Export ডাউনলোড হয়েছে (Audit এ রেকর্ড আছে)। Credential কখনোই Export এ থাকে না।");
+                } catch (e) { setMsg(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+              }}>⬇ সম্পূর্ণ Data Export (JSON)</button>
+              {data.status === "DELETED" ? (
+                <button className="abtn-danger" onClick={async () => {
+                  const typed = window.prompt(`স্থায়ীভাবে মুছতে Org এর নাম হুবহু লিখুন: "${data.name}" — এটি আর ফেরানো যাবে না। আগে Export নিয়ে রাখুন।`);
+                  if (typed !== data.name) { setMsg("নাম মেলেনি — স্থায়ী Deletion বাতিল।"); return; }
+                  const reason = window.prompt("স্থায়ী Deletion এর কারণ (Audit Certificate এ থাকবে):");
+                  if (!reason || reason.trim().length < 3) return;
+                  try {
+                    const out = await apiFetch<any>(`/admin/orgs/${id}/delete-permanent`, { method: "POST", body: JSON.stringify({ confirmName: typed, reason }) });
+                    setMsg(`স্থায়ীভাবে মোছা হয়েছে। Certificate: ${Object.entries(out.certificate).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+                    setTimeout(() => { window.location.href = "/orgs"; }, 3500);
+                  } catch (e) { setMsg(e instanceof Error ? e.message : "Deletion ব্যর্থ"); }
+                }}>☠ স্থায়ীভাবে মুছুন (শুধু SUPER)</button>
+              ) : null}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
+          </div>
         </div>
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">

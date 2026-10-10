@@ -1,5 +1,9 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+
+// Milestone 40: scheduled maintenance windows live in
+// SystemSetting; the guard caches the row briefly.
+let maintenanceCache: { at: number; window: any } = { at: 0, window: null };
 
 /**
  * Tenant isolation guard.
@@ -33,6 +37,29 @@ export class TenantGuard implements CanActivate {
     } catch (e) {
       if (e instanceof ForbiddenException) throw e;
       // organization lookup unavailable (older fakes) — do not block
+    }
+    // Milestone 40 (Admin Phase A4): a scheduled maintenance
+    // window with hardLockout refuses tenant WRITES while it is
+    // active (reads keep working so teams can see the banner and
+    // their data). Admin routes never pass through this guard.
+    try {
+      const method = (req.method ?? "GET").toUpperCase();
+      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+        if (Date.now() - maintenanceCache.at > 30000) {
+          const row = await (this.prisma as any).systemSetting?.findUnique({ where: { key: "maintenanceWindow" } });
+          maintenanceCache = { at: Date.now(), window: row?.value ?? null };
+        }
+        const w = maintenanceCache.window;
+        if (w?.hardLockout && w.startsAt && w.endsAt) {
+          const now = Date.now();
+          if (new Date(w.startsAt).getTime() <= now && now <= new Date(w.endsAt).getTime()) {
+            throw new ServiceUnavailableException(w.message || "রক্ষণাবেক্ষণ চলছে — সাময়িকভাবে পরিবর্তন বন্ধ আছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।");
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof ServiceUnavailableException) throw e;
+      // settings lookup unavailable — do not block
     }
     // Milestone 35 (Phase N1): a PAST_DUE organization is
     // read-only. Reads keep working (the team can see everything
