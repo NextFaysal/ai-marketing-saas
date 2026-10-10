@@ -6,10 +6,20 @@ this repo: `Dockerfile`, `docker-compose.dokploy.yml`,
 `.env.dokploy.example`. Estimated time: 20–40 minutes, most of it
 the first image build.
 
-> Honest status: these files are prepared and syntax-checked, but
-> they have NOT been build-tested (the development sandbox has no
-> Docker). The first Dokploy build log is the real test — if it
-> fails, send the log and the fix lands in the repo the same day.
+> Honest status: the development sandbox has no Docker, so the
+> image itself has not been run under Docker yet. The build
+> sequence HAS now been rehearsed locally with the exact file set
+> the Dockerfile copies — and that rehearsal caught two real
+> first-build failures, both fixed (see "Pre-flight fixes"
+> below): the lockfile had no `apps/admin` importer (frozen
+> install failed) and `tsconfig.base.json` was never copied into
+> the image (every package build failed). With the fixes,
+> `pnpm install --frozen-lockfile`, `pnpm db:generate` and the
+> full `pnpm -r build` all pass in the simulated context. The
+> Dockerfile also installs `openssl`/`ca-certificates` in both
+> stages, which Prisma requires on slim images. The first real
+> Dokploy build is still a test — if it fails, send the log and
+> the fix lands in the repo the same day.
 
 ## 0. Prerequisites
 - Dokploy installed on the server (its standard installer).
@@ -57,8 +67,11 @@ services running; `https://api.<domain>/health` returns
 `{"status":"ok",...}`; the app + admin login pages load.
 
 ## 5. First run (Dokploy → api service → Terminal)
-Run inside the **api** container:
+Run inside the **api** container. Dokploy's terminal opens at
+`/` — the project lives in `/app`, so `cd` first (otherwise pnpm
+answers `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`):
 ```bash
+cd /app
 # Optional: demo data (owner@demo.local / ChangeMe123!)
 pnpm db:seed
 

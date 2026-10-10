@@ -1,4 +1,21 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+// Browser calls go through the same-origin /backend proxy
+// (next.config rewrites it to the API service), so the app works
+// on any domain with no build-time configuration. Setting
+// NEXT_PUBLIC_API_URL at build time overrides this for exotic
+// split-origin deployments.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/backend";
+
+/**
+ * Absolute, publicly reachable API base for copy-paste surfaces
+ * (tracker snippet, webhook URLs). Without an explicit
+ * NEXT_PUBLIC_API_URL it is this app's own origin + /backend,
+ * which reaches the API on any standard deployment.
+ */
+export function publicApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") return `${window.location.origin}/backend`;
+  return "/backend";
+}
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;

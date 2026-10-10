@@ -1,6 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, publicApiBase } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
@@ -19,7 +19,6 @@ const MODELS = [
   { value: "LAST_NON_DIRECT", label: "Last Non-Direct" },
   { value: "LINEAR", label: "Linear" },
 ];
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export default function AttributionPage() {
   const [stores, setStores] = useState<Store[]>([]);
@@ -85,7 +84,7 @@ export default function AttributionPage() {
         {stores.length === 0 ? <p className="mt-2 text-sm text-slate-500">আগে Stores & Integrations থেকে একটি স্টোর যোগ করুন।</p> : stores.map((s) => (
           <div key={s.id} className="mt-3">
             <div className="text-sm font-medium">{s.name}</div>
-            <pre className="mt-1 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-green-300">{`<script async src="${webOrigin}/tracker.js" data-key="${s.trackingKey ?? "(key তৈরি হয়নি, স্টোরটি আবার তৈরি করুন)"}" data-api="${API_URL}"></script>`}</pre>
+            <pre className="mt-1 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-green-300">{`<script async src="${webOrigin}/tracker.js" data-key="${s.trackingKey ?? "(key তৈরি হয়নি, স্টোরটি আবার তৈরি করুন)"}" data-api="${publicApiBase()}"></script>`}</pre>
           </div>
         ))}
       </div>

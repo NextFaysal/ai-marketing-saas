@@ -1,6 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, publicApiBase } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 
@@ -126,8 +126,8 @@ export default function IntegrationsPage() {
                   শেষ Sync: {i.lastSyncAt ? new Date(i.lastSyncAt).toLocaleString() : "এখনো হয়নি"}
                   {i.lastError ? <span className="text-red-600"> · শেষ এরর: {i.lastError}</span> : null}
                 </div>
-                {i.provider === "woocommerce" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (WP Admin এ বসান): <code>{`{API_URL}/webhooks/woocommerce/${i.id}`}</code> · Topic: Order created/updated, Product created/updated</div> : null}
-                {i.provider === "shopify" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (Shopify Admin → Settings → Notifications → Webhooks): <code>{`{API_URL}/webhooks/shopify/${i.id}`}</code> · Format: JSON · Event: Order creation, Order update, Product creation, Product update</div> : null}
+                {i.provider === "woocommerce" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (WP Admin এ বসান): <code>{`${publicApiBase()}/webhooks/woocommerce/${i.id}`}</code> · Topic: Order created/updated, Product created/updated</div> : null}
+                {i.provider === "shopify" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (Shopify Admin → Settings → Notifications → Webhooks): <code>{`${publicApiBase()}/webhooks/shopify/${i.id}`}</code> · Format: JSON · Event: Order creation, Order update, Product creation, Product update</div> : null}
                 {(jobs[i.id] ?? []).map((j) => (
                   <div key={j.id} className="mt-1 text-xs text-slate-500">{j.kind}: {j.status} · fetched {j.fetched}, created {j.created}, updated {j.updated}{j.error ? ` · ${j.error}` : ""}</div>
                 ))}
