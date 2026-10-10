@@ -12,8 +12,11 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [signupClosed, setSignupClosed] = useState(false);
+  const [refCode, setRefCode] = useState("");
   React.useEffect(() => {
     fetch(`${API_URL}/public/system-status`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && j.signupOpen === false) setSignupClosed(true); }).catch(() => undefined);
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref) setRefCode(ref);
   }, []);
 
   async function onSubmit(e: React.FormEvent) {
@@ -23,7 +26,7 @@ export default function RegisterPage() {
     if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "তথ্য যাচাই করুন"); return; }
     setLoading(true);
     try {
-      const data = await apiFetch<{ accessToken: string }>("/auth/register", { method: "POST", body: JSON.stringify(parsed.data) });
+      const data = await apiFetch<{ accessToken: string }>("/auth/register", { method: "POST", body: JSON.stringify({ ...parsed.data, ...(refCode ? { referralCode: refCode } : {}) }) });
       localStorage.setItem("accessToken", data.accessToken);
       router.push("/onboarding");
     } catch (err) { setError(err instanceof Error ? err.message : "Registration failed"); }

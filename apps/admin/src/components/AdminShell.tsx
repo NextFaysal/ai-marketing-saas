@@ -28,6 +28,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
       { label: "Platform Health", icon: "💚", href: "/health" },
       { label: "Proactive Alerts", icon: "🚨", href: "/alerts" },
       { label: "System & Reliability", icon: "🖥", href: "/system" },
+      { label: "Growth Ops", icon: "📈", href: "/growth" },
       { label: "Usage & Cost", icon: "📈", href: "/usage" },
       { label: "Security", icon: "🔐", href: "/security" },
     ],

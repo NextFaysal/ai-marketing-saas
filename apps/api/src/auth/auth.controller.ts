@@ -24,6 +24,8 @@ export class AuthController {
   }
   @Get("me")
   me(@CurrentUser() user: AuthUser) { return this.auth.me(user.userId); }
+  @Get("referral")
+  referral(@CurrentUser() user: AuthUser) { return this.auth.myReferral(user.userId); }
   @Get("totp/status")
   totpStatus(@CurrentUser() user: AuthUser) { return this.auth.totpStatus(user.userId); }
   @Post("totp/enroll")

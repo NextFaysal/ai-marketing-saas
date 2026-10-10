@@ -168,6 +168,8 @@ export default function BillingPage() {
         </div>
       ) : null}
 
+      <ReferralCard taka={taka} />
+
       <div className="card p-5">
         <h2 className="mb-1 font-semibold">প্ল্যান কিনুন / বদলান</h2>
         <p className="mb-3 text-sm text-slate-500">অনলাইন পেমেন্টে প্ল্যান সঙ্গে সঙ্গে সক্রিয় হয় — যাচাইকৃত পেমেন্ট ছাড়া কখনোই নয়। অথবা অনুরোধ পাঠালে প্ল্যাটফর্ম টিম ম্যানুয়ালি পেমেন্ট নিশ্চিত করে বদলে দেয়।</p>
@@ -254,6 +256,52 @@ export default function BillingPage() {
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Milestone 41: referral program card (code, link, stats). */
+function ReferralCard({ taka }: { taka: (minor: string) => string }) {
+  const tk = (minor: number) => taka(String(minor));
+  const [ref, setRef] = useState<{
+    code: string; programEnabled: boolean; rewardMinor: number;
+    stats: { signups: number; rewarded: number; earnedMinor: number };
+    referrals: { id: string; status: string; referredEmail: string | null; createdAt: string; rewardMinor: number | null }[];
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    apiFetch<typeof ref>("/auth/referral").then(setRef).catch(() => setRef(null));
+  }, []);
+  if (!ref) return null;
+  const link = typeof window !== "undefined" ? `${window.location.origin}/register?ref=${ref.code}` : `/register?ref=${ref.code}`;
+  return (
+    <div className="card p-5">
+      <h2 className="font-semibold">🎁 রেফারেল প্রোগ্রাম</h2>
+      {ref.programEnabled ? (
+        <p className="mt-1 text-sm text-slate-500">
+          আপনার লিংক দিয়ে কেউ সাইন আপ করে প্রথম পেমেন্ট করলেই আপনি পাবেন <strong>{tk(ref.rewardMinor)}</strong> বিলিং ক্রেডিট।
+          এখন পর্যন্ত: {ref.stats.signups} জন সাইন আপ · {ref.stats.rewarded} জন পেমেন্ট করেছেন · অর্জিত ক্রেডিট {tk(ref.stats.earnedMinor)}।
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-slate-500">রেফারেল প্রোগ্রামটি আপাতত বন্ধ আছে — চালু হলে আপনার লিংক দিয়ে সাইন আপ করা বন্ধুর প্রথম পেমেন্টে আপনি ক্রেডিট পাবেন। আপনার লিংকটি এখনই সংরক্ষণ করে রাখতে পারেন।</p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <code className="flex-1 truncate rounded-lg bg-slate-100 px-3 py-2 text-sm">{link}</code>
+        <button
+          className="btn-secondary"
+          onClick={async () => { try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ } }}
+        >{copied ? "✅ কপি হয়েছে" : "কপি করুন"}</button>
+      </div>
+      {ref.referrals.length > 0 ? (
+        <ul className="mt-3 space-y-1 text-sm text-slate-600">
+          {ref.referrals.slice(0, 5).map((r) => (
+            <li key={r.id} className="flex justify-between gap-2 rounded-lg bg-slate-50 px-3 py-1.5">
+              <span>{r.referredEmail ?? "—"}</span>
+              <span>{r.status === "rewarded" ? `✅ পুরস্কার ${tk(r.rewardMinor ?? 0)}` : "⏳ অপেক্ষায়"}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

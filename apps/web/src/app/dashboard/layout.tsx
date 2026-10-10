@@ -163,7 +163,8 @@ interface PlatformStatus {
 function PlatformBanner() {
   const [status, setStatus] = useState<PlatformStatus | null>(null);
   useEffect(() => {
-    fetch(`${API_URL}/public/system-status`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setStatus(j); }).catch(() => undefined);
+    const oid = getOrganizationId();
+    fetch(`${API_URL}/public/system-status${oid ? `?organizationId=${encodeURIComponent(oid)}` : ""}`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setStatus(j); }).catch(() => undefined);
   }, []);
   if (!status || (!status.maintenanceMode && !status.announcement && !status.maintenanceWindow?.upcoming)) return null;
   const w = status.maintenanceWindow;

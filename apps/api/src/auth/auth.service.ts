@@ -25,7 +25,57 @@ export class AuthService {
       data: { email, name: dto.name.trim(), passwordHash: hashSync(dto.password, 10) },
     });
     await this.audit.log({ userId: user.id, action: "auth.register", entityType: "User", entityId: user.id, ipAddress: ip });
+    // Milestone 41: record the referral when the signup carried a
+    // valid code. A bad/unknown code never blocks registration.
+    if (dto.referralCode) {
+      try {
+        const referrer = await (this.prisma as any).user.findUnique({ where: { referralCode: dto.referralCode.trim().toUpperCase() } });
+        if (referrer && referrer.id !== user.id) {
+          await (this.prisma as any).referral.create({
+            data: { referrerUserId: referrer.id, referredUserId: user.id, code: dto.referralCode.trim().toUpperCase() },
+          });
+        }
+      } catch { /* duplicate or unavailable — signup stands */ }
+    }
     return this.issueToken(user);
+  }
+
+  /** Milestone 41: the caller's referral code, link and stats. */
+  async myReferral(userId: string) {
+    const { ensureReferralCode } = await import("../common/referral");
+    const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    const code = await ensureReferralCode(this.prisma as any, user);
+    const rows = await (this.prisma as any).referral?.findMany({
+      where: { referrerUserId: userId }, orderBy: { createdAt: "desc" }, take: 50,
+    }).catch(() => []) ?? [];
+    const referredUsers = await (this.prisma as any).user.findMany({
+      where: { id: { in: (rows as any[]).map((r) => r.referredUserId) } },
+    }).catch(() => []);
+    const byId = new Map((referredUsers as any[]).map((u) => [u.id, u]));
+    let earned = 0;
+    const referrals = (rows as any[]).map((r) => {
+      if (r.status === "rewarded") earned += Number(r.rewardMinor ?? 0);
+      const u = byId.get(r.referredUserId);
+      return {
+        id: r.id, status: r.status, createdAt: r.createdAt, rewardedAt: r.rewardedAt,
+        rewardMinor: r.rewardMinor != null ? Number(r.rewardMinor) : null,
+        referredName: u?.name ?? null, referredEmail: u?.email ?? null,
+      };
+    });
+    const { referralConfig } = await import("../common/referral");
+    const cfg = await referralConfig(this.prisma as any);
+    return {
+      code,
+      programEnabled: cfg.enabled,
+      rewardMinor: cfg.rewardMinor,
+      stats: {
+        signups: referrals.length,
+        rewarded: referrals.filter((r) => r.status === "rewarded").length,
+        earnedMinor: earned,
+      },
+      referrals,
+    };
   }
 
   async login(dto: LoginDto, ip?: string) {

@@ -3,7 +3,7 @@ import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
-import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
 
@@ -32,6 +32,23 @@ class AnnouncementDto {
   @IsString() @MinLength(1) body!: string;
   @IsOptional() @IsString() startsAt?: string;
   @IsOptional() @IsString() endsAt?: string;
+  @IsOptional() @IsString() audience?: string;
+}
+class CampaignDto {
+  @IsString() @MinLength(1) subject!: string;
+  @IsString() @MinLength(1) body!: string;
+  @IsString() @MinLength(1) audience!: string;
+  @IsOptional() organizationIds?: string[];
+}
+class ChangelogDto {
+  @IsOptional() @IsString() version?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() body?: string;
+  @IsOptional() @IsBoolean() published?: boolean;
+}
+class ReferralConfigDto {
+  @IsBoolean() enabled!: boolean;
+  @IsNumber() rewardMinor!: number;
 }
 class FlagDto { @IsString() @MinLength(1) key!: string; @IsBoolean() enabled!: boolean; }
 class LimitsDto {
@@ -235,6 +252,24 @@ export class AdminController {
   @Delete("announcements/:id") @AdminTier("SUPER")
   deleteAnnouncement(@Req() req: any, @Param("id") id: string) { return this.admin.deleteAnnouncement(req.adminUser, id, req.ip); }
 
+  // ---- Milestone 41 (Phase A5): campaigns, changelog, referrals, feedback ----
+  @Get("campaigns") campaigns() { return this.admin.listCampaigns(); }
+  @Post("campaigns") @AdminTier("SUPER")
+  sendCampaign(@Req() req: any, @Body() dto: CampaignDto) { return this.admin.sendCampaign(req.adminUser, dto, req.ip); }
+  @Get("changelog") changelogAdmin() { return this.admin.listChangelogAdmin(); }
+  @Post("changelog") @AdminTier("SUPER", "SUPPORT")
+  createChangelog(@Req() req: any, @Body() dto: ChangelogDto) {
+    return this.admin.createChangelog(req.adminUser, { version: dto.version, title: dto.title ?? "", body: dto.body ?? "", published: dto.published }, req.ip);
+  }
+  @Patch("changelog/:id") @AdminTier("SUPER", "SUPPORT")
+  updateChangelog(@Req() req: any, @Param("id") id: string, @Body() dto: ChangelogDto) { return this.admin.updateChangelog(req.adminUser, id, dto, req.ip); }
+  @Delete("changelog/:id") @AdminTier("SUPER")
+  deleteChangelog(@Req() req: any, @Param("id") id: string) { return this.admin.deleteChangelog(req.adminUser, id, req.ip); }
+  @Get("referrals") referrals() { return this.admin.referralsBoard(); }
+  @Patch("referrals/config") @AdminTier("SUPER")
+  referralConfig(@Req() req: any, @Body() dto: ReferralConfigDto) { return this.admin.updateReferralConfig(req.adminUser, dto, req.ip); }
+  @Get("feedback") feedback() { return this.admin.feedbackBoard(); }
+
   @Get("orgs/:id/flags") orgFlags(@Param("id") id: string) { return this.admin.getOrgFlags(id); }
   @Post("orgs/:id/flags") @AdminTier("SUPER", "SUPPORT")
   setOrgFlag(@Req() req: any, @Param("id") id: string, @Body() dto: FlagDto) { return this.admin.setOrgFlag(req.adminUser, id, dto.key, dto.enabled === true, req.ip); }
@@ -390,5 +425,7 @@ export class AdminController {
 @Controller("public")
 export class PublicStatusController {
   constructor(private readonly admin: AdminService) {}
-  @Public() @Get("system-status") status() { return this.admin.publicStatus(); }
+  @Public() @Get("system-status") status(@Query("organizationId") organizationId?: string) { return this.admin.publicStatus(organizationId); }
+  @Public() @Get("changelog") changelog() { return this.admin.publicChangelog(); }
+  @Public() @Get("pricing") pricing() { return this.admin.publicPricing(); }
 }

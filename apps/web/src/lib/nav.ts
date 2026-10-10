@@ -26,6 +26,7 @@ export const NAV_ITEMS = [
   { label: "Reports", href: "/dashboard/reports", ready: true },
   { label: "সাবস্ক্রিপশন ও বিলিং", href: "/dashboard/billing", ready: true },
   { label: "🎫 Support", href: "/dashboard/support", ready: true },
+  { label: "📣 আপডেটসমূহ", href: "/dashboard/changelog", ready: true },
   { label: "Team Settings", href: "/dashboard/team", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", ready: true },
 ] as const;

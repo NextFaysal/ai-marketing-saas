@@ -8,7 +8,11 @@ interface Settings {
   killSwitches: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   planPrices: Record<string, number>;
 }
-interface Announcement { id: string; title: string; body: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
+interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
+const AUDIENCES: { value: string; label: string }[] = [
+  { value: "all", label: "সবাই" }, { value: "trialing", label: "ট্রায়ালে থাকা" }, { value: "past_due", label: "পেমেন্ট বকেয়া (Past Due)" },
+  { value: "plan_FREE", label: "FREE প্ল্যান" }, { value: "plan_STARTER", label: "STARTER প্ল্যান" }, { value: "plan_GROWTH", label: "GROWTH প্ল্যান" }, { value: "plan_AGENCY", label: "AGENCY প্ল্যান" },
+];
 
 interface PlatformConfigView {
   llm: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
@@ -150,6 +154,7 @@ export default function SettingsPage() {
   const [msg, setMsg] = React.useState("");
   const [title, setTitle] = React.useState("");
   const [body, setBody] = React.useState("");
+  const [audience, setAudience] = React.useState("all");
   const [aiOrgIds, setAiOrgIds] = React.useState("");
   const load = React.useCallback(async () => {
     const settings = await apiFetch<Settings>("/admin/settings").catch(() => null);
@@ -199,18 +204,23 @@ export default function SettingsPage() {
             <button className="abtn-secondary" onClick={() => save({ killSwitches: { broadcastsPaused: s.killSwitches.broadcastsPaused, aiDisabledOrgIds: aiOrgIds.split(",").map((x) => x.trim()).filter(Boolean) } }, "AI kill switch সেভ হয়েছে।")}>সেভ করুন</button>
           </div>
           <div className="acard space-y-3">
-            <div className="font-semibold">📣 Announcement (সব Tenant Dashboard এ দেখাবে)</div>
+            <div className="font-semibold">📣 Announcement (Targeted — M41)</div>
             <input className="ainput" placeholder="শিরোনাম" value={title} onChange={(e) => setTitle(e.target.value)} />
             <textarea className="ainput" rows={2} placeholder="বার্তা" value={body} onChange={(e) => setBody(e.target.value)} />
+            <label className="block text-sm">কারা দেখবে
+              <select className="ainput mt-1" value={audience} onChange={(e) => setAudience(e.target.value)}>
+                {AUDIENCES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+              </select></label>
+            <p className="text-xs text-slate-500">Targeted Announcement মিলে যাওয়া Org দের কাছেই যাবে এবং সাধারণ ঘোষণার চেয়ে অগ্রাধিকার পাবে।</p>
             <button className="abtn" onClick={async () => {
               if (!title.trim() || !body.trim()) return;
-              await apiFetch("/admin/announcements", { method: "POST", body: JSON.stringify({ title, body }) });
+              await apiFetch("/admin/announcements", { method: "POST", body: JSON.stringify({ title, body, audience }) });
               setTitle(""); setBody(""); setMsg("Announcement প্রকাশ হয়েছে।"); await load();
             }}>প্রকাশ করুন</button>
             <ul className="space-y-2">
               {anns.map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span></span>
+                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}</span></span>
                   <span className="flex shrink-0 gap-1">
                     <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) }); await load(); }}>{a.active ? "বন্ধ" : "চালু"}</button>
                     <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}`, { method: "DELETE" }); await load(); }}>মুছুন</button>

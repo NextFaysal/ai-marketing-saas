@@ -8,6 +8,7 @@ import {
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
 import { PLAN_TIERS, planPrices } from "../common/platform-settings";
+import { maybeRewardReferral } from "../common/referral";
 
 /**
  * Milestone 36 + 39: subscription payments (SSLCommerz + bKash).
@@ -556,6 +557,10 @@ export class PaymentsService {
 
   private async activate(checkout: any, refId: string, detail?: Record<string, unknown>) {
     const now = new Date();
+    // Milestone 41: a referral reward fires on the org's FIRST payment.
+    const priorPayments = (await (this.prisma as any).saasPayment.count?.({
+      where: { organizationId: checkout.organizationId },
+    })?.catch?.(() => 1)) ?? 1;
     const creditApplied = BigInt(checkout.creditAppliedMinor ?? 0);
     const discount = BigInt(checkout.discountMinor ?? 0);
     const fullValue = BigInt(checkout.amountMinor ?? 0) + creditApplied + discount;
@@ -629,6 +634,10 @@ export class PaymentsService {
         couponCode: checkout.couponCode ?? null, tranId: checkout.tranId, periodEnd: newEnd.toISOString(),
       },
     });
+    if (priorPayments === 0) {
+      try { await maybeRewardReferral(this.prisma as any, this.audit, checkout.organizationId); }
+      catch { /* a referral reward must never break a confirmed payment */ }
+    }
     return { ok: true, activated: true, plan: checkout.plan, currentPeriodEnd: newEnd.toISOString() };
   }
 

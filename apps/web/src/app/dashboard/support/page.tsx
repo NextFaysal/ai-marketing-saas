@@ -67,6 +67,8 @@ export default function SupportPage() {
       </header>
       {error ? <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p> : null}
 
+      <FeedbackCard orgId={orgId} />
+
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -122,6 +124,45 @@ export default function SupportPage() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+/** Milestone 41: quick NPS feedback — goes straight to the platform team. */
+function FeedbackCard({ orgId }: { orgId: string | null }) {
+  const [score, setScore] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState("");
+  if (!orgId) return null;
+  if (done) {
+    return <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">🙏 ধন্যবাদ! আপনার মতামত প্ল্যাটফর্ম টিমের কাছে পৌঁছেছে।</div>;
+  }
+  return (
+    <div className="rounded-2xl border bg-white p-4">
+      <div className="text-sm font-semibold">💬 এক মিনিটে মতামত দিন</div>
+      <p className="mt-0.5 text-xs text-slate-500">বন্ধু বা পরিচিত কারো কাছে এই প্ল্যাটফর্মটি সুপারিশ করার সম্ভাবনা কতটা? (০ = একদমই না, ১০ = অবশ্যই)</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {Array.from({ length: 11 }, (_, i) => (
+          <button
+            key={i}
+            onClick={() => setScore(i)}
+            className={`h-9 w-9 rounded-lg border text-sm font-semibold ${score === i ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 bg-slate-50 hover:border-indigo-300"}`}
+          >{i}</button>
+        ))}
+      </div>
+      <textarea className="mt-2 w-full rounded-lg border p-2 text-sm" rows={2} placeholder="কী ভালো লাগলো / কী উন্নত করা দরকার? (ঐচ্ছিক)" value={comment} onChange={(e) => setComment(e.target.value)} />
+      {err ? <p className="mt-1 text-xs text-red-600">{err}</p> : null}
+      <button
+        className="btn-primary mt-2"
+        disabled={score === null}
+        onClick={async () => {
+          try {
+            await apiFetch(`/organizations/${orgId}/feedback`, { method: "POST", body: JSON.stringify({ score, comment: comment.trim() || undefined }) });
+            setDone(true);
+          } catch (e) { setErr(e instanceof Error ? e.message : "পাঠানো যায়নি"); }
+        }}
+      >মতামত পাঠান</button>
     </div>
   );
 }

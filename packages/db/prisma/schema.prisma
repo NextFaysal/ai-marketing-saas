@@ -44,6 +44,7 @@ enum SubscriptionStatus {
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
+  referralCode String?  @unique
   name         String
   passwordHash String
   isSuperAdmin Boolean      @default(false)
@@ -1743,6 +1744,7 @@ model Announcement {
   id        String    @id @default(cuid())
   title     String
   body      String
+  audience  String    @default("all")
   startsAt  DateTime?
   endsAt    DateTime?
   active    Boolean   @default(true)
@@ -1884,4 +1886,55 @@ model AdminApiKey {
   createdAt   DateTime  @default(now())
 
   @@index([createdById])
+}
+
+// Milestone 41 (Admin A5): growth ops — referrals, feedback, campaigns, changelog.
+
+model Referral {
+  id             String    @id @default(cuid())
+  referrerUserId String
+  referredUserId String    @unique
+  code           String
+  status         String    @default("pending") // pending | rewarded
+  rewardMinor    BigInt?
+  rewardedOrgId  String?
+  createdAt      DateTime  @default(now())
+  rewardedAt     DateTime?
+
+  @@index([referrerUserId])
+}
+
+model Feedback {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  score          Int
+  comment        String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+model PlatformCampaign {
+  id          String   @id @default(cuid())
+  subject     String
+  body        String
+  audience    String
+  recipients  Int
+  sent        Int
+  failed      Int
+  createdById String
+  createdAt   DateTime @default(now())
+}
+
+model ChangelogEntry {
+  id          String    @id @default(cuid())
+  version     String?
+  title       String
+  body        String
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }

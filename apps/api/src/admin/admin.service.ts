@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException,
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices } from "../common/platform-settings";
+import { referralConfig, maybeRewardReferral } from "../common/referral";
 import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
 import { EmailProvider } from "../messaging/email.provider";
@@ -305,11 +306,38 @@ export class AdminService {
     return this.getSettings();
   }
 
-  async publicStatus() {
+  /** Milestone 41: the valid announcement audiences. */
+  static readonly ANNOUNCEMENT_AUDIENCES = ["all", "trialing", "past_due", ...PLAN_TIERS.map((t) => `plan_${t}`)];
+
+  /** The audience tags an organization currently matches. */
+  private async orgAudienceTags(organizationId: string): Promise<string[]> {
+    const tags = ["all"];
+    const sub = await (this.prisma as any).subscription?.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (sub) {
+      tags.push(`plan_${sub.plan}`);
+      if (sub.status === "TRIALING") tags.push("trialing");
+      if (sub.status === "PAST_DUE") tags.push("past_due");
+    }
+    return tags;
+  }
+
+  async publicStatus(organizationId?: string) {
     const settings = await this.getSettings();
     const now = new Date();
     const announcements = await (this.prisma as any).announcement?.findMany?.({ where: { active: true }, orderBy: { createdAt: "desc" }, take: 10 }).catch(() => []) ?? [];
-    const current = (announcements as any[]).find((a) => (!a.startsAt || new Date(a.startsAt) <= now) && (!a.endsAt || new Date(a.endsAt) >= now)) ?? null;
+    const inWindow = (announcements as any[]).filter((a) => (!a.startsAt || new Date(a.startsAt) <= now) && (!a.endsAt || new Date(a.endsAt) >= now));
+    let current: any = null;
+    if (organizationId) {
+      const tags = await this.orgAudienceTags(organizationId);
+      // Targeted announcements win over the global one.
+      current = inWindow.find((a) => (a.audience ?? "all") !== "all" && tags.includes(a.audience ?? "all"))
+        ?? inWindow.find((a) => (a.audience ?? "all") === "all")
+        ?? null;
+    } else {
+      current = inWindow.find((a) => (a.audience ?? "all") === "all") ?? null;
+    }
     const w = (settings as any).maintenanceWindow as any;
     const windowActive = !!w && new Date(w.startsAt) <= now && now <= new Date(w.endsAt);
     const windowUpcoming = !!w && new Date(w.startsAt) > now;
@@ -328,10 +356,14 @@ export class AdminService {
   async listAnnouncements() {
     return (this.prisma as any).announcement.findMany({ orderBy: { createdAt: "desc" }, take: 50 });
   }
-  async createAnnouncement(actor: any, dto: { title: string; body: string; startsAt?: string; endsAt?: string }, ip?: string) {
+  async createAnnouncement(actor: any, dto: { title: string; body: string; startsAt?: string; endsAt?: string; audience?: string }, ip?: string) {
     if (!dto.title?.trim() || !dto.body?.trim()) throw new BadRequestException("Announcement title and body are required");
+    const audience = dto.audience ?? "all";
+    if (!AdminService.ANNOUNCEMENT_AUDIENCES.includes(audience)) {
+      throw new BadRequestException(`audience must be one of ${AdminService.ANNOUNCEMENT_AUDIENCES.join(", ")}`);
+    }
     const row = await (this.prisma as any).announcement.create({
-      data: { title: dto.title.trim(), body: dto.body.trim(), startsAt: dto.startsAt ? new Date(dto.startsAt) : null, endsAt: dto.endsAt ? new Date(dto.endsAt) : null, active: true, createdById: actor.id },
+      data: { title: dto.title.trim(), body: dto.body.trim(), audience, startsAt: dto.startsAt ? new Date(dto.startsAt) : null, endsAt: dto.endsAt ? new Date(dto.endsAt) : null, active: true, createdById: actor.id },
     });
     await this.logAdmin(actor, "announcement_created", "Announcement", row.id, { title: row.title }, ip);
     return row;
@@ -537,6 +569,7 @@ export class AdminService {
     let amount: bigint;
     try { amount = BigInt(dto.amountMinor); } catch { throw new BadRequestException("amountMinor must be an integer in minor units"); }
     if (amount <= 0n) throw new BadRequestException("Payment amount must be positive");
+    const priorPayments = (await (this.prisma as any).saasPayment.count?.({ where: { organizationId: dto.organizationId } })?.catch?.(() => 1)) ?? 1;
     const row = await (this.prisma as any).saasPayment.create({
       data: {
         organizationId: dto.organizationId, amountMinor: amount, currency: dto.currency ?? "BDT", method: dto.method,
@@ -545,6 +578,11 @@ export class AdminService {
       },
     });
     await this.logAdmin(actor, "payment_recorded", "SaasPayment", row.id, { organizationId: dto.organizationId, amountMinor: amount.toString(), method: dto.method, reference: dto.reference ?? null }, ip);
+    // Milestone 41: a manual payment is also a first payment for referrals.
+    if (priorPayments === 0) {
+      try { await maybeRewardReferral(this.prisma as any, this.audit, dto.organizationId); }
+      catch { /* rewards never block payment records */ }
+    }
     return { ...row, amountMinor: row.amountMinor.toString(), refundedMinor: BigInt(row.refundedMinor ?? 0).toString() };
   }
 
@@ -1931,5 +1969,212 @@ export class AdminService {
     });
     await this.logAdmin(actor, "backup_verified", "SystemSetting", "backupManifest", { totalRows }, ip);
     return manifest;
+  }
+
+  // ---------------- Milestone 41 (Phase A5): Growth Ops ----------------
+
+  /** Resolve campaign recipient emails for an audience. */
+  private async campaignRecipients(audience: string, organizationIds?: string[]): Promise<{ organizationId: string; email: string }[]> {
+    const p = this.prisma as any;
+    let orgIds: string[] = [];
+    if (organizationIds?.length) {
+      orgIds = organizationIds.slice(0, 200);
+    } else {
+      const orgs = await p.organization.findMany({ where: { status: "ACTIVE" }, take: 1000 }).catch(() => []);
+      if (audience === "all") {
+        orgIds = (orgs as any[]).map((o) => o.id);
+      } else {
+        for (const o of orgs as any[]) {
+          const tags = await this.orgAudienceTags(o.id);
+          if (tags.includes(audience)) orgIds.push(o.id);
+        }
+      }
+    }
+    const members = await p.membership.findMany({
+      where: { organizationId: { in: orgIds }, role: { in: ["OWNER", "ADMIN"] }, status: "ACTIVE" },
+      take: 5000,
+    }).catch(() => []);
+    const users = await p.user.findMany({ where: { id: { in: [...new Set((members as any[]).map((m) => m.userId))] } } }).catch(() => []);
+    const emailById = new Map((users as any[]).map((u) => [u.id, u.email]));
+    const seen = new Set<string>();
+    const out: { organizationId: string; email: string }[] = [];
+    for (const m of members as any[]) {
+      const email = emailById.get(m.userId);
+      if (email && !seen.has(email)) { seen.add(email); out.push({ organizationId: m.organizationId, email }); }
+    }
+    return out;
+  }
+
+  async listCampaigns() {
+    const rows = await (this.prisma as any).platformCampaign?.findMany({ orderBy: { createdAt: "desc" }, take: 30 }).catch(() => []) ?? [];
+    return rows;
+  }
+
+  /**
+   * Send a platform email campaign through the REAL EmailProvider.
+   * An unconfigured provider refuses the whole campaign up front;
+   * per-recipient outcomes are counted, never assumed.
+   */
+  async sendCampaign(actor: any, dto: { subject: string; body: string; audience: string; organizationIds?: string[] }, ip?: string) {
+    if (!dto.subject?.trim() || !dto.body?.trim()) throw new BadRequestException("Campaign subject and body are required");
+    if (dto.audience !== "all" && !AdminService.ANNOUNCEMENT_AUDIENCES.includes(dto.audience)) {
+      throw new BadRequestException(`audience must be "all" or one of ${AdminService.ANNOUNCEMENT_AUDIENCES.join(", ")}`);
+    }
+    const recipients = await this.campaignRecipients(dto.audience, dto.organizationIds);
+    if (recipients.length === 0) throw new BadRequestException("No recipients match this audience");
+    if (recipients.length > 500) {
+      throw new BadRequestException(`Audience resolves to ${recipients.length} recipients — over the 500 safety cap. Narrow the audience.`);
+    }
+    const email = new EmailProvider();
+    let sent = 0;
+    let failed = 0;
+    let configError: string | null = null;
+    for (const r of recipients) {
+      try {
+        await email.send({ to: r.email, subject: dto.subject.trim(), text: dto.body });
+        sent++;
+      } catch (e) {
+        failed++;
+        const message = e instanceof Error ? e.message : String(e);
+        if (/not configured/i.test(message)) { configError = message; break; }
+      }
+    }
+    if (configError && sent === 0) {
+      throw new BadRequestException(`Email is not configured — no campaign email was sent. (${configError})`);
+    }
+    const row = await (this.prisma as any).platformCampaign.create({
+      data: {
+        subject: dto.subject.trim(), body: dto.body, audience: dto.audience,
+        recipients: recipients.length, sent, failed, createdById: actor.id,
+      },
+    });
+    await this.logAdmin(actor, "campaign_sent", "PlatformCampaign", row.id, { audience: dto.audience, recipients: recipients.length, sent, failed }, ip);
+    return { ...row, note: configError ? `Sending stopped partway: ${configError}` : undefined };
+  }
+
+  // ---- Changelog ----
+
+  async listChangelogAdmin() {
+    return ((this.prisma as any).changelogEntry?.findMany({ orderBy: { createdAt: "desc" }, take: 100 }).catch(() => [])) ?? [];
+  }
+  async createChangelog(actor: any, dto: { version?: string; title: string; body: string; published?: boolean }, ip?: string) {
+    if (!dto.title?.trim() || !dto.body?.trim()) throw new BadRequestException("Changelog title and body are required");
+    const row = await (this.prisma as any).changelogEntry.create({
+      data: {
+        version: dto.version?.trim() || null, title: dto.title.trim(), body: dto.body,
+        published: dto.published === true, publishedAt: dto.published === true ? new Date() : null,
+      },
+    });
+    await this.logAdmin(actor, "changelog_created", "ChangelogEntry", row.id, { title: row.title, published: row.published }, ip);
+    return row;
+  }
+  async updateChangelog(actor: any, id: string, dto: { version?: string; title?: string; body?: string; published?: boolean }, ip?: string) {
+    const row = await (this.prisma as any).changelogEntry.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("Changelog entry not found");
+    const data: any = {};
+    if (dto.version !== undefined) data.version = dto.version.trim() || null;
+    if (dto.title !== undefined) data.title = dto.title.trim();
+    if (dto.body !== undefined) data.body = dto.body;
+    if (dto.published !== undefined) {
+      data.published = dto.published;
+      data.publishedAt = dto.published ? (row.publishedAt ?? new Date()) : null;
+    }
+    const updated = await (this.prisma as any).changelogEntry.update({ where: { id }, data });
+    await this.logAdmin(actor, "changelog_updated", "ChangelogEntry", id, { published: updated.published }, ip);
+    return updated;
+  }
+  async deleteChangelog(actor: any, id: string, ip?: string) {
+    const row = await (this.prisma as any).changelogEntry.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("Changelog entry not found");
+    await (this.prisma as any).changelogEntry.delete({ where: { id } });
+    await this.logAdmin(actor, "changelog_deleted", "ChangelogEntry", id, { title: row.title }, ip);
+    return { deleted: true };
+  }
+  async publicChangelog() {
+    const rows = await (this.prisma as any).changelogEntry?.findMany({ where: { published: true }, orderBy: { publishedAt: "desc" }, take: 30 }).catch(() => []) ?? [];
+    return (rows as any[]).map((r) => ({ id: r.id, version: r.version, title: r.title, body: r.body, publishedAt: r.publishedAt }));
+  }
+
+  // ---- Referrals board + config ----
+
+  async referralsBoard() {
+    const cfg = await referralConfig(this.prisma as any);
+    const rows = await (this.prisma as any).referral?.findMany({ orderBy: { createdAt: "desc" }, take: 200 }).catch(() => []) ?? [];
+    const userIds = [...new Set((rows as any[]).flatMap((r) => [r.referrerUserId, r.referredUserId]))];
+    const users = await (this.prisma as any).user.findMany({ where: { id: { in: userIds } } }).catch(() => []);
+    const byId = new Map((users as any[]).map((u) => [u.id, u]));
+    let paidOut = 0;
+    const recent = (rows as any[]).slice(0, 30).map((r) => {
+      if (r.status === "rewarded") paidOut += Number(r.rewardMinor ?? 0);
+      return {
+        id: r.id, code: r.code, status: r.status, createdAt: r.createdAt, rewardedAt: r.rewardedAt,
+        rewardMinor: r.rewardMinor != null ? Number(r.rewardMinor) : null,
+        referrerEmail: byId.get(r.referrerUserId)?.email ?? null,
+        referredEmail: byId.get(r.referredUserId)?.email ?? null,
+      };
+    });
+    const rewardedAll = (rows as any[]).filter((r) => r.status === "rewarded");
+    return {
+      config: cfg,
+      totals: {
+        signups: rows.length,
+        rewarded: rewardedAll.length,
+        paidOutMinor: rewardedAll.reduce((a, r) => a + Number(r.rewardMinor ?? 0), 0),
+      },
+      recent,
+    };
+  }
+
+  async updateReferralConfig(actor: any, dto: { enabled: boolean; rewardMinor: number }, ip?: string) {
+    const rewardMinor = Math.floor(Number(dto.rewardMinor));
+    if (!Number.isFinite(rewardMinor) || rewardMinor < 0 || rewardMinor > 100000000) {
+      throw new BadRequestException("rewardMinor must be between 0 and 100000000 (minor units)");
+    }
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "referralConfig" },
+      create: { key: "referralConfig", value: { enabled: dto.enabled === true, rewardMinor } as any, updatedById: actor.id },
+      update: { value: { enabled: dto.enabled === true, rewardMinor } as any, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "referral_config_updated", "SystemSetting", "referralConfig", { enabled: dto.enabled === true, rewardMinor }, ip);
+    return referralConfig(this.prisma as any);
+  }
+
+  // ---- Feedback / NPS board ----
+
+  async feedbackBoard(take = 50) {
+    const rows = await (this.prisma as any).feedback?.findMany({ orderBy: { createdAt: "desc" }, take: 500 }).catch(() => []) ?? [];
+    const all = rows as any[];
+    const promoters = all.filter((f) => f.score >= 9).length;
+    const passives = all.filter((f) => f.score >= 7 && f.score <= 8).length;
+    const detractors = all.filter((f) => f.score <= 6).length;
+    const nps = all.length ? Math.round(((promoters - detractors) / all.length) * 100) : null;
+    const average = all.length ? Math.round((all.reduce((a, f) => a + f.score, 0) / all.length) * 10) / 10 : null;
+    const orgs = await (this.prisma as any).organization.findMany({
+      where: { id: { in: [...new Set(all.map((f) => f.organizationId))] } },
+    }).catch(() => []);
+    const nameById = new Map((orgs as any[]).map((o) => [o.id, o.name]));
+    return {
+      summary: { count: all.length, average, promoters, passives, detractors, nps },
+      recent: all.slice(0, Math.min(200, take)).map((f) => ({
+        id: f.id, score: f.score, comment: f.comment, createdAt: f.createdAt,
+        organizationId: f.organizationId, organizationName: nameById.get(f.organizationId) ?? null,
+      })),
+    };
+  }
+
+  // ---- Public pricing (from the operator's own settings) ----
+
+  async publicPricing() {
+    const prices = await planPrices(this.prisma as any);
+    const trialDays = await platformSetting(this.prisma as any, "trialDays").catch(() => null);
+    return {
+      currency: "BDT",
+      trialDays: typeof trialDays === "number" ? trialDays : 14,
+      plans: PLAN_TIERS.map((tier) => ({
+        tier,
+        priceMinor: (prices as any)[tier] ?? 0,
+        limits: (DEFAULT_PLAN_LIMITS as any)[tier] ?? {},
+      })),
+    };
   }
 }
