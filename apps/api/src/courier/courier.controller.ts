@@ -47,6 +47,12 @@ export class CourierController {
   @Get("redx/stores")
   redxStores(@Param("organizationId") orgId: string) { return this.courier.redxStores(orgId); }
 
+  /** Sales & Data S5: per-provider performance over booked shipments. */
+  @Get("performance")
+  performance(@Param("organizationId") orgId: string, @Query("days") days?: string) {
+    return this.courier.performance(orgId, days);
+  }
+
   @Get("shipments")
   list(@Param("organizationId") orgId: string, @Query("orderId") orderId?: string) {
     return this.courier.listShipments(orgId, orderId);

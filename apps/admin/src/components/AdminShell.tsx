@@ -26,11 +26,13 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
     items: [
       { label: "Settings & Config", icon: "⚙️", href: "/settings" },
       { label: "Platform Health", icon: "💚", href: "/health" },
+      { label: "Social & Ads Ops", icon: "📣", href: "/social-ops" },
       { label: "Proactive Alerts", icon: "🚨", href: "/alerts" },
       { label: "System & Reliability", icon: "🖥", href: "/system" },
       { label: "Growth Ops", icon: "📈", href: "/growth" },
       { label: "Usage & Cost", icon: "📈", href: "/usage" },
       { label: "Security", icon: "🔐", href: "/security" },
+      { label: "Admins", icon: "🧑‍💼", href: "/admins" },
     ],
   },
 ];

@@ -67,9 +67,10 @@ export class OrganizationsService {
     }
     const user = await (this.prisma as any).user.findUnique({ where: { email: dto.email.toLowerCase().trim() } });
     if (!user) throw new BadRequestException("This person does not have an account yet. Ask them to register first.");
-    const { orgLimitOverrides, orgPlan, DEFAULT_PLAN_LIMITS } = await import("../common/platform-settings");
+    const { orgLimitOverrides, orgPlan, planLimits } = await import("../common/platform-settings");
     const overrides = await orgLimitOverrides(this.prisma as any, organizationId);
-    const seatLimit = overrides.seatLimit ?? DEFAULT_PLAN_LIMITS[await orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
+    const mergedLimits = await planLimits(this.prisma as any);
+    const seatLimit = overrides.seatLimit ?? mergedLimits[await orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
     if (seatLimit != null) {
       const activeMembers = await (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } });
       if (activeMembers >= seatLimit) {
@@ -99,7 +100,7 @@ export class OrganizationsService {
       aiDaily: Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200),
       broadcastCap: Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000),
     };
-    const [sub, prices, limits, payments, seatsUsed, aiCallsToday, broadcasts30d, yearlyPrices] = await Promise.all([
+    const [sub, prices, limits, payments, seatsUsed, aiCallsToday, broadcasts30d, yearlyPrices, mergedPlanLimits] = await Promise.all([
       (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }),
       ps.planPrices(this.prisma as any),
       ps.effectiveLimits(this.prisma as any, organizationId, baseline),
@@ -112,6 +113,7 @@ export class OrganizationsService {
         where: { organizationId, createdAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } },
       }),
       ps.planYearlyPrices(this.prisma as any),
+      ps.planLimits(this.prisma as any),
     ]);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
     const pc = await import("../common/platform-config");
@@ -163,7 +165,7 @@ export class OrganizationsService {
         priceMinor: String(prices[tier] ?? 0),
         yearlyPriceMinor: String(yearlyPrices[tier] ?? 0),
         currency: "BDT",
-        limits: ps.DEFAULT_PLAN_LIMITS[tier],
+        limits: mergedPlanLimits[tier],
       })),
       payments: (payments ?? []).map((p: any) => ({
         id: p.id,
@@ -230,7 +232,8 @@ export class OrganizationsService {
   private async seatGuard(organizationId: string, excludeInvitationId?: string) {
     const ps = await import("../common/platform-settings");
     const overrides = await ps.orgLimitOverrides(this.prisma as any, organizationId);
-    const seatLimit = overrides.seatLimit ?? ps.DEFAULT_PLAN_LIMITS[await ps.orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
+    const mergedLimits = await ps.planLimits(this.prisma as any);
+    const seatLimit = overrides.seatLimit ?? mergedLimits[await ps.orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
     if (seatLimit == null) return;
     const [members, pendingInvites] = await Promise.all([
       (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } }),
@@ -659,7 +662,8 @@ export class OrganizationsService {
   async seatUsage(organizationId: string) {
     const ps = await import("../common/platform-settings");
     const overrides = await ps.orgLimitOverrides(this.prisma as any, organizationId);
-    const limit = overrides.seatLimit ?? ps.DEFAULT_PLAN_LIMITS[await ps.orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
+    const mergedLimits = await ps.planLimits(this.prisma as any);
+    const limit = overrides.seatLimit ?? mergedLimits[await ps.orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
     const [activeMembers, suspendedMembers, pendingInvites] = await Promise.all([
       (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } }),
       (this.prisma as any).membership.count({ where: { organizationId, status: "SUSPENDED" } }),

@@ -35,6 +35,7 @@ export const PERMISSION_AREAS: PermissionAreaDef[] = [
   { key: "customers", labelBn: "গ্রাহক ও লিড", label: "Customers & leads", minRole: "SUPPORT_AGENT" as Role, noteBn: "গ্রাহক তালিকা, লিড বোর্ড, CRM" },
   { key: "courier", labelBn: "কুরিয়ার", label: "Courier", minRole: "SUPPORT_AGENT" as Role, noteBn: "কুরিয়ার বুকিং, শিপমেন্ট, চার্জ" },
   { key: "campaigns", labelBn: "ক্যাম্পেইন", label: "Campaigns", minRole: "MARKETING_MANAGER" as Role, noteBn: "বিজ্ঞাপন ক্যাম্পেইন তৈরি ও প্রকাশ, ব্রডকাস্ট" },
+  { key: "social", labelBn: "সোশ্যাল পোস্ট", label: "Social posts", minRole: "MARKETING_MANAGER" as Role, noteBn: "সোশ্যাল মিডিয়া পোস্ট তৈরি, শিডিউল ও প্রকাশ" },
   { key: "ads", labelBn: "বিজ্ঞাপন ব্যবস্থাপনা", label: "Ads management", minRole: "ADVERTISER" as Role, noteBn: "অডিয়েন্স, ক্রিয়েটিভ, ক্যাটালগ, রূপান্তর" },
   { key: "ai", labelBn: "AI সহকারী ও জ্ঞানভান্ডার", label: "AI assistant & knowledge", minRole: "MARKETING_MANAGER" as Role, noteBn: "AI চ্যাট, রিপোর্ট, ব্যবসার তথ্য" },
   { key: "analytics", labelBn: "অ্যানালিটিক্স", label: "Analytics", minRole: "ANALYST" as Role, noteBn: "বিক্রি/লাভের হিসাব, প্রতিযোগী, অ্যাট্রিবিউশন" },

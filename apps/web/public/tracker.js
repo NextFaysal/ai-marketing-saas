@@ -10,11 +10,15 @@
  *   window.TP.track("product_view", { productId: "123", name: "Shirt" })
  *   window.TP.purchase(orderId, "1250.00", "BDT")   // call on the thank-you page
  *   window.TP.lead({ source: "landing-form" })
+ *   window.TP.identify({ email: "a@b.com", phone: "+8801..." })  // only when the shopper provides it, e.g. at checkout
  * Elements with [data-tp-add-to-cart] automatically emit add_to_cart on click.
  * Elements with [data-tp-product] automatically emit product_view.
  *
  * Privacy: only a pseudonymous random visitor id is stored (cookie/localStorage).
- * No names, emails or payment data are collected by this script.
+ * No names or payment data are collected by this script. Contact details
+ * (email/phone) are stored ONLY when the store explicitly calls
+ * TP.identify(...) — e.g. when a shopper types them at checkout; they are
+ * never collected automatically.
  */
 (function () {
   "use strict";
@@ -129,7 +133,15 @@
         }
       } catch (e) { /* pixel is optional; never break the store */ }
     },
-    lead: function (properties) { track("lead", properties || {}); }
+    lead: function (properties) { track("lead", properties || {}); },
+    identify: function (contact) {
+      if (!contact) return;
+      var p = {};
+      if (contact.email) p.email = String(contact.email);
+      if (contact.phone) p.phone = String(contact.phone);
+      if (!p.email && !p.phone) return;
+      send("identify", { properties: p });
+    }
   };
 
   function onReady() {

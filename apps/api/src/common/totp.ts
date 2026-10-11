@@ -64,3 +64,16 @@ export function otpauthUrl(secretBase32: string, account: string, issuer = "Qosp
   const label = encodeURIComponent(`${issuer}:${account}`);
   return `otpauth://totp/${label}?secret=${secretBase32}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
+
+/**
+ * Admin Polish AP1: render an otpauth URL as a scannable
+ * QR PNG data URL. Rendering failure returns undefined —
+ * enrolment must never depend on it (manual secret entry
+ * is the fallback).
+ */
+export async function qrDataUrlFor(url: string): Promise<string | undefined> {
+  try {
+    const QRCode = (await import("qrcode")).default;
+    return await QRCode.toDataURL(url, { margin: 1, width: 240 });
+  } catch { return undefined; }
+}

@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { encryptJson, decryptJson } from "../crypto";
 import { IntegrationsService } from "../integrations.service";
+import { InventoryService } from "../../inventory/inventory.service";
 import { ShopifyClient, ShopifySecrets } from "./shopify.client";
 import { normalizeShopifyProduct, normalizeShopifyOrder, normalizeShopifyVariant } from "./normalize";
 
@@ -17,10 +18,13 @@ export function verifyShopifyHmac(rawBody: string, hmacHeader: string | undefine
 
 @Injectable()
 export class ShopifyService {
+  private readonly logger = new Logger(ShopifyService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly integrations: IntegrationsService,
+    @Optional() private readonly inventory?: InventoryService,
   ) {}
 
   async connect(organizationId: string, actorId: string, dto: { storeId: string; accessToken: string; apiSecret: string }) {
@@ -116,6 +120,10 @@ export class ShopifyService {
         ? await (this.prisma as any).productVariant.findFirst({ where: { productId: product.id, sku: v.sku } })
         : await (this.prisma as any).productVariant.findFirst({ where: { productId: product.id, name: v.name } });
       if (existing) {
+        // S1: ledger the stock jump before the overwrite.
+        try {
+          await this.inventory?.recordSyncedStock(organizationId, product.id, existing.id, existing.stockQuantity ?? null, v.stockQuantity ?? null);
+        } catch (e) { this.logger.warn(`inventory sync_correction (shopify variant) failed: ${e instanceof Error ? e.message : "unknown"}`); }
         await (this.prisma as any).productVariant.update({ where: { id: existing.id }, data: { priceMinor: v.priceMinor ?? null, stockQuantity: v.stockQuantity } });
       } else {
         await (this.prisma as any).productVariant.create({

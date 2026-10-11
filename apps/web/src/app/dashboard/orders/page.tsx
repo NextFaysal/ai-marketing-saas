@@ -8,7 +8,7 @@ import { EmptyState, KpiCard } from "@repo/ui";
 interface OrderItem { id: string; name: string; quantity: number; totalMinor: string }
 interface Order {
   id: string; externalNumber?: string | null; status: string; isCod: boolean;
-  paymentMethod?: string | null; totalMinor: string; placedAt?: string | null;
+  paymentMethod?: string | null; totalMinor: string; refundedMinor?: string; internalNote?: string | null; placedAt?: string | null;
   customer?: { firstName?: string | null; lastName?: string | null; phone?: string | null; email?: string | null } | null;
   items?: OrderItem[];
   risk?: { band: string; score: number | null } | null;
@@ -22,8 +22,33 @@ const RISK_LABEL: Record<string, { text: string; cls: string }> = {
 };
 interface Stats { totalOrders: number; codOrders: number; codSharePercent: number; deliveredRevenueMinor: string; byStatus: { status: string; count: number }[] }
 interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string }
+// Sales & Data S5: row shape from GET organizations/:id/courier/performance.
+interface ProviderPerformance { provider: string; booked: number; delivered: number; returned: number; cancelled: number; inFlight: number; decided: number; deliveryRate: number | null; returnRate: number | null; avgDeliveryHours: null }
+interface CourierPerformance { days: number; deliveryTimeAvailable: boolean; providers: ProviderPerformance[]; totals: ProviderPerformance }
+const PERF_PROVIDER_LABEL: Record<string, string> = { steadfast: "Steadfast", pathao: "Pathao", redx: "RedX", total: "মোট" };
 
 const STATUSES = ["", "pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed"];
+
+// Sales & Data S2: client-side mirror of the PATCH transition
+// table (apps/api OrdersService). The server stays the
+// authority — a 400 shows its Bengali message verbatim.
+// "returned" is a merchant-set, internal-only status.
+const PATCH_STATUSES = ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed", "returned"];
+const ORDER_TRANSITIONS: Record<string, string[]> = {
+  pending: PATCH_STATUSES, "on-hold": PATCH_STATUSES, processing: PATCH_STATUSES,
+  completed: ["refunded", "returned"],
+  cancelled: ["pending", "on-hold", "processing"],
+  failed: ["pending", "on-hold", "processing"],
+  refunded: [], returned: [],
+};
+function transitionAllowed(from: string, to: string): boolean {
+  if (from === to) return true;
+  const allowed = ORDER_TRANSITIONS[from];
+  // Stored status outside the vocabulary (legacy platform
+  // string): the server's escape hatch allows any target.
+  if (!allowed) return true;
+  return allowed.includes(to);
+}
 
 export default function OrdersPage() {
   const [items, setItems] = useState<Order[]>([]);
@@ -31,6 +56,7 @@ export default function OrdersPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [status, setStatus] = useState("");
   const [codOnly, setCodOnly] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [courier, setCourier] = useState<{ connected: boolean } | null>(null);
@@ -56,6 +82,56 @@ export default function OrdersPage() {
   const [quoteOut, setQuoteOut] = useState<any>(null);
   const [quoteBusy, setQuoteBusy] = useState(false);
   const [riskDetail, setRiskDetail] = useState<(RiskDetail & { orderLabel: string }) | null>(null);
+  // Sales & Data S2: order actions panel (status / refund / note).
+  const [actOrder, setActOrder] = useState<Order | null>(null);
+  const [actStatus, setActStatus] = useState("");
+  const [actRefundTaka, setActRefundTaka] = useState("");
+  const [actRefundReason, setActRefundReason] = useState("");
+  const [actNote, setActNote] = useState("");
+  const [actBusy, setActBusy] = useState("");
+  const [actNotice, setActNotice] = useState("");
+  // Sales & Data S5: courier performance panel.
+  const [perfDays, setPerfDays] = useState(30);
+  const [perf, setPerf] = useState<CourierPerformance | null>(null);
+
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<CourierPerformance>(`/organizations/${orgId}/courier/performance?days=${perfDays}`)
+      .then(setPerf).catch(() => setPerf(null));
+  }, [perfDays]);
+
+  function openActions(o: Order) {
+    if (actOrder?.id === o.id) { setActOrder(null); return; }
+    setActOrder(o); setActStatus(o.status); setActNote(o.internalNote ?? "");
+    setActRefundTaka(""); setActRefundReason(""); setActNotice("");
+  }
+
+  async function patchOrder(body: Record<string, unknown>, okMessage: string) {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    setActBusy("save"); setActNotice("");
+    try {
+      const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${actOrder.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      setActOrder(updated); setActStatus(updated.status); setActNote(updated.internalNote ?? "");
+      setActNotice(okMessage);
+      await load();
+    } catch (err) { setActNotice(err instanceof Error ? err.message : "সংরক্ষণ ব্যর্থ"); }
+    finally { setActBusy(""); }
+  }
+
+  async function saveStatus() { if (actOrder) await patchOrder({ status: actStatus }, "স্ট্যাটাস সংরক্ষণ হয়েছে।"); }
+
+  async function saveRefund() {
+    if (!actOrder) return;
+    const raw = actRefundTaka.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setActNotice("টাকার পরিমাণ ঠিকভাবে লিখুন — পয়সা ভগ্নাংশে দেওয়া যাবে না (সর্বোচ্চ ২ ঘর দশমিক)।"); return; }
+    const minor = BigInt(Math.round(Number(raw) * 100));
+    if (minor <= 0n) { setActNotice("Refund-এর পরিমাণ ০-এর বেশি হতে হবে।"); return; }
+    await patchOrder({ refund: { amountMinor: minor.toString(), reason: actRefundReason.trim() || undefined } }, "Refund রেকর্ড হয়েছে।");
+    setActRefundTaka(""); setActRefundReason("");
+  }
+
+  async function saveNote() { await patchOrder({ internalNote: actNote }, "নোট সংরক্ষণ হয়েছে।"); }
+  async function clearNote() { await patchOrder({ internalNote: null }, "নোট মুছে ফেলা হয়েছে।"); }
 
   async function showRisk(o: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -230,6 +306,27 @@ export default function OrdersPage() {
     } catch (err) { setCourierNotice(err instanceof Error ? err.message : "PDF ডাউনলোড ব্যর্থ"); }
   }
 
+  // Sales & Data S3: CSV export — binary download, so fetch the
+  // blob directly with the auth header (leads page pattern).
+  // Carries the page's current status / COD filters only.
+  async function downloadExport() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setExportBusy(true); setError("");
+    try {
+      const params = new URLSearchParams();
+      if (status) params.set("status", status);
+      if (codOnly) params.set("cod", "true");
+      const qs = params.toString();
+      const res = await fetch(`${API_URL}/organizations/${orgId}/orders/export${qs ? `?${qs}` : ""}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+      if (!res.ok) { const body: any = await res.json().catch(() => ({})); throw new Error(body?.message ?? `HTTP ${res.status}`); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "orders-export.csv"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) { setError(err instanceof Error ? err.message : "এক্সপোর্ট ব্যর্থ"); }
+    finally { setExportBusy(false); }
+  }
+
   function toggleSelect(orderId: string, on: boolean) {
     setSelected((prev) => {
       if (on) return prev.includes(orderId) || prev.length >= 50 ? prev : [...prev, orderId];
@@ -295,6 +392,7 @@ export default function OrdersPage() {
           {STATUSES.map((s) => <option key={s} value={s}>{s === "" ? "সব স্ট্যাটাস" : s}</option>)}
         </select>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={codOnly} onChange={(e) => setCodOnly(e.target.checked)} /> শুধু COD</label>
+        <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}</button>
       </div>
       <div className="card space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -365,6 +463,59 @@ export default function OrdersPage() {
             )}
           </div>
         </div>
+      </div>
+      <div className="card space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">🚚 কুরিয়ার পারফরম্যান্স</h2>
+          <label className="flex items-center gap-2 text-sm text-slate-500">সময়কাল
+            <select className="rounded-lg border bg-white px-2 py-1.5 text-sm" value={perfDays} onChange={(e) => setPerfDays(Number(e.target.value))}>
+              <option value={7}>শেষ ৭ দিন</option>
+              <option value={30}>শেষ ৩০ দিন</option>
+              <option value={90}>শেষ ৯০ দিন</option>
+            </select>
+          </label>
+        </div>
+        {!perf ? (
+          <p className="text-sm text-slate-400">পারফরম্যান্সের তথ্য পাওয়া যায়নি।</p>
+        ) : perf.providers.length === 0 ? (
+          <p className="text-sm text-slate-400">এই সময়ে কোনো shipment বুক হয়নি।</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-slate-500">
+                  <th className="py-2 pr-2 font-semibold">কুরিয়ার</th>
+                  <th className="py-2 pr-2 font-semibold">বুকিং</th>
+                  <th className="py-2 pr-2 font-semibold">ডেলিভার্ড</th>
+                  <th className="py-2 pr-2 font-semibold">রিটার্ন</th>
+                  <th className="py-2 pr-2 font-semibold">বাতিল</th>
+                  <th className="py-2 pr-2 font-semibold">পথে আছে</th>
+                  <th className="py-2 pr-2 font-semibold">ডেলিভারি হার</th>
+                  <th className="py-2 font-semibold">রিটার্ন হার</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...perf.providers, perf.totals].map((row) => {
+                  const isTotal = row.provider === "total";
+                  const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
+                  return (
+                    <tr key={row.provider} className={isTotal ? "border-t-2 bg-slate-50 font-semibold" : "border-b last:border-0"}>
+                      <td className="py-2 pr-2">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</td>
+                      <td className="py-2 pr-2">{row.booked}</td>
+                      <td className="py-2 pr-2">{row.delivered}</td>
+                      <td className="py-2 pr-2">{row.returned}</td>
+                      <td className="py-2 pr-2">{row.cancelled}</td>
+                      <td className="py-2 pr-2">{row.inFlight}</td>
+                      <td className="py-2 pr-2">{rate(row.deliveryRate)}</td>
+                      <td className="py-2">{rate(row.returnRate)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-[11px] text-slate-400">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {riskDetail ? (
@@ -440,6 +591,7 @@ export default function OrdersPage() {
                         {RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}{o.risk.score != null ? ` · ${o.risk.score}` : ""}
                       </button>
                     ) : null}
+                    <button className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => openActions(o)}>⚙️ অ্যাকশন</button>
                   </td>
                   <td className="px-4 py-3">{o.isCod ? <span className="font-semibold text-amber-600">COD</span> : (o.paymentMethod ?? "—")}</td>
                   <td className="px-4 py-3">{formatMinor(BigInt(o.totalMinor))}</td>
@@ -526,6 +678,49 @@ export default function OrdersPage() {
                       )) : null}
                     </div>
                     <button className="btn-primary" disabled={courierBusy !== "" || bookForm.address.trim().length < 8 || (bookForm.provider === "redx" && !bookForm.rAreaId)} onClick={() => bookShipment(order)}>{courierBusy === "book" ? "বুক হচ্ছে..." : `${bookForm.provider === "pathao" ? "Pathao" : bookForm.provider === "redx" ? "RedX" : "Steadfast"} এ বুক করুন${order.isCod ? ` (COD ${formatMinor(BigInt(order.totalMinor))})` : ""}`}</button>
+                  </div>
+                </td></tr>
+              ); })() : null}
+              {actOrder ? (() => { const o = actOrder; const refunded = BigInt(o.refundedMinor ?? "0"); const totalAmt = BigInt(o.totalMinor); return (
+                <tr className="border-t bg-slate-50"><td colSpan={9} className="px-4 py-3">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold">⚙️ অর্ডার অ্যাকশন — #{o.externalNumber ?? o.id.slice(0, 8)}</h3>
+                      <button className="btn-ghost btn-sm" onClick={() => setActOrder(null)}>বন্ধ করুন</button>
+                    </div>
+                    {actNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{actNotice}</p> : null}
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">স্ট্যাটাস</label>
+                        <select className="input" value={actStatus} onChange={(e) => setActStatus(e.target.value)}>
+                          {!PATCH_STATUSES.includes(o.status) ? <option value={o.status}>{o.status} (বর্তমান)</option> : null}
+                          {PATCH_STATUSES.map((s) => (
+                            <option key={s} value={s} disabled={!transitionAllowed(o.status, s)}>
+                              {s}{s === o.status ? " (বর্তমান)" : ""}{!transitionAllowed(o.status, s) ? " — যাওয়া যাবে না" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="btn-primary btn-sm" disabled={actBusy !== "" || actStatus === o.status} onClick={saveStatus}>স্ট্যাটাস সংরক্ষণ</button>
+                        <p className="text-xs text-slate-400">Cancelled/Failed হলে স্টক ফেরত যোগ হয়, Returned হলেও তাই; Completed হলে order.delivered ইভেন্ট যায়। যেসব স্ট্যাটাসে যাওয়া যাবে না সেগুলো নিষ্ক্রিয় — সার্ভারই চূড়ান্ত authority।</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Refund রেকর্ড (টাকায়)</label>
+                        <input className="input" placeholder="পরিমাণ (টাকা, যেমন 250 বা 250.50)" value={actRefundTaka} onChange={(e) => setActRefundTaka(e.target.value)} />
+                        <input className="input" placeholder="কারণ (ঐচ্ছিক)" value={actRefundReason} onChange={(e) => setActRefundReason(e.target.value)} />
+                        <button className="btn-primary btn-sm" disabled={actBusy !== "" || actRefundTaka.trim() === ""} onClick={saveRefund}>Refund রেকর্ড করুন</button>
+                        <p className="text-xs text-slate-500">মোট ফেরত: {formatMinor(refunded)} / {formatMinor(totalAmt)} · আরও ফেরতযোগ্য: {formatMinor(totalAmt - refunded)}</p>
+                        <p className="text-xs text-slate-400">Refund শুধু টাকার হিসাব রাখে — স্টক ফেরত চাইলে স্ট্যাটাস Cancelled/Returned করুন। পুরো টাকা ফেরত হলে খোলা অর্ডার নিজে থেকেই refunded হয়ে যায়।</p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">অভ্যন্তরীণ নোট (শুধু টিমের জন্য)</label>
+                        <textarea className="input" rows={3} maxLength={2000} placeholder="যেমন: কাস্টমার ফোনে ঠিকানা বদলেছেন…" value={actNote} onChange={(e) => setActNote(e.target.value)} />
+                        <div className="flex gap-2">
+                          <button className="btn-primary btn-sm" disabled={actBusy !== ""} onClick={saveNote}>নোট সংরক্ষণ</button>
+                          <button className="btn-ghost btn-sm text-red-600" disabled={actBusy !== ""} onClick={clearNote}>নোট মুছুন</button>
+                        </div>
+                        <p className="text-xs text-slate-400">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
+                      </div>
+                    </div>
                   </div>
                 </td></tr>
               ); })() : null}

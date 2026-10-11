@@ -6,7 +6,7 @@ import { AttributionService } from "../attribution/attribution.service";
 import { parseMoneyToMinor } from "@repo/contracts";
 
 const MAX_BATCH = 50;
-const ALLOWED_TYPES = ["page_view", "product_view", "add_to_cart", "checkout_started", "lead", "purchase", "refund", "custom"];
+const ALLOWED_TYPES = ["page_view", "product_view", "add_to_cart", "checkout_started", "lead", "purchase", "refund", "custom", "identify"];
 
 @Injectable()
 export class TrackingService {
@@ -46,6 +46,27 @@ export class TrackingService {
       visitor = await (this.prisma as any).visitor.create({ data: { organizationId, anonymousId: event.anonymousId } });
     } else {
       await (this.prisma as any).visitor.update({ where: { id: visitor.id }, data: { lastSeenAt: new Date() } });
+    }
+
+    // S4: an identify event is the ONLY way contact details reach a
+    // visitor — the store calls TP.identify(...) explicitly (e.g. when a
+    // shopper types their email/phone at checkout). Fields are validated
+    // strictly; invalid values are ignored, never stored. The identify
+    // event itself is still stored below like any other event.
+    if (event.type === "identify") {
+      const props: any = event.properties ?? {};
+      const contact: { email?: string; phone?: string } = {};
+      if (typeof props.email === "string") {
+        const email = props.email.trim().toLowerCase();
+        if (email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) contact.email = email;
+      }
+      if (typeof props.phone === "string") {
+        const phone = props.phone.trim();
+        if (phone.length >= 6 && phone.length <= 20 && /^[0-9+\-\s]+$/.test(phone)) contact.phone = phone;
+      }
+      if (contact.email !== undefined || contact.phone !== undefined) {
+        await (this.prisma as any).visitor.update({ where: { id: visitor.id }, data: contact });
+      }
     }
 
     // Session: created once, with its touchpoint. Later events in the same

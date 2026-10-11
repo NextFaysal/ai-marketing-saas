@@ -38,6 +38,19 @@ describe("definition -> graph -> definition identity", () => {
     expect(roundTrip(ALL_STEP_TYPES)).toEqual(ALL_STEP_TYPES);
   });
 
+  it("round-trips a branch step with both arms intact (W4)", () => {
+    const def: WorkflowDefinition = {
+      name: "শাখা",
+      trigger: "order_created",
+      steps: [{
+        type: "branch", field: "total", op: "gte", value: 1000,
+        then: [{ type: "add_tag", tag: "big", target: "lead" }],
+        else: [{ type: "notify_team", text: "ছোট অর্ডার", role: "OWNER" }],
+      }],
+    };
+    expect(roundTrip(def)).toEqual(def);
+  });
+
   it("round-trips a single-step workflow with no conditions", () => {
     const def: WorkflowDefinition = {
       name: "সহজ",

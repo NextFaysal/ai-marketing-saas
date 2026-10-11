@@ -39,7 +39,7 @@ export class MetaClient {
     return { id: String(me.id), name: me.name };
   }
 
-  async listAdAccounts(): Promise<{ externalId: string; name: string; currency: string; status: number }[]> {
+  async listAdAccounts(): Promise<{ externalId: string; name: string; currency: string; status: number; timezone: string | null }[]> {
     const out: any[] = [];
     let next: string | null = null;
     let first = true;
@@ -47,9 +47,48 @@ export class MetaClient {
       first = false;
       const page: any = next
         ? await this.getAbsolute(next)
-        : await this.get<any>("/me/adaccounts", { fields: "id,name,currency,account_status", limit: "100" });
+        : await this.get<any>("/me/adaccounts", { fields: "id,name,currency,account_status,timezone_name", limit: "100" });
       for (const a of page.data ?? []) {
-        out.push({ externalId: String(a.id), name: String(a.name ?? a.id), currency: a.currency ?? "BDT", status: Number(a.account_status ?? 1) });
+        out.push({ externalId: String(a.id), name: String(a.name ?? a.id), currency: a.currency ?? "BDT", status: Number(a.account_status ?? 1), timezone: a.timezone_name ? String(a.timezone_name) : null });
+      }
+      next = page.paging?.next ?? null;
+      if (next && !next.startsWith("https://graph.facebook.com/")) next = null; // never follow foreign URLs
+    }
+    return out;
+  }
+
+  /**
+   * SP1: list the Pages this token can act on, with each Page's
+   * linked Instagram business account. IMPORTANT: the per-page
+   * `access_token` in the /me/accounts response IS the Page access
+   * token (not the user token the client was constructed with) —
+   * posting to a Page requires the Page token, so callers seal THAT
+   * value as the credential at connect time.
+   */
+  async listPages(): Promise<{ pageId: string; name: string; pageAccessToken: string; pictureUrl: string | null; instagram: { externalId: string; username: string | null; pictureUrl: string | null } | null }[]> {
+    const out: { pageId: string; name: string; pageAccessToken: string; pictureUrl: string | null; instagram: { externalId: string; username: string | null; pictureUrl: string | null } | null }[] = [];
+    let next: string | null = null;
+    let first = true;
+    while (first || next) {
+      first = false;
+      const page: any = next
+        ? await this.getAbsolute(next)
+        : await this.get<any>("/me/accounts", { fields: "id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}", limit: "100" });
+      for (const p of page.data ?? []) {
+        const ig = p.instagram_business_account;
+        out.push({
+          pageId: String(p.id),
+          name: String(p.name ?? p.id),
+          pageAccessToken: String(p.access_token ?? ""),
+          pictureUrl: p.picture?.url ? String(p.picture.url) : null,
+          instagram: ig
+            ? {
+                externalId: String(ig.id),
+                username: ig.username ? String(ig.username) : null,
+                pictureUrl: ig.profile_picture_url ? String(ig.profile_picture_url) : null,
+              }
+            : null,
+        });
       }
       next = page.paging?.next ?? null;
       if (next && !next.startsWith("https://graph.facebook.com/")) next = null; // never follow foreign URLs

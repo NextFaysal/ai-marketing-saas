@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString } from "class-validator";
 
 export class CreateTemplateDto {
   @IsString() name!: string;
@@ -32,8 +32,19 @@ export class CreateWorkflowDto {
   @IsString() trigger!: string;
   @IsOptional() conditions?: unknown;
   @IsArray() steps!: any[];
+  // Workflows W6 governance (settable at create too).
+  @IsOptional() @IsInt() cooldownMinutes?: number;
+  @IsOptional() @IsInt() dailyRunCap?: number | null;
 }
 export class UpdateWorkflowDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsBoolean() enabled?: boolean;
+  // Workflows W1: the definition itself is editable now,
+  // validated exactly like create.
+  @IsOptional() @IsString() trigger?: string;
+  @IsOptional() conditions?: unknown;
+  @IsOptional() @IsArray() steps?: any[];
+  // Workflows W6 governance.
+  @IsOptional() @IsInt() cooldownMinutes?: number;
+  @IsOptional() @IsInt() dailyRunCap?: number | null;
 }

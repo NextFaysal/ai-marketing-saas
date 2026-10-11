@@ -4,6 +4,12 @@ import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
 import { useOverview, DailyBars } from "@/components/analytics-shared";
+import { ReportGoals } from "@/components/report-goals";
+
+// RP5: previous-period delta — null means the previous
+// period was zero, so no honest percentage exists.
+const deltaHint = (d: number | null | undefined, label: string) =>
+  d === null || d === undefined ? "" : ` · ${label} ${d > 0 ? "▲" : d < 0 ? "▼" : ""} ${Math.abs(d)}%`;
 
 function CreativeSection() {
   const [accounts, setAccounts] = React.useState<{ id: string; name: string; platform: string; integrationId?: string | null }[]>([]);
@@ -206,7 +212,7 @@ function AbSection() {
 
 function ShareLinksCard() {
   const [shares, setShares] = React.useState<{ id: string; token: string; title: string; days: number; expiresAt: string }[]>([]);
-  const [form, setForm] = React.useState({ title: "", days: 30, expiresInDays: 30 });
+  const [form, setForm] = React.useState({ title: "", days: 30, expiresInDays: 30, kind: "overview" });
   const [msg, setMsg] = React.useState("");
   const loadShares = React.useCallback(async () => {
     const { apiFetch } = await import("@/lib/api");
@@ -235,6 +241,10 @@ function ShareLinksCard() {
         </select>
         <select className="input w-36" value={form.expiresInDays} onChange={(e) => setForm({ ...form, expiresInDays: Number(e.target.value) })}>
           {[7, 30, 90].map((d) => <option key={d} value={d}>মেয়াদ {d} দিন</option>)}
+        </select>
+        <select className="input w-40" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+          <option value="overview">ধরন: Overview</option>
+          <option value="executive">ধরন: Executive Summary</option>
         </select>
         <button className="btn-primary">লিংক তৈরি</button>
       </form>
@@ -279,13 +289,14 @@ export default function AnalyticsPage() {
         </div>
       </div>
       <Link href="/dashboard/analytics/cohorts" className="card block p-4 font-semibold text-indigo-700 transition hover:bg-slate-50">📊 Cohort ও Churn বিশ্লেষণ →</Link>
+      <ReportGoals />
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {data?.mixedCurrencies ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">সতর্কতা: এই রেঞ্জে একাধিক মুদ্রার ডেটা আছে ({data.currencies.join(", ")})। মোট সংখ্যা মুদ্রা রূপান্তর ছাড়াই যোগ করা হয়েছে, তাই ব্যাখ্যায় সাবধান হোন।</p> : null}
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : data ? (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard label="Revenue" value={fmtMoney(data.totals.revenueMinor)} hint={`${data.totals.orders}টি অর্ডার · AOV ${fmtMoney(data.totals.averageOrderValueMinor)}`} />
-            <KpiCard label="Ad Spend" value={fmtMoney(data.totals.adSpendMinor)} hint={`${data.totals.impressions.toLocaleString()} impressions`} />
+            <KpiCard label="Revenue" value={fmtMoney(data.totals.revenueMinor)} hint={`${data.totals.orders}টি অর্ডার · AOV ${fmtMoney(data.totals.averageOrderValueMinor)}${deltaHint((data as any).comparison?.deltas?.revenue, "আগের সময়ের তুলনায়")}`} />
+            <KpiCard label="Ad Spend" value={fmtMoney(data.totals.adSpendMinor)} hint={`${data.totals.impressions.toLocaleString()} impressions${deltaHint((data as any).comparison?.deltas?.adSpend, "আগের সময়ের তুলনায়")}`} />
             <KpiCard label="MER (Revenue/Spend)" value={fmtRatio(data.kpis.mer)} hint="Blended, সব চ্যানেল মিলিয়ে" />
             <KpiCard label="Platform ROAS" value={fmtRatio(data.kpis.platformRoas)} hint="প্ল্যাটফর্মের নিজের Reported Value দিয়ে" />
             <KpiCard label="CTR" value={data.kpis.ctrPercent === null ? "—" : `${data.kpis.ctrPercent}%`} hint={`${data.totals.clicks.toLocaleString()} clicks`} />

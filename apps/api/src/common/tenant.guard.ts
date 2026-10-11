@@ -92,6 +92,20 @@ export class TenantGuard implements CanActivate {
       if (viewAs.orgId !== organizationId) {
         throw new ForbiddenException("This view-as session is limited to a single organization");
       }
+      // Admin Polish AP2: the token alone is no longer enough —
+      // its server-side session must exist and be live (not
+      // revoked, not expired). Tokens minted before AP2 carry
+      // no sessionId and are rejected here. A missing table
+      // (older unit fakes) throws synchronously — caught.
+      let session: any = null;
+      if (viewAs.sessionId) {
+        try {
+          session = await (this.prisma as any).viewAsSession.findUnique({ where: { id: viewAs.sessionId } });
+        } catch { session = null; }
+      }
+      if (!session || session.revokedAt || new Date(session.expiresAt).getTime() <= Date.now() || session.organizationId !== organizationId) {
+        throw new ForbiddenException("This view-as session has been revoked or has expired. The admin can start a new session.");
+      }
       const method = (req.method ?? "GET").toUpperCase();
       if (viewAs.mode !== "write" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
         throw new ForbiddenException("This is a read-only view-as session — changes are disabled. The admin can start a write session if a fix is needed.");

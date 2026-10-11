@@ -4,7 +4,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { RiskService } from "./risk.service";
-import type { CreateManualOrderDto } from "./orders.dto";
+import { EventsService } from "../common/events.service";
+import { InventoryService } from "../inventory/inventory.service";
+import { minorToMajor, toCsv } from "../imports/csv";
+import { dhakaDayStartUtc } from "../crm/lead-followups";
+import type { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
 
 function pubOrder(o: any) {
   return {
@@ -16,6 +20,24 @@ function pubOrder(o: any) {
   };
 }
 
+/**
+ * Sales & Data S2 transition table (see updateOrder + the
+ * acceptance doc). A stored status missing from this map is a
+ * legacy platform string outside the PATCH vocabulary — the
+ * escape hatch in updateOrder allows it to move anywhere in the
+ * vocabulary. Empty array = terminal (no different status).
+ */
+const ORDER_TRANSITIONS: Record<string, string[]> = {
+  pending: ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed", "returned"],
+  "on-hold": ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed", "returned"],
+  processing: ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed", "returned"],
+  completed: ["refunded", "returned"],
+  cancelled: ["pending", "on-hold", "processing"],
+  failed: ["pending", "on-hold", "processing"],
+  refunded: [],
+  returned: [],
+};
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -25,6 +47,13 @@ export class OrdersService {
     // upsert (dedupe + order.created + risk all inherit).
     @Optional() private readonly integrations?: IntegrationsService,
     @Optional() private readonly audit?: AuditService,
+    // Sales & Data S2: stock restore on cancel/return + domain
+    // events. REAL imports (M65 lesson: an inline import() type
+    // makes Nest inject undefined and events silently never
+    // fire). Both @Optional so positional test construction and
+    // partial deployments keep working.
+    @Optional() private readonly inventory?: InventoryService,
+    @Optional() private readonly events?: EventsService,
   ) {}
 
   /**
@@ -89,6 +118,154 @@ export class OrdersService {
     return { ...pubOrder(order), upsertResult: result };
   }
 
+  // ---------- Sales & Data S2: order actions (PATCH) ----------
+
+  /**
+   * Merchant order actions: status change, refund recording and
+   * the internal note — one PATCH, each action independent.
+   *
+   * Transition table (from → allowed to; same→same is a no-op
+   * success that skips status side effects):
+   *   pending | on-hold | processing → any vocabulary status
+   *   completed                      → refunded, returned
+   *   cancelled | failed             → pending, on-hold, processing (revival)
+   *   refunded                       → (none — terminal)
+   *   returned                       → (none — terminal; goods are back)
+   * Escape hatch: a stored status OUTSIDE the vocabulary (legacy
+   * platform strings like Woo "checkout-draft") may move to any
+   * vocabulary status — we cannot judge a lifecycle we don't own.
+   *
+   * Refund records MONEY ONLY: it never restores stock by
+   * itself. Full refund (cumulative == total) with no explicit
+   * status auto-moves the order to "refunded" — except from
+   * completed/cancelled/refunded/returned, which keep their
+   * status. An explicit dto.status always wins over the
+   * auto-transition (and is judged by the table above).
+   */
+  async updateOrder(organizationId: string, actorId: string, orderId: string, dto: UpdateOrderDto) {
+    const hasStatus = dto.status !== undefined;
+    const hasRefund = dto.refund !== undefined && dto.refund !== null;
+    const hasNote = dto.internalNote !== undefined;
+    if (!hasStatus && !hasRefund && !hasNote) {
+      throw new BadRequestException("কিছুই পাঠানো হয়নি — status, refund অথবা internalNote-এর যেকোনো একটি পাঠান");
+    }
+    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+    const from: string = order.status;
+
+    // --- Refund: validate fully before any write. ---
+    let refundAmount: bigint | null = null;
+    let newRefunded: bigint | null = null;
+    if (hasRefund) {
+      try { refundAmount = BigInt(dto.refund!.amountMinor as any); } catch { refundAmount = null; }
+      if (refundAmount === null) {
+        throw new BadRequestException("refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+      }
+      if (refundAmount <= 0n) {
+        throw new BadRequestException("refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+      }
+      newRefunded = BigInt(order.refundedMinor ?? 0) + refundAmount;
+      if (newRefunded > BigInt(order.totalMinor ?? 0)) {
+        throw new BadRequestException("মোট refund অর্ডারের মোট মূল্যের বেশি হতে পারবে না");
+      }
+    }
+
+    // --- Status: judge the explicit transition, if any. ---
+    let targetStatus: string | null = null;
+    let autoStatus: "refunded" | null = null;
+    if (hasStatus && dto.status !== from) {
+      if (ORDER_TRANSITIONS[from]) {
+        if (!ORDER_TRANSITIONS[from].includes(dto.status!)) {
+          throw new BadRequestException(`অর্ডারের অবস্থা "${from}" থেকে "${dto.status}"-তে নেওয়া যাবে না`);
+        }
+      }
+      // from outside the vocabulary → escape hatch, any target allowed.
+      targetStatus = dto.status!;
+    }
+    // --- Full-refund auto-status (explicit status wins). ---
+    if (
+      hasRefund && newRefunded !== null && newRefunded === BigInt(order.totalMinor ?? 0)
+      && !hasStatus && !["completed", "cancelled", "refunded", "returned"].includes(from)
+    ) {
+      targetStatus = "refunded";
+      autoStatus = "refunded";
+    }
+    const finalStatus = targetStatus ?? from;
+    const statusChanges = finalStatus !== from;
+
+    // --- One write for every field change. ---
+    const data: Record<string, unknown> = {};
+    if (statusChanges) data.status = finalStatus;
+    if (hasRefund) data.refundedMinor = newRefunded;
+    let noteCleared = false;
+    if (hasNote) {
+      if (dto.internalNote === null) { data.internalNote = null; noteCleared = true; }
+      else {
+        const trimmed = String(dto.internalNote).trim();
+        // Empty-after-trim stores null (documented): a note of
+        // only whitespace is no note at all.
+        data.internalNote = trimmed === "" ? null : trimmed;
+        noteCleared = trimmed === "";
+      }
+    }
+    if (Object.keys(data).length > 0) {
+      await (this.prisma as any).order.update({ where: { id: order.id }, data });
+    }
+
+    // --- Status side effects (only on an actual change). ---
+    if (statusChanges) {
+      if (finalStatus === "cancelled" || finalStatus === "failed") {
+        try { await this.inventory?.applyOrderRestore(organizationId, orderId, "order_cancelled"); }
+        catch { /* restore is failure-isolated: the status change stands */ }
+      } else if (finalStatus === "returned") {
+        try { await this.inventory?.applyOrderRestore(organizationId, orderId, "order_returned"); }
+        catch { /* failure-isolated, as above */ }
+      }
+      if (finalStatus === "completed") {
+        this.safeEmit("order.delivered", organizationId, { orderId });
+      }
+      this.safeEmit("order.status_changed", organizationId, { orderId, from, to: finalStatus });
+    }
+    if (hasRefund) {
+      this.safeEmit("order.refunded", organizationId, {
+        orderId, amountMinor: refundAmount!.toString(), cumulativeRefundedMinor: newRefunded!.toString(),
+      });
+    }
+
+    // --- Audit: one entry per action kind. The note's CONTENT
+    // is never written to audit metadata — only that it changed
+    // and whether it was cleared. ---
+    if (statusChanges) {
+      await this.audit?.log({
+        organizationId, userId: actorId, action: "orders.status_changed",
+        entityType: "Order", entityId: orderId, metadata: { from, to: finalStatus },
+      }).catch(() => undefined);
+    }
+    if (hasRefund) {
+      await this.audit?.log({
+        organizationId, userId: actorId, action: "orders.refund_recorded",
+        entityType: "Order", entityId: orderId,
+        metadata: {
+          amountMinor: refundAmount!.toString(), cumulativeRefundedMinor: newRefunded!.toString(),
+          reason: dto.refund!.reason ?? null, autoStatus,
+        },
+      }).catch(() => undefined);
+    }
+    if (hasNote) {
+      await this.audit?.log({
+        organizationId, userId: actorId, action: "orders.internal_note_updated",
+        entityType: "Order", entityId: orderId, metadata: { cleared: noteCleared },
+      }).catch(() => undefined);
+    }
+
+    return this.getOne(organizationId, orderId);
+  }
+
+  /** Events must never throw into the request path. */
+  private safeEmit(event: string, organizationId: string, context: Record<string, unknown>) {
+    try { this.events?.emit(event, { organizationId, context }); } catch { /* fire-and-forget */ }
+  }
+
   async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number }) {
     const page = Math.max(1, q.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
@@ -117,6 +294,82 @@ export class OrdersService {
       } catch { /* risk is advisory only */ }
     }
     return { total, page, pageSize, items: mapped };
+  }
+
+  // ---------- Sales & Data S3: orders CSV export ----------
+
+  /**
+   * CSV export of the org's orders (newest first by placedAt,
+   * capped at 5000 rows — the same cap as the leads export).
+   * Filters mirror `list` (status, isCod) plus an export-only
+   * date range: `from`/`to` are date-only strings ("YYYY-MM-DD")
+   * interpreted as Asia/Dhaka calendar days. The effective order
+   * date is placedAt ?? createdAt, so an order with no placedAt
+   * falls back to its createdAt for range inclusion.
+   * Every money column is a stored Order field, written in major
+   * units (taka) via minorToMajor — nothing is fabricated.
+   */
+  async exportCsv(organizationId: string, q: { status?: string; isCod?: boolean; from?: string; to?: string }): Promise<string> {
+    const parseDay = (value: string, label: string): Date => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+      }
+      const [y, m, d] = value.split("-").map(Number);
+      const probe = new Date(Date.UTC(y, m - 1, d));
+      if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+        throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+      }
+      // Noon UTC keeps the instant inside the intended Dhaka
+      // calendar date when solved to that day's Dhaka midnight.
+      return dhakaDayStartUtc(new Date(`${value}T12:00:00.000Z`));
+    };
+    let start: Date | undefined;
+    let endExclusive: Date | undefined;
+    if (q.from) start = parseDay(q.from, "from");
+    if (q.to) endExclusive = new Date(parseDay(q.to, "to").getTime() + 24 * 3600 * 1000);
+    if (q.from && q.to && q.from > q.to) {
+      throw new BadRequestException("from তারিখ to তারিখের পরে হতে পারবে না");
+    }
+    const where: any = {
+      organizationId,
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
+    };
+    if (start || endExclusive) {
+      const range: any = {
+        ...(start ? { gte: start } : {}),
+        ...(endExclusive ? { lt: endExclusive } : {}),
+      };
+      where.OR = [
+        { placedAt: { ...range } },
+        { placedAt: null, createdAt: { ...range } },
+      ];
+    }
+    const orders = await (this.prisma as any).order.findMany({
+      where, orderBy: { placedAt: "desc" }, take: 5000, // cap mirrors the leads export (5000 rows, newest first)
+      include: { customer: true, items: true },
+    });
+    const headers = ["order_id", "external_id", "external_number", "source", "status", "is_cod", "payment_method", "customer_name", "customer_phone", "customer_email", "items", "subtotal", "shipping", "discount", "tax", "total", "refunded", "currency", "placed_at", "created_at"];
+    const rows = (orders as any[]).map((o) => {
+      const customer = o.customer ?? {};
+      const customerName = [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.name || "";
+      return [
+        o.id ?? "", o.externalId ?? "", o.externalNumber ?? "", o.source ?? "", o.status ?? "",
+        o.isCod ? "yes" : "no", o.paymentMethod ?? "",
+        customerName, customer.phone ?? "", customer.email ?? "",
+        (o.items ?? []).map((i: any) => `${i.name} ×${i.quantity}`).join(" | "),
+        minorToMajor(BigInt(o.subtotalMinor ?? 0)),
+        minorToMajor(BigInt(o.shippingMinor ?? 0)),
+        minorToMajor(BigInt(o.discountMinor ?? 0)),
+        minorToMajor(BigInt(o.taxMinor ?? 0)),
+        minorToMajor(BigInt(o.totalMinor ?? 0)),
+        minorToMajor(BigInt(o.refundedMinor ?? 0)),
+        o.currency ?? "",
+        o.placedAt ? new Date(o.placedAt).toISOString() : "",
+        o.createdAt ? new Date(o.createdAt).toISOString() : "",
+      ];
+    });
+    return toCsv(headers, rows);
   }
 
   async getOne(organizationId: string, orderId: string) {

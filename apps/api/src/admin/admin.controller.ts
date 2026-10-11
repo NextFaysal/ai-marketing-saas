@@ -24,6 +24,8 @@ class SettingsDto {
   @IsOptional() @IsString() supportContact?: string;
   @IsOptional() @IsObject() killSwitches?: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   @IsOptional() @IsObject() planPrices?: Record<string, number>;
+  @IsOptional() @IsObject() planYearlyPrices?: Record<string, number>;
+  @IsOptional() @IsObject() planLimits?: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }>;
   @IsOptional() @IsObject() maintenanceWindow?: { startsAt: string; endsAt: string; message?: string; hardLockout?: boolean } | null;
   @IsOptional() @IsInt() auditRetentionDays?: number;
 }
@@ -113,6 +115,28 @@ class BkashConfigDto {
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
+class ImageConfigDto {
+  @IsOptional() @IsString() provider?: string;
+  @IsOptional() @IsString() model?: string;
+  @IsOptional() @IsString() apiKey?: string;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+class TiktokAppConfigDto {
+  @IsOptional() @IsString() clientKey?: string;
+  @IsOptional() @IsString() clientSecret?: string;
+  @IsOptional() @IsString() redirectUri?: string;
+  @IsOptional() @IsBoolean() audited?: boolean;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+class GoogleAppConfigDto {
+  @IsOptional() @IsString() clientId?: string;
+  @IsOptional() @IsString() clientSecret?: string;
+  @IsOptional() @IsString() redirectUri?: string;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
 class CouponDto {
   @IsString() @MinLength(3) code!: string;
   @IsIn(["percent", "fixed"]) kind!: string;
@@ -131,7 +155,7 @@ class RefundDto {
   @IsOptional() @IsBoolean() revokeAccess?: boolean;
 }
 class AiRatesDto { @IsObject() rates!: Record<string, number>; }
-class ApiKeyDto { @IsString() @MinLength(3) name!: string; }
+class ApiKeyDto { @IsString() @MinLength(3) name!: string; @IsOptional() @IsArray() scopes?: string[]; }
 class IpAllowlistDto { @IsArray() entries!: string[]; }
 class BulkStatusDto {
   @IsArray() organizationIds!: string[];
@@ -243,14 +267,44 @@ export class AdminController {
   updateSslcommerzConfig(@Req() req: any, @Body() dto: SslcommerzConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "sslcommerz", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/bkash") @AdminTier("SUPER")
   updateBkashConfig(@Req() req: any, @Body() dto: BkashConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "bkash", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/image") @AdminTier("SUPER")
+  updateImageConfig(@Req() req: any, @Body() dto: ImageConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "image", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/tiktok") @AdminTier("SUPER")
+  updateTiktokConfig(@Req() req: any, @Body() dto: TiktokAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "tiktok", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/google") @AdminTier("SUPER")
+  updateGoogleConfig(@Req() req: any, @Body() dto: GoogleAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "google", dto as unknown as Record<string, unknown>, req.ip); }
   @Post("platform-config/test-llm") @AdminTier("SUPER")
   testLlm() { return this.admin.testLlm(); }
+  @Post("platform-config/test-image") @AdminTier("SUPER")
+  testImage() { return this.admin.testImage(); }
   @Post("platform-config/test-email") @AdminTier("SUPER")
   testEmail(@Body() dto: TestSendDto) { return this.admin.testEmail(dto.to); }
   @Post("platform-config/test-sms") @AdminTier("SUPER")
   testSms(@Body() dto: TestSendDto) { return this.admin.testSms(dto.to); }
+  // AA3: verify the five formerly blind-save config blocks.
+  @Post("platform-config/test-meta") @AdminTier("SUPER")
+  testMeta() { return this.admin.testMeta(); }
+  @Post("platform-config/test-sslcommerz") @AdminTier("SUPER")
+  testSslcommerz() { return this.admin.testSslcommerz(); }
+  @Post("platform-config/test-bkash") @AdminTier("SUPER")
+  testBkash() { return this.admin.testBkash(); }
+  @Post("platform-config/test-tiktok") @AdminTier("SUPER")
+  testTiktok() { return this.admin.testTiktok(); }
+  @Post("platform-config/test-google") @AdminTier("SUPER")
+  testGoogle() { return this.admin.testGoogle(); }
   @Patch("settings") @AdminTier("SUPER")
   updateSettings(@Req() req: any, @Body() dto: SettingsDto) { return this.admin.updateSettings(req.adminUser, dto as unknown as Record<string, unknown>, req.ip); }
+
+  @Patch("settings/plan-limits") @AdminTier("SUPER")
+  updatePlanLimits(@Req() req: any, @Body() body: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }>) {
+    return this.admin.updateSettings(req.adminUser, { planLimits: body }, req.ip);
+  }
+
+  // AA7: plan-scoped feature-flag defaults (sparse flag -> tier -> boolean).
+  @Patch("settings/plan-flag-defaults") @AdminTier("SUPER")
+  updatePlanFlagDefaults(@Req() req: any, @Body() body: Record<string, Record<string, boolean>>) {
+    return this.admin.updateSettings(req.adminUser, { planFlagDefaults: body }, req.ip);
+  }
 
   @Get("announcements") announcements() { return this.admin.listAnnouncements(); }
   @Post("announcements") @AdminTier("SUPER", "SUPPORT")
@@ -309,6 +363,15 @@ export class AdminController {
 
   @Get("usage") usage() { return this.admin.usageBoard(); }
 
+  // AA7: AI usage drill-down — per org x feature (tokens/calls only).
+  @Get("usage/ai-detail") usageAiDetail(@Query("days") days?: string, @Query("organizationId") organizationId?: string) {
+    return this.admin.aiUsageDetail(days ? Number(days) : undefined, organizationId || undefined);
+  }
+  @Get("usage/ai-detail/export.csv") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=ai-usage-by-feature.csv")
+  exportAiUsageCsv(@Query("days") days?: string, @Query("organizationId") organizationId?: string) {
+    return this.admin.exportAiUsageCsv(days ? Number(days) : undefined, organizationId || undefined);
+  }
+
   // ---- Phase A1 (Milestone 37): Operator Visibility++ ----
   @Get("analytics/series") analyticsSeries(@Query("months") months?: string) { return this.admin.analyticsSeries(months ? Number(months) : undefined); }
   @Get("analytics/top-tenants") analyticsTopTenants(@Query("limit") limit?: string) { return this.admin.analyticsTopTenants(limit ? Number(limit) : undefined); }
@@ -322,6 +385,15 @@ export class AdminController {
   @Post("orgs/:id/view-as") @AdminTier("SUPER", "SUPPORT")
   viewAs(@Req() req: any, @Param("id") id: string, @Body() dto: ViewAsDto) {
     return this.admin.startViewAs(req.adminUser, req.adminTier, id, dto, req.ip);
+  }
+
+  // Admin Polish AP2: view-as session registry + revocation.
+  @Get("view-as/sessions") @AdminTier("SUPER", "SUPPORT", "ANALYST")
+  viewAsSessions(@Req() req: any) { return this.admin.listViewAsSessions({ ...req.adminUser, adminTier: req.adminTier }); }
+
+  @Post("view-as/sessions/:sessionId/revoke") @AdminTier("SUPER", "SUPPORT")
+  viewAsRevoke(@Req() req: any, @Param("sessionId") sessionId: string) {
+    return this.admin.revokeViewAsSession({ ...req.adminUser, adminTier: req.adminTier }, sessionId, req.ip);
   }
 
   @Get("orgs/:id/timeline360")
@@ -349,6 +421,8 @@ export class AdminController {
   @Post("totp/confirm") totpConfirm(@Req() req: any, @Body() body: { code: string }) { return this.admin.totpConfirm(req.adminUser, body?.code ?? "", req.ip); }
   @Post("totp/disable") totpDisable(@Req() req: any, @Body() body: { code: string }) { return this.admin.totpDisable(req.adminUser, body?.code ?? "", req.ip); }
   @Get("security") security(@Req() req: any) { return this.admin.securityOverview(req.adminUser); }
+  // AA7: dedicated admins roster (read-only; grant/revoke stays on the user page).
+  @Get("security/admins") adminsRoster() { return this.admin.adminsRoster(); }
   @Post("security/revoke-my-sessions")
   revokeMine(@Req() req: any, @Body() dto: ReasonDto) { return this.admin.revokeSessions(req.adminUser, req.adminUser.id, dto.reason, req.ip); }
   @Post("users/:id/revoke-sessions") @AdminTier("SUPER", "SUPPORT")
@@ -357,7 +431,7 @@ export class AdminController {
   // ---- Milestone 40 (Phase A4): control & safety ----
   @Get("security/api-keys") apiKeys() { return this.admin.listApiKeys(); }
   @Post("security/api-keys") @AdminTier("SUPER")
-  createApiKey(@Req() req: any, @Body() dto: ApiKeyDto) { return this.admin.createApiKey(req.adminUser, dto.name, req.ip); }
+  createApiKey(@Req() req: any, @Body() dto: ApiKeyDto) { return this.admin.createApiKey(req.adminUser, dto.name, req.ip, dto.scopes); }
   @Post("security/api-keys/:id/revoke") @AdminTier("SUPER")
   revokeApiKey(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) { return this.admin.revokeApiKey(req.adminUser, id, dto.reason, req.ip); }
   @Get("security/ip-allowlist") ipAllowlist() { return this.admin.getIpAllowlist(); }
@@ -375,7 +449,14 @@ export class AdminController {
 
   // ---- Milestone 42 (Phase A6): reliability panel ----
   @Get("system/version") systemVersion() { return this.admin.systemVersion(); }
+  @Get("system/env-check") systemEnvCheck() { return this.admin.systemEnvCheck(); }
   @Get("system/queues") systemQueues() { return this.admin.systemQueues(); }
+  @Get("system/webhooks") systemWebhooks(@Query("provider") provider?: string, @Query("organizationId") organizationId?: string, @Query("hasError") hasError?: string, @Query("take") take?: string) {
+    return this.admin.systemWebhooks({ provider, organizationId, hasError: hasError === "true" || hasError === "1" ? true : undefined, take: take ? Number(take) : undefined });
+  }
+  @Get("system/webhooks/:id") systemWebhookEvent(@Param("id") id: string) { return this.admin.systemWebhookEvent(id); }
+  @Get("system/social-board") socialBoard() { return this.admin.socialBoard(); }
+  @Get("system/ads-board") adsBoard() { return this.admin.adsBoard(); }
   @Get("system/inbox-health") systemInboxHealth() { return this.admin.inboxHealth(); }
   @Get("system/dlq") systemDlq() { return this.admin.listDlq(); }
   @Post("system/dlq/:dlqId/replay") @AdminTier("SUPER", "SUPPORT")
@@ -431,8 +512,12 @@ export class AdminController {
     return this.paymentsSvc.setCouponActive(req.adminUser, id, dto.active, dto.reason, req.ip);
   }
 
-  @Get("audit") audit(@Query("action") action?: string, @Query("userId") userId?: string, @Query("take") take?: string) {
-    return this.admin.auditTrail({ action, userId, take: Number(take ?? 50) || 50 });
+  @Get("audit") audit(@Query("action") action?: string, @Query("userId") userId?: string, @Query("take") take?: string, @Query("organizationId") organizationId?: string, @Query("entityType") entityType?: string, @Query("dateFrom") dateFrom?: string, @Query("dateTo") dateTo?: string) {
+    return this.admin.auditTrail({ action, userId, organizationId, entityType, dateFrom, dateTo, take: Number(take ?? 50) || 50 });
+  }
+  @Get("audit/export.csv") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=audit-export.csv")
+  exportAuditCsv(@Query("action") action?: string, @Query("userId") userId?: string, @Query("organizationId") organizationId?: string, @Query("entityType") entityType?: string, @Query("dateFrom") dateFrom?: string, @Query("dateTo") dateTo?: string) {
+    return this.admin.exportAuditCsv({ action, userId, organizationId, entityType, dateFrom, dateTo });
   }
 }
 

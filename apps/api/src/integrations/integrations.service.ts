@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { CreateStoreDto, ConnectWooDto } from "./integrations.dto";
 import { encryptJson, decryptJson } from "./crypto";
 import { randomUUID } from "crypto";
@@ -20,7 +21,9 @@ export class IntegrationsService {
   // and Nest silently injects undefined, which disabled every
   // order.created/order.delivered emission from store sync
   // until Milestone 65 caught it live.
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService) {}
+  private readonly logger = new Logger(IntegrationsService.name);
+
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService, @Optional() private readonly inventory?: InventoryService) {}
 
   // ---------- Stores ----------
   async createStore(organizationId: string, actorId: string, dto: CreateStoreDto) {
@@ -207,6 +210,11 @@ export class IntegrationsService {
       ? await (this.prisma as any).productVariant.findFirst({ where: { productId: product.id, sku: v.sku } })
       : await (this.prisma as any).productVariant.findFirst({ where: { productId: product.id, name: v.name } });
     if (existing) {
+      // S1: explain the stock jump in the ledger BEFORE the synced
+      // value overwrites it (sync_correction; caller stays the writer).
+      try {
+        await this.inventory?.recordSyncedStock(organizationId, product.id, existing.id, existing.stockQuantity ?? null, v.stockQuantity ?? null);
+      } catch (e) { this.logger.warn(`inventory sync_correction (variant) failed: ${e instanceof Error ? e.message : "unknown"}`); }
       await (this.prisma as any).productVariant.update({ where: { id: existing.id }, data: { priceMinor: v.priceMinor ?? null, stockQuantity: v.stockQuantity } });
     } else {
       await (this.prisma as any).productVariant.create({
@@ -225,6 +233,10 @@ export class IntegrationsService {
       currency: p.currency, stockQuantity: p.stockQuantity, imageUrl: p.imageUrl ?? null,
     };
     if (existing) {
+      // S1: record the sync_correction BEFORE the overwrite.
+      try {
+        await this.inventory?.recordSyncedStock(organizationId, existing.id, null, existing.stockQuantity ?? null, p.stockQuantity ?? null);
+      } catch (e) { this.logger.warn(`inventory sync_correction failed: ${e instanceof Error ? e.message : "unknown"}`); }
       await (this.prisma as any).product.update({ where: { id: existing.id }, data });
       return "updated";
     }
@@ -314,6 +326,9 @@ export class IntegrationsService {
     const existing = await (this.prisma as any).order.findFirst({
       where: { organizationId, source: source, externalId: o.externalId },
     });
+    // S1: the pre-update status is the transition-detection point
+    // for store orders (this update branch overwrites status).
+    const prevStatus: string | null = existing?.status ?? null;
     let orderId: string;
     let result: "created" | "updated";
     if (existing) {
@@ -349,6 +364,24 @@ export class IntegrationsService {
           priceMinor: item.priceMinor, totalMinor: item.totalMinor,
         },
       });
+    }
+    // S1 inventory hooks — failure-isolated: inventory must never
+    // break an order upsert. Placement is idempotent per
+    // (order, product, variant); restore replays placed movements.
+    if (this.inventory) {
+      if (result === "created") {
+        try {
+          await this.inventory.applyOrderPlaced(organizationId, orderId, { status: o.status });
+        } catch (e) { this.logger.warn(`inventory order_placed failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+      } else if (prevStatus !== o.status) {
+        try {
+          if (o.status === "cancelled" || o.status === "failed") {
+            await this.inventory.applyOrderRestore(organizationId, orderId, "order_cancelled");
+          } else if (o.status === "returned") {
+            await this.inventory.applyOrderRestore(organizationId, orderId, "order_returned");
+          }
+        } catch (e) { this.logger.warn(`inventory restore failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+      }
     }
     if (o.status === "completed" && this.events) {
       this.events.emit("order.delivered", { organizationId, context: { orderId } });

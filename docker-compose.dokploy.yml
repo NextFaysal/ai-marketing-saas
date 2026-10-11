@@ -44,6 +44,9 @@ services:
       # Milestone 57: queue dispatch mode + worker callback secret.
       REDIS_URL: redis://redis:6379
       INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the worker)}
+      # AA2: the Admin System panel probes the worker's WK2
+      # health endpoint at this address (compose service name).
+      WORKER_HEALTH_URL: http://worker:4100/health
       API_PORT: "4000"
       WEB_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in the Dokploy Environment tab}
     depends_on:
@@ -75,10 +78,20 @@ services:
   worker:
     image: ai-marketing-saas:latest
     command: node apps/worker/dist/index.js
+    # WK2: the worker drains in-flight jobs on SIGTERM; give
+    # it the full minute before the orchestrator SIGKILLs.
+    stop_grace_period: 60s
     environment:
       REDIS_URL: redis://redis:6379
       API_INTERNAL_URL: http://api:4000
       INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the api)}
+      WORKER_HEALTH_PORT: "4100"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
     depends_on: [api, redis]
 
 volumes:

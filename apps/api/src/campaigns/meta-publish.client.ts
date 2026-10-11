@@ -176,4 +176,21 @@ export class MetaPublishClient {
     if (Object.keys(params).length === 0) throw new MetaPublishError(400, "No budget value to update");
     await this.post(`/${adSetId}`, params);
   }
+
+  /** Campaign Builder CB2: Meta's delivery estimate for a
+   * targeting spec. This is Meta's own modelled range —
+   * callers must label it an estimate, never a promise. */
+  async deliveryEstimate(adAccountExternalId: string, input: { targeting: Record<string, unknown>; optimizationGoal: string; currency: string }): Promise<{ lowerBound?: number; upperBound?: number; raw: unknown }> {
+    const body = await this.get<any>(`/${adAccountExternalId}/delivery_estimate`, {
+      targeting_spec: JSON.stringify(input.targeting),
+      optimization_goal: input.optimizationGoal,
+      currency: input.currency,
+    });
+    const first = Array.isArray(body?.data) ? body.data[0] : undefined;
+    return {
+      lowerBound: typeof first?.users_lower_bound === "number" ? first.users_lower_bound : undefined,
+      upperBound: typeof first?.users_upper_bound === "number" ? first.users_upper_bound : undefined,
+      raw: first ?? body,
+    };
+  }
 }

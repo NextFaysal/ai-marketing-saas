@@ -12,9 +12,11 @@ import { AudiencesModule } from "../audiences/audiences.module";
 import { InboxModule } from "../inbox/inbox.module";
 import { CrmModule } from "../crm/crm.module";
 import { PaymentsModule } from "../payments/payments.module";
+import { SocialModule } from "../social/social.module";
+import { ReportSharesModule } from "../reports/report-shares.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService],
   exports: [AutomationService],

@@ -1,16 +1,29 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { existsSync, readdirSync } from "node:fs";
+import { get as httpGet } from "node:http";
+import { get as httpsGet } from "node:https";
+import { dirname, join } from "node:path";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
-import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices, planYearlyPrices } from "../common/platform-settings";
+import { platformSetting, PLAN_TIERS, planPrices, planYearlyPrices, planLimits, PLAN_LIMIT_FIELDS } from "../common/platform-settings";
+import { KNOWN_FLAG_KEYS, planFlagDefaults } from "../common/feature-flags";
 import { referralConfig, maybeRewardReferral } from "../common/referral";
-import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
+import {
+  seal, unseal, refreshPlatformConfig, getPlatformConfigSync,
+  effectiveLlmConfig, effectiveImageConfig,
+  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig,
+  sslcommerzBase, bkashBase, socialOAuthRedirectUri,
+  type BkashConfig, type SslcommerzConfig,
+} from "../common/platform-config";
 import { rateLimitStats } from "../common/throttler.guard";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
+import { buildImageProvider } from "../ai/images/image.factory";
 import { EmailProvider } from "../messaging/email.provider";
 import { buildInvoiceHtml } from "../payments/payments.service";
 import { SmsProvider, normalizeBdPhone } from "../messaging/sms.provider";
 import { AuditService } from "../audit/audit.service";
 import { issueAdminToken } from "../common/admin-token";
+import { computeAdAccountHealth } from "../ads/ad-health";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -239,25 +252,66 @@ export class AdminService {
     return (this.prisma as any).adminNote.findMany({ where: { targetType, targetId }, orderBy: { createdAt: "desc" }, take: 50 });
   }
 
-  async auditTrail(filters: { action?: string; userId?: string; take?: number }) {
+  private auditWhere(filters: { action?: string; userId?: string; organizationId?: string; entityType?: string; dateFrom?: string; dateTo?: string }) {
     const where: any = {};
     if (filters.action) where.action = { startsWith: filters.action };
     if (filters.userId) where.userId = filters.userId;
+    if (filters.organizationId) where.organizationId = filters.organizationId;
+    if (filters.entityType) where.entityType = filters.entityType;
+    const createdAt: any = {};
+    if (filters.dateFrom) {
+      const d = new Date(filters.dateFrom);
+      if (!Number.isNaN(d.getTime())) createdAt.gte = d;
+    }
+    if (filters.dateTo) {
+      const d = new Date(filters.dateTo);
+      if (!Number.isNaN(d.getTime())) createdAt.lte = d;
+    }
+    if (Object.keys(createdAt).length) where.createdAt = createdAt;
+    return where;
+  }
+
+  async auditTrail(filters: { action?: string; userId?: string; organizationId?: string; entityType?: string; dateFrom?: string; dateTo?: string; take?: number }) {
+    const where = this.auditWhere(filters);
     return (this.prisma as any).auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: Math.min(200, filters.take ?? 50) });
   }
 
+  async exportAuditCsv(filters: { action?: string; userId?: string; organizationId?: string; entityType?: string; dateFrom?: string; dateTo?: string }): Promise<string> {
+    const where = this.auditWhere(filters);
+    const rows = await (this.prisma as any).auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: 1000 }).catch(() => []);
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = ["createdAt,action,entityType,entityId,organizationId,userId,ipAddress,metadata"];
+    for (const r of rows as any[]) {
+      const meta = r.metadata == null ? "" : JSON.stringify(r.metadata);
+      lines.push([
+        r.createdAt ? new Date(r.createdAt).toISOString() : "",
+        esc(r.action), esc(r.entityType), esc(r.entityId ?? ""), esc(r.organizationId ?? ""), esc(r.userId ?? ""), esc(r.ipAddress ?? ""), esc(meta),
+      ].join(","));
+    }
+    return lines.join("\n");
+  }
+
   // ---------------- Platform settings, announcements, flags ----------------
-  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "planYearlyPrices", "maintenanceWindow", "auditRetentionDays"] as const;
+  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "planYearlyPrices", "planLimits", "planFlagDefaults", "maintenanceWindow", "auditRetentionDays"] as const;
 
   async getSettings() {
+    const rawPlanLimits = await platformSetting(this.prisma as any, "planLimits");
     const out: Record<string, unknown> = {
       maintenanceMode: false, signupOpen: true, supportContact: "",
       killSwitches: { aiDisabledOrgIds: [], broadcastsPaused: false },
       planPrices: await planPrices(this.prisma as any),
       planYearlyPrices: await planYearlyPrices(this.prisma as any),
+      planLimits: await planLimits(this.prisma as any),
+      planLimitsStored: rawPlanLimits ?? null,
+      // AA7: the sparse plan-flag-default map, already sanitized by
+      // the reader (unknown flags/tiers/non-booleans dropped) — the
+      // console matrix renders explicit entries from exactly this.
+      planFlagDefaults: await planFlagDefaults(this.prisma as any),
       maintenanceWindow: null, auditRetentionDays: 365,
     };
     for (const key of AdminService.SETTING_KEYS) {
+      if (key === "planLimits") continue; // already merged above; raw is in planLimitsStored
+      if (key === "planFlagDefaults") continue; // sanitized sparse map already set above
       const v = await platformSetting(this.prisma as any, key);
       if (v !== null && v !== undefined) out[key] = v;
     }
@@ -287,6 +341,40 @@ export class AdminService {
         for (const tier of PLAN_TIERS) {
           if (pp[tier] !== undefined && (typeof pp[tier] !== "number" || pp[tier] < 0)) {
             throw new BadRequestException(`${key}.${tier} must be a non-negative number (minor units)`);
+          }
+        }
+      }
+      if (key === "planLimits") {
+        const pl = value as any;
+        if (!pl || typeof pl !== "object" || Array.isArray(pl)) throw new BadRequestException("planLimits must be an object");
+        for (const tier of PLAN_TIERS) {
+          if (pl[tier] === undefined) continue;
+          const tierVal = pl[tier];
+          if (!tierVal || typeof tierVal !== "object" || Array.isArray(tierVal)) {
+            throw new BadRequestException(`planLimits.${tier} must be an object`);
+          }
+          for (const field of PLAN_LIMIT_FIELDS) {
+            if (tierVal[field] !== undefined && (!Number.isInteger(tierVal[field]) || tierVal[field] < 0)) {
+              throw new BadRequestException(`planLimits.${tier}.${field} must be a non-negative integer`);
+            }
+          }
+        }
+      }
+      if (key === "planFlagDefaults") {
+        const pfd = value as any;
+        if (!pfd || typeof pfd !== "object" || Array.isArray(pfd)) throw new BadRequestException("planFlagDefaults must be an object");
+        for (const [flag, perTier] of Object.entries(pfd)) {
+          if (!(KNOWN_FLAG_KEYS as readonly string[]).includes(flag)) {
+            throw new BadRequestException(`planFlagDefaults: unknown flag "${flag}" (known: ${KNOWN_FLAG_KEYS.join(", ")})`);
+          }
+          if (!perTier || typeof perTier !== "object" || Array.isArray(perTier)) {
+            throw new BadRequestException(`planFlagDefaults.${flag} must be an object of tier -> boolean`);
+          }
+          for (const [tier, v] of Object.entries(perTier as Record<string, unknown>)) {
+            if (!(PLAN_TIERS as readonly string[]).includes(tier)) {
+              throw new BadRequestException(`planFlagDefaults.${flag}: unknown tier "${tier}"`);
+            }
+            if (typeof v !== "boolean") throw new BadRequestException(`planFlagDefaults.${flag}.${tier} must be a boolean`);
           }
         }
       }
@@ -369,6 +457,11 @@ export class AdminService {
   }
   async createAnnouncement(actor: any, dto: { title: string; body: string; startsAt?: string; endsAt?: string; audience?: string }, ip?: string) {
     if (!dto.title?.trim() || !dto.body?.trim()) throw new BadRequestException("Announcement title and body are required");
+    if (dto.startsAt && Number.isNaN(Date.parse(dto.startsAt))) throw new BadRequestException("startsAt must be a valid ISO date");
+    if (dto.endsAt && Number.isNaN(Date.parse(dto.endsAt))) throw new BadRequestException("endsAt must be a valid ISO date");
+    if (dto.startsAt && dto.endsAt && new Date(dto.endsAt).getTime() <= new Date(dto.startsAt).getTime()) {
+      throw new BadRequestException("endsAt must be after startsAt");
+    }
     const audience = dto.audience ?? "all";
     if (!AdminService.ANNOUNCEMENT_AUDIENCES.includes(audience)) {
       throw new BadRequestException(`audience must be one of ${AdminService.ANNOUNCEMENT_AUDIENCES.join(", ")}`);
@@ -394,7 +487,10 @@ export class AdminService {
     return { id, deleted: true };
   }
 
-  static readonly KNOWN_FLAGS = ["dayparting", "portfolio", "creative_library", "order_bot", "offline_conversions", "agency_portfolio"];
+  // AA7: the canonical flag list lives in common/feature-flags
+  // (KNOWN_FLAG_KEYS) so the runtime resolver and this console can
+  // never drift apart; copied so callers can't mutate the source.
+  static readonly KNOWN_FLAGS = [...KNOWN_FLAG_KEYS];
 
   async getOrgFlags(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
@@ -443,9 +539,179 @@ export class AdminService {
       byProvider[r.provider] ??= { total: 0, connected: 0 };
       byProvider[r.provider].total++;
       if (r.status === "CONNECTED") byProvider[r.provider].connected++;
-      else broken.push({ id: r.id, provider: r.provider, status: r.status, organizationId: r.organizationId, organizationName: nameOf(r.organizationId), updatedAt: r.updatedAt ?? null });
+      else broken.push({ id: r.id, provider: r.provider, status: r.status, organizationId: r.organizationId, organizationName: nameOf(r.organizationId), lastError: r.lastError ?? null, lastSyncAt: r.lastSyncAt ?? null, updatedAt: r.updatedAt ?? null });
     }
     return { byProvider, broken: broken.slice(0, 100) };
+  }
+
+  // ---------------- Admin Advanced AA5: Social + Ads operator boards ----------------
+  // Cross-tenant, read-only, metadata-only. SocialAccount rows
+  // NEVER hold credential material by SP1 design, and the ads
+  // board reads integrations through a field-select that never
+  // touches the credential relation — so neither payload can
+  // carry a secret. Errors are surfaced VERBATIM: the operator
+  // needs the platform's own words to act on them.
+
+  async socialBoard() {
+    const p = this.prisma as any;
+    const now = Date.now();
+    const staleCreatorBefore = new Date(now - 48 * 3600 * 1000);
+    const stuckPublishingBefore = new Date(now - 15 * 60 * 1000);
+    const accounts = await p.socialAccount.findMany({ take: 5000 }).catch(() => []);
+    const accountRows: any[] = Array.isArray(accounts) ? accounts : [];
+    const byStatus: Record<string, number> = {};
+    const byPlatform: Record<string, number> = {};
+    for (const a of accountRows) {
+      byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
+      byPlatform[a.platform] = (byPlatform[a.platform] ?? 0) + 1;
+    }
+    const errorRows = accountRows
+      .filter((a) => a.status === "error")
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 100);
+
+    const failedRowsRaw = await p.socialPost.findMany({
+      where: { status: "failed" }, orderBy: { updatedAt: "desc" }, take: 100,
+    }).catch(() => []);
+    const staleRowsRaw = await p.socialPost.findMany({
+      where: { status: "sent_to_creator", updatedAt: { lt: staleCreatorBefore } },
+      orderBy: { updatedAt: "desc" }, take: 100,
+    }).catch(() => []);
+    const stuckRowsRaw = await p.socialPost.findMany({
+      where: { status: "publishing", updatedAt: { lt: stuckPublishingBefore } },
+      orderBy: { updatedAt: "desc" }, take: 100,
+    }).catch(() => []);
+    // Counts are the FULL matching totals (items are capped at
+    // 100) — a capped list must never masquerade as the total.
+    const staleCountRaw = await p.socialPost.count({
+      where: { status: "sent_to_creator", updatedAt: { lt: staleCreatorBefore } },
+    }).catch(() => null);
+    const stuckCountRaw = await p.socialPost.count({
+      where: { status: "publishing", updatedAt: { lt: stuckPublishingBefore } },
+    }).catch(() => null);
+    // Re-filter in memory as a second guard: the stale/stuck
+    // definitions live here, not only in the query.
+    const failedRows: any[] = (Array.isArray(failedRowsRaw) ? failedRowsRaw : []).slice(0, 100);
+    const staleRows: any[] = (Array.isArray(staleRowsRaw) ? staleRowsRaw : [])
+      .filter((r: any) => new Date(r.updatedAt).getTime() < staleCreatorBefore.getTime()).slice(0, 100);
+    const stuckRows: any[] = (Array.isArray(stuckRowsRaw) ? stuckRowsRaw : [])
+      .filter((r: any) => new Date(r.updatedAt).getTime() < stuckPublishingBefore.getTime()).slice(0, 100);
+    const staleCount = typeof staleCountRaw === "number" ? staleCountRaw : staleRows.length;
+    const stuckCount = typeof stuckCountRaw === "number" ? stuckCountRaw : stuckRows.length;
+
+    // Resolve account name/platform for posts whose account is
+    // not among the fetched rows (defensive — the 5000-cap fetch
+    // normally covers every account a post can reference).
+    const accountById = new Map<string, any>(accountRows.map((a) => [a.id, a]));
+    const postRows = [...failedRows, ...staleRows, ...stuckRows];
+    const missingAccountIds = [...new Set(postRows.map((r) => r.socialAccountId).filter((id) => id && !accountById.has(id)))];
+    if (missingAccountIds.length > 0) {
+      const extra = await p.socialAccount.findMany({ where: { id: { in: missingAccountIds } } }).catch(() => []);
+      for (const a of (Array.isArray(extra) ? extra : []) as any[]) accountById.set(a.id, a);
+    }
+    // One organization lookup for every org the payload names.
+    const orgIds = [...new Set([
+      ...errorRows.map((a) => a.organizationId),
+      ...postRows.map((r) => r.organizationId),
+    ].filter(Boolean))];
+    const orgs = orgIds.length > 0
+      ? await p.organization.findMany({ where: { id: { in: orgIds } } }).catch(() => [])
+      : [];
+    const nameOf = (id: string) => (orgs as any[]).find((o) => o.id === id)?.name ?? null;
+
+    const postItem = (r: any) => {
+      const account = accountById.get(r.socialAccountId);
+      return {
+        id: r.id, organizationId: r.organizationId, organizationName: nameOf(r.organizationId),
+        socialAccountId: r.socialAccountId,
+        accountName: account?.name ?? null, platform: account?.platform ?? null,
+        status: r.status, error: r.error ?? null,
+        captionExcerpt: String(r.caption ?? "").slice(0, 80),
+        scheduledAt: r.scheduledAt ?? null, updatedAt: r.updatedAt ?? null,
+      };
+    };
+    return {
+      accounts: { total: accountRows.length, byStatus, byPlatform },
+      errorAccounts: errorRows.map((a) => ({
+        id: a.id, organizationId: a.organizationId, organizationName: nameOf(a.organizationId),
+        platform: a.platform, name: a.name, username: a.username ?? null,
+        lastError: a.lastError ?? null, updatedAt: a.updatedAt ?? null,
+      })),
+      posts: {
+        failed: failedRows.map(postItem),
+        sentToCreatorStale: { count: staleCount, items: staleRows.map(postItem) },
+        stuckPublishing: { count: stuckCount, items: stuckRows.map(postItem) },
+      },
+    };
+  }
+
+  async adsBoard() {
+    const p = this.prisma as any;
+    const accounts = await p.adAccount.findMany({ take: 5000 }).catch(() => []);
+    const accountRows: any[] = Array.isArray(accounts) ? accounts : [];
+    const integrationIds = [...new Set(accountRows.map((a) => a.integrationId).filter(Boolean))] as string[];
+    let integrations: any[] = [];
+    if (integrationIds.length > 0) {
+      // Select ONLY the health fields — never include the
+      // credential relation, so no credential material can leak.
+      try {
+        integrations = await p.integration.findMany({
+          where: { id: { in: integrationIds } },
+          select: { id: true, status: true, lastSyncAt: true, lastError: true, createdAt: true },
+        });
+      } catch {
+        try {
+          integrations = await p.integration.findMany({ where: { id: { in: integrationIds } } });
+        } catch { integrations = []; }
+      }
+      if (!Array.isArray(integrations)) integrations = [];
+    }
+    const integrationById = new Map<string, any>((integrations as any[]).map((i) => [i.id, i]));
+    const now = Date.now();
+    const byHealth: Record<string, number> = {};
+    const platformBuckets: Record<string, number> = {};
+    let syncDisabledCount = 0;
+    const bandById = new Map<string, string>();
+    for (const a of accountRows) {
+      const band = computeAdAccountHealth(a, a.integrationId ? (integrationById.get(a.integrationId) ?? null) : null, now);
+      bandById.set(a.id, band);
+      byHealth[band] = (byHealth[band] ?? 0) + 1;
+      const bucket = a.platformStatusBucket ? String(a.platformStatusBucket) : "none";
+      platformBuckets[bucket] = (platformBuckets[bucket] ?? 0) + 1;
+      if (a.syncDisabled) syncDisabledCount++;
+    }
+    const brokenRows = accountRows
+      .filter((a) => bandById.get(a.id) === "error" || a.platformStatusBucket === "disabled" || a.platformStatusBucket === "restricted")
+      .sort((a, b) => {
+        const ea = bandById.get(a.id) === "error" ? 0 : 1;
+        const eb = bandById.get(b.id) === "error" ? 0 : 1;
+        if (ea !== eb) return ea - eb;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      })
+      .slice(0, 100);
+    const orgIds = [...new Set(brokenRows.map((a) => a.organizationId).filter(Boolean))];
+    const orgs = orgIds.length > 0
+      ? await p.organization.findMany({ where: { id: { in: orgIds } } }).catch(() => [])
+      : [];
+    const nameOf = (id: string) => (orgs as any[]).find((o) => o.id === id)?.name ?? null;
+    return {
+      total: accountRows.length,
+      byHealth,
+      platformBuckets,
+      syncDisabledCount,
+      broken: brokenRows.map((a) => {
+        const integration = a.integrationId ? integrationById.get(a.integrationId) : undefined;
+        return {
+          id: a.id, organizationId: a.organizationId, organizationName: nameOf(a.organizationId),
+          name: a.name, label: a.label ?? null, displayName: a.label ?? a.name,
+          platform: a.platform, health: bandById.get(a.id),
+          platformStatusBucket: a.platformStatusBucket ?? null,
+          lastError: integration?.lastError ?? null,
+          lastSyncAt: integration?.lastSyncAt ?? null,
+          updatedAt: a.updatedAt ?? null,
+        };
+      }),
+    };
   }
 
   async healthJobs() {
@@ -461,6 +727,25 @@ export class AdminService {
   async usageBoard() {
     const since30 = new Date(Date.now() - 30 * 86400000);
     const orgs = await (this.prisma as any).organization.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
+    // AA6 (C6): per-org MediaAsset storage. Prefer a single
+    // DB-side groupBy; older spec fakes (and any delegate that
+    // lacks groupBy) fall back to per-org findMany summed in JS.
+    // Channel/inbox media has NO byte-size data anywhere, so it
+    // is deliberately NOT estimated here — only MediaAsset
+    // storage is reported.
+    let storageByOrg: Map<string, { bytes: number; count: number }> | null = null;
+    try {
+      const grouped = await (this.prisma as any).mediaAsset.groupBy({
+        by: ["organizationId"], _sum: { sizeBytes: true }, _count: { _all: true },
+      });
+      if (Array.isArray(grouped)) {
+        storageByOrg = new Map();
+        for (const g of grouped as any[]) {
+          const count = typeof g._count === "number" ? g._count : (g._count?._all ?? 0);
+          storageByOrg.set(g.organizationId, { bytes: Number(g._sum?.sizeBytes ?? 0), count: Number(count ?? 0) });
+        }
+      }
+    } catch { storageByOrg = null; }
     const out: any[] = [];
     for (const org of orgs as any[]) {
       const [aiRows, deliveries, broadcasts, workflowRuns, shipments, orders] = await Promise.all([
@@ -473,14 +758,113 @@ export class AdminService {
       ]);
       let aiTokens = 0;
       for (const r of aiRows as any[]) aiTokens += Number(r.inputTokens ?? 0) + Number(r.outputTokens ?? 0);
+      let storageBytes = 0;
+      let mediaAssets = 0;
+      if (storageByOrg) {
+        const s = storageByOrg.get(org.id);
+        storageBytes = s?.bytes ?? 0;
+        mediaAssets = s?.count ?? 0;
+      } else {
+        try {
+          const assets = await (this.prisma as any).mediaAsset.findMany({
+            where: { organizationId: org.id }, select: { sizeBytes: true },
+          }).catch(() => []);
+          const assetRows: any[] = Array.isArray(assets) ? assets : [];
+          mediaAssets = assetRows.length;
+          storageBytes = assetRows.reduce((a: number, r: any) => a + Number(r.sizeBytes ?? 0), 0);
+        } catch { storageBytes = 0; mediaAssets = 0; }
+      }
       out.push({
         organizationId: org.id, name: org.name, status: org.status,
         aiCalls30d: (aiRows as any[]).length, aiTokens30d: aiTokens,
         deliveries30d: deliveries, broadcastsTotal: broadcasts, workflowRuns30d: workflowRuns,
         courierShipmentsTotal: shipments, orders30d: orders,
+        storageBytes, mediaAssets,
       });
     }
     return out;
+  }
+
+  /** AA7 (C12): AI usage drill-down — per organization × feature
+   * rows from AIUsageRecord for a window (days, default 30, capped
+   * at 90). Tokens and call counts ONLY: money stays on the
+   * Analytics AI-cost board, where the operator sets the rates —
+   * no second, possibly divergent, price source is invented here.
+   * `estimatedCalls` counts records whose token numbers are dev-
+   * adapter estimates (AIUsageRecord.estimated), shown separately
+   * so real and estimated usage are never silently blended.
+   * Aggregation prefers DB-side groupBy (AA6 pattern); delegates
+   * without groupBy fall back to a capped findMany summed in JS. */
+  async aiUsageDetail(daysRaw?: number, organizationId?: string) {
+    const days = Math.min(90, Math.max(1, Math.floor(Number(daysRaw) || 30)));
+    const since = new Date(Date.now() - days * 86400000);
+    const where: Record<string, unknown> = { createdAt: { gte: since } };
+    if (organizationId) where.organizationId = organizationId;
+    type Agg = { organizationId: string; feature: string; calls: number; inputTokens: number; outputTokens: number; estimatedCalls: number };
+    const map = new Map<string, Agg>();
+    const slot = (org: string, feature: string): Agg => {
+      const k = org + "|" + feature;
+      let a = map.get(k);
+      if (!a) { a = { organizationId: org, feature, calls: 0, inputTokens: 0, outputTokens: 0, estimatedCalls: 0 }; map.set(k, a); }
+      return a;
+    };
+    const countOf = (g: any) => (typeof g?._count === "number" ? g._count : Number(g?._count?._all ?? 0));
+    let grouped: any[] | null = null;
+    try {
+      grouped = await (this.prisma as any).aIUsageRecord.groupBy({
+        by: ["organizationId", "feature"], where,
+        _count: { _all: true }, _sum: { inputTokens: true, outputTokens: true },
+      });
+    } catch { grouped = null; }
+    if (Array.isArray(grouped)) {
+      for (const g of grouped as any[]) {
+        const a = slot(String(g.organizationId), String(g.feature));
+        a.calls += countOf(g);
+        a.inputTokens += Number(g._sum?.inputTokens ?? 0);
+        a.outputTokens += Number(g._sum?.outputTokens ?? 0);
+      }
+      // Estimated-call split: a second grouped pass over the
+      // estimated subset only. If it fails, estimates stay 0 —
+      // visible as "unknown split", never blended into real calls.
+      try {
+        const est = await (this.prisma as any).aIUsageRecord.groupBy({
+          by: ["organizationId", "feature"], where: { ...where, estimated: true }, _count: { _all: true },
+        });
+        if (Array.isArray(est)) {
+          for (const g of est as any[]) slot(String(g.organizationId), String(g.feature)).estimatedCalls += countOf(g);
+        }
+      } catch { /* split unavailable */ }
+    } else {
+      const rows = await (this.prisma as any).aIUsageRecord.findMany({ where, take: 20000 }).catch(() => []);
+      for (const r of rows as any[]) {
+        const a = slot(String(r.organizationId), String(r.feature));
+        a.calls += 1;
+        a.inputTokens += Number(r.inputTokens ?? 0);
+        a.outputTokens += Number(r.outputTokens ?? 0);
+        if (r.estimated === true) a.estimatedCalls += 1;
+      }
+    }
+    const orgIds = [...new Set([...map.values()].map((a) => a.organizationId))];
+    const orgs = orgIds.length
+      ? await (this.prisma as any).organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }).catch(() => [])
+      : [];
+    const nameOf = (id: string) => (orgs as any[]).find((o) => o.id === id)?.name ?? id;
+    const all = [...map.values()].map((a) => ({ ...a, orgName: nameOf(a.organizationId), totalTokens: a.inputTokens + a.outputTokens }));
+    all.sort((x, y) => (y.totalTokens - x.totalTokens) || (y.calls - x.calls));
+    return { days, since, totalRows: all.length, rows: all.slice(0, 200) };
+  }
+
+  /** AA7: CSV twin of aiUsageDetail (same window/filter, full
+   * 200-row cap), mirroring the billing/audit export pattern. */
+  async exportAiUsageCsv(daysRaw?: number, organizationId?: string): Promise<string> {
+    const { days, rows } = await this.aiUsageDetail(daysRaw, organizationId);
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [`# AI usage by feature — last ${days} days (tokens/calls only; costs live on the Analytics AI-cost board)`];
+    lines.push("organizationId,orgName,feature,calls,inputTokens,outputTokens,totalTokens,estimatedCalls");
+    for (const r of rows) {
+      lines.push([r.organizationId, esc(r.orgName), esc(r.feature), r.calls, r.inputTokens, r.outputTokens, r.totalTokens, r.estimatedCalls].join(","));
+    }
+    return lines.join("\n");
   }
 
   // ---------------- Support view (metadata-first; content is a separate audited act) ----------------
@@ -755,6 +1139,12 @@ export class AdminService {
     const entries = await (this.prisma as any).auditLog.findMany({
       where: { action: "billing.dunning_sent" }, orderBy: { createdAt: "desc" }, take: 1000,
     }).catch(() => []);
+    const dunningJobs = await (this.prisma as any).scheduledJob.findMany({
+      where: { type: "dunning_reminders" },
+    }).catch(() => []);
+    const reminderConfigured = new Set(
+      ((dunningJobs as any[]) ?? []).filter((j: any) => j.enabled).map((j: any) => j.organizationId),
+    );
     const byOrg = new Map<string, any[]>();
     for (const e of entries as any[]) {
       if (!e.organizationId) continue;
@@ -776,6 +1166,7 @@ export class AdminService {
         daysOverdue: sub.currentPeriodEnd ? Math.floor((now - new Date(sub.currentPeriodEnd).getTime()) / 86400000) : null,
         dunningStagesSent: stages,
         lastDunningAt: sent.length ? sent[0].createdAt : null,
+        reminderJobConfigured: reminderConfigured.has(sub.organizationId),
       });
     }
     out.sort((a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0));
@@ -823,7 +1214,7 @@ export class AdminService {
 
   // ---------------- Security & TOTP (Phase D) ----------------
   async totpEnroll(actor: any, ip?: string) {
-    const { generateTotpSecret, otpauthUrl } = await import("../common/totp");
+    const { generateTotpSecret, otpauthUrl, qrDataUrlFor } = await import("../common/totp");
     const { encryptJson } = await import("../integrations/crypto");
     const secret = generateTotpSecret();
     await (this.prisma as any).user.update({
@@ -834,7 +1225,9 @@ export class AdminService {
     // The base32 secret is returned ONCE, to its owner, so they can
     // add it to an authenticator app. It is stored AES-GCM encrypted
     // and never returned again (confirm/disable only accept codes).
-    return { secret, otpauthUrl: otpauthUrl(secret, actor.email), note: "Add this to your authenticator app, then confirm with a 6-digit code. Until confirmation, two-factor stays OFF." };
+    // AP1: qrDataUrl is the same otpauth URL as a scannable PNG.
+    const url = otpauthUrl(secret, actor.email);
+    return { secret, otpauthUrl: url, qrDataUrl: await qrDataUrlFor(url), note: "Scan the QR code with your authenticator app (or enter the secret manually), then confirm with a 6-digit code. Until confirmation, two-factor stays OFF." };
   }
 
   private async actorTotpSecret(actor: any): Promise<string> {
@@ -875,6 +1268,36 @@ export class AdminService {
     };
   }
 
+  /** AA7 (C13): the admins roster — every platform admin in one
+   * place. Assembled from the same rows securityOverview lists
+   * (grant sets isSuperAdmin + adminTier together; the guard
+   * requires the flag), extended with createdAt and a renamed
+   * totpEnrolled boolean. Legacy admins (flag set, adminTier null)
+   * operate as SUPER — the tier the M28 mutation gate and the
+   * last-SUPER protection already assume — so the roster reports
+   * "SUPER" for them rather than a misleading blank. The TOTP
+   * SECRET is never selected; enrolment is a boolean only.
+   * Read-only by design: grant/revoke stays on the user page. */
+  async adminsRoster() {
+    const rows = await (this.prisma as any).user.findMany({
+      where: { isSuperAdmin: true },
+      select: { id: true, email: true, name: true, adminTier: true, status: true, totpEnabled: true, lastLoginAt: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+      admins: (rows as any[]).map((u) => ({
+        id: u.id,
+        name: u.name ?? null,
+        email: u.email,
+        tier: u.adminTier ?? "SUPER",
+        status: u.status,
+        totpEnrolled: u.totpEnabled === true,
+        lastLoginAt: u.lastLoginAt ?? null,
+        createdAt: u.createdAt ?? null,
+      })),
+    };
+  }
+
   async revokeSessions(actor: any, targetUserId: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const target = await (this.prisma as any).user.findUnique({ where: { id: targetUserId } });
@@ -896,10 +1319,12 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
+      this.rawConfigRow("imageConfig"),
+      this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
     ]);
     return {
       llm: {
@@ -942,6 +1367,28 @@ export class AdminService {
         sandbox: bk ? bk.sandbox !== false : process.env.BKASH_SANDBOX !== "false",
         secretConfigured: Boolean((bk?.appSecretEncrypted && bk?.passwordEncrypted) || (process.env.BKASH_APP_SECRET && process.env.BKASH_PASSWORD)),
       },
+      image: {
+        source: img?.provider ? "admin" : (process.env.IMAGE_PROVIDER ? "env" : "none"),
+        provider: img?.provider ?? (process.env.IMAGE_PROVIDER || null),
+        model: img?.model ?? (process.env.IMAGE_MODEL || null),
+        secretConfigured: Boolean(img?.apiKeyEncrypted || process.env.IMAGE_API_KEY),
+      },
+      tiktokApp: {
+        source: tt?.clientKey ? "admin" : (process.env.TIKTOK_CLIENT_KEY ? "env" : "none"),
+        clientKey: tt?.clientKey ?? (process.env.TIKTOK_CLIENT_KEY || null),
+        redirectUri: tt?.redirectUri ?? (process.env.TIKTOK_REDIRECT_URI || null),
+        // The operator's own declaration that TikTok approved the
+        // app for direct posting — unlocks the direct-post path;
+        // it is never inferred from anything else.
+        audited: tt ? tt.audited === true : process.env.TIKTOK_APP_AUDITED === "true",
+        secretConfigured: Boolean(tt?.clientSecretEncrypted || process.env.TIKTOK_CLIENT_SECRET),
+      },
+      googleApp: {
+        source: gg?.clientId ? "admin" : (process.env.GOOGLE_CLIENT_ID ? "env" : "none"),
+        clientId: gg?.clientId ?? (process.env.GOOGLE_CLIENT_ID || null),
+        redirectUri: gg?.redirectUri ?? (process.env.GOOGLE_REDIRECT_URI || null),
+        secretConfigured: Boolean(gg?.clientSecretEncrypted || process.env.GOOGLE_CLIENT_SECRET),
+      },
       note: "Boot secrets (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY) stay in the server environment by design — the encryption key cannot be stored inside what it encrypts.",
     };
   }
@@ -952,7 +1399,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -980,6 +1427,15 @@ export class AdminService {
       }
       setField("model", patch.model === undefined ? undefined : String(patch.model));
       setSecret("apiKey", "apiKeyEncrypted", patch.apiKey, patch.clearSecret);
+    } else if (area === "tiktok") {
+      setField("clientKey", patch.clientKey === undefined ? undefined : String(patch.clientKey));
+      setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
+      if (patch.audited !== undefined) setField("audited", patch.audited === true);
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "google") {
+      setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
+      setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "meta") {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
       if (patch.graphVersion !== undefined) {
@@ -1013,13 +1469,106 @@ export class AdminService {
       if (patch.sandbox !== undefined) setField("sandbox", patch.sandbox === true);
       setSecret("appSecret", "appSecretEncrypted", patch.appSecret, patch.clearSecret);
       setSecret("password", "passwordEncrypted", patch.password, undefined);
+    } else if (area === "image") {
+      if (patch.provider !== undefined) {
+        const p = String(patch.provider).toLowerCase();
+        if (!["gemini", ""].includes(p)) throw new BadRequestException("image provider must be gemini");
+        setField("provider", p);
+      }
+      setField("model", patch.model === undefined ? undefined : String(patch.model));
+      setSecret("apiKey", "apiKeyEncrypted", patch.apiKey, patch.clearSecret);
     }
+
+    // SP4 verify-before-save (image area only): when the merged
+    // config names a real provider WITH a key, one minimal REAL
+    // generation must succeed before anything is persisted. A
+    // failure audits the attempt and throws — nothing is upserted
+    // and the snapshot is not refreshed, so a broken key/model can
+    // never silently become the live configuration. Skipped for
+    // disable/clear-style saves (no provider or no key) and when
+    // the secret itself is being cleared.
+    let imageVerified: { model: string; latencyMs: number } | null = null;
+    if (area === "image" && patch.clearSecret !== true) {
+      const mergedProvider = typeof next.provider === "string" ? next.provider : "";
+      const mergedKey = (typeof patch.apiKey === "string" && patch.apiKey)
+        ? patch.apiKey
+        : unseal(current.apiKeyEncrypted);
+      if (mergedProvider === "gemini" && mergedKey) {
+        const started = Date.now();
+        try {
+          const verifyProvider = buildImageProvider("gemini", mergedKey, next.model ? String(next.model) : undefined);
+          const result = await Promise.race([
+            verifyProvider.generate("A simple red circle centered on a plain white background."),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Image verification timed out after 30s")), 30_000)),
+          ]);
+          imageVerified = { model: result.model, latencyMs: Date.now() - started };
+        } catch (e) {
+          const message = e instanceof Error ? e.message : "unknown error";
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: message }, ip);
+          throw new BadRequestException(`Image provider verification FAILED — the setting was NOT saved: ${message}`);
+        }
+      }
+    }
+
+    // AA3 verify-before-save, same discipline as SP4's image
+    // block, for the two blocks whose probe is a TRUE credential
+    // proof AND side-effect-free:
+    //  - Meta: when the merged config holds an App ID + a secret,
+    //    Meta must mint an app access token for them before the
+    //    row is written.
+    //  - bKash: when the merged config is complete (all four
+    //    credential parts), a token grant must succeed first;
+    //    the granted token is discarded, never stored.
+    // SSLCommerz (init creates gateway-side session state),
+    // TikTok and Google (partial client-auth probes only)
+    // deliberately do NOT block saving — their test buttons are
+    // the verification path. Skipped on clearSecret/clear, like
+    // image.
+    let metaVerified: { latencyMs: number } | null = null;
+    if (area === "meta" && patch.clearSecret !== true) {
+      const mergedAppId = typeof next.appId === "string" ? next.appId : "";
+      const mergedSecret = (typeof patch.appSecret === "string" && patch.appSecret)
+        ? patch.appSecret
+        : unseal(current.appSecretEncrypted);
+      if (mergedAppId && mergedSecret) {
+        const version = (typeof next.graphVersion === "string" && next.graphVersion) || process.env.META_GRAPH_VERSION || "v21.0";
+        const probe = await this.probeMetaApp(mergedAppId, mergedSecret, version);
+        if (!probe.ok) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
+          throw new BadRequestException(`Meta app verification FAILED — the setting was NOT saved: ${probe.detail}`);
+        }
+        metaVerified = { latencyMs: probe.latencyMs };
+      }
+    }
+    let bkashVerified: { latencyMs: number } | null = null;
+    if (area === "bkash" && patch.clearSecret !== true) {
+      const merged: BkashConfig = {
+        appKey: typeof next.appKey === "string" ? next.appKey : "",
+        username: typeof next.username === "string" ? next.username : "",
+        appSecret: (typeof patch.appSecret === "string" && patch.appSecret) ? patch.appSecret : (unseal(current.appSecretEncrypted) ?? ""),
+        password: (typeof patch.password === "string" && patch.password) ? patch.password : (unseal(current.passwordEncrypted) ?? ""),
+        sandbox: next.sandbox !== false,
+      };
+      if (merged.appKey && merged.username && merged.appSecret && merged.password) {
+        const probe = await this.probeBkashGrant(merged);
+        if (!probe.ok) {
+          await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
+          throw new BadRequestException(`bKash verification FAILED — the setting was NOT saved: ${probe.detail}`);
+        }
+        bkashVerified = { latencyMs: probe.latencyMs };
+      }
+    }
+
     await (this.prisma as any).systemSetting.upsert({
       where: { key }, create: { key, value: next, updatedById: actor.id }, update: { value: next, updatedById: actor.id },
     });
     await refreshPlatformConfig(this.prisma as any);
     await this.logAdmin(actor, "platform_config_updated", "SystemSetting", key, { area, changed }, ip);
-    return this.getPlatformConfig();
+    const configView = await this.getPlatformConfig();
+    if (imageVerified) return { ...configView, imageVerification: { ok: true, model: imageVerified.model, latencyMs: imageVerified.latencyMs } };
+    if (metaVerified) return { ...configView, metaVerification: { ok: true, latencyMs: metaVerified.latencyMs } };
+    if (bkashVerified) return { ...configView, bkashVerification: { ok: true, latencyMs: bkashVerified.latencyMs } };
+    return configView;
   }
 
   /** A REAL minimal completion against the configured provider.
@@ -1042,6 +1591,31 @@ export class AdminService {
       return { ok: true, provider: cfg.provider, model: result.model, source: cfg.source, latencyMs: Date.now() - started, sample: String(result.text).slice(0, 80) };
     } catch (e) {
       throw new BadRequestException(`LLM test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+  }
+
+  /** A REAL minimal image generation against the configured
+   * image provider (SP4). Success requires actual image bytes
+   * back from the provider; failures surface its error verbatim. */
+  async testImage() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveImageConfig();
+    if (cfg.source === "none" || !cfg.provider) {
+      throw new BadRequestException("No image provider is configured. Set a provider + API key above (or IMAGE_PROVIDER/IMAGE_API_KEY in env) first.");
+    }
+    const provider = buildImageProvider(cfg.provider, cfg.apiKey, cfg.model);
+    const started = Date.now();
+    try {
+      const result = await Promise.race([
+        provider.generate("A simple red circle centered on a plain white background."),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Image test timed out after 30s")), 30_000)),
+      ]);
+      return {
+        ok: true, provider: cfg.provider, model: result.model, source: cfg.source,
+        latencyMs: Date.now() - started, bytes: result.bytes.length, contentType: result.contentType,
+      };
+    } catch (e) {
+      throw new BadRequestException(`Image test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
     }
   }
 
@@ -1069,6 +1643,248 @@ export class AdminService {
     } catch (e) {
       throw new BadRequestException(`SMS test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
     }
+  }
+
+  // ---------------- Admin Advanced AA3: verify the five blind-save blocks ----
+  // Meta / SSLCommerz / bKash / TikTok / Google configs used to
+  // save BLIND — a typo'd secret was discovered by a failing
+  // tenant payment or OAuth. Each probe below performs the
+  // cheapest REAL authentication-shaped call against the provider
+  // with the EFFECTIVE config (admin -> env) and NEVER saves
+  // anything. Unlike the older test methods (which throw), these
+  // RETURN { ok, latencyMs, detail } — a missing config is an
+  // honest ok:false result, not a 500, and a provider rejection
+  // carries the provider's own words in `detail`.
+  //
+  // Proof classification (see docs/admin-aa3-acceptance.md):
+  //  - Meta (client_credentials app-token mint) and bKash
+  //    (token grant) are TRUE credential proofs -> they also run
+  //    as verify-before-save in updatePlatformConfig.
+  //  - SSLCommerz (session-init) proves gateway acceptance but
+  //    creates an inert unpaid session on the gateway -> test
+  //    button only, never on save.
+  //  - TikTok / Google dummy-grant probes distinguish the
+  //    providers' documented invalid_client (client REJECTED)
+  //    from code/token errors (client ACCEPTED, dummy material
+  //    refused as expected) -> client-auth proof only, labelled
+  //    as such; they do not prove redirect-URI registration or
+  //    API enablement, and never run on save.
+
+  private probeFail(started: number, detail: string) {
+    return { ok: false, latencyMs: Date.now() - started, detail };
+  }
+
+  private async probeMetaApp(appId: string, appSecret: string, graphVersion: string) {
+    const started = Date.now();
+    try {
+      const qs = new URLSearchParams({ client_id: appId, grant_type: "client_credentials" });
+      qs.set("client_secret", appSecret);
+      const res = await fetch(`https://graph.facebook.com/${graphVersion}/oauth/access_token?${qs.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (res.ok && json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "Meta app access token ইস্যু করেছে — App ID ও App Secret সঠিক।" };
+      }
+      return this.probeFail(started, json?.error?.message ?? `Meta উত্তর দিয়েছে HTTP ${res.status} — কোনো app token পাওয়া যায়নি।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  private async probeBkashGrant(cfg: BkashConfig) {
+    const started = Date.now();
+    try {
+      const res = await fetch(`${bkashBase(cfg)}/token/grant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", username: cfg.username, password: cfg.password },
+        body: JSON.stringify({ app_key: cfg.appKey, app_secret: cfg.appSecret }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (json?.id_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "bKash token grant সফল — App Key/Secret ও Username/Password সঠিক। (প্রাপ্ত token সংরক্ষণ করা হয়নি।)" };
+      }
+      return this.probeFail(started, json?.statusMessage ?? json?.errorMessage ?? `bKash উত্তর দিয়েছে HTTP ${res.status} — কোনো token পাওয়া যায়নি।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  private async probeSslcommerzInit(cfg: SslcommerzConfig) {
+    const started = Date.now();
+    const apiBase = (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, "");
+    const form = new URLSearchParams({
+      store_id: cfg.storeId,
+      store_passwd: cfg.storePass,
+      total_amount: "10.00",
+      currency: "BDT",
+      tran_id: `ADMIN-VERIFY-${Date.now()}`,
+      success_url: `${apiBase}/public/payments/sslcommerz/return`,
+      fail_url: `${apiBase}/public/payments/sslcommerz/return`,
+      cancel_url: `${apiBase}/public/payments/sslcommerz/return`,
+      ipn_url: `${apiBase}/public/payments/sslcommerz/ipn`,
+      product_name: "Admin config verification",
+      product_category: "service",
+      product_profile: "general",
+      cus_name: "Admin Verify",
+      cus_email: "verify@localhost",
+      cus_phone: "01000000000",
+      cus_add1: "Dhaka",
+      cus_city: "Dhaka",
+      cus_country: "Bangladesh",
+      ship_name: "Admin Verify",
+      ship_add1: "Dhaka",
+      ship_city: "Dhaka",
+      ship_country: "Bangladesh",
+      shipping_method: "NO",
+    });
+    try {
+      const res = await fetch(`${sslcommerzBase(cfg)}/gwprocess/v4/api.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form.toString(),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (json?.status === "SUCCESS" && json?.GatewayPageURL) {
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: "SSLCommerz gateway session তৈরি করেছে — Store ID ও Password গৃহীত হয়েছে। এটি একটি আসল session-init পরীক্ষা: কোনো টাকা কাটা হয়নি, session-টি মেয়াদ শেষে নিজে মুছে যাবে।",
+        };
+      }
+      const reason = String(json?.failed_reason ?? json?.status ?? `HTTP ${res.status}`);
+      if (/store|password|credential/i.test(reason)) {
+        return this.probeFail(started, `${reason} — SSLCommerz Store credential প্রত্যাখ্যান করেছে।`);
+      }
+      return this.probeFail(started, `${reason} — SSLCommerz session-init ব্যর্থ; কারণটি credential কিনা এই উত্তর থেকে নিশ্চিত বলা যায় না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  private async probeTiktokApp(cfg: { clientKey: string; clientSecret: string; redirectUri?: string }) {
+    const started = Date.now();
+    try {
+      const res = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: (() => {
+          const form = new URLSearchParams();
+          form.set("client_key", cfg.clientKey);
+          form.set("client_secret", cfg.clientSecret);
+          form.set("code", "admin-verify-invalid-code");
+          form.set("grant_type", "authorization_code");
+          form.set("redirect_uri", socialOAuthRedirectUri("tiktok", cfg.redirectUri));
+          return form.toString();
+        })(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "TikTok token দিয়েছে — Client Key/Secret সঠিক।" };
+      }
+      const errStr = typeof json?.error === "string" ? json.error : (typeof json?.error?.code === "string" ? json.error.code : "");
+      const errDesc = String(json?.error_description ?? json?.error?.message ?? "");
+      if (errStr === "invalid_client") {
+        return this.probeFail(started, errDesc || "TikTok client authentication ব্যর্থ (invalid_client) — Client Key/Secret প্রত্যাখ্যান করা হয়েছে।");
+      }
+      if (errStr) {
+        // Any OTHER structured OAuth error means the client was
+        // authenticated and only the deliberately-bogus code was
+        // refused — the documented distinction this probe rests on.
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: `TikTok client credential গৃহীত হয়েছে — dummy authorization code প্রত্যাখ্যান করা হয়েছে (প্রত্যাশিত; code-টি আসল নয়)। প্রমাণের সীমা: Client Key/Secret সঠিক — পূর্ণ প্রমাণের জন্য আসল user OAuth round-trip লাগবে। TikTok-এর উত্তর: ${errStr}${errDesc ? ` — ${errDesc}` : ""}`,
+        };
+      }
+      return this.probeFail(started, `TikTok-এর উত্তর বোঝা যায়নি (HTTP ${res.status}) — credential যাচাই করা গেল না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  private async probeGoogleApp(cfg: { clientId: string; clientSecret: string }) {
+    const started = Date.now();
+    try {
+      const res = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: (() => {
+          const form = new URLSearchParams();
+          form.set("client_id", cfg.clientId);
+          form.set("client_secret", cfg.clientSecret);
+          form.set("refresh_token", "admin-verify-invalid-token");
+          form.set("grant_type", "refresh_token");
+          return form.toString();
+        })(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      const errStr = typeof json?.error === "string" ? json.error : "";
+      const errDesc = String(json?.error_description ?? "");
+      if (errStr === "invalid_client") {
+        return this.probeFail(started, errDesc || "Google client authentication ব্যর্থ (invalid_client) — Client ID/Secret প্রত্যাখ্যান করা হয়েছে।");
+      }
+      if (errStr === "invalid_grant") {
+        // Google's documented distinction: invalid_grant is only
+        // returned AFTER the client itself authenticated — the
+        // deliberately-bogus refresh token is what was refused.
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: `Google client credential গৃহীত হয়েছে — dummy refresh token প্রত্যাখ্যান করা হয়েছে (প্রত্যাশিত; token-টি আসল নয়)। প্রমাণের সীমা: Client ID/Secret Google চিনেছে — Redirect URI নিবন্ধন বা YouTube Data API চালু আছে কিনা এটি প্রমাণ করে না। Google-এর উত্তর: invalid_grant${errDesc ? ` — ${errDesc}` : ""}`,
+        };
+      }
+      if (json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "Google access token দিয়েছে — Client ID/Secret সঠিক।" };
+      }
+      return this.probeFail(started, errDesc || `Google-এর উত্তর বোঝা যায়নি (HTTP ${res.status}) — credential যাচাই করা গেল না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  async testMeta() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = getPlatformConfigSync().metaApp;
+    if (!cfg?.appId || !cfg?.appSecret) {
+      return { ok: false, latencyMs: 0, detail: "Meta App configure করা নেই — যাচাইয়ের জন্য App ID ও App Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    }
+    const version = cfg.graphVersion ?? process.env.META_GRAPH_VERSION ?? "v21.0";
+    const probe = await this.probeMetaApp(cfg.appId, cfg.appSecret, version);
+    return { ...probe, source: "admin" as const };
+  }
+
+  async testSslcommerz() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveSslcommerzConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "SSLCommerz configure করা নেই — Store ID ও Store Password সেভ করুন (বা env-তে দিন) তারপর যাচাই করুন।" };
+    const probe = await this.probeSslcommerzInit(cfg);
+    return { ...probe, sandbox: cfg.sandbox, source: cfg.source };
+  }
+
+  async testBkash() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveBkashConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "bKash configure করা নেই — App Key, App Secret, Username ও Password চারটিই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeBkashGrant(cfg);
+    return { ...probe, sandbox: cfg.sandbox, source: cfg.source };
+  }
+
+  async testTiktok() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveTiktokAppConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "TikTok App configure করা নেই — Client Key ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeTiktokApp(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  async testGoogle() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveGoogleAppConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "Google App configure করা নেই — Client ID ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeGoogleApp(cfg);
+    return { ...probe, source: cfg.source };
   }
 
   // ---------------- Phase A1 (Milestone 37): Operator Visibility++ ----------------
@@ -1313,23 +2129,51 @@ export class AdminService {
     const targetMembership = [...memberships].sort((a: any, b: any) => rank(a.role) - rank(b.role))[0];
     const target = await (this.prisma as any).user.findUnique({ where: { id: targetMembership.userId } });
     if (!target || target.status !== "ACTIVE") throw new BadRequestException("The target member account is not active");
+    // Admin Polish AP2: the session is registered server-side
+    // FIRST; the token carries the session id and TenantGuard
+    // requires the row to be live — so revocation is real.
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    const session = await (this.prisma as any).viewAsSession.create({
+      data: { adminId: actor.id, adminEmail: actor.email, targetUserId: target.id, organizationId, mode, reason: why, expiresAt },
+    });
     const token = await this.jwt.signAsync(
       {
         sub: target.id, email: target.email, isSuperAdmin: false, tv: (target as any).tokenVersion ?? 0,
-        viewAs: { adminId: actor.id, adminEmail: actor.email, orgId: organizationId, mode },
+        viewAs: { adminId: actor.id, adminEmail: actor.email, orgId: organizationId, mode, sessionId: session.id },
       },
       { expiresIn: "30m" },
     );
     await this.logAdmin(actor, "view_as_started", "Organization", organizationId, {
-      mode, reason: why, targetUserId: target.id, targetEmail: target.email, targetRole: targetMembership.role,
+      mode, reason: why, targetUserId: target.id, targetEmail: target.email, targetRole: targetMembership.role, sessionId: session.id,
     }, ip);
     const webBase = process.env.WEB_URL ?? "http://localhost:3000";
     return {
-      token, mode, expiresInMinutes: 30,
+      token, mode, expiresInMinutes: 30, sessionId: session.id,
       organizationId, organizationName: org.name,
       targetUser: { id: target.id, email: target.email, role: targetMembership.role },
       url: `${webBase}/view-as?token=${encodeURIComponent(token)}&org=${organizationId}`,
     };
+  }
+
+  /** AP2: list view-as sessions (mine; SUPER sees everyone's),
+   * newest first, with a computed active flag. */
+  async listViewAsSessions(actor: any) {
+    const where = actor?.adminTier === "SUPER" || actor?.isSuperAdmin ? {} : { adminId: actor.id };
+    const rows = await (this.prisma as any).viewAsSession.findMany({ where, orderBy: { createdAt: "desc" }, take: 50 });
+    const now = Date.now();
+    return rows.map((s: any) => ({ ...s, active: !s.revokedAt && new Date(s.expiresAt).getTime() > now }));
+  }
+
+  /** AP2: revoke a session server-side. Mine, or any for SUPER. */
+  async revokeViewAsSession(actor: any, sessionId: string, ip?: string) {
+    const s = await (this.prisma as any).viewAsSession.findUnique({ where: { id: sessionId } });
+    if (!s) throw new NotFoundException("View-as session not found");
+    const isSuper = actor?.adminTier === "SUPER" || actor?.isSuperAdmin;
+    if (s.adminId !== actor.id && !isSuper) throw new ForbiddenException("Only the session's admin (or a SUPER admin) can revoke it");
+    if (s.revokedAt) return { ...s, active: false };
+    const updated = await (this.prisma as any).viewAsSession.update({ where: { id: sessionId }, data: { revokedAt: new Date(), revokedById: actor.id } });
+    await this.logAdmin(actor, "view_as_revoked", "Organization", s.organizationId, { sessionId, mode: s.mode, targetUserId: s.targetUserId }, ip);
+    return { ...updated, active: false };
   }
 
   /** Org 360: A1 history + orders, conversations, sync jobs, tickets. */
@@ -1551,21 +2395,28 @@ export class AdminService {
     const rows = await (this.prisma as any).adminApiKey.findMany({ orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []);
     return (rows as any[]).map((r) => ({
       id: r.id, name: r.name, keyPrefix: r.keyPrefix, createdById: r.createdById,
+      // AP3: scopes ride along; [] means a legacy full-access key.
+      scopes: (r as any).scopes ?? [],
       lastUsedAt: r.lastUsedAt, revokedAt: r.revokedAt, createdAt: r.createdAt,
     }));
   }
 
-  async createApiKey(actor: any, nameRaw: string, ip?: string) {
+  async createApiKey(actor: any, nameRaw: string, ip?: string, scopesRaw?: unknown) {
     const name = String(nameRaw ?? "").trim();
     if (name.length < 3) throw new BadRequestException("API key name is required (min 3 characters)");
+    // AP3: validate the requested grants against the catalog.
+    const { validateScopes } = await import("../common/api-key-scopes");
+    let scopes: string[];
+    try { scopes = validateScopes(scopesRaw); }
+    catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid scopes"); }
     const { randomBytes, createHash } = await import("node:crypto");
     const raw = `qosa_${randomBytes(32).toString("hex")}`;
     const keyHash = createHash("sha256").update(raw).digest("hex");
     const row = await (this.prisma as any).adminApiKey.create({
-      data: { name, keyPrefix: raw.slice(0, 12), keyHash, createdById: actor.id },
+      data: { name, keyPrefix: raw.slice(0, 12), keyHash, createdById: actor.id, scopes },
     });
-    await this.logAdmin(actor, "api_key_created", "AdminApiKey", row.id, { name }, ip);
-    return { id: row.id, name: row.name, keyPrefix: row.keyPrefix, key: raw, note: "This is the only time the full key is shown. Store it in a secrets manager." };
+    await this.logAdmin(actor, "api_key_created", "AdminApiKey", row.id, { name, scopes }, ip);
+    return { id: row.id, name: row.name, keyPrefix: row.keyPrefix, scopes, key: raw, note: "This is the only time the full key is shown. Store it in a secrets manager." };
   }
 
   async revokeApiKey(actor: any, id: string, reasonRaw: string, ip?: string) {
@@ -1829,6 +2680,141 @@ export class AdminService {
     };
   }
 
+  // ---------------- Admin Advanced AA1: Deploy Readiness ----------------
+  // The owner's 2026-10-11 Dokploy redeploy failed because
+  // INTERNAL_JOB_SECRET was missing from the compose env — and
+  // nothing anywhere in the product could have told him before
+  // the deploy. This checklist reports PRESENCE ONLY: a variable
+  // is either set (non-empty) or not. Values are never read into
+  // the response, never logged, never compared.
+  //
+  // Two groups, kept honest about what the API process can
+  // attest:
+  //  - "api": variables in THIS process's own environment.
+  //  - "compose": variables that exist only at the Dokploy /
+  //    compose layer (POSTGRES_PASSWORD is interpolated into
+  //    DATABASE_URL by compose; APP_DOMAIN is interpolated into
+  //    WEB_URL + the domain routing). The API cannot see them,
+  //    so they are reported as unverifiable — never guessed from
+  //    their derivatives.
+
+  private static readonly ENV_REQUIRED: { name: string; hintBn: string }[] = [
+    { name: "DATABASE_URL", hintBn: "ডাটাবেস সংযোগের ঠিকানা — এটি ছাড়া API চালুই হতে পারে না।" },
+    { name: "JWT_SECRET", hintBn: "লগইন সেশনের সাইনিং secret — না থাকলে বা বদলালে সবাই লগআউট হয়ে যাবে।" },
+    { name: "ENCRYPTION_KEY", hintBn: "সংরক্ষিত সব credential এই key দিয়ে খোলা হয় — না থাকলে কোনো integration-এর গোপন তথ্য পড়া যাবে না। বসানোর পর এটি কখনো বদলাবেন না।" },
+    { name: "INTERNAL_JOB_SECRET", hintBn: "API ও Worker-এর মধ্যকার যাচাই secret — না থাকলে বা দুই পাশে না মিললে নির্ধারিত Job চলবে না। আগের একটি deploy ঠিক এই কারণেই আটকে গিয়েছিল।" },
+  ];
+
+  private static readonly ENV_OPTIONAL: { name: string; hintBn: string }[] = [
+    { name: "REDIS_URL", hintBn: "Queue dispatch-এর জন্য — না থাকলে Job গুলো API-র ভেতরেই (inline) চলে এবং আলাদা Worker প্রসেস কোনো কাজ পায় না।" },
+    { name: "API_PUBLIC_URL", hintBn: "API-র পাবলিক ঠিকানা — Social OAuth callback ও public link তৈরিতে লাগে।" },
+    { name: "PUBLIC_API_URL", hintBn: "Telegram webhook স্বয়ংক্রিয় নিবন্ধনে লাগে — না থাকলে channel connect-এর সময় webhook হাতে নিবন্ধন করতে হয়।" },
+    { name: "WEB_URL", hintBn: "Tenant অ্যাপের ঠিকানা — email/notification-এর link তৈরিতে লাগে। Dokploy-তে APP_DOMAIN থেকে compose এটি বানিয়ে দেয়।" },
+    { name: "WORKER_HEALTH_URL", hintBn: "Worker-এর health endpoint-এর ঠিকানা (AA2) — না থাকলে ডিফল্ট http://worker:4100/health ধরে নেওয়া হয়।" },
+    { name: "ADMIN_IP_ALLOWLIST", hintBn: "শুধু নির্দিষ্ট IP থেকে Admin প্রবেশের বাধা — না থাকলে যেকোনো নেটওয়ার্ক থেকে Admin লগইন সম্ভব (তখন TOTP-ই প্রধান সুরক্ষা)। Console থেকেও তালিকা রাখা যায়।" },
+  ];
+
+  private static readonly ENV_COMPOSE: { name: string; hintBn: string }[] = [
+    { name: "POSTGRES_PASSWORD", hintBn: "Postgres কন্টেইনারের পাসওয়ার্ড — API প্রসেস এটি দেখতে পায় না; compose এটিকে DATABASE_URL-এর ভেতরে বসিয়ে দেয়। Dokploy-এর Environment ট্যাবে আছে কিনা মিলিয়ে দেখুন।" },
+    { name: "APP_DOMAIN", hintBn: "Tenant অ্যাপের ডোমেইন — API এটি সরাসরি দেখে না; compose এটিকে WEB_URL বানিয়ে দেয় এবং Dokploy Domains ট্যাবে routing হয়। Environment ও Domains — দুই ট্যাবেই মিলিয়ে দেখুন।" },
+  ];
+
+  /** Locate the repo's prisma migrations directory, if the
+   * running image carries it (the monorepo image does; a
+   * stripped runtime may not — then pending stays unknown). */
+  private migrationsDir(): string | null {
+    // An explicit operator pointer is authoritative: if it is
+    // set but wrong, pending stays honestly unknown instead of
+    // silently falling back to a different directory.
+    if (process.env.PRISMA_MIGRATIONS_DIR) {
+      try { return existsSync(process.env.PRISMA_MIGRATIONS_DIR) ? process.env.PRISMA_MIGRATIONS_DIR : null; }
+      catch { return null; }
+    }
+    const candidates: string[] = [];
+    try {
+      candidates.push(join(dirname(require.resolve("@repo/db/package.json")), "prisma", "migrations"));
+    } catch { /* package not resolvable from here */ }
+    candidates.push(join(process.cwd(), "packages/db/prisma/migrations"));
+    candidates.push(join(process.cwd(), "../../packages/db/prisma/migrations"));
+    for (const c of candidates) {
+      try { if (existsSync(c)) return c; } catch { /* keep looking */ }
+    }
+    return null;
+  }
+
+  async systemEnvCheck() {
+    const present = (name: string) => {
+      const v = process.env[name];
+      return typeof v === "string" && v.trim().length > 0;
+    };
+    const apiEnv = [
+      ...AdminService.ENV_REQUIRED.map((e) => ({ name: e.name, required: true, present: present(e.name), hintBn: e.hintBn })),
+      ...AdminService.ENV_OPTIONAL.map((e) => ({ name: e.name, required: false, present: present(e.name), hintBn: e.hintBn })),
+    ];
+    const requiredMissing = apiEnv.filter((e) => e.required && !e.present).length;
+
+    // Migration readiness from the DB's own ledger (same source
+    // as systemVersion) vs the repo directory when readable.
+    let migrations: { applied: number; latest: string | null; repoTotal: number | null; pending: number | null; pendingNames: string[] } | null = null;
+    try {
+      const rows = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY finished_at DESC`,
+      );
+      const appliedNames = new Set(((rows as any[]) ?? []).map((r: any) => String(r.migration_name)));
+      const latestApplied = ((rows as any[]) ?? [])[0]?.migration_name ?? null;
+      let repoTotal: number | null = null;
+      let pendingNames: string[] = [];
+      let pending: number | null = null;
+      const dir = this.migrationsDir();
+      if (dir) {
+        const repoNames = readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && /^\d+_/.test(d.name))
+          .map((d) => d.name)
+          .sort();
+        repoTotal = repoNames.length;
+        pendingNames = repoNames.filter((n) => !appliedNames.has(n)).slice(0, 20);
+        pending = repoNames.filter((n) => !appliedNames.has(n)).length;
+      }
+      migrations = {
+        applied: appliedNames.size,
+        latest: latestApplied ? String(latestApplied) : null,
+        repoTotal,
+        pending,
+        pendingNames,
+      };
+    } catch { /* not a Postgres-backed Prisma (tests) — reported as null */ }
+
+    // Platform-config source summary: the getPlatformConfig safe
+    // view already computes admin/env/none per block without ever
+    // exposing a secret — reuse it verbatim.
+    const pc: any = await this.getPlatformConfig().catch(() => null);
+    const areaLabels: [string, string][] = [
+      ["llm", "AI / LLM"], ["metaApp", "Meta App"], ["smtp", "Email (SMTP)"], ["sms", "SMS"],
+      ["sslcommerz", "SSLCommerz"], ["bkash", "bKash"], ["image", "AI Image"],
+      ["tiktokApp", "TikTok App"], ["googleApp", "Google App"],
+    ];
+    const platformConfig = areaLabels.map(([area, label]) => ({
+      area,
+      label,
+      source: (pc?.[area]?.source as string) ?? "none",
+      secretConfigured: Boolean(pc?.[area]?.secretConfigured ?? pc?.[area]?.appSecretConfigured),
+    }));
+
+    return {
+      checkedAt: new Date().toISOString(),
+      summary: {
+        requiredTotal: AdminService.ENV_REQUIRED.length,
+        requiredPresent: AdminService.ENV_REQUIRED.length - requiredMissing,
+        requiredMissing,
+        ready: requiredMissing === 0,
+      },
+      apiEnv,
+      composeEnv: AdminService.ENV_COMPOSE.map((e) => ({ name: e.name, verifiable: false as const, hintBn: e.hintBn })),
+      migrations,
+      platformConfig,
+    };
+  }
+
   /** Work queues as they actually exist in this system: scheduled
    * jobs, store syncs, message deliveries, workflow runs. */
   /** Unified Inbox U6: platform-wide inbox health for the A6
@@ -1920,7 +2906,131 @@ export class AdminService {
         running: workflowRunning,
         latestErrors: (workflowErrors as any[]).map((r) => ({ organizationId: r.organizationId, error: r.error, createdAt: r.createdAt })),
       },
+      // AA2: the live worker process + real BullMQ depths are
+      // attached below (both failure-isolated — a dead worker or
+      // Redis must never take the DB counts down with it).
+      worker: await this.workerHealth(),
+      bullmq: await this.bullmqCounts(),
     };
+  }
+
+  // ---------------- Admin Advanced AA2: Worker + BullMQ live view ----
+  // Before AA2 the console showed only DOWNSTREAM symptoms of a
+  // dead worker (due jobs piling up, webhooks processing inline)
+  // — never the worker itself. Two real data sources, no
+  // fabrication:
+  //  - Liveness/uptime/redis/secret: the worker's own /health
+  //    payload (WK2), passed through VERBATIM — it is the
+  //    operator's own infrastructure reporting on itself.
+  //  - Queue depths: read by the API directly from Redis. The
+  //    API already depends on bullmq + ioredis and holds Queue
+  //    handles for these exact queues ("scheduled-jobs" from
+  //    AutomationService, "webhook" from WebhookDispatcher), so
+  //    getJobCounts is the same data BullMQ itself maintains.
+  //    The worker's /health carries NO counts, which is why the
+  //    API reads Redis rather than proxying numbers the worker
+  //    never reported.
+
+  private _bullQueues = new Map<string, any>();
+
+  private async bullQueue(name: string): Promise<any> {
+    const cached = this._bullQueues.get(name);
+    if (cached) return cached;
+    const { Queue } = await import("bullmq");
+    const { default: Redis } = await import("ioredis");
+    const connection = new Redis(process.env.REDIS_URL as string, { maxRetriesPerRequest: null, connectTimeout: 3000 });
+    connection.on("error", () => undefined); // surfaced via the counts call, not as an unhandled error
+    const q = new Queue(name, { connection });
+    this._bullQueues.set(name, q);
+    return q;
+  }
+
+  private static errText(e: unknown): string {
+    if (!(e instanceof Error)) return "unknown error";
+    const cause = (e as any)?.cause;
+    const causeMsg = cause instanceof Error ? cause.message : (typeof cause?.message === "string" ? cause.message : "");
+    return causeMsg && !e.message.includes(causeMsg) ? `${e.message}: ${causeMsg}` : e.message;
+  }
+
+  /** BullMQ depths for the two queues that exist (WK1 rule: a
+   * queue ships only with producer + processor). Never throws. */
+  async bullmqCounts() {
+    if (!process.env.REDIS_URL) {
+      return {
+        available: false,
+        reason: "REDIS_URL সেট নেই — queue dispatch বন্ধ আছে; job গুলো API-র ভেতরেই (inline) চলে, BullMQ-তে কিছু জমে না।",
+        queues: [] as any[],
+      };
+    }
+    try {
+      const work = (async () => {
+        const queues: any[] = [];
+        for (const name of ["scheduled-jobs", "webhook"]) {
+          const q = await this.bullQueue(name);
+          const c = await q.getJobCounts("waiting", "active", "delayed", "failed", "completed", "paused");
+          queues.push({
+            name,
+            waiting: Number(c?.waiting ?? 0), active: Number(c?.active ?? 0),
+            delayed: Number(c?.delayed ?? 0), failed: Number(c?.failed ?? 0),
+            completed: Number(c?.completed ?? 0), paused: Number(c?.paused ?? 0),
+          });
+        }
+        return queues;
+      })();
+      const queues = await Promise.race([
+        work,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Redis থেকে queue count পড়তে ৩ সেকেন্ডের বেশি লেগেছে")), 3000)),
+      ]);
+      return { available: true, queues };
+    } catch (e) {
+      return { available: false, error: AdminService.errText(e), queues: [] as any[] };
+    }
+  }
+
+  /** One raw probe of the worker health URL. Deliberately
+   * node:http(s), NOT fetch: the target is an internal compose
+   * service address — it must never be routed through the
+   * HTTP(S)_PROXY env proxies a host may export (in the sandbox
+   * a proxied fetch to an unresolvable name leaves a hanging
+   * socket behind even after abort). agent:false + a hard 2s
+   * timeout + destroy tears the socket fully down either way.
+   * Specs stub this method; production uses it as-is. */
+  private probeWorkerHealth(url: string): Promise<{ status: number; body: unknown }> {
+    return new Promise((resolve, reject) => {
+      let parsed: URL;
+      try { parsed = new URL(url); } catch { reject(new Error(`WORKER_HEALTH_URL সঠিক URL নয়: ${url}`)); return; }
+      const get = parsed.protocol === "https:" ? httpsGet : httpGet;
+      const req = get(parsed, { agent: false, timeout: 2000 }, (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (c: Buffer) => { size += c.length; if (size <= 65536) chunks.push(c); });
+        res.on("end", () => {
+          let body: unknown = null;
+          try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { body = null; }
+          resolve({ status: res.statusCode ?? 0, body });
+        });
+      });
+      req.on("timeout", () => req.destroy(new Error("Worker health probe-এর সময় শেষ (2s)")));
+      req.on("error", reject);
+    });
+  }
+
+  /** Probe the worker's /health with a ~2s budget. A live but
+   * DEGRADED worker answers HTTP 503 WITH its payload — that is
+   * still "reachable", and the payload says degraded itself.
+   * Never throws. */
+  async workerHealth() {
+    const healthUrl = process.env.WORKER_HEALTH_URL || "http://worker:4100/health";
+    const checkedAt = new Date().toISOString();
+    try {
+      const { status, body } = await this.probeWorkerHealth(healthUrl);
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        return { reachable: true, healthUrl, checkedAt, health: body as Record<string, unknown> };
+      }
+      return { reachable: false, healthUrl, checkedAt, error: `Worker health endpoint অবৈধ উত্তর দিয়েছে (HTTP ${status})` };
+    } catch (e) {
+      return { reachable: false, healthUrl, checkedAt, error: AdminService.errText(e) };
+    }
   }
 
   /** Error summary across every subsystem that records failures. */
@@ -1944,6 +3054,78 @@ export class AdminService {
       { source: "workflow_runs", count: (workflows as any[]).length, latest: (workflows as any[]).slice(0, 5).map((r) => ({ title: "workflow run", detail: r.error ?? null, at: r.createdAt })) },
     ];
     return { windowHours, totalErrors: sources.reduce((a, s) => a + s.count, 0), sources };
+  }
+
+  // ---------------- Admin Advanced AA6: Webhook explorer (C7) ----------------
+  async systemWebhooks(filters: { provider?: string; organizationId?: string; hasError?: boolean; take?: number } = {}) {
+    const p = this.prisma as any;
+    let orgIntegrationIds: string[] | null = null;
+    if (filters.organizationId) {
+      const integrations = await p.integration.findMany({ where: { organizationId: filters.organizationId } }).catch(() => []);
+      orgIntegrationIds = ((integrations as any[]) ?? []).map((i: any) => i.id);
+      if (orgIntegrationIds.length === 0) return [];
+    }
+    const where: any = {};
+    if (filters.provider) where.provider = filters.provider;
+    if (filters.hasError) where.error = { not: null };
+    if (orgIntegrationIds) where.integrationId = { in: orgIntegrationIds };
+    const rows = await p.webhookEvent.findMany({
+      where, orderBy: { receivedAt: "desc" }, take: Math.min(100, filters.take ?? 50),
+    }).catch(() => []);
+    const rowList: any[] = Array.isArray(rows) ? rows : [];
+    const integrationIds = [...new Set(rowList.map((r: any) => r.integrationId).filter(Boolean))];
+    let integrations: any[] = [];
+    if (integrationIds.length > 0) {
+      integrations = await p.integration.findMany({ where: { id: { in: integrationIds } } }).catch(() => []);
+      if (!Array.isArray(integrations)) integrations = [];
+    }
+    const integrationById = new Map<string, any>(integrations.map((i: any) => [i.id, i]));
+    const orgIds = [...new Set(integrations.map((i: any) => i.organizationId).filter(Boolean))];
+    let orgs: any[] = [];
+    if (orgIds.length > 0) {
+      orgs = await p.organization.findMany({ where: { id: { in: orgIds } } }).catch(() => []);
+      if (!Array.isArray(orgs)) orgs = [];
+    }
+    const nameOf = (id: string | null | undefined) => (orgs as any[]).find((o: any) => o.id === id)?.name ?? null;
+    return rowList.map((r: any) => {
+      const integration = integrationById.get(r.integrationId);
+      const organizationId = integration?.organizationId ?? null;
+      return {
+        id: r.id, provider: r.provider, topic: r.topic ?? null,
+        integrationId: r.integrationId,
+        organizationId, organizationName: organizationId ? nameOf(organizationId) : null,
+        deliveryId: r.deliveryId ?? null, signatureValid: r.signatureValid ?? false,
+        processedAt: r.processedAt ?? null, error: r.error ?? null, receivedAt: r.receivedAt,
+      };
+    });
+  }
+
+  async systemWebhookEvent(id: string) {
+    const p = this.prisma as any;
+    const row = await p.webhookEvent.findUnique({ where: { id } }).catch(() => null);
+    if (!row) throw new NotFoundException("Webhook event not found");
+    let organizationId: string | null = null;
+    let organizationName: string | null = null;
+    if (row.integrationId) {
+      const integration = await p.integration.findUnique({ where: { id: row.integrationId } }).catch(() => null);
+      if (integration?.organizationId) {
+        organizationId = integration.organizationId;
+        const org = await p.organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+        organizationName = org?.name ?? null;
+      }
+    }
+    const summary = {
+      id: row.id, provider: row.provider, topic: row.topic ?? null,
+      integrationId: row.integrationId,
+      organizationId, organizationName,
+      deliveryId: row.deliveryId ?? null, signatureValid: row.signatureValid ?? false,
+      processedAt: row.processedAt ?? null, error: row.error ?? null, receivedAt: row.receivedAt,
+    };
+    const s = JSON.stringify(row.payload ?? null);
+    if (s.length > 20000) {
+      return { ...summary, payload: s.slice(0, 20000), payloadTruncated: true };
+    }
+    return { ...summary, payload: row.payload ?? null, payloadTruncated: false };
   }
 
   /** In-app activity log = the audit trail (process stdout is not
@@ -2386,6 +3568,7 @@ export class AdminService {
   async publicPricing() {
     const prices = await planPrices(this.prisma as any);
     const yearly = await planYearlyPrices(this.prisma as any);
+    const mergedLimits = await planLimits(this.prisma as any);
     const trialDays = await platformSetting(this.prisma as any, "trialDays").catch(() => null);
     return {
       currency: "BDT",
@@ -2394,7 +3577,7 @@ export class AdminService {
         tier,
         priceMinor: (prices as any)[tier] ?? 0,
         yearlyPriceMinor: (yearly as any)[tier] ?? 0,
-        limits: (DEFAULT_PLAN_LIMITS as any)[tier] ?? {},
+        limits: (mergedLimits as any)[tier] ?? {},
       })),
     };
   }

@@ -31,6 +31,16 @@ export interface SmtpConfig { host: string; port: number; user?: string; pass?: 
 export interface SmsConfig { apiToken: string; senderId: string; apiUrl?: string }
 export interface SslcommerzConfig { storeId: string; storePass: string; sandbox: boolean }
 export interface BkashConfig { appKey: string; appSecret: string; username: string; password: string; sandbox: boolean }
+export interface ImageConfig { provider: string; model?: string; apiKey: string }
+/** SP8: the OPERATOR's TikTok app (one app for the whole SaaS;
+ * tenants OAuth their own creator accounts into it). `audited`
+ * is the operator's declaration that TikTok has approved the app
+ * for direct posting — it unlocks the direct-post adapter path
+ * and the video.publish scope; it is never inferred. */
+export interface TiktokAppConfig { clientKey: string; clientSecret: string; redirectUri?: string; audited: boolean }
+/** SP9: the OPERATOR's Google app for YouTube (same one-app
+ * model). Tenants OAuth their own Google accounts into it. */
+export interface GoogleAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
 
 export interface PlatformConfigSnapshot {
   llm: LlmConfig | null;
@@ -39,12 +49,15 @@ export interface PlatformConfigSnapshot {
   sms: SmsConfig | null;
   sslcommerz: SslcommerzConfig | null;
   bkash: BkashConfig | null;
+  image: ImageConfig | null;
+  tiktokApp: TiktokAppConfig | null;
+  googleApp: GoogleAppConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -53,8 +66,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -83,10 +96,12 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
+    readKey(prisma, "imageConfig"),
+    readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -120,7 +135,25 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         password: unseal(bkashRaw.passwordEncrypted) ?? "", sandbox: bkashRaw.sandbox !== false,
       }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, loadedAt: Date.now() };
+  const image: ImageConfig | null = imageRaw?.provider
+    ? { provider: String(imageRaw.provider), model: imageRaw.model ? String(imageRaw.model) : undefined, apiKey: unseal(imageRaw.apiKeyEncrypted) ?? "" }
+    : null;
+  const tiktokApp: TiktokAppConfig | null = tiktokRaw?.clientKey
+    ? {
+        clientKey: String(tiktokRaw.clientKey),
+        clientSecret: unseal(tiktokRaw.clientSecretEncrypted) ?? "",
+        redirectUri: tiktokRaw.redirectUri ? String(tiktokRaw.redirectUri) : undefined,
+        audited: tiktokRaw.audited === true,
+      }
+    : null;
+  const googleApp: GoogleAppConfig | null = googleRaw?.clientId
+    ? {
+        clientId: String(googleRaw.clientId),
+        clientSecret: unseal(googleRaw.clientSecretEncrypted) ?? "",
+        redirectUri: googleRaw.redirectUri ? String(googleRaw.redirectUri) : undefined,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -137,6 +170,15 @@ export function effectiveLlmConfig(): { provider: string; apiKey: string; model?
   if (dyn?.provider) return { provider: dyn.provider, apiKey: dyn.apiKey, model: dyn.model, source: "admin" };
   const provider = (process.env.LLM_PROVIDER ?? "").toLowerCase();
   if (provider) return { provider, apiKey: process.env.LLM_API_KEY ?? "", model: process.env.LLM_MODEL || undefined, source: "env" };
+  return { provider: "", apiKey: "", source: "none" };
+}
+
+/** Effective image-generation config: admin setting wins, env is the fallback. */
+export function effectiveImageConfig(): { provider: string; apiKey: string; model?: string; source: "admin" | "env" | "none" } {
+  const dyn = snapshot.image;
+  if (dyn?.provider) return { provider: dyn.provider, apiKey: dyn.apiKey, model: dyn.model, source: "admin" };
+  const provider = (process.env.IMAGE_PROVIDER ?? "").toLowerCase();
+  if (provider) return { provider, apiKey: process.env.IMAGE_API_KEY ?? "", model: process.env.IMAGE_MODEL || undefined, source: "env" };
   return { provider: "", apiKey: "", source: "none" };
 }
 
@@ -210,6 +252,55 @@ export function effectiveBkashConfig(): (BkashConfig & { source: "admin" | "env"
 
 export function bkashBase(cfg: BkashConfig): string {
   return cfg.sandbox ? "https://tokenized.sandbox.bka.sh/v1.2.0-beta" : "https://tokenized.pay.bka.sh/v1.2.0-beta";
+}
+
+/** SP8: the operator's TikTok app — admin snapshot wins, env is
+ * the fallback (same discipline as every other area). Null means
+ * TikTok connect must refuse HONESTLY (a Bengali "app configure
+ * করা হয়নি"), never emit a broken authorize URL. A config with a
+ * client key but NO secret is treated as not configured: the
+ * token exchange could never succeed with it. */
+export function effectiveTiktokAppConfig(): (TiktokAppConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.tiktokApp?.clientKey && snapshot.tiktokApp.clientSecret) {
+    return { ...snapshot.tiktokApp, source: "admin" };
+  }
+  if (process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET) {
+    return {
+      clientKey: process.env.TIKTOK_CLIENT_KEY,
+      clientSecret: process.env.TIKTOK_CLIENT_SECRET,
+      redirectUri: process.env.TIKTOK_REDIRECT_URI || undefined,
+      audited: process.env.TIKTOK_APP_AUDITED === "true",
+      source: "env",
+    };
+  }
+  return null;
+}
+
+/** SP9: the operator's Google app for YouTube — same resolution. */
+export function effectiveGoogleAppConfig(): (GoogleAppConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.googleApp?.clientId && snapshot.googleApp.clientSecret) {
+    return { ...snapshot.googleApp, source: "admin" };
+  }
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    return {
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri: process.env.GOOGLE_REDIRECT_URI || undefined,
+      source: "env",
+    };
+  }
+  return null;
+}
+
+/** The OAuth callback URL for a social platform: the operator's
+ * configured redirect URI wins (it must match what is registered
+ * in the TikTok/Google app console EXACTLY); otherwise it is
+ * derived from API_PUBLIC_URL + the API's public callback route
+ * (payments.service apiBase convention). */
+export function socialOAuthRedirectUri(platform: "tiktok" | "youtube", configured?: string): string {
+  if (configured) return configured.replace(/\/$/, "");
+  const apiBase = (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, "");
+  return `${apiBase}/social/oauth/${platform}/callback`;
 }
 
 /** The app secret a messaging webhook should be verified against:

@@ -26,14 +26,18 @@ type FetchFn = typeof fetch;
 export class TikTokAdsClient {
   constructor(private readonly accessToken: string, private readonly fetchFn: FetchFn = fetch) {}
 
-  async verifyAdvertiser(advertiserId: string): Promise<{ id: string; name?: string; currency?: string }> {
-    const url = `https://business-api.tiktok.com/open_api/v1.3/advertiser/info/?advertiser_ids=${JSON.stringify([advertiserId])}&fields=${JSON.stringify(["id", "name", "currency"])}`;
+  async verifyAdvertiser(advertiserId: string): Promise<{ id: string; name?: string; currency?: string; status?: string; timezone?: string }> {
+    const url = `https://business-api.tiktok.com/open_api/v1.3/advertiser/info/?advertiser_ids=${JSON.stringify([advertiserId])}&fields=${JSON.stringify(["id", "name", "currency", "status", "timezone"])}`;
     const res = await this.fetchFn(url, { headers: { "Access-Token": this.accessToken } });
     const body: any = await res.json().catch(() => ({}));
     if (!res.ok || body.code !== 0) throw new Error(`TikTok advertiser check failed: ${body.message ?? res.status}`);
     const info = body.data?.list?.[0];
     if (!info) throw new Error("TikTok advertiser not found for this token");
-    return { id: String(info.id), name: info.name, currency: info.currency };
+    return {
+      id: String(info.id), name: info.name, currency: info.currency,
+      status: info.status ? String(info.status) : undefined,
+      timezone: info.timezone ? String(info.timezone) : undefined,
+    };
   }
 
   async getCampaignDaily(advertiserId: string, from: string, to: string): Promise<TikTokDailyRow[]> {

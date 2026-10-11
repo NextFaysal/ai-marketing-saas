@@ -1,12 +1,16 @@
-import { BadGatewayException, BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { encryptJson, decryptJson } from "../integrations/crypto";
 import { SteadfastClient, SteadfastError } from "./steadfast.client";
 import { PathaoClient, PathaoError, pathaoClientTokens, PATHAO_PROD_BASE } from "./pathao.client";
 import { RedxClient, RedxError, REDX_DEFAULT_BASE } from "./redx.client";
 import { InboxService } from "../inbox/inbox.service";
+import { EventsService } from "../common/events.service";
 import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
+import { dhakaDayStartUtc } from "../crm/lead-followups";
+import { buildCourierPerformance } from "./courier-performance";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -37,10 +41,17 @@ export function normalizeBdPhone(raw: string): string {
 
 @Injectable()
 export class CourierService {
+  private readonly logger = new Logger(CourierService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Optional() private readonly inbox?: InboxService,
+    @Optional() private readonly inventory?: InventoryService,
+    // Automations A2: appended LAST + @Optional so existing
+    // positional constructions in specs keep working.
+    // EventsModule is @Global — Nest resolves it in the app.
+    @Optional() private readonly events?: EventsService,
   ) {}
 
   private providerOf(value?: string): Provider {
@@ -528,6 +539,29 @@ export class CourierService {
     })]);
   }
 
+  /**
+   * Sales & Data S5: courier performance over the shipments
+   * BOOKED in the last `days` Asia/Dhaka calendar days (today
+   * included) — the same window discipline as the CRM C6
+   * funnel. Definitions live in ./courier-performance.ts and
+   * docs/sales-s5-acceptance.md. Average delivery time is NOT
+   * reported: no delivered-at timestamp is stored.
+   */
+  async performance(organizationId: string, daysInput?: number | string | null, now = new Date()) {
+    const days = daysInput === undefined || daysInput === null || daysInput === "" ? 30 : Number(daysInput);
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      throw new BadRequestException("days must be an integer between 1 and 365");
+    }
+    const end = new Date(dhakaDayStartUtc(now).getTime() + 86400000);
+    const start = new Date(end.getTime() - days * 86400000);
+    const rows = await (this.prisma as any).courierShipment.findMany({
+      where: { organizationId, createdAt: { gte: start, lt: end } },
+      select: { provider: true, status: true },
+      take: 20000,
+    });
+    return buildCourierPerformance(rows, days, start, end);
+  }
+
   async listShipments(organizationId: string, orderId?: string) {
     const rows = await (this.prisma as any).courierShipment.findMany({
       where: { organizationId, ...(orderId ? { orderId } : {}) }, orderBy: { createdAt: "desc" }, take: 100,
@@ -548,9 +582,43 @@ export class CourierService {
       else status = await (client as RedxClient).parcelStatus(shipment.trackingCode);
     } catch (e) { throw courierError(e); }
     const changed = status !== shipment.status;
+    // Automations A2: capture BEFORE the update — after it,
+    // nothing may be trusted to still hold the old status.
+    const previousStatus = shipment.status;
     const updated = await (this.prisma as any).courierShipment.update({
       where: { id: shipmentId }, data: { status, lastCheckedAt: new Date() },
     });
+    // S1: a courier-confirmed return restores the order's stock.
+    // This is the ONLY status-writing shipment update: syncAll
+    // funnels through syncShipment (the other courierShipment
+    // update, in notifyCustomer, writes only lastNotifiedStatus),
+    // so hooking here covers single + bulk sync exactly once.
+    // Restore itself is idempotent per order. Failure-isolated.
+    if (this.inventory && status === "returned" && shipment.status !== "returned") {
+      try {
+        await this.inventory.applyOrderRestore(organizationId, shipment.orderId, "order_returned");
+      } catch (e) { this.logger.warn(`inventory order_returned restore failed for order ${shipment.orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+    }
+    // Automations A2: a status change is a workflow event.
+    // WorkflowsService fans this one event out to the
+    // shipment_status_changed / shipment_delivered /
+    // shipment_returned triggers. Failure-isolated like the
+    // S1 hook above: an event problem must never break sync.
+    if (this.events && changed) {
+      try {
+        this.events.emit("shipment.status_changed", {
+          organizationId,
+          context: {
+            shipmentId: shipment.id,
+            orderId: shipment.orderId,
+            provider: shipment.provider,
+            trackingCode: shipment.trackingCode ?? undefined,
+            shipmentStatus: status,
+            previousStatus,
+          },
+        });
+      } catch (e) { this.logger.warn(`shipment.status_changed emit failed for shipment ${shipment.id}: ${e instanceof Error ? e.message : "unknown"}`); }
+    }
     if (changed) await this.notifyCustomer(organizationId, updated).catch(() => undefined);
     return this.serialize(updated);
   }

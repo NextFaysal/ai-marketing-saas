@@ -9,6 +9,7 @@ class CreateShareDto {
   @IsString() @MaxLength(200) title!: string;
   @IsOptional() @IsNumber() days?: number;
   @IsOptional() @IsNumber() expiresInDays?: number;
+  @IsOptional() @IsString() kind?: string;
 }
 
 @Controller("organizations/:organizationId/report-shares")

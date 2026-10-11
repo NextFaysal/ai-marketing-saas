@@ -11,7 +11,7 @@ interface Summary {
 interface Payment { id: string; organizationId: string; organizationName?: string | null; amountMinor: string; refundedMinor?: string; netMinor?: string; method: string; reference?: string | null; createdAt: string; note?: string | null }
 interface Checkout { id: string; organizationName?: string | null; plan: string; gateway: string; tranId: string; status: string; amountMinor: string; discountMinor: string; creditAppliedMinor: string; couponCode?: string | null; createdAt: string; stuck: boolean }
 interface Coupon { id: string; code: string; kind: string; value: number; planScope?: string | null; expiresAt?: string | null; maxRedemptions?: number | null; redeemedCount: number; active: boolean }
-interface DunningRow { organizationId: string; organizationName: string; plan: string; daysOverdue?: number | null; dunningStagesSent: number[]; lastDunningAt?: string | null }
+interface DunningRow { organizationId: string; organizationName: string; plan: string; daysOverdue?: number | null; dunningStagesSent: number[]; lastDunningAt?: string | null; reminderJobConfigured?: boolean }
 interface OrgRow { id: string; name: string }
 
 const METHODS = ["bkash", "bank", "cash", "card", "other"];
@@ -271,7 +271,7 @@ export default function BillingPage() {
                   <ul className="space-y-1.5 text-sm">{dunning.map((d) => (
                     <li key={d.organizationId} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
                       <a className="text-indigo-300 hover:underline" href={`/orgs/${d.organizationId}`}>{d.organizationName}</a>
-                      <span>{d.plan} · {d.daysOverdue ?? "—"} দিন পার · পাঠানো Stage: {d.dunningStagesSent.length ? d.dunningStagesSent.join(", ") : "এখনো নয়"}</span>
+                      <span>{d.plan} · {d.daysOverdue ?? "—"} দিন পার · পাঠানো Stage: {d.dunningStagesSent.length ? d.dunningStagesSent.join(", ") : "এখনো নয়"}{d.reminderJobConfigured === false ? <span className="ml-2 text-red-400">⚠ reminder job নেই — পাঠানো হচ্ছে না</span> : null}</span>
                     </li>
                   ))}</ul>
                 )}

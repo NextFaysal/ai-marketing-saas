@@ -309,7 +309,7 @@ export class SocialCommentsService {
       classification,
       postTitle: comment.postTitle ?? undefined,
       matchedProduct,
-      tonePreference: dto?.tone?: settings.tonePreference,
+      tonePreference: dto?.tone ?? settings.tonePreference,
     });
 
     return {

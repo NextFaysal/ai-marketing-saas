@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnalyticsService } from "../analytics/analytics.service";
+import { ExecutiveService } from "./executive.service";
 
 @Injectable()
 export class ReportSharesService {
@@ -10,21 +11,60 @@ export class ReportSharesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly analytics: AnalyticsService,
+    @Optional() private readonly executiveSvc?: ExecutiveService,
   ) {}
 
-  async create(organizationId: string, actorId: string, dto: { title: string; days?: number; expiresInDays?: number }) {
+  async create(organizationId: string, actorId: string, dto: { title: string; days?: number; expiresInDays?: number; kind?: string }) {
     const days = dto.days ?? 30;
     if (![7, 14, 30, 60, 90].includes(days)) throw new BadRequestException("days must be one of 7, 14, 30, 60, 90");
+    const kind = dto.kind ?? "overview";
+    if (!["overview", "executive"].includes(kind)) throw new BadRequestException("kind must be overview or executive");
     const expiresInDays = Math.min(365, Math.max(1, dto.expiresInDays ?? 30));
     const token = randomBytes(24).toString("base64url");
     const share = await (this.prisma as any).reportShare.create({
       data: {
-        organizationId, token, title: dto.title, days,
+        organizationId, token, title: dto.title, days, kind,
         expiresAt: new Date(Date.now() + expiresInDays * 86400000), createdById: actorId,
       },
     });
-    await this.audit.log({ organizationId, userId: actorId, action: "report_share.created", entityType: "ReportShare", entityId: share.id, metadata: { days } });
+    await this.audit.log({ organizationId, userId: actorId, action: "report_share.created", entityType: "ReportShare", entityId: share.id, metadata: { days, kind } });
     return share;
+  }
+
+  /**
+   * RP6: the public EXECUTIVE rendering. Built from the
+   * same ExecutiveService payload as the tenant view,
+   * with profit and every cost-derived field REMOVED —
+   * the client-report discipline is identical to the
+   * overview share's.
+   */
+  private async publicExecutive(share: any) {
+    if (!this.executiveSvc) throw new NotFoundException("This report link is invalid");
+    const to = new Date(); to.setUTCHours(0, 0, 0, 0);
+    const from = new Date(to.getTime() - (share.days - 1) * 86400000);
+    const exec = await this.executiveSvc.executive(share.organizationId, from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: share.organizationId } });
+    return {
+      kind: "executive",
+      title: share.title,
+      business: org?.name ?? "",
+      branding: {
+        name: org?.brandName ?? org?.name ?? "",
+        logoUrl: org?.logoUrl ?? null,
+        primaryColor: org?.primaryColor ?? null,
+      },
+      generatedAt: new Date().toISOString(),
+      days: share.days,
+      range: exec.range,
+      sales: {
+        orders: exec.sales.orders, revenueMinor: exec.sales.revenueMinor,
+        refundedMinor: exec.sales.refundedMinor, averageOrderValueMinor: exec.sales.averageOrderValueMinor,
+      },
+      ads: exec.ads,
+      customers: exec.customers,
+      operations: exec.operations,
+      note: "Platform-reported conversions come from the ad platforms themselves and can differ from tracked store orders. Costs and profit margins are not part of this client report.",
+    };
   }
 
   async list(organizationId: string) {
@@ -44,6 +84,7 @@ export class ReportSharesService {
     const share = await (this.prisma as any).reportShare.findUnique({ where: { token } });
     if (!share) throw new NotFoundException("This report link is invalid");
     if (new Date(share.expiresAt).getTime() < Date.now()) throw new NotFoundException("This report link has expired");
+    if (share.kind === "executive") return this.publicExecutive(share);
     const to = new Date(); to.setUTCHours(0, 0, 0, 0);
     const from = new Date(to.getTime() - (share.days - 1) * 86400000);
     const toExclusive = new Date(to.getTime() + 86400000);

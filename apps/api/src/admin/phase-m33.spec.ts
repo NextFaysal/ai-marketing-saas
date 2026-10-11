@@ -73,6 +73,8 @@ describe("Milestone 33 — dynamic platform config (AdminService)", () => {
     const svc = new AdminService(prismaFake(), audit);
     await expect(svc.updatePlatformConfig(actor, "llm", { provider: "grok" })).rejects.toThrow(/provider must be/);
     await expect(svc.updatePlatformConfig(actor, "meta", { graphVersion: "21" })).rejects.toThrow(/v21\.0/);
+    // AA3: meta saves now verify-before-save (app-token probe) — answer it.
+    (global as any).fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ access_token: "app-token" }) }));
     const view: any = await svc.updatePlatformConfig(actor, "meta", { appId: "123456", appSecret: "shh-secret", graphVersion: "v22.0" });
     expect(view.metaApp.appId).toBe("123456");
     expect(view.metaApp.appSecretConfigured).toBe(true);

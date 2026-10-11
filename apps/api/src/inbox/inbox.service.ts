@@ -8,6 +8,7 @@ import { MetaMessagingClient, MessagingSecrets } from "./meta-messaging.client";
 import { WooClient } from "../integrations/woocommerce/woo.client";
 import { randomUUID } from "crypto";
 import { parseMetaWebhook } from "./webhook.parser";
+import { SocialCommentsService } from "./social-comments.service";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
@@ -22,6 +23,7 @@ import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence"
 import { formatMinor } from "@repo/contracts";
 import { RiskService } from "../orders/risk.service";
 import { LeadAssignmentService } from "../crm/lead-assignment.service";
+import { InventoryService } from "../inventory/inventory.service";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
 
@@ -54,7 +56,14 @@ export class InboxService {
     // creates directly (leadgen, first-message). Optional — a
     // missing engine leaves those leads unassigned, as before.
     @Optional() private readonly leadAssignment?: LeadAssignmentService,
-    @Optional() private readonly socialComments?: any,
+    // Sales & Data S1: chat orders decrement stock through the
+    // inventory ledger. Optional — absent leaves stock untouched.
+    @Optional() private readonly inventory?: InventoryService,
+    // Owner series: webhook comment ingest dispatch. Typed as the
+    // class (merge integration fix) — as `any`, Nest's reflected
+    // type is Object and the provider never resolved, which would
+    // have left webhook comment ingest silently inert.
+    @Optional() private readonly socialComments?: SocialCommentsService,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -2632,6 +2641,19 @@ export class InboxService {
       });
     }
 
+    // S1: a chat order takes stock like any other order. The DTO
+    // lines carry the internal variant id resolved above, so the
+    // movement can be variant-level. Failure-isolated — inventory
+    // never blocks a chat order.
+    if (this.inventory) {
+      try {
+        await this.inventory.applyOrderPlaced(organizationId, order.id, {
+          items: lines.map((l) => ({ productId: l.product.id, variantId: l.variant?.id ?? null, quantity: l.quantity })),
+          status: order.status,
+        });
+      } catch { /* inventory never blocks a chat order */ }
+    }
+
     // Optional push to the connected WooCommerce store. The local order
     // is real either way; the sync outcome is recorded, never assumed.
     let syncStatus = "local_only"; let syncError: string | null = null;
@@ -3347,6 +3369,23 @@ export class InboxService {
       }
     }
     this.rtConversation(organizationId, conversationId, { status: updated.status, assignedUserId: updated.assignedUserId, tags: updated.tags, pipelineStage: updated.pipelineStage, outcome: updated.outcome });
+    // Workflows W2: assignment / close events. Emitted on
+    // this central update path (manual assign, status
+    // changes, bulk updates that route through here).
+    try {
+      const wfContext = {
+        conversationId, channel: updated.channel,
+        leadId: updated.leadId ?? undefined, customerId: updated.customerId ?? undefined,
+        contactName: updated.contactName ?? undefined, contactPhone: updated.contactPhone ?? undefined,
+        assignedUserId: updated.assignedUserId ?? undefined, status: updated.status,
+      };
+      if (dto.assignedUserId && dto.assignedUserId !== beforeAssignee) {
+        this.events?.emit("conversation.assigned", { organizationId, context: wfContext });
+      }
+      if (dto.status === "closed" && before.status !== "closed") {
+        this.events?.emit("conversation.closed", { organizationId, context: wfContext });
+      }
+    } catch { /* workflow events never affect the update */ }
     if (dto.assignedUserId && dto.assignedUserId !== actorId && dto.assignedUserId !== beforeAssignee) {
       await this.notify(organizationId, dto.assignedUserId, "assigned",
         `নতুন কথোপকথন অ্যাসাইন হয়েছে: ${updated.contactName ?? updated.externalContactId ?? "গ্রাহক"}`,

@@ -75,6 +75,8 @@ function makePrisma() {
       { id: "s-1", organizationId: "org-1", plan: "GROWTH", status: "ACTIVE", createdAt: new Date(), updatedAt: new Date(), currentPeriodEnd: null },
     ]),
     auditLog: table([]),
+    // AP2: startViewAs registers a server-side session row.
+    viewAsSession: table([]),
     saasPayment: table([]),
     order: table([]),
     channelConversation: table([]),
@@ -152,9 +154,11 @@ describe("Milestone 38 — view-as", () => {
     const membership = { status: "ACTIVE", role: "OWNER" };
     const mk = (viewAs: any, method = "GET", orgId = "org-1") => {
       const req: any = { params: { organizationId: orgId }, headers: {}, method, url: `/organizations/${orgId}/products`, user: { userId: "owner-1", isSuperAdmin: false, viewAs } };
-      return { ctx: { switchToHttp: () => ({ getRequest: () => req }) } as any, prisma: { membership: { findUnique: async () => membership } } as any };
+      // AP2: the guard also requires the live session row.
+      const liveSession = { id: "sess-m38", organizationId: "org-1", revokedAt: null, expiresAt: new Date(Date.now() + 10 * 60000) };
+      return { ctx: { switchToHttp: () => ({ getRequest: () => req }) } as any, prisma: { membership: { findUnique: async () => membership }, viewAsSession: { findUnique: async () => liveSession } } as any };
     };
-    const va = { adminId: "admin-1", orgId: "org-1", mode: "read" };
+    const va = { adminId: "admin-1", orgId: "org-1", mode: "read", sessionId: "sess-m38" };
     { const { ctx, prisma } = mk(va); await expect(new TenantGuard(prisma).canActivate(ctx)).resolves.toBe(true); }
     { const { ctx, prisma } = mk(va, "POST"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException); }
     { const { ctx, prisma } = mk(va, "GET", "org-2"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException); }

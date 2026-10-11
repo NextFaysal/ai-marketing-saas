@@ -177,9 +177,46 @@ export class AnalyticsService {
   }
 
   async overview(organizationId: string, fromStr?: string, toStr?: string) {
-    const { from, toExclusive } = parseRange(fromStr, toStr);
+    const { from, toExclusive, days } = parseRange(fromStr, toStr);
     const result = await this.computeRange(organizationId, from, toExclusive);
     const { _dailyRaw, _orders, ...pub } = result as any;
+    // Reports Advanced RP5: previous-period comparison —
+    // the same computation over the immediately preceding
+    // equal-length window. A delta is null when the
+    // previous value is 0 and the current is not (a
+    // percentage would be fabricated); 0 when both are 0.
+    const prevTo = from;
+    const prevFrom = new Date(from.getTime() - days * 86400000);
+    const prev = await this.computeRange(organizationId, prevFrom, prevTo).catch(() => null);
+    const delta = (cur: number, old: number): number | null => {
+      if (old === 0) return cur === 0 ? 0 : null;
+      return Math.round(((cur - old) / old) * 10000) / 100;
+    };
+    const cur = {
+      orders: Number(result.totals.orders ?? 0),
+      revenueMinor: BigInt(result.totals.revenueMinor ?? 0),
+      adSpendMinor: BigInt(result.totals.adSpendMinor ?? 0),
+      profitMinor: BigInt(result.profit.contributionProfitMinor ?? 0),
+    };
+    const old = prev ? {
+      orders: Number(prev.totals.orders ?? 0),
+      revenueMinor: BigInt(prev.totals.revenueMinor ?? 0),
+      adSpendMinor: BigInt(prev.totals.adSpendMinor ?? 0),
+      profitMinor: BigInt(prev.profit.contributionProfitMinor ?? 0),
+    } : null;
+    (pub as any).comparison = old ? {
+      previousRange: { from: dayKey(prevFrom), to: dayKey(new Date(prevTo.getTime() - 86400000)) },
+      previous: {
+        orders: old.orders, revenueMinor: old.revenueMinor.toString(),
+        adSpendMinor: old.adSpendMinor.toString(), profitMinor: old.profitMinor.toString(),
+      },
+      deltas: {
+        orders: delta(cur.orders, old.orders),
+        revenue: delta(Number(cur.revenueMinor), Number(old.revenueMinor)),
+        adSpend: delta(Number(cur.adSpendMinor), Number(old.adSpendMinor)),
+        profit: delta(Number(cur.profitMinor), Number(old.profitMinor)),
+      },
+    } : null;
     return pub;
   }
 

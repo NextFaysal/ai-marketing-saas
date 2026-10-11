@@ -1,9 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
 import { createHash } from "node:crypto";
 import { IS_PUBLIC_KEY } from "./decorators";
 import { PrismaService } from "../prisma/prisma.service";
+import { hasScope, requiredGrant } from "./api-key-scopes";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -30,6 +31,12 @@ export class JwtAuthGuard implements CanActivate {
         if (row && !row.revokedAt) {
           const creator = await (this.prisma as any).user.findUnique({ where: { id: row.createdById } }).catch(() => null);
           if (creator) {
+            // Admin Polish AP3: enforce the key's scopes for this
+            // route. Legacy keys (empty list) keep full access.
+            const grant = requiredGrant(String((req as any).method ?? "GET"), url);
+            if (!hasScope((row as any).scopes, grant)) {
+              throw new ForbiddenException(`This API key lacks the required scope: ${grant}`);
+            }
             req.user = {
               userId: creator.id, email: creator.email, isSuperAdmin: !!creator.isSuperAdmin,
               tv: creator.tokenVersion ?? 0, viaApiKey: true, apiKeyId: row.id,

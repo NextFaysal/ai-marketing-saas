@@ -44,10 +44,15 @@ import { StepFields, TemplateOption, WaTemplateOption } from "./step-fields";
 
 const TRIGGERS = [
   { value: "order_created", label: "নতুন Order তৈরি হলে" },
+  { value: "order_delivered", label: "Order ডেলিভারি হলে" },
+  { value: "order_cod_confirmed", label: "COD Order কনফার্ম হলে" },
   { value: "lead_created", label: "নতুন Lead তৈরি হলে" },
   { value: "inbox_message_received", label: "Inbox এ নতুন বার্তা এলে" },
   { value: "inbox_unanswered", label: "Inbox বার্তার উত্তর না হলে (সময়ভিত্তিক)" },
+  { value: "conversation_assigned", label: "কথোপকথন Assign হলে" },
+  { value: "conversation_closed", label: "কথোপকথন বন্ধ হলে" },
   { value: "lead_stage_changed", label: "Lead এর Stage বদলালে" },
+  { value: "schedule", label: "প্রতিদিন নির্দিষ্ট সময়ে (Schedule)" },
 ];
 const OPS = ["eq", "neq", "gt", "gte", "lt", "lte", "contains"];
 
@@ -162,6 +167,8 @@ function CanvasInner({
   waTemplates,
   sourceNote,
   onSaved,
+  workflowId,
+  members = [],
 }: {
   initialDefinition: WorkflowDefinition;
   scopeKey: string;
@@ -169,6 +176,10 @@ function CanvasInner({
   waTemplates: WaTemplateOption[];
   sourceNote?: string;
   onSaved: () => void | Promise<void>;
+  // Workflows W1: when set, Save PATCHES this workflow in
+  // place instead of creating a new one.
+  workflowId?: string;
+  members?: { userId: string; name: string; role: string }[];
 }) {
   const storageKey = `wfc-pos:${scopeKey}`;
   const [meta, setMeta] = useState({
@@ -361,8 +372,15 @@ function CanvasInner({
       if (!orgId) throw new Error("Organization পাওয়া যায়নি");
       const payload: Record<string, unknown> = { name: def.name, trigger: def.trigger, steps: def.steps };
       if (def.conditions && def.conditions.length > 0) payload.conditions = def.conditions;
-      await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify(payload) });
-      setNotice("Workflow তৈরি হয়েছে ও সক্রিয় আছে।");
+      if (workflowId) {
+        // Workflows W1: edit in place. Runs already in
+        // flight keep their start-time snapshot.
+        await apiFetch(`/organizations/${orgId}/workflows/${workflowId}`, { method: "PATCH", body: JSON.stringify(payload) });
+        setNotice("Workflow আপডেট হয়েছে। চলমান Run গুলো আগের ধাপেই চলবে (Snapshot)।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify(payload) });
+        setNotice("Workflow তৈরি হয়েছে ও সক্রিয় আছে।");
+      }
       await onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে");
@@ -481,7 +499,7 @@ function CanvasInner({
             <div className="space-y-3">
               <div className="font-semibold">ধাপ সম্পাদনা</div>
               {draft ? (
-                <StepFields draft={draft} onChange={setDraft} templates={templates} waTemplates={waTemplates} />
+                <StepFields draft={draft} onChange={setDraft} templates={templates} waTemplates={waTemplates} members={members} />
               ) : null}
               <div className="flex flex-wrap gap-2 border-t pt-3">
                 <button type="button" className="btn-primary btn-sm" onClick={applyPanel}>প্রয়োগ করুন</button>
@@ -505,6 +523,8 @@ export default function WorkflowCanvas(props: {
   waTemplates: WaTemplateOption[];
   sourceNote?: string;
   onSaved: () => void | Promise<void>;
+  workflowId?: string;
+  members?: { userId: string; name: string; role: string }[];
 }) {
   return (
     <ReactFlowProvider>

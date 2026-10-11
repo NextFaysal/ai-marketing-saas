@@ -425,6 +425,7 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<TotpStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [otpauthUrl, setOtpauthUrl] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -439,9 +440,10 @@ export default function SettingsPage() {
   async function enroll() {
     setBusy(true); setError(""); setNotice("");
     try {
-      const out = await apiFetch<{ secret: string; otpauthUrl: string }>("/auth/totp/enroll", { method: "POST" });
+      const out = await apiFetch<{ secret: string; otpauthUrl: string; qrDataUrl?: string }>("/auth/totp/enroll", { method: "POST" });
       setSecret(out.secret);
       setOtpauthUrl(out.otpauthUrl);
+      setQrDataUrl(out.qrDataUrl ?? "");
       setNotice("Secret তৈরি হয়েছে — Authenticator অ্যাপে যোগ করে নিচে কোড দিয়ে নিশ্চিত করুন। নিশ্চিত না করা পর্যন্ত 2FA চালু হবে না।");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "শুরু করা যায়নি"); }
@@ -513,6 +515,13 @@ export default function SettingsPage() {
                   <button className="btn-primary min-h-[44px]" disabled={busy} onClick={enroll}>{busy ? "অপেক্ষা করুন…" : "2FA চালু করা শুরু করুন"}</button>
                 ) : (
                   <div className="space-y-3 rounded-2xl bg-slate-50 p-4">
+                    {qrDataUrl ? (
+                      <div>
+                        <div className="text-xs font-medium text-slate-500">Authenticator অ্যাপ দিয়ে Scan করুন</div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={qrDataUrl} alt="TOTP QR" className="mt-1 rounded bg-white p-1 ring-1 ring-slate-200" width={180} height={180} />
+                      </div>
+                    ) : null}
                     <div>
                       <div className="text-xs font-medium text-slate-500">Secret Key (একবারই দেখানো হয় — নিরাপদে রাখুন)</div>
                       <code className="mt-1 block break-all rounded bg-white p-2 text-sm ring-1 ring-slate-200">{secret}</code>

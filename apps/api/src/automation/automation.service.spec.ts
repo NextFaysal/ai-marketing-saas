@@ -39,7 +39,17 @@ function buildSvc() {
     organization: { findMany: async () => [{ id: "org-1" }] },
   };
   const campaignsStub = { calls: [] as any[], async setMetaStatus(orgId: string, actor: string, planId: string, status: string) { this.calls.push({ planId, status }); return { metaStatus: status }; } };
-  const adsStub = { syncMetaInsights: async () => ({ rows: 3, created: 3, updated: 0 }) };
+  const adsStub = {
+    syncMetaInsights: async () => ({ rows: 3, created: 3, updated: 0 }),
+    // AD5: executeJob dispatches insights jobs via syncInsightsJob.
+    // Only the meta arm is stubbed — other platforms throw, exactly
+    // like the previously-undefined syncGoogleInsights did (the
+    // failing-job test below depends on that).
+    syncInsightsJob: async (platform: string) => {
+      if (platform !== "meta") throw new TypeError("adsStub has no insights job for this platform");
+      return { rows: 3, created: 3, updated: 0 };
+    },
+  };
   const svc = new AutomationService(
     tables as any, { log: async () => undefined } as any,
     {} as any, {} as any, adsStub as any, {} as any, {} as any, campaignsStub as any,

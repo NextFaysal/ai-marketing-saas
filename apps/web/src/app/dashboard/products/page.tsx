@@ -18,11 +18,44 @@ interface ProductItem {
   currentCostMinor?: string | null;
   marginPercent?: number | null;
   stockQuantity?: number | null;
+  lowStockThreshold?: number | null;
   status: "ACTIVE" | "DRAFT" | "ARCHIVED";
   bumpTitle?: string | null;
   bumpPriceMinor?: string | null;
   bumpImageUrl?: string | null;
 }
+
+interface VariantItem { id: string; name: string; sku?: string | null; stockQuantity?: number | null; priceMinor?: string | null }
+
+interface SalesBucket { units: number; orders: number; revenueMinor: string; returnedUnits: number }
+interface SalesReport {
+  days: number;
+  products: ({ productId: string; name: string; category?: string | null } & SalesBucket)[];
+  categories: ({ category?: string | null } & SalesBucket)[];
+  unlinked: SalesBucket;
+  totals: SalesBucket;
+}
+
+/** Minor-unit string -> taka decimal string for a form input,
+ * via BigInt division/remainder (no float loss). */
+function minorToDecimal(minor: string): string {
+  const v = BigInt(minor);
+  const negative = v < 0n;
+  const abs = negative ? -v : v;
+  return `${negative ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
+}
+interface MovementItem {
+  id: string; delta: number; balanceAfter: number; reason: string;
+  variantName?: string | null; note?: string | null; createdAt: string;
+}
+
+const MOVEMENT_REASON_LABELS: Record<string, string> = {
+  order_placed: "অর্ডারে বিক্রি",
+  order_cancelled: "বাতিলে ফেরত",
+  order_returned: "রিটার্নে ফেরত",
+  manual_adjustment: "হাতে সমন্বয়",
+  sync_correction: "স্টোর sync সংশোধন",
+};
 
 export default function ProductsPage() {
   const [items, setItems] = useState<ProductItem[]>([]);
@@ -46,6 +79,7 @@ export default function ProductsPage() {
     cost: "",
     category: "",
     stockQuantity: "",
+    lowStockThreshold: "",
     description: "",
     imageUrl: "",
     status: "ACTIVE" as "ACTIVE" | "DRAFT" | "ARCHIVED",
@@ -54,6 +88,30 @@ export default function ProductsPage() {
     bumpImageUrl: "",
   });
   const [saving, setSaving] = useState(false);
+  // Sales & Data S1: stock adjustment dialog (adjustment form + movement history).
+  const [stockFor, setStockFor] = useState<ProductItem | null>(null);
+  const [variants, setVariants] = useState<VariantItem[]>([]);
+  const [variantId, setVariantId] = useState("");
+  const [adjDelta, setAdjDelta] = useState("");
+  const [adjSetTo, setAdjSetTo] = useState("");
+  const [adjNote, setAdjNote] = useState("");
+  const [adjThreshold, setAdjThreshold] = useState("");
+  const [adjBusy, setAdjBusy] = useState(false);
+  const [adjMsg, setAdjMsg] = useState("");
+  const [movements, setMovements] = useState<MovementItem[]>([]);
+  // Sales & Data S6: product sales report panel.
+  const [reportDays, setReportDays] = useState(30);
+  const [report, setReport] = useState<SalesReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState("");
+  // Sales & Data S6: variant manager dialog (separate from the stock dialog).
+  const [variantFor, setVariantFor] = useState<ProductItem | null>(null);
+  const [mgrVariants, setMgrVariants] = useState<VariantItem[]>([]);
+  const [vForm, setVForm] = useState({ name: "", sku: "", price: "", stock: "" });
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  const [evForm, setEvForm] = useState({ name: "", sku: "", price: "", stock: "" });
+  const [vBusy, setVBusy] = useState(false);
+  const [vMsg, setVMsg] = useState("");
 
   const load = useCallback(async (q = "") => {
     const orgId = getOrganizationId();
@@ -81,6 +139,156 @@ export default function ProductsPage() {
     load();
   }, [load]);
 
+  const loadReport = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setReportLoading(true);
+    try {
+      const data = await apiFetch<SalesReport>(`/organizations/${orgId}/products/sales-report?days=${reportDays}`);
+      setReport(data); setReportError("");
+    } catch (e) { setReportError(e instanceof Error ? e.message : "রিপোর্ট লোড ব্যর্থ হয়েছে"); }
+    finally { setReportLoading(false); }
+  }, [reportDays]);
+
+  useEffect(() => { loadReport(); }, [loadReport]);
+
+  const refreshMgrVariants = useCallback(async (productId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const detail = await apiFetch<ProductItem & { variants?: VariantItem[] }>(
+      `/organizations/${orgId}/products/${productId}`);
+    setMgrVariants(detail.variants ?? []);
+  }, []);
+
+  async function openVariantDialog(p: ProductItem) {
+    setVariantFor(p); setMgrVariants([]);
+    setVForm({ name: "", sku: "", price: "", stock: "" });
+    setEditingVariantId(null); setEvForm({ name: "", sku: "", price: "", stock: "" });
+    setVMsg("");
+    try { await refreshMgrVariants(p.id); } catch { setVMsg("ভ্যারিয়েন্ট লোড ব্যর্থ হয়েছে।"); }
+  }
+
+  async function onCreateVariant(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId(); if (!orgId || !variantFor) return;
+    setVBusy(true); setVMsg("");
+    try {
+      await apiFetch(`/organizations/${orgId}/products/${variantFor.id}/variants`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: vForm.name, sku: vForm.sku || undefined, price: vForm.price || undefined,
+          stockQuantity: vForm.stock ? Number(vForm.stock) : undefined,
+        }),
+      });
+      setVForm({ name: "", sku: "", price: "", stock: "" });
+      setVMsg("ভ্যারিয়েন্ট যোগ হয়েছে।");
+      await refreshMgrVariants(variantFor.id);
+      await load(search);
+    } catch (e) { setVMsg(e instanceof Error ? e.message : "ভ্যারিয়েন্ট যোগ ব্যর্থ হয়েছে"); }
+    finally { setVBusy(false); }
+  }
+
+  function startEditVariant(v: VariantItem) {
+    setEditingVariantId(v.id);
+    setEvForm({
+      name: v.name, sku: v.sku ?? "",
+      price: v.priceMinor ? minorToDecimal(v.priceMinor) : "",
+      stock: v.stockQuantity != null ? String(v.stockQuantity) : "",
+    });
+    setVMsg("");
+  }
+
+  async function onSaveVariant(v: VariantItem) {
+    const orgId = getOrganizationId(); if (!orgId || !variantFor) return;
+    setVBusy(true); setVMsg("");
+    try {
+      await apiFetch(`/organizations/${orgId}/products/${variantFor.id}/variants/${v.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: evForm.name, sku: evForm.sku, price: evForm.price,
+          stockQuantity: evForm.stock.trim() ? Number(evForm.stock) : undefined,
+        }),
+      });
+      setEditingVariantId(null);
+      setVMsg("ভ্যারিয়েন্ট সংরক্ষণ হয়েছে।");
+      await refreshMgrVariants(variantFor.id);
+      await load(search);
+    } catch (e) { setVMsg(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে"); }
+    finally { setVBusy(false); }
+  }
+
+  async function onDeleteVariant(v: VariantItem) {
+    const orgId = getOrganizationId(); if (!orgId || !variantFor) return;
+    if (!window.confirm(`ভ্যারিয়েন্ট "${v.name}" মুছে ফেলবেন?`)) return;
+    setVBusy(true); setVMsg("");
+    try {
+      await apiFetch(`/organizations/${orgId}/products/${variantFor.id}/variants/${v.id}`, { method: "DELETE" });
+      if (editingVariantId === v.id) setEditingVariantId(null);
+      setVMsg("ভ্যারিয়েন্ট মোছা হয়েছে।");
+      await refreshMgrVariants(variantFor.id);
+      await load(search);
+    } catch (e) { setVMsg(e instanceof Error ? e.message : "মুছতে ব্যর্থ হয়েছে"); }
+    finally { setVBusy(false); }
+  }
+
+  const loadMovements = useCallback(async (productId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const data = await apiFetch<{ items: MovementItem[] }>(
+        `/organizations/${orgId}/products/${productId}/movements?pageSize=20`);
+      setMovements(data.items);
+    } catch { setMovements([]); }
+  }, []);
+
+  async function openStockDialog(p: ProductItem) {
+    setStockFor(p); setVariants([]); setVariantId("");
+    setAdjDelta(""); setAdjSetTo(""); setAdjNote(""); setAdjMsg("");
+    setAdjThreshold(p.lowStockThreshold != null ? String(p.lowStockThreshold) : "");
+    setMovements([]);
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const detail = await apiFetch<ProductItem & { variants?: VariantItem[] }>(
+        `/organizations/${orgId}/products/${p.id}`);
+      setVariants(detail.variants ?? []);
+    } catch { /* variants are optional in the dialog */ }
+    await loadMovements(p.id);
+  }
+
+  const selectedVariant = variants.find((v) => v.id === variantId) ?? null;
+  const currentStock = stockFor ? (selectedVariant ? selectedVariant.stockQuantity : stockFor.stockQuantity) : null;
+
+  async function onAdjust(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId(); if (!orgId || !stockFor) return;
+    setAdjBusy(true); setAdjMsg("");
+    try {
+      const thresholdNum = adjThreshold.trim() ? Number(adjThreshold) : null;
+      if (thresholdNum !== (stockFor.lowStockThreshold ?? null) && thresholdNum !== null) {
+        await apiFetch(`/organizations/${orgId}/products/${stockFor.id}`, {
+          method: "PATCH", body: JSON.stringify({ lowStockThreshold: thresholdNum }),
+        });
+      }
+      if (adjDelta.trim() || adjSetTo.trim()) {
+        const out = await apiFetch<{ stockQuantity: number }>(
+          `/organizations/${orgId}/products/${stockFor.id}/stock-adjustment`, {
+            method: "POST",
+            body: JSON.stringify({
+              variantId: variantId || undefined,
+              delta: adjDelta.trim() ? Number(adjDelta) : undefined,
+              setTo: adjSetTo.trim() ? Number(adjSetTo) : undefined,
+              note: adjNote.trim() || undefined,
+            }),
+          });
+        setAdjMsg(`সমন্বয় হয়েছে — নতুন স্টক: ${out.stockQuantity}`);
+        setAdjDelta(""); setAdjSetTo(""); setAdjNote("");
+        await loadMovements(stockFor.id);
+      } else {
+        setAdjMsg("সংরক্ষণ হয়েছে।");
+      }
+      await load(search);
+    } catch (e) { setAdjMsg(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ হয়েছে"); }
+    finally { setAdjBusy(false); }
+  }
+
   function openCreateModal() {
     setEditingProduct(null);
     setForm({
@@ -91,6 +299,7 @@ export default function ProductsPage() {
       cost: "",
       category: "",
       stockQuantity: "100",
+      lowStockThreshold: "",
       description: "",
       imageUrl: "",
       status: "ACTIVE",
@@ -115,6 +324,7 @@ export default function ProductsPage() {
       cost: unitCost,
       category: p.category || "",
       stockQuantity: p.stockQuantity?.toString() || "",
+      lowStockThreshold: p.lowStockThreshold?.toString() || "",
       description: p.description || "",
       imageUrl: p.imageUrl || "",
       status: p.status,
@@ -145,6 +355,7 @@ export default function ProductsPage() {
             status: form.status,
             price: form.price,
             stockQuantity: form.stockQuantity ? Number(form.stockQuantity) : undefined,
+            lowStockThreshold: form.lowStockThreshold ? Number(form.lowStockThreshold) : undefined,
             imageUrl: form.imageUrl.trim() || undefined,
             bumpTitle: form.bumpTitle.trim() || undefined,
             bumpPrice: form.bumpPrice.trim() || undefined,
@@ -170,6 +381,7 @@ export default function ProductsPage() {
             compareAtPrice: form.compareAtPrice.trim() || undefined,
             category: form.category.trim() || undefined,
             stockQuantity: form.stockQuantity ? Number(form.stockQuantity) : undefined,
+            lowStockThreshold: form.lowStockThreshold ? Number(form.lowStockThreshold) : undefined,
             description: form.description.trim() || undefined,
             imageUrl: form.imageUrl.trim() || undefined,
             status: form.status,
@@ -487,6 +699,18 @@ export default function ProductsPage() {
                           </>
                         ) : null}
                         <button
+                          onClick={() => openStockDialog(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+                        >
+                          📦 স্টক
+                        </button>
+                        <button
+                          onClick={() => openVariantDialog(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+                        >
+                          🧩 ভ্যারিয়েন্ট
+                        </button>
+                        <button
                           onClick={() => openEditModal(p)}
                           className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
                         >
@@ -507,6 +731,70 @@ export default function ProductsPage() {
           </table>
         </div>
       )}
+
+      <section className="card p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">📊 পণ্য বিক্রি</h2>
+          <select className="rounded-lg border px-3 py-2 text-sm" value={reportDays} onChange={(e) => setReportDays(Number(e.target.value))}>
+            <option value={7}>শেষ ৭ দিন</option>
+            <option value={30}>শেষ ৩০ দিন</option>
+            <option value={90}>শেষ ৯০ দিন</option>
+          </select>
+        </div>
+        {reportLoading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : reportError ? (
+          <p className="text-sm text-slate-500">{reportError}</p>
+        ) : !report || report.totals.units === 0 ? (
+          <p className="text-sm text-slate-500">এই সময়ে কোনো বিক্রি নেই।</p>
+        ) : (
+          <>
+            <div className="overflow-hidden rounded-lg border">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-500"><tr>
+                  <th className="px-4 py-3">পণ্য</th><th className="px-4 py-3">ক্যাটাগরি</th><th className="px-4 py-3">ইউনিট</th>
+                  <th className="px-4 py-3">অর্ডার</th><th className="px-4 py-3">রিটার্ন (ইউনিট)</th><th className="px-4 py-3">আয়</th>
+                </tr></thead>
+                <tbody>
+                  {report.products.map((r) => (
+                    <tr key={r.productId} className="border-t">
+                      <td className="px-4 py-3 font-medium">{r.name}</td>
+                      <td className="px-4 py-3">{r.category ?? "ক্যাটাগরি নেই"}</td>
+                      <td className="px-4 py-3">{r.units}</td>
+                      <td className="px-4 py-3">{r.orders}</td>
+                      <td className="px-4 py-3">{r.returnedUnits}</td>
+                      <td className="px-4 py-3">{formatMinor(BigInt(r.revenueMinor))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-sm font-medium">
+              মোট: {report.totals.units} ইউনিট · {report.totals.orders} অর্ডার · আয় {formatMinor(BigInt(report.totals.revenueMinor))} · রিটার্ন {report.totals.returnedUnits} ইউনিট
+            </p>
+            {report.categories.length > 0 ? (
+              <div className="overflow-hidden rounded-lg border">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500"><tr>
+                    <th className="px-4 py-3">ক্যাটাগরি</th><th className="px-4 py-3">ইউনিট</th><th className="px-4 py-3">আয়</th>
+                  </tr></thead>
+                  <tbody>
+                    {report.categories.map((c, i) => (
+                      <tr key={`${c.category ?? "none"}-${i}`} className="border-t">
+                        <td className="px-4 py-3">{c.category ?? "ক্যাটাগরি নেই"}</td>
+                        <td className="px-4 py-3">{c.units}</td>
+                        <td className="px-4 py-3">{formatMinor(BigInt(c.revenueMinor))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            {report.unlinked.units > 0 ? (
+              <p className="text-sm text-slate-600">লিংকহীন আইটেম: {report.unlinked.units} ইউনিট · আয় {formatMinor(BigInt(report.unlinked.revenueMinor))} (এসব আইটেমের পণ্য মেলানো যায়নি)</p>
+            ) : null}
+          </>
+        )}
+        <p className="text-xs text-slate-400">হিসাবের নিয়ম: বাতিল, refunded ও failed অর্ডার বাদ (Analytics-এর revenue নিয়ম)। অর্ডারের তারিখ = placedAt, না থাকলে তৈরির সময়। রিটার্ন ইউনিট: যেসব অর্ডারের courier shipment returned হয়েছে অথবা অর্ডারের status returned।</p>
+      </section>
 
       {/* CREATE & EDIT PRODUCT MODAL */}
       {isModalOpen ? (
@@ -644,6 +932,20 @@ export default function ProductsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  কম স্টকের সতর্কতা (Low-stock alert, খালি = ৫)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="5"
+                  value={form.lowStockThreshold}
+                  onChange={(e) => setForm({ ...form, lowStockThreshold: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   প্রোডাক্ট ইমেজ ইউআরএল (Image URL)
                 </label>
                 <input
@@ -740,6 +1042,129 @@ export default function ProductsPage() {
               </button>
             </div>
           </form>
+        </div>
+      ) : null}
+
+      {stockFor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setStockFor(null)}>
+          <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">স্টক সমন্বয় — {stockFor.name}</h2>
+              <button className="text-slate-500" onClick={() => setStockFor(null)}>✕</button>
+            </div>
+            <p className="text-sm text-slate-600">
+              বর্তমান স্টক: {currentStock == null ? <span className="text-slate-400">ট্র্যাক হয় না</span> : <strong>{currentStock}</strong>}
+              {selectedVariant ? ` (ভ্যারিয়েন্ট: ${selectedVariant.name})` : ""}
+            </p>
+            <form onSubmit={onAdjust} className="space-y-3">
+              {variants.length > 0 ? (
+                <select className="w-full rounded-lg border px-3 py-2 text-sm" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
+                  <option value="">পুরো পণ্য (ভ্যারিয়েন্ট নয়)</option>
+                  {variants.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}{v.sku ? ` (${v.sku})` : ""} — স্টক: {v.stockQuantity ?? "ট্র্যাক হয় না"}</option>
+                  ))}
+                </select>
+              ) : null}
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm">পরিবর্তন (+/-)
+                  <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" placeholder="যেমন +10 বা -2" value={adjDelta} onChange={(e) => { setAdjDelta(e.target.value); if (e.target.value) setAdjSetTo(""); }} />
+                </label>
+                <label className="text-sm">অথবা সরাসরি স্টক বসান
+                  <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" placeholder="নতুন মোট স্টক" value={adjSetTo} onChange={(e) => { setAdjSetTo(e.target.value); if (e.target.value) setAdjDelta(""); }} />
+                </label>
+              </div>
+              <label className="block text-sm">নোট
+                <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" maxLength={300} placeholder="কেন সমন্বয় করছেন (ঐচ্ছিক)" value={adjNote} onChange={(e) => setAdjNote(e.target.value)} />
+              </label>
+              <label className="block text-sm">কম স্টকের সতর্কতা (খালি = ৫)
+                <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" value={adjThreshold} onChange={(e) => setAdjThreshold(e.target.value)} />
+              </label>
+              {adjMsg ? <p className="text-sm text-slate-600">{adjMsg}</p> : null}
+              <button className="btn-primary disabled:opacity-50" disabled={adjBusy}>{adjBusy ? "সেভ হচ্ছে..." : "সমন্বয় করুন"}</button>
+            </form>
+
+            <div className="border-t pt-3">
+              <h3 className="mb-2 text-sm font-semibold">স্টক ইতিহাস</h3>
+              {movements.length === 0 ? (
+                <p className="text-sm text-slate-400">এখনো কোনো স্টক পরিবর্তনের রেকর্ড নেই।</p>
+              ) : (
+                <ul className="space-y-1.5 text-sm">
+                  {movements.map((m) => (
+                    <li key={m.id} className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-slate-400">{new Date(m.createdAt).toLocaleString("bn-BD")}</span>
+                      <span>{MOVEMENT_REASON_LABELS[m.reason] ?? m.reason}{m.variantName ? ` · ${m.variantName}` : ""}</span>
+                      <span className={m.delta >= 0 ? "text-emerald-600" : "text-red-600"}>{m.delta >= 0 ? `+${m.delta}` : m.delta}</span>
+                      <span className="text-slate-500">→ বাকি {m.balanceAfter}</span>
+                      {m.note ? <span className="text-slate-400">({m.note})</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {variantFor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setVariantFor(null)}>
+          <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">ভ্যারিয়েন্ট — {variantFor.name}</h2>
+              <button className="text-slate-500" onClick={() => setVariantFor(null)}>✕</button>
+            </div>
+
+            <form onSubmit={onCreateVariant} className="space-y-3 border-b pb-4">
+              <div className="grid grid-cols-2 gap-3">
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="ভ্যারিয়েন্টের নাম *" value={vForm.name} onChange={(e) => setVForm({ ...vForm, name: e.target.value })} required />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="SKU" value={vForm.sku} onChange={(e) => setVForm({ ...vForm, sku: e.target.value })} />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="দাম (BDT, ঐচ্ছিক)" value={vForm.price} onChange={(e) => setVForm({ ...vForm, price: e.target.value })} />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="স্টক (ঐচ্ছিক)" type="number" min="0" value={vForm.stock} onChange={(e) => setVForm({ ...vForm, stock: e.target.value })} />
+              </div>
+              <button className="btn-primary disabled:opacity-50" disabled={vBusy}>{vBusy ? "সেভ হচ্ছে..." : "ভ্যারিয়েন্ট যোগ করুন"}</button>
+            </form>
+
+            {mgrVariants.length === 0 ? (
+              <p className="text-sm text-slate-400">এখনো কোনো ভ্যারিয়েন্ট নেই।</p>
+            ) : (
+              <ul className="space-y-3">
+                {mgrVariants.map((v) => (
+                  <li key={v.id} className="border-b pb-3 last:border-b-0">
+                    {editingVariantId === v.id ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="নাম *" value={evForm.name} onChange={(e) => setEvForm({ ...evForm, name: e.target.value })} required />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="SKU" value={evForm.sku} onChange={(e) => setEvForm({ ...evForm, sku: e.target.value })} />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="দাম (BDT, খালি = পণ্যের দাম)" value={evForm.price} onChange={(e) => setEvForm({ ...evForm, price: e.target.value })} />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="স্টক" type="number" min="0" value={evForm.stock} onChange={(e) => setEvForm({ ...evForm, stock: e.target.value })} />
+                        </div>
+                        <div className="flex gap-3">
+                          <button className="btn-primary disabled:opacity-50" disabled={vBusy} onClick={() => onSaveVariant(v)}>সংরক্ষণ</button>
+                          <button className="rounded-lg border bg-white px-4 py-2 text-sm" onClick={() => setEditingVariantId(null)}>বাতিল</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <div className="text-sm">
+                          <span className="font-medium">{v.name}</span>
+                          {v.sku ? <span className="text-slate-400"> · {v.sku}</span> : null}
+                          <div className="text-xs text-slate-500">
+                            দাম: {v.priceMinor ? formatMinor(BigInt(v.priceMinor)) : "পণ্যের দামই প্রযোজ্য"} · স্টক: {v.stockQuantity == null ? "ট্র্যাক হয় না" : v.stockQuantity}
+                          </div>
+                        </div>
+                        <div className="whitespace-nowrap">
+                          <button className="mr-3 text-sky-700 text-sm" disabled={vBusy} onClick={() => startEditVariant(v)}>সম্পাদনা</button>
+                          <button className="text-red-600 text-sm" disabled={vBusy} onClick={() => onDeleteVariant(v)}>মুছুন</button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {vMsg ? <p className="text-sm text-slate-600">{vMsg}</p> : null}
+            <p className="text-xs text-slate-400">ট্র্যাক করা ভ্যারিয়েন্টের স্টক বদলালে পরিবর্তনটি স্টক ইতিহাসে (ledger-এ) রেকর্ড হবে। ভ্যারিয়েন্ট মুছলে আগের স্টক ইতিহাস থেকে যায়।</p>
+          </div>
         </div>
       ) : null}
     </div>

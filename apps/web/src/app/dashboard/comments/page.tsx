@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { apiFetch, getOrganizationId } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
+import { getOrganizationId } from "@/lib/org";
 
 interface SocialCommentItem {
   id: string;
@@ -15,7 +16,7 @@ interface SocialCommentItem {
   authorAvatarUrl?: string;
   commentText: string;
   sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | "SPAM";
-  intent: "PRICE_QUERY" | "DELIVERY_QUERY" | "COMPLAINT" | "GENERAL" | "PRODUCT_INFO";
+  intent: "PRICE_QUERY" | "DELIVERY_QUERY" | "COMPLAINT" | "GENERAL" | "PRODUCT_INFO" | "BARGAIN" | "COMPETITOR_MENTION";
   status: "PENDING" | "AUTO_REPLIED" | "MANUALLY_REPLIED" | "HIDDEN" | "ESCALATED";
   replyText?: string;
   repliedAt?: string;

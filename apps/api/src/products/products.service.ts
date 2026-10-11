@@ -1,9 +1,13 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { CreateProductDto, UpdateProductDto, CreateVariantDto, SetCostDto } from "./products.dto";
+import { InventoryService } from "../inventory/inventory.service";
+import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto } from "./products.dto";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { computeMargin } from "./pricing";
+import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
+import { classifyShipmentStatus } from "../courier/courier-performance";
+import { dhakaDayStartUtc } from "../crm/lead-followups";
 
 function parseMoney(value: string, field: string): bigint {
   try { return parseMoneyToMinor(value); }
@@ -44,7 +48,11 @@ export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly integrations: IntegrationsService,
+    @Optional() private readonly inventory?: InventoryService,
+    // Owner series: public checkout ingestion flows orders through
+    // IntegrationsService.upsertOrder. Optional so positional spec
+    // constructions keep working; the Nest module always provides it.
+    @Optional() private readonly integrations?: IntegrationsService,
   ) {}
 
   async create(organizationId: string, actorId: string, dto: CreateProductDto) {
@@ -69,7 +77,8 @@ export class ProductsService {
         priceMinor: parseMoney(dto.price, "price"),
         compareAtMinor: dto.compareAtPrice ? parseMoney(dto.compareAtPrice, "compareAtPrice") : null,
         currency: dto.currency ?? "BDT",
-        stockQuantity: dto.stockQuantity, imageUrl: dto.imageUrl || null,
+        stockQuantity: dto.stockQuantity, lowStockThreshold: dto.lowStockThreshold,
+        imageUrl: dto.imageUrl || null,
         bumpTitle: dto.bumpTitle?.trim() || null,
         bumpPriceMinor: dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null,
         bumpImageUrl: dto.bumpImageUrl?.trim() || null,
@@ -207,6 +216,9 @@ export class ProductsService {
     const externalId = `checkout-${randomUUID()}`;
     const cleanPhone = dto.customerPhone.trim();
 
+    if (!this.integrations) {
+      throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
+    }
     await this.integrations.upsertOrder(
       p.organization.id,
       null,
@@ -238,13 +250,11 @@ export class ProductsService {
       "manual"
     );
 
-    // If stockQuantity is tracked, reduce stock
-    if (p.stockQuantity !== null && p.stockQuantity !== undefined && p.stockQuantity >= qty) {
-      await (this.prisma as any).product.update({
-        where: { id: p.id },
-        data: { stockQuantity: p.stockQuantity - qty },
-      });
-    }
+    // Stock: NO manual decrement here (merge integration fix).
+    // upsertOrder's S1 inventory hook (applyOrderPlaced) already
+    // decrements Product.stockQuantity once for the SKU-matched
+    // main item and writes the StockMovement; the owner's original
+    // direct decrement double-counted every checkout order.
 
     return {
       success: true,
@@ -294,15 +304,188 @@ export class ProductsService {
     return pub;
   }
 
+  // ---------- Sales & Data S6: product sales report ----------
+
+  /**
+   * Product-wise sales over the last `days` Asia/Dhaka calendar
+   * days (today included), computed from real Order/OrderItem
+   * rows of THIS org:
+   *  - order date = placedAt ?? createdAt (the query expresses
+   *    this as an OR over the stored columns);
+   *  - revenue excludes REVENUE_EXCLUDED_STATUSES (Analytics'
+   *    constant, imported — cancelled / refunded / failed);
+   *  - an order is "returned" when its status is "returned" OR
+   *    any linked CourierShipment classifies as returned
+   *    (S5's classifyShipmentStatus);
+   *  - items whose productId is null go to the `unlinked`
+   *    bucket; items pointing at a deleted product keep their
+   *    productId bucket with the item's stored name and a null
+   *    category;
+   *  - per-category `orders` counts DISTINCT orders touching
+   *    that category (an order counts in each category it
+   *    touches); totals count distinct orders overall.
+   */
+  async salesReport(organizationId: string, daysInput?: number | string | null, now = new Date()) {
+    const days = daysInput === undefined || daysInput === null || daysInput === "" ? 30 : Number(daysInput);
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      throw new BadRequestException("days must be an integer between 1 and 365");
+    }
+    const end = new Date(dhakaDayStartUtc(now).getTime() + 86400000);
+    const start = new Date(end.getTime() - days * 86400000);
+
+    const orders = await (this.prisma as any).order.findMany({
+      where: {
+        organizationId,
+        OR: [
+          { placedAt: { gte: start, lt: end } },
+          { placedAt: null, createdAt: { gte: start, lt: end } },
+        ],
+      },
+      include: { items: true },
+      take: 20000,
+    });
+    const kept = (orders as any[]).filter((o) => !REVENUE_EXCLUDED_STATUSES.includes(o.status));
+
+    const orderIds = kept.map((o) => o.id);
+    const returnedOrderIds = new Set<string>();
+    for (const o of kept) if (o.status === "returned") returnedOrderIds.add(o.id);
+    if (orderIds.length) {
+      const shipments = await (this.prisma as any).courierShipment.findMany({
+        where: { organizationId, orderId: { in: orderIds } },
+        select: { orderId: true, status: true },
+      });
+      for (const s of shipments as any[]) {
+        if (classifyShipmentStatus(s.status) === "returned") returnedOrderIds.add(s.orderId);
+      }
+    }
+
+    // Product names/categories; first stored item name per
+    // productId is the fallback for a deleted product row.
+    const productIds: string[] = [];
+    const firstItemName = new Map<string, string>();
+    for (const o of kept) {
+      for (const item of o.items ?? []) {
+        if (!item.productId) continue;
+        if (!firstItemName.has(item.productId)) {
+          firstItemName.set(item.productId, item.name);
+          productIds.push(item.productId);
+        }
+      }
+    }
+    const productRows = productIds.length
+      ? await (this.prisma as any).product.findMany({
+          where: { organizationId, id: { in: productIds } },
+          select: { id: true, name: true, category: true },
+        })
+      : [];
+    const productInfo = new Map<string, { name: string; category: string | null }>(
+      (productRows as any[]).map((p) => [p.id, { name: p.name, category: p.category ?? null }]),
+    );
+
+    interface Bucket { units: number; orders: Set<string>; revenue: bigint; returnedUnits: number }
+    const blank = (): Bucket => ({ units: 0, orders: new Set<string>(), revenue: 0n, returnedUnits: 0 });
+    const add = (b: Bucket, orderId: string, qty: number, revenue: bigint, returned: boolean) => {
+      b.units += qty;
+      b.orders.add(orderId);
+      b.revenue += revenue;
+      if (returned) b.returnedUnits += qty;
+    };
+    const byProduct = new Map<string, Bucket>();
+    const byCategory = new Map<string | null, Bucket>();
+    const unlinked = blank();
+    const totals = blank();
+
+    for (const o of kept) {
+      const returned = returnedOrderIds.has(o.id);
+      for (const item of o.items ?? []) {
+        const qty = item.quantity ?? 0;
+        const revenue = BigInt(item.totalMinor ?? 0);
+        add(totals, o.id, qty, revenue, returned);
+        if (!item.productId) {
+          add(unlinked, o.id, qty, revenue, returned);
+          continue;
+        }
+        let pb = byProduct.get(item.productId);
+        if (!pb) { pb = blank(); byProduct.set(item.productId, pb); }
+        add(pb, o.id, qty, revenue, returned);
+        const category = productInfo.get(item.productId)?.category ?? null;
+        let cb = byCategory.get(category);
+        if (!cb) { cb = blank(); byCategory.set(category, cb); }
+        add(cb, o.id, qty, revenue, returned);
+      }
+    }
+
+    const finalize = (b: Bucket) => ({
+      units: b.units, orders: b.orders.size, revenueMinor: b.revenue.toString(), returnedUnits: b.returnedUnits,
+    });
+    const products = [...byProduct.entries()]
+      .map(([productId, b]) => ({
+        productId,
+        name: productInfo.get(productId)?.name ?? firstItemName.get(productId) ?? productId,
+        category: productInfo.get(productId)?.category ?? null,
+        ...finalize(b),
+      }))
+      .sort((a, b) => {
+        const diff = BigInt(b.revenueMinor) - BigInt(a.revenueMinor);
+        if (diff !== 0n) return diff > 0n ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 100);
+    const categories = [...byCategory.entries()]
+      .map(([category, b]) => ({ category, ...finalize(b) }))
+      .sort((a, b) => {
+        const diff = BigInt(b.revenueMinor) - BigInt(a.revenueMinor);
+        if (diff !== 0n) return diff > 0n ? 1 : -1;
+        return String(a.category ?? "").localeCompare(String(b.category ?? ""));
+      });
+
+    return {
+      days,
+      windowStart: start.toISOString(),
+      windowEnd: end.toISOString(),
+      revenueExcludedStatuses: REVENUE_EXCLUDED_STATUSES,
+      products,
+      categories,
+      unlinked: finalize(unlinked),
+      totals: finalize(totals),
+    };
+  }
+
   async update(organizationId: string, actorId: string, productId: string, dto: UpdateProductDto) {
-    await this.getOne(organizationId, productId); // 404 + tenant scope
+    const existing = await this.getOne(organizationId, productId); // 404 + tenant scope
     const data: any = { ...dto };
     if (dto.price !== undefined) { data.priceMinor = parseMoney(dto.price, "price"); delete data.price; }
     if (dto.bumpPrice !== undefined) {
       data.bumpPriceMinor = dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null;
       delete data.bumpPrice;
     }
+    // S1 branching for a stockQuantity change:
+    // - Inventory present AND the product is already TRACKED
+    //   (existing.stockQuantity != null) AND the value actually
+    //   changes → INVENTORY owns the stock write: stockQuantity is
+    //   excluded from this update and adjust(setTo) writes the
+    //   value + StockMovement + audit, so the edit is explained
+    //   in the ledger like every other stock change. (Calling
+    //   adjust AFTER a plain write would double-apply, because
+    //   adjust computes from the current value.)
+    // - Existing stock is null (untracked → tracked) → plain
+    //   write: this is a BASELINE, not a movement.
+    // - Inventory absent (positional spec constructions) → plain
+    //   write, exactly as before S1.
+    const inventoryOwnsStock = Boolean(
+      this.inventory
+      && dto.stockQuantity !== undefined
+      && existing.stockQuantity != null
+      && dto.stockQuantity !== existing.stockQuantity,
+    );
+    if (inventoryOwnsStock) delete data.stockQuantity;
     const updated = await (this.prisma as any).product.update({ where: { id: productId }, data });
+    if (inventoryOwnsStock) {
+      const result = await this.inventory!.adjust(organizationId, actorId, productId, {
+        setTo: dto.stockQuantity, note: "পণ্য সম্পাদনা থেকে স্টক হালনাগাদ",
+      });
+      updated.stockQuantity = result.stockQuantity;
+    }
     await this.audit.log({ organizationId, userId: actorId, action: "product.update", entityType: "Product", entityId: productId });
     return toPublicProduct(updated, null);
   }
@@ -325,6 +508,57 @@ export class ProductsService {
     });
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.create", entityType: "ProductVariant", entityId: variant.id });
     return { ...variant, priceMinor: variant.priceMinor?.toString() ?? null };
+  }
+
+  async updateVariant(organizationId: string, actorId: string, productId: string, variantId: string, dto: UpdateVariantDto) {
+    await this.getOne(organizationId, productId); // 404 + tenant scope
+    const variant = await (this.prisma as any).productVariant.findFirst({
+      where: { id: variantId, productId },
+    });
+    if (!variant) throw new NotFoundException("Variant not found for this product");
+    if (dto.sku) {
+      const dup = await (this.prisma as any).productVariant.findFirst({
+        where: { productId, sku: dto.sku, id: { not: variantId } },
+      });
+      if (dup) throw new ConflictException(`A variant with SKU ${dto.sku} already exists on this product`);
+    }
+    const data: any = {};
+    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.sku !== undefined) data.sku = dto.sku || null;
+    if (dto.price !== undefined) data.priceMinor = dto.price ? parseMoney(dto.price, "price") : null;
+    // Stock branching mirrors the S1 product update: inventory
+    // present AND the variant is already TRACKED (stockQuantity
+    // != null) AND the value changes → InventoryService owns
+    // the stock write (value + StockMovement + audit) and the
+    // number is excluded from this direct update. Untracked →
+    // tracked is a baseline plain write with NO movement.
+    const inventoryOwnsStock = Boolean(
+      this.inventory
+      && dto.stockQuantity !== undefined
+      && variant.stockQuantity != null
+      && dto.stockQuantity !== variant.stockQuantity,
+    );
+    if (!inventoryOwnsStock && dto.stockQuantity !== undefined) data.stockQuantity = dto.stockQuantity;
+    const updated = await (this.prisma as any).productVariant.update({ where: { id: variantId }, data });
+    if (inventoryOwnsStock) {
+      const result = await this.inventory!.adjust(organizationId, actorId, productId, {
+        variantId, setTo: dto.stockQuantity, note: "ভ্যারিয়েন্ট সম্পাদনা থেকে স্টক হালনাগাদ",
+      });
+      updated.stockQuantity = result.stockQuantity;
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "product.variant.update", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
+    return { ...updated, priceMinor: updated.priceMinor?.toString() ?? null };
+  }
+
+  async deleteVariant(organizationId: string, actorId: string, productId: string, variantId: string) {
+    await this.getOne(organizationId, productId); // 404 + tenant scope
+    const variant = await (this.prisma as any).productVariant.findFirst({
+      where: { id: variantId, productId },
+    });
+    if (!variant) throw new NotFoundException("Variant not found for this product");
+    await (this.prisma as any).productVariant.delete({ where: { id: variantId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.variant.delete", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
+    return { deleted: true, productId, variantId };
   }
 
   async setCost(organizationId: string, actorId: string, productId: string, dto: SetCostDto) {

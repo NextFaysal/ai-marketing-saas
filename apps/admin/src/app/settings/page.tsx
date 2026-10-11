@@ -8,6 +8,8 @@ interface Settings {
   killSwitches: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   planPrices: Record<string, number>;
   planYearlyPrices: Record<string, number>;
+  planLimits: Record<string, { aiDaily: number; broadcastCap: number; seats: number }>;
+  planLimitsStored: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }> | null;
 }
 interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
 const AUDIENCES: { value: string; label: string }[] = [
@@ -22,6 +24,9 @@ interface PlatformConfigView {
   sms: { source: string; senderId: string | null; apiUrl: string | null; secretConfigured: boolean };
   sslcommerz: { source: string; storeId: string | null; sandbox: boolean; secretConfigured: boolean };
   bkash: { source: string; appKey: string | null; username: string | null; sandbox: boolean; secretConfigured: boolean };
+  image: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
+  tiktokApp: { source: string; clientKey: string | null; redirectUri: string | null; audited: boolean; secretConfigured: boolean };
+  googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
   note: string;
 }
 
@@ -39,12 +44,20 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
     catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
-  async function test(kind: "test-llm" | "test-email" | "test-sms", to?: string) {
+  async function test(kind: "test-llm" | "test-email" | "test-sms" | "test-image", to?: string) {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: JSON.stringify(to ? { to } : {}) });
-      setMsg(`✅ Test সফল: ${kind === "test-llm" ? `${out.provider} / ${out.model} (${out.latencyMs}ms)` : `Message ID: ${out.providerMessageId}`}`);
+      setMsg(`✅ Test সফল: ${kind === "test-llm" ? `${out.provider} / ${out.model} (${out.latencyMs}ms)` : kind === "test-image" ? `${out.provider} / ${out.model} — ${out.bytes} bytes (${out.latencyMs}ms)` : `Message ID: ${out.providerMessageId}`}`);
     } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Test ব্যর্থ"}`); }
+    finally { setBusy(""); }
+  }
+  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google") {
+    setBusy(kind);
+    try {
+      const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: "{}" });
+      setMsg(out.ok ? `✅ যাচাই সফল: ${out.detail} (${out.latencyMs}ms)` : `❌ যাচাই ব্যর্থ: ${out.detail}`);
+    } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "যাচাই ব্যর্থ"}`); }
     finally { setBusy(""); }
   }
   const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
@@ -74,16 +87,32 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           <p className="text-xs text-slate-500">Test সফল মানে আসল Provider উত্তর দিয়েছে — Dev Template কখনো পাস হিসেবে গণনা হয় না।</p>
         </div>
         <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">🖼️ AI Image Generation</span>{srcBadge(cfg.image.source)}</div>
+          <label className="block text-sm">Provider
+            <select id="pc-image-provider" className="ainput mt-1" defaultValue={cfg.image.provider ?? ""}>
+              <option value="">— নেই —</option><option value="gemini">Gemini</option>
+            </select></label>
+          <label className="block text-sm">Model (ঐচ্ছিক)<input id="pc-image-model" className="ainput mt-1" defaultValue={cfg.image.model ?? ""} placeholder="gemini-2.5-flash-image" /></label>
+          <label className="block text-sm">API Key<input id="pc-image-key" type="password" className="ainput mt-1" placeholder={secretPh(cfg.image.secretConfigured)} /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("image", { provider: val("pc-image-provider"), model: val("pc-image-model"), apiKey: val("pc-image-key") || undefined }, "Image সেটিং সেভ হয়েছে — যাচাই পাস করেছে, এখন থেকে এই Provider-ই চলবে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => test("test-image")}>{busy === "test-image" ? "Test হচ্ছে…" : "🧪 আসল Test"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("image", { clear: true }, "Image Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>Admin সেটিং মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">সেভ করার সময় একটি আসল ছোট্ট ছবি তৈরি করে যাচাই করা হয় — যাচাই ব্যর্থ হলে সেটিং সেভ হয় না এবং Provider-এর Error হুবহু দেখানো হয়।</p>
+        </div>
+        <div className="acard space-y-3">
           <div className="flex items-center justify-between"><span className="font-semibold">📘 Platform Meta App</span>{srcBadge(cfg.metaApp.source)}</div>
           <label className="block text-sm">App ID<input id="pc-meta-appid" className="ainput mt-1" defaultValue={cfg.metaApp.appId ?? ""} /></label>
           <label className="block text-sm">App Secret<input id="pc-meta-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.appSecretConfigured)} /></label>
           <label className="block text-sm">Ad Library Token<input id="pc-meta-adlib" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.adLibraryTokenConfigured)} /></label>
           <label className="block text-sm">Graph Version<input id="pc-meta-version" className="ainput mt-1" defaultValue={cfg.metaApp.graphVersion ?? "v21.0"} /></label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("meta", { appId: val("pc-meta-appid"), appSecret: val("pc-meta-secret") || undefined, adLibraryToken: val("pc-meta-adlib") || undefined, graphVersion: val("pc-meta-version") }, "Meta App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("meta", { appId: val("pc-meta-appid"), appSecret: val("pc-meta-secret") || undefined, adLibraryToken: val("pc-meta-adlib") || undefined, graphVersion: val("pc-meta-version") }, "Meta App সেটিং সেভ হয়েছে — Meta যাচাই পাস করেছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-meta")}>{busy === "test-meta" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("meta", { clear: true }, "Meta App Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
           </div>
-          <p className="text-xs text-slate-500">Tenant রা নিজের অ্যাপের Secret না দিলে Webhook যাচাইয়ে এই Platform Secret-ই ব্যবহৃত হয়। প্রতিটি Tenant এর Ad Account Token আলাদাই থাকে।</p>
+          <p className="text-xs text-slate-500">সেভ করার সময় Meta-র কাছ থেকে App Access Token নিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, Meta-র Error হুবহু দেখানো হয়। Tenant রা নিজের অ্যাপের Secret না দিলে Webhook যাচাইয়ে এই Platform Secret-ই ব্যবহৃত হয়। প্রতিটি Tenant এর Ad Account Token আলাদাই থাকে।</p>
         </div>
         <div className="acard space-y-3">
           <div className="flex items-center justify-between"><span className="font-semibold">✉️ Email (SMTP)</span>{srcBadge(cfg.smtp.source)}</div>
@@ -124,9 +153,10 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </label>
           <div className="flex flex-wrap gap-2">
             <button className="abtn" disabled={busy !== ""} onClick={() => patch("sslcommerz", { storeId: val("pc-ssl-store"), storePass: val("pc-ssl-pass") || undefined, sandbox: (document.getElementById("pc-ssl-sandbox") as HTMLInputElement)?.checked ?? true }, "SSLCommerz সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-sslcommerz")}>{busy === "test-sslcommerz" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("sslcommerz", { clear: true }, "SSLCommerz Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
-          <p className="text-xs text-slate-500">প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
+          <p className="text-xs text-slate-500">যাচাই = আসল session-init পরীক্ষা (একটি মেয়াদোত্তীর্ণ-হয়ে-যাওয়া session তৈরি হয়, কোনো টাকা কাটে না) — তাই সেভের সময় স্বয়ংক্রিয় যাচাই হয় না, এই বোতামেই যাচাই করুন। প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
         </div>
         <div className="acard space-y-3">
           <div className="flex items-center justify-between"><span className="font-semibold">📱 bKash (Tokenized Checkout)</span>{srcBadge(cfg.bkash.source)}</div>
@@ -139,10 +169,39 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             Sandbox Mode (পরীক্ষামূলক)
           </label>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("bkash", { appKey: val("pc-bk-key"), username: val("pc-bk-user"), appSecret: val("pc-bk-secret") || undefined, password: val("pc-bk-pass") || undefined, sandbox: (document.getElementById("pc-bk-sandbox") as HTMLInputElement)?.checked ?? true }, "bKash সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("bkash", { appKey: val("pc-bk-key"), username: val("pc-bk-user"), appSecret: val("pc-bk-secret") || undefined, password: val("pc-bk-pass") || undefined, sandbox: (document.getElementById("pc-bk-sandbox") as HTMLInputElement)?.checked ?? true }, "bKash সেটিং সেভ হয়েছে — Token Grant যাচাই পাস করেছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-bkash")}>{busy === "test-bkash" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("bkash", { clear: true }, "bKash Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
-          <p className="text-xs text-slate-500">Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
+          <p className="text-xs text-slate-500">সেভ করার সময় আসল Token Grant দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, bKash-এর Error হুবহু দেখানো হয় (প্রাপ্ত Token সংরক্ষণ করা হয় না)। Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">🎵 TikTok App (Social Posts — SP8)</span>{srcBadge(cfg.tiktokApp.source)}</div>
+          <label className="block text-sm">Client Key<input id="pc-tt-key" className="ainput mt-1" defaultValue={cfg.tiktokApp.clientKey ?? ""} placeholder="TikTok Developer Portal-এর App Client Key" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-tt-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.tiktokApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-tt-redirect" className="ainput mt-1" defaultValue={cfg.tiktokApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/tiktok/callback" /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-tt-audited" type="checkbox" defaultChecked={cfg.tiktokApp.audited} />
+            App Audit সম্পন্ন (Direct Post চালু হবে — শুধু TikTok সত্যিই অনুমোদন দিলে টিক দিন)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("tiktok", { clientKey: val("pc-tt-key"), clientSecret: val("pc-tt-secret") || undefined, redirectUri: val("pc-tt-redirect"), audited: (document.getElementById("pc-tt-audited") as HTMLInputElement)?.checked ?? false }, "TikTok App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-tiktok")}>{busy === "test-tiktok" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("tiktok", { clear: true }, "TikTok App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে TikTok-এর invalid_client বনাম code-error উত্তরের পার্থক্য দেখা হয়) — পূর্ণ প্রমাণ আসল User OAuth-এই হয়। এটি পুরো প্ল্যাটফর্মের ONE app — Tenant রা নিজেদের TikTok Creator অ্যাকাউন্ট OAuth দিয়ে যুক্ত করে। TikTok Developer Portal-এ Redirect URI ঠিক এটাই নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/tiktok/callback</code> (অথবা উপরে নিজে যা দিলেন)। Audit না হলে পোস্ট Creator-এর Inbox-এ যায় — কখনোই "Published" বলা হয় না।</p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">▶️ Google App — YouTube (Social Posts — SP9)</span>{srcBadge(cfg.googleApp.source)}</div>
+          <label className="block text-sm">Client ID<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect") }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
         </div>
       </div>
     </div>
@@ -156,6 +215,8 @@ export default function SettingsPage() {
   const [title, setTitle] = React.useState("");
   const [body, setBody] = React.useState("");
   const [audience, setAudience] = React.useState("all");
+  const [annStartsAt, setAnnStartsAt] = React.useState("");
+  const [annEndsAt, setAnnEndsAt] = React.useState("");
   const [aiOrgIds, setAiOrgIds] = React.useState("");
   const load = React.useCallback(async () => {
     const settings = await apiFetch<Settings>("/admin/settings").catch(() => null);
@@ -206,6 +267,37 @@ export default function SettingsPage() {
             <button className="abtn-secondary" onClick={() => save({ planYearlyPrices: s.planYearlyPrices }, "বার্ষিক দাম আপডেট হয়েছে।")}>বার্ষিক দাম সেভ করুন</button>
             <p className="mt-1 text-xs text-slate-500">ডিফল্ট = মাসিক × ১০ (২ মাস ফ্রি)। Billing পেজের বার্ষিক Toggle এ সাশ্রয় আসল দুই দাম থেকে হিসাব হয়।</p>
           </div>
+          <div className="border-t border-slate-800 pt-3">
+            <div className="mb-2 font-semibold">Plan Limits</div>
+            <p className="mb-3 text-xs text-slate-500">প্রতি প্ল্যানে AI Daily, Broadcast Cap ও Seats — 0 দিলে সেই সুবিধা বন্ধ থাকবে। Org-ভিত্তিক Override থাকলে তা এই মানের চেয়ে অগ্রাধিকার পায়।</p>
+            {(["FREE", "STARTER", "GROWTH", "AGENCY"] as const).map((tier) => {
+              const limits = s.planLimits?.[tier] ?? { aiDaily: 0, broadcastCap: 0, seats: 0 };
+              const fromSetting = !!(s.planLimitsStored && tier in s.planLimitsStored);
+              const setField = (field: "aiDaily" | "broadcastCap" | "seats", v: number) =>
+                setS({ ...s, planLimits: { ...s.planLimits, [tier]: { ...limits, [field]: v } } });
+              return (
+                <div key={tier} className="mb-3 rounded-lg bg-slate-800/50 p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm">
+                    <span className="w-20 font-medium">{tier}</span>
+                    {fromSetting ? <span className="abadge-green">Setting</span> : <span className="abadge-amber">Default</span>}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <label className="block">AI Daily
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.aiDaily} onChange={(e) => setField("aiDaily", Number(e.target.value))} />
+                    </label>
+                    <label className="block">Broadcast Cap
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.broadcastCap} onChange={(e) => setField("broadcastCap", Number(e.target.value))} />
+                    </label>
+                    <label className="block">Seats
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.seats} onChange={(e) => setField("seats", Number(e.target.value))} />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+            <button className="abtn-secondary" onClick={() => save({ planLimits: s.planLimits }, "Plan Limits আপডেট হয়েছে।")}>Limits সেভ করুন</button>
+            <p className="mt-1 text-xs text-slate-500">সেভ করলে সব Tier স্পষ্টভাবে Setting হিসেবে সংরক্ষিত হবে — এরপর Badge-এ Setting দেখাবে।</p>
+          </div>
         </div>
         <div className="space-y-4">
           <div className="acard space-y-3">
@@ -224,16 +316,24 @@ export default function SettingsPage() {
               <select className="ainput mt-1" value={audience} onChange={(e) => setAudience(e.target.value)}>
                 {AUDIENCES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
               </select></label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-sm">শুরুর সময় (ঐচ্ছিক)
+                <input type="datetime-local" className="ainput mt-1" value={annStartsAt} onChange={(e) => setAnnStartsAt(e.target.value)} /></label>
+              <label className="block text-sm">শেষের সময় (ঐচ্ছিক)
+                <input type="datetime-local" className="ainput mt-1" value={annEndsAt} onChange={(e) => setAnnEndsAt(e.target.value)} /></label>
+            </div>
             <p className="text-xs text-slate-500">Targeted Announcement মিলে যাওয়া Org দের কাছেই যাবে এবং সাধারণ ঘোষণার চেয়ে অগ্রাধিকার পাবে।</p>
             <button className="abtn" onClick={async () => {
               if (!title.trim() || !body.trim()) return;
-              await apiFetch("/admin/announcements", { method: "POST", body: JSON.stringify({ title, body, audience }) });
-              setTitle(""); setBody(""); setMsg("Announcement প্রকাশ হয়েছে।"); await load();
+              try {
+                await apiFetch("/admin/announcements", { method: "POST", body: JSON.stringify({ title, body, audience, ...(annStartsAt ? { startsAt: new Date(annStartsAt).toISOString() } : {}), ...(annEndsAt ? { endsAt: new Date(annEndsAt).toISOString() } : {}) }) });
+                setTitle(""); setBody(""); setAnnStartsAt(""); setAnnEndsAt(""); setMsg("Announcement প্রকাশ হয়েছে।"); await load();
+              } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
             }}>প্রকাশ করুন</button>
             <ul className="space-y-2">
               {anns.map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}</span></span>
+                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}{(a.startsAt || a.endsAt) ? <span className="block">🗓 {a.startsAt ? new Date(a.startsAt).toLocaleString("bn-BD") : "—"} → {a.endsAt ? new Date(a.endsAt).toLocaleString("bn-BD") : "—"}</span> : null}</span></span>
                   <span className="flex shrink-0 gap-1">
                     <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) }); await load(); }}>{a.active ? "বন্ধ" : "চালু"}</button>
                     <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}`, { method: "DELETE" }); await load(); }}>মুছুন</button>
@@ -244,9 +344,105 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+      <PlanFlagDefaultsCard setMsg={setMsg} />
       <PlatformConfigSection setMsg={setMsg} />
       <MaintenanceAndSafety setMsg={setMsg} />
     </AdminShell>
+  );
+}
+
+const FLAG_LABELS: { key: string; label: string }[] = [
+  { key: "dayparting", label: "Dayparting (বিজ্ঞাপন)" },
+  { key: "portfolio", label: "Portfolio" },
+  { key: "creative_library", label: "Creative Library" },
+  { key: "order_bot", label: "Order Bot (Inbox)" },
+  { key: "offline_conversions", label: "Offline Conversions" },
+  { key: "agency_portfolio", label: "Agency Portfolio" },
+];
+const FLAG_TIERS = ["FREE", "STARTER", "GROWTH", "AGENCY"] as const;
+type TriState = "" | "true" | "false";
+
+/** AA7: plan-scoped feature-flag defaults. Tri-state matrix:
+ * unset = "Default (ON)" — nothing stored, the feature stays on;
+ * ON/OFF store an explicit sparse entry. The dedicated endpoint
+ * replaces the whole sparse map on save. */
+function PlanFlagDefaultsCard({ setMsg }: { setMsg: (m: string) => void }) {
+  const [cells, setCells] = React.useState<Record<string, Record<string, TriState>>>({});
+  const [loaded, setLoaded] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  const apply = React.useCallback((sparse: Record<string, Record<string, boolean>> | undefined) => {
+    const next: Record<string, Record<string, TriState>> = {};
+    for (const { key } of FLAG_LABELS) {
+      next[key] = {};
+      for (const tier of FLAG_TIERS) {
+        const v = sparse?.[key]?.[tier];
+        next[key][tier] = v === undefined ? "" : v ? "true" : "false";
+      }
+    }
+    setCells(next);
+  }, []);
+
+  const load = React.useCallback(async () => {
+    const s = await apiFetch<{ planFlagDefaults?: Record<string, Record<string, boolean>> }>("/admin/settings").catch(() => null);
+    if (s) { apply(s.planFlagDefaults ?? {}); setLoaded(true); }
+  }, [apply]);
+  React.useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    const sparse: Record<string, Record<string, boolean>> = {};
+    for (const { key } of FLAG_LABELS) {
+      for (const tier of FLAG_TIERS) {
+        const v = cells[key]?.[tier];
+        if (v === "true") (sparse[key] ??= {})[tier] = true;
+        else if (v === "false") (sparse[key] ??= {})[tier] = false;
+      }
+    }
+    setBusy(true);
+    try {
+      const out = await apiFetch<{ planFlagDefaults?: Record<string, Record<string, boolean>> }>("/admin/settings/plan-flag-defaults", { method: "PATCH", body: JSON.stringify(sparse) });
+      apply(out?.planFlagDefaults ?? sparse);
+      setMsg("Plan Feature Defaults সেভ হয়েছে।");
+    } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+    finally { setBusy(false); }
+  }
+
+  if (!loaded) return null;
+  return (
+    <div className="acard mt-4 space-y-3">
+      <div className="font-semibold">🚩 Plan Feature Defaults (AA7)</div>
+      <p className="text-xs text-slate-500">
+        প্রতিটি Feature কোন Plan-এ Default হিসেবে চালু/বন্ধ থাকবে। <b>Default (ON)</b> মানে আলাদা করে কিছু সেট করা নেই — Feature চালুই থাকে।
+        Org-এর <b>Plan বদলালে তার Default-ও বদলে যায়</b>, কারণ Default সবসময় Org-এর বর্তমান Plan দেখে ঠিক হয়।
+        Org পেজ থেকে কোনো Org-এর জন্য আলাদা করে সেট করা Flag সবসময় এই Default-এর চেয়ে অগ্রাধিকার পায়।
+      </p>
+      <div className="overflow-x-auto">
+        <table className="atable">
+          <thead className="bg-slate-900"><tr><th className="ath">Feature</th>{FLAG_TIERS.map((t) => <th key={t} className="ath">{t}</th>)}</tr></thead>
+          <tbody>
+            {FLAG_LABELS.map(({ key, label }) => (
+              <tr key={key} className="border-t border-slate-800">
+                <td className="atd font-medium">{label}<span className="block text-xs text-slate-500">{key}</span></td>
+                {FLAG_TIERS.map((tier) => (
+                  <td key={tier} className="atd">
+                    <select
+                      className="ainput !w-auto px-2 py-1 text-xs"
+                      value={cells[key]?.[tier] ?? ""}
+                      onChange={(e) => setCells({ ...cells, [key]: { ...cells[key], [tier]: e.target.value as TriState } })}
+                    >
+                      <option value="">Default (ON)</option>
+                      <option value="true">ON</option>
+                      <option value="false">OFF</option>
+                    </select>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button className="abtn-secondary" disabled={busy} onClick={save}>{busy ? "সেভ হচ্ছে…" : "Defaults সেভ করুন"}</button>
+    </div>
   );
 }
 

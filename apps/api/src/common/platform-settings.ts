@@ -60,6 +60,30 @@ export async function planPrices(prisma: any): Promise<Record<string, number>> {
   return out;
 }
 
+export type PlanLimits = { aiDaily: number; broadcastCap: number; seats: number };
+export const PLAN_LIMIT_FIELDS = ["aiDaily", "broadcastCap", "seats"] as const;
+
+/** AA4: operator-editable per-plan limits stored in SystemSetting
+ * "planLimits". Mirrors planPrices(): start from a deep copy of
+ * DEFAULT_PLAN_LIMITS and overlay only integer >= 0 values, so
+ * 0 is a real blocking value and partial tiers/fields merge. */
+export async function planLimits(prisma: any): Promise<Record<string, PlanLimits>> {
+  const raw = (await platformSetting(prisma, "planLimits")) as any;
+  const out: Record<string, PlanLimits> = {};
+  for (const tier of PLAN_TIERS) out[tier] = { ...DEFAULT_PLAN_LIMITS[tier] };
+  if (raw && typeof raw === "object") {
+    for (const tier of PLAN_TIERS) {
+      const tierRaw = raw[tier];
+      if (!tierRaw || typeof tierRaw !== "object") continue;
+      for (const field of PLAN_LIMIT_FIELDS) {
+        const v = tierRaw[field];
+        if (typeof v === "number" && Number.isInteger(v) && v >= 0) out[tier][field] = v;
+      }
+    }
+  }
+  return out;
+}
+
 /** Billing Package B3: yearly cycle prices. Defaults are
  * the monthly price × 10 ("two months free") — operator
  * configuration like the monthly prices, stored in
@@ -94,12 +118,16 @@ export async function effectiveLimits(
   organizationId: string,
   baseline: { aiDaily: number; broadcastCap: number },
 ): Promise<{ aiDaily: number; broadcastCap: number; seats: number | null; plan: string }> {
-  const [overrides, plan] = await Promise.all([orgLimitOverrides(prisma, organizationId), orgPlan(prisma, organizationId)]);
-  const planLimits = DEFAULT_PLAN_LIMITS[plan] ?? DEFAULT_PLAN_LIMITS.FREE;
+  const [overrides, plan, allLimits] = await Promise.all([
+    orgLimitOverrides(prisma, organizationId),
+    orgPlan(prisma, organizationId),
+    planLimits(prisma),
+  ]);
+  const limitsForPlan = allLimits[plan] ?? allLimits.FREE ?? DEFAULT_PLAN_LIMITS.FREE;
   return {
-    aiDaily: overrides.aiDailyLimit ?? planLimits.aiDaily ?? baseline.aiDaily,
-    broadcastCap: overrides.broadcastCap ?? planLimits.broadcastCap ?? baseline.broadcastCap,
-    seats: overrides.seatLimit ?? planLimits.seats ?? null,
+    aiDaily: overrides.aiDailyLimit ?? limitsForPlan.aiDaily ?? baseline.aiDaily,
+    broadcastCap: overrides.broadcastCap ?? limitsForPlan.broadcastCap ?? baseline.broadcastCap,
+    seats: overrides.seatLimit ?? limitsForPlan.seats ?? null,
     plan,
   };
 }

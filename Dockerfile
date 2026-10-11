@@ -22,7 +22,11 @@ RUN pnpm db:generate
 RUN pnpm -r build
 
 FROM node:22-bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+# fontconfig + fonts-noto-core: PP1's sharp rasterizer renders the
+# template poster's <text> (incl. Bengali — Noto Sans Bengali) with
+# system fonts; the slim image ships none, so posters would lose
+# their text in production without these.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates fontconfig fonts-noto-core && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 ENV NODE_ENV=production

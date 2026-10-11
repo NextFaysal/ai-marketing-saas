@@ -18,7 +18,7 @@ import { CompetitorsModule } from "../competitors/competitors.module";
   imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule],
   controllers: [AiController],
   providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService],
-  exports: [ReportsService, ProposalsService, ProactiveService],
+  exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory],
 })
 
 export class AiModule {}

@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CampaignsService } from "./campaigns.service";
-import { CreatePlanDto, UpdatePlanDto, AddAdSetDto, AddAdDto, RejectDto, GenerateCopyDto, InstantiateBlueprintDto } from "./campaigns.dto";
+import { CreatePlanDto, UpdatePlanDto, AddAdSetDto, AddAdDto, UpdateAdSetDto, UpdateAdDto, RejectDto, GenerateCopyDto, InstantiateBlueprintDto, SuggestPlanDto, CommentDto, ScheduleLaunchDto, CrossPlatformDto } from "./campaigns.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -42,6 +42,27 @@ export class CampaignsController {
     return this.campaigns.deleteAdSet(orgId, id, adSetId);
   }
 
+  // Campaign Builder CB1: in-place edits + duplicates.
+  @Patch(":planId/ad-sets/:adSetId") @UseGuards(RolesGuard) @Roles(...WRITE)
+  updateAdSet(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adSetId") adSetId: string, @Body() dto: UpdateAdSetDto) {
+    return this.campaigns.updateAdSet(orgId, id, adSetId, user.userId, dto);
+  }
+
+  @Post(":planId/ad-sets/:adSetId/duplicate") @UseGuards(RolesGuard) @Roles(...WRITE)
+  duplicateAdSet(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adSetId") adSetId: string) {
+    return this.campaigns.duplicateAdSet(orgId, id, adSetId, user.userId);
+  }
+
+  @Patch(":planId/ads/:adId") @UseGuards(RolesGuard) @Roles(...WRITE)
+  updateAd(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string, @Body() dto: UpdateAdDto) {
+    return this.campaigns.updateAd(orgId, id, adId, user.userId, dto);
+  }
+
+  @Post(":planId/ads/:adId/duplicate") @UseGuards(RolesGuard) @Roles(...WRITE)
+  duplicateAd(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adId") adId: string) {
+    return this.campaigns.duplicateAd(orgId, id, adId, user.userId);
+  }
+
   @Post(":planId/ad-sets/:adSetId/ads") @UseGuards(RolesGuard) @Roles(...WRITE)
   addAd(@Param("organizationId") orgId: string, @Param("planId") id: string, @Param("adSetId") adSetId: string, @Body() dto: AddAdDto) {
     return this.campaigns.addAd(orgId, id, adSetId, dto);
@@ -80,6 +101,66 @@ export class CampaignsController {
   @Post(":planId/pause") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   pause(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string) {
     return this.campaigns.setMetaStatus(orgId, user.userId, id, "PAUSED");
+  }
+
+  // Campaign Builder CB3: AI draft suggestion + creative health.
+  @Post("suggest") @UseGuards(RolesGuard) @Roles(...WRITE)
+  suggest(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SuggestPlanDto) {
+    return this.campaigns.suggestPlan(orgId, user.userId, dto);
+  }
+
+  @Post(":planId/creative-health")
+  creativeHealth(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.creativeHealth(orgId, id);
+  }
+
+  // Campaign Builder CB4: comments, timeline, snapshot.
+  @Get(":planId/comments")
+  listComments(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.listComments(orgId, id);
+  }
+
+  @Post(":planId/comments") @UseGuards(RolesGuard) @Roles(...WRITE)
+  addComment(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: CommentDto) {
+    return this.campaigns.addComment(orgId, id, user.userId, dto.body);
+  }
+
+  @Get(":planId/timeline")
+  timeline(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.planTimeline(orgId, id);
+  }
+
+  @Get(":planId/submission-diff")
+  submissionDiff(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.submissionDiff(orgId, id);
+  }
+
+  // Campaign Builder CB5: performance, winner, launch.
+  @Get(":planId/performance")
+  performance(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.planPerformance(orgId, id);
+  }
+
+  @Post(":planId/promote-winner") @UseGuards(RolesGuard) @Roles(...WRITE)
+  promoteWinner(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.promoteWinner(orgId, id, user.userId);
+  }
+
+  @Post(":planId/schedule-launch") @UseGuards(RolesGuard) @Roles(...WRITE)
+  scheduleLaunch(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: ScheduleLaunchDto) {
+    return this.campaigns.scheduleLaunch(orgId, id, user.userId, dto.publishAt ?? null);
+  }
+
+  // Campaign Builder CB6: cross-platform draft.
+  @Post(":planId/cross-platform") @UseGuards(RolesGuard) @Roles(...WRITE)
+  crossPlatform(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("planId") id: string, @Body() dto: CrossPlatformDto) {
+    return this.campaigns.crossPlatformDraft(orgId, id, user.userId, dto);
+  }
+
+  // Campaign Builder CB2: unified readiness (read-only).
+  @Post(":planId/readiness")
+  readiness(@Param("organizationId") orgId: string, @Param("planId") id: string) {
+    return this.campaigns.readiness(orgId, id);
   }
 
   @Post(":planId/preflight")

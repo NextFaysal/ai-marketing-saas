@@ -13,12 +13,13 @@ import { SocialCommentsController } from "./social-comments.controller";
 import { SocialCommentsService } from "./social-comments.service";
 import { OrdersModule } from "../orders/orders.module";
 import { CrmModule } from "../crm/crm.module";
+import { InventoryModule } from "../inventory/inventory.module";
 
 @Module({
   // CRM C5: CrmModule provides LeadAssignmentService for the
   // leads the inbox ingestion paths create (CrmModule imports
   // nothing itself, so this adds no module cycle).
-  imports: [OrdersModule, CrmModule],
+  imports: [OrdersModule, CrmModule, InventoryModule],
   controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController, SocialCommentsController],
   providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService, SocialCommentsService],
   exports: [InboxService, RealtimeService, TelegramService, EmailChannelService, SocialCommentsService],

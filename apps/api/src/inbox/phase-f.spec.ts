@@ -55,6 +55,24 @@ const NAMES = ["integration", "integrationCredential", "channelConversation", "c
 function fakePrisma() {
   const tables: Record<string, any> = {};
   for (const n of NAMES) tables[n] = makeTable(n);
+  // SC1: computeRfm aggregates via order.groupBy (two placedAt
+  // partitions). Emulate it over the fake order rows.
+  tables.order.groupBy = async (args: any) => {
+    const wantNull = args.where.placedAt === null;
+    const sel = (tables.order.rows as any[]).filter((o: any) =>
+      o.organizationId === args.where.organizationId && o.status !== "cancelled" && o.customerId != null
+      && (wantNull ? o.placedAt == null : o.placedAt != null));
+    const byId = new Map<string, any>();
+    for (const o of sel) {
+      const g = byId.get(o.customerId) ?? { customerId: o.customerId, _count: { _all: 0 }, _sum: { totalMinor: 0n }, _max: {} };
+      g._count._all++;
+      g._sum.totalMinor += BigInt(o.totalMinor ?? 0);
+      if (wantNull) { const t = o.createdAt ?? o.placedAt; if (t && (!g._max.createdAt || t > g._max.createdAt)) g._max.createdAt = t; }
+      else if (o.placedAt && (!g._max.placedAt || o.placedAt > g._max.placedAt)) g._max.placedAt = o.placedAt;
+      byId.set(o.customerId, g);
+    }
+    return [...byId.values()];
+  };
   tables.businessProfile = { findUnique: async () => ({ industry: "fashion", description: "x", brandVoice: "friendly" }) };
   // membership findMany with include user: rows carry a joined user object
   const origMembers = tables.membership.findMany;

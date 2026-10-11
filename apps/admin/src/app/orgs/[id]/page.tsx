@@ -17,6 +17,8 @@ export default function OrgDetailPage() {
   const params = useParams();
   const id = String(params.id);
   const [data, setData] = React.useState<OrgDetail | null>(null);
+  const [notes, setNotes] = React.useState<{ id: string; body: string; createdAt: string }[]>([]);
+  const [note, setNote] = React.useState("");
   const [msg, setMsg] = React.useState("");
   const [limits, setLimits] = React.useState<{ aiDailyLimitOverride: string; broadcastCapOverride: string; seatLimit: string }>({ aiDailyLimitOverride: "", broadcastCapOverride: "", seatLimit: "" });
   const [flags, setFlags] = React.useState<{ knownFlags: string[]; flags: { key: string; enabled: boolean }[] }>({ knownFlags: [], flags: [] });
@@ -32,6 +34,7 @@ export default function OrgDetailPage() {
     });
     setFlags(await apiFetch<{ knownFlags: string[]; flags: { key: string; enabled: boolean }[] }>(`/admin/orgs/${id}/flags`).catch(() => ({ knownFlags: [], flags: [] })));
     setSupport(await apiFetch<{ recentOrders: { id: string; externalNumber?: string | null; status: string; totalMinor: string }[]; recentConversations: { id: string; channel: string; status: string; contactName?: string | null; messageCount: number }[] }>(`/admin/orgs/${id}/support-view`).catch(() => null));
+    setNotes(await apiFetch<{ id: string; body: string; createdAt: string }[]>(`/admin/notes?targetType=organization&targetId=${id}`).catch(() => []));
   }, [id]);
   React.useEffect(() => { load(); }, [load]);
   async function setStatus(status: string, label: string) {
@@ -122,6 +125,14 @@ export default function OrgDetailPage() {
               ) : null}
             </div>
             <p className="mt-1 text-xs text-slate-500">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
+          </div>
+          <div className="border-t border-slate-800 pt-3">
+            <div className="mb-2 font-medium">Admin নোট</div>
+            <div className="flex gap-2">
+              <input className="ainput" placeholder="অভ্যন্তরীণ নোট লিখুন…" value={note} onChange={(e) => setNote(e.target.value)} />
+              <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
+            </div>
+            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {new Date(n.createdAt).toLocaleString("bn-BD")}</span></li>)}</ul>
           </div>
         </div>
       </div>

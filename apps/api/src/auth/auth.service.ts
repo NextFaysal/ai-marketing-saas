@@ -256,7 +256,12 @@ export class AuthService {
     await this.audit.log({ userId, action: "auth.totp_enroll_started", entityType: "User", entityId: userId, ipAddress: ip });
     // Returned ONCE, to the owner, for authenticator entry; stored
     // encrypted and never returned again.
-    return { secret, otpauthUrl: otpauthUrl(secret, user.email), note: "Add this to your authenticator app, then confirm with a 6-digit code. Two-factor stays OFF until confirmation." };
+    const url = otpauthUrl(secret, user.email);
+    // Admin Polish AP1: a scannable QR of the same otpauth URL
+    // (undefined if rendering fails — enrolment never blocks).
+    const { qrDataUrlFor } = await import("../common/totp");
+    const qrDataUrl = await qrDataUrlFor(url);
+    return { secret, otpauthUrl: url, qrDataUrl, note: "Scan the QR code with your authenticator app (or enter the secret manually), then confirm with a 6-digit code. Two-factor stays OFF until confirmation." };
   }
 
   private async ownTotpSecret(userId: string): Promise<string> {

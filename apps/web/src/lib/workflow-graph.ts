@@ -54,6 +54,15 @@ export const KNOWN_STEP_TYPES = [
   "wait",
   "condition",
   "send_inbox_message",
+  // Workflows W3 actions.
+  "assign_conversation",
+  "change_lead_stage",
+  "add_tag",
+  "notify_team",
+  "create_follow_up",
+  "http_webhook",
+  // Workflows W4.
+  "branch",
 ] as const;
 
 export const STEP_TYPE_META: Record<string, { label: string; color: string }> = {
@@ -64,6 +73,13 @@ export const STEP_TYPE_META: Record<string, { label: string; color: string }> = 
   wait: { label: "অপেক্ষা (Wait)", color: "#d97706" },
   condition: { label: "শর্ত (Branch)", color: "#9333ea" },
   send_inbox_message: { label: "Inbox এ বার্তা পাঠান", color: "#db2777" },
+  assign_conversation: { label: "কথোপকথন Assign করুন", color: "#0f766e" },
+  change_lead_stage: { label: "Lead Stage বদলান", color: "#7c3aed" },
+  add_tag: { label: "Tag যোগ করুন", color: "#b45309" },
+  notify_team: { label: "টিমকে জানান", color: "#be185d" },
+  create_follow_up: { label: "Follow-up তৈরি করুন", color: "#15803d" },
+  http_webhook: { label: "Webhook পাঠান", color: "#334155" },
+  branch: { label: "শাখা (যদি / নয়তো)", color: "#9333ea" },
   unknown: { label: "অজানা ধাপ (Locked)", color: "#64748b" },
 };
 
@@ -78,6 +94,8 @@ export function defaultStep(type: string): RawStep {
       return { type, minutes: 60 };
     case "condition":
       return { type, field: "", op: "eq", value: "" };
+    case "branch":
+      return { type, field: "", op: "eq", value: "", then: [{ type: "send_inbox_message", text: "" }], else: [] };
     case "send_email":
     case "send_sms":
       return { type, templateId: "" };
@@ -320,6 +338,20 @@ export interface StepDraftLike {
   op?: string;
   value?: string;
   whatsappTemplateId?: string;
+  // Workflows W3 action fields.
+  userId?: string;
+  clear?: boolean;
+  stage?: string;
+  tag?: string;
+  target?: string;
+  role?: string;
+  title?: string;
+  days?: number;
+  url?: string;
+  secret?: string;
+  // Workflows W4: branch arms (drafts; built recursively).
+  then?: StepDraftLike[];
+  else?: StepDraftLike[];
 }
 
 /** Build the API step payload from a form/canvas draft. This is the
@@ -331,6 +363,17 @@ export function buildPayloadStep(s: StepDraftLike): RawStep {
   if (s.type === "wait") return { type: s.type, minutes: Number(s.minutes) || 60 };
   if (s.type === "condition") return { type: s.type, field: s.field || "", op: s.op || "eq", value: parseConditionValue(s.value) };
   if (s.type === "send_inbox_message") return s.whatsappTemplateId ? { type: s.type, whatsappTemplateId: s.whatsappTemplateId } : { type: s.type, text: s.text || undefined };
+  // Workflows W3 actions.
+  if (s.type === "assign_conversation") return s.clear ? { type: s.type, clear: true } : { type: s.type, userId: s.userId || undefined };
+  if (s.type === "change_lead_stage") return { type: s.type, stage: s.stage || "contacted" };
+  if (s.type === "add_tag") return { type: s.type, tag: s.tag || "", target: s.target || "lead" };
+  if (s.type === "notify_team") return { type: s.type, text: s.text || "", title: s.title || undefined, role: s.role || undefined, userId: s.userId || undefined };
+  if (s.type === "create_follow_up") return { type: s.type, days: Number(s.days) || 3, text: s.text || undefined };
+  if (s.type === "http_webhook") return { type: s.type, url: s.url || "", secret: s.secret || undefined };
+  if (s.type === "branch") return {
+    type: s.type, field: s.field || "", op: s.op || "eq", value: parseConditionValue(s.value),
+    then: (s.then ?? []).map(buildPayloadStep), else: (s.else ?? []).map(buildPayloadStep),
+  };
   return { type: s.type, templateId: s.templateId };
 }
 
@@ -347,10 +390,22 @@ export function stepToDraft(step: RawStep): StepDraftLike {
     op: typeof step.op === "string" ? step.op : "eq",
     value: step.value === undefined || step.value === null ? "" : String(step.value),
     whatsappTemplateId: typeof step.whatsappTemplateId === "string" ? step.whatsappTemplateId : "",
+    userId: typeof step.userId === "string" ? step.userId : "",
+    clear: step.clear === true,
+    stage: typeof step.stage === "string" ? step.stage : "contacted",
+    tag: typeof step.tag === "string" ? step.tag : "",
+    target: typeof step.target === "string" ? step.target : "lead",
+    role: typeof step.role === "string" ? step.role : "",
+    title: typeof step.title === "string" ? step.title : "",
+    days: typeof step.days === "number" ? step.days : 3,
+    url: typeof step.url === "string" ? step.url : "",
+    secret: typeof step.secret === "string" ? step.secret : "",
+    then: Array.isArray(step.then) ? (step.then as RawStep[]).map((x) => stepToDraft(x)) : [],
+    else: Array.isArray(step.else) ? (step.else as RawStep[]).map((x) => stepToDraft(x)) : [],
   };
 }
 
-const PANEL_KEYS: (keyof StepDraftLike)[] = ["templateId", "text", "minutes", "field", "op", "value", "whatsappTemplateId"];
+const PANEL_KEYS: (keyof StepDraftLike)[] = ["templateId", "text", "minutes", "field", "op", "value", "whatsappTemplateId", "userId", "clear", "stage", "tag", "target", "role", "title", "days", "url", "secret", "then", "else"];
 
 /**
  * Merge a panel draft back into the raw step. The payload builder
@@ -390,6 +445,11 @@ export function stepSummary(step: RawStep): string {
     case "add_lead_activity":
     case "add_conversation_note":
       return typeof step.text === "string" && step.text ? step.text.slice(0, 42) : "Note খালি";
+    case "branch": {
+      const t = Array.isArray(step.then) ? step.then.length : 0;
+      const e = Array.isArray(step.else) ? step.else.length : 0;
+      return `${String(step.field ?? "?")} ${String(step.op ?? "eq")} ${JSON.stringify(step.value ?? "")} · ✓ ${t} ধাপ / ✗ ${e} ধাপ`;
+    }
     default:
       return "ক্যানভাসে বদলানো যাবে না — যেমন আছে তেমনই থাকবে";
   }

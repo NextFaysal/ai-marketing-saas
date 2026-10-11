@@ -43,12 +43,14 @@ export class EmailProvider {
     return this.transport;
   }
 
-  async send(input: { to: string; subject: string; text: string }): Promise<{ providerMessageId: string }> {
+  async send(input: { to: string; subject: string; text: string; html?: string }): Promise<{ providerMessageId: string }> {
     const cfg = effectiveSmtpConfig();
     const from = cfg?.from || cfg?.user;
     if (!cfg || !from) throw new Error("Email is not configured: set the SMTP From address in the Admin Console or SMTP_FROM in the API environment.");
     const info = await this.getTransport().sendMail({
       from, to: input.to, subject: input.subject, text: input.text,
+      // AP4: optional HTML part; text stays as the fallback.
+      ...(input.html ? { html: input.html } : {}),
     });
     if (!info?.messageId) throw new Error("SMTP server did not return a message id; the email is NOT counted as sent");
     return { providerMessageId: String(info.messageId) };

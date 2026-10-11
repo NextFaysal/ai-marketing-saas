@@ -691,11 +691,13 @@ export class PaymentsService {
       try { await maybeRewardReferral(this.prisma as any, this.audit, checkout.organizationId, { amountMinor: fullValue, plan: String(checkout.plan) }); }
       catch { /* a referral reward must never break a confirmed payment */ }
     }
-    // Billing Package B5: email the invoice (text form, the
-    // same content as the printable invoice) to OWNER/ADMIN
-    // members + the profile's billing recipients. A courtesy
-    // copy only — a mail failure never affects the payment,
-    // and the send is audited only when it actually went out.
+    // Billing Package B5: email the invoice to OWNER/ADMIN
+    // members + the profile's billing recipients. AP4: the
+    // email carries the HTML rendering from the SAME
+    // buildInvoiceHtml as the downloadable invoice (text
+    // kept as the fallback part). A courtesy copy only —
+    // a mail failure never affects the payment, and the
+    // send is audited only when it actually went out.
     if (this.email) {
       try {
         const p = this.prisma as any;
@@ -719,9 +721,18 @@ export class PaymentsService {
             `প্রিন্টযোগ্য ইনভয়েসটি Billing পেজের পেমেন্ট ইতিহাস থেকে যেকোনো সময় ডাউনলোড করা যাবে।`,
             `— Qosprey AI Marketing টিম`,
           ].join("\n");
+          // AP4: HTML rendering from the same builder + the
+          // stored payment row — the emailed numbers ARE the
+          // downloadable invoice's numbers.
+          const org = (await p.organization?.findUnique?.({ where: { id: checkout.organizationId } })?.catch?.(() => null)) ?? null;
+          const html = buildInvoiceHtml({
+            payment: paymentRow, orgName: org?.name ?? checkout.organizationId,
+            buyer: { address: (prof as any)?.billingAddress ?? null, bin: (prof as any)?.billingBin ?? null },
+            forEmail: true,
+          });
           let sent = 0;
           for (const to of recipients) {
-            try { await this.email.send({ to, subject: `ইনভয়েস INV-${String(paymentRow.id).slice(-8).toUpperCase()} — ${checkout.plan}`, text }); sent++; }
+            try { await this.email.send({ to, subject: `ইনভয়েস INV-${String(paymentRow.id).slice(-8).toUpperCase()} — ${checkout.plan}`, text, html }); sent++; }
             catch { /* counted below — partial sends stay honest */ }
           }
           if (sent > 0) {
@@ -1013,7 +1024,7 @@ export class PaymentsService {
  * Print-to-PDF from the browser is the delivery mechanism (no
  * PDF dependency); every value comes from the stored record,
  * refunds netted and shown — never hidden. */
-export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?: { address?: string | null; bin?: string | null } }): string {
+export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?: { address?: string | null; bin?: string | null }; forEmail?: boolean }): string {
   const p = input.payment;
   const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -1021,10 +1032,16 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?:
   const refunded = BigInt(p.refundedMinor ?? 0);
   const invoiceNo = `INV-${String(p.id).slice(-8).toUpperCase()}`;
   const date = new Date(p.createdAt).toISOString().slice(0, 10);
+  // AP4: the email rendering shares this builder + data with
+  // the downloadable invoice (one data path, two renderings).
+  // Email clients need inline styles and no print button.
+  const em = input.forEmail === true;
+  const tdStyle = em ? ` style="padding:10px 8px;border-top:1px solid #e2e8f0;font-size:14px;font-family:system-ui,sans-serif"` : "";
+  const tdRStyle = em ? ` style="padding:10px 8px;border-top:1px solid #e2e8f0;font-size:14px;text-align:right;font-weight:600;font-family:system-ui,sans-serif"` : "";
   const rows = [
     ["Subscription payment", `${esc(p.currency ?? "BDT")} ${fmt(gross)}`],
     ...(refunded > 0n ? [["Refund", `− ${esc(p.currency ?? "BDT")} ${fmt(refunded)}`], ["Net paid", `${esc(p.currency ?? "BDT")} ${fmt(gross - refunded)}`]] : []),
-  ].map(([a, b]) => `<tr><td>${a}</td><td class="r">${b}</td></tr>`).join("");
+  ].map(([a, b]) => `<tr><td${tdStyle}>${a}</td><td class="r"${tdRStyle}>${b}</td></tr>`).join("");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${invoiceNo}</title>
 <style>
@@ -1034,10 +1051,10 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?:
   td { padding: 10px 8px; border-top: 1px solid #e2e8f0; font-size: 14px; } .r { text-align: right; font-weight: 600; }
   .box { border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 18px; margin-top: 18px; }
   @media print { .noprint { display: none; } }
-</style></head><body>
-  <h1>Qosprey — AI Marketing SaaS</h1>
+</style></head><body${em ? ` style="font-family:system-ui,sans-serif;color:#0f172a;margin:24px auto;max-width:720px;padding:0 20px"` : ""}>
+  <h1${em ? ` style="font-size:22px;margin:0 0 4px"` : ""}>Qosprey — AI Marketing SaaS</h1>
   <div class="muted">Invoice ${invoiceNo} · Issued ${date}</div>
-  <div class="box">
+  <div class="box"${em ? ` style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-top:18px"` : ""}>
     <div><strong>Billed to:</strong> ${esc(input.orgName)}</div>
     ${input.buyer?.address ? `<div class="muted">${esc(input.buyer.address)}</div>` : ""}
     ${input.buyer?.bin ? `<div class="muted">BIN: ${esc(input.buyer.bin)}</div>` : ""}
@@ -1046,8 +1063,8 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?:
     ${p.note ? `<div class="muted">Note: ${esc(p.note)}</div>` : ""}
     ${refunded > 0n && p.refundReason ? `<div class="muted">Refund reason: ${esc(p.refundReason)}</div>` : ""}
   </div>
-  <table>${rows}</table>
+  <table${em ? ` style="width:100%;border-collapse:collapse;margin-top:20px"` : ""}>${rows}</table>
   <p class="muted" style="margin-top:24px">Generated from the platform's payment records. Amounts are shown exactly as recorded.</p>
-  <button class="noprint" onclick="window.print()">Print / Save as PDF</button>
+  ${em ? `<p class="muted">প্রিন্টযোগ্য কপিটি Billing পেজের পেমেন্ট ইতিহাস থেকে যেকোনো সময় ডাউনলোড করা যাবে।</p>` : `<button class="noprint" onclick="window.print()">Print / Save as PDF</button>`}
 </body></html>`;
 }

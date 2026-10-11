@@ -9,6 +9,7 @@ export class CreateProductDto {
   @IsOptional() @IsString() compareAtPrice?: string;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(0) stockQuantity?: number;
+  @IsOptional() @IsInt() @Min(0) lowStockThreshold?: number;
   @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string;
   @IsOptional() @IsString() @MaxLength(200) bumpTitle?: string;
   @IsOptional() @IsString() bumpPrice?: string;
@@ -21,6 +22,7 @@ export class UpdateProductDto {
   @IsOptional() @IsEnum(["DRAFT", "ACTIVE", "ARCHIVED"]) status?: string;
   @IsOptional() @IsString() price?: string;
   @IsOptional() @IsInt() @Min(0) stockQuantity?: number;
+  @IsOptional() @IsInt() @Min(0) lowStockThreshold?: number;
   @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string;
   @IsOptional() @IsString() @MaxLength(200) bumpTitle?: string;
   @IsOptional() @IsString() bumpPrice?: string;
@@ -28,6 +30,12 @@ export class UpdateProductDto {
 }
 export class CreateVariantDto {
   @IsString() @MinLength(1) @MaxLength(200) name!: string;
+  @IsOptional() @IsString() @MaxLength(100) sku?: string;
+  @IsOptional() @IsString() price?: string;
+  @IsOptional() @IsInt() @Min(0) stockQuantity?: number;
+}
+export class UpdateVariantDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(200) name?: string;
   @IsOptional() @IsString() @MaxLength(100) sku?: string;
   @IsOptional() @IsString() price?: string;
   @IsOptional() @IsInt() @Min(0) stockQuantity?: number;

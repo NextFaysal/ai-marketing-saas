@@ -1,20 +1,45 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { apiFetch } from "@/lib/api";
+import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 
-interface Row { id: string; action: string; entityType: string; entityId?: string | null; userId?: string | null; ipAddress?: string | null; createdAt: string; metadata?: Record<string, unknown> | null }
+interface Row { id: string; action: string; entityType: string; entityId?: string | null; userId?: string | null; organizationId?: string | null; ipAddress?: string | null; createdAt: string; metadata?: Record<string, unknown> | null }
 
 export default function AuditPage() {
   const [rows, setRows] = React.useState<Row[]>([]);
   const [prefix, setPrefix] = React.useState("admin.");
+  const [organizationId, setOrganizationId] = React.useState("");
+  const [entityType, setEntityType] = React.useState("");
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
+  const [take, setTake] = React.useState("100");
+  const buildQuery = React.useCallback((forExport: boolean) => {
+    const params = new URLSearchParams();
+    if (!forExport) params.set("take", take);
+    if (prefix) params.set("action", prefix);
+    if (organizationId.trim()) params.set("organizationId", organizationId.trim());
+    if (entityType.trim()) params.set("entityType", entityType.trim());
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    return params.toString();
+  }, [prefix, organizationId, entityType, dateFrom, dateTo, take]);
   React.useEffect(() => {
-    apiFetch<Row[]>(`/admin/audit?take=100${prefix ? `&action=${encodeURIComponent(prefix)}` : ""}`).then(setRows).catch(() => setRows([]));
-  }, [prefix]);
+    apiFetch<Row[]>(`/admin/audit?${buildQuery(false)}`).then(setRows).catch(() => setRows([]));
+  }, [buildQuery]);
+  async function exportCsv() {
+    const token = getAdminToken();
+    const res = await fetch(`${API_URL}/admin/audit/export.csv?${buildQuery(true)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "audit-export.csv"; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
   return (
     <AdminShell title="🧾 Audit Trail">
       <div className="acard overflow-hidden p-0">
-        <div className="flex items-center gap-2 border-b border-slate-800 p-4">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 p-4">
           <span className="text-sm text-slate-400">Action prefix:</span>
           <select className="ainput w-48" value={prefix} onChange={(e) => setPrefix(e.target.value)}>
             <option value="admin.">শুধু Admin অ্যাকশন</option>
@@ -23,6 +48,18 @@ export default function AuditPage() {
             <option value="campaign.">Campaign</option>
             <option value="audience.">Audience</option>
           </select>
+          <input className="ainput w-48" placeholder="Organization ID" value={organizationId} onChange={(e) => setOrganizationId(e.target.value)} />
+          <input className="ainput w-40" placeholder="Entity Type" value={entityType} onChange={(e) => setEntityType(e.target.value)} />
+          <label className="flex items-center gap-1 text-sm text-slate-400">From <input type="date" className="ainput w-40" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+          <label className="flex items-center gap-1 text-sm text-slate-400">To <input type="date" className="ainput w-40" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+          <label className="flex items-center gap-1 text-sm text-slate-400">Take
+            <select className="ainput w-24" value={take} onChange={(e) => setTake(e.target.value)}>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={exportCsv}>⬇ CSV Export</button>
         </div>
         <table className="atable">
           <thead className="bg-slate-900"><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Actor</th><th className="ath">IP</th><th className="ath">বিস্তারিত</th></tr></thead>

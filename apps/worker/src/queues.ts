@@ -1,13 +1,16 @@
-// Queue names are contracts between API (producer) and worker (consumer).
-// New queues are added per phase; do not rename without a migration plan.
+// Queue names are contracts between API (producer) and worker
+// (consumer). Do not rename without a migration plan.
+//
+// Worker Completion WK1 (2026-10-11): five queues that never
+// had a producer (sync-store, sync-ads, aggregate-daily,
+// ai-report, competitor-scan) were retired. All of that work
+// runs as ScheduledJob types through the scheduled-jobs
+// queue (M57). RULE: a queue is added ONLY together with its
+// producer and its processor, in the same change — never
+// ahead of them.
 export const QUEUES = {
-  SYNC_STORE: "sync-store",           // Milestone 3: WooCommerce / Shopify sync
-  SYNC_ADS: "sync-ads",               // Milestone 5: Meta / Google / TikTok insights
-  AGGREGATE_DAILY: "aggregate-daily", // Milestone 5: daily metric rollups
-  AI_REPORT: "ai-report",             // Milestone 6: daily AI reports
-  COMPETITOR_SCAN: "competitor-scan", // Phase 8
-  WEBHOOK: "webhook",                 // Phase 7: inbound webhooks
-  SCHEDULED_JOBS: "scheduled-jobs",   // Milestone 57: DB ScheduledJob execution (API dispatches, worker executes via internal callback)
-  SCHEDULED_JOBS_DLQ: "scheduled-jobs-dlq", // Milestone 57: exhausted jobs (recorded in the DeadLetterJob table via the API)
+  WEBHOOK: "webhook",                 // M63: inbound webhooks (API enqueues, worker executes via internal callback)
+  SCHEDULED_JOBS: "scheduled-jobs",   // M57: DB ScheduledJob execution (API dispatches, worker executes via internal callback)
+  SCHEDULED_JOBS_DLQ: "scheduled-jobs-dlq", // M57: record-only channel (rows live in the API's DeadLetterJob table)
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

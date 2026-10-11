@@ -1,6 +1,6 @@
 import { Type } from "class-transformer";
 import {
-  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString,
+  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches,
   Max, MaxLength, Min, ValidateNested,
 } from "class-validator";
 
@@ -33,4 +33,36 @@ export class CreateManualOrderDto {
   status?: string;
   @IsOptional() @IsString() @MaxLength(10) currency?: string;
   @IsOptional() @IsString() @MaxLength(40) placedAt?: string;
+}
+
+/** Sales & Data S2: the merchant-facing PATCH vocabulary.
+ * "returned" is internal-only: no platform sync produces it as
+ * an Order.status (returns live on CourierShipment); it exists
+ * so a merchant can mark a COD order returned by hand. */
+export const ORDER_PATCH_STATUSES = [
+  "pending", "on-hold", "processing", "completed",
+  "cancelled", "refunded", "failed", "returned",
+] as const;
+
+export class OrderRefundDto {
+  /** Refund amount in integer minor units, as a digit string —
+   * BigInt-safe end to end (a JSON number would lose precision
+   * and invites fractional poisha). */
+  @IsString() @Matches(/^\d+$/, { message: "refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)" })
+  amountMinor!: string;
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+
+/** Sales & Data S2: PATCH /orders/:orderId — every field
+ * optional, but at least one must be present (enforced in the
+ * service so the Bengali 400 names all three options).
+ * internalNote semantics: key absent = untouched, string =
+ * set (trimmed; empty-after-trim stores null), null = clear.
+ * Nest's pipe keeps an explicit JSON null on the DTO instance,
+ * so `dto.internalNote !== undefined` distinguishes clear from
+ * untouched. */
+export class UpdateOrderDto {
+  @IsOptional() @IsIn(ORDER_PATCH_STATUSES) status?: string;
+  @IsOptional() @ValidateNested() @Type(() => OrderRefundDto) refund?: OrderRefundDto;
+  @IsOptional() @IsString() @MaxLength(2000) internalNote?: string | null;
 }

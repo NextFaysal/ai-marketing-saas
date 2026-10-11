@@ -5,12 +5,19 @@ import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 
 interface Report {
+  kind?: string;
   title: string; business: string; generatedAt: string; days: number;
   branding?: { name: string; logoUrl: string | null; primaryColor: string | null };
   delivery?: { shipments: number; delivered: number; returned: number; returnRatePercent: number | null };
   totals: { orders: number; revenueMinor: string; adSpendMinor: string; impressions: number; clicks: number; platformConversions: number };
   kpis: { mer: number | null; platformRoas: number | null; ctrPercent: number | null; cpcMinor: number | null; cpaMinor: number | null };
   campaigns: { name: string; platform: string; spendMinor: string; clicks: number; ctrPercent: number | null; platformConversions: number; cpaMinor: number | null; platformRoas: number | null }[];
+  // RP6 executive kind
+  range?: { from: string; to: string };
+  sales?: { orders: number; revenueMinor: string; refundedMinor: string; averageOrderValueMinor: string };
+  ads?: { spendMinor: string; impressions: number; clicks: number; platformConversions: number; mer: number | null; platformRoas: number | null; topCampaigns: { name: string; spendMinor: string; conversions: number; cpaMinor: string | null }[] };
+  customers?: { newInRange: number; withOrders: number; segments: Record<string, number> };
+  operations?: { ordersByStatus: Record<string, number>; topProducts: { name: string; quantity: number; totalMinor: string }[] };
   note: string;
 }
 
@@ -47,7 +54,47 @@ export default function PublicReportPage() {
       </header>
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">এই রিপোর্ট লিংকটি পাওয়া যায়নি বা মেয়াদ শেষ হয়ে গেছে। ({error})</div> : null}
       {!report && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
-      {report ? (<>
+      {report?.kind === "executive" && report.sales && report.ads ? (<>
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            ["Revenue", money(report.sales.revenueMinor)],
+            ["Orders", String(report.sales.orders)],
+            ["AOV", money(report.sales.averageOrderValueMinor)],
+            ["Refunds", money(report.sales.refundedMinor)],
+            ["Ad Spend", money(report.ads.spendMinor)],
+            ["MER", report.ads.mer === null ? "—" : String(report.ads.mer)],
+            ["Platform ROAS", report.ads.platformRoas === null ? "—" : String(report.ads.platformRoas)],
+            ["নতুন Customer", String(report.customers?.newInRange ?? 0)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border bg-white p-4">
+              <div className="text-xs text-slate-400">{label}</div>
+              <div className="mt-1 text-lg font-bold" style={accent ? { color: accent } : undefined}>{value}</div>
+            </div>
+          ))}
+        </section>
+        {report.ads.topCampaigns.length > 0 ? (
+          <section className="overflow-hidden rounded-xl border bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Top Campaign</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Conv.</th><th className="px-4 py-3">CPA</th></tr></thead>
+              <tbody>{report.ads.topCampaigns.map((c, i) => (
+                <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{c.name}</td><td className="px-4 py-3">{money(c.spendMinor)}</td><td className="px-4 py-3">{c.conversions}</td><td className="px-4 py-3">{c.cpaMinor === null ? "—" : money(c.cpaMinor)}</td></tr>
+              ))}</tbody>
+            </table>
+          </section>
+        ) : null}
+        {report.operations && report.operations.topProducts.length > 0 ? (
+          <section className="overflow-hidden rounded-xl border bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Top Product</th><th className="px-4 py-3">পরিমাণ</th><th className="px-4 py-3">বিক্রি</th></tr></thead>
+              <tbody>{report.operations.topProducts.map((p, i) => (
+                <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{p.name}</td><td className="px-4 py-3">{p.quantity}</td><td className="px-4 py-3">{money(p.totalMinor)}</td></tr>
+              ))}</tbody>
+            </table>
+          </section>
+        ) : null}
+        <p className="text-xs text-slate-400">{report.note}</p>
+      </>) : null}
+      {report && report.kind !== "executive" ? (<>
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ["Revenue", money(report.totals.revenueMinor)],

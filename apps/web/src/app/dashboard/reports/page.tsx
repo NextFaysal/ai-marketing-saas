@@ -8,12 +8,27 @@ import { EmptyState } from "@repo/ui";
 interface Report { id: string; type: string; title: string; content: string; provider: string; version: number; createdAt: string; periodStart: string; periodEnd: string }
 interface Recommendation { id: string; title: string; detail?: string | null; priority: string; status: string }
 interface Anomaly { type: string; severity: string; message: string }
+interface CenterData {
+  catalog: { key: string; title: string; route: string; description: string }[];
+  shares: { activeCount: number };
+  jobs: { id: string; name: string; type: string; enabled: boolean; lastRunAt: string | null; lastStatus: string | null }[];
+  freshness: { storeLastSyncAt: string | null; latestAdMetricDate: string | null; latestOrderAt: string | null };
+}
+interface ExecutiveData {
+  range: { from: string; to: string };
+  sales: { orders: number; revenueMinor: string; profit: { contributionProfitMinor: string; contributionMarginPercent: number | null } };
+  ads: { spendMinor: string; platformConversions: number; topCampaigns: { name: string; spendMinor: string; conversions: number }[] };
+  customers: { newInRange: number; withOrders: number; segments: Record<string, number> };
+  operations: { ordersByStatus: Record<string, number>; topProducts: { name: string; quantity: number; totalMinor: string }[] };
+}
 
 export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [selected, setSelected] = useState<Report | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [anomalies, setAnomalies] = useState<{ anomalies: Anomaly[]; sufficientData: boolean; note?: string } | null>(null);
+  const [center, setCenter] = useState<CenterData | null>(null);
+  const [exec, setExec] = useState<ExecutiveData | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
 
@@ -28,6 +43,8 @@ export default function ReportsPage() {
       ]);
       setReports(r); setRecommendations(recs); setAnomalies(an);
       if (r.length && !selected) setSelected(r[0]);
+      apiFetch<CenterData>(`/organizations/${orgId}/reports/center`).then(setCenter).catch(() => setCenter(null));
+      apiFetch<ExecutiveData>(`/organizations/${orgId}/reports/executive`).then(setExec).catch(() => setExec(null));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }, [selected]);
 
@@ -68,6 +85,58 @@ export default function ReportsPage() {
         </div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+
+      {center ? (
+        <div className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-semibold">Report Center — সব রিপোর্ট এক জায়গায়</div>
+            <div className="text-xs text-slate-500">
+              ডেটা হালনাগাদ: Store Sync {center.freshness.storeLastSyncAt ? new Date(center.freshness.storeLastSyncAt).toLocaleString() : "কখনো হয়নি"} · Ads ডেটা {center.freshness.latestAdMetricDate ? new Date(center.freshness.latestAdMetricDate).toLocaleDateString() : "নেই"} · শেষ Order {center.freshness.latestOrderAt ? new Date(center.freshness.latestOrderAt).toLocaleString() : "নেই"}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {center.catalog.map((c) => (
+              <a key={c.key} href={c.route} className="rounded-lg border p-3 transition hover:border-blue-400">
+                <div className="text-sm font-medium">{c.title}</div>
+                <div className="mt-0.5 text-xs text-slate-500">{c.description}</div>
+              </a>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+            <span>সক্রিয় Client Report Link: <strong className="text-slate-700">{center.shares.activeCount}</strong></span>
+            {center.jobs.length > 0 ? <span>Report Job: {center.jobs.map((j) => `${j.name} (${j.enabled ? "চালু" : "বন্ধ"}${j.lastRunAt ? `, শেষ: ${new Date(j.lastRunAt).toLocaleDateString()}` : ""})`).join(" · ")}</span> : <span>কোনো Report Job নেই — Automations থেকে তৈরি করুন।</span>}
+          </div>
+        </div>
+      ) : null}
+
+      {exec ? (
+        <div className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-semibold">Executive Summary — শেষ ৩০ দিন</div>
+            <div className="text-xs text-slate-500">{exec.range.from} → {exec.range.to}</div>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-400">Revenue</div><div className="mt-0.5 font-bold">{(Number(BigInt(exec.sales.revenueMinor)) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} ৳</div><div className="text-xs text-slate-500">{exec.sales.orders}টি অর্ডার</div></div>
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-400">Contribution Profit</div><div className="mt-0.5 font-bold">{(Number(BigInt(exec.sales.profit.contributionProfitMinor)) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} ৳</div><div className="text-xs text-slate-500">Margin {exec.sales.profit.contributionMarginPercent ?? "—"}%</div></div>
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-400">Ad Spend</div><div className="mt-0.5 font-bold">{(Number(BigInt(exec.ads.spendMinor)) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} ৳</div><div className="text-xs text-slate-500">{exec.ads.platformConversions}টি platform conversion</div></div>
+            <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-slate-400">Customer</div><div className="mt-0.5 font-bold">{exec.customers.newInRange} নতুন</div><div className="text-xs text-slate-500">অর্ডারসহ মোট {exec.customers.withOrders} · সেরা Segment: {Object.entries(exec.customers.segments).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—"}</div></div>
+          </div>
+          <div className="mt-3 grid gap-4 text-sm lg:grid-cols-2">
+            <div>
+              <div className="font-medium">Top Campaign</div>
+              {exec.ads.topCampaigns.length === 0 ? <p className="text-slate-500">কোনো Campaign ডেটা নেই।</p> : (
+                <ul className="mt-1 space-y-1">{exec.ads.topCampaigns.map((c, i) => <li key={i} className="flex justify-between gap-2"><span>{c.name}</span><span className="text-slate-500">{(Number(BigInt(c.spendMinor)) / 100).toLocaleString()} ৳ · {c.conversions} conv.</span></li>)}</ul>
+              )}
+            </div>
+            <div>
+              <div className="font-medium">Top Product</div>
+              {exec.operations.topProducts.length === 0 ? <p className="text-slate-500">কোনো Product বিক্রি নেই।</p> : (
+                <ul className="mt-1 space-y-1">{exec.operations.topProducts.map((p, i) => <li key={i} className="flex justify-between gap-2"><span>{p.name}</span><span className="text-slate-500">{p.quantity}টি · {(Number(BigInt(p.totalMinor)) / 100).toLocaleString()} ৳</span></li>)}</ul>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {anomalies ? (
         <div className="card p-5">

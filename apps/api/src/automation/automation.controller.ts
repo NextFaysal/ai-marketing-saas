@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AutomationService } from "./automation.service";
 import { CreateJobDto, UpdateJobDto, CreateRuleDto, UpdateRuleDto } from "./automation.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
@@ -52,4 +52,24 @@ export class AutomationController {
   }
   @Get("runs")
   runs(@Param("organizationId") orgId: string) { return this.automation.listRuns(orgId); }
+
+  // ----- Automations A3: tenant automation health -----
+  @Get("health")
+  health(@Param("organizationId") orgId: string) { return this.automation.getAutomationHealth(orgId); }
+  @Get("dead-letters")
+  deadLetters(@Param("organizationId") orgId: string, @Query() q: { take?: string; skip?: string; open?: string }) {
+    return this.automation.listOrgDeadLetters(orgId, { take: q?.take, skip: q?.skip, openOnly: q?.open });
+  }
+  @Post("dead-letters/:dlqId/replay") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  replayDeadLetter(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("dlqId") dlqId: string) {
+    return this.automation.replayOrgDeadLetter(orgId, dlqId, user.userId);
+  }
+
+  // ----- Automations A4: job template gallery -----
+  @Get("job-templates")
+  jobTemplates() { return this.automation.listJobTemplates(); }
+  @Post("job-templates/:key/install") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  installJobTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("key") key: string, @Body() dto: { targetId?: string; name?: string }) {
+    return this.automation.installJobTemplate(orgId, user.userId, key, dto);
+  }
 }

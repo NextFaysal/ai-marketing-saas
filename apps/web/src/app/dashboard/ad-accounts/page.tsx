@@ -2,12 +2,30 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { filterAdAccounts } from "@/lib/ad-account-filters";
 import { EmptyState } from "@repo/ui";
 
-interface AdAccount { id: string; platform: string; sourceType: string; externalId?: string | null; name: string; currency: string; integrationId?: string | null }
+interface AdAccountConnection { integrationId: string; status: string; lastSyncAt?: string | null; lastError?: string | null; connectedAt?: string }
+interface AdAccount { id: string; platform: string; sourceType: string; externalId?: string | null; name: string; currency: string; integrationId?: string | null; connection?: AdAccountConnection | null; health?: string; platformStatusRaw?: string | null; platformStatusBucket?: string | null; timezone?: string | null; platformStatusCheckedAt?: string | null; spendWatchEnabled?: boolean; dailyCapMinor?: string | null; anomalyPct?: number | null; syncDisabled?: boolean; label?: string | null }
+// AD6 bulk sync-all response (POST ad-accounts/sync-all).
+interface SyncAllResult { total: number; success: number; failed: number; skipped: number; results: { accountId: string; status: string; error?: string }[] }
+// AD5 picker step 1 response (POST integrations/meta/discover) —
+// the token itself is never part of this payload.
+interface DiscoveredMetaAccount { externalId: string; name: string; currency: string; platformStatusRaw?: string | null; platformStatusBucket?: string | null; timezone?: string | null; alreadyConnected: boolean; accountId?: string | null }
+interface SpendWatchView { todaySpendFormatted: string; avgDailySpendFormatted: string; avgDaysUsed: number; avgBasis: string; dailyCapFormatted?: string | null; capCrossed: boolean; anomalyTriggered: boolean }
 
 export default function AdAccountsPage() {
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
+  // AD6: client-side search/filter state + bulk sync-all result +
+  // per-card label drafts.
+  const [filterQuery, setFilterQuery] = useState("");
+  const [filterPlatform, setFilterPlatform] = useState("");
+  const [filterHealth, setFilterHealth] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [syncAllResult, setSyncAllResult] = useState<SyncAllResult | null>(null);
+  const [labelForm, setLabelForm] = useState<Record<string, string>>({});
+  const [watch, setWatch] = useState<Record<string, SpendWatchView>>({});
+  const [watchForm, setWatchForm] = useState<Record<string, { capTaka: string; pct: string }>>({});
   const [capi, setCapi] = useState<{ configured: boolean; pixelId?: string; hasDedicatedToken?: boolean; testEventCode?: string | null; purchaseTrigger?: string; enabled?: boolean; sendLeadEvents?: boolean } | null>(null);
   const [capiForm, setCapiForm] = useState({ pixelId: "", accessToken: "", testEventCode: "", purchaseTrigger: "placed", enabled: true, sendLeadEvents: true });
   const [capiEvents, setCapiEvents] = useState<{ id: string; eventName: string; sourceType: string; eventId: string; status: string; eventsReceived?: number | null; error?: string | null; createdAt: string }[]>([]);
@@ -25,6 +43,10 @@ export default function AdAccountsPage() {
   const [form, setForm] = useState({ platform: "meta", name: "", externalId: "", currency: "BDT" });
   const [manual, setManual] = useState<Record<string, { date: string; spend: string }>>({});
   const [metaToken, setMetaToken] = useState("");
+  // AD5 picker: accounts discovered under the pasted token (step 1)
+  // and the user's checkbox selection (step 2).
+  const [metaDiscovered, setMetaDiscovered] = useState<DiscoveredMetaAccount[] | null>(null);
+  const [metaSelected, setMetaSelected] = useState<Record<string, boolean>>({});
   const [googleForm, setGoogleForm] = useState({ customerId: "", clientId: "", clientSecret: "", refreshToken: "", developerToken: "", loginCustomerId: "" });
   const [tiktokForm, setTiktokForm] = useState({ advertiserId: "", accessToken: "" });
   const [error, setError] = useState("");
@@ -35,7 +57,31 @@ export default function AdAccountsPage() {
     const orgId = getOrganizationId();
     if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
     try {
-      setAccounts(await apiFetch<AdAccount[]>(`/organizations/${orgId}/ad-accounts`));
+      const list = await apiFetch<AdAccount[]>(`/organizations/${orgId}/ad-accounts`);
+      setAccounts(list);
+      // AD4: live spend-watch computation per account (same function
+      // the watchdog job uses — the numbers here and in alerts match).
+      void (async () => {
+        const entries = await Promise.all(list.map(async (a) => {
+          try {
+            const w = await apiFetch<SpendWatchView>(`/organizations/${orgId}/ad-accounts/${a.id}/spend-watch`);
+            return [a.id, w] as const;
+          } catch { return null; }
+        }));
+        setWatch(Object.fromEntries(entries.filter(Boolean) as [string, SpendWatchView][]));
+        setWatchForm((prev) => {
+          const next = { ...prev };
+          for (const a of list) {
+            if (!next[a.id]) {
+              next[a.id] = {
+                capTaka: a.dailyCapMinor ? String(Number(a.dailyCapMinor) / 100) : "",
+                pct: a.anomalyPct != null ? String(a.anomalyPct) : "",
+              };
+            }
+          }
+          return next;
+        });
+      })();
       apiFetch(`/organizations/${orgId}/conversions/settings`).then((s: any) => { setCapi(s); if (s?.configured) setCapiForm((f) => ({ ...f, pixelId: s.pixelId ?? "", testEventCode: s.testEventCode ?? "", purchaseTrigger: s.purchaseTrigger ?? "placed", enabled: s.enabled ?? true, sendLeadEvents: s.sendLeadEvents ?? true })); }).catch(() => undefined);
       apiFetch(`/organizations/${orgId}/conversions/events`).then((rows: any) => setCapiEvents(rows)).catch(() => undefined);
       apiFetch(`/organizations/${orgId}/publish/publications`).then((rows: any) => setPubs(rows)).catch(() => undefined);
@@ -62,18 +108,60 @@ export default function AdAccountsPage() {
     finally { setBusy(""); }
   }
 
-  async function connectMeta(e: React.FormEvent) {
+  // AD5 picker step 1: verify the token and list the accounts
+  // under it. The server stores NOTHING for this call; accounts the
+  // org already knows come back flagged and pre-checked.
+  async function discoverMeta(e: React.FormEvent) {
     e.preventDefault();
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("meta"); setError("");
+    setBusy("meta-discover"); setError("");
     try {
-      const res = await apiFetch<{ connectedAccounts: AdAccount[] }>(`/organizations/${orgId}/integrations/meta/connect`, {
+      const res = await apiFetch<{ accounts: DiscoveredMetaAccount[] }>(`/organizations/${orgId}/integrations/meta/discover`, {
         method: "POST", body: JSON.stringify({ accessToken: metaToken }),
       });
+      setMetaDiscovered(res.accounts);
+      setMetaSelected(Object.fromEntries(res.accounts.map((a) => [a.externalId, a.alreadyConnected])));
+      if (res.accounts.length === 0) setNotice("এই Token-এর অধীনে কোনো Ad Account পাওয়া যায়নি।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Meta discovery failed"); }
+    finally { setBusy(""); }
+  }
+
+  // AD5 picker step 2: connect ONLY the checked accounts (the
+  // server treats a present-but-empty selection as an error, never
+  // as "connect everything").
+  async function connectMetaSelected() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const ids = Object.entries(metaSelected).filter(([, v]) => v).map(([k]) => k);
+    if (ids.length === 0) { setError("অন্তত একটি Ad Account বেছে নিন।"); return; }
+    setBusy("meta-connect"); setError("");
+    try {
+      const res = await apiFetch<{ connectedAccounts: AdAccount[] }>(`/organizations/${orgId}/integrations/meta/connect`, {
+        method: "POST", body: JSON.stringify({ accessToken: metaToken, adAccountExternalIds: ids }),
+      });
       setMetaToken("");
-      setNotice(`Meta কানেক্ট হয়েছে: ${res.connectedAccounts.length}টি Ad Account পাওয়া গেছে।`);
+      setMetaDiscovered(null);
+      setMetaSelected({});
+      setNotice(`Meta কানেক্ট হয়েছে: ${res.connectedAccounts.length}টি Ad Account কানেক্ট হয়েছে।`);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Meta connection failed"); }
+    finally { setBusy(""); }
+  }
+
+  // AD5: flip the per-account sync switch. While sync is off, the
+  // manual + scheduled insights syncs refuse/skip — publishing is
+  // a different concern and is NOT touched by this switch.
+  async function setSyncDisabled(a: AdAccount, disabled: boolean) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`syncflag-${a.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/ad-accounts/${a.id}/sync`, {
+        method: "PATCH", body: JSON.stringify({ syncDisabled: disabled }),
+      });
+      setNotice(disabled
+        ? `“${a.name}” এর Sync বন্ধ করা হয়েছে — হাতে করা ও নির্ধারিত Insights Sync এখন হবে না (Publish আগের মতোই চলবে)।`
+        : `“${a.name}” এর Sync আবার চালু করা হয়েছে।`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Sync সেটিং সংরক্ষণ ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
@@ -164,6 +252,121 @@ export default function AdAccountsPage() {
     finally { setBusy(""); }
   }
 
+  async function disconnectAccount(a: AdAccount) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const sharedCount = a.integrationId ? accounts.filter((x) => x.integrationId === a.integrationId).length : 0;
+    let message = `“${a.name}” Ad Account-এর API সংযোগ বিচ্ছিন্ন করবেন?\n\nডেটা (Campaign/Metrics) থেকে যাবে, কিন্তু Sync ও Publish বন্ধ হয়ে যাবে।`;
+    if (sharedCount > 1) message += `\n\nশুধু এই Accountটিই বিচ্ছিন্ন হবে — একই Token-এর অন্য Account আগের মতোই চলবে।`;
+    if (!window.confirm(message)) return;
+    setBusy(`disconnect-${a.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/ad-accounts/${a.id}/disconnect`, { method: "POST" });
+      setNotice(`“${a.name}” এর সংযোগ বিচ্ছিন্ন হয়েছে। ডেটা আগের মতোই আছে; আবার কানেক্ট করতে “পুনরায় কানেক্ট করুন” ব্যবহার করুন।`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Disconnect failed"); }
+    finally { setBusy(""); }
+  }
+
+  // AD6: bulk sync-all — the server runs each account's primary
+  // insights sync sequentially and reports per-account results; a
+  // failure in one account never fails the batch.
+  async function syncAll() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("sync-all"); setError(""); setSyncAllResult(null);
+    try {
+      const res = await apiFetch<SyncAllResult>(`/organizations/${orgId}/ad-accounts/sync-all`, { method: "POST" });
+      setSyncAllResult(res);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Sync All ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // AD6: save (or clear, with an empty value) the account's display
+  // label through the AD5 settings endpoint.
+  async function saveLabel(a: AdAccount) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const value = (labelForm[a.id] ?? a.label ?? "").trim();
+    setBusy(`label-${a.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/ad-accounts/${a.id}/sync`, {
+        method: "PATCH", body: JSON.stringify({ label: value }),
+      });
+      setNotice(value ? `“${a.name}” এর লেবেল “${value}” সংরক্ষণ হয়েছে।` : `“${a.name}” এর লেবেল মুছে ফেলা হয়েছে — এখন প্ল্যাটফর্মের নামই দেখাবে।`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "লেবেল সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  function reconnect(platform: string) {
+    const id = platform === "meta" ? "connect-meta" : platform === "google" ? "connect-google" : platform === "tiktok" ? "connect-tiktok" : null;
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("ring-2", "ring-red-400");
+    window.setTimeout(() => el.classList.remove("ring-2", "ring-red-400"), 2500);
+    const firstInput = el.querySelector("input");
+    if (firstInput) window.setTimeout(() => (firstInput as HTMLElement).focus(), 350);
+  }
+
+  const healthMeta: Record<string, { label: string; cls: string }> = {
+    connected: { label: "সংযুক্ত", cls: "bg-green-100 text-green-700" },
+    stale: { label: "Sync পুরনো", cls: "bg-amber-100 text-amber-700" },
+    error: { label: "Sync ব্যর্থ", cls: "bg-red-100 text-red-700" },
+    disconnected: { label: "বিচ্ছিন্ন", cls: "bg-slate-200 text-red-600" },
+    manual: { label: "ম্যানুয়াল (API নেই)", cls: "bg-slate-100 text-slate-600" },
+    // AD5: sync was deliberately switched off — its own state, not "stale".
+    sync_disabled: { label: "Sync বন্ধ", cls: "bg-slate-200 text-slate-700" },
+  };
+
+  // AD3: the platform's own account status (verbatim value kept in
+  // platformStatusRaw). A null bucket means the platform has not
+  // reported a status — shown as such, never guessed as "active".
+  const platformStatusMeta: Record<string, { label: string; cls: string }> = {
+    active: { label: "প্ল্যাটফর্ম: সক্রিয়", cls: "bg-green-100 text-green-700" },
+    disabled: { label: "প্ল্যাটফর্ম: বন্ধ (Disabled)", cls: "bg-red-100 text-red-700" },
+    restricted: { label: "প্ল্যাটফর্ম: সীমাবদ্ধ (Restricted)", cls: "bg-amber-100 text-amber-700" },
+    unknown: { label: "প্ল্যাটফর্ম: অজানা অবস্থা", cls: "bg-slate-200 text-slate-600" },
+  };
+
+  async function refreshStatus(a: AdAccount) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`refresh-${a.id}`); setError("");
+    try {
+      const res = await apiFetch<{ platformStatusBucket?: string | null; platformStatusRaw?: string | null }>(`/organizations/${orgId}/ad-accounts/${a.id}/refresh-status`, { method: "POST" });
+      const label = res.platformStatusBucket ? (platformStatusMeta[res.platformStatusBucket]?.label ?? res.platformStatusBucket) : "প্ল্যাটফর্ম জানায়নি";
+      setNotice(`“${a.name}” এর সর্বশেষ প্ল্যাটফর্ম স্ট্যাটাস: ${label}${res.platformStatusRaw ? ` (মান: ${res.platformStatusRaw})` : ""}।`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "স্ট্যাটাস যাচাই ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // AD4: save the spend-watch settings (toggle saves immediately too).
+  // ALERTING ONLY — enabling this never pauses or stops a campaign.
+  async function saveWatch(a: AdAccount, enabledOverride?: boolean) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const form = watchForm[a.id] ?? { capTaka: "", pct: "" };
+    setBusy(`watch-${a.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/ad-accounts/${a.id}/spend-watch`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: enabledOverride ?? a.spendWatchEnabled ?? false,
+          dailyCap: form.capTaka.trim() === "" ? null : form.capTaka.trim(),
+          anomalyPct: form.pct.trim() === "" ? null : Number(form.pct),
+        }),
+      });
+      setNotice(`“${a.name}” এর Spend Watch সেটিংস সংরক্ষণ হয়েছে (শুধু সতর্কতা — Campaign স্বয়ংক্রিয়ভাবে বন্ধ হয় না)।`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Spend Watch সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // AD6: the visible list is the fetched list filtered client-side
+  // (the endpoint already returns every field the filters need).
+  const filteredAccounts = filterAdAccounts(accounts, { query: filterQuery, platform: filterPlatform, health: filterHealth, status: filterStatus });
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
+
   const inputCls = "input mt-1";
 
   return (
@@ -179,36 +382,149 @@ export default function AdAccountsPage() {
         <EmptyState title="এখনো কোনো Ad Account নেই" description="নিচে CSV/Manual এর জন্য Account তৈরি করুন অথবা Meta Token দিয়ে সরাসরি কানেক্ট করুন।" />
       ) : (
         <div className="space-y-3">
-          {accounts.map((a) => (
+          <div className="card space-y-3 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={syncAll}>
+                {busy === "sync-all" ? "সব Sync হচ্ছে..." : "🔄 সব Sync করুন"}
+              </button>
+              <span className="text-xs text-slate-500">প্রতিটি API Account-এর প্রধান Insights Sync একে একে (Sequential) চলবে — Sync বন্ধ বা API ছাড়া Account বাদ যাবে।</span>
+            </div>
+            {syncAllResult ? (
+              <div className="rounded-lg bg-slate-50 p-3 text-sm">
+                <p>সব Sync শেষ: <b className="text-green-700">সফল {syncAllResult.success}</b> · <b className="text-red-600">ব্যর্থ {syncAllResult.failed}</b> · <b>বাদ {syncAllResult.skipped}</b> (মোট {syncAllResult.total}টি)</p>
+                {syncAllResult.results.some((r) => r.status === "failed") ? (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-red-600">ব্যর্থ Accountগুলোর বিবরণ দেখুন</summary>
+                    <ul className="mt-1 list-inside list-disc text-xs text-red-700">
+                      {syncAllResult.results.filter((r) => r.status === "failed").map((r) => (
+                        <li key={r.accountId}>{accountById.get(r.accountId)?.label || accountById.get(r.accountId)?.name || r.accountId} — {r.error ?? "অজানা ত্রুটি"}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
+              <label className="text-xs text-slate-500">খুঁজুন (নাম / লেবেল / ID)
+                <input className="input mt-1 w-52" placeholder="যেমন: মেইন পেজ" value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} />
+              </label>
+              <label className="text-xs text-slate-500">প্ল্যাটফর্ম
+                <select className="input mt-1" value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)}>
+                  <option value="">সব</option><option value="meta">Meta</option><option value="google">Google</option><option value="tiktok">TikTok</option>
+                </select>
+              </label>
+              <label className="text-xs text-slate-500">Health
+                <select className="input mt-1" value={filterHealth} onChange={(e) => setFilterHealth(e.target.value)}>
+                  <option value="">সব</option>
+                  {Object.entries(healthMeta).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-slate-500">প্ল্যাটফর্ম স্ট্যাটাস
+                <select className="input mt-1" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                  <option value="">সব</option>
+                  {Object.entries(platformStatusMeta).map(([k, v]) => <option key={k} value={k}>{v.label.replace("প্ল্যাটফর্ম: ", "")}</option>)}
+                </select>
+              </label>
+              <span className="pb-2 text-sm text-slate-500">{filteredAccounts.length}টি Account দেখাচ্ছে (মোট {accounts.length}টি)</span>
+            </div>
+          </div>
+          {filteredAccounts.length === 0 ? (
+            <p className="card p-5 text-sm text-slate-500">এই ফিল্টারে কোনো Ad Account মিলছে না — ফিল্টার বদলে আবার চেষ্টা করুন। (Account মুছে যায়নি; মোট {accounts.length}টি Account-ই আছে।)</p>
+          ) : null}
+          {filteredAccounts.map((a) => (
             <div key={a.id} className="card p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-semibold">{a.name} <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs capitalize">{a.platform}</span> <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{a.sourceType}</span></div>
-                <div className="text-xs text-slate-400">{a.externalId ?? ""} · {a.currency}</div>
+                <div className="font-semibold">{a.label || a.name}{a.label ? <span className="ml-1 text-xs font-normal text-slate-400">({a.name})</span> : null} <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs capitalize">{a.platform}</span> <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{a.sourceType}</span>{a.health ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${healthMeta[a.health]?.cls ?? "bg-slate-100 text-slate-600"}`}>{healthMeta[a.health]?.label ?? a.health}</span> : null}{a.sourceType === "api" ? (a.platformStatusBucket ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[a.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`} title={a.platformStatusRaw ? `প্ল্যাটফর্মের মান: ${a.platformStatusRaw}` : undefined}>{platformStatusMeta[a.platformStatusBucket]?.label ?? a.platformStatusBucket}</span> : <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>) : null}</div>
+                <div className="text-xs text-slate-400">{a.externalId ?? ""} · {a.currency}{a.timezone ? ` · ${a.timezone}` : ""}</div>
               </div>
+              {a.platformStatusCheckedAt ? <p className="mt-1 text-xs text-slate-500">প্ল্যাটফর্ম স্ট্যাটাস সর্বশেষ যাচাই: {new Date(a.platformStatusCheckedAt).toLocaleString("bn-BD")}</p> : null}
+              {a.connection?.lastSyncAt ? <p className="mt-1 text-xs text-slate-500">শেষ Sync: {new Date(a.connection.lastSyncAt).toLocaleString("bn-BD")}</p> : null}
+              {a.connection?.lastError ? <p className="mt-1 text-xs text-red-600">{a.connection.lastError}</p> : null}
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="text-xs text-slate-500">লেবেল (নিজের দেওয়া নাম — সর্বোচ্চ ৬০ অক্ষর; ফাঁকা রাখলে প্ল্যাটফর্মের নামই দেখাবে)
+                  <input className="input mt-1 w-60" maxLength={200} placeholder={a.name} value={labelForm[a.id] ?? a.label ?? ""} onChange={(e) => setLabelForm((p) => ({ ...p, [a.id]: e.target.value }))} />
+                </label>
+                <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => saveLabel(a)}>
+                  {busy === `label-${a.id}` ? "সংরক্ষণ হচ্ছে..." : "লেবেল সংরক্ষণ"}
+                </button>
+              </div>
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <label className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" checked={a.spendWatchEnabled ?? false} disabled={busy !== ""} onChange={(e) => saveWatch(a, e.target.checked)} />
+                  🔔 Spend Watch — দৈনিক ক্যাপ ও অস্বাভাবিক খরচের সতর্কতা
+                  <span className="text-xs font-normal text-slate-500">(শুধু Alert — Campaign স্বয়ংক্রিয়ভাবে বন্ধ হয় না; সতর্কতা Automations-এর “Ad Spend Watchdog” Job চালালে যাবে)</span>
+                </label>
+                {watch[a.id] ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    আজ এখন পর্যন্ত: <b>{watch[a.id].todaySpendFormatted}</b> · {watch[a.id].avgBasis}: <b>{watch[a.id].avgDailySpendFormatted}</b>
+                    {watch[a.id].dailyCapFormatted ? <> · ক্যাপ: {watch[a.id].dailyCapFormatted}</> : null}
+                    {watch[a.id].capCrossed ? <span className="ml-1 font-semibold text-red-600">ক্যাপ ছুঁয়েছে!</span> : null}
+                    {watch[a.id].anomalyTriggered ? <span className="ml-1 font-semibold text-amber-600">অস্বাভাবিক খরচ!</span> : null}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-end gap-2">
+                  <label className="text-xs text-slate-500">দৈনিক ক্যাপ (টাকা — ফাঁকা = বন্ধ)
+                    <input className="input mt-1 w-36" inputMode="decimal" placeholder="যেমন 5000" value={watchForm[a.id]?.capTaka ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: e.target.value, pct: p[a.id]?.pct ?? "" } }))} />
+                  </label>
+                  <label className="text-xs text-slate-500">Anomaly % (গড়ের তুলনায় বেশি — ফাঁকা = বন্ধ)
+                    <input className="input mt-1 w-28" inputMode="numeric" placeholder="যেমন 50" value={watchForm[a.id]?.pct ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: p[a.id]?.capTaka ?? "", pct: e.target.value } }))} />
+                  </label>
+                  <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => saveWatch(a)}>
+                    {busy === `watch-${a.id}` ? "সংরক্ষণ হচ্ছে..." : "Watch সেটিংস সংরক্ষণ করুন"}
+                  </button>
+                </div>
+              </div>
+              {(a.health === "error" || a.health === "disconnected") && a.sourceType === "api" ? (
+                <div className="mt-2">
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => reconnect(a.platform)}>পুনরায় কানেক্ট করুন</button>
+                </div>
+              ) : null}
+              {a.integrationId ? (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <label className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    <input type="checkbox" checked={!a.syncDisabled} disabled={busy !== ""} onChange={(e) => setSyncDisabled(a, !e.target.checked)} />
+                    🔄 Sync {a.syncDisabled ? "বন্ধ আছে" : "চালু আছে"}
+                    <span className="text-xs font-normal text-slate-500">(বন্ধ থাকলে হাতে করা ও নির্ধারিত Insights Sync হবে না — Publish-এ কোনো প্রভাব নেই)</span>
+                  </label>
+                </div>
+              ) : null}
               <div className="mt-3 flex flex-wrap items-end gap-3">
-                {a.platform === "google" && a.integrationId ? (
+                {a.syncDisabled && a.integrationId ? (
+                  <span className="text-xs text-slate-500">Sync বন্ধ রাখা হয়েছে — Sync বোতামগুলো নিষ্ক্রিয়।</span>
+                ) : null}
+                {a.platform === "google" && a.integrationId && !a.syncDisabled ? (
                   <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => syncPlatform(a.id, "google")}>
                     {busy === `sync-${a.id}` ? "Sync হচ্ছে..." : "Google Insights Sync (৩০ দিন)"}
                   </button>
                 ) : null}
-                {a.platform === "tiktok" && a.integrationId ? (
+                {a.platform === "tiktok" && a.integrationId && !a.syncDisabled ? (
                   <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => syncPlatform(a.id, "tiktok")}>
                     {busy === `sync-${a.id}` ? "Sync হচ্ছে..." : "TikTok Insights Sync (৩০ দিন)"}
                   </button>
                 ) : null}
-                {a.platform === "meta" && a.integrationId ? (
+                {a.platform === "meta" && a.integrationId && !a.syncDisabled ? (
                   <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => syncMeta(a.id)}>
                     {busy === `sync-${a.id}` ? "Sync হচ্ছে..." : "Meta Insights Sync (৩০ দিন)"}
                   </button>
                 ) : null}
-                {a.platform === "meta" && a.integrationId ? (
+                {a.platform === "meta" && a.integrationId && !a.syncDisabled ? (
                   <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => syncMetaExtra(a.id, "meta-ad-insights", "Ad-level")}>
                     {busy === `syncx-${a.id}` ? "Sync হচ্ছে..." : "Ad-level Sync"}
                   </button>
                 ) : null}
-                {a.platform === "meta" && a.integrationId ? (
+                {a.platform === "meta" && a.integrationId && !a.syncDisabled ? (
                   <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => syncMetaExtra(a.id, "meta-breakdowns", "Breakdown")}>
                     {busy === `syncx-${a.id}` ? "Sync হচ্ছে..." : "Breakdown Sync"}
+                  </button>
+                ) : null}
+                {a.integrationId && !a.syncDisabled ? (
+                  <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => refreshStatus(a)}>
+                    {busy === `refresh-${a.id}` ? "যাচাই হচ্ছে..." : "স্ট্যাটাস যাচাই"}
+                  </button>
+                ) : null}
+                {a.integrationId ? (
+                  <button className="rounded-lg border border-red-300 px-3 py-2 text-sm font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => disconnectAccount(a)}>
+                    {busy === `disconnect-${a.id}` ? "বিচ্ছিন্ন হচ্ছে..." : "সংযোগ বিচ্ছিন্ন করুন"}
                   </button>
                 ) : null}
                 <label className="text-sm">
@@ -465,22 +781,48 @@ export default function AdAccountsPage() {
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>Account তৈরি করুন</button>
       </form>
 
-      <form onSubmit={connectMeta} className="space-y-3 card p-5">
+      <form id="connect-meta" onSubmit={discoverMeta} className="space-y-3 card p-5">
         <div className="font-semibold">Meta API দিয়ে কানেক্ট (যদি Token থাকে)</div>
         <p className="text-sm text-slate-500">
           Meta App (Marketing API, ads_read) থেকে পাওয়া User/System-User Access Token লাগবে। অন্যের Account এর জন্য
           Advanced Access ও App Review দরকার হতে পারে, সেটি Meta এর প্রক্রিয়া, আমরা বাইপাস করি না।
-          Token সার্ভারে এনক্রিপ্ট করে রাখা হয়, যাচাই ব্যর্থ হলে সেভ হয় না।
+          প্রথম ধাপে Token যাচাই করে এর অধীনের Accountগুলো দেখানো হয় — কোনো কিছু সেভ হয় না; তারপর যেগুলো বেছে দেবেন
+          শুধু সেগুলোই কানেক্ট হবে। Token সার্ভারে এনক্রিপ্ট করে রাখা হয়, যাচাই ব্যর্থ হলে সেভ হয় না।
         </p>
         <label className="block text-sm">Access Token
-          <input className={inputCls} type="password" value={metaToken} onChange={(e) => setMetaToken(e.target.value)} required placeholder="EAA..." />
+          <input className={inputCls} type="password" value={metaToken} onChange={(e) => { setMetaToken(e.target.value); setMetaDiscovered(null); setMetaSelected({}); }} required placeholder="EAA..." />
         </label>
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
-          {busy === "meta" ? "যাচাই হচ্ছে..." : "যাচাই করে Meta কানেক্ট করুন"}
+          {busy === "meta-discover" ? "যাচাই হচ্ছে..." : "🔍 অ্যাকাউন্ট খুঁজুন"}
         </button>
+        {metaDiscovered !== null ? (
+          <div className="space-y-2 border-t border-slate-100 pt-3">
+            {metaDiscovered.length === 0 ? (
+              <p className="text-sm text-slate-500">এই Token-এর অধীনে কোনো Ad Account পাওয়া যায়নি।</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium">কোন Accountগুলো কানেক্ট করবেন? ({Object.values(metaSelected).filter(Boolean).length}টি বেছে নেওয়া)</p>
+                <div className="space-y-1">
+                  {metaDiscovered.map((d) => (
+                    <label key={d.externalId} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                      <input type="checkbox" checked={metaSelected[d.externalId] ?? false} disabled={busy !== ""} onChange={(e) => setMetaSelected((p) => ({ ...p, [d.externalId]: e.target.checked }))} />
+                      <span className="font-medium">{d.name}</span>
+                      <span className="text-xs text-slate-400">{d.externalId} · {d.currency}{d.timezone ? ` · ${d.timezone}` : ""}</span>
+                      {d.platformStatusBucket ? <span className={`rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[d.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`}>{platformStatusMeta[d.platformStatusBucket]?.label ?? d.platformStatusBucket}</span> : <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>}
+                      {d.alreadyConnected ? <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">আগে থেকেই কানেক্টেড</span> : null}
+                    </label>
+                  ))}
+                </div>
+                <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== "" || Object.values(metaSelected).filter(Boolean).length === 0} onClick={connectMetaSelected}>
+                  {busy === "meta-connect" ? "কানেক্ট হচ্ছে..." : "নির্বাচিতগুলো কানেক্ট করুন"}
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
       </form>
 
-      <form onSubmit={connectGoogle} className="space-y-3 card p-5">
+      <form id="connect-google" onSubmit={connectGoogle} className="space-y-3 card p-5">
         <div className="font-semibold">Google Ads API দিয়ে কানেক্ট</div>
         <p className="text-sm text-slate-500">
           Google Ads API এর জন্য লাগবে: Developer Token (Google Ads API Center থেকে, Approval Level অনুযায়ী Access),
@@ -500,7 +842,7 @@ export default function AdAccountsPage() {
         </button>
       </form>
 
-      <form onSubmit={connectTikTok} className="space-y-3 card p-5">
+      <form id="connect-tiktok" onSubmit={connectTikTok} className="space-y-3 card p-5">
         <div className="font-semibold">TikTok Ads API দিয়ে কানেক্ট</div>
         <p className="text-sm text-slate-500">TikTok Marketing API App থেকে পাওয়া Advertiser ID ও দীর্ঘমেয়াদি Access Token লাগবে। Token যাচাই ব্যর্থ হলে সেভ হবে না।</p>
         <div className="grid grid-cols-2 gap-3">

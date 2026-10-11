@@ -13,6 +13,17 @@ interface Report {
   reconciliation: { trackedPurchaseEvents: number; purchaseEventsWithoutMatchingOrder: number; uncreditedRevenueMinor: string; note: string };
 }
 
+interface AbandonedCart {
+  visitorId: string; sessionKey: string; storeId: string;
+  signal: "checkout_started" | "add_to_cart";
+  lastActivityAt: string;
+  items: { productId: string | null; name: string | null; quantity: number | null }[];
+  valueMinor: string | null; currency: string | null;
+  storeName: string | null; storeUrl: string | null;
+  contact: { email: string | null; phone: string | null };
+  recoverySentAt: string | null;
+}
+
 const MODELS = [
   { value: "LAST_TOUCH", label: "Last Touch" },
   { value: "FIRST_TOUCH", label: "First Touch" },
@@ -43,6 +54,34 @@ export default function AttributionPage() {
   }, [model]);
 
   useEffect(() => { load(); }, [load]);
+
+  // S4: abandoned carts — its own state slice; a failure here must not
+  // break the attribution report above.
+  const [carts, setCarts] = useState<AbandonedCart[] | null>(null);
+  const [cartError, setCartError] = useState("");
+  const [recoverError, setRecoverError] = useState("");
+  const [sendingId, setSendingId] = useState("");
+
+  const loadCarts = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const res = await apiFetch<{ carts: AbandonedCart[] }>(`/organizations/${orgId}/tracking/abandoned-carts`);
+      setCarts(res.carts); setCartError("");
+    } catch (e) { setCartError(e instanceof Error ? e.message : "Abandoned Carts লোড করা যায়নি"); }
+  }, []);
+
+  useEffect(() => { loadCarts(); }, [loadCarts]);
+
+  async function sendRecovery(visitorId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setSendingId(visitorId); setRecoverError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/tracking/abandoned-carts/${visitorId}/recover`, { method: "POST" });
+      await loadCarts();
+    } catch (e) { setRecoverError(e instanceof Error ? e.message : "Recovery ইমেইল পাঠানো যায়নি"); }
+    finally { setSendingId(""); }
+  }
 
   async function reconcile() {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -130,6 +169,61 @@ export default function AttributionPage() {
           <p className="text-xs text-slate-400">{report.reconciliation.note} Cross-device ও Cross-platform Attribution কখনো নিখুঁত হয় না, তাই এই সংখ্যা প্ল্যাটফর্মের নিজের রিপোর্টের সাথে হুবহু মিলবে না, এটাই স্বাভাবিক।</p>
         </>
       ) : null}
+
+      <div className="card p-5">
+        <h2 className="font-semibold">🛒 ছেড়ে যাওয়া কার্ট (Abandoned Carts)</h2>
+        <p className="mt-1 text-sm text-slate-500">শেষ ৭ দিনে কার্টে পণ্য যোগ করে কমপক্ষে ১ ঘণ্টা আগে থেমে গেছে, কিন্তু কেনাকাটা সম্পূর্ণ করেনি — এমন ভিজিটর।</p>
+        <p className="mt-1 text-sm text-slate-500">ইমেইল ধরতে দোকানের চেকআউটে TP.identify(&#123; email, phone &#125;) hook বসান।</p>
+        {cartError ? <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{cartError}</p> : null}
+        {recoverError ? <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{recoverError}</p> : null}
+        {carts === null ? (
+          <p className="mt-3 text-sm text-slate-500">লোড হচ্ছে...</p>
+        ) : carts.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState title="কোনো ছেড়ে যাওয়া কার্ট নেই" description="শেষ ৭ দিনে কার্টে পণ্য যোগ করে কেনাকাটা সম্পূর্ণ করেনি — এমন কোনো ভিজিটর পাওয়া যায়নি।" />
+          </div>
+        ) : (
+          <div className="mt-2">
+            {carts.map((c) => (
+              <div key={`${c.visitorId}-${c.sessionKey}`} className="border-t py-3 first:border-t-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{c.storeName ?? "অজানা স্টোর"}</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                    {c.signal === "checkout_started" ? "Checkout শুরু করেছিল" : "কার্টে যোগ করেছিল"}
+                  </span>
+                  <span className="text-xs text-slate-400">শেষ কার্যকলাপ: {new Date(c.lastActivityAt).toLocaleString("bn-BD")}</span>
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {c.items.length > 0 ? (
+                    <ul className="list-inside list-disc">
+                      {c.items.map((item, i) => (
+                        <li key={i}>{item.name ?? item.productId}{item.quantity ? ` ×${item.quantity}` : ""}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-400">পণ্যের বিবরণ পাওয়া যায়নি</span>
+                  )}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  মূল্য: {c.valueMinor ? formatMinor(BigInt(c.valueMinor)) : "মূল্য জানা নেই"}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  যোগাযোগ: {c.contact.email || c.contact.phone ? [c.contact.email, c.contact.phone].filter(Boolean).join(" · ") : "যোগাযোগের তথ্য নেই"}
+                </div>
+                <div className="mt-2">
+                  {c.recoverySentAt ? (
+                    <span className="text-sm text-green-700">Recovery পাঠানো হয়েছে ({new Date(c.recoverySentAt).toLocaleString("bn-BD")})</span>
+                  ) : c.contact.email ? (
+                    <button className="btn-primary" disabled={sendingId === c.visitorId} onClick={() => sendRecovery(c.visitorId)}>
+                      {sendingId === c.visitorId ? "পাঠানো হচ্ছে..." : "Recovery ইমেইল পাঠান"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

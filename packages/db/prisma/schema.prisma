@@ -95,6 +95,9 @@ model Organization {
   trackingEvents TrackingEvent[]
   touchpoints    Touchpoint[]
   adAccounts     AdAccount[]
+  socialAccounts SocialAccount[]
+  socialPosts    SocialPost[]
+  mediaAssets    MediaAsset[]
   dailyAdMetrics DailyAdMetric[]
   dailyAggregates DailyMetricAggregate[]
   aiConversations AIConversation[]
@@ -119,6 +122,9 @@ model Organization {
   aiDailyLimitOverride  Int?
   broadcastCapOverride  Int?
   seatLimit             Int?
+  // SP7: when true, social posts by non-OWNER/ADMIN members need
+  // OWNER/ADMIN approval before they can be scheduled/published.
+  socialRequireApproval Boolean @default(false)
 }
 
 model Membership {
@@ -273,6 +279,9 @@ model Product {
   compareAtMinor BigInt?
   currency       String        @default("BDT")
   stockQuantity  Int?
+  // Sales & Data S1: per-product low-stock alert threshold.
+  // Null = the platform default (5, see InventoryService).
+  lowStockThreshold Int?
   imageUrl       String?
   source         String        @default("manual") // manual | csv | woocommerce | shopify
   externalId     String?
@@ -526,6 +535,9 @@ model Order {
   // Unified Inbox U3: delivery address captured in chat (bot v2 /
   // chat orders); previously it lived only in an internal note.
   address         String?
+  // Sales & Data S2: merchant-only internal note on the order
+  // (staff context; never sent to the customer or any platform).
+  internalNote   String?
   currency       String       @default("BDT")
   subtotalMinor  BigInt       @default(0)
   shippingMinor  BigInt       @default(0)
@@ -571,6 +583,8 @@ model Visitor {
   id             String           @id @default(uuid())
   organizationId String
   anonymousId    String
+  email          String?
+  phone          String?
   firstSeenAt    DateTime         @default(now())
   lastSeenAt     DateTime         @default(now())
   createdAt      DateTime         @default(now())
@@ -692,6 +706,33 @@ model AdAccount {
   name           String
   currency       String       @default("BDT")
   status         String       @default("ACTIVE")
+  // AD3: the platform's own account status, captured at connect and
+  // via refresh-status. platformStatusRaw is the platform's verbatim
+  // value (Meta numeric code as string, Google/TikTok status string);
+  // platformStatusBucket is the normalized active|disabled|restricted|
+  // unknown. Both stay null when the platform reports no status —
+  // never guessed. timezone is the account's platform-reported
+  // timezone (informational in v1).
+  platformStatusRaw       String?
+  platformStatusBucket    String?
+  timezone                String?
+  platformStatusCheckedAt DateTime?
+  // AD4: per-account spend watchdog — ALERTING ONLY (no platform kill
+  // switch is held at account level, and v1 builds no enforcement).
+  // dailyCapMinor is an alert threshold in the account's own currency
+  // minor units; anomalyPct alerts when today's spend reaches the
+  // trailing complete-day average × (1 + pct/100); null = off.
+  spendWatchEnabled Boolean  @default(false)
+  dailyCapMinor     BigInt?
+  anomalyPct        Int?
+  // AD5: per-account sync switch. When true, every platform-data
+  // sync path for this account (manual insights/breakdown/status
+  // sync + the scheduled insights jobs) refuses/skips — publishing
+  // is a different concern and is NOT affected by this flag.
+  syncDisabled      Boolean  @default(false)
+  // AD6: tenant-chosen display label (free text; trimmed and capped
+  // at 60 chars service-side). NULL/empty = show the platform name.
+  label             String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1245,6 +1286,31 @@ model CampaignPlan {
   abVariant            String?
   abMetric             String?
   advantagePlus Boolean @default(false)
+  // Campaign Builder CB2: optional plan-level daily
+  // budget cap (minor units). Submit + publish refuse
+  // when the ad sets' daily budgets sum above it.
+  dailyBudgetCapMinor BigInt?
+  // Campaign Builder CB4: the full definition frozen
+  // at submit-for-approval. Publish re-compares it —
+  // what was approved is what gets published.
+  submissionSnapshot Json?
+  // Campaign Builder CB5: scheduled launch. Only an
+  // APPROVED plan may carry this; the launch scan
+  // publishes it (PAUSED, as always) at this time.
+  publishAt DateTime?
+}
+
+// Campaign Builder CB4: discussion on a plan
+// (approval conversation, change requests, notes).
+model CampaignPlanComment {
+  id             String   @id @default(uuid())
+  organizationId String
+  planId         String
+  authorId       String
+  body           String
+  createdAt      DateTime @default(now())
+
+  @@index([planId, createdAt])
 }
 
 model CampaignAdSet {
@@ -1468,6 +1534,12 @@ model Workflow {
   conditions     Json? // [{field, op, value}] - all must pass
   steps          Json // [{type: send_email|send_sms|add_lead_activity, templateId?, text?}]
   enabled        Boolean  @default(true)
+  // Workflows W6 governance: minimum minutes between
+  // automated runs for the SAME entity (0 = off), and a
+  // per-day automated run cap (null = off). Manual and
+  // retry runs are deliberate and never governed.
+  cooldownMinutes Int     @default(0)
+  dailyRunCap     Int?
   createdById    String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1489,6 +1561,10 @@ model WorkflowRun {
   // resumeAt passes, continuing at nextStepIndex with its stored context.
   resumeAt       DateTime?
   nextStepIndex  Int      @default(0)
+  // Workflows W1: the steps as they were when the run
+  // started — editing the workflow never rewrites a
+  // run already in flight.
+  stepsSnapshot  Json?
   error          String?
   createdAt      DateTime @default(now())
   workflow       Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
@@ -1685,6 +1761,29 @@ model AgentPresence {
   @@index([organizationId, conversationId])
 }
 
+// Sales & Data S1: one row per stock change, so a product's
+// balance is always explainable. Loose-reference like
+// AgentNotification: plain organizationId, no relations.
+// reason: order_placed | order_cancelled | order_returned |
+// manual_adjustment | sync_correction. Negative balanceAfter is
+// recorded truthfully (oversell happens with COD commerce).
+model StockMovement {
+  id             String   @id @default(uuid())
+  organizationId String
+  productId      String
+  variantId      String?
+  delta          Int
+  balanceAfter   Int
+  reason         String
+  orderId        String?
+  actorUserId    String?
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, productId, createdAt])
+  @@index([orderId, reason])
+}
+
 // In-app agent notifications: assignments, @mentions, urgent chats.
 model AgentNotification {
   id             String    @id @default(uuid())
@@ -1854,11 +1953,52 @@ model PlatformPublication {
 
 // Public, read-only, expiring report link for clients (Phase I).
 // Shows spend/revenue/orders/platform metrics — never costs or profit.
+/// Reports Advanced RP2: a tenant-built report definition.
+/// metrics/dimension are validated against the engine's
+/// matrix in code (custom-reports.service.ts); rangePreset
+/// is one of last_7d | last_30d | this_month | last_month.
+model SavedReport {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  metrics        String[]
+  dimension      String // day | platform | campaign
+  rangePreset    String   @default("last_30d")
+  recipients     String[] @default([])
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+/// Reports Advanced RP5: a monthly target for one
+/// metric (revenue | orders | spend). Progress is
+/// computed on read from AnalyticsService.computeRange
+/// — never stored, never estimated.
+model ReportGoal {
+  id             String   @id @default(uuid())
+  organizationId String
+  month          String // YYYY-MM
+  metric         String // revenue | orders | spend
+  target         BigInt
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, month, metric])
+  @@index([organizationId])
+}
+
 model ReportShare {
   id             String   @id @default(uuid())
   organizationId String
   token          String   @unique
   title          String
+  // RP6: overview (default, M20 behaviour) | executive
+  // (RP6 summary — the public rendering still strips
+  // costs and profit for both kinds).
+  kind           String   @default("overview")
   days           Int      @default(30)
   expiresAt      DateTime
   createdById    String
@@ -2102,11 +2242,36 @@ model SupportTicketMessage {
   @@index([ticketId, createdAt])
 }
 
+/// Admin Polish AP2: server-side registry for view-as
+/// sessions. startViewAs creates a row; TenantGuard
+/// requires it to exist, be unrevoked and unexpired —
+/// so a session can be killed before its token's 30
+/// minutes are up.
+model ViewAsSession {
+  id             String    @id @default(cuid())
+  adminId        String
+  adminEmail     String
+  targetUserId   String
+  organizationId String
+  mode           String // read | write
+  reason         String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  revokedById    String?
+  createdAt      DateTime  @default(now())
+
+  @@index([adminId, revokedAt])
+  @@index([organizationId])
+}
+
 model AdminApiKey {
   id          String    @id @default(cuid())
   name        String
   keyPrefix   String // first chars, shown in the console
   keyHash     String    @unique // SHA-256 of the full key; the key itself is never stored
+  // AP3: scope grants (area:read|write|* or "*").
+  // Empty = legacy key with full access (pre-AP3).
+  scopes      String[]  @default([])
   createdById String
   lastUsedAt  DateTime?
   revokedAt   DateTime?
@@ -2294,6 +2459,163 @@ model AgentSchedule {
   @@index([organizationId])
 }
 
+// ---------- Social Media Post Scheduler SP1: foundation ----------
+// Organic (non-ad) social posting. SocialAccount is deliberately
+// SEPARATE from the inbox Meta connection: posting needs different
+// Meta permissions (pages_manage_posts / instagram_content_publish)
+// than messaging, so it gets its own Integration (provider
+// "meta_social") whose sealed credential is the PAGE access token
+// (see social.service.ts). platform/status are plain Strings,
+// matching the AdAccount convention in this schema.
+
+model SocialAccount {
+  id             String       @id @default(uuid())
+  organizationId String
+  integrationId  String?
+  platform       String // meta_page | instagram | tiktok | youtube
+  externalId     String // Meta Page id, or Instagram business account id
+  name           String
+  username       String?
+  pictureUrl     String?
+  status         String       @default("connected") // connected | disconnected
+  lastError      String?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts          SocialPost[]
+
+  @@unique([organizationId, platform, externalId])
+  @@index([organizationId])
+}
+
+model SocialPost {
+  id              String        @id @default(uuid())
+  organizationId  String
+  socialAccountId String
+  caption         String
+  linkUrl         String?
+  // [{ assetId, kind }] referencing MediaAsset rows of the same org.
+  mediaRefs       Json          @default("[]")
+  status          String        @default("draft") // draft | scheduled | publishing | published | failed | cancelled | sent_to_creator
+  scheduledAt     DateTime?
+  publishedAt     DateTime?
+  platformPostId  String?
+  platformUrl     String?
+  // SP8/SP9: an honest platform-state note recorded WITH a
+  // successful hand-off — e.g. TikTok inbox mode ("video Creator-
+  // এর inbox-এ পাঠানো হয়েছে, app-এ গিয়ে post সম্পূর্ণ করুন") or
+  // YouTube's unverified-app lock ("Private হিসেবে আপলোড হয়েছে").
+  // Null for plain Meta publishes, where published means published.
+  publishNote     String?
+  error           String?
+  // SP5: publish attempts used so far (reset when a failed post is
+  // re-scheduled; the publish worker caps at MAX_PUBLISH_ATTEMPTS).
+  attempts        Int           @default(0)
+  // SP7: published-post insights, stored EXACTLY as the platform
+  // returns them: { platform, reactions?, comments?, shares?,
+  // likeCount?, commentsCount?, impressions?, reach?, saved?,
+  // plays? } — a metric the platform does not return stays ABSENT
+  // from the object (never 0, never estimated).
+  insights         Json?
+  insightsFetchedAt DateTime?
+  // SP7: approval flow — only meaningful while the org setting
+  // Organization.socialRequireApproval is on. null = the post has
+  // no approval state (the setting is off, or the post predates
+  // it). Values: pending | approved | rejected.
+  approvalStatus   String?
+  submittedById    String?
+  reviewedById     String?
+  reviewNote       String?
+  createdById     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([socialAccountId])
+}
+
+// SP8/SP9: OAuth handshake state for operator-app platforms
+// (TikTok / YouTube), where the tenant authorizes on the
+// platform's own site instead of pasting a token. The row id IS
+// the unguessable `state` value (32 random bytes, base64url);
+// the callback validates it strictly: org + user + platform
+// binding, 10-minute expiry, single use (consumedAt). purpose
+// "channel_pick" is SP9's second step: after Google returns MORE
+// THAN ONE channel, payload holds the SEALED token bundle
+// (encryptJson — tokens never sit in this table in plaintext)
+// plus the channel list, while the tenant picks one.
+model SocialOAuthState {
+  id             String    @id
+  organizationId String
+  userId         String
+  platform       String // tiktok | youtube
+  purpose        String    @default("connect") // connect | channel_pick
+  payload        Json?
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId])
+  @@index([expiresAt])
+}
+
+// SP1 audit finding: MediaStore (inbox/media-store.ts) is byte
+// storage only — it has no asset registry. Inbox media is bound to
+// ChannelMessage rows and CreativeAsset is bound to an ad account,
+// so neither can represent a tenant's post media. This small
+// registry is that missing layer: one row per uploaded asset, with
+// an opt-in unguessable publicToken (Instagram publishing requires
+// a public media URL; tenant media stays private until the tenant
+// explicitly creates a public link).
+model MediaAsset {
+  id             String       @id @default(uuid())
+  organizationId String
+  kind           String // image | video
+  name           String
+  contentType    String
+  sizeBytes      Int
+  storageKey     String
+  publicToken    String?      @unique
+  // SP4: how this asset came to exist — upload | ai_generated | template.
+  // PP3 adds: imported (a product image fetched from its external URL).
+  origin         String       @default("upload")
+  // SP4: the (product-enriched) prompt for ai_generated assets; null otherwise.
+  prompt         String?
+  // PP1: for a mechanically derived asset (e.g. the PNG rasterized
+  // from an SVG poster), the id of the source MediaAsset. The
+  // publish path caches by (organizationId, derivedFromId,
+  // contentType) so each SVG is rasterized at most once per org.
+  derivedFromId  String?
+  // PP3: for an "imported" asset, the external URL the bytes were
+  // fetched from (the product's imageUrl). Dedupe key per
+  // organization: importing the same URL again returns the existing
+  // asset instead of fetching it a second time. Null otherwise.
+  sourceUrl      String?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// SP3: tenant-saved hashtag sets for social captions. No generic
+// tenant key-value store exists, so sets get this one small model;
+// tags is a JSON array of strings (without the leading "#").
+model SocialHashtagSet {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  tags           Json     @default("[]")
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
 // ==========================================
 // Omnichannel Social Comment Management & AI
 // ==========================================

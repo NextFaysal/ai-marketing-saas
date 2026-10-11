@@ -15,6 +15,9 @@ import { EmailChannelService } from "../inbox/channels/email.service";
 import { ProactiveService } from "../ai/proactive.service";
 import { LeadsService } from "../crm/leads.service";
 import { PaymentsService } from "../payments/payments.service";
+import { SocialPublishService } from "../social/social-publish.service";
+import { ReportExportService } from "../reports/report-export.service";
+import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { refreshPlatformConfig } from "../common/platform-config";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { platformSetting, effectiveLimits } from "../common/platform-settings";
@@ -22,12 +25,61 @@ import { platformSetting, effectiveLimits } from "../common/platform-settings";
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
-  "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
+  "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "monthly_report", "saved_report_delivery", "meta_status_sync", "audience_refresh", "dayparting",
   "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
-  "lead_followup_sweep", "auto_renew",
+  "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due",
 ] as const;
 
+
+/**
+ * Automations A4 — job template gallery (server-side catalogue,
+ * mirroring WORKFLOW_PRESETS so API and web share one list).
+ * Every template is grounded in a REAL executeJob case; the
+ * description states only what that case actually does.
+ * targetKind "org" installs with targetId = the organization id
+ * (the same convention as the Automations page's org job group);
+ * "integration"/"competitor" templates require the tenant to pick
+ * a target at install time — a target is never fabricated.
+ */
+export interface JobTemplate {
+  key: string;
+  name: string;
+  descriptionBn: string;
+  type: string;
+  targetKind: "org" | "integration" | "competitor";
+  intervalMinutes: number;
+}
+export const JOB_TEMPLATES: JobTemplate[] = [
+  { key: "woo_orders_sync", name: "WooCommerce Orders Sync (টেমপ্লেট)", type: "woo_orders", targetKind: "integration", intervalMinutes: 30,
+    descriptionBn: "বেছে নেওয়া WooCommerce স্টোরের অর্ডারগুলো প্রতি ৩০ মিনিটে Sync হবে — নতুন অর্ডার ও স্ট্যাটাসের পরিবর্তন এখানে চলে আসবে।" },
+  { key: "daily_briefing", name: "Daily AI Briefing (টেমপ্লেট)", type: "daily_briefing", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার AI ব্রিফিং তৈরি হবে — গত দিনের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ, সঙ্গে গুরুত্বপূর্ণ অস্বাভাবিক পরিবর্তনের (Anomaly) সতর্কতা।" },
+  { key: "daily_report", name: "Daily AI Report (টেমপ্লেট)", type: "daily_report", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার AI Daily Report তৈরি হবে — বিক্রি ও বিজ্ঞাপনের হালনাগাদ সারসংক্ষেপ Reports অংশে পাবেন।" },
+  { key: "monthly_report", name: "Monthly AI Report (টেমপ্লেট)", type: "monthly_report", targetKind: "org", intervalMinutes: 43200,
+    descriptionBn: "প্রতি ৩০ দিনে একবার AI Monthly Report তৈরি হবে — পুরো মাসের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ Reports অংশে পাবেন।" },
+  { key: "subscription_sweep", name: "Subscription Sweep (টেমপ্লেট)", type: "subscription_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার Subscription যাচাই হবে — মেয়াদ শেষ হলে নির্ধারিত Plan পরিবর্তন প্রয়োগ হবে বা Subscription Past Due চিহ্নিত হবে।" },
+  { key: "billing_reminders", name: "Billing Reminders (টেমপ্লেট)", type: "billing_reminders", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: মেয়াদ শেষের আগাম সতর্কতা এবং অসম্পূর্ণ (Abandoned) পেমেন্টের Reminder ইমেইল পাঠানো হবে।" },
+  { key: "lead_followup_sweep", name: "Lead Follow-up Sweep (টেমপ্লেট)", type: "lead_followup_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায় Lead ফলোআপ যাচাই হবে — আজকের ও Overdue ফলোআপের নোটিফিকেশন দায়িত্বপ্রাপ্ত সদস্যের কাছে যাবে (একই Lead-এর জন্য দিনে একবার)।" },
+  { key: "ad_spend_watchdog", name: "Ad Spend Watchdog (টেমপ্লেট)", type: "ad_spend_watchdog", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: Spend Watch চালু থাকা প্রতিটি Ad Account-এর আজকের খরচ যাচাই হবে — দৈনিক ক্যাপ ছুঁলে বা গত ৭ দিনের (বা যত দিনের ইতিহাস আছে) গড়ের তুলনায় অস্বাভাবিক বেশি হলে Owner/Admin নোটিফিকেশন পাবেন (Account প্রতি দিনে একবার করে)। এটি শুধু সতর্কতা — কোনো Campaign স্বয়ংক্রিয়ভাবে বন্ধ হবে না।" },
+  { key: "inbox_assignment_sweep", name: "Inbox Assignment Sweep (টেমপ্লেট)", type: "inbox_assignment_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: অ্যাসাইনবিহীন কথোপকথন এবং Away এজেন্টের কথোপকথন সক্রিয় এজেন্টদের মধ্যে পুনঃবণ্টন হবে।" },
+  { key: "competitor_multi_sync", name: "Competitor Multi-Platform Sync (টেমপ্লেট)", type: "competitor_multi_sync", targetKind: "competitor", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: বেছে নেওয়া প্রতিদ্বন্দ্বীর সব প্ল্যাটফর্মের (Meta/Google/TikTok/Bing) বিজ্ঞাপন একসাথে Sync হবে।" },
+  { key: "meta_status_sync", name: "Meta Status Sync (টেমপ্লেট)", type: "meta_status_sync", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: সব Published Campaign Plan-এর Meta Status Sync হবে — Meta-তে বাইরে থেকে বদলালে এখানেও তা মিলে যাবে।" },
+  { key: "audience_refresh", name: "Audience Refresh (টেমপ্লেট)", type: "audience_refresh", targetKind: "org", intervalMinutes: 360,
+    descriptionBn: "প্রতি ৬ ঘণ্টায়: সব Audience-এর সদস্য তালিকা হালনাগাদ ডেটা দিয়ে Refresh হবে।" },
+  { key: "audit_retention", name: "Audit Retention (টেমপ্লেট)", type: "audit_retention", targetKind: "org", intervalMinutes: 10080,
+    descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।" },
+  { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: শিডিউল করা Social পোস্টগুলোর সময় হয়ে গেলে সেগুলো Facebook Page / Instagram-এ প্রকাশ হবে। প্রকাশ ব্যর্থ হলে ব্যবধান রেখে আবার চেষ্টা হবে (সর্বোচ্চ ৩ বার), তারপর পোস্টটি Failed হবে ও Owner/Admin নোটিফিকেশন পাবেন।" },
+];
 
 export const RULE_METRICS = [
   "platform_cpa", "platform_roas", "spend_no_conversions",
@@ -62,6 +114,8 @@ export class AutomationService implements OnModuleInit {
     @Optional() private readonly proactive?: ProactiveService,
     @Optional() private readonly leads?: LeadsService,
     @Optional() private readonly payments?: PaymentsService,
+    @Optional() private readonly socialPublish?: SocialPublishService,
+    @Optional() private readonly reportExports?: ReportExportService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -149,7 +203,58 @@ export class AutomationService implements OnModuleInit {
       entityType: "ScheduledJob", entityId: input.scheduledJobId,
       metadata: { error: row.error, attempts: row.attempts },
     }).catch(() => undefined);
+    // Automations A3: tell the org a job died for good. Fully
+    // failure-isolated — a notification problem never affects
+    // job processing or the DLQ write above.
+    await this.notifyDeadLettered(row, job).catch(() => undefined);
     return row;
+  }
+
+  /**
+   * Automations A3 — dead-letter notification. Fires when a NEW
+   * DeadLetterJob row lands for a real ScheduledJob: ACTIVE
+   * OWNER/ADMIN members get an AgentNotification (type
+   * "job_dead_letter"), at most once per job per Asia/Dhaka day
+   * (AuditLog marker "automation.dead_letter_notified", the
+   * C1/S1 dedupe discipline). Webhook dead letters carry no org
+   * (organizationId null) and never notify — there is nobody
+   * tenant-side to notify. Never throws.
+   */
+  private async notifyDeadLettered(row: any, job: any): Promise<void> {
+    try {
+      if (!row?.organizationId || !job) return;
+      const marker = await (this.prisma as any).auditLog.findFirst({
+        where: {
+          organizationId: row.organizationId, action: "automation.dead_letter_notified",
+          entityType: "ScheduledJob", entityId: job.id,
+          createdAt: { gte: dhakaDayStartUtc(new Date()) },
+        },
+      }).catch(() => null);
+      if (marker) return;
+      const memberships = await (this.prisma as any).membership.findMany({
+        where: { organizationId: row.organizationId, status: "ACTIVE" }, take: 200,
+      }).catch(() => []);
+      const recipients = [...new Set((memberships as any[])
+        .filter((m) => ["OWNER", "ADMIN"].includes(m.role))
+        .map((m) => m.userId as string))];
+      if (recipients.length === 0) return;
+      const errorText = String(row.error ?? "");
+      const excerpt = errorText.length > 200 ? `${errorText.slice(0, 200)}…` : errorText;
+      const title = `অটোমেশন ব্যর্থ হয়েছে: ${job.name}`;
+      const body = `“${job.name}” (${row.jobType ?? job.type}) Jobটি সব চেষ্টা শেষে ব্যর্থ হয়েছে — মোট ${row.attempts ?? 0} বার চেষ্টা করা হয়েছিল। ত্রুটি: ${excerpt} Automations পেজের Dead Letter অংশে বিস্তারিত দেখে আবার চালাতে পারবেন।`;
+      for (const userId of recipients) {
+        await (this.prisma as any).agentNotification.create({
+          data: { organizationId: row.organizationId, userId, type: "job_dead_letter", title, body, conversationId: null },
+        }).catch(() => undefined);
+      }
+      await this.audit.log({
+        organizationId: row.organizationId, userId: undefined, action: "automation.dead_letter_notified",
+        entityType: "ScheduledJob", entityId: job.id,
+        metadata: { dlqId: row.id, jobType: row.jobType ?? job.type, attempts: row.attempts ?? 0, recipients: recipients.length },
+      });
+    } catch (e) {
+      this.logger.warn(`dead-letter notification failed for dlq ${row?.id}: ${e instanceof Error ? e.message : "unknown"}`);
+    }
   }
 
   async listDlq(take = 50) {
@@ -175,6 +280,115 @@ export class AutomationService implements OnModuleInit {
     }
     void this.executeScheduledJobById(job.id).catch(() => undefined);
     return { replayed: true, mode: "inline" };
+  }
+
+  // ---------- Automations A3: tenant automation health ----------
+
+  /** Bounded excerpt of a stored dead-letter error (the row keeps
+   * up to 2000 chars from the write path). The list API never
+   * ships the full text: it returns at most DLQ_ERROR_EXCERPT
+   * chars plus the true length, so truncation is explicit. */
+  static readonly DLQ_ERROR_EXCERPT = 300;
+
+  async listOrgDeadLetters(organizationId: string, query: { take?: unknown; skip?: unknown; openOnly?: unknown } = {}) {
+    const take = Math.min(50, Math.max(1, Math.floor(Number(query.take ?? 20)) || 20));
+    const skip = Math.max(0, Math.floor(Number(query.skip ?? 0)) || 0);
+    const openOnly = query.openOnly === true || query.openOnly === "true" || query.openOnly === "1";
+    const where: Record<string, unknown> = { organizationId, ...(openOnly ? { replayedAt: null } : {}) };
+    const [total, rows] = await Promise.all([
+      (this.prisma as any).deadLetterJob.count({ where }),
+      (this.prisma as any).deadLetterJob.findMany({ where, orderBy: { createdAt: "desc" }, skip, take }),
+    ]);
+    const jobIds = [...new Set((rows as any[])
+      .map((r) => r.scheduledJobId as string | null)
+      .filter((id): id is string => Boolean(id) && !id!.startsWith("webhook:")))];
+    const jobs = jobIds.length
+      ? await (this.prisma as any).scheduledJob.findMany({ where: { id: { in: jobIds }, organizationId } }).catch(() => [])
+      : [];
+    const names = new Map((jobs as any[]).map((j) => [j.id as string, j.name as string]));
+    return {
+      total,
+      entries: (rows as any[]).map((r) => {
+        const full = String(r.error ?? "");
+        const truncated = full.length > AutomationService.DLQ_ERROR_EXCERPT;
+        return {
+          id: r.id,
+          jobType: r.jobType ?? null,
+          scheduledJobId: r.scheduledJobId ?? null,
+          jobName: r.scheduledJobId ? (names.get(r.scheduledJobId) ?? null) : null,
+          error: truncated ? full.slice(0, AutomationService.DLQ_ERROR_EXCERPT) : full,
+          errorTruncated: truncated,
+          errorLength: full.length,
+          attempts: r.attempts ?? 0,
+          createdAt: r.createdAt,
+          replayedAt: r.replayedAt ?? null,
+          open: !r.replayedAt,
+        };
+      }),
+    };
+  }
+
+  /** Tenant-scoped replay: the row must belong to the caller's
+   * org (another org's entry is a 404, never a leak), then the
+   * EXISTING replayDlq mechanism does the work — mark replayedAt,
+   * audit, re-enqueue (queue mode) or execute inline. */
+  async replayOrgDeadLetter(organizationId: string, dlqId: string, actorId: string) {
+    const row = await (this.prisma as any).deadLetterJob.findFirst({ where: { id: dlqId, organizationId } });
+    if (!row) throw new NotFoundException("Dead-letter entry not found");
+    return this.replayDlq(dlqId, actorId);
+  }
+
+  /**
+   * Per-job health, derived ONLY from stored AutomationRun rows
+   * (kind "schedule") and the job row itself:
+   * - runs7d / decided7d: runs in the last 7 days; decided =
+   *   success + error (skipped/triggered never count as decided).
+   * - successRate7d: success7d / decided7d, null when decided7d
+   *   is 0 — never a fabricated 0 or 100.
+   * - consecutiveFailures: error runs counting back from the
+   *   newest decided run until the first success (scan capped at
+   *   the latest 100 runs of the job).
+   * - band: "never_run" when no decided run exists (job row's
+   *   lastStatus is the fallback witness), "failing" when the
+   *   latest decided run is an error, else "ok".
+   */
+  async getAutomationHealth(organizationId: string) {
+    const jobs = await this.listJobs(organizationId);
+    const since = new Date(Date.now() - 7 * 86400000);
+    const health: any[] = [];
+    for (const job of jobs as any[]) {
+      const base = { organizationId, kind: "schedule", refId: job.id };
+      const [runs7d, success7d, error7d, recent] = await Promise.all([
+        (this.prisma as any).automationRun.count({ where: { ...base, createdAt: { gte: since } } }),
+        (this.prisma as any).automationRun.count({ where: { ...base, status: "success", createdAt: { gte: since } } }),
+        (this.prisma as any).automationRun.count({ where: { ...base, status: "error", createdAt: { gte: since } } }),
+        (this.prisma as any).automationRun.findMany({ where: base, orderBy: { createdAt: "desc" }, take: 100 }),
+      ]);
+      const decided7d = success7d + error7d;
+      let consecutiveFailures = 0;
+      let latestDecided: string | null = null;
+      for (const run of recent as any[]) {
+        if (run.status !== "success" && run.status !== "error") continue;
+        if (latestDecided === null) latestDecided = run.status;
+        if (run.status === "success") break;
+        consecutiveFailures++;
+      }
+      const band = latestDecided !== null
+        ? (latestDecided === "error" ? "failing" : "ok")
+        : (job.lastStatus === "error" ? "failing" : job.lastStatus === "success" ? "ok" : "never_run");
+      health.push({
+        jobId: job.id, name: job.name, type: job.type, enabled: job.enabled,
+        lastRunAt: job.lastRunAt ?? null, lastStatus: job.lastStatus ?? null, lastError: job.lastError ?? null,
+        runs7d, decided7d,
+        successRate7d: decided7d > 0 ? Math.round((success7d / decided7d) * 10000) / 10000 : null,
+        consecutiveFailures, band,
+      });
+    }
+    const [openCount, latest] = await Promise.all([
+      (this.prisma as any).deadLetterJob.count({ where: { organizationId, replayedAt: null } }),
+      this.listOrgDeadLetters(organizationId, { take: 20 }),
+    ]);
+    return { jobs: health, deadLetters: { openCount, latest: latest.entries } };
   }
 
   onModuleInit() {
@@ -233,6 +447,51 @@ export class AutomationService implements OnModuleInit {
     return (this.prisma as any).scheduledJob.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" } });
   }
 
+  // ---------- Automations A4: job template gallery ----------
+
+  listJobTemplates() {
+    return JOB_TEMPLATES;
+  }
+
+  /**
+   * One-click install: creates a REAL ScheduledJob through the
+   * existing createJob path (so the job is enabled with the
+   * codebase's normal job defaults and runs on the normal
+   * schedule). Org templates target the organization itself;
+   * integration/competitor templates require the tenant's chosen
+   * targetId, validated to belong to the org. Installing the same
+   * template target twice is refused — a duplicate sweep would
+   * only double store/API calls.
+   */
+  async installJobTemplate(organizationId: string, actorId: string, key: string, dto?: { targetId?: string; name?: string }) {
+    const tpl = JOB_TEMPLATES.find((t) => t.key === key);
+    if (!tpl) throw new NotFoundException("Job template not found");
+    let targetId = organizationId;
+    if (tpl.targetKind !== "org") {
+      if (!dto?.targetId) {
+        throw new BadRequestException(tpl.targetKind === "integration"
+          ? "এই টেমপ্লেটের জন্য একটি Store Integration বেছে দিতে হবে"
+          : "এই টেমপ্লেটের জন্য একটি Competitor বেছে দিতে হবে");
+      }
+      targetId = dto.targetId;
+      const table = (this.prisma as any)[tpl.targetKind === "integration" ? "integration" : "competitor"];
+      const owned = table ? await table.findFirst({ where: { id: targetId, organizationId } }).catch(() => null) : null;
+      if (!owned) {
+        throw new BadRequestException(tpl.targetKind === "integration"
+          ? "Integration not found in this organization"
+          : "Competitor not found in this organization");
+      }
+    }
+    const existing = await (this.prisma as any).scheduledJob.findFirst({
+      where: { organizationId, type: tpl.type, targetId },
+    });
+    if (existing) throw new BadRequestException("এই টেমপ্লেটের Job ইতিমধ্যে তৈরি আছে");
+    return this.createJob(organizationId, actorId, {
+      name: dto?.name?.trim() ? dto.name.trim() : tpl.name,
+      type: tpl.type, targetId, intervalMinutes: tpl.intervalMinutes,
+    });
+  }
+
   private async getJobOrThrow(organizationId: string, jobId: string) {
     const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: jobId, organizationId } });
     if (!job) throw new NotFoundException("Scheduled job not found");
@@ -265,15 +524,20 @@ export class AutomationService implements OnModuleInit {
       case "woo_orders": return this.integrations.syncOrders(orgId, actor, job.targetId);
       case "shopify_products": return this.shopify.syncProducts(orgId, actor, job.targetId);
       case "shopify_orders": return this.shopify.syncOrders(orgId, actor, job.targetId);
-      case "meta_insights": return this.ads.syncMetaInsights(orgId, actor, job.targetId, {});
-      case "google_insights": return this.ads.syncGoogleInsights(orgId, actor, job.targetId, {});
-      case "tiktok_insights": return this.ads.syncTikTokInsights(orgId, actor, job.targetId, {});
+      // AD5: scheduled insights syncs go through the job entry
+      // point so a sync-disabled account is SKIPPED (the skip
+      // marker becomes the run result) instead of failing the job.
+      case "meta_insights": return this.ads.syncInsightsJob("meta", orgId, actor, job.targetId);
+      case "google_insights": return this.ads.syncInsightsJob("google", orgId, actor, job.targetId);
+      case "tiktok_insights": return this.ads.syncInsightsJob("tiktok", orgId, actor, job.targetId);
       case "daily_report": return this.reports.generate(orgId, actor, { type: "daily" });
       case "daily_briefing": return this.proactive ? this.proactive.runDailyBriefing(orgId, actor) : { skipped: "proactive service unavailable" };
       case "competitor_ads": return this.competitors.syncAds(orgId, actor, job.targetId, {});
       case "competitor_scan": return this.competitors.scanWebsite(orgId, actor, job.targetId);
       case "competitor_multi_sync": return this.competitors.syncMultiPlatform(orgId, actor, job.targetId);
       case "weekly_ads_report": return this.sendWeeklyAdsReport(orgId);
+      case "monthly_report": return this.reports.generate(orgId, actor, { type: "monthly" });
+      case "saved_report_delivery": return this.deliverSavedReport(orgId, job.targetId);
 
       case "dunning_reminders": return this.sendDunningReminder(orgId);
       case "billing_reminders": return this.sendBillingReminders(orgId);
@@ -292,6 +556,14 @@ export class AutomationService implements OnModuleInit {
       case "lead_followup_sweep": {
         if (!this.leads) throw new BadRequestException("Leads service is not available in this deployment");
         return this.leads.sweepFollowUpReminders(orgId);
+      }
+      case "ad_spend_watchdog": {
+        if (!this.ads) throw new BadRequestException("Ads service is not available in this deployment");
+        return this.ads.runSpendWatchdog(orgId);
+      }
+      case "social_publish_due": {
+        if (!this.socialPublish) throw new BadRequestException("Social publish service is not available in this deployment");
+        return this.socialPublish.runDuePublishes(orgId);
       }
       case "auto_renew": {
         if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");
@@ -430,6 +702,40 @@ export class AutomationService implements OnModuleInit {
       sent++;
     }
     return { sent, recipients: recipients.length, spendMinor: spend.toString(), orders: revenueOrders.length };
+  }
+
+  /**
+   * Reports Advanced RP4: deliver a tenant's saved
+   * report by email. Recipients = the report's own
+   * list ∪ OWNER/ADMIN member emails ∪ the business
+   * profile's billing emails. A send counts only when
+   * the provider confirms (send() throws otherwise,
+   * failing the job honestly). No recipients at all
+   * is a job failure, not a silent success.
+   */
+  async deliverSavedReport(organizationId: string, savedReportId: string) {
+    if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
+    if (!this.reportExports) throw new BadRequestException("Report export service is not available in this deployment");
+    const def = await (this.prisma as any).savedReport.findFirst({ where: { id: savedReportId, organizationId } }).catch(() => null);
+    if (!def) throw new BadRequestException("Saved report not found for this job's target");
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] }, status: "ACTIVE" }, include: { user: true },
+    }).catch(() => []);
+    const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId }, select: { billingEmails: true } }).catch(() => null);
+    const billing = Array.isArray(profile?.billingEmails) ? profile.billingEmails : [];
+    const recipients = [...new Set([
+      ...(def.recipients ?? []),
+      ...(memberships ?? []).map((m: any) => m.user?.email).filter(Boolean),
+      ...billing.map((b: any) => String(b)).filter((b: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b)),
+    ])] as string[];
+    if (!recipients.length) throw new BadRequestException("No email recipients found for this report (report recipients, OWNER/ADMIN, billing contacts all empty)");
+    const parts = await this.reportExports.savedEmailParts(organizationId, savedReportId);
+    let sent = 0;
+    for (const to of recipients) {
+      await this.email.send({ to, subject: parts.subject, text: parts.text, html: parts.html });
+      sent++;
+    }
+    return { sent, recipients: recipients.length, reportId: savedReportId };
   }
 
   /** Milestone 39 dunning: staged PAST_DUE reminders (stage 1 on

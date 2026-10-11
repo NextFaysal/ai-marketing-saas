@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { CreateManualOrderDto } from "./orders.dto";
+import { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -28,9 +28,27 @@ export class OrdersController {
     });
   }
 
+  /** Sales & Data S3: CSV export of this org's orders only.
+   * Declared before ":orderId/risk" / ":orderId" so the literal
+   * "export" wins over the parameter routes. */
+  @Get("export") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=orders-export.csv")
+  exportCsv(@Param("organizationId") orgId: string, @Query() q: { status?: string; cod?: string; from?: string; to?: string }) {
+    return this.orders.exportCsv(orgId, {
+      status: q.status, isCod: q.cod === undefined ? undefined : q.cod === "true",
+      from: q.from, to: q.to,
+    });
+  }
+
   @Get(":orderId/risk")
   risk(@Param("organizationId") orgId: string, @Param("orderId") id: string) { return this.orders.riskForOrder(orgId, id); }
 
   @Get(":orderId")
   getOne(@Param("organizationId") orgId: string, @Param("orderId") id: string) { return this.orders.getOne(orgId, id); }
+
+  /** Sales & Data S2: order actions — status change, refund
+   * recording, internal note (each independently optional). */
+  @Patch(":orderId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  update(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: UpdateOrderDto) {
+    return this.orders.updateOrder(orgId, user.userId, id, dto);
+  }
 }

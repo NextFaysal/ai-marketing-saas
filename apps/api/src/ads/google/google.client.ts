@@ -60,8 +60,11 @@ export class GoogleAdsClient {
     return this.accessToken;
   }
 
-  /** Light-weight connectivity check: fetch the customer resource. */
-  async verifyCustomer(customerId: string): Promise<{ id: string; descriptiveName?: string; currencyCode?: string }> {
+  /** Light-weight connectivity check: fetch the customer resource.
+   * The same resource genuinely carries `status` (CustomerStatus)
+   * and `timeZone`; both are returned verbatim when present and
+   * left undefined when Google does not send them (AD3). */
+  async verifyCustomer(customerId: string): Promise<{ id: string; descriptiveName?: string; currencyCode?: string; status?: string; timeZone?: string }> {
     const token = await this.getAccessToken();
     const id = customerId.replace(/-/g, "");
     const res = await this.fetchFn(`https://googleads.googleapis.com/${this.version}/customers/${id}`, {
@@ -69,7 +72,11 @@ export class GoogleAdsClient {
     });
     const body: any = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`Google Ads customer check failed (${res.status}): ${body?.error?.message ?? "unknown error"}`);
-    return { id: String(body.id ?? id), descriptiveName: body.descriptiveName, currencyCode: body.currencyCode };
+    return {
+      id: String(body.id ?? id), descriptiveName: body.descriptiveName, currencyCode: body.currencyCode,
+      status: body.status ? String(body.status) : undefined,
+      timeZone: body.timeZone ? String(body.timeZone) : undefined,
+    };
   }
 
   private headers(token: string): Record<string, string> {

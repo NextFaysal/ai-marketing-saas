@@ -9,7 +9,7 @@ import { getOrganizationId } from "@/lib/org";
 const GROUPS: { title: string; hrefs: string[] }[] = [
   { title: "সারসংক্ষেপ", hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports"] },
   { title: "বিক্রি ও ডেটা", hrefs: ["/dashboard/products", "/dashboard/integrations", "/dashboard/orders", "/dashboard/attribution", "/dashboard/knowledge"] },
-  { title: "বিজ্ঞাপন", hrefs: ["/dashboard/ad-accounts", "/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/analytics", "/dashboard/profit", "/dashboard/competitors"] },
+  { title: "বিজ্ঞাপন", hrefs: ["/dashboard/ad-accounts", "/dashboard/campaigns", "/dashboard/social-posts", "/dashboard/campaign-builder", "/dashboard/analytics", "/dashboard/profit", "/dashboard/competitors"] },
   { title: "গ্রাহক ও অটোমেশন", hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/customers", "/dashboard/messaging", "/dashboard/workflows", "/dashboard/automations"] },
   { title: "সেটিংস", hrefs: ["/dashboard/billing", "/dashboard/support", "/dashboard/team", "/dashboard/settings"] },
 ];

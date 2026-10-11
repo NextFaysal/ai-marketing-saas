@@ -14,10 +14,18 @@ export default function SecurityPage() {
   const router = useRouter();
   const [data, setData] = React.useState<SecurityData | null>(null);
   const [msg, setMsg] = React.useState("");
-  const [enroll, setEnroll] = React.useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [enroll, setEnroll] = React.useState<{ secret: string; otpauthUrl: string; qrDataUrl?: string } | null>(null);
   const [code, setCode] = React.useState("");
   const load = React.useCallback(async () => { setData(await apiFetch<SecurityData>("/admin/security").catch(() => null)); }, []);
   React.useEffect(() => { load(); }, [load]);
+  // AP2: view-as sessions (server-side registry).
+  const [vaSessions, setVaSessions] = React.useState<{ id: string; adminEmail: string; organizationId: string; mode: string; active: boolean; expiresAt: string; createdAt: string }[]>([]);
+  const loadSessions = React.useCallback(async () => { setVaSessions(await apiFetch<{ id: string; adminEmail: string; organizationId: string; mode: string; active: boolean; expiresAt: string; createdAt: string }[]>("/admin/view-as/sessions").catch(() => [])); }, []);
+  React.useEffect(() => { loadSessions(); }, [loadSessions]);
+  async function revokeSession(id: string) {
+    try { await apiFetch(`/admin/view-as/sessions/${id}/revoke`, { method: "POST" }); setMsg("✅ View-As সেশন বাতিল হয়েছে — ওই Token আর কাজ করবে না।"); await loadSessions(); }
+    catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+  }
 
   async function confirmEnroll() {
     try {
@@ -43,6 +51,13 @@ export default function SecurityPage() {
           ) : null}
           {enroll ? (
             <div className="space-y-2 rounded-lg bg-slate-800 p-3 text-sm">
+              {enroll.qrDataUrl ? (
+                <div className="space-y-1">
+                  <div>Authenticator অ্যাপ দিয়ে QR টি Scan করুন:</div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={enroll.qrDataUrl} alt="TOTP QR" className="rounded bg-white p-1" width={180} height={180} />
+                </div>
+              ) : null}
               <div>Secret (Authenticator এ হাতে লিখুন):</div>
               <code className="block break-all rounded bg-slate-900 p-2 text-indigo-300">{enroll.secret}</code>
               <div className="break-all text-xs text-slate-500">{enroll.otpauthUrl}</div>
@@ -90,18 +105,35 @@ export default function SecurityPage() {
           <p className="text-xs text-slate-500">সব Admin হারিয়ে গেলে একমাত্র উদ্ধার পথ: সার্ভার Shell থেকে <code>node scripts/grant-admin.mjs &lt;email&gt;</code> — এটি TOTP রিসেট করে দেয় (Break-Glass) এবং Audit এ রেকর্ড থাকে।</p>
         </div>
       </div>
+      <div className="acard mt-4 space-y-3">
+        <div className="font-semibold">👁️ View-As সেশন <span className="text-xs font-normal text-slate-400">(Admin Polish AP2 — Server-side Revocation)</span></div>
+        <p className="text-xs text-slate-500">সেশন বাতিল করলে ওই View-As Token সঙ্গে সঙ্গে অকার্যকর হয়ে যাবে — Token-এর ৩০ মিনিট মেয়াদের অপেক্ষা করতে হবে না।</p>
+        {vaSessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সেশন নেই।</p> : (
+          <ul className="space-y-2">
+            {vaSessions.slice(0, 15).map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
+                <span>{s.adminEmail} → Org {s.organizationId.slice(0, 8)}… · {s.mode} · {s.active ? <span className="abadge-green">সক্রিয়</span> : <span className="abadge-amber">শেষ/বাতিল</span>} <span className="text-xs text-slate-500">মেয়াদ {new Date(s.expiresAt).toLocaleString("bn-BD")}</span></span>
+                {s.active ? <button className="abtn-danger" onClick={() => revokeSession(s.id)}>বাতিল করুন</button> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <ApiKeysAndAnomalies />
     </AdminShell>
   );
 }
 
-interface ApiKeyRow { id: string; name: string; keyPrefix: string; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }
+interface ApiKeyRow { id: string; name: string; keyPrefix: string; scopes?: string[]; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }
+const SCOPE_AREAS = ["tenants", "billing", "growth", "admins", "system"] as const;
 interface Anomaly { email: string; failures: number; lastAt: string; note: string }
 
 function ApiKeysAndAnomalies() {
   const [keys, setKeys] = React.useState<ApiKeyRow[]>([]);
   const [anomalies, setAnomalies] = React.useState<Anomaly[]>([]);
   const [name, setName] = React.useState("");
+  const [scopeSel, setScopeSel] = React.useState<string[]>(["system:read"]);
   const [shownKey, setShownKey] = React.useState("");
   const [msg, setMsg] = React.useState("");
   const load = React.useCallback(async () => {
@@ -119,17 +151,32 @@ function ApiKeysAndAnomalies() {
           <input className="ainput" placeholder="Key এর নাম — যেমন: Uptime monitor" value={name} onChange={(e) => setName(e.target.value)} />
           <button className="abtn" onClick={async () => {
             if (name.trim().length < 3) { setMsg("নাম দিন (কমপক্ষে ৩ অক্ষর)।"); return; }
+            if (!scopeSel.length) { setMsg("অন্তত একটি Scope বেছে নিন।"); return; }
             try {
-              const out = await apiFetch<{ key: string }>("/admin/security/api-keys", { method: "POST", body: JSON.stringify({ name }) });
+              const out = await apiFetch<{ key: string }>("/admin/security/api-keys", { method: "POST", body: JSON.stringify({ name, scopes: scopeSel }) });
               setShownKey(out.key); setName(""); setMsg("Key তৈরি হয়েছে — নিচে থেকে এখনই কপি করে নিরাপদে রাখুন।"); await load();
             } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
           }}>তৈরি করুন</button>
+        </div>
+        <div className="space-y-1 text-xs text-slate-400">
+          <div>Scope (AP3) — Key শুধু বেছে দেওয়া এলাকাতেই কাজ করবে:</div>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={scopeSel.includes("*")} onChange={(e) => setScopeSel(e.target.checked ? ["*"] : [])} /> <b>*</b> পূর্ণ ক্ষমতা (Full access)</label>
+          {scopeSel.includes("*") ? null : SCOPE_AREAS.map((a) => (
+            <span key={a} className="mr-3 inline-flex items-center gap-2">
+              <span className="text-slate-500">{a}:</span>
+              {(["read", "write"] as const).map((v) => (
+                <label key={v} className="inline-flex items-center gap-1">
+                  <input type="checkbox" checked={scopeSel.includes(`${a}:${v}`)} onChange={(e) => setScopeSel((prev) => e.target.checked ? [...prev, `${a}:${v}`] : prev.filter((g) => g !== `${a}:${v}`))} /> {v}
+                </label>
+              ))}
+            </span>
+          ))}
         </div>
         {shownKey ? <input className="ainput" readOnly value={shownKey} onFocus={(e) => e.target.select()} /> : null}
         <ul className="space-y-2">
           {keys.map((k) => (
             <li key={k.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-              <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}</span></span>
+              <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}</span><span className="block text-xs text-indigo-300">{!k.scopes?.length ? "Scope: legacy — পূর্ণ ক্ষমতা" : `Scope: ${k.scopes.join(", ")}`}</span></span>
               {k.revokedAt ? <span className="abadge-red">বাতিল</span> : (
                 <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
                   const reason = window.prompt("Key বাতিলের কারণ (Audit এ থাকবে):");
@@ -157,6 +204,7 @@ function ApiKeysAndAnomalies() {
         )}
         <p className="text-xs text-slate-500">ব্যর্থ লগইন Audit Log এ রেকর্ড হয় (শুধু ইমেইল — পাসওয়ার্ড কখনোই নয়)।</p>
       </div>
+
     </div>
   );
 }

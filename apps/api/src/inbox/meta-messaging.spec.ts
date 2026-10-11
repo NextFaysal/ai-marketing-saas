@@ -32,8 +32,11 @@ describe("parseMetaWebhook", () => {
     expect(echo.messages).toHaveLength(0);
   });
   it("garbage payloads parse to empty", () => {
-    expect(parseMetaWebhook(null)).toEqual({ messages: [], statuses: [], leadgens: [] });
-    expect(parseMetaWebhook({})).toEqual({ messages: [], statuses: [], leadgens: [] });
+    // Merge note (owner series e115adf): the parser gained an
+    // additive `comments` array (social comment ingest); the empty
+    // shape assertions include it — behaviour otherwise unchanged.
+    expect(parseMetaWebhook(null)).toEqual({ messages: [], statuses: [], leadgens: [], comments: [] });
+    expect(parseMetaWebhook({})).toEqual({ messages: [], statuses: [], leadgens: [], comments: [] });
   });
 });
 

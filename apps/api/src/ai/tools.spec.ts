@@ -22,6 +22,26 @@ function table(rows: any[] = []) {
 function fakePrisma(tables: Record<string, any[]>) {
   const out: any = {};
   for (const [name, rows] of Object.entries(tables)) out[name] = table(rows);
+  // SC1: computeRfm aggregates via order.groupBy (two placedAt
+  // partitions). Emulate it over the fake order rows.
+  if (out.order) {
+    out.order.groupBy = async (args: any) => {
+      const wantNull = args.where.placedAt === null;
+      const sel = (out.order.rows as any[]).filter((o) =>
+        o.organizationId === args.where.organizationId && o.status !== "cancelled" && o.customerId != null
+        && (wantNull ? o.placedAt == null : o.placedAt != null));
+      const byId = new Map<string, any>();
+      for (const o of sel) {
+        const g = byId.get(o.customerId) ?? { customerId: o.customerId, _count: { _all: 0 }, _sum: { totalMinor: 0n }, _max: {} };
+        g._count._all++;
+        g._sum.totalMinor += BigInt(o.totalMinor ?? 0);
+        if (wantNull) { const t = o.createdAt ?? o.placedAt; if (t && (!g._max.createdAt || t > g._max.createdAt)) g._max.createdAt = t; }
+        else if (o.placedAt && (!g._max.placedAt || o.placedAt > g._max.placedAt)) g._max.placedAt = o.placedAt;
+        byId.set(o.customerId, g);
+      }
+      return [...byId.values()];
+    };
+  }
   return out;
 }
 /** Analytics stub keyed by the range start date, shaped like computeRange.

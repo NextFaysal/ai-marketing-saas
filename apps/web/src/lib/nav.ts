@@ -10,6 +10,7 @@ export const NAV_ITEMS = [
   { label: "Orders", href: "/dashboard/orders", ready: true },
   { label: "Advertising Accounts", href: "/dashboard/ad-accounts", ready: true },
   { label: "Campaigns", href: "/dashboard/campaigns", ready: true },
+  { label: "📣 Social Posts", href: "/dashboard/social-posts", ready: true },
   { label: "Creatives", href: "/dashboard/creatives", ready: true },
   { label: "Audiences", href: "/dashboard/audiences", ready: true },
   { label: "Campaign Builder", href: "/dashboard/campaign-builder", ready: true },
