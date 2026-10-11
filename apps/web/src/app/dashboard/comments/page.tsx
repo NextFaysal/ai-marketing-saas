@@ -275,6 +275,32 @@ export default function SocialCommentsPage() {
     }
   }
 
+  async function handleQuickAutoReply(cmt: SocialCommentItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      setNotice(`🤖 ${cmt.authorName}-এর জন্য AI উত্তর জেনারেট হচ্ছে...`);
+      const suggestion = await apiFetch<{ aiPlan: { publicCommentReply: string; privateDmText?: string; shouldSendDm: boolean } }>(
+        `/organizations/${orgId}/social-comments/${cmt.id}/suggest-ai`,
+        { method: "POST" }
+      );
+      if (suggestion?.aiPlan?.publicCommentReply) {
+        await apiFetch(`/organizations/${orgId}/social-comments/${cmt.id}/reply`, {
+          method: "POST",
+          body: JSON.stringify({
+            replyText: suggestion.aiPlan.publicCommentReply,
+            sendPrivateDm: suggestion.aiPlan.shouldSendDm,
+            privateDmText: suggestion.aiPlan.privateDmText,
+          }),
+        });
+        setNotice(`⚡ ${cmt.authorName}-এর কমেন্টে ১-ক্লিকে মানুষের মতো AI রিপ্লাই সফলভাবে পাঠানো হয়েছে!`);
+        await loadData();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "১-ক্লিক রিপ্লাই ব্যর্থ হয়েছে");
+    }
+  }
+
   async function toggleStatus(cmtId: string, newStatus: "PENDING" | "HIDDEN" | "ESCALATED") {
     const orgId = getOrganizationId();
     if (!orgId) return;
@@ -645,11 +671,21 @@ export default function SocialCommentsPage() {
 
                 {/* Right: Actions */}
                 <div className="flex lg:flex-col items-center lg:items-end gap-2 flex-shrink-0">
+                  {!cmt.replyText ? (
+                    <button
+                      onClick={() => handleQuickAutoReply(cmt)}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1"
+                      title="মডেল ছাড়াই সরাসরি মানুষের মতো AI দিয়ে অটো-রিপ্লাই ও DM পাঠান"
+                    >
+                      <span>⚡ ১-ক্লিক অটো-রিপ্লাই</span>
+                    </button>
+                  ) : null}
+
                   <button
                     onClick={() => openReplyModal(cmt)}
                     className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm"
                   >
-                    {cmt.replyText ? "✏️ রিপ্লাই এডিট / পুনরায় পাঠান" : "⚡ মানুষের মতো AI রিপ্লাই"}
+                    {cmt.replyText ? "✏️ রিপ্লাই এডিট / পুনরায় পাঠান" : "✨ রিভিউ করে রিপ্লাই"}
                   </button>
 
                   {cmt.status !== "HIDDEN" ? (
