@@ -76,10 +76,13 @@ export default function SocialCommentsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const loadData = useCallback(async () => {
+  // Live Auto-Refresh (Polling)
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const loadData = useCallback(async (isSilent = false) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    setLoading(true);
+    if (!isSilent) setLoading(true);
     setError("");
     try {
       // First ensure demo seed if fresh
@@ -99,15 +102,24 @@ export default function SocialCommentsPage() {
       setStats(res.stats || { pendingCount: 0, spamCount: 0 });
       setSettings(setRes);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কমেন্ট লোড করতে সমস্যা হয়েছে");
+      if (!isSilent) setError(e instanceof Error ? e.message : "কমেন্ট লোড করতে সমস্যা হয়েছে");
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   }, [selectedPlatform, selectedStatus, searchQuery]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Periodic Auto-Refresh every 15 seconds if enabled
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => {
+      loadData(true);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, loadData]);
 
   async function handleBulkAction(action: "AI_REPLY_ALL" | "HIDE_ALL" | "MARK_RESOLVED") {
     if (selectedIds.length === 0) return;
@@ -368,7 +380,19 @@ export default function SocialCommentsPage() {
             ⚙️ AI রিপ্লাই ও স্প্যাম সেটিংস
           </button>
           <button
-            onClick={loadData}
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm transition-all ${
+              autoRefresh 
+                ? "border-emerald-300 bg-emerald-50 text-emerald-800" 
+                : "border-slate-200 bg-white text-slate-500"
+            }`}
+            title="১৫ সেকেন্ড পরপর নতুন কমেন্ট স্বয়ংক্রিয়ভাবে স্ক্রিনে আনুন"
+          >
+            <span className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+            {autoRefresh ? "Live Sync (অন)" : "Live Sync (অফ)"}
+          </button>
+          <button
+            onClick={() => loadData(false)}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50"
           >
