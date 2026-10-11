@@ -2284,3 +2284,54 @@ model AgentSchedule {
   @@unique([organizationId, userId])
   @@index([organizationId])
 }
+
+// ==========================================
+// Omnichannel Social Comment Management & AI
+// ==========================================
+
+model SocialComment {
+  id                String   @id @default(uuid())
+  organizationId    String
+  platform          String   // "facebook" | "instagram" | "tiktok" | "youtube"
+  externalPostId    String   // Page post id or video id
+  externalCommentId String   // Platform unique comment id
+  postTitle         String?
+  postMediaUrl      String?
+  authorName        String
+  authorAvatarUrl   String?
+  authorSocialId    String?
+  commentText       String
+  sentiment         String   @default("NEUTRAL") // POSITIVE | NEUTRAL | NEGATIVE | SPAM
+  intent            String   @default("GENERAL") // PRICE_QUERY | DELIVERY_QUERY | COMPLAINT | GENERAL | PRODUCT_INFO
+  status            String   @default("PENDING") // PENDING | AUTO_REPLIED | MANUALLY_REPLIED | HIDDEN | ESCALATED
+  replyText         String?
+  repliedAt         DateTime?
+  isPrivateDmSent   Boolean  @default(false)
+  privateDmText     String?
+  confidenceScore   Float    @default(0.95)
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([organizationId, externalCommentId])
+  @@index([organizationId, platform, status])
+  @@index([organizationId, externalPostId])
+}
+
+model SocialReplySetting {
+  id                 String   @id @default(uuid())
+  organizationId     String   @unique
+  aiAutoReplyEnabled Boolean  @default(true)
+  sendPrivateDm      Boolean  @default(true)
+  autoHideSpam       Boolean  @default(true)
+  replyDelaySeconds  Int      @default(25)
+  tonePreference     String   @default("FRIENDLY_SALES") // FRIENDLY_SALES | PROFESSIONAL | HELPFUL_SUPPORT
+  bannedKeywords     String[] @default([])
+  salesOrderUrl      String?
+  freeDeliveryThresholdMinor BigInt?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([organizationId])
+}
+

@@ -9,6 +9,8 @@ import { LlmFactory } from "../ai/llm/llm.factory";
 import { TelegramService } from "./channels/telegram.service";
 import { EmailChannelService } from "./channels/email.service";
 import { TelegramWebhookController } from "./channels/telegram-webhook.controller";
+import { SocialCommentsController } from "./social-comments.controller";
+import { SocialCommentsService } from "./social-comments.service";
 import { OrdersModule } from "../orders/orders.module";
 import { CrmModule } from "../crm/crm.module";
 
@@ -17,8 +19,8 @@ import { CrmModule } from "../crm/crm.module";
   // leads the inbox ingestion paths create (CrmModule imports
   // nothing itself, so this adds no module cycle).
   imports: [OrdersModule, CrmModule],
-  controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController],
-  providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService],
-  exports: [InboxService, RealtimeService, TelegramService, EmailChannelService],
+  controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController, SocialCommentsController],
+  providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService, SocialCommentsService],
+  exports: [InboxService, RealtimeService, TelegramService, EmailChannelService, SocialCommentsService],
 })
 export class InboxModule {}
