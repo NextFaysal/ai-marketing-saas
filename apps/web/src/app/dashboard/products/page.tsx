@@ -217,6 +217,61 @@ export default function ProductsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={async () => {
+              const orgId = getOrganizationId();
+              if (!orgId) return;
+              try {
+                setNotice("ডেমো প্রোডাক্ট তৈরি হচ্ছে...");
+                const demoItems = [
+                  {
+                    name: "অরিজিনাল লেদার ওয়ালেট ও বেল্ট প্রিমিয়াম কম্বো",
+                    sku: "WLT-BLT-01",
+                    price: "1450",
+                    compareAtPrice: "1850",
+                    category: "Fashion Accessories",
+                    stockQuantity: 45,
+                    description: "১০০% অরিজিনাল জেনুইন লেদার ওয়ালেট ও প্রিমিয়াম অটো-লক বেল্ট কম্বো। ৫ বছরের লেদার গ্যারান্টি।",
+                    imageUrl: "https://images.unsplash.com/photo-1627123424574-724758594e93?w=500&q=80",
+                  },
+                  {
+                    name: "স্মার্ট ওয়্যারলেস নয়েজ ক্যান্সেলিং ইয়ারবাডস",
+                    sku: "EBD-PRO-02",
+                    price: "1250",
+                    compareAtPrice: "1600",
+                    category: "Electronics",
+                    stockQuantity: 30,
+                    description: "ক্রিস্টাল ক্লিয়ার সাউন্ড, অ্যাক্টিভ নয়েজ ক্যান্সেলেশন ও ৪০ ঘণ্টার ব্যাটারি ব্যাকআপ।",
+                    imageUrl: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80",
+                  },
+                  {
+                    name: "ড্রাই স্কিন ময়েশ্চারাইজিং ডে ক্রিম",
+                    sku: "CRM-GLW-03",
+                    price: "850",
+                    compareAtPrice: "1100",
+                    category: "Beauty & Skin Care",
+                    stockQuantity: 60,
+                    description: "ন্যাচারাল উপাদান সমৃদ্ধ ডিপ হাইড্রেটিং ময়েশ্চারাইজার। সব ধরণের স্কিনের উপযোগী।",
+                    imageUrl: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=500&q=80",
+                  },
+                ];
+
+                for (const item of demoItems) {
+                  await apiFetch(`/organizations/${orgId}/products`, {
+                    method: "POST",
+                    body: JSON.stringify(item),
+                  });
+                }
+                setNotice("✨ ৩টি জনপ্রিয় ডেমো পণ্য সফলভাবে তৈরি হয়েছে! এখন সরাসরি ১-ক্লিক চেকআউট টেস্ট করতে পারবেন।");
+                await load();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "ডেমো পণ্য তৈরি ব্যর্থ হয়েছে");
+              }
+            }}
+            className="rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
+          >
+            🧪 ৩টি ডেমো পণ্য যোগ করুন
+          </button>
           <a
             href="/dashboard/products/import"
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
