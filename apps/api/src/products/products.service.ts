@@ -35,9 +35,17 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+import { IntegrationsService } from "../integrations/integrations.service";
+import { PublicCheckoutOrderDto } from "./products.dto";
+import { randomUUID } from "node:crypto";
+
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly integrations: IntegrationsService,
+  ) {}
 
   async create(organizationId: string, actorId: string, dto: CreateProductDto) {
     if (dto.sku) {
@@ -79,6 +87,152 @@ export class ProductsService {
     });
     if (!p) throw new NotFoundException("Product not found");
     return toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
+  }
+
+  /**
+   * Public storefront query: returns product and organization delivery/payment settings
+   */
+  async getPublicProductBySlug(slug: string) {
+    const p = await (this.prisma as any).product.findFirst({
+      where: { slug, status: "ACTIVE" },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            businessProfile: true,
+          },
+        },
+        variants: { orderBy: { createdAt: "asc" } },
+      },
+    });
+    if (!p) throw new NotFoundException("Product not found or inactive");
+
+    const bp = p.organization?.businessProfile;
+    return {
+      product: {
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        description: p.description,
+        category: p.category,
+        imageUrl: p.imageUrl,
+        priceMinor: p.priceMinor.toString(),
+        compareAtMinor: p.compareAtMinor ? p.compareAtMinor.toString() : null,
+        stockQuantity: p.stockQuantity,
+        variants: p.variants?.map((v: any) => ({
+          id: v.id,
+          name: v.name,
+          sku: v.sku,
+          priceMinor: v.priceMinor ? v.priceMinor.toString() : null,
+          stockQuantity: v.stockQuantity,
+        })),
+      },
+      organization: {
+        id: p.organization.id,
+        name: p.organization.name,
+        slug: p.organization.slug,
+        insideDhakaFee: bp?.insideDhakaFeeMinor ? (Number(bp.insideDhakaFeeMinor) / 100).toString() : "60",
+        outsideDhakaFee: bp?.outsideDhakaFeeMinor ? (Number(bp.outsideDhakaFeeMinor) / 100).toString() : "120",
+        codAvailable: bp?.codAvailable !== false,
+        bkashNumber: bp?.bkashNumber || null,
+        nagadNumber: bp?.nagadNumber || null,
+        paymentNote: bp?.paymentNote || null,
+      },
+    };
+  }
+
+  /**
+   * Public checkout: customers place order with 1-click COD/Bkash without login
+   */
+  async placePublicOrder(slug: string, dto: PublicCheckoutOrderDto) {
+    const p = await (this.prisma as any).product.findFirst({
+      where: { slug, status: "ACTIVE" },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            businessProfile: true,
+          },
+        },
+        variants: true,
+      },
+    });
+    if (!p) throw new NotFoundException("Product is unavailable or out of stock");
+
+    const qty = Math.max(1, dto.quantity ?? 1);
+    const unitPriceMinor = BigInt(p.priceMinor);
+    const subtotal = unitPriceMinor * BigInt(qty);
+
+    const bp = p.organization?.businessProfile;
+    const isOutside = dto.deliveryZone === "outside_dhaka";
+    const shippingMinor = isOutside
+      ? (bp?.outsideDhakaFeeMinor ?? 12000n)
+      : (bp?.insideDhakaFeeMinor ?? 6000n);
+
+    const total = subtotal + BigInt(shippingMinor);
+    const externalId = `checkout-${randomUUID()}`;
+    const cleanPhone = dto.customerPhone.trim();
+
+    await this.integrations.upsertOrder(
+      p.organization.id,
+      null,
+      {
+        externalId,
+        externalNumber: `ORD-${Date.now().toString().slice(-6)}`,
+        status: "processing",
+        paymentMethod: dto.paymentMethod || "cod",
+        isCod: dto.paymentMethod !== "bkash" && dto.paymentMethod !== "nagad",
+        currency: p.currency || "BDT",
+        subtotalMinor: subtotal,
+        shippingMinor: BigInt(shippingMinor),
+        discountMinor: 0n,
+        taxMinor: 0n,
+        totalMinor: total,
+        refundedMinor: 0n,
+        placedAt: new Date(),
+        customer: {
+          externalId: cleanPhone,
+          firstName: dto.customerName.trim(),
+          phone: cleanPhone,
+          address: {
+            address_1: dto.customerAddress.trim(),
+            note: dto.note || undefined,
+          },
+        },
+        items: [
+          {
+            name: p.name,
+            sku: p.sku || undefined,
+            quantity: qty,
+            priceMinor: unitPriceMinor,
+            totalMinor: subtotal,
+          },
+        ],
+      },
+      "manual"
+    );
+
+    // If stockQuantity is tracked, reduce stock
+    if (p.stockQuantity !== null && p.stockQuantity !== undefined && p.stockQuantity >= qty) {
+      await (this.prisma as any).product.update({
+        where: { id: p.id },
+        data: { stockQuantity: p.stockQuantity - qty },
+      });
+    }
+
+    return {
+      success: true,
+      orderNumber: externalId,
+      productName: p.name,
+      quantity: qty,
+      totalFormatted: `${(Number(total) / 100).toLocaleString("en-IN")} BDT`,
+      customerName: dto.customerName,
+      customerPhone: cleanPhone,
+      deliveryAddress: dto.customerAddress,
+    };
   }
 
   async list(organizationId: string, query: { search?: string; category?: string; status?: string; page?: number; pageSize?: number }) {

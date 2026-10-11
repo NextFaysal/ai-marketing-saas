@@ -32,3 +32,15 @@ export class SetCostDto {
   @IsOptional() @IsString() variantId?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
+
+export class PublicCheckoutOrderDto {
+  @IsString() @MinLength(2) @MaxLength(120) customerName!: string;
+  @IsString() @MinLength(10) @MaxLength(20) customerPhone!: string;
+  @IsString() @MinLength(5) @MaxLength(500) customerAddress!: string;
+  @IsOptional() @IsString() deliveryZone?: "inside_dhaka" | "outside_dhaka";
+  @IsOptional() @IsInt() @Min(1) quantity?: number;
+  @IsOptional() @IsString() variantId?: string;
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsString() paymentMethod?: "cod" | "bkash" | "nagad";
+}
+
