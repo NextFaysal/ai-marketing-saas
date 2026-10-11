@@ -6,8 +6,10 @@ import { decryptJson } from "../integrations/crypto";
 import { AdLibraryClient } from "./ad-library.client";
 import { WebsiteScanner } from "./website-scanner";
 import { MultiPlatformScanner } from "./multi-platform-scanner";
+import { SeoTrafficAnalyzer } from "./seo-analyzer";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 
 interface EvidenceRef { ref: string; label: string; url?: string }
@@ -749,7 +751,111 @@ Return strictly valid JSON with this format:
       strategicInsights: insights,
     };
   }
+
+  async getSeoTrafficReport(organizationId: string, competitorId: string) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const analyzer = new SeoTrafficAnalyzer();
+    return analyzer.analyze(competitor.name, competitor.websiteUrl ?? undefined);
+  }
+
+  async generateSeoGapStrategy(organizationId: string, actorId: string, competitorId: string, ownProductId?: string) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const analyzer = new SeoTrafficAnalyzer();
+    const seoReport = await analyzer.analyze(competitor.name, competitor.websiteUrl ?? undefined);
+
+    let ownProduct: { title: string; description?: string } | null = null;
+    if (ownProductId) {
+      const p = await this.prisma.product.findFirst({
+        where: { id: ownProductId, organizationId },
+        select: { title: true, description: true },
+      });
+      if (p) ownProduct = p;
+    }
+
+    const provider = this.llm.getProvider();
+    const targetTitle = ownProduct?.title || "Your Store Product";
+    const competitorKeywords = seoReport.topKeywords.slice(0, 5).map((k) => k.keyword).join(", ");
+
+    const systemPrompt = "You are an elite e-commerce SEO and SERP copy strategist. You help DTC brands outrank competitors on Google.";
+    const userPrompt = `Competitor: ${competitor.name} (${seoReport.domain})
+Estimated Organic Monthly Traffic: ${seoReport.estimatedMonthlyOrganicVisits.toLocaleString()}
+Domain Authority: ${seoReport.domainAuthorityScore}/100
+Competitor Top Ranking Keywords: ${competitorKeywords}
+Target Product to Optimize: "${targetTitle}"
+
+Task:
+Generate a high-converting, high-CTR Google SEO package that hijacks the competitor's organic keyword dominance:
+1. Recommended Google SEO Meta Title (Under 60 chars, includes high-volume keyword + power word + CTR hook)
+2. Compelling Meta Description (Under 155 chars, highlighting COD / fast delivery / competitive advantage)
+3. 5 High-Intent Focus Keywords to tag on the product page
+4. "Why this outranks them" tactical reason.
+
+Format as a clean JSON with keys:
+{
+  "recommendedMetaTitle": "...",
+  "recommendedMetaDescription": "...",
+  "targetKeywords": ["...", "..."],
+  "outrankTactics": "...",
+  "estimatedCtrBoost": "..."
+}`;
+
+    let strategyResult = {
+      recommendedMetaTitle: `${targetTitle} - Best Price in BD | Cash On Delivery`,
+      recommendedMetaDescription: `Looking for authentic ${targetTitle}? Order today with fast home delivery & Cash on Delivery across Bangladesh. 100% genuine product guaranteed!`,
+      targetKeywords: [
+        `${targetTitle.toLowerCase()} price in bangladesh`,
+        `buy ${targetTitle.toLowerCase()} online`,
+        `${targetTitle.toLowerCase()} cash on delivery`,
+        `original ${targetTitle.toLowerCase()} shop bd`,
+        `${competitor.name.toLowerCase()} alternative`,
+      ],
+      outrankTactics: `Targets high-intent transactional search queries for ${competitor.name}'s niche by offering cash on delivery assurance and fast home delivery, yielding higher SERP CTR.`,
+      estimatedCtrBoost: "+35% higher SERP CTR",
+    };
+
+    try {
+      const response = await provider.generateText({
+        systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+        temperature: 0.3,
+      });
+      const parsed = JSON.parse(response.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      if (parsed.recommendedMetaTitle) {
+        strategyResult = {
+          recommendedMetaTitle: parsed.recommendedMetaTitle,
+          recommendedMetaDescription: parsed.recommendedMetaDescription || strategyResult.recommendedMetaDescription,
+          targetKeywords: Array.isArray(parsed.targetKeywords) ? parsed.targetKeywords : strategyResult.targetKeywords,
+          outrankTactics: parsed.outrankTactics || strategyResult.outrankTactics,
+          estimatedCtrBoost: parsed.estimatedCtrBoost || strategyResult.estimatedCtrBoost,
+        };
+      }
+    } catch {
+      // Fallback to strategyResult
+    }
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: "COMPETITOR_SEO_GAP_GENERATED",
+      entityType: "competitor",
+      entityId: competitorId,
+      details: { competitorName: competitor.name, targetProduct: targetTitle },
+    });
+
+    return {
+      competitor: {
+        id: competitor.id,
+        name: competitor.name,
+        domain: seoReport.domain,
+        monthlyOrganicVisits: seoReport.estimatedMonthlyOrganicVisits,
+        domainAuthority: seoReport.domainAuthorityScore,
+      },
+      seoReport,
+      strategy: strategyResult,
+    };
+  }
 }
+
 
 
 export function nameMatchScore(a: string, b: string): number {

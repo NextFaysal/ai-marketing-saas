@@ -34,5 +34,9 @@ export class SyncMultiPlatformDto {
   @IsOptional() countries?: string[];
   @IsOptional() activeOnly?: boolean;
 }
+export class GenerateSeoGapDto {
+  @IsOptional() @IsString() ownProductId?: string;
+}
+
 
 

@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -85,4 +86,20 @@ export class CompetitorsController {
   observations(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
     return this.competitors.listObservations(orgId, id);
   }
+
+  @Get(":competitorId/seo-traffic")
+  seoTraffic(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
+    return this.competitors.getSeoTrafficReport(orgId, id);
+  }
+
+  @Post(":competitorId/seo-gap") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER")
+  seoGap(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("competitorId") id: string,
+    @Body() dto: GenerateSeoGapDto,
+  ) {
+    return this.competitors.generateSeoGapStrategy(orgId, user.userId, id, dto?.ownProductId);
+  }
 }
+

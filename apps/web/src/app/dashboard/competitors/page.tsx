@@ -116,6 +116,56 @@ interface DossierData {
   strategicInsights: Insight[];
 }
 
+interface OrganicKeyword {
+  keyword: string;
+  estimatedPosition: number;
+  searchVolume: number;
+  keywordDifficulty: number;
+  intent: "Transactional" | "Commercial" | "Informational";
+  estimatedMonthlyClicks: number;
+  rankingUrl: string;
+}
+
+interface TopOrganicPage {
+  url: string;
+  title: string;
+  estimatedTrafficShare: number;
+  primaryKeywords: string[];
+}
+
+interface SeoTrafficReport {
+  domain: string;
+  estimatedMonthlyOrganicVisits: number;
+  domainAuthorityScore: number;
+  totalIndexedKeywords: number;
+  topKeywords: OrganicKeyword[];
+  topPages: TopOrganicPage[];
+  intentDistribution: {
+    transactional: number;
+    commercial: number;
+    informational: number;
+  };
+  focusKeywordThemes: string[];
+}
+
+interface SeoStrategyResult {
+  competitor: {
+    id: string;
+    name: string;
+    domain: string;
+    monthlyOrganicVisits: number;
+    domainAuthority: number;
+  };
+  seoReport: SeoTrafficReport;
+  strategy: {
+    recommendedMetaTitle: string;
+    recommendedMetaDescription: string;
+    targetKeywords: string[];
+    outrankTactics: string;
+    estimatedCtrBoost: string;
+  };
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -127,7 +177,7 @@ export default function CompetitorsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
   // Workspace Tabs
-  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook">("spy");
+  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook" | "seo">("spy");
 
   // Swipe File (Saved creatives)
   const [savedSwipeIds, setSavedSwipeIds] = useState<string[]>([]);
@@ -136,6 +186,14 @@ export default function CompetitorsPage() {
   const [isDossierOpen, setIsDossierOpen] = useState(false);
   const [dossierData, setDossierData] = useState<DossierData | null>(null);
   const [loadingDossier, setLoadingDossier] = useState(false);
+
+  // SEO & Traffic Spy State
+  const [seoReport, setSeoReport] = useState<SeoTrafficReport | null>(null);
+  const [seoStrategy, setSeoStrategy] = useState<SeoStrategyResult | null>(null);
+  const [loadingSeo, setLoadingSeo] = useState(false);
+  const [generatingSeoGap, setGeneratingSeoGap] = useState(false);
+  const [selectedProductIdForSeo, setSelectedProductIdForSeo] = useState<string>("");
+
 
   // Forms & Modals
   const [form, setForm] = useState({ name: "", facebookPageId: "", websiteUrl: "", notes: "" });
@@ -207,10 +265,46 @@ export default function CompetitorsPage() {
     load();
   }, [load]);
 
+  const fetchSeoReport = useCallback(async (c: Competitor) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setLoadingSeo(true);
+    setError("");
+    try {
+      const report = await apiFetch<SeoTrafficReport>(`/organizations/${orgId}/competitors/${c.id}/seo-traffic`);
+      setSeoReport(report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load SEO report");
+    } finally {
+      setLoadingSeo(false);
+    }
+  }, []);
+
+  async function generateSeoGapHandler(c: Competitor) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setGeneratingSeoGap(true);
+    setError("");
+    try {
+      const res = await apiFetch<SeoStrategyResult>(`/organizations/${orgId}/competitors/${c.id}/seo-gap`, {
+        method: "POST",
+        body: JSON.stringify({ ownProductId: selectedProductIdForSeo || undefined }),
+      });
+      setSeoStrategy(res);
+      setNotice("AI SEO Gap ও কিওয়ার্ড হাইজ্যাক স্ট্র্যাটেজি সফলভাবে তৈরি হয়েছে! 🚀");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to generate SEO gap strategy");
+    } finally {
+      setGeneratingSeoGap(false);
+    }
+  }
+
   const openCompetitor = useCallback(async (c: Competitor) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
     setActive(c);
+    setSeoReport(null);
+    setSeoStrategy(null);
     try {
       const [a, o] = await Promise.all([
         apiFetch<Ad[]>(`/organizations/${orgId}/competitors/${c.id}/ads`),
@@ -218,10 +312,14 @@ export default function CompetitorsPage() {
       ]);
       setAds(a);
       setObservations(o);
+      if (activeTab === "seo") {
+        fetchSeoReport(c);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load competitor details");
     }
-  }, []);
+  }, [activeTab, fetchSeoReport]);
+
 
   async function openDossierModalHandler() {
     const orgId = getOrganizationId();
@@ -580,7 +678,22 @@ export default function CompetitorsPage() {
         >
           📊 Strategy & Offer Playbook
         </button>
+        <button
+          onClick={() => {
+            setActiveTab("seo");
+            if (active) fetchSeoReport(active);
+          }}
+          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "seo"
+              ? "bg-slate-900 text-white shadow"
+              : "bg-white text-slate-600 border hover:bg-slate-50"
+          }`}
+        >
+          <span>🔍 SEO & Traffic Spy</span>
+          <span className="rounded bg-emerald-500/20 text-emerald-700 px-1 py-0.2 text-[9px] font-bold">New</span>
+        </button>
       </div>
+
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
@@ -1160,6 +1273,407 @@ export default function CompetitorsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* TAB 5: SEO & TRAFFIC SPY */}
+      {activeTab === "seo" ? (
+        <div className="space-y-6">
+          {!active ? (
+            <div className="card p-8 bg-white text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-2xl text-indigo-600">
+                🔍
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                  যে কোনো প্রতিযোগীর গুগল সার্চ ট্রাফিক, র‍্যাঙ্কিং কিওয়ার্ড, ডোমেন অথরিটি এবং পেজ মেটা টাইটেল অডিট করতে নিচে ক্লিক করুন।
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 pt-2">
+                {competitors.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      openCompetitor(c);
+                      fetchSeoReport(c);
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                  >
+                    🏢 {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Header card */}
+              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-900">{active.name} — SEO & Organic Traffic Intelligence</h3>
+                    <span className="rounded bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 font-bold">
+                      Ahrefs / SEMrush Alternative
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    অর্গানিক সার্চ প্রেজেন্স, কিওয়ার্ড ভলিউম এবং গুগলে তাদের শীর্ষ পেজসমূহের বিশ্লেষণ
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={loadingSeo}
+                    onClick={() => fetchSeoReport(active)}
+                  >
+                    {loadingSeo ? "অ্যানালাইজ হচ্ছে..." : "🔄 রি-স্ক্যান SEO"}
+                  </button>
+                </div>
+              </div>
+
+              {loadingSeo ? (
+                <div className="card p-12 bg-white text-center text-sm text-slate-500">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-600 border-r-transparent mb-3" />
+                  <p>সার্চ ইঞ্জিন ডেটা ও কিওয়ার্ড র্যাংকিং ফেচ করা হচ্ছে...</p>
+                </div>
+              ) : seoReport ? (
+                <div className="space-y-6">
+                  {/* Metric Overview Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="card p-4 bg-gradient-to-br from-indigo-50/50 to-white border border-indigo-100">
+                      <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
+                        মাসিক অর্গানিক ট্রাফিক
+                      </span>
+                      <p className="mt-2 text-2xl font-black text-indigo-700">
+                        {seoReport.estimatedMonthlyOrganicVisits.toLocaleString()}
+                      </p>
+                      <span className="text-[10px] text-slate-500">গুগল অর্গানিক ক্লিক (CTR Weighted)</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-emerald-50/50 to-white border border-emerald-100">
+                      <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider">
+                        Domain Authority (DA)
+                      </span>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <span className="text-2xl font-black text-emerald-700">{seoReport.domainAuthorityScore}</span>
+                        <span className="text-xs text-slate-400 font-semibold">/ 100</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500">সার্চ ইঞ্জিন র‍্যাঙ্কিং সক্ষমতা</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-blue-50/50 to-white border border-blue-100">
+                      <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider">
+                        টোটাল ইনডেক্সড কিওয়ার্ড
+                      </span>
+                      <p className="mt-2 text-2xl font-black text-blue-700">
+                        ~{seoReport.totalIndexedKeywords}
+                      </p>
+                      <span className="text-[10px] text-slate-500">সার্চে ইন্ডেক্স হওয়া ভ্যারিয়েশনস</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-purple-50/50 to-white border border-purple-100">
+                      <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">
+                        অর্গানিক ট্রাফিকের মূল্য (PPC)
+                      </span>
+                      <p className="mt-2 text-2xl font-black text-purple-700">
+                        ৳{Math.round(seoReport.estimatedMonthlyOrganicVisits * 8.5).toLocaleString()}
+                      </p>
+                      <span className="text-[10px] text-slate-500">Google Ads দিলে যা খরচ হতো</span>
+                    </div>
+                  </div>
+
+                  {/* Intent Distribution & Focus Themes */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="card p-4 bg-white space-y-3">
+                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        🎯 সার্চ ইনটেন্ট বন্টন (Search Intent)
+                      </span>
+                      <div className="space-y-2">
+                        <div>
+                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                            <span>Transactional (সরাসরি কেনাকাটা)</span>
+                            <span className="text-emerald-700">{seoReport.intentDistribution.transactional}%</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${seoReport.intentDistribution.transactional}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                            <span>Commercial (প্রোডাক্ট তুলনা ও যাচাই)</span>
+                            <span className="text-blue-700">{seoReport.intentDistribution.commercial}%</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${seoReport.intentDistribution.commercial}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                            <span>Informational (তথ্যমূলক অনুসন্ধান)</span>
+                            <span className="text-amber-700">{seoReport.intentDistribution.informational}%</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-amber-500 rounded-full" style={{ width: `${seoReport.intentDistribution.informational}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="card p-4 bg-white space-y-3">
+                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        🏷️ শীর্ষ কিওয়ার্ড থিম (Top SEO Pillars)
+                      </span>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {seoReport.focusKeywordThemes.map((theme, i) => (
+                          <span key={i} className="rounded-lg bg-slate-100 text-slate-800 text-xs px-2.5 py-1 font-semibold border">
+                            #{theme}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-2">
+                        প্রতিযোগী এই থিমগুলোতে গুগল সার্চ ট্রাফিকের সিংহভাগ নিয়ন্ত্রণ করছে।
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Top Organic Ranking Keywords Table */}
+                  <div className="card p-5 bg-white space-y-4">
+                    <div className="flex items-center justify-between border-b pb-3">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-sm">
+                          গুগল টপ র‍্যাঙ্কিং কিওয়ার্ড (Top Ranking Keywords)
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          যেসব কিওয়ার্ডে প্রতিযোগী গুগলের শীর্ষ ফলাফলে অবস্থান করছে
+                        </p>
+                      </div>
+                      <span className="text-xs text-slate-400 font-medium">{seoReport.topKeywords.length} টি শীর্ষ কিওয়ার্ড</span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
+                          <tr>
+                            <th className="py-2.5 px-3">কিওয়ার্ড (Keyword)</th>
+                            <th className="py-2.5 px-3">র‍্যাঙ্ক (Position)</th>
+                            <th className="py-2.5 px-3">মাসিক সার্চ ভলিউম</th>
+                            <th className="py-2.5 px-3">KD (Difficulty)</th>
+                            <th className="py-2.5 px-3">ইনটেন্ট</th>
+                            <th className="py-2.5 px-3">আনুমানিক ক্লিক</th>
+                            <th className="py-2.5 px-3 text-right">অ্যাকশন</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y text-slate-700">
+                          {seoReport.topKeywords.map((kw, i) => (
+                            <tr key={i} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                {kw.keyword}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-flex items-center justify-center rounded-md bg-blue-100 text-blue-800 px-2 py-0.5 font-bold text-[11px]">
+                                  #{kw.estimatedPosition}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold">
+                                {kw.searchVolume.toLocaleString()} /mo
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                  kw.keywordDifficulty < 20 ? "bg-green-100 text-green-800" :
+                                  kw.keywordDifficulty < 40 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                                }`}>
+                                  {kw.keywordDifficulty}% KD
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  kw.intent === "Transactional" ? "bg-emerald-100 text-emerald-800" :
+                                  kw.intent === "Commercial" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"
+                                }`}>
+                                  {kw.intent}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold text-slate-900">
+                                ~{kw.estimatedMonthlyClicks.toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(kw.keyword);
+                                    setCopiedText(kw.keyword);
+                                    setTimeout(() => setCopiedText(""), 2000);
+                                  }}
+                                  className="rounded border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                                >
+                                  {copiedText === kw.keyword ? "কপি হয়েছে!" : "📋 কপি"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Top Organic Landing Pages */}
+                  <div className="card p-5 bg-white space-y-4">
+                    <div className="border-b pb-3">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        প্রতিযোগীর শীর্ষ ট্রাফিক ড্রাইভকারী পেজ (Top Organic Pages)
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        কোন কোন ল্যান্ডিং পেজ ও মেটা টাইটেল দিয়ে তারা গুগল থেকে ক্রেতা পাচ্ছে
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {seoReport.topPages.map((page, idx) => (
+                        <div key={idx} className="rounded-xl border p-3.5 bg-slate-50/50 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-bold text-slate-900 text-xs line-clamp-1">{page.title}</span>
+                            <span className="rounded bg-indigo-100 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5 shrink-0">
+                              {page.estimatedTrafficShare}% Traffic
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-blue-600 truncate font-mono">{page.url}</p>
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {page.primaryKeywords.map((pk, kx) => (
+                              <span key={kx} className="rounded bg-white border border-slate-200 text-slate-600 text-[10px] px-1.5 py-0.5">
+                                {pk}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ⚡ AI SEO Gap & Keyword Hijack Strategy Engine */}
+                  <div className="card p-6 bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-900 text-white space-y-5 rounded-2xl shadow-xl">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-700/60 pb-4">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-500 text-sm">⚡</span>
+                          <h4 className="font-bold text-base text-white">
+                            AI SEO Gap & Keyword Hijack Engine
+                          </h4>
+                        </div>
+                        <p className="text-xs text-slate-300 mt-1">
+                          প্রতিযোগীর শীর্ষ র‍্যাঙ্কিং কিওয়ার্ডগুলো হাইজ্যাক করে আপনার প্রোডাক্টের মেটা টাইটেল ও ডিসক্রিপশন তৈরি করুন
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <select
+                          className="rounded-lg bg-slate-800 border border-slate-700 text-xs text-white px-3 py-2 outline-none"
+                          value={selectedProductIdForSeo}
+                          onChange={(e) => setSelectedProductIdForSeo(e.target.value)}
+                        >
+                          <option value="">জেনারেল স্টোর / সকল প্রোডাক্ট</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>{p.title}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => generateSeoGapHandler(active)}
+                          disabled={generatingSeoGap}
+                          className="rounded-lg bg-indigo-500 hover:bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all disabled:opacity-50 shrink-0"
+                        >
+                          {generatingSeoGap ? "স্ট্র্যাটেজি তৈরি হচ্ছে..." : "🚀 মেটা টাইটেল ও কিওয়ার্ড হাইজ্যাক করুন"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {seoStrategy ? (
+                      <div className="space-y-4 pt-2">
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+                                🏷️ প্রস্তাবিত Google Meta Title (SERP Hook)
+                              </span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(seoStrategy.strategy.recommendedMetaTitle);
+                                  setCopiedText("metaTitle");
+                                  setTimeout(() => setCopiedText(""), 2000);
+                                }}
+                                className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold"
+                              >
+                                {copiedText === "metaTitle" ? "কপি হয়েছে!" : "📋 কপি"}
+                              </button>
+                            </div>
+                            <p className="font-bold text-sm text-emerald-400">
+                              {seoStrategy.strategy.recommendedMetaTitle}
+                            </p>
+                            <span className="text-[10px] text-slate-400">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaTitle.length} অক্ষর (গুগল অপটিমাল &lt; 60)</span>
+                          </div>
+
+                          <div className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+                                📝 High-CTR Meta Description
+                              </span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(seoStrategy.strategy.recommendedMetaDescription);
+                                  setCopiedText("metaDesc");
+                                  setTimeout(() => setCopiedText(""), 2000);
+                                }}
+                                className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold"
+                              >
+                                {copiedText === "metaDesc" ? "কপি হয়েছে!" : "📋 কপি"}
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-200 leading-relaxed">
+                              {seoStrategy.strategy.recommendedMetaDescription}
+                            </p>
+                            <span className="text-[10px] text-slate-400">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaDescription.length} অক্ষর (গুগল অপটিমাল &lt; 155)</span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl bg-slate-800/50 p-4 border border-slate-700 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+                              🎯 প্রোডাক্ট পেজে ট্যাগ করার জন্য ৫টি হাই-কনভার্টিং কিওয়ার্ড
+                            </span>
+                            <span className="rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold px-2 py-0.5">
+                              {seoStrategy.strategy.estimatedCtrBoost}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {seoStrategy.strategy.targetKeywords.map((kw: string, i: number) => (
+                              <button
+                                key={i}
+                                onClick={() => {
+                                  navigator.clipboard.writeText(kw);
+                                  setCopiedText(kw);
+                                  setTimeout(() => setCopiedText(""), 2000);
+                                }}
+                                className="rounded-lg bg-indigo-950/70 border border-indigo-700/50 px-2.5 py-1 text-xs font-semibold text-indigo-200 hover:bg-indigo-900"
+                              >
+                                {kw} {copiedText === kw ? "✓" : "+"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg bg-indigo-950/40 p-3 border border-indigo-800/50 text-xs text-indigo-200 flex items-center gap-2">
+                          <span>💡</span>
+                          <span><strong>কেন এটি প্রতিদ্বন্দীকে টেক্কা দেবে:</strong> {seoStrategy.strategy.outrankTactics}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="card p-8 bg-white text-center text-xs text-slate-500">
+                  <p>সার্চ ইঞ্জিন ডেটা লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান SEO&rdquo; বাটনে ক্লিক করুন।</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+
 
       {/* White-Label Agency Dossier Audit Modal */}
       {isDossierOpen ? (

@@ -199,5 +199,39 @@ describe("CompetitorsService", () => {
     expect(counter.counterCampaign.primaryText).toBeDefined();
     expect(counter.counterCampaign.callToAction).toBeDefined();
   });
+
+  it("getSeoTrafficReport calculates organic clicks, DA, keywords, and intent distribution", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", {
+      name: "Apex Footwear",
+      websiteUrl: "https://apexfootwear.com",
+    });
+
+    const report = await svc.getSeoTrafficReport("org-1", competitor.id);
+    expect(report.domain).toBe("apexfootwear.com");
+    expect(report.estimatedMonthlyOrganicVisits).toBeGreaterThan(0);
+    expect(report.domainAuthorityScore).toBeGreaterThanOrEqual(25);
+    expect(report.topKeywords.length).toBeGreaterThan(0);
+    expect(report.topPages.length).toBeGreaterThan(0);
+    expect(report.intentDistribution.transactional).toBe(55);
+  });
+
+  it("generateSeoGapStrategy creates high-CTR meta title, description and target keywords", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", {
+      name: "Apex Footwear",
+      websiteUrl: "https://apexfootwear.com",
+    });
+
+    const gap = await svc.generateSeoGapStrategy("org-1", "u", competitor.id);
+    expect(gap.competitor.name).toBe("Apex Footwear");
+    expect(gap.strategy.recommendedMetaTitle).toBeDefined();
+    expect(gap.strategy.recommendedMetaDescription).toBeDefined();
+    expect(gap.strategy.targetKeywords.length).toBe(5);
+    expect(gap.strategy.estimatedCtrBoost).toBe("+35% higher SERP CTR");
+  });
 });
+
 
