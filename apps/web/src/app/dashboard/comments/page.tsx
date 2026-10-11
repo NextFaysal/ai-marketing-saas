@@ -136,6 +136,45 @@ export default function SocialCommentsPage() {
     }
   }
 
+  // Interactive Live Comment Simulator
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
+  const [simForm, setSimForm] = useState({
+    platform: "facebook" as const,
+    authorName: "",
+    commentText: "",
+    postTitle: "প্রিমিয়াম লেদার কম্বো প্যাক",
+  });
+  const [simulating, setSimulating] = useState(false);
+
+  async function handleSimulateSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setSimulating(true);
+    setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social-comments/ingest`, {
+        method: "POST",
+        body: JSON.stringify({
+          platform: simForm.platform,
+          externalPostId: `post_${Date.now()}`,
+          externalCommentId: `cmt_${Date.now()}`,
+          postTitle: simForm.postTitle,
+          authorName: simForm.authorName || "রিয়েল কাস্টমার",
+          commentText: simForm.commentText,
+        }),
+      });
+      setNotice("🎉 নতুন টেস্ট কমেন্ট ইনজেস্ট হয়েছে এবং AI স্বয়ংক্রিয়ভাবে প্রসেস করেছে!");
+      setIsSimulatorOpen(false);
+      setSimForm({ platform: "facebook", authorName: "", commentText: "", postTitle: "প্রিমিয়াম লেদার কম্বো প্যাক" });
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "সিমুলেশন ব্যর্থ");
+    } finally {
+      setSimulating(false);
+    }
+  }
+
   // Open Reply Modal & Generate Contextual AI Suggestion
   async function openReplyModal(cmt: SocialCommentItem) {
     setActiveComment(cmt);
@@ -291,6 +330,12 @@ export default function SocialCommentsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsSimulatorOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
+          >
+            🧪 টেস্ট কমেন্ট সিমুলেট (Live Simulator)
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
@@ -763,6 +808,130 @@ export default function SocialCommentsPage() {
                 className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 {savingSettings ? "সংরক্ষণ হচ্ছে..." : "সেটিংস সংরক্ষণ করুন"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {/* LIVE COMMENT SIMULATOR MODAL */}
+      {isSimulatorOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <form
+            onSubmit={handleSimulateSubmit}
+            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl space-y-4"
+          >
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  🧪 লাইভ কমেন্ট সিমুলেটর (Live Comment Simulator)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  সোশ্যাল মিডিয়া থেকে কমেন্ট এলে AI কীভাবে রেসপন্স করে তা এখনই লাইভ টেস্ট করুন
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSimulatorOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">প্ল্যাটফর্ম:</label>
+                <select
+                  value={simForm.platform}
+                  onChange={(e) => setSimForm({ ...simForm, platform: e.target.value as any })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs font-medium"
+                >
+                  <option value="facebook">Facebook Page Post</option>
+                  <option value="instagram">Instagram Reel / Post</option>
+                  <option value="tiktok">TikTok Video</option>
+                  <option value="youtube">YouTube Short</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">পোস্টের বিষয় / প্রোডাক্টের নাম:</label>
+                <input
+                  type="text"
+                  required
+                  value={simForm.postTitle}
+                  onChange={(e) => setSimForm({ ...simForm, postTitle: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                  placeholder="যেমন: প্রিমিয়াম লেদার ওয়ালেট ও বেল্ট কম্বো"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">কাস্টমারের নাম:</label>
+                <input
+                  type="text"
+                  required
+                  value={simForm.authorName}
+                  onChange={(e) => setSimForm({ ...simForm, authorName: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                  placeholder="যেমন: আসিফ ইকবাল"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">কাস্টমারের মন্তব্য (Comment):</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={simForm.commentText}
+                  onChange={(e) => setSimForm({ ...simForm, commentText: e.target.value })}
+                  className="w-full rounded-lg border p-2 text-xs"
+                  placeholder="যেমন: ভাইয়া এটার দাম কত? চট্টগ্রামে কতদিনের মধ্যে ডেলিভারি হবে?"
+                />
+              </div>
+
+              <div className="rounded-lg bg-indigo-50/70 p-2.5 text-[11px] text-indigo-900 border border-indigo-200">
+                💡 <b>দ্রুত টেস্ট আইডিয়া:</b> 
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSimForm({ ...simForm, commentText: "ভাইয়া এটার বর্তমান অফার প্রাইস কত? হোম ডেলিভারি কি ফ্রি?" })}
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
+                  >
+                    দাম জিজ্ঞাসা
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimForm({ ...simForm, commentText: "পার্সেল হাতে পেয়ে দেখলাম সাইজ ছোট, এক্সচেঞ্জ করতে চাই।" })}
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
+                  >
+                    কমপ্লেইন্ট
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimForm({ ...simForm, commentText: "ঘরে বসে সহজে ইনকাম করতে আমাদের টেলিগ্রাম লিংকে ক্লিক করুন bit.ly/spam" })}
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
+                  >
+                    স্প্যাম
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t">
+              <button
+                type="button"
+                onClick={() => setIsSimulatorOpen(false)}
+                className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                বাতিল
+              </button>
+              <button
+                type="submit"
+                disabled={simulating}
+                className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {simulating ? "সিমুলেট হচ্ছে..." : "🚀 কমেন্ট সেন্ড করুন"}
               </button>
             </div>
           </form>
