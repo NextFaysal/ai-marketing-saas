@@ -187,6 +187,11 @@ model BusinessProfile {
   billingEmails       Json?
   billingAddress      String?
   billingBin          String?
+  // SaaS Multi-Tenant Merchant Growth Settings
+  metaPixelId         String?      // Merchant's Facebook Pixel ID
+  metaCapiToken       String?      // Merchant's Conversions API Token
+  tikTokPixelId       String?      // Merchant's TikTok Pixel ID
+  customDomain        String?      // e.g. "shop.leatherbrand.com"
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -271,6 +276,10 @@ model Product {
   imageUrl       String?
   source         String        @default("manual") // manual | csv | woocommerce | shopify
   externalId     String?
+  // SaaS eCommerce Expansion: 1-Click Order Bump & Upsells
+  bumpTitle      String?       // e.g. "লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
+  bumpPriceMinor BigInt?       // e.g. 19000 (190 BDT)
+  bumpImageUrl   String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)

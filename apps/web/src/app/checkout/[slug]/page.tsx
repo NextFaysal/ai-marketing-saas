@@ -15,6 +15,9 @@ interface CheckoutData {
     priceMinor: string;
     compareAtMinor?: string | null;
     stockQuantity?: number | null;
+    bumpTitle?: string | null;
+    bumpPriceMinor?: string | null;
+    bumpImageUrl?: string | null;
     variants?: { id: string; name: string; sku?: string | null; priceMinor?: string | null }[];
   };
   organization: {
@@ -27,6 +30,8 @@ interface CheckoutData {
     bkashNumber?: string | null;
     nagadNumber?: string | null;
     paymentNote?: string | null;
+    metaPixelId?: string | null;
+    tikTokPixelId?: string | null;
   };
 }
 
@@ -48,6 +53,7 @@ export default function CheckoutPage() {
   const [quantity, setQuantity] = useState(1);
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "bkash" | "nagad">("cod");
   const [note, setNote] = useState("");
+  const [includeBump, setIncludeBump] = useState(false);
 
   useEffect(() => {
     if (!slug) return;
@@ -96,6 +102,7 @@ export default function CheckoutPage() {
           quantity,
           paymentMethod,
           note: note.trim() || undefined,
+          includeBump,
         }),
       });
 
@@ -144,7 +151,8 @@ export default function CheckoutPage() {
 
   const { product, organization } = data;
   const unitPrice = Number(product.priceMinor) / 100;
-  const subtotal = unitPrice * quantity;
+  const bumpPrice = (product.bumpPriceMinor && includeBump) ? Number(product.bumpPriceMinor) / 100 : 0;
+  const subtotal = (unitPrice * quantity) + bumpPrice;
   const deliveryCharge = deliveryZone === "inside_dhaka" ? Number(organization.insideDhakaFee) : Number(organization.outsideDhakaFee);
   const grandTotal = subtotal + deliveryCharge;
 
@@ -199,6 +207,31 @@ export default function CheckoutPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6">
+      {/* 📊 SaaS Multi-Tenant Merchant Facebook Pixel Injection */}
+      {organization.metaPixelId ? (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              !function(f,b,e,v,n,t,s)
+              {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+              n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+              if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+              n.queue=[];t=b.createElement(e);t.async=!0;
+              t.src=v;s=b.getElementsByTagName(e)[0];
+              s.parentNode.insertBefore(t,s)}(window, document,'script',
+              'https://connect.facebook.net/en_US/fbevents.js');
+              fbq('init', '${organization.metaPixelId}');
+              fbq('track', 'PageView');
+              fbq('track', 'InitiateCheckout', {
+                content_name: '${product.name.replace(/'/g, "\\'")}',
+                value: ${unitPrice},
+                currency: 'BDT'
+              });
+            `,
+          }}
+        />
+      ) : null}
+
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Brand Header */}
         <div className="text-center">
@@ -395,12 +428,52 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
+              {/* ⚡ High-Converting 1-Click Order Bump Box */}
+              {product.bumpTitle && product.bumpPriceMinor ? (
+                <div
+                  onClick={() => setIncludeBump(!includeBump)}
+                  className={`rounded-xl border p-3.5 transition-all cursor-pointer ${
+                    includeBump
+                      ? "border-amber-500 bg-amber-50/70 ring-2 ring-amber-400"
+                      : "border-dashed border-amber-300 bg-amber-50/20 hover:bg-amber-50/40"
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={includeBump}
+                      onChange={(e) => setIncludeBump(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-bold bg-amber-500 text-white px-1.5 py-0.2 rounded">
+                          🔥 বিশেষ অ্যাড-অন অফার
+                        </span>
+                        <span className="text-xs font-bold text-slate-900">
+                          {product.bumpTitle}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-900 font-bold">
+                        মাত্র ৳{(Number(product.bumpPriceMinor) / 100).toLocaleString("en-IN")} অতিরিক্ত যোগ হবে
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
               {/* Price Calculation Breakdown */}
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>সাবটোটাল ({quantity} টি পণ্য):</span>
-                  <span className="font-semibold text-slate-900">৳{subtotal.toLocaleString("en-IN")}</span>
+                  <span className="font-semibold text-slate-900">৳{(unitPrice * quantity).toLocaleString("en-IN")}</span>
                 </div>
+                {includeBump && bumpPrice > 0 ? (
+                  <div className="flex justify-between text-amber-800 font-semibold bg-amber-50 px-2 py-1 rounded">
+                    <span>⚡ স্পেশাল অ্যাড-অন:</span>
+                    <span>+ ৳{bumpPrice.toLocaleString("en-IN")}</span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between text-slate-600">
                   <span>ডেলিভারি চার্জ:</span>
                   <span className="font-semibold text-slate-900">৳{deliveryCharge}</span>

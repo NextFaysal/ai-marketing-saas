@@ -10,6 +10,9 @@ export class CreateProductDto {
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsInt() @Min(0) stockQuantity?: number;
   @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string;
+  @IsOptional() @IsString() @MaxLength(200) bumpTitle?: string;
+  @IsOptional() @IsString() bumpPrice?: string;
+  @IsOptional() @IsString() @MaxLength(1000) bumpImageUrl?: string;
 }
 export class UpdateProductDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(200) name?: string;
@@ -19,6 +22,9 @@ export class UpdateProductDto {
   @IsOptional() @IsString() price?: string;
   @IsOptional() @IsInt() @Min(0) stockQuantity?: number;
   @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string;
+  @IsOptional() @IsString() @MaxLength(200) bumpTitle?: string;
+  @IsOptional() @IsString() bumpPrice?: string;
+  @IsOptional() @IsString() @MaxLength(1000) bumpImageUrl?: string;
 }
 export class CreateVariantDto {
   @IsString() @MinLength(1) @MaxLength(200) name!: string;
@@ -42,5 +48,6 @@ export class PublicCheckoutOrderDto {
   @IsOptional() @IsString() variantId?: string;
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsString() paymentMethod?: "cod" | "bkash" | "nagad";
+  @IsOptional() includeBump?: boolean;
 }
 

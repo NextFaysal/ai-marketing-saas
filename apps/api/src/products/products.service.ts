@@ -70,6 +70,9 @@ export class ProductsService {
         compareAtMinor: dto.compareAtPrice ? parseMoney(dto.compareAtPrice, "compareAtPrice") : null,
         currency: dto.currency ?? "BDT",
         stockQuantity: dto.stockQuantity, imageUrl: dto.imageUrl || null,
+        bumpTitle: dto.bumpTitle?.trim() || null,
+        bumpPriceMinor: dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null,
+        bumpImageUrl: dto.bumpImageUrl?.trim() || null,
         source: "manual",
       },
     });
@@ -121,6 +124,9 @@ export class ProductsService {
         priceMinor: p.priceMinor.toString(),
         compareAtMinor: p.compareAtMinor ? p.compareAtMinor.toString() : null,
         stockQuantity: p.stockQuantity,
+        bumpTitle: p.bumpTitle || null,
+        bumpPriceMinor: p.bumpPriceMinor ? p.bumpPriceMinor.toString() : null,
+        bumpImageUrl: p.bumpImageUrl || null,
         variants: p.variants?.map((v: any) => ({
           id: v.id,
           name: v.name,
@@ -139,6 +145,8 @@ export class ProductsService {
         bkashNumber: bp?.bkashNumber || null,
         nagadNumber: bp?.nagadNumber || null,
         paymentNote: bp?.paymentNote || null,
+        metaPixelId: bp?.metaPixelId || null,
+        tikTokPixelId: bp?.tikTokPixelId || null,
       },
     };
   }
@@ -164,13 +172,36 @@ export class ProductsService {
 
     const qty = Math.max(1, dto.quantity ?? 1);
     const unitPriceMinor = BigInt(p.priceMinor);
-    const subtotal = unitPriceMinor * BigInt(qty);
+    let subtotal = unitPriceMinor * BigInt(qty);
 
     const bp = p.organization?.businessProfile;
     const isOutside = dto.deliveryZone === "outside_dhaka";
     const shippingMinor = isOutside
       ? (bp?.outsideDhakaFeeMinor ?? 12000n)
       : (bp?.insideDhakaFeeMinor ?? 6000n);
+
+    // Check if customer accepted 1-Click Order Bump Upsell
+    const items = [
+      {
+        name: p.name,
+        sku: p.sku || undefined,
+        quantity: qty,
+        priceMinor: unitPriceMinor,
+        totalMinor: subtotal,
+      },
+    ];
+
+    if (dto.includeBump && p.bumpPriceMinor && p.bumpTitle) {
+      const bumpPrice = BigInt(p.bumpPriceMinor);
+      subtotal += bumpPrice;
+      items.push({
+        name: `[Special Add-On] ${p.bumpTitle}`,
+        sku: "ADD-ON-BUMP",
+        quantity: 1,
+        priceMinor: bumpPrice,
+        totalMinor: bumpPrice,
+      });
+    }
 
     const total = subtotal + BigInt(shippingMinor);
     const externalId = `checkout-${randomUUID()}`;
@@ -202,15 +233,7 @@ export class ProductsService {
             note: dto.note || undefined,
           },
         },
-        items: [
-          {
-            name: p.name,
-            sku: p.sku || undefined,
-            quantity: qty,
-            priceMinor: unitPriceMinor,
-            totalMinor: subtotal,
-          },
-        ],
+        items,
       },
       "manual"
     );
@@ -228,6 +251,8 @@ export class ProductsService {
       orderNumber: externalId,
       productName: p.name,
       quantity: qty,
+      hasBump: !!(dto.includeBump && p.bumpPriceMinor),
+      totalMinor: total.toString(),
       totalFormatted: `${(Number(total) / 100).toLocaleString("en-IN")} BDT`,
       customerName: dto.customerName,
       customerPhone: cleanPhone,
@@ -273,6 +298,10 @@ export class ProductsService {
     await this.getOne(organizationId, productId); // 404 + tenant scope
     const data: any = { ...dto };
     if (dto.price !== undefined) { data.priceMinor = parseMoney(dto.price, "price"); delete data.price; }
+    if (dto.bumpPrice !== undefined) {
+      data.bumpPriceMinor = dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null;
+      delete data.bumpPrice;
+    }
     const updated = await (this.prisma as any).product.update({ where: { id: productId }, data });
     await this.audit.log({ organizationId, userId: actorId, action: "product.update", entityType: "Product", entityId: productId });
     return toPublicProduct(updated, null);

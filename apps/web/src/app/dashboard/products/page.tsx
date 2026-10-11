@@ -19,6 +19,9 @@ interface ProductItem {
   marginPercent?: number | null;
   stockQuantity?: number | null;
   status: "ACTIVE" | "DRAFT" | "ARCHIVED";
+  bumpTitle?: string | null;
+  bumpPriceMinor?: string | null;
+  bumpImageUrl?: string | null;
 }
 
 export default function ProductsPage() {
@@ -46,6 +49,9 @@ export default function ProductsPage() {
     description: "",
     imageUrl: "",
     status: "ACTIVE" as "ACTIVE" | "DRAFT" | "ARCHIVED",
+    bumpTitle: "",
+    bumpPrice: "",
+    bumpImageUrl: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -88,6 +94,9 @@ export default function ProductsPage() {
       description: "",
       imageUrl: "",
       status: "ACTIVE",
+      bumpTitle: "",
+      bumpPrice: "",
+      bumpImageUrl: "",
     });
     setIsModalOpen(true);
   }
@@ -97,6 +106,7 @@ export default function ProductsPage() {
     const unitPrice = (Number(p.priceMinor) / 100).toString();
     const compPrice = p.compareAtMinor ? (Number(p.compareAtMinor) / 100).toString() : "";
     const unitCost = p.currentCostMinor ? (Number(p.currentCostMinor) / 100).toString() : "";
+    const bPrice = p.bumpPriceMinor ? (Number(p.bumpPriceMinor) / 100).toString() : "";
     setForm({
       name: p.name,
       sku: p.sku || "",
@@ -108,6 +118,9 @@ export default function ProductsPage() {
       description: p.description || "",
       imageUrl: p.imageUrl || "",
       status: p.status,
+      bumpTitle: p.bumpTitle || "",
+      bumpPrice: bPrice,
+      bumpImageUrl: p.bumpImageUrl || "",
     });
     setIsModalOpen(true);
   }
@@ -133,6 +146,9 @@ export default function ProductsPage() {
             price: form.price,
             stockQuantity: form.stockQuantity ? Number(form.stockQuantity) : undefined,
             imageUrl: form.imageUrl.trim() || undefined,
+            bumpTitle: form.bumpTitle.trim() || undefined,
+            bumpPrice: form.bumpPrice.trim() || undefined,
+            bumpImageUrl: form.bumpImageUrl.trim() || undefined,
           }),
         });
 
@@ -157,6 +173,9 @@ export default function ProductsPage() {
             description: form.description.trim() || undefined,
             imageUrl: form.imageUrl.trim() || undefined,
             status: form.status,
+            bumpTitle: form.bumpTitle.trim() || undefined,
+            bumpPrice: form.bumpPrice.trim() || undefined,
+            bumpImageUrl: form.bumpImageUrl.trim() || undefined,
           }),
         });
 
@@ -647,6 +666,60 @@ export default function ProductsPage() {
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 />
+              </div>
+
+              {/* ⚡ SaaS Super-Feature: 1-Click Order Bump / Upsell Offer */}
+              <div className="rounded-xl border border-amber-300 bg-amber-50/40 p-3.5 space-y-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                  <span>⚡ ১-ক্লিক অর্ডার বাম্প ও আপসেল (1-Click Order Bump Offer)</span>
+                  <span className="rounded bg-amber-200 text-amber-800 text-[10px] px-1.5 py-0.2">SaaS Booster</span>
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  চেকআউট পেজে গ্রাহককে এই পণ্যের সাথে আকর্ষণীয় অ্যাড-অন অফার দেখান (যেমন: ওয়ালেটের সাথে লেদার পলিশ বা কম্বো উপহার)।
+                </p>
+
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      অ্যাড-অন অফার শিরোনাম (Bump Offer Title):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="যেমন: মাত্র ১৯০ টাকায় লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
+                      value={form.bumpTitle}
+                      onChange={(e) => setForm({ ...form, bumpTitle: e.target.value })}
+                      className="w-full rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        অ্যাড-অন প্রাইস (Bump Price BDT):
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="190"
+                        value={form.bumpPrice}
+                        onChange={(e) => setForm({ ...form, bumpPrice: e.target.value })}
+                        className="w-full rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                        অ্যাড-অন ইমেজ লিংক (ঐচ্ছিক):
+                      </label>
+                      <input
+                        type="url"
+                        placeholder="https://..."
+                        value={form.bumpImageUrl}
+                        onChange={(e) => setForm({ ...form, bumpImageUrl: e.target.value })}
+                        className="w-full rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
