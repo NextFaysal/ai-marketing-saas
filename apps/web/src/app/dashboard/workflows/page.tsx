@@ -387,6 +387,15 @@ export default function WorkflowsPage() {
     return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
   }, [stats]);
 
+  const runStats = useMemo(() => {
+    const total = runs.length;
+    const completed = runs.filter((r) => r.status === "completed").length;
+    const failed = runs.filter((r) => r.status === "failed").length;
+    const waiting = runs.filter((r) => r.status === "waiting").length;
+    const skipped = runs.filter((r) => r.status === "skipped").length;
+    return { total, completed, failed, waiting, skipped };
+  }, [runs]);
+
   const filteredWorkflows = useMemo(() => {
     return workflows.filter((w) => {
       if (searchQuery.trim() && !w.name.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -640,6 +649,23 @@ export default function WorkflowsPage() {
     }
   }
 
+  function exportAllWorkflows() {
+    if (workflows.length === 0) {
+      setError("এক্সপোর্ট করার মতো কোনো Workflow নেই");
+      return;
+    }
+    const data = workflows.map((w) => ({
+      name: w.name,
+      trigger: w.trigger,
+      conditions: w.conditions ?? [],
+      steps: w.steps,
+      cooldownMinutes: w.cooldownMinutes ?? 0,
+      dailyRunCap: w.dailyRunCap ?? null,
+      enabled: w.enabled,
+    }));
+    downloadJson(`all_workflows_backup_${new Date().toISOString().slice(0, 10)}`, JSON.stringify(data, null, 2));
+  }
+
   function handleImportJson() {
     setError("");
     try {
@@ -809,6 +835,18 @@ export default function WorkflowsPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             <span>JSON ইমপোর্ট</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={exportAllWorkflows}
+            title="সবগুলো Workflow ব্যাকআপ ডাউনলোড করুন"
+          >
+            <svg className="h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span>সম্পূর্ণ ব্যাকআপ</span>
           </button>
 
           <button
@@ -1936,6 +1974,51 @@ export default function WorkflowsPage() {
               </div>
             </div>
           </div>
+
+          {/* Run Health Visual Breakdown */}
+          {runs.length > 0 && (
+            <div className="card p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-slate-700">রানের সামগ্রিক স্বাস্থ্য ও পারফরম্যান্স অনুপাত:</span>
+                <div className="flex flex-wrap gap-2">
+                  <span className="badge badge-green">
+                    ✓ সম্পন্ন: {runStats.completed} ({runStats.total ? Math.round((runStats.completed / runStats.total) * 100) : 0}%)
+                  </span>
+                  <span className="badge badge-red">
+                    ✗ ব্যর্থ: {runStats.failed}
+                  </span>
+                  <span className="badge badge-amber">
+                    ⏱️ অপেক্ষমাণ: {runStats.waiting}
+                  </span>
+                  <span className="badge badge-slate">
+                    ⊘ স্কিপড: {runStats.skipped}
+                  </span>
+                </div>
+              </div>
+              <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="bg-emerald-500 transition-all duration-300"
+                  style={{ width: `${(runStats.completed / (runStats.total || 1)) * 100}%` }}
+                  title={`Completed: ${runStats.completed}`}
+                />
+                <div
+                  className="bg-red-500 transition-all duration-300"
+                  style={{ width: `${(runStats.failed / (runStats.total || 1)) * 100}%` }}
+                  title={`Failed: ${runStats.failed}`}
+                />
+                <div
+                  className="bg-amber-400 transition-all duration-300"
+                  style={{ width: `${(runStats.waiting / (runStats.total || 1)) * 100}%` }}
+                  title={`Waiting: ${runStats.waiting}`}
+                />
+                <div
+                  className="bg-slate-300 transition-all duration-300"
+                  style={{ width: `${(runStats.skipped / (runStats.total || 1)) * 100}%` }}
+                  title={`Skipped: ${runStats.skipped}`}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Runs Feed */}
           {runs.length === 0 ? (
