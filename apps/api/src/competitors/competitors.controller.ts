@@ -112,6 +112,12 @@ export class CompetitorsController {
   ) {
     return this.competitors.deconstructVideoScript(orgId, user.userId, id, dto);
   }
+
+  @Get(":competitorId/reviews-mine")
+  reviewsMine(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
+    return this.competitors.mineCustomerComplaints(orgId, id);
+  }
 }
+
 
 

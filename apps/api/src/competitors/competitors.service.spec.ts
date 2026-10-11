@@ -261,7 +261,26 @@ describe("CompetitorsService", () => {
     expect(script.adaptedScript.fullVoiceoverBangla).toBeDefined();
     expect(script.adaptedScript.creatorShootingChecklist.length).toBeGreaterThan(0);
   });
+
+  it("mineCustomerComplaints extracts top pain points and counter-positioning angles", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", {
+      name: "Fast Fashion BD",
+      websiteUrl: "https://fastfashionbd.com",
+    });
+
+    const report = await svc.mineCustomerComplaints("org-1", competitor.id);
+    expect(report.competitorName).toBe("Fast Fashion BD");
+    expect(report.overallRatingScore).toBe(3.8);
+    expect(report.sentimentDistribution.dissatisfied).toBe(24);
+    expect(report.topComplaints.length).toBe(4);
+    expect(report.topComplaints[0].category).toBe("Shipping & Delivery");
+    expect(report.recommendedCounterAngles.length).toBeGreaterThan(0);
+    expect(report.biggestVulnerability).toBeDefined();
+  });
 });
+
 
 
 

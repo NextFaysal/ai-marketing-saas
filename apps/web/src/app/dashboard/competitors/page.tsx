@@ -195,6 +195,34 @@ interface DeconstructedVideoScript {
   };
 }
 
+interface CustomerComplaintTheme {
+  category: string;
+  frequencyPercent: number;
+  complaintSummary: string;
+  sampleCustomerQuotes: string[];
+  severity: "High" | "Medium" | "Critical";
+}
+
+interface CompetitorReviewMineReport {
+  competitorName: string;
+  domain: string;
+  overallRatingScore: number;
+  totalAnalyzedFeedback: number;
+  sentimentDistribution: {
+    satisfied: number;
+    neutral: number;
+    dissatisfied: number;
+  };
+  topComplaints: CustomerComplaintTheme[];
+  biggestVulnerability: string;
+  recommendedCounterAngles: {
+    hookHeadline: string;
+    trustMechanism: string;
+    guaranteeOffer: string;
+    whyBuyersSwitch: string;
+  }[];
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -206,7 +234,7 @@ export default function CompetitorsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
   // Workspace Tabs
-  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook" | "seo">("spy");
+  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook" | "seo" | "complaints">("spy");
 
   // Swipe File (Saved creatives)
   const [savedSwipeIds, setSavedSwipeIds] = useState<string[]>([]);
@@ -230,8 +258,13 @@ export default function CompetitorsPage() {
   const [selectedProductIdForVideo, setSelectedProductIdForVideo] = useState<string>("");
   const [videoScriptStyle, setVideoScriptStyle] = useState<string>("ugc");
 
+  // Review Mine State
+  const [reviewMineReport, setReviewMineReport] = useState<CompetitorReviewMineReport | null>(null);
+  const [loadingReviewMine, setLoadingReviewMine] = useState(false);
+
   // Forms & Modals
   const [form, setForm] = useState({ name: "", facebookPageId: "", websiteUrl: "", notes: "" });
+
   const [editCompetitor, setEditCompetitor] = useState<Competitor | null>(null);
   const [obsForm, setObsForm] = useState({ productName: "", price: "", sourceUrl: "" });
   
@@ -362,13 +395,30 @@ export default function CompetitorsPage() {
     }
   }
 
-  const openCompetitor = useCallback(async (c: Competitor) => {
+  const fetchReviewMine = useCallback(async (c: Competitor) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setLoadingReviewMine(true);
+    setError("");
+    try {
+      const res = await apiFetch<CompetitorReviewMineReport>(
+        `/organizations/${orgId}/competitors/${c.id}/reviews-mine`
+      );
+      setReviewMineReport(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load review mine");
+    } finally {
+      setLoadingReviewMine(false);
+    }
+  }, []);
 
+  const openCompetitor = useCallback(async (c: Competitor) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
     setActive(c);
     setSeoReport(null);
     setSeoStrategy(null);
+    setReviewMineReport(null);
     try {
       const [a, o] = await Promise.all([
         apiFetch<Ad[]>(`/organizations/${orgId}/competitors/${c.id}/ads`),
@@ -378,11 +428,14 @@ export default function CompetitorsPage() {
       setObservations(o);
       if (activeTab === "seo") {
         fetchSeoReport(c);
+      } else if (activeTab === "complaints") {
+        fetchReviewMine(c);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load competitor details");
     }
-  }, [activeTab, fetchSeoReport]);
+  }, [activeTab, fetchSeoReport, fetchReviewMine]);
+
 
 
   async function openDossierModalHandler() {
@@ -756,7 +809,22 @@ export default function CompetitorsPage() {
           <span>🔍 SEO & Traffic Spy</span>
           <span className="rounded bg-emerald-500/20 text-emerald-700 px-1 py-0.2 text-[9px] font-bold">New</span>
         </button>
+        <button
+          onClick={() => {
+            setActiveTab("complaints");
+            if (active) fetchReviewMine(active);
+          }}
+          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "complaints"
+              ? "bg-slate-900 text-white shadow"
+              : "bg-white text-slate-600 border hover:bg-slate-50"
+          }`}
+        >
+          <span>💬 Bad Review Mine</span>
+          <span className="rounded bg-rose-500/20 text-rose-700 px-1 py-0.2 text-[9px] font-bold">Hot</span>
+        </button>
       </div>
+
 
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
@@ -1750,6 +1818,222 @@ export default function CompetitorsPage() {
           )}
         </div>
       ) : null}
+
+      {/* TAB 6: BAD REVIEW & COMPLAINT MINE */}
+      {activeTab === "complaints" ? (
+        <div className="space-y-6">
+          {!active ? (
+            <div className="card p-8 bg-white text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-2xl text-rose-600">
+                💬
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                  প্রতিযোগীর কাস্টমারদের নেগেটিভ রিভিউ, ডেলিভারি অসন্তোষ এবং দুর্বলতা মাইনিং করে কাউন্টার-অ্যাড তৈরি করতে সিলেক্ট করুন।
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 pt-2">
+                {competitors.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      openCompetitor(c);
+                      fetchReviewMine(c);
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                  >
+                    🏢 {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Header card */}
+              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-900">
+                      {active.name} — Customer Sentiment & Complaint Mining
+                    </h3>
+                    <span className="rounded bg-rose-100 text-rose-700 text-xs px-2 py-0.5 font-bold">
+                      দুর্বলতা কাজে লাগানো
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    ক্রেতাদের অসন্তোষ, দেরিতে ডেলিভারি, এবং খারাপ ফিডব্যাক বিশ্লেষণ করে ক্রেতাকে আপনার স্টোরে টানার কৌশল
+                  </p>
+                </div>
+                <button
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  disabled={loadingReviewMine}
+                  onClick={() => fetchReviewMine(active)}
+                >
+                  {loadingReviewMine ? "মাইনিং হচ্ছে..." : "🔄 রি-স্ক্যান রিভিউ"}
+                </button>
+              </div>
+
+              {loadingReviewMine ? (
+                <div className="card p-12 bg-white text-center text-sm text-slate-500">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-rose-600 border-r-transparent mb-3" />
+                  <p>কাস্টমারদের রিভিউ ও সোশ্যাল ফিডব্যাক বিশ্লেষণ করা হচ্ছে...</p>
+                </div>
+              ) : reviewMineReport ? (
+                <div className="space-y-6">
+                  {/* Satisfaction & Sentiment Overview */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="card p-4 bg-gradient-to-br from-rose-50/60 to-white border border-rose-100">
+                      <span className="text-[11px] font-bold text-rose-900 uppercase tracking-wider">
+                        কাস্টমার স্যাটিসফ্যাকশন স্কোর
+                      </span>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <span className="text-3xl font-black text-rose-700">{reviewMineReport.overallRatingScore}</span>
+                        <span className="text-xs text-slate-400 font-semibold">/ ৫.০</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        মোট বিশ্লেষিত ফিডব্যাক: {reviewMineReport.totalAnalyzedFeedback} টি
+                      </span>
+                    </div>
+
+                    <div className="card p-4 bg-white md:col-span-2 space-y-2">
+                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        📊 সেন্টিমেন্ট বন্টন (Sentiment Breakdown)
+                      </span>
+                      <div className="space-y-2 pt-1">
+                        <div>
+                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+                            <span>অসন্তুষ্ট ক্রেতা (Dissatisfied)</span>
+                            <span className="text-rose-600 font-bold">{reviewMineReport.sentimentDistribution.dissatisfied}%</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-rose-500 rounded-full" style={{ width: `${reviewMineReport.sentimentDistribution.dissatisfied}%` }} />
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-xs text-slate-500 pt-1">
+                          <span>সন্তুষ্ট: {reviewMineReport.sentimentDistribution.satisfied}%</span>
+                          <span>নিরপেক্ষ: {reviewMineReport.sentimentDistribution.neutral}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Biggest Vulnerability Alert */}
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4 flex items-start gap-3">
+                    <span className="text-xl">🚨</span>
+                    <div>
+                      <h4 className="font-bold text-rose-950 text-sm">
+                        প্রতিযোগীর সবচেয়ে মারাত্মক দুর্বলতা (Core Vulnerability)
+                      </h4>
+                      <p className="mt-1 text-xs text-rose-800 leading-relaxed font-medium">
+                        {reviewMineReport.biggestVulnerability}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Recurring Complaint Categories */}
+                  <div className="card p-5 bg-white space-y-4">
+                    <div className="border-b pb-3">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        শীর্ষ ৪টি গ্রাহক অসন্তোষের বিষয় (Top Customer Friction Points)
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        যেসব কারণে ক্রেতারা প্রতিদ্বন্দীর ওপর ক্ষুব্ধ
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {reviewMineReport.topComplaints.map((item, idx) => (
+                        <div key={idx} className="rounded-xl border p-4 bg-slate-50/50 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs">{item.category}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="rounded bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5">
+                                {item.frequencyPercent}% অভিযোগ
+                              </span>
+                              <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
+                                item.severity === "Critical" ? "bg-red-500 text-white" : "bg-amber-100 text-amber-800"
+                              }`}>
+                                {item.severity}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-700 leading-relaxed">{item.complaintSummary}</p>
+                          <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200/70">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">ক্রেতাদের বাস্তব উক্তি:</span>
+                            {item.sampleCustomerQuotes.map((q, qi) => (
+                              <p key={qi} className="text-[11px] text-slate-600 italic">
+                                {q}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* High-Converting Counter-Positioning Angles */}
+                  <div className="card p-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white space-y-4 rounded-2xl shadow-xl">
+                    <div className="border-b border-slate-700 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500 text-sm">🎯</span>
+                        <h4 className="font-bold text-base text-white">
+                          AI Reassurance Angles ("ক্রেতা ছিনতাই" কপি ও ট্রাস্ট অফার)
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1">
+                        প্রতিযোগীর এই দুর্বলতাগুলো সমাধান করে বিজ্ঞাপনে কী প্রতিশ্রুতি দিলে ক্রেতারা সরাসরি আপনার থেকে কিনবে
+                      </p>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4 pt-1">
+                      {reviewMineReport.recommendedCounterAngles.map((angle, i) => (
+                        <div key={i} className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-bold text-sm text-emerald-400 leading-snug">
+                              &ldquo;{angle.hookHeadline}&rdquo;
+                            </span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(angle.hookHeadline);
+                                setCopiedText(`angle-${i}`);
+                                setTimeout(() => setCopiedText(""), 2000);
+                              }}
+                              className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold shrink-0"
+                            >
+                              {copiedText === `angle-${i}` ? "কপি হয়েছে!" : "📋 কপি"}
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 text-xs">
+                            <div className="rounded bg-slate-900/60 p-2.5 border border-slate-700/60">
+                              <span className="font-semibold text-indigo-300 text-[11px] block">🛡️ বিশ্বাস অর্জনের মেকানিজম:</span>
+                              <p className="text-slate-200 mt-0.5">{angle.trustMechanism}</p>
+                            </div>
+                            <div className="rounded bg-slate-900/60 p-2.5 border border-slate-700/60">
+                              <span className="font-semibold text-amber-300 text-[11px] block">⚡ গ্যারান্টি অফার:</span>
+                              <p className="text-slate-200 mt-0.5">{angle.guaranteeOffer}</p>
+                            </div>
+                          </div>
+
+                          <div className="text-[11px] text-slate-400 italic pt-1 border-t border-slate-700/60">
+                            💡 ক্রেতা কেন সুইচ করবে: {angle.whyBuyersSwitch}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="card p-8 bg-white text-center text-xs text-slate-500">
+                  <p>রিভিউ ও ফিডব্যাক লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান রিভিউ&rdquo; বাটনে ক্লিক করুন।</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+
 
 
       {/* White-Label Agency Dossier Audit Modal */}

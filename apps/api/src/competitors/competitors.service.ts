@@ -8,9 +8,11 @@ import { WebsiteScanner } from "./website-scanner";
 import { MultiPlatformScanner } from "./multi-platform-scanner";
 import { SeoTrafficAnalyzer } from "./seo-analyzer";
 import { VideoScriptDeconstructor } from "./video-deconstructor";
+import { ReviewMiner } from "./review-miner";
 import { DeconstructVideoScriptDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 
 
@@ -902,7 +904,14 @@ Format as a clean JSON with keys:
 
     return result;
   }
+
+  async mineCustomerComplaints(organizationId: string, competitorId: string) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const miner = new ReviewMiner(this.llm);
+    return miner.mine(competitor.name, competitor.websiteUrl ?? undefined);
+  }
 }
+
 
 
 
