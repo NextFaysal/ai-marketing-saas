@@ -166,6 +166,35 @@ interface SeoStrategyResult {
   };
 }
 
+interface ScriptScene {
+  timeRange: string;
+  phase: string;
+  visualCue: string;
+  audioVoiceover: string;
+  onScreenText: string;
+  directorNotes: string;
+}
+
+interface DeconstructedVideoScript {
+  competitorAdId: string;
+  format: string;
+  totalDurationSeconds: number;
+  hookCategory: string;
+  competitorHookBreakdown: {
+    firstThreeSecondsHook: string;
+    whyItRetainsViewers: string;
+    coreEmotionalTrigger: string;
+  };
+  adaptedScript: {
+    conceptTitle: string;
+    targetProductName: string;
+    scenes: ScriptScene[];
+    fullVoiceoverBangla: string;
+    creatorShootingChecklist: string[];
+    suggestedAudioTrack: string;
+  };
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -194,6 +223,12 @@ export default function CompetitorsPage() {
   const [generatingSeoGap, setGeneratingSeoGap] = useState(false);
   const [selectedProductIdForSeo, setSelectedProductIdForSeo] = useState<string>("");
 
+  // Video Script Deconstructor Modal State
+  const [videoModalAd, setVideoModalAd] = useState<Ad | null>(null);
+  const [videoScriptResult, setVideoScriptResult] = useState<DeconstructedVideoScript | null>(null);
+  const [isVideoDeconstructing, setIsVideoDeconstructing] = useState(false);
+  const [selectedProductIdForVideo, setSelectedProductIdForVideo] = useState<string>("");
+  const [videoScriptStyle, setVideoScriptStyle] = useState<string>("ugc");
 
   // Forms & Modals
   const [form, setForm] = useState({ name: "", facebookPageId: "", websiteUrl: "", notes: "" });
@@ -210,6 +245,7 @@ export default function CompetitorsPage() {
   const [counterAdResult, setCounterAdResult] = useState<CounterAdResult | null>(null);
   const [isGeneratingCounterAd, setIsGeneratingCounterAd] = useState(false);
   const [copiedText, setCopiedText] = useState("");
+
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -299,7 +335,35 @@ export default function CompetitorsPage() {
     }
   }
 
+  async function deconstructVideoScriptHandler() {
+    if (!videoModalAd || !active) return;
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setIsVideoDeconstructing(true);
+    setError("");
+    try {
+      const res = await apiFetch<DeconstructedVideoScript>(
+        `/organizations/${orgId}/competitors/${active.id}/video-script`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            competitorAdId: videoModalAd.id,
+            ownProductId: selectedProductIdForVideo || undefined,
+            videoStyle: videoScriptStyle || undefined,
+          }),
+        }
+      );
+      setVideoScriptResult(res);
+      setNotice("ভিডিও স্ক্রিপ্ট ডিকনস্ট্রাকশন ও UGC স্টোরিবোর্ড সফলভাবে তৈরি হয়েছে! 🎬");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to deconstruct video script");
+    } finally {
+      setIsVideoDeconstructing(false);
+    }
+  }
+
   const openCompetitor = useCallback(async (c: Competitor) => {
+
     const orgId = getOrganizationId();
     if (!orgId) return;
     setActive(c);
@@ -1048,16 +1112,29 @@ export default function CompetitorsPage() {
                       </a>
                     ) : <span />}
 
-                    <button
-                      onClick={() => {
-                        setCounterModalAd(a);
-                        setCounterAdResult(null);
-                      }}
-                      className="rounded bg-gradient-to-r from-indigo-600 to-blue-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:from-indigo-700 hover:to-blue-700"
-                    >
-                      ⚡ Beat This Ad (কাউন্টার কপি)
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          setVideoModalAd(a);
+                          setVideoScriptResult(null);
+                        }}
+                        className="rounded border border-pink-200 bg-pink-50/70 px-2 py-1 text-xs font-semibold text-pink-700 hover:bg-pink-100 flex items-center gap-1 transition-colors"
+                        title="রিলস ও টিকটক ভিডিও স্ক্রিপ্ট ফ্রেম-বাই-ফ্রেম বিশ্লেষণ"
+                      >
+                        🎬 স্ক্রিপ্ট ডিকনস্ট্রাক্ট
+                      </button>
+                      <button
+                        onClick={() => {
+                          setCounterModalAd(a);
+                          setCounterAdResult(null);
+                        }}
+                        className="rounded bg-gradient-to-r from-indigo-600 to-blue-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:from-indigo-700 hover:to-blue-700"
+                      >
+                        ⚡ Beat This Ad
+                      </button>
+                    </div>
                   </div>
+
                 </div>
               ))}
 
@@ -1975,6 +2052,226 @@ export default function CompetitorsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* Video Script Deconstructor Modal */}
+      {videoModalAd ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
+          <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white p-6 space-y-5">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-pink-100 text-pink-700 text-lg">
+                  🎬
+                </span>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Viral UGC & Video Script Deconstructor
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    রিলস ও টিকটক ভিডিওর হুক বিশ্লেষণ এবং আপনার স্টোরের জন্য ফ্রেম-বাই-ফ্রেম শুটিং স্ক্রিপ্ট
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setVideoModalAd(null)}
+                className="rounded p-1 text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Competitor Ad Snippet */}
+            <div className="rounded-xl bg-slate-50 p-3.5 text-xs border border-slate-200">
+              <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
+                অরিজিনাল ভিডিও অ্যাড টেক্সট ({videoModalAd.platforms.join(", ")}):
+              </span>
+              <p className="mt-1 text-slate-800 line-clamp-3 leading-relaxed">
+                {videoModalAd.creativeText || "(ভিডিওর টেক্সট অনুপস্থিত)"}
+              </p>
+            </div>
+
+            {/* Inputs: Product & Style */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  আপনার কোন প্রোডাক্টের জন্য ভিডিও বানাবেন?
+                </label>
+                <select
+                  className={inputCls}
+                  value={selectedProductIdForVideo}
+                  onChange={(e) => setSelectedProductIdForVideo(e.target.value)}
+                >
+                  <option value="">ডিফল্ট স্টোর প্রোডাক্ট (অটো কনটেক্সট)</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({formatMinor(BigInt(p.priceMinor), p.currency)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  ভিডিও কনটেন্টের স্টাইল
+                </label>
+                <select
+                  className={inputCls}
+                  value={videoScriptStyle}
+                  onChange={(e) => setVideoScriptStyle(e.target.value)}
+                >
+                  <option value="ugc">📱 UGC Creator / কাস্টমার সেলফি স্টাইল</option>
+                  <option value="unboxing">📦 Dramatic Unboxing & ASMR ফিনিশ</option>
+                  <option value="problem_solution">⚡ Problem-Agitation-Solution (সমস্যা ও সমাধান)</option>
+                  <option value="skit">🎭 Relatable Story / কমেডি সিচুয়েশনাল ড্রামা</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={deconstructVideoScriptHandler}
+              disabled={isVideoDeconstructing}
+              className="w-full rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 py-3 text-xs font-bold text-white shadow-md hover:from-pink-700 hover:to-indigo-700 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            >
+              {isVideoDeconstructing ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-r-transparent" />
+                  <span>ভিডিওর ফ্রেম ও হুক বিশ্লেষণ হচ্ছে...</span>
+                </>
+              ) : (
+                <>
+                  <span>⚡ ফ্রেম-বাই-ফ্রেম স্ক্রিপ্ট ও ভয়েসওভার ডিকনস্ট্রাক্ট করুন</span>
+                  <span>➔</span>
+                </>
+              )}
+            </button>
+
+            {/* Generated Script Results */}
+            {videoScriptResult ? (
+              <div className="space-y-5 pt-3 border-t">
+                {/* Hook & Retention Breakdown Card */}
+                <div className="rounded-xl border border-pink-200 bg-pink-50/50 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-pink-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>🎯 ০-৩ সেকেন্ড হুক অ্যানালাইসিস</span>
+                      <span className="rounded bg-pink-200/80 text-pink-800 text-[10px] px-2 py-0.5 font-bold">
+                        {videoScriptResult.hookCategory}
+                      </span>
+                    </span>
+                    <span className="text-xs font-semibold text-slate-600">
+                      মোট ডিউরেশন: ~{videoScriptResult.totalDurationSeconds}s ({videoScriptResult.format})
+                    </span>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-3 text-xs">
+                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                      <span className="font-semibold text-slate-500 text-[11px]">স্ক্রোল থামানোর হুক:</span>
+                      <p className="mt-1 font-bold text-slate-800">{videoScriptResult.competitorHookBreakdown.firstThreeSecondsHook}</p>
+                    </div>
+                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                      <span className="font-semibold text-slate-500 text-[11px]">ভিউয়ার ধরে রাখার কারণ (Retention):</span>
+                      <p className="mt-1 text-slate-700">{videoScriptResult.competitorHookBreakdown.whyItRetainsViewers}</p>
+                    </div>
+                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                      <span className="font-semibold text-slate-500 text-[11px]">মানসিক ট্রিগার (Trigger):</span>
+                      <p className="mt-1 font-semibold text-indigo-700">{videoScriptResult.competitorHookBreakdown.coreEmotionalTrigger}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Scene-by-Scene Storyboard & Teleprompter */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-slate-900 text-sm">
+                      🎬 সিন-বাই-সিন স্টোরিবোর্ড ও শুটিং গাইড ({videoScriptResult.adaptedScript.conceptTitle})
+                    </h4>
+                    <span className="text-xs text-slate-400">রিলস / টিকটক (৯:১৬) ফরম্যাট</span>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-xl border">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100 text-slate-700 font-semibold border-b">
+                        <tr>
+                          <th className="py-2.5 px-3 w-24">টাইমস্ট্যাম্প</th>
+                          <th className="py-2.5 px-3 w-36">ফেজ / পর্ব</th>
+                          <th className="py-2.5 px-3">ক্যামেরা ও বি-রোল নির্দেশিকা (Visual Shot)</th>
+                          <th className="py-2.5 px-3">স্পোকেন ডায়লগ / ভয়েসওভার (Audio)</th>
+                          <th className="py-2.5 px-3">স্ক্রিন টেক্সট / ক্যাপশন</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y text-slate-800">
+                        {videoScriptResult.adaptedScript.scenes.map((scene, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-mono font-bold text-indigo-600">
+                              {scene.timeRange}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="rounded bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5">
+                                {scene.phase}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600">
+                              <span className="font-medium text-slate-900">{scene.visualCue}</span>
+                              <p className="text-[10px] text-slate-400 mt-0.5">নোট: {scene.directorNotes}</p>
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 leading-relaxed">
+                              &ldquo;{scene.audioVoiceover}&rdquo;
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-pink-700">
+                              {scene.onScreenText}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Teleprompter Box */}
+                <div className="rounded-xl bg-slate-900 text-white p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-pink-400">
+                      🎙️ টেলিপ্রম্পটার ভয়েসওভার কপি (Full Voiceover Script)
+                    </span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(videoScriptResult.adaptedScript.fullVoiceoverBangla);
+                        setCopiedText("voiceover");
+                        setTimeout(() => setCopiedText(""), 2000);
+                      }}
+                      className="rounded bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1 text-white font-semibold flex items-center gap-1 border border-slate-700"
+                    >
+                      {copiedText === "voiceover" ? "কপি হয়েছে!" : "📋 কপি টেলিপ্রম্পটার"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                    {videoScriptResult.adaptedScript.fullVoiceoverBangla}
+                  </p>
+                </div>
+
+                {/* Creator Shooting Checklist */}
+                <div className="grid sm:grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-xl border p-3.5 bg-slate-50 space-y-2">
+                    <span className="font-bold text-slate-900 block">🎥 ক্রিয়েটর শুটিং চেকলিস্ট:</span>
+                    <ul className="space-y-1 text-slate-600 list-disc list-inside text-[11px]">
+                      {videoScriptResult.adaptedScript.creatorShootingChecklist.map((item, ix) => (
+                        <li key={ix}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="rounded-xl border p-3.5 bg-slate-50 space-y-2">
+                    <span className="font-bold text-slate-900 block">🎵 সাজেস্টেড ব্যাকগ্রাউন্ড মিউজিক:</span>
+                    <p className="text-slate-700 text-[11px] leading-relaxed">
+                      {videoScriptResult.adaptedScript.suggestedAudioTrack}
+                    </p>
+                    <div className="pt-2 border-t text-[11px] text-slate-500">
+                      টিপস: টিকটক ও ইনস্টাগ্রামে ট্রেন্ডিং সাউন্ড ব্যবহার করলে রিচ ২ গুণ বৃদ্ধি পায়।
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
 
       {/* AI Market Intelligence Feed */}
       <div className="card p-5 bg-white">

@@ -232,6 +232,36 @@ describe("CompetitorsService", () => {
     expect(gap.strategy.targetKeywords.length).toBe(5);
     expect(gap.strategy.estimatedCtrBoost).toBe("+35% higher SERP CTR");
   });
+
+  it("deconstructVideoScript creates scene-by-scene storyboard and voiceover", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Fashion House BD" });
+
+    const ad = await (prisma as any).competitorAd.create({
+      data: {
+        competitorId: competitor.id,
+        externalAdId: "ad-video-1",
+        startedAt: new Date(Date.now() - 5 * 86400000),
+        isActive: true,
+        platforms: ["tiktok", "facebook"],
+        creativeText: "Don't miss our viral Panjabi drop this Eid! Free shipping nationwide.",
+      },
+    });
+
+    const script = await svc.deconstructVideoScript("org-1", "u", competitor.id, {
+      competitorAdId: ad.id,
+      videoStyle: "ugc",
+    });
+
+    expect(script.format).toBe("TikTok & Reels (9:16)");
+    expect(script.competitorHookBreakdown.firstThreeSecondsHook).toBeDefined();
+    expect(script.adaptedScript.scenes.length).toBe(5);
+    expect(script.adaptedScript.scenes[0].phase).toBe("Scroll-Stopping Hook");
+    expect(script.adaptedScript.fullVoiceoverBangla).toBeDefined();
+    expect(script.adaptedScript.creatorShootingChecklist.length).toBeGreaterThan(0);
+  });
 });
+
 
 

@@ -37,6 +37,12 @@ export class SyncMultiPlatformDto {
 export class GenerateSeoGapDto {
   @IsOptional() @IsString() ownProductId?: string;
 }
+export class DeconstructVideoScriptDto {
+  @IsString() competitorAdId!: string;
+  @IsOptional() @IsString() ownProductId?: string;
+  @IsOptional() @IsString() videoStyle?: string;
+}
+
 
 
 

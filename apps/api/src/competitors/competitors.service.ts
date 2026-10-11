@@ -7,8 +7,11 @@ import { AdLibraryClient } from "./ad-library.client";
 import { WebsiteScanner } from "./website-scanner";
 import { MultiPlatformScanner } from "./multi-platform-scanner";
 import { SeoTrafficAnalyzer } from "./seo-analyzer";
+import { VideoScriptDeconstructor } from "./video-deconstructor";
+import { DeconstructVideoScriptDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 
 
@@ -854,7 +857,53 @@ Format as a clean JSON with keys:
       strategy: strategyResult,
     };
   }
+
+  async deconstructVideoScript(
+    organizationId: string,
+    actorId: string,
+    competitorId: string,
+    dto: DeconstructVideoScriptDto,
+  ) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const ad = await this.prisma.competitorAd.findFirst({
+      where: { id: dto.competitorAdId, competitorId },
+    });
+    if (!ad) {
+      throw new NotFoundException(`Competitor ad ${dto.competitorAdId} not found`);
+    }
+
+    let ownProductTitle: string | undefined = undefined;
+    if (dto.ownProductId) {
+      const product = await this.prisma.product.findFirst({
+        where: { id: dto.ownProductId, organizationId },
+        select: { title: true },
+      });
+      if (product) ownProductTitle = product.title;
+    }
+
+    const deconstructor = new VideoScriptDeconstructor(this.llm);
+    const result = await deconstructor.deconstruct({
+      competitorName: competitor.name,
+      adText: ad.creativeText || "Check out our best collections online!",
+      platforms: (ad.platforms as string[]) || ["facebook"],
+      adId: ad.id,
+      targetProductName: ownProductTitle,
+      videoStyle: dto.videoStyle,
+    });
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: "COMPETITOR_VIDEO_SCRIPT_DECONSTRUCTED",
+      entityType: "competitor_ad",
+      entityId: ad.id,
+      details: { competitorName: competitor.name, targetProduct: ownProductTitle },
+    });
+
+    return result;
+  }
 }
+
 
 
 

@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+
 
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -101,5 +102,16 @@ export class CompetitorsController {
   ) {
     return this.competitors.generateSeoGapStrategy(orgId, user.userId, id, dto?.ownProductId);
   }
+
+  @Post(":competitorId/video-script") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER")
+  deconstructVideoScript(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("competitorId") id: string,
+    @Body() dto: DeconstructVideoScriptDto,
+  ) {
+    return this.competitors.deconstructVideoScript(orgId, user.userId, id, dto);
+  }
 }
+
 
