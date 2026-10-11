@@ -9,10 +9,12 @@ import { MultiPlatformScanner } from "./multi-platform-scanner";
 import { SeoTrafficAnalyzer } from "./seo-analyzer";
 import { VideoScriptDeconstructor } from "./video-deconstructor";
 import { ReviewMiner } from "./review-miner";
+import { FunnelAuditor } from "./funnel-auditor";
 import { AlertDispatcher, AlertChannelConfig, AlertNotificationPayload } from "./alert-dispatcher";
 import { DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 
 
@@ -1002,7 +1004,14 @@ Format as a clean JSON with keys:
       return dispatcher.sendToWhatsapp(url, testPayload);
     }
   }
+
+  async auditCheckoutFunnel(organizationId: string, competitorId: string) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const auditor = new FunnelAuditor();
+    return auditor.audit(competitor.name, competitor.websiteUrl ?? undefined);
+  }
 }
+
 
 
 

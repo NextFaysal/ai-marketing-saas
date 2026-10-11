@@ -140,7 +140,13 @@ export class CompetitorsController {
   ) {
     return this.competitors.testSendAlert(orgId, dto);
   }
+
+  @Get(":competitorId/funnel-audit")
+  funnelAudit(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
+    return this.competitors.auditCheckoutFunnel(orgId, id);
+  }
 }
+
 
 
 

@@ -320,7 +320,25 @@ describe("CompetitorsService", () => {
 
     expect(res.success).toBe(true);
   });
+
+  it("auditCheckoutFunnel analyzes checkout type, friction score, and AOV bundles", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", {
+      name: "Smart Gadgets BD",
+      websiteUrl: "https://smartgadgetsbd.com",
+    });
+
+    const funnel = await svc.auditCheckoutFunnel("org-1", competitor.id);
+    expect(funnel.competitorName).toBe("Smart Gadgets BD");
+    expect(funnel.checkoutType).toBe("1-Page Express Checkout");
+    expect(funnel.formFrictionScore).toBe(28);
+    expect(funnel.bundleOffers.length).toBe(3);
+    expect(funnel.bundleOffers[1].popularityScore).toBe(50);
+    expect(funnel.conversionOptimizationTips.length).toBeGreaterThan(0);
+  });
 });
+
 
 
 

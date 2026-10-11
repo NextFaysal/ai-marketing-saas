@@ -234,6 +234,30 @@ interface AlertChannelConfig {
   notifyOnWinningAd: boolean;
 }
 
+interface CheckoutBundleTier {
+  tierName: string;
+  quantity: number;
+  discountOffer: string;
+  perceivedValue: string;
+  popularityScore: number;
+}
+
+interface FunnelAuditReport {
+  competitorName: string;
+  domain: string;
+  checkoutType: string;
+  formFrictionScore: number;
+  requiredFields: string[];
+  paymentGatewaysDetected: string[];
+  activeTrustBadges: string[];
+  bundleOffers: CheckoutBundleTier[];
+  conversionOptimizationTips: {
+    tactic: string;
+    impact: "High" | "Medium" | "Critical";
+    howToBeatThem: string;
+  }[];
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -245,7 +269,12 @@ export default function CompetitorsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
   // Workspace Tabs
-  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook" | "seo" | "complaints">("spy");
+  const [activeTab, setActiveTab] = useState<"spy" | "swipefile" | "pricing" | "playbook" | "seo" | "complaints" | "funnel">("spy");
+
+  // Funnel Audit State
+  const [funnelReport, setFunnelReport] = useState<FunnelAuditReport | null>(null);
+  const [loadingFunnel, setLoadingFunnel] = useState(false);
+
 
   // Swipe File (Saved creatives)
   const [savedSwipeIds, setSavedSwipeIds] = useState<string[]>([]);
@@ -502,6 +531,23 @@ export default function CompetitorsPage() {
     }
   }, []);
 
+  const fetchFunnelAudit = useCallback(async (c: Competitor) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setLoadingFunnel(true);
+    setError("");
+    try {
+      const res = await apiFetch<FunnelAuditReport>(
+        `/organizations/${orgId}/competitors/${c.id}/funnel-audit`
+      );
+      setFunnelReport(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load funnel audit");
+    } finally {
+      setLoadingFunnel(false);
+    }
+  }, []);
+
   const openCompetitor = useCallback(async (c: Competitor) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
@@ -509,6 +555,7 @@ export default function CompetitorsPage() {
     setSeoReport(null);
     setSeoStrategy(null);
     setReviewMineReport(null);
+    setFunnelReport(null);
     try {
       const [a, o] = await Promise.all([
         apiFetch<Ad[]>(`/organizations/${orgId}/competitors/${c.id}/ads`),
@@ -520,11 +567,14 @@ export default function CompetitorsPage() {
         fetchSeoReport(c);
       } else if (activeTab === "complaints") {
         fetchReviewMine(c);
+      } else if (activeTab === "funnel") {
+        fetchFunnelAudit(c);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load competitor details");
     }
-  }, [activeTab, fetchSeoReport, fetchReviewMine]);
+  }, [activeTab, fetchSeoReport, fetchReviewMine, fetchFunnelAudit]);
+
 
 
 
@@ -921,7 +971,22 @@ export default function CompetitorsPage() {
           <span>💬 Bad Review Mine</span>
           <span className="rounded bg-rose-500/20 text-rose-700 px-1 py-0.2 text-[9px] font-bold">Hot</span>
         </button>
+        <button
+          onClick={() => {
+            setActiveTab("funnel");
+            if (active) fetchFunnelAudit(active);
+          }}
+          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === "funnel"
+              ? "bg-slate-900 text-white shadow"
+              : "bg-white text-slate-600 border hover:bg-slate-50"
+          }`}
+        >
+          <span>🛒 Checkout & Funnel Spy</span>
+          <span className="rounded bg-amber-500/20 text-amber-700 px-1 py-0.2 text-[9px] font-bold">+35% AOV</span>
+        </button>
       </div>
+
 
 
 
@@ -2141,6 +2206,235 @@ export default function CompetitorsPage() {
           )}
         </div>
       ) : null}
+
+      {/* TAB 7: FUNNEL & CHECKOUT SPY */}
+      {activeTab === "funnel" ? (
+        <div className="space-y-6">
+          {!active ? (
+            <div className="card p-8 bg-white text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 text-2xl text-amber-600">
+                🛒
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                  প্রতিযোগীর চেকআউট ফর্ম, ট্রাস্ট ব্যাজ, পেমেন্ট মেথড এবং অফার বান্ডেল বিশ্লেষণ দেখতে নিচে ক্লিক করুন।
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 pt-2">
+                {competitors.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      openCompetitor(c);
+                      fetchFunnelAudit(c);
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                  >
+                    🏢 {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Header card */}
+              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-900">
+                      {active.name} — Checkout Funnel & Conversion Architecture
+                    </h3>
+                    <span className="rounded bg-amber-100 text-amber-800 text-xs px-2 py-0.5 font-bold">
+                      AOV & কনভার্সন অপ্টিমাইজার
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    চেকআউট ফর্ম আর্কিটেকচার, পেমেন্ট মেথড, ট্রাস্ট উপাদান এবং গড় অর্ডার ভ্যালু (AOV) বৃদ্ধির কম্বো অফার
+                  </p>
+                </div>
+                <button
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  disabled={loadingFunnel}
+                  onClick={() => fetchFunnelAudit(active)}
+                >
+                  {loadingFunnel ? "অডিট হচ্ছে..." : "🔄 রি-স্ক্যান ফানেল"}
+                </button>
+              </div>
+
+              {loadingFunnel ? (
+                <div className="card p-12 bg-white text-center text-sm text-slate-500">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-amber-600 border-r-transparent mb-3" />
+                  <p>চেকআউট ফ্লো এবং বান্ডেল অফার বিশ্লেষণ করা হচ্ছে...</p>
+                </div>
+              ) : funnelReport ? (
+                <div className="space-y-6">
+                  {/* High-level metrics */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="card p-4 bg-gradient-to-br from-amber-50/60 to-white border border-amber-100">
+                      <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">
+                        চেকআউট টাইপ
+                      </span>
+                      <p className="mt-2 text-base font-black text-slate-900">
+                        {funnelReport.checkoutType}
+                      </p>
+                      <span className="text-[10px] text-slate-500">হাইপার-কনভার্টিং ডিরেক্ট চেকআউট</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-emerald-50/60 to-white border border-emerald-100">
+                      <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider">
+                        ফর্ম ফ্রিকশন স্কোর
+                      </span>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <span className="text-2xl font-black text-emerald-700">{funnelReport.formFrictionScore}</span>
+                        <span className="text-xs text-slate-400 font-semibold">/ ১০০ (লো ফ্রিকশন)</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500">সহজেই অর্ডার সম্পন্ন করা যায়</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-blue-50/60 to-white border border-blue-100">
+                      <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider">
+                        পেমেন্ট মেথড
+                      </span>
+                      <p className="mt-2 text-2xl font-black text-blue-700">
+                        {funnelReport.paymentGatewaysDetected.length} টি
+                      </p>
+                      <span className="text-[10px] text-slate-500">COD, বিকাশ, নগদ সহ সক্রিয়</span>
+                    </div>
+
+                    <div className="card p-4 bg-gradient-to-br from-purple-50/60 to-white border border-purple-100">
+                      <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">
+                        ট্রাস্ট ব্যাজ এলিমেন্ট
+                      </span>
+                      <p className="mt-2 text-2xl font-black text-purple-700">
+                        {funnelReport.activeTrustBadges.length} টি
+                      </p>
+                      <span className="text-[10px] text-slate-500">কনভার্সন বুস্টিং গ্যারান্টি</span>
+                    </div>
+                  </div>
+
+                  {/* Form fields & Payment Methods */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="card p-4 bg-white space-y-3">
+                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        📝 চেকআউটের আবশ্যকীয় ফিল্ডসমূহ (Required Fields)
+                      </span>
+                      <div className="space-y-1.5 pt-1">
+                        {funnelReport.requiredFields.map((rf, i) => (
+                          <div key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border text-xs text-slate-800">
+                            <span className="text-emerald-600 font-bold">✓</span>
+                            <span>{rf}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        ৩টির বেশি ফিল্ড থাকলে কনভার্সন রেট ড্রপ করে। প্রতিযোগী লো-ফ্রিকশন ৩-ফিল্ড ব্যবহার করছে।
+                      </p>
+                    </div>
+
+                    <div className="card p-4 bg-white space-y-3">
+                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        🛡️ সক্রিয় ট্রাস্ট ব্যাজ ও নিশ্চয়তা (Trust Badges)
+                      </span>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {funnelReport.activeTrustBadges.map((badge, i) => (
+                          <span key={i} className="rounded-lg bg-emerald-50 text-emerald-800 text-xs px-2.5 py-1 font-semibold border border-emerald-200">
+                            🛡️ {badge}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="pt-2 border-t">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">পেমেন্ট গেটওয়ে:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {funnelReport.paymentGatewaysDetected.map((pg, i) => (
+                            <span key={i} className="rounded bg-slate-100 text-slate-700 text-[11px] px-2 py-0.5 font-medium">
+                              💳 {pg}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AOV Upsell Bundles */}
+                  <div className="card p-5 bg-white space-y-4">
+                    <div className="flex items-center justify-between border-b pb-3">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-sm">
+                          প্রতিযোগীর বান্ডেল অফার আর্কিটেকচার (AOV Boosters)
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          কীভাবে তারা একক পণ্যের জায়গায় ২ বা ৩টি পণ্য বিক্রি করে গড় অর্ডার ভ্যালু ৫০% বাড়াচ্ছে
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                        Order Bump Formula
+                      </span>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {funnelReport.bundleOffers.map((tier, idx) => (
+                        <div key={idx} className={`rounded-xl border p-4 space-y-2.5 transition-all ${
+                          tier.popularityScore >= 50
+                            ? "bg-amber-50/50 border-amber-300 ring-1 ring-amber-300"
+                            : "bg-slate-50/50"
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 text-xs">{tier.tierName}</span>
+                            <span className="rounded bg-white text-slate-700 text-[10px] font-bold px-1.5 py-0.5 border">
+                              {tier.popularityScore}% ক্রেতা
+                            </span>
+                          </div>
+                          <p className="font-bold text-sm text-indigo-700">{tier.discountOffer}</p>
+                          <p className="text-xs text-slate-600 leading-relaxed">{tier.perceivedValue}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Conversion Optimization & How to Beat Them */}
+                  <div className="card p-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white space-y-4 rounded-2xl shadow-xl">
+                    <div className="border-b border-slate-700 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500 text-sm">⚡</span>
+                        <h4 className="font-bold text-base text-white">
+                          ফানেল অপ্টিমাইজেশন ও আউট-স্মার্ট কৌশল (Beat Their Funnel)
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1">
+                        আপনার স্টোরের চেকআউট পেজে কী পরিবর্তন আনলে কনভার্সন রেট প্রতিদ্বন্দীর চেয়ে বেশি হবে
+                      </p>
+                    </div>
+
+                    <div className="grid sm:grid-cols-3 gap-3 pt-1">
+                      {funnelReport.conversionOptimizationTips.map((tip, i) => (
+                        <div key={i} className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-emerald-400">{tip.tactic}</span>
+                            <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
+                              tip.impact === "Critical" ? "bg-red-500 text-white" : "bg-indigo-500/30 text-indigo-300"
+                            }`}>
+                              {tip.impact}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                            {tip.howToBeatThem}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="card p-8 bg-white text-center text-xs text-slate-500">
+                  <p>ফানেল ডেটা লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান ফানেল&rdquo; বাটনে ক্লিক করুন।</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+
 
 
 
