@@ -72,6 +72,10 @@ export default function SocialCommentsPage() {
   const [loadingAiSuggestion, setLoadingAiSuggestion] = useState(false);
   const [submittingReply, setSubmittingReply] = useState(false);
 
+  // Bulk Actions
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   const loadData = useCallback(async () => {
     const orgId = getOrganizationId();
     if (!orgId) return;
@@ -104,6 +108,33 @@ export default function SocialCommentsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  async function handleBulkAction(action: "AI_REPLY_ALL" | "HIDE_ALL" | "MARK_RESOLVED") {
+    if (selectedIds.length === 0) return;
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setBulkBusy(true);
+    setError("");
+    try {
+      const res = await apiFetch<{ success: boolean; affected: number }>(
+        `/organizations/${orgId}/social-comments/bulk-action`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            commentIds: selectedIds,
+            action,
+          }),
+        }
+      );
+      setNotice(`✅ সফলভাবে ${res.affected} টি কমেন্টের উপর ${action === "AI_REPLY_ALL" ? "AI অটো-রিপ্লাই" : action === "HIDE_ALL" ? "হাইড" : "সমাধান"} সম্পন্ন হয়েছে!`);
+      setSelectedIds([]);
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "বাল্ক অ্যাকশন ব্যর্থ হয়েছে");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   // Open Reply Modal & Generate Contextual AI Suggestion
   async function openReplyModal(cmt: SocialCommentItem) {
@@ -379,6 +410,43 @@ export default function SocialCommentsPage() {
         />
       </div>
 
+      {/* ⚡ Bulk Operations Toolbar */}
+      <div className="flex items-center justify-between rounded-xl bg-slate-900 text-white px-4 py-2.5 text-xs">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={comments.length > 0 && selectedIds.length === comments.length}
+            onChange={(e) => {
+              if (e.target.checked) setSelectedIds(comments.map((c) => c.id));
+              else setSelectedIds([]);
+            }}
+            className="rounded border-slate-700"
+          />
+          <span className="font-semibold">
+            {selectedIds.length > 0 ? `${selectedIds.length}টি কমেন্ট নির্বাচিত` : "সবগুলো একসাথে সিলেক্ট করুন"}
+          </span>
+        </div>
+
+        {selectedIds.length > 0 ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleBulkAction("AI_REPLY_ALL")}
+              disabled={bulkBusy}
+              className="rounded-lg bg-indigo-600 px-3 py-1 font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              ⚡ একসাথে সবগুলোতে AI রিপ্লাই দিন
+            </button>
+            <button
+              onClick={() => handleBulkAction("HIDE_ALL")}
+              disabled={bulkBusy}
+              className="rounded-lg bg-slate-800 px-3 py-1 font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+            >
+              🛡️ একসাথে হাইড করুন
+            </button>
+          </div>
+        ) : null}
+      </div>
+
       {/* Comment Stream List */}
       <div className="space-y-4">
         {loading ? (
@@ -401,6 +469,15 @@ export default function SocialCommentsPage() {
                 {/* Left: Author & Content */}
                 <div className="space-y-2 max-w-3xl">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(cmt.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedIds([...selectedIds, cmt.id]);
+                        else setSelectedIds(selectedIds.filter((id) => id !== cmt.id));
+                      }}
+                      className="rounded border-slate-300"
+                    />
                     {platformBadge(cmt.platform)}
                     <span className="font-bold text-slate-900 text-sm">{cmt.authorName}</span>
                     <span className="text-xs text-slate-400">

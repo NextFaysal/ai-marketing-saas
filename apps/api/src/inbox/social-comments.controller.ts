@@ -5,7 +5,8 @@ import {
   ReplyCommentDto, 
   GenerateAiReplyDto, 
   UpdateReplySettingsDto, 
-  IngestExternalCommentDto 
+  IngestExternalCommentDto,
+  BulkActionDto,
 } from "./social-comments.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -82,5 +83,16 @@ export class SocialCommentsController {
     @Body("status") status: "PENDING" | "HIDDEN" | "ESCALATED",
   ) {
     return this.service.updateCommentStatus(orgId, commentId, status);
+  }
+
+  @Post("bulk-action")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  bulkAction(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: BulkActionDto,
+  ) {
+    return this.service.executeBulkAction(orgId, user.userId, dto.commentIds, dto.action);
   }
 }

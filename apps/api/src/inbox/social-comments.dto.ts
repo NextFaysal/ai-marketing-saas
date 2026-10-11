@@ -43,3 +43,9 @@ export class IngestExternalCommentDto {
   @IsOptional() @IsString() authorSocialId?: string;
   @IsString() commentText!: string;
 }
+
+export class BulkActionDto {
+  @IsArray() commentIds!: string[];
+  @IsString() action!: "AI_REPLY_ALL" | "HIDE_ALL" | "MARK_RESOLVED";
+}
+

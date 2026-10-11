@@ -289,6 +289,55 @@ export class SocialCommentsService {
     });
   }
 
+  async executeBulkAction(organizationId: string, actorId: string, commentIds: string[], action: "AI_REPLY_ALL" | "HIDE_ALL" | "MARK_RESOLVED") {
+    let affected = 0;
+    const settings = await this.getSettings(organizationId);
+
+    for (const id of commentIds) {
+      const c = await (this.prisma as any).socialComment.findFirst({
+        where: { id, organizationId },
+      });
+      if (!c) continue;
+
+      if (action === "HIDE_ALL") {
+        await (this.prisma as any).socialComment.update({
+          where: { id },
+          data: { status: "HIDDEN" },
+        });
+        affected++;
+      } else if (action === "MARK_RESOLVED") {
+        await (this.prisma as any).socialComment.update({
+          where: { id },
+          data: { status: "AUTO_REPLIED" },
+        });
+        affected++;
+      } else if (action === "AI_REPLY_ALL") {
+        const suggestion = await this.generateAiSuggestion(organizationId, id);
+        await (this.prisma as any).socialComment.update({
+          where: { id },
+          data: {
+            status: "AUTO_REPLIED",
+            replyText: suggestion.aiPlan.publicCommentReply,
+            repliedAt: new Date(),
+            isPrivateDmSent: settings.sendPrivateDm && suggestion.aiPlan.shouldSendDm,
+            privateDmText: suggestion.aiPlan.privateDmText,
+          },
+        });
+        affected++;
+      }
+    }
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: `social_comments.bulk_${action.toLowerCase()}`,
+      entityType: "SocialComment",
+      entityId: organizationId,
+    });
+
+    return { success: true, affected };
+  }
+
   async seedDemoFeedIfEmpty(organizationId: string) {
     const count = await (this.prisma as any).socialComment.count({ where: { organizationId } });
     if (count > 0) return { count };
