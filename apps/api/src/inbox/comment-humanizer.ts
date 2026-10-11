@@ -51,7 +51,30 @@ export class CommentHumanizer {
       };
     }
 
-    // 2. Price Query with Product Context
+    // 2. Competitor Brand Hijack / Mention Handling
+    if (ctx.classification.intent === "COMPETITOR_MENTION") {
+      const prodName = ctx.matchedProduct?.name || ctx.postTitle || "আমাদের এই প্রোডাক্টটি";
+      return {
+        publicCommentReply: `${greeting} ${salutation}! বাজারে কমদামে অনেক কপি বা আন-অফিশিয়াল প্রোডাক্ট পাওয়া যায়। কিন্তু ${prodName} সম্পূর্ণ ১০০% অরিজিনাল, প্রিমিয়াম ফিনিশিং এবং এর সাথে পাচ্ছেন মান নিশ্চিতের রিপ্লেসমেন্ট ওয়ারেন্টি ✨ বিস্তারিত ও আসল ছবি দেখতে ইনবক্স চেক করুন!`,
+        privateDmText: `আসসালামু আলাইকুম ${salutation}! বাজারের সাধারণ বা কপি প্রোডাক্টের সাথে আমাদের অরিজিনাল কোয়ালিটির পার্থক্যের ভিডিও ও রিয়েল ছবি দেখতে ইনবক্সে আপনাকে স্বাগতম। আজই অর্ডারে পাচ্ছেন স্পেশাল সিক্রেট ডিসকাউন্ট!`,
+        shouldSendDm: true,
+        humanConfidence: 0.95,
+      };
+    }
+
+    // 3. Discount Bargaining & Negotiator Handling
+    if (ctx.classification.intent === "BARGAIN") {
+      const price = ctx.matchedProduct?.priceFormatted || "বর্তমান অফার মূল্যে";
+      const orderUrl = ctx.matchedProduct?.orderUrl || "";
+      return {
+        publicCommentReply: `${greeting} ${salutation}! প্রিমিয়াম কোয়ালিটি নিশ্চিত করে আমাদের লাভ একদম সীমিত রেখে ${price} ফিক্সড অফার রাখা হয়েছে। তবে আপনি যদি আজই অর্ডার কনফার্ম করেন, ইনবক্সে আপনার জন্য বিশেষ সারপ্রাইজ ডেলিভারি ভাউচার দেওয়া হবে 🎁`,
+        privateDmText: `আসসালামু আলাইকুম ${salutation}! 😊\n\nদামাদামির সুযোগ না থাকলেও আপনার আগ্রহের কারণে আমরা আপনাকে ১০০ টাকার স্পেশাল ভাউচার কোড "VIP100" প্রদান করছি!\n\nসরাসরি অর্ডার পেজে এই কুপন ব্যবহার করে ডিসকাউন্ট উপভোগ করুন:\n👉 ${orderUrl || "আমাদের পেজের শপ লিংক"}\n\nধন্যবাদ! ❤️`,
+        shouldSendDm: true,
+        humanConfidence: 0.97,
+      };
+    }
+
+    // 4. Price Query with Product Context
     if (ctx.classification.intent === "PRICE_QUERY") {
       const prodName = ctx.matchedProduct?.name || ctx.postTitle || "এই প্রোডাক্টটির";
       const price = ctx.matchedProduct?.priceFormatted || "অফার প্রাইস";

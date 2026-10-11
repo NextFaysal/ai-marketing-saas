@@ -339,6 +339,10 @@ export default function SocialCommentsPage() {
     switch (i) {
       case "PRICE_QUERY":
         return <span className="rounded border border-amber-300 bg-amber-50 text-amber-800 text-[11px] px-1.5 py-0.5 font-bold">💰 দাম জানতে চেয়েছে</span>;
+      case "BARGAIN":
+        return <span className="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] px-1.5 py-0.5 font-bold">🏷️ দামাদামি / ছাড় চেয়েছে</span>;
+      case "COMPETITOR_MENTION":
+        return <span className="rounded border border-orange-300 bg-orange-50 text-orange-800 text-[11px] px-1.5 py-0.5 font-bold">🛑 প্রতিদ্বন্দীর তুলনা</span>;
       case "DELIVERY_QUERY":
         return <span className="rounded border border-blue-300 bg-blue-50 text-blue-800 text-[11px] px-1.5 py-0.5 font-bold">🚚 ডেলিভারি জানতে চেয়েছে</span>;
       case "COMPLAINT":
@@ -450,18 +454,22 @@ export default function SocialCommentsPage() {
 
         <div className="rounded-xl border bg-white p-4 shadow-sm">
           <div className="text-xs font-bold text-slate-800 mb-2">🎯 কাস্টমার প্রশ্নের ধরন (Buyer Intent)</div>
-          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
             <div className="rounded-lg bg-amber-50 p-2 border border-amber-200">
               <div className="font-bold text-amber-900 text-sm">{comments.filter(c => c.intent === 'PRICE_QUERY').length}</div>
               <div className="text-[10px] text-amber-700 font-semibold mt-0.5">💰 দাম জিজ্ঞাসা</div>
             </div>
-            <div className="rounded-lg bg-blue-50 p-2 border border-blue-200">
-              <div className="font-bold text-blue-900 text-sm">{comments.filter(c => c.intent === 'DELIVERY_QUERY').length}</div>
-              <div className="text-[10px] text-blue-700 font-semibold mt-0.5">🚚 ডেলিভারি প্রশ্ন</div>
+            <div className="rounded-lg bg-emerald-50 p-2 border border-emerald-200">
+              <div className="font-bold text-emerald-900 text-sm">{comments.filter(c => c.intent === 'BARGAIN').length}</div>
+              <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">🏷️ দামাদামি / ছাড়</div>
+            </div>
+            <div className="rounded-lg bg-orange-50 p-2 border border-orange-200">
+              <div className="font-bold text-orange-900 text-sm">{comments.filter(c => c.intent === 'COMPETITOR_MENTION').length}</div>
+              <div className="text-[10px] text-orange-700 font-semibold mt-0.5">🛑 প্রতিদ্বন্দীর তুলনা</div>
             </div>
             <div className="rounded-lg bg-rose-50 p-2 border border-rose-200">
               <div className="font-bold text-rose-900 text-sm">{comments.filter(c => c.intent === 'COMPLAINT').length}</div>
-              <div className="text-[10px] text-rose-700 font-semibold mt-0.5">🚨 সাপোর্ট / কমপ্লেইন্ট</div>
+              <div className="text-[10px] text-rose-700 font-semibold mt-0.5">🚨 কমপ্লেইন্ট</div>
             </div>
           </div>
         </div>
@@ -961,6 +969,20 @@ export default function SocialCommentsPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setSimForm({ ...simForm, commentText: "ভাইয়া ১০০০ টাকা রাখা যাবে? কিছু ছাড় দিলে এখনই নিয়ে নিব।" })}
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 font-medium text-emerald-700"
+                  >
+                    🏷️ দামাদামি / ছাড়
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimForm({ ...simForm, commentText: "দারাজ এ তো এটা কম দামে পাওয়া যায়, আপনাদের এত দাম কেন?" })}
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 font-medium text-orange-700"
+                  >
+                    🛑 প্রতিদ্বন্দীর তুলনা
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setSimForm({ ...simForm, commentText: "পার্সেল হাতে পেয়ে দেখলাম সাইজ ছোট, এক্সচেঞ্জ করতে চাই।" })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
                   >
@@ -969,7 +991,7 @@ export default function SocialCommentsPage() {
                   <button
                     type="button"
                     onClick={() => setSimForm({ ...simForm, commentText: "ঘরে বসে সহজে ইনকাম করতে আমাদের টেলিগ্রাম লিংকে ক্লিক করুন bit.ly/spam" })}
-                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
+                    className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 text-rose-600"
                   >
                     স্প্যাম
                   </button>

@@ -120,13 +120,28 @@ export class SocialCommentsService {
       initialStatus = "HIDDEN";
     }
 
-    // Try to match a product by postTitle
+    // Enhanced Multi-Product Smart Auto-Detector:
+    // First, check if the customer specifically mentioned any product name in their comment text
     let matchedProduct: any = null;
-    if (dto.postTitle) {
-      const prods = await (this.prisma as any).product.findMany({
-        where: { organizationId, status: "ACTIVE" },
-        take: 10,
-      });
+    const prods = await (this.prisma as any).product.findMany({
+      where: { organizationId, status: "ACTIVE" },
+      take: 20,
+    });
+
+    const commentWords = dto.commentText.toLowerCase();
+    for (const p of prods) {
+      if (commentWords.includes(p.name.toLowerCase())) {
+        matchedProduct = {
+          name: p.name,
+          priceFormatted: formatMinor(BigInt(p.priceMinor), p.currency || "BDT"),
+          orderUrl: settings.salesOrderUrl || undefined,
+        };
+        break;
+      }
+    }
+
+    // Fallback: match by post title keywords if no specific product was mentioned in comment
+    if (!matchedProduct && dto.postTitle) {
       const words = dto.postTitle.toLowerCase().split(/\s+/);
       for (const p of prods) {
         if (words.some((w: string) => p.name.toLowerCase().includes(w))) {

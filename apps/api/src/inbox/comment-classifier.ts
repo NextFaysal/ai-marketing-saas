@@ -1,9 +1,11 @@
 export interface ClassifiedComment {
   sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | "SPAM";
-  intent: "PRICE_QUERY" | "DELIVERY_QUERY" | "COMPLAINT" | "PRODUCT_INFO" | "GENERAL";
+  intent: "PRICE_QUERY" | "DELIVERY_QUERY" | "COMPLAINT" | "PRODUCT_INFO" | "BARGAIN" | "COMPETITOR_MENTION" | "GENERAL";
   confidenceScore: number;
   shouldHideOrDelete: boolean;
   isHighPriorityComplaint: boolean;
+  isBargaining?: boolean;
+  competitorDetected?: string;
 }
 
 export class CommentClassifier {
@@ -11,6 +13,16 @@ export class CommentClassifier {
     "click here", "inbox me for crypto", "whatsapp me at", "earn money online", 
     "ঘরোয়া উপায়ে ইনকাম", "টেলিগ্রাম চ্যানেলে জয়েন করুন", "ফ্রি গিফট", "sex", "porn",
     "dm for promo", "dm us on @"
+  ];
+
+  private static competitorKeywords = [
+    "daraz", "দারাজ", "aarong", "আড়ং", "chaldal", "চালডাল", "অন্য পেজে", "অন্য পেইজে", 
+    "কম দামে পাওয়া যায়", "ওরা কম রাখে", "ওখানে কম", "দোকানে কম"
+  ];
+
+  private static bargainKeywords = [
+    "কম রাখা যাবে", "কম রাখেন", "কিছু কম হবে", "একদাম", "ফিক্সড", "দামাদামি", "ডিসকাউন্ট দেন", 
+    "কমান", "কমানো যাবে", "কমান ভাই", "কম হবে", "লাস্ট কত", "একটু কম রাখেন", "কিছু ছাড় দিন"
   ];
 
   private static priceKeywords = [
@@ -55,7 +67,35 @@ export class CommentClassifier {
       }
     }
 
-    // 3. Check Price Intent
+    // 3. Check Competitor Brand Mention & Hijack attempt
+    for (const kw of this.competitorKeywords) {
+      if (lower.includes(kw)) {
+        return {
+          sentiment: "NEUTRAL",
+          intent: "COMPETITOR_MENTION",
+          confidenceScore: 0.94,
+          shouldHideOrDelete: false,
+          isHighPriorityComplaint: false,
+          competitorDetected: kw,
+        };
+      }
+    }
+
+    // 4. Check Bargaining Intent
+    for (const kw of this.bargainKeywords) {
+      if (lower.includes(kw)) {
+        return {
+          sentiment: "POSITIVE",
+          intent: "BARGAIN",
+          confidenceScore: 0.93,
+          shouldHideOrDelete: false,
+          isHighPriorityComplaint: false,
+          isBargaining: true,
+        };
+      }
+    }
+
+    // 5. Check Price Intent
     for (const kw of this.priceKeywords) {
       if (lower.includes(kw)) {
         return {
@@ -68,7 +108,7 @@ export class CommentClassifier {
       }
     }
 
-    // 4. Check Delivery Intent
+    // 6. Check Delivery Intent
     for (const kw of this.deliveryKeywords) {
       if (lower.includes(kw)) {
         return {
