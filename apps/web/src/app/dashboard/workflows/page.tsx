@@ -13,6 +13,7 @@ import {
   type StepDraftLike,
   type WorkflowDefinition,
 } from "@/lib/workflow-graph";
+import { WORKFLOW_BLUEPRINTS_CATALOG, type WorkflowBlueprint } from "@/lib/workflow-blueprints";
 
 interface Template {
   id: string;
@@ -133,128 +134,8 @@ const TRIGGER_SUGGESTIONS: Record<string, { label: string; field: string; op: st
   ],
 };
 
-// Rich business blueprints for any merchant
-const BUSINESS_BLUEPRINTS = [
-  {
-    key: "cart_recovery_power",
-    category: "ecommerce",
-    catLabel: "🛍️ ই-কমার্স",
-    name: "কার্ট রিকভারি ও স্মার্ট এসএমএস",
-    descriptionBn: "গ্রাহক পণ্য কার্টে রেখে চলে গেলে ৩০ মিনিট পর অটোমেটিক ফলো-আপ এসএমএস পাঠানো ও টিমকে অবগত করা।",
-    trigger: "cart_abandoned",
-    conditions: [{ field: "cartValue", op: "gte", value: "500" }],
-    steps: [
-      { type: "wait", minutes: 30 },
-      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, আপনার কার্টে থাকা পণ্যগুলো ({{itemsSummary}}) এখনো আপনার জন্য সংরক্ষিত আছে। কিনতে ক্লিক করুন: {{cartUrl}}" },
-      { type: "notify_team", role: "MARKETING_MANAGER", title: "Abandoned Cart", text: "গ্রাহক {{contactName}} এর কার্ট (৳{{cartValue}}) রিকভারি মেসেজ পাঠানো হয়েছে।" },
-    ],
-  },
-  {
-    key: "vip_order_concierge",
-    category: "ecommerce",
-    catLabel: "🛍️ ই-কমার্স",
-    name: "ভিআইপি অর্ডার ডিটেকশন ও ওনার অ্যালার্ট",
-    descriptionBn: "কোনো গ্রাহক ৳৩,০০০ বা তার বেশি অর্ডার করলেই সাথে সাথে ওনারকে জানানো এবং কাস্টমারকে VIP ট্যাগ দেওয়া।",
-    trigger: "order_created",
-    conditions: [{ field: "total", op: "gte", value: "3000" }],
-    steps: [
-      { type: "add_tag", target: "lead", tag: "vip-customer" },
-      { type: "notify_team", role: "OWNER", title: "🌟 ভিআইপি অর্ডার অ্যালার্ট", text: "অভিনন্দন! অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে ৳{{total}} টাকার! গ্রাহক: {{contactName}}।" },
-      { type: "notify_channel", title: "🌟 নতুন ভিআইপি অর্ডার", text: "অর্ডার #{{orderNumber}} (৳{{total}}) সম্পন্ন করেছেন {{contactName}}।" },
-    ],
-  },
-  {
-    key: "cod_instant_confirm",
-    category: "ecommerce",
-    catLabel: "🛍️ ই-কমার্স",
-    name: "COD অর্ডার কনফার্মেশন ও ফলো-আপ",
-    descriptionBn: "ক্যাশ অন ডেলিভারি (COD) অর্ডার কনফার্ম হওয়ামাত্রই গ্রাহককে ধন্যবাদ মেসেজ ও টিমকে প্যাকিং শুরু করতে বলা।",
-    trigger: "order_cod_confirmed",
-    conditions: [],
-    steps: [
-      { type: "send_inbox_message", text: "ধন্যবাদ {{contactName}}! আপনার COD অর্ডার #{{orderNumber}} (৳{{total}}) কনফার্ম হয়েছে। পার্সেল ডেলিভারিতে পাঠালে ট্র্যাকিং কোড পাবেন।" },
-      { type: "notify_team", role: "ADMIN", title: "COD কনফার্মড", text: "অর্ডার #{{orderNumber}} এর প্যাকেজিং সম্পন্ন করে কুরিয়ারে দিন।" },
-    ],
-  },
-  {
-    key: "delivered_review_voucher",
-    category: "ecommerce",
-    catLabel: "🛍️ ই-কমার্স",
-    name: "ডেলিভারি সম্পন্ন হলে ৫-স্টার রিভিউ রিকোয়েস্ট",
-    descriptionBn: "অর্ডার সফলভাবে ডেলিভারি হওয়ার ২৪ ঘণ্টা পর গ্রাহককে সন্তুষ্টি যাচাই ও রিভিউ দেওয়ার অনুরোধ পাঠানো।",
-    trigger: "order_delivered",
-    conditions: [],
-    steps: [
-      { type: "wait", minutes: 1440 },
-      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, অর্ডার #{{orderNumber}} এর পণ্যগুলো আপনার কেমন লাগলো? আপনার মূল্যবান মতামত ও ৫-স্টার রিভিউ আমাদের অনুপ্রেরণা দেবে!" },
-      { type: "create_follow_up", days: 3, text: "গ্রাহক {{contactName}} এর রিভিউ ও রিপিট অর্ডারের খোঁজ নিন" },
-    ],
-  },
-  {
-    key: "new_lead_auto_assign",
-    category: "leads",
-    catLabel: "👥 লিড ও সিআরএম",
-    name: "নতুন লিড স্বাগতম ও তাৎক্ষণিক অ্যাসাইন",
-    descriptionBn: "ওয়েবসাইট বা ফেসবুক থেকে নতুন লিড আসা মাত্রই সেলস এজেন্টের কাছে অ্যাসাইন ও কাস্টমারকে স্বাগতম জানানো।",
-    trigger: "lead_created",
-    conditions: [],
-    steps: [
-      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, আমাদের সাথে যোগাযোগের জন্য ধন্যবাদ! আমাদের প্রতিনিধি দ্রুতই আপনার সাথে কথা বলছেন।" },
-      { type: "create_follow_up", days: 1, text: "নতুন লিড {{contactName}} এর সাথে বিস্তারিত আলোচনা করুন" },
-    ],
-  },
-  {
-    key: "lead_qualified_quote",
-    category: "leads",
-    catLabel: "👥 লিড ও সিআরএম",
-    name: "লিড Qualified হলে কোটেশন রিমাইন্ডার",
-    descriptionBn: "লিড স্টেজ 'Qualified' এ পরিবর্তন হলে সেলস টিমকে কোটেশন পাঠানোর টাস্ক ও ২ দিন পর ফলো-আপ শিডিউল।",
-    trigger: "lead_stage_changed",
-    conditions: [{ field: "stage", op: "eq", value: "qualified" }],
-    steps: [
-      { type: "notify_team", role: "MARKETING_MANAGER", title: "লিড Qualified", text: "{{contactName}} উপযুক্ত লিড হিসেবে চিহ্নিত হয়েছে — দ্রুত প্রস্তাবনা পাঠান।" },
-      { type: "create_follow_up", days: 2, text: "{{contactName}} এর কোটেশনের ফলো-আপ নিন" },
-    ],
-  },
-  {
-    key: "complaint_escalation_manager",
-    category: "support",
-    catLabel: "💬 সাপোর্ট ও ইনবক্স",
-    name: "গ্রাহকের অভিযোগ শনাক্ত ও ম্যানেজার এসকেলেশন",
-    descriptionBn: "ইনবক্সে কোনো অভিযোগ শনাক্ত হলে অবিলম্বে কাস্টমার কেয়ার ম্যানেজারের কাছে ফ্ল্যাগ ও ইন্টারনাল নোট তৈরি।",
-    trigger: "inbox_message_received",
-    conditions: [{ field: "intent", op: "eq", value: "complaint" }],
-    steps: [
-      { type: "add_tag", target: "conversation", tag: "urgent-complaint" },
-      { type: "add_conversation_note", text: "🚨 গ্রাহকের অভিযোগ এসেছে — দ্রুত অগ্রাধিকার দিয়ে সমাধান করুন" },
-      { type: "notify_team", role: "ADMIN", title: "জরুরি অভিযোগ", text: "গ্রাহক {{contactName}} একটি অভিযোগ করেছেন, দ্রুত ইনবক্স দেখুন।" },
-    ],
-  },
-  {
-    key: "ai_inbox_reply_assistant",
-    category: "support",
-    catLabel: "💬 সাপোর্ট ও ইনবক্স",
-    name: "AI স্মার্ট উত্তর ও সামারি জেনারেটর",
-    descriptionBn: "গ্রাহকের বার্তার প্রেক্ষিতে কৃত্রিম বুদ্ধিমত্তা (AI) দ্বারা তাৎক্ষণিক সারসংক্ষেপ ও খসড়া প্রস্তুত রাখা।",
-    trigger: "inbox_message_received",
-    conditions: [],
-    steps: [
-      { type: "ai_generate", prompt: "গ্রাহকের বার্তার মূল বক্তব্য সংক্ষেপে লিখুন এবং একজন আদর্শ সাপোর্ট এজেন্টের জন্য উত্তরের পয়েন্টগুলো দিন।", action: "add_conversation_note", outputField: "aiSummary" },
-    ],
-  },
-  {
-    key: "slack_discord_ops_alert",
-    category: "alerts",
-    catLabel: "📢 চ্যানেল অ্যালার্ট",
-    name: "স্ল্যাক / ডিসকর্ড চ্যানেলে রিয়েলটাইম অর্ডার অ্যালার্ট",
-    descriptionBn: "প্রতিটি নতুন অর্ডারে সরাসরি আপনার স্ল্যাক বা ডিসকর্ড চ্যানেলে স্বয়ংক্রিয় নোটিফিকেশন প্রেরণ।",
-    trigger: "order_created",
-    conditions: [{ field: "total", op: "gte", value: "1000" }],
-    steps: [
-      { type: "notify_channel", title: "🛒 নতুন অর্ডার সম্পন্ন!", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে (৳{{total}})। গ্রাহক: {{contactName}} ({{contactPhone}})" },
-    ],
-  },
-];
+// 105+ Rich business blueprints catalog for any merchant problem
+const BUSINESS_BLUEPRINTS = WORKFLOW_BLUEPRINTS_CATALOG;
 
 function getStepMeta(type: string): { label: string; icon: string; badgeCls: string } {
   switch (type) {
@@ -334,6 +215,7 @@ export default function WorkflowsPage() {
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [blueprintCategory, setBlueprintCategory] = useState<string>("all");
+  const [blueprintSearch, setBlueprintSearch] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -410,10 +292,33 @@ export default function WorkflowsPage() {
     });
   }, [workflows, searchQuery, filterTrigger, filterStatus]);
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: BUSINESS_BLUEPRINTS.length };
+    for (const bp of BUSINESS_BLUEPRINTS) {
+      counts[bp.category] = (counts[bp.category] || 0) + 1;
+    }
+    return counts;
+  }, []);
+
   const filteredBlueprints = useMemo(() => {
-    if (blueprintCategory === "all") return BUSINESS_BLUEPRINTS;
-    return BUSINESS_BLUEPRINTS.filter((b) => b.category === blueprintCategory);
-  }, [blueprintCategory]);
+    return BUSINESS_BLUEPRINTS.filter((b) => {
+      if (blueprintCategory !== "all" && b.category !== blueprintCategory) {
+        return false;
+      }
+      if (blueprintSearch.trim()) {
+        const q = blueprintSearch.toLowerCase().trim();
+        const matchName = b.name.toLowerCase().includes(q);
+        const matchCat = b.catLabel.toLowerCase().includes(q);
+        const matchProblem = b.problemBn.toLowerCase().includes(q);
+        const matchSolution = b.solutionBn.toLowerCase().includes(q);
+        const matchImpact = b.impactBn.toLowerCase().includes(q);
+        if (!matchName && !matchCat && !matchProblem && !matchSolution && !matchImpact) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [blueprintCategory, blueprintSearch]);
 
   function testContext() {
     const ctx: Record<string, string> = {};
@@ -773,6 +678,22 @@ export default function WorkflowsPage() {
     setEditorView("form");
     setActiveTab("builder");
     setNotice(`"${bp.name}" ব্লুপ্রিন্ট সফলভাবে বিল্ডারে লোড হয়েছে! পর্যালোচনা করে সংরক্ষণ করুন।`);
+  }
+
+  function openBlueprintInCanvas(bp: WorkflowBlueprint) {
+    setCanvasDef({
+      name: bp.name,
+      trigger: bp.trigger,
+      conditions: bp.conditions,
+      steps: bp.steps as RawStep[],
+    });
+    setCanvasScope(`bp-${bp.key}`);
+    setCanvasWorkflowId(undefined);
+    setCanvasNote(`রেডিমেড ব্লুপ্রিন্ট "${bp.name}" ক্যানভাসে লোড করা হয়েছে — আপনার পছন্দমত নোড ড্র্যাগ/ড্রপ ও এডিট করুন।`);
+    setCanvasEpoch((n) => n + 1);
+    setEditorView("canvas");
+    setActiveTab("builder");
+    setNotice(`"${bp.name}" ব্লুপ্রিন্ট ক্যানভাসে লোড হয়েছে!`);
   }
 
   function openInCanvas(w: Workflow) {
@@ -1803,133 +1724,265 @@ export default function WorkflowsPage() {
       )}
 
       {/* ============================================================== */}
-      {/* TAB 3: BUSINESS BLUEPRINTS & PRESETS GALLERY                   */}
+      {/* TAB 3: PROBLEM-BASED BUSINESS BLUEPRINTS GALLERY (105+ SOLS)   */}
       {/* ============================================================== */}
       {activeTab === "presets" && (
         <div className="space-y-6">
-          <div className="card p-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* Header & Search Bar Card */}
+          <div className="card p-5 sm:p-6 space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">📚 রেডিমেড বিজনেস ব্লুপ্রিন্ট ও টেমপ্লেট</h2>
-                <p className="text-sm text-slate-500">
-                  যেকোনো ব্যবসা প্রতিষ্ঠানের জন্য তৈরি সম্পূর্ণ কার্যক্ষম অটোমেশন — ১-ক্লিকে বিল্ডারে লোড বা সরাসরি ইনস্টল করুন।
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold text-slate-900">📚 রেডিমেড বিজনেস সল্যুশন গ্যালারি</h2>
+                  <span className="badge badge-brand font-bold">১০৫+ ব্লুপ্রিন্ট</span>
+                </div>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  আপনার ব্যবসার সমস্যা নির্বাচন করুন — রেডিমেড ওয়ার্কফ্লো ১-ক্লিকে লোড করুন বা ভিজ্যুয়াল ক্যানভাসে কাস্টমাইজ করুন।
                 </p>
               </div>
 
-              {/* Blueprint Category Pills */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {/* Reset Search / Filter Button if filtered */}
+              {(blueprintCategory !== "all" || blueprintSearch.trim()) && (
                 <button
                   type="button"
-                  onClick={() => setBlueprintCategory("all")}
-                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                    blueprintCategory === "all" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  onClick={() => {
+                    setBlueprintCategory("all");
+                    setBlueprintSearch("");
+                  }}
+                  className="btn-secondary btn-xs self-start sm:self-center"
                 >
-                  সব ({BUSINESS_BLUEPRINTS.length})
+                  ✕ ফিল্টার রিসেট
                 </button>
+              )}
+            </div>
+
+            {/* Smart Search Bar */}
+            <div className="relative">
+              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                className="input !pl-10 !pr-10 !py-2.5 w-full text-sm rounded-xl border-slate-200 focus:border-brand-500 focus:ring-brand-500"
+                placeholder="সমস্যা বা প্রয়োজন দিয়ে খুঁজুন (যেমন: কার্ট, কুরিয়ার, রিটার্ন, লিড, পেমেন্ট, AI, শিডিউল, ইনবক্স)..."
+                value={blueprintSearch}
+                onChange={(e) => setBlueprintSearch(e.target.value)}
+              />
+              {blueprintSearch && (
                 <button
                   type="button"
-                  onClick={() => setBlueprintCategory("ecommerce")}
-                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                    blueprintCategory === "ecommerce" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  onClick={() => setBlueprintSearch("")}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                  title="অনুসন্ধান মুছুন"
                 >
-                  🛍️ ই-কমার্স
+                  ✕
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setBlueprintCategory("leads")}
-                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                    blueprintCategory === "leads" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
-                >
-                  👥 লিড ও সিআরএম
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBlueprintCategory("support")}
-                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                    blueprintCategory === "support" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
-                >
-                  💬 সাপোর্ট ও AI
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBlueprintCategory("alerts")}
-                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                    blueprintCategory === "alerts" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
-                >
-                  📢 চ্যানেল অ্যালার্ট
-                </button>
+              )}
+            </div>
+
+            {/* Categorized Filter Chips */}
+            <div className="flex flex-wrap items-center gap-1.5 text-xs pt-1 border-t border-slate-100">
+              <span className="text-xs font-semibold text-slate-400 mr-1">ক্যাটাগরি:</span>
+              {[
+                { id: "all", label: "সব সমাধান", icon: "✨", count: categoryCounts.all || BUSINESS_BLUEPRINTS.length },
+                { id: "ecommerce", label: "ই-কমার্স ও সেলস", icon: "🛍️", count: categoryCounts.ecommerce || 0 },
+                { id: "courier", label: "কুরিয়ার ও রিটার্ন", icon: "🚚", count: categoryCounts.courier || 0 },
+                { id: "leads", label: "লিড ও সিআরএম", icon: "👥", count: categoryCounts.leads || 0 },
+                { id: "inbox", label: "ইনবক্স ও কেয়ার", icon: "💬", count: categoryCounts.inbox || 0 },
+                { id: "ai", label: "AI অটোমেশন", icon: "🤖", count: categoryCounts.ai || 0 },
+                { id: "ops", label: "টিম ও অপস", icon: "📢", count: categoryCounts.ops || 0 },
+                { id: "schedule", label: "শিডিউল ও রুটিন", icon: "⏰", count: categoryCounts.schedule || 0 },
+              ].map((cat) => {
+                const isActive = blueprintCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setBlueprintCategory(cat.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 font-medium transition ${
+                      isActive
+                        ? "bg-brand-600 text-white shadow-sm ring-1 ring-brand-700"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200/80"
+                    }`}
+                  >
+                    <span>{cat.icon}</span>
+                    <span>{cat.label}</span>
+                    <span
+                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                        isActive ? "bg-white/25 text-white" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {cat.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Result Stats Line */}
+            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+              <div>
+                প্রদর্শিত হচ্ছে: <strong className="text-slate-800">{filteredBlueprints.length}</strong> টি সমস্যা-ভিত্তিক ব্লুপ্রিন্ট
+                {blueprintSearch && ` ("${blueprintSearch}" এর জন্য)`}
               </div>
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Business Blueprints */}
-            {filteredBlueprints.map((bp) => {
-              const tr = TRIGGERS.find((t) => t.value === bp.trigger);
-              return (
-                <div
-                  key={bp.key}
-                  className="card card-hover p-5 border border-slate-200 flex flex-col justify-between"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="badge badge-brand">{bp.catLabel}</span>
-                      <span className="badge badge-slate">{tr?.icon} {tr?.label}</span>
-                    </div>
+          {/* Blueprint Cards Grid */}
+          {filteredBlueprints.length === 0 ? (
+            <div className="card p-10">
+              <EmptyState
+                title="কোনো ব্লুপ্রিন্ট পাওয়া যায়নি"
+                description={`"${blueprintSearch}" অথবা নির্বাচিত ক্যাটাগরিতে কোনো সমাধান পাওয়া যায়নি। অনুসন্ধান পরিবর্তন করে পুনরায় চেষ্টা করুন।`}
+                actionLabel="সব ব্লুপ্রিন্ট দেখুন"
+                onAction={() => {
+                  setBlueprintCategory("all");
+                  setBlueprintSearch("");
+                }}
+              />
+            </div>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {filteredBlueprints.map((bp) => {
+                const tr = TRIGGERS.find((t) => t.value === bp.trigger);
+                return (
+                  <div
+                    key={bp.key}
+                    className="card card-hover p-5 border border-slate-200/90 flex flex-col justify-between hover:shadow-md hover:border-brand-200 transition-all duration-200"
+                  >
+                    <div className="space-y-3">
+                      {/* Top Badges */}
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="badge badge-brand text-[11px] font-medium">{bp.catLabel}</span>
+                        <div className="flex items-center gap-1.5">
+                          {bp.badge && (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
+                              ★ {bp.badge}
+                            </span>
+                          )}
+                          <span className="badge badge-slate text-[10px]">
+                            {tr?.icon} {tr?.label}
+                          </span>
+                        </div>
+                      </div>
 
-                    <h3 className="text-base font-bold text-slate-900">{bp.name}</h3>
-                    <p className="text-xs text-slate-500 leading-relaxed">{bp.descriptionBn}</p>
+                      {/* Workflow Name */}
+                      <h3 className="text-base font-bold text-slate-900 leading-snug">{bp.name}</h3>
 
-                    <div className="rounded-xl bg-slate-50 p-2.5 text-xs text-slate-700 border border-slate-100 font-mono space-y-1">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ধাপসমূহের ফ্লো:</div>
-                      <div className="line-clamp-2">
-                        {bp.steps.map((st) => getStepMeta(st.type).label).join(" ➔ ")}
+                      {/* Problem Block */}
+                      <div className="rounded-xl bg-rose-50/70 p-3 text-xs border border-rose-100/80 text-rose-950 space-y-1">
+                        <div className="font-bold text-rose-700 flex items-center gap-1.5 text-[11px]">
+                          <span>🔴</span>
+                          <span>ব্যবসায়িক সমস্যা:</span>
+                        </div>
+                        <p className="text-slate-700 leading-relaxed text-[11.5px]">{bp.problemBn}</p>
+                      </div>
+
+                      {/* Solution Block */}
+                      <div className="rounded-xl bg-emerald-50/70 p-3 text-xs border border-emerald-100/80 text-emerald-950 space-y-1">
+                        <div className="font-bold text-emerald-700 flex items-center gap-1.5 text-[11px]">
+                          <span>🟢</span>
+                          <span>অটোমেশন সমাধান:</span>
+                        </div>
+                        <p className="text-slate-700 leading-relaxed text-[11.5px]">{bp.solutionBn}</p>
+                      </div>
+
+                      {/* Impact / ROI Box */}
+                      <div className="rounded-xl bg-indigo-50/70 p-2.5 text-xs border border-indigo-100/80 text-indigo-950 flex items-start gap-1.5">
+                        <span className="font-bold text-indigo-700 shrink-0 text-[11px]">📈 প্রভাব:</span>
+                        <span className="text-indigo-900 font-medium text-[11.5px] leading-snug">{bp.impactBn}</span>
+                      </div>
+
+                      {/* Conditions (if any) */}
+                      {bp.conditions && bp.conditions.length > 0 && (
+                        <div className="rounded-lg bg-amber-50/50 px-2.5 py-1.5 text-[11px] text-amber-900 border border-amber-100 flex items-center gap-1.5">
+                          <span className="font-semibold text-amber-700 shrink-0">🔍 শর্ত:</span>
+                          <span className="font-mono text-[10.5px] truncate">
+                            {bp.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join(" এবং ")}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Steps Pipeline Preview */}
+                      <div className="rounded-xl bg-slate-50 p-2.5 text-xs text-slate-700 border border-slate-100 space-y-1">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <span>পাইপলাইন ধাপসমূহ:</span>
+                          <span className="text-slate-500 font-mono">{bp.steps.length} টি ধাপ</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                          {bp.steps.map((st, sIdx) => {
+                            const meta = getStepMeta(st.type);
+                            return (
+                              <React.Fragment key={sIdx}>
+                                <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium border ${meta.badgeCls}`}>
+                                  <span>{meta.icon}</span>
+                                  <span>{meta.label}</span>
+                                </span>
+                                {sIdx < bp.steps.length - 1 && <span className="text-slate-300 text-xs">➔</span>}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="mt-4 pt-3 border-t flex gap-2">
-                    <button
-                      type="button"
-                      className="btn-primary btn-sm flex-1"
-                      onClick={() => loadBlueprint(bp)}
-                    >
-                      🛠️ বিল্ডারে লোড করুন
-                    </button>
+                    {/* Action Buttons */}
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-primary btn-sm flex-1 font-semibold"
+                        onClick={() => loadBlueprint(bp)}
+                        title="এই ব্লুপ্রিন্টটি বিল্ডার ফর্মে লোড করুন"
+                      >
+                        🛠️ বিল্ডারে লোড করুন
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm font-semibold"
+                        onClick={() => openBlueprintInCanvas(bp)}
+                        title="ভিজ্যুয়াল ক্যানভাস ফ্লোচার্টে দেখুন ও কাস্টমাইজ করুন"
+                      >
+                        🎨 ক্যানভাস
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          )}
 
-            {/* Server-Provided Presets */}
-            {presets.map((p) => (
-              <div key={p.key} className="card card-hover p-5 border border-slate-200 flex flex-col justify-between">
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="badge badge-green">সার্ভার প্রিসেট</span>
-                    <span className="text-lg">⚡</span>
+          {/* Server-Provided Presets (if any configured on server) */}
+          {presets.length > 0 && (
+            <div className="card p-5 space-y-4 mt-8">
+              <h3 className="font-bold text-slate-900 text-sm">⚡ সার্ভার-প্রদত্ত কুইক প্রিসেট</h3>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {presets.map((p) => (
+                  <div key={p.key} className="card card-hover p-4 border border-slate-200 flex flex-col justify-between">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="badge badge-green text-[10px]">সার্ভার প্রিসেট</span>
+                        <span className="text-base">⚡</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-900">{p.name}</h4>
+                      <p className="text-xs text-slate-500 leading-relaxed">{p.descriptionBn}</p>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm flex-1 text-xs"
+                        onClick={() => installPreset(p.key, p.name)}
+                      >
+                        ১-ক্লিকে ইনস্টল
+                      </button>
+                    </div>
                   </div>
-                  <h3 className="text-base font-bold text-slate-900">{p.name}</h3>
-                  <p className="text-xs text-slate-500 leading-relaxed">{p.descriptionBn}</p>
-                </div>
-
-                <div className="mt-4 pt-3 border-t flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm flex-1"
-                    onClick={() => installPreset(p.key, p.name)}
-                  >
-                    ১-ক্লিকে ইনস্টল
-                  </button>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
