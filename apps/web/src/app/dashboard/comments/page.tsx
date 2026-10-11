@@ -175,6 +175,31 @@ export default function SocialCommentsPage() {
     }
   }
 
+  function handleExportCsv() {
+    if (comments.length === 0) return;
+    const headers = ["Platform", "Author", "Comment", "Intent", "Sentiment", "Status", "Reply", "Date"];
+    const rows = comments.map((c) => [
+      c.platform,
+      `"${c.authorName.replace(/"/g, '""')}"`,
+      `"${c.commentText.replace(/"/g, '""')}"`,
+      c.intent,
+      c.sentiment,
+      c.status,
+      `"${(c.replyText || "").replace(/"/g, '""')}"`,
+      new Date(c.createdAt).toLocaleDateString(),
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `social_comments_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setNotice("📥 সকল সোশ্যাল কমেন্ট ও উত্তর সফলভাবে CSV ফাইলে ডাউনলোড হয়েছে!");
+  }
+
   // Open Reply Modal & Generate Contextual AI Suggestion
   async function openReplyModal(cmt: SocialCommentItem) {
     setActiveComment(cmt);
@@ -446,13 +471,23 @@ export default function SocialCommentsPage() {
           </select>
         </div>
 
-        <input
-          type="text"
-          placeholder="কমেন্ট, কাস্টমার নাম বা প্রোডাক্ট সার্চ..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 w-full sm:w-64"
-        />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <input
+            type="text"
+            placeholder="কমেন্ট, কাস্টমার নাম বা প্রোডাক্ট সার্চ..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 w-full sm:w-64"
+          />
+          <button
+            onClick={handleExportCsv}
+            disabled={comments.length === 0}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
+            title="সকল কমেন্ট এক্সেল/সিএসভি ফাইলে এক্সপোর্ট করুন"
+          >
+            📥 Export CSV
+          </button>
+        </div>
       </div>
 
       {/* ⚡ Bulk Operations Toolbar */}
