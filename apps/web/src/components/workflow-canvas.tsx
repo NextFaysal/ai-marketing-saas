@@ -46,12 +46,18 @@ const TRIGGERS = [
   { value: "order_created", label: "নতুন Order তৈরি হলে" },
   { value: "order_delivered", label: "Order ডেলিভারি হলে" },
   { value: "order_cod_confirmed", label: "COD Order কনফার্ম হলে" },
+  { value: "order_status_changed", label: "Order এর Status বদলালে" },
+  { value: "order_refunded", label: "Order Refund হলে" },
+  { value: "cart_abandoned", label: "কার্ট ফেলে রেখে গেলে (Cart Abandoned)" },
+  { value: "shipment_status_changed", label: "পার্সেলের Status বদলালে" },
+  { value: "shipment_delivered", label: "পার্সেল ডেলিভারি হলে" },
+  { value: "shipment_returned", label: "পার্সেল রিটার্ন হলে" },
   { value: "lead_created", label: "নতুন Lead তৈরি হলে" },
+  { value: "lead_stage_changed", label: "Lead এর Stage বদলালে" },
   { value: "inbox_message_received", label: "Inbox এ নতুন বার্তা এলে" },
   { value: "inbox_unanswered", label: "Inbox বার্তার উত্তর না হলে (সময়ভিত্তিক)" },
   { value: "conversation_assigned", label: "কথোপকথন Assign হলে" },
   { value: "conversation_closed", label: "কথোপকথন বন্ধ হলে" },
-  { value: "lead_stage_changed", label: "Lead এর Stage বদলালে" },
   { value: "schedule", label: "প্রতিদিন নির্দিষ্ট সময়ে (Schedule)" },
 ];
 const OPS = ["eq", "neq", "gt", "gte", "lt", "lte", "contains"];
@@ -465,7 +471,16 @@ function CanvasInner({
                   else setMeta({ ...meta, conditions: [{ field, op: firstCondition?.op ?? "gte", value: firstCondition?.value ?? "" }, ...extraConditions] });
                 }}>
                   <option value="">কোনো শর্ত নেই</option>
-                  <option value="total">Order Total</option><option value="stage">Lead Stage</option><option value="source">Source</option><option value="status">Order Status</option>
+                  <option value="total">Order Total (টাকায়)</option>
+                  <option value="stage">Lead Stage</option>
+                  <option value="source">Source</option>
+                  <option value="status">Order Status</option>
+                  <option value="cartValue">কার্টের মোট মূল্য (টাকা)</option>
+                  <option value="itemsCount">কার্টের আইটেম সংখ্যা</option>
+                  <option value="intent">গ্রাহকের Intent (complaint/order)</option>
+                  <option value="refundAmount">রিফান্ড পরিমাণ (টাকায়)</option>
+                  <option value="shipmentStatus">পার্সেল স্ট্যাটাস</option>
+                  <option value="scheduleTime">Schedule সময় (HH:MM)</option>
                 </select>
               </label>
               {firstCondition ? <>

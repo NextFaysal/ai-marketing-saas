@@ -2078,9 +2078,48 @@ export default function WorkflowsPage() {
               </button>
             </div>
 
-            <p className="text-xs text-slate-500">
-              কোন প্রেক্ষাপটে টেস্ট করতে চান তা উল্লেখ করুন (ঐচ্ছিক)। <b>Dry-run</b> এ কোনো এসএমএস বা ইমেইল পাঠানো হয় না — শুধু শর্ত যাচাই ও লজিক সিমুলেট করে।
-            </p>
+            {/* Quick Sample Presets */}
+            <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3 space-y-1.5">
+              <div className="text-xs font-semibold text-brand-900">
+                💡 নমুনা ডাটা দিয়ে ১-ক্লিক টেস্ট (প্রয়োজনীয় ফিল্ডগুলো স্বয়ংক্রিয়ভাবে পূরণ হবে):
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  className="rounded-lg border border-brand-300 bg-white px-2.5 py-1 text-xs font-medium text-brand-800 hover:bg-brand-100 transition"
+                  onClick={() =>
+                    setTestCtx({ orderId: "sample_order_101", customerId: "cust_vip_01", leadId: "", conversationId: "" })
+                  }
+                >
+                  🛒 নমুনা অর্ডার (৳১,৫০০)
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-brand-300 bg-white px-2.5 py-1 text-xs font-medium text-brand-800 hover:bg-brand-100 transition"
+                  onClick={() =>
+                    setTestCtx({ leadId: "sample_lead_01", customerId: "", conversationId: "", orderId: "" })
+                  }
+                >
+                  👤 নমুনা লিড (Qualified)
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-brand-300 bg-white px-2.5 py-1 text-xs font-medium text-brand-800 hover:bg-brand-100 transition"
+                  onClick={() =>
+                    setTestCtx({ conversationId: "sample_conv_01", customerId: "", leadId: "", orderId: "" })
+                  }
+                >
+                  💬 নমুনা ইনবক্স চ্যাট
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:text-slate-800 transition"
+                  onClick={() => setTestCtx({ leadId: "", customerId: "", conversationId: "", orderId: "" })}
+                >
+                  মুছুন
+                </button>
+              </div>
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
