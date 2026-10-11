@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MaxLength } from "class-validator";
+import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
+
 export class CreateCompetitorDto {
   @IsString() @MaxLength(200) name!: string;
   @IsOptional() @IsString() facebookPageId?: string;
@@ -42,6 +43,25 @@ export class DeconstructVideoScriptDto {
   @IsOptional() @IsString() ownProductId?: string;
   @IsOptional() @IsString() videoStyle?: string;
 }
+
+export class ConfigureAlertSettingsDto {
+  @IsOptional() @IsBoolean() telegramEnabled?: boolean;
+  @IsOptional() @IsString() telegramBotToken?: string;
+  @IsOptional() @IsString() telegramChatId?: string;
+  @IsOptional() @IsBoolean() whatsappEnabled?: boolean;
+  @IsOptional() @IsString() whatsappWebhookUrl?: string;
+  @IsOptional() @IsBoolean() notifyOnPriceDrop?: boolean;
+  @IsOptional() @IsBoolean() notifyOnStockOut?: boolean;
+  @IsOptional() @IsBoolean() notifyOnWinningAd?: boolean;
+}
+
+export class TestAlertChannelDto {
+  @IsString() channel!: "telegram" | "whatsapp";
+  @IsOptional() @IsString() telegramBotToken?: string;
+  @IsOptional() @IsString() telegramChatId?: string;
+  @IsOptional() @IsString() whatsappWebhookUrl?: string;
+}
+
 
 
 

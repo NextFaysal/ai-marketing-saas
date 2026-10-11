@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+
 
 
 import { TenantGuard } from "../common/tenant.guard";
@@ -117,7 +118,30 @@ export class CompetitorsController {
   reviewsMine(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
     return this.competitors.mineCustomerComplaints(orgId, id);
   }
+
+  @Get("alert-settings")
+  getAlertSettings(@Param("organizationId") orgId: string) {
+    return this.competitors.getAlertSettings(orgId);
+  }
+
+  @Post("alert-settings") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  saveAlertSettings(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: ConfigureAlertSettingsDto,
+  ) {
+    return this.competitors.saveAlertSettings(orgId, user.userId, dto);
+  }
+
+  @Post("alert-settings/test") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  testAlertChannel(
+    @Param("organizationId") orgId: string,
+    @Body() dto: TestAlertChannelDto,
+  ) {
+    return this.competitors.testSendAlert(orgId, dto);
+  }
 }
+
 
 
 

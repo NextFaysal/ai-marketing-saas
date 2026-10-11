@@ -223,6 +223,17 @@ interface CompetitorReviewMineReport {
   }[];
 }
 
+interface AlertChannelConfig {
+  telegramEnabled: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  whatsappEnabled: boolean;
+  whatsappWebhookUrl?: string;
+  notifyOnPriceDrop: boolean;
+  notifyOnStockOut: boolean;
+  notifyOnWinningAd: boolean;
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -262,7 +273,23 @@ export default function CompetitorsPage() {
   const [reviewMineReport, setReviewMineReport] = useState<CompetitorReviewMineReport | null>(null);
   const [loadingReviewMine, setLoadingReviewMine] = useState(false);
 
+  // Alert Bot Modal State
+  const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<AlertChannelConfig>({
+    telegramEnabled: false,
+    telegramBotToken: "",
+    telegramChatId: "",
+    whatsappEnabled: false,
+    whatsappWebhookUrl: "",
+    notifyOnPriceDrop: true,
+    notifyOnStockOut: true,
+    notifyOnWinningAd: true,
+  });
+  const [isSavingAlertConfig, setIsSavingAlertConfig] = useState(false);
+  const [isTestingAlert, setIsTestingAlert] = useState(false);
+
   // Forms & Modals
+
   const [form, setForm] = useState({ name: "", facebookPageId: "", websiteUrl: "", notes: "" });
 
   const [editCompetitor, setEditCompetitor] = useState<Competitor | null>(null);
@@ -332,7 +359,70 @@ export default function CompetitorsPage() {
 
   useEffect(() => {
     load();
+    loadAlertSettings();
   }, [load]);
+
+  async function loadAlertSettings() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const res = await apiFetch<AlertChannelConfig>(`/organizations/${orgId}/competitors/alert-settings`);
+      if (res) setAlertConfig(res);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveAlertSettingsHandler(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setIsSavingAlertConfig(true);
+    setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/competitors/alert-settings`, {
+        method: "POST",
+        body: JSON.stringify(alertConfig),
+      });
+      setNotice("Telegram ও WhatsApp অ্যালার্ট বট সেটিংস সফলভাবে সংরক্ষিত হয়েছে! 📲");
+      setIsAlertSettingsOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save alert settings");
+    } finally {
+      setIsSavingAlertConfig(false);
+    }
+  }
+
+  async function testAlertChannelHandler(channel: "telegram" | "whatsapp") {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setIsTestingAlert(true);
+    setError("");
+    try {
+      const res = await apiFetch<{ success: boolean; error?: string }>(
+        `/organizations/${orgId}/competitors/alert-settings/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            channel,
+            telegramBotToken: alertConfig.telegramBotToken,
+            telegramChatId: alertConfig.telegramChatId,
+            whatsappWebhookUrl: alertConfig.whatsappWebhookUrl,
+          }),
+        }
+      );
+      if (res.success) {
+        setNotice(`টেস্ট নোটিফিকেশন সফলভাবে পাঠানো হয়েছে! 🔔 আপনার ${channel === "telegram" ? "Telegram" : "WhatsApp"}-এ চেক করুন।`);
+      } else {
+        setError(`নোটিফিকেশন পাঠানো যায়নি: ${res.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send test alert");
+    } finally {
+      setIsTestingAlert(false);
+    }
+  }
+
 
   const fetchSeoReport = useCallback(async (c: Competitor) => {
     const orgId = getOrganizationId();
@@ -744,6 +834,13 @@ export default function CompetitorsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setIsAlertSettingsOpen(true)}
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 flex items-center gap-1.5"
+          >
+            <span>📲 Telegram & WhatsApp Alert Bot</span>
+            <span className="rounded bg-emerald-100 text-emerald-800 px-1 py-0.2 text-[10px] font-bold">24/7</span>
+          </button>
+          <button
             onClick={openDossierModalHandler}
             className="rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 flex items-center gap-1.5"
           >
@@ -752,6 +849,7 @@ export default function CompetitorsPage() {
           </button>
         </div>
       </div>
+
 
       {/* Main Feature Tabs */}
       <div className="flex flex-wrap gap-2 border-b pb-2">
@@ -840,8 +938,18 @@ export default function CompetitorsPage() {
                 🚨 Live Opportunity & Threat Alerts ({alerts.length})
               </h3>
             </div>
-            <span className="text-[11px] text-amber-800 font-medium">ইনস্ট্যান্ট অ্যাকশনেবল অপরচুনিটি</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsAlertSettingsOpen(true)}
+                className="rounded-lg bg-amber-200/70 hover:bg-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-900 flex items-center gap-1 transition-colors"
+                title="টেলিগ্রাম ও হোয়াটসঅ্যাপে ইনস্ট্যান্ট নোটিফিকেশন চালু করুন"
+              >
+                📲 Telegram / WhatsApp বট
+              </button>
+              <span className="text-[11px] text-amber-800 font-medium">ইনস্ট্যান্ট অ্যাকশনেবল অপরচুনিটি</span>
+            </div>
           </div>
+
           <div className="grid gap-2 sm:grid-cols-2">
             {alerts.slice(0, 4).map((alt) => (
               <div key={alt.id} className="rounded-lg bg-white p-2.5 text-xs border border-amber-200/80 shadow-xs">
@@ -2555,6 +2663,173 @@ export default function CompetitorsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* Alert Bot Settings Modal */}
+      {isAlertSettingsOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <form onSubmit={saveAlertSettingsHandler} className="card w-full max-w-lg bg-white p-6 space-y-5">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 text-lg">
+                  📲
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Telegram & WhatsApp Real-Time Alert Bot
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    প্রতিযোগী দাম কমালে বা স্টক-আউট হলে ফোনে ইনস্ট্যান্ট নোটিফিকেশন পান
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAlertSettingsOpen(false)}
+                className="rounded p-1 text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Telegram Settings */}
+            <div className="rounded-xl border p-4 bg-slate-50 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 font-bold text-xs text-slate-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alertConfig.telegramEnabled}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, telegramEnabled: e.target.checked })}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>✈️ Telegram নোটিফিকেশন সক্রিয় করুন</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={!alertConfig.telegramBotToken || !alertConfig.telegramChatId || isTestingAlert}
+                  onClick={() => testAlertChannelHandler("telegram")}
+                  className="rounded border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট মেসেজ পাঠান"}
+                </button>
+              </div>
+
+              {alertConfig.telegramEnabled ? (
+                <div className="space-y-2 pt-1 text-xs">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                      Telegram Bot Token (@BotFather থেকে প্রাপ্ত)
+                    </label>
+                    <input
+                      className={inputCls}
+                      placeholder="e.g. 7123456789:AAH..."
+                      value={alertConfig.telegramBotToken || ""}
+                      onChange={(e) => setAlertConfig({ ...alertConfig, telegramBotToken: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                      Telegram Chat ID / Channel ID
+                    </label>
+                    <input
+                      className={inputCls}
+                      placeholder="e.g. 123456789 বা -100123456789"
+                      value={alertConfig.telegramChatId || ""}
+                      onChange={(e) => setAlertConfig({ ...alertConfig, telegramChatId: e.target.value })}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {/* WhatsApp Settings */}
+            <div className="rounded-xl border p-4 bg-slate-50 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 font-bold text-xs text-slate-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alertConfig.whatsappEnabled}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, whatsappEnabled: e.target.checked })}
+                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span>💬 WhatsApp Webhook নোটিফিকেশন</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={!alertConfig.whatsappWebhookUrl || isTestingAlert}
+                  onClick={() => testAlertChannelHandler("whatsapp")}
+                  className="rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট Webhook"}
+                </button>
+              </div>
+
+              {alertConfig.whatsappEnabled ? (
+                <div className="pt-1 text-xs">
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                    WhatsApp Webhook URL (Make / Zapier / UltraMsg / WPPConnect)
+                  </label>
+                  <input
+                    className={inputCls}
+                    placeholder="https://hook.eu1.make.com/..."
+                    value={alertConfig.whatsappWebhookUrl || ""}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, whatsappWebhookUrl: e.target.value })}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Trigger Checkboxes */}
+            <div className="space-y-2 border-t pt-3 text-xs">
+              <span className="font-bold text-slate-800 block">কোন কোন ক্ষেত্রে অ্যালার্ট পাঠাবে:</span>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alertConfig.notifyOnStockOut}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnStockOut: e.target.checked })}
+                  />
+                  <span>🚨 প্রতিদ্বন্দীর প্রোডাক্ট Stock-Out হলে (ক্যাম্পেইন বুস্ট সুযোগ)</span>
+                </label>
+                <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alertConfig.notifyOnPriceDrop}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnPriceDrop: e.target.checked })}
+                  />
+                  <span>📉 প্রতিযোগী প্রোডাক্টের দাম ১০%+ কমালে</span>
+                </label>
+                <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alertConfig.notifyOnWinningAd}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnWinningAd: e.target.checked })}
+                  />
+                  <span>🔥 প্রতিদ্বন্দীর নতুন Winning Ad (১৪+ দিন স্থায়ী) শনাক্ত হলে</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button
+                type="button"
+                onClick={() => setIsAlertSettingsOpen(false)}
+                className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                বাতিল
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingAlertConfig}
+                className="btn-primary text-xs py-2 px-4 disabled:opacity-50"
+              >
+                {isSavingAlertConfig ? "সংরক্ষণ হচ্ছে..." : "সেটিংস সংরক্ষণ করুন"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
 
 
       {/* AI Market Intelligence Feed */}

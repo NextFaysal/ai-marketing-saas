@@ -279,7 +279,49 @@ describe("CompetitorsService", () => {
     expect(report.recommendedCounterAngles.length).toBeGreaterThan(0);
     expect(report.biggestVulnerability).toBeDefined();
   });
+
+  it("saves and loads Telegram and WhatsApp alert configuration", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+
+    const initial = await svc.getAlertSettings("org-1");
+    expect(initial.telegramEnabled).toBe(false);
+
+    const updated = await svc.saveAlertSettings("org-1", "u", {
+      telegramEnabled: true,
+      telegramBotToken: "test-token",
+      telegramChatId: "123456",
+      notifyOnStockOut: true,
+    });
+
+    expect(updated.telegramEnabled).toBe(true);
+    expect(updated.telegramChatId).toBe("123456");
+
+    const fetched = await svc.getAlertSettings("org-1");
+    expect(fetched.telegramEnabled).toBe(true);
+    expect(fetched.telegramChatId).toBe("123456");
+  });
+
+  it("testSendAlert dispatches payload to Telegram with token and chatId", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+
+    (global as any).fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, result: { message_id: 998 } }),
+    });
+
+    const res = await svc.testSendAlert("org-1", {
+      channel: "telegram",
+      telegramBotToken: "fake-bot-token",
+      telegramChatId: "fake-chat-id",
+    });
+
+    expect(res.success).toBe(true);
+  });
 });
+
 
 
 

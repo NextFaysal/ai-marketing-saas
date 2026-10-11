@@ -9,9 +9,11 @@ import { MultiPlatformScanner } from "./multi-platform-scanner";
 import { SeoTrafficAnalyzer } from "./seo-analyzer";
 import { VideoScriptDeconstructor } from "./video-deconstructor";
 import { ReviewMiner } from "./review-miner";
-import { DeconstructVideoScriptDto } from "./competitors.dto";
+import { AlertDispatcher, AlertChannelConfig, AlertNotificationPayload } from "./alert-dispatcher";
+import { DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 
 
@@ -910,7 +912,98 @@ Format as a clean JSON with keys:
     const miner = new ReviewMiner(this.llm);
     return miner.mine(competitor.name, competitor.websiteUrl ?? undefined);
   }
+
+  async getAlertSettings(organizationId: string): Promise<AlertChannelConfig> {
+    const record = await (this.prisma as any).competitorInsight.findFirst({
+      where: { organizationId, provider: "alert_config" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!record || !record.detail) {
+      return {
+        telegramEnabled: false,
+        whatsappEnabled: false,
+        notifyOnPriceDrop: true,
+        notifyOnStockOut: true,
+        notifyOnWinningAd: true,
+      };
+    }
+    try {
+      return JSON.parse(record.detail);
+    } catch {
+      return {
+        telegramEnabled: false,
+        whatsappEnabled: false,
+        notifyOnPriceDrop: true,
+        notifyOnStockOut: true,
+        notifyOnWinningAd: true,
+      };
+    }
+  }
+
+  async saveAlertSettings(organizationId: string, actorId: string, dto: ConfigureAlertSettingsDto) {
+    const existing = await this.getAlertSettings(organizationId);
+    const updated: AlertChannelConfig = {
+      ...existing,
+      ...dto,
+      telegramEnabled: dto.telegramEnabled ?? existing.telegramEnabled,
+      whatsappEnabled: dto.whatsappEnabled ?? existing.whatsappEnabled,
+      notifyOnPriceDrop: dto.notifyOnPriceDrop ?? existing.notifyOnPriceDrop,
+      notifyOnStockOut: dto.notifyOnStockOut ?? existing.notifyOnStockOut,
+      notifyOnWinningAd: dto.notifyOnWinningAd ?? existing.notifyOnWinningAd,
+    };
+
+    await (this.prisma as any).competitorInsight.create({
+      data: {
+        organizationId,
+        competitorId: null,
+        kind: "activity",
+        title: "Alert Notification Configuration",
+        detail: JSON.stringify(updated),
+        evidence: [{ ref: "config:alert", label: "Alert Configuration" }],
+        provider: "alert_config",
+      },
+    });
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: "COMPETITOR_ALERT_CONFIG_UPDATED",
+      entityType: "organization",
+      entityId: organizationId,
+      details: { telegramEnabled: updated.telegramEnabled, whatsappEnabled: updated.whatsappEnabled },
+    });
+
+    return updated;
+  }
+
+  async testSendAlert(organizationId: string, dto: TestAlertChannelDto) {
+    const dispatcher = new AlertDispatcher();
+    const testPayload = {
+      title: "টেস্ট অ্যালার্ট নোটিফিকেশন",
+      detail: "অভিনন্দন! আপনার Marketing Intelligence OS বট সফলভাবে যুক্ত হয়েছে। এখন থেকে প্রতিযোগী দাম কমালে বা স্টক-আউট হলে আপনি রিয়েল-টাইম অ্যালার্ট পাবেন।",
+      kind: "winning_ad" as const,
+      competitorName: "Demo Competitor BD",
+      url: "https://facebook.com/ads/library",
+      timestamp: new Date().toISOString(),
+    };
+
+    if (dto.channel === "telegram") {
+      const token = dto.telegramBotToken;
+      const chatId = dto.telegramChatId;
+      if (!token || !chatId) {
+        throw new BadRequestException("Telegram Bot Token এবং Chat ID প্রয়োজন।");
+      }
+      return dispatcher.sendToTelegram(token, chatId, testPayload);
+    } else {
+      const url = dto.whatsappWebhookUrl;
+      if (!url) {
+        throw new BadRequestException("WhatsApp Webhook URL প্রয়োজন।");
+      }
+      return dispatcher.sendToWhatsapp(url, testPayload);
+    }
+  }
 }
+
 
 
 
