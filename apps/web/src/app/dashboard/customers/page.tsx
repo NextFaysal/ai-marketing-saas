@@ -15,7 +15,14 @@ interface Detail {
   shipments: { id: string; trackingCode?: string | null; status: string; provider: string }[];
   lead: { id: string; stage: string; source: string } | null;
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string };
+  risk?: { band: string; score: number | null; history: { total: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number }; reasons: string[]; suggestion: string | null } | null;
 }
+const RISK_LABEL: Record<string, { text: string; cls: string }> = {
+  high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-100 text-red-700" },
+  medium: { text: "ঝুঁকি: মাঝারি", cls: "bg-amber-100 text-amber-700" },
+  low: { text: "ঝুঁকি: কম", cls: "bg-emerald-100 text-emerald-700" },
+  unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
+};
 
 const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -112,6 +119,16 @@ export default function CustomersPage() {
                   <button className="btn-warning" disabled={!mergeTarget || busy !== ""} onClick={doMerge}>{busy === "merge" ? "মার্জ হচ্ছে..." : "মার্জ করুন"}</button>
                 </div>
               </div>
+              {detail.risk ? (
+                <div className="card space-y-1">
+                  <h3 className="font-semibold">↩️ রিটার্ন ঝুঁকি <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[detail.risk.band]?.cls ?? ""}`}>{RISK_LABEL[detail.risk.band]?.text ?? detail.risk.band}{detail.risk.score != null ? ` · স্কোর ${detail.risk.score}/১০০` : ""}</span></h3>
+                  <p className="text-sm text-slate-600">মোট {detail.risk.history.total}টি অর্ডার · ডেলিভারি {detail.risk.history.delivered}টি · রিটার্ন {detail.risk.history.returned}টি · বাতিল/ব্যর্থ {detail.risk.history.cancelledOrFailed}টি · রিফান্ড {detail.risk.history.refunded}টি</p>
+                  <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500">
+                    {detail.risk.reasons.slice(0, 4).map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                  {detail.risk.suggestion ? <p className="text-xs font-medium text-amber-700">{detail.risk.suggestion}</p> : null}
+                </div>
+              ) : null}
               <div className="card">
                 <h3 className="mb-2 font-semibold">অর্ডারসমূহ</h3>
                 {detail.orders.length === 0 ? <p className="text-sm text-slate-400">কোনো অর্ডার নেই</p> : detail.orders.map((o) => (

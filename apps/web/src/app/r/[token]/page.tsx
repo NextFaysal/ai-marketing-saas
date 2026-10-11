@@ -6,6 +6,8 @@ import { API_URL } from "@/lib/api";
 
 interface Report {
   title: string; business: string; generatedAt: string; days: number;
+  branding?: { name: string; logoUrl: string | null; primaryColor: string | null };
+  delivery?: { shipments: number; delivered: number; returned: number; returnRatePercent: number | null };
   totals: { orders: number; revenueMinor: string; adSpendMinor: string; impressions: number; clicks: number; platformConversions: number };
   kpis: { mer: number | null; platformRoas: number | null; ctrPercent: number | null; cpcMinor: number | null; cpaMinor: number | null };
   campaigns: { name: string; platform: string; spendMinor: string; clicks: number; ctrPercent: number | null; platformConversions: number; cpaMinor: number | null; platformRoas: number | null }[];
@@ -27,10 +29,19 @@ export default function PublicReportPage() {
     })();
   }, [token]);
   const money = (v: string) => formatMinor(BigInt(v));
+  const accent = report?.branding?.primaryColor ?? undefined;
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <header>
-        <p className="text-xs uppercase tracking-wide text-slate-400">{report?.business ?? "Campaign Report"}</p>
+        {/* Milestone 59: white-label header — the agency's own logo
+            + brand name lead; the legal business name stays as the
+            small line so the report's owner is never ambiguous. */}
+        {report?.branding?.logoUrl ? (
+          <img src={`${API_URL}${report.branding.logoUrl}`} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
+        ) : null}
+        <p className="mt-2 text-xs uppercase tracking-wide" style={accent ? { color: accent } : undefined}>
+          {report?.branding?.name ?? report?.business ?? "Campaign Report"}
+        </p>
         <h1 className="mt-1 text-2xl font-bold">{report?.title ?? "Campaign Report"}</h1>
         {report ? <p className="text-sm text-slate-500">শেষ {report.days} দিন · তৈরি: {new Date(report.generatedAt).toLocaleString()}</p> : null}
       </header>
@@ -50,10 +61,28 @@ export default function PublicReportPage() {
           ].map(([label, value]) => (
             <div key={label} className="rounded-xl border bg-white p-4">
               <div className="text-xs text-slate-400">{label}</div>
-              <div className="mt-1 text-lg font-bold">{value}</div>
+              <div className="mt-1 text-lg font-bold" style={accent ? { color: accent } : undefined}>{value}</div>
             </div>
           ))}
         </section>
+        {report.delivery ? (
+          <section>
+            <h2 className="mb-2 text-sm font-bold text-slate-700">🚚 ডেলিভারি সারসংক্ষেপ (এই সময়ে)</h2>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                ["মোট পার্সেল পাঠানো হয়েছে", String(report.delivery.shipments)],
+                ["ডেলিভারি হয়েছে", String(report.delivery.delivered)],
+                ["রিটার্ন এসেছে", String(report.delivery.returned)],
+                ["রিটার্ন হার", report.delivery.returnRatePercent === null ? "—" : `${report.delivery.returnRatePercent}%`],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border bg-white p-4">
+                  <div className="text-xs text-slate-400">{label}</div>
+                  <div className="mt-1 text-lg font-bold" style={accent ? { color: accent } : undefined}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
         <section className="overflow-hidden rounded-xl border bg-white">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Campaign</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">CTR</th><th className="px-4 py-3">Conv.</th><th className="px-4 py-3">ROAS</th></tr></thead>

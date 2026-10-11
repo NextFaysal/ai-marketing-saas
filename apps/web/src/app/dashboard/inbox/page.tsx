@@ -13,6 +13,9 @@ interface Conversation {
   customerId?: string | null; leadId?: string | null;
   priority?: string; sentimentFlag?: string | null; firstResponseAt?: string | null;
   spamFlag?: boolean; spamReason?: string | null;
+  autoReplyPaused?: boolean;
+  pipelineStage?: string;
+  outcome?: string | null;
   csatRating?: number | null; csatSentAt?: string | null;
   summaryText?: string | null; summaryProvider?: string | null; summaryAt?: string | null;
 }
@@ -123,7 +126,7 @@ export default function InboxPage() {
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [qrForm, setQrForm] = useState({ title: "", content: "" });
   const [tplForm, setTplForm] = useState({ name: "", language: "bn", category: "UTILITY", bodyText: "" });
-  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null } | null>(null);
+  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null; reassignAfterMinutes?: number | null; escalationTeamId?: string | null; perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null; retentionDays?: number | null } | null>(null);
   const [botSession, setBotSession] = useState<{ id: string; state: string; status: string } | null>(null);
   const [verifications, setVerifications] = useState<PaymentVerification[]>([]);
   const [presence, setPresence] = useState<{ userId: string; name: string; typing: boolean }[]>([]);
@@ -144,11 +147,60 @@ export default function InboxPage() {
     return () => { cancelled = true; clearInterval(t); };
   }, [active?.id, iAmTyping]);
   const [report, setReport] = useState<any>(null);
+  // U4: telegram / email connect forms
+  const [tgToken, setTgToken] = useState("");
+  const [tgResult, setTgResult] = useState("");
+  const [emailForm, setEmailForm] = useState({ imapHost: "", imapPort: 993, smtpHost: "", smtpPort: 587, user: "", password: "" });
+  const [emailResult, setEmailResult] = useState("");
+  const [tiktokPack, setTiktokPack] = useState<any>(null);
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<any>(`/organizations/${orgId}/inbox/tiktok/status`).then(setTiktokPack).catch(() => undefined);
+  }, []);
+
+  // U5: control center — board view, command profile, close outcome
+  const [viewMode, setViewMode] = useState<"list" | "board" | "media">("list");
+  const [mediaItems, setMediaItems] = useState<any[]>([]);
+  const [mediaQ, setMediaQ] = useState("");
+  const [mediaType, setMediaType] = useState("");
+  const loadMedia = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const params = new URLSearchParams(); if (mediaType) params.set("type", mediaType); if (mediaQ) params.set("q", mediaQ);
+    try { setMediaItems(await apiFetch<any[]>(`/organizations/${orgId}/inbox/media?${params.toString()}`)); } catch { setMediaItems([]); }
+  }, [mediaQ, mediaType]);
+  useEffect(() => { if (viewMode === "media") void loadMedia(); }, [viewMode, loadMedia]);
+  const [board, setBoard] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [closeOutcome, setCloseOutcome] = useState<string>("sale");
+  const loadBoard = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try { setBoard(await apiFetch<any>(`/organizations/${orgId}/inbox/pipeline-board`)); } catch { /* board is additive */ }
+  }, []);
+  useEffect(() => { if (viewMode === "board") { void loadBoard(); const t = setInterval(loadBoard, 30000); return () => clearInterval(t); } }, [viewMode, loadBoard]);
+
+  // U2: teams + agent states
+  const [teams, setTeams] = useState<any[]>([]);
+  const [agentStates, setAgentStates] = useState<any[]>([]);
+  const [myStatus, setMyStatus] = useState("online");
+  const [teamForm, setTeamForm] = useState<{ name: string; channels: string[] }>({ name: "", channels: [] });
+  const [teamDraft, setTeamDraft] = useState<Record<string, Record<string, number>>>({});
+  const loadTeams = useCallback(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<any[]>(`/organizations/${orgId}/inbox/teams`).then((rows) => {
+      setTeams(rows);
+      const draft: Record<string, Record<string, number>> = {};
+      for (const t of rows) { draft[t.id] = {}; for (const mb of t.members ?? []) draft[t.id][mb.userId] = mb.capacity ?? 20; }
+      setTeamDraft(draft);
+    }).catch(() => undefined);
+    apiFetch<any[]>(`/organizations/${orgId}/inbox/agent-states`).then(setAgentStates).catch(() => undefined);
+  }, []);
+  useEffect(() => { loadTeams(); }, [loadTeams]);
   const [products, setProducts] = useState<{ id: string; name: string; priceMinor: string; currency: string; stockQuantity?: number | null }[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderItems, setOrderItems] = useState<{ productId: string; quantity: number }[]>([]);
   const [orderShip, setOrderShip] = useState("60");
+  const [orderAddress, setOrderAddress] = useState("");
   const [orderCod, setOrderCod] = useState(true);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -186,6 +238,7 @@ export default function InboxPage() {
   }, [filters]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+  useEffect(() => { const mine = agentStates.find((a) => a.userId === myId); if (mine?.status) setMyStatus(mine.status); }, [agentStates, myId]);
   // U1: realtime stream — instant messages/updates/presence, with a
   // slow safety poll if the stream silently drops.
   useEffect(() => {
@@ -290,6 +343,7 @@ export default function InboxPage() {
     try {
       const res = await apiFetch<{ conversation: Conversation; messages: Message[]; drafts: Draft[]; context: ContextData; botSession?: { id: string; state: string; status: string } | null }>(`/organizations/${orgId}/inbox/conversations/${conv.id}`);
       setActive(res.conversation); setMessages(res.messages); setDrafts(res.drafts); setContext(res.context); setBotSession(res.botSession ?? null);
+      apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${conv.id}/command-profile`).then(setProfile).catch(() => setProfile(null));
       setNotes(await apiFetch<Note[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/notes`).catch(() => []));
       setVerifications(await apiFetch<PaymentVerification[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/payment-verifications`).catch(() => []));
       setMobileChat(true);
@@ -351,11 +405,15 @@ export default function InboxPage() {
     try {
       const order = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/orders`, {
         method: "POST",
-        body: JSON.stringify({ items: orderItems, shippingMinor: Math.round((Number(orderShip) || 0) * 100), isCod: orderCod }),
+        body: JSON.stringify({ items: orderItems, shippingMinor: Math.round((Number(orderShip) || 0) * 100), isCod: orderCod, address: orderAddress || undefined }),
       });
       if (order.storeSyncStatus === "synced") setNotice(`Order তৈরি হয়েছে এবং WooCommerce এ পাঠানো হয়েছে (#${order.externalNumber})।`);
       else if (order.storeSyncStatus === "failed") setNotice(`Order তৈরি হয়েছে (শুধু এই সিস্টেমে)। স্টোরে পাঠানো যায়নি: ${order.storeSyncError ?? "অজানা ত্রুটি"}`);
       else setNotice(`Order তৈরি হয়েছে (শুধু এই সিস্টেমে) — ${order.externalNumber}।`);
+      // M50: merchant-side return-risk warning (never shown to the customer).
+      if (order.risk && (order.risk.band === "high" || order.risk.band === "medium")) {
+        setError(`⚠️ রিটার্ন ঝুঁকি (${order.risk.band === "high" ? "উচ্চ" : "মাঝারি"}${order.risk.score != null ? `, স্কোর ${order.risk.score}` : ""}): ${order.risk.reasons?.[0] ?? ""} ${order.risk.suggestion ?? ""}`);
+      }
       setOrderOpen(false); setOrderItems([]);
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
@@ -487,12 +545,105 @@ export default function InboxPage() {
     <div className="space-y-6">
       <div>
         <h1 className="page-title">Inbox</h1>
+        <div className="mt-2 flex gap-1.5">
+          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "list" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("list")}>💬 কথোপকথন</button>
+          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "board" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("board")}>🗂️ পাইপলাইন বোর্ড</button>
+          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "media" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("media")}>🖼️ মিডিয়া</button>
+          <button className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold" onClick={async () => {
+            const orgId = getOrganizationId(); if (!orgId) return;
+            try {
+              const data = await apiFetch<any>(`/organizations/${orgId}/inbox/export`);
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+              const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "inbox-export.json"; a.click(); URL.revokeObjectURL(a.href);
+            } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+          }}>⬇ Export (৩০ দিন)</button>
+        </div>
         <p className="text-sm text-slate-500">WhatsApp ও Messenger এক জায়গায়। AI শুধু Draft সাজেস্ট করে, পাঠানোর সিদ্ধান্ত সবসময় মানুষের। বার্তা "পাঠানো হয়েছে" দেখানো হয় শুধু প্ল্যাটফর্মের Message ID পেলে। Internal Note কখনোই গ্রাহকের কাছে যায় না।</p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
-      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+      {viewMode === "board" ? (
+        <div className="card p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="section-title">🗂️ সেলস পাইপলাইন {board ? `· মোট সক্রিয় ${board.totalActive}টি` : ""}</div>
+            <button className="btn-secondary btn-sm" onClick={() => void loadBoard()}>↻ রিফ্রেশ</button>
+          </div>
+          {!board ? <p className="text-sm text-slate-400">লোড হচ্ছে...</p> : (
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+              {([["new", "🆕 New Lead"], ["talking", "💬 Talking"], ["ordered", "🛒 Order Placed"], ["shipped", "🚚 Shipped"], ["delivered", "✅ Completed"], ["repeat", "🔁 Repeat"]] as const).map(([stage, label]) => (
+                <div key={stage} className={`min-h-[120px] rounded-xl p-2 ${stage === "shipped" ? "bg-sky-50" : "bg-slate-50"}`}
+                  title={stage === "shipped" ? "Shipped ধাপটি কুরিয়ারের স্ট্যাটাস থেকে নিজে থেকে আসে — এখানে কার্ড ফেলা যায় না" : undefined}
+                  onDragOver={stage === "shipped" ? undefined : (e) => e.preventDefault()}
+                  onDrop={stage === "shipped" ? undefined : async (e) => {
+                    e.preventDefault();
+                    const convId = e.dataTransfer.getData("text/plain");
+                    const orgId = getOrganizationId(); if (!convId || !orgId) return;
+                    await apiFetch(`/organizations/${orgId}/inbox/conversations/${convId}`, { method: "PATCH", body: JSON.stringify({ pipelineStage: stage }) }).catch(() => undefined);
+                    void loadBoard();
+                  }}>
+                  <div className="mb-1 flex items-baseline justify-between px-1">
+                    <span className="text-xs font-bold">{label}</span>
+                    <span className="text-[11px] text-slate-500">{board.stages[stage]?.count ?? 0}টি</span>
+                  </div>
+                  <div className="px-1 text-[11px] font-medium text-emerald-700">সংযুক্ত অর্ডার মূল্য: ৳{board.stages[stage] ? (Number(board.stages[stage].valueMinor) / 100).toLocaleString("bn-BD") : "০"}</div>
+                  <div className="mt-2 space-y-1.5">
+                    {(board.stages[stage]?.cards ?? []).map((card: any) => (
+                      <div key={card.id} draggable
+                        onDragStart={(e) => e.dataTransfer.setData("text/plain", card.id)}
+                        onClick={() => { setViewMode("list"); void openConversation({ id: card.id } as Conversation); }}
+                        className="cursor-pointer rounded-lg bg-white p-2 shadow-sm ring-1 ring-slate-100 hover:ring-indigo-200">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="truncate text-xs font-semibold">{card.contactName ?? card.contactPhone ?? "গ্রাহক"}</span>
+                          <ChannelChip channel={card.channel} />
+                        </div>
+                        <div className="truncate text-[11px] text-slate-500">{card.lastMessagePreview ?? ""}</div>
+                        <div className="mt-0.5 flex items-center justify-between text-[10px] text-slate-400">
+                          <span>{card.lastMessageAt ? new Date(card.lastMessageAt).toLocaleString("bn-BD") : ""}</span>
+                          {card.unreadCount > 0 ? <span className="rounded-full bg-red-500 px-1.5 font-bold text-white">{card.unreadCount}</span> : null}
+                          {card.latestOrderTotalMinor ? <span className="font-semibold text-emerald-600">৳{(Number(card.latestOrderTotalMinor) / 100).toLocaleString("bn-BD")}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-slate-400">কার্ড Drag করে অন্য কলামে ছাড়লে Stage বদলায়। Stage অটো-এগোয়ও: প্রথম Reply → Talking, Chat Order → Order Placed/Repeat, কুরিয়ার পার্সেল পথে থাকলে → Shipped (এই ধাপটি শুধু কুরিয়ারের আসল স্ট্যাটাস থেকে আসে — হাতে বসানো যায় না, এখানে কার್ಡও ফেলা যায় না), Order Delivered হলে → Completed। মূল্য = ওই Stage এর কথোপকথনে সংযুক্ত আসল অর্ডারের যোগ (Forecast নয়)।</p>
+        </div>
+      ) : null}
+
+      {viewMode === "media" ? (
+        <div className="card p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="section-title">🖼️ মিডিয়া লাইব্রেরি (শেষ ৯০ দিন)</div>
+            <input className="input ml-auto !w-52" placeholder="নাম/ফোন খুঁজুন" value={mediaQ} onChange={(e) => setMediaQ(e.target.value)} />
+            <select className="input !w-36" value={mediaType} onChange={(e) => setMediaType(e.target.value)}>
+              <option value="">সব ধরন</option><option value="image">🖼️ ছবি</option><option value="audio">🎙️ ভয়েস</option><option value="video">🎬 ভিডিও</option><option value="document">📄 ডকুমেন্ট</option>
+            </select>
+            <button className="btn-secondary btn-sm" onClick={() => void loadMedia()}>↻</button>
+          </div>
+          {mediaItems.length === 0 ? <p className="text-sm text-slate-400">কোনো মিডিয়া পাওয়া যায়নি।</p> : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {mediaItems.map((m: any) => (
+                <button key={m.id} className="rounded-xl bg-slate-50 p-3 text-left ring-1 ring-slate-100 hover:ring-indigo-200"
+                  onClick={() => { setViewMode("list"); void openConversation({ id: m.conversationId } as Conversation); }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{m.type === "image" ? "🖼️" : m.type === "audio" ? "🎙️" : m.type === "video" ? "🎬" : "📄"}</span>
+                    {m.stored ? <span className="badge-green">💾 সংরক্ষিত</span> : <span className="badge-amber">প্ল্যাটফর্মে</span>}
+                  </div>
+                  <div className="mt-1 truncate text-xs font-semibold">{m.contactName ?? "গ্রাহক"} · {m.channel}</div>
+                  <div className="text-[11px] text-slate-400">{new Date(m.createdAt).toLocaleString("bn-BD")}{m.sizeBytes ? ` · ${(m.sizeBytes / 1024).toFixed(0)} KB` : ""}</div>
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-slate-400">"💾 সংরক্ষিত" মানে ছবি/ভয়েস আমাদের Media Pipeline এ জমা আছে — প্ল্যাটফর্মের Link মেয়াদ শেষ হলেও থাকবে। S3 সেট করলে (MEDIA_S3_*) Signed URL এ খুলবে, নইলে Local Store + নিরাপদ Proxy।</p>
+        </div>
+      ) : null}
+
+      <div className={`${viewMode !== "list" ? "hidden" : ""} grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_320px]`}>
         {/* ---- Conversation list + filters ---- */}
         <div className={`${mobileChat ? "hidden lg:block" : "block"} space-y-2`}>
           <input id="inbox-search" className="input" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
@@ -555,6 +706,82 @@ export default function InboxPage() {
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}>{active.status === "closed" ? "↩️ আবার খুলুন" : "✓ বন্ধ করুন"}</button>
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
               </div>
+
+              {/* U5 quick actions + pipeline/outcome controls */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <select className="rounded-lg bg-slate-100 px-2 py-1.5 font-medium" value={active.pipelineStage ?? "new"}
+                  onChange={(e) => patchConversation({ pipelineStage: e.target.value })} title="Pipeline Stage">
+                  <option value="new">🆕 New</option><option value="talking">💬 Talking</option>
+                  <option value="ordered">🛒 Ordered</option><option value="delivered">✅ Delivered</option><option value="repeat">🔁 Repeat</option>
+                </select>
+                <button className="rounded-lg bg-sky-50 px-2.5 py-1.5 font-medium text-sky-700" disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
+                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}>🚚 ট্র্যাকিং পাঠান</button>
+                <button className="rounded-lg bg-violet-50 px-2.5 py-1.5 font-medium text-violet-700" disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    const order = context?.orders?.[0];
+                    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
+                    setBusy("courier");
+                    try {
+                      const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
+                      const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
+                      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
+                      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
+                      if (!address) return;
+                      const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
+                      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
+                      await refreshActive();
+                    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}>📦 কুরিয়ার বুকিং</button>
+                <button className="rounded-lg bg-amber-50 px-2.5 py-1.5 font-medium text-amber-700" disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
+                    setBusy("refund");
+                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)"); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}>💸 রিফান্ড অনুরোধ</button>
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-medium" disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    try {
+                      const token = localStorage.getItem("accessToken");
+                      const base = (window as any).location.origin;
+                      const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+                      if (!res.ok) throw new Error("Export ব্যর্থ");
+                      const blob = await res.blob();
+                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
+                    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+                  }}>⬇ CSV Export</button>
+                <button className="rounded-lg bg-red-50 px-2.5 py-1.5 font-medium text-red-600" disabled={busy !== ""}
+                  onClick={() => { if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}>🚫 ব্লক/Spam</button>
+                {active.status !== "closed" ? (
+                  <span className="ml-auto flex items-center gap-1.5">
+                    <select className="rounded-lg bg-slate-100 px-2 py-1.5 font-medium" value={closeOutcome} onChange={(e) => setCloseOutcome(e.target.value)} title="বন্ধ করার ফলাফল (Outcome)">
+                      <option value="sale">🛒 Sale হয়েছে</option>
+                      <option value="no_sale_price">💰 No-sale: দাম</option>
+                      <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
+                      <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
+                      <option value="support_resolved">🛠️ Support সমাধান</option>
+                      <option value="spam">🚫 Spam</option>
+                      <option value="other">• অন্যান্য</option>
+                    </select>
+                    <button className="rounded-lg bg-slate-900 px-2.5 py-1.5 font-medium text-white"
+                      onClick={() => patchConversation({ status: "closed", outcome: closeOutcome })}>✓ Outcome সহ বন্ধ</button>
+                  </span>
+                ) : active.outcome ? <span className="ml-auto font-medium text-slate-500">ফলাফল: {active.outcome}</span> : null}
+              </div>
+
+              {active.autoReplyPaused ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100">
+                  <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।</span>
+                  <button className="rounded-lg bg-white px-2 py-1 font-semibold text-red-600 ring-1 ring-red-200" onClick={() => patchConversation({ autoReplyPaused: false })}>▶️ আবার চালু করুন</button>
+                </div>
+              ) : null}
 
               {active.channel === "whatsapp" ? (
                 active.whatsappWindow?.open ? (
@@ -752,6 +979,42 @@ export default function InboxPage() {
               ) : null}
             </div>
 
+            {profile ? (
+              <div className="card space-y-3 p-4">
+                <div className="section-title">🎯 Command Profile</div>
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  <span className="badge-indigo">Stage: {profile.conversation.pipelineStage}</span>
+                  {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
+                  {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
+                  {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
+                </div>
+                {profile.conversations?.length > 1 ? (
+                  <div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
+                    <div className="space-y-1">
+                      {profile.conversations.map((c: any) => (
+                        <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
+                          onClick={() => { if (c.id !== active.id) void openConversation({ id: c.id } as Conversation); }}>
+                          <span className="flex items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? "—"}</span></span>
+                          <span className="shrink-0 text-slate-400">{c.status}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {profile.payments?.verifications?.length ? (
+                  <div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
+                    {profile.payments.verifications.map((v: any) => (
+                      <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
+                        {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="card space-y-3 p-4">
               <div className="section-title">দায়িত্ব ও Tag</div>
               {active.spamFlag ? (
@@ -803,6 +1066,7 @@ export default function InboxPage() {
                       </div>
                     ))}
                     <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
+                    <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
                     <div className="flex items-end gap-2">
                       <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
                       <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
@@ -845,6 +1109,14 @@ export default function InboxPage() {
                 {notes.length === 0 ? <p className="text-xs text-slate-400">কোনো নোট নেই।</p> : null}
               </div>
               <textarea className="input" rows={2} placeholder="টিমের জন্য নোট লিখুন (গ্রাহক দেখবে না)..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+              {members.length > 1 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {members.filter((mb) => mb.user.id !== myId).slice(0, 8).map((mb) => (
+                    <button key={mb.user.id} type="button" className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-brand-50" onClick={() => setNoteText((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}@${mb.user.name ?? mb.user.email} `)}>@{mb.user.name ?? mb.user.email}</button>
+                  ))}
+                  <span className="text-[11px] text-slate-400">Mention করলে তাঁর কাছে নোটিফিকেশন যাবে</span>
+                </div>
+              ) : null}
               <button className="btn-secondary btn-sm" onClick={addNote}>নোট যোগ করুন</button>
             </div>
           </div>
@@ -882,6 +1154,39 @@ export default function InboxPage() {
                 <label className="block">SLA প্রথম উত্তর (মিনিট)
                   <input className="input mt-1" type="number" min={1} value={settings.slaFirstResponseMinutes} onChange={(e) => setSettings({ ...settings, slaFirstResponseMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaFirstResponseMinutes: settings.slaFirstResponseMinutes })} />
                 </label>
+                <label className="block">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)
+                  <input className="input mt-1" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} />
+                </label>
+                <label className="block">Retention — বন্ধ কথোপকথন মোছা (দিন, ফাঁকা = কখনো নয়)
+                  <input className="input mt-1" type="number" min={7} max={3650} placeholder="বন্ধ" value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} />
+                  <span className="text-[11px] text-slate-400">Automation এ "Inbox Retention" Job চালালে মেয়াদ শেষ বন্ধ Thread মুছে যাবে (খোলা Thread কখনো নয়)।</span>
+                </label>
+                <label className="block">Escalation টিম (অভিযোগ/জরুরি)
+                  <select className="input mt-1" value={settings.escalationTeamId ?? ""} onChange={(e) => saveSettings({ escalationTeamId: e.target.value || null })}>
+                    <option value="">কোনোটিই নয়</option>
+                    {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Channel অনুযায়ী Autopilot মোড (ফাঁকা = গ্লোবাল)</div>
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                    <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
+                      <select className="input mt-0.5" value={settings.perChannelModes?.[ch] ?? ""} onChange={(e) => {
+                        const perChannelModes = { ...(settings.perChannelModes ?? {}) };
+                        if (e.target.value) perChannelModes[ch] = e.target.value; else delete perChannelModes[ch];
+                        saveSettings({ perChannelModes });
+                      }}>
+                        <option value="">গ্লোবাল</option><option value="off">বন্ধ</option><option value="draft">Draft</option><option value="auto">অটো</option>
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <label className="mt-2 block text-xs">উচ্চ-মূল্যের অর্ডারে Escalation (৳, ফাঁকা = বন্ধ) — এর বেশি মূল্যের খোলা অর্ডার থাকলে Autopilot থেমে মানুষের কাছে যাবে
+                  <input className="input mt-0.5" type="number" min={0} value={settings.escalationThresholdMinor != null ? Math.round(settings.escalationThresholdMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, escalationThresholdMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ escalationThresholdMinor: settings.escalationThresholdMinor ?? null })} />
+                </label>
+                <p className="mt-1 text-[11px] text-slate-400">Escalation হয়: অভিযোগ/নেতিবাচক ভাব, "এজেন্ট চাই" জাতীয় অনুরোধ, পরপর ২টি বোঝা-যায়নি বার্তা, উচ্চ-মূল্যের অর্ডার। থামলে Thread এ ব্যানার আসবে; মানুষের উত্তর দিলেই আবার চালু হয়। LLM Tier শুধু যাচাই করা তথ্যই বলতে পারে — সংখ্যা মিল না খেলে পাঠানো হয় না।</p>
               </div>
               <div>
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Intent অনুযায়ী মোড (ফাঁকা = গ্লোবাল)</div>
@@ -914,18 +1219,174 @@ export default function InboxPage() {
                 <div className={`rounded-xl p-2.5 ${report.currentBreaches > 0 ? "bg-red-50" : "bg-slate-50"}`}><div className="text-[11px] uppercase text-slate-400">SLA ভঙ্গ (এখন)</div><div className={`text-lg font-bold ${report.currentBreaches > 0 ? "text-red-600" : ""}`}>{report.currentBreaches}</div></div>
               </div>
               <div className="text-xs text-slate-500">চ্যাট-যুক্ত গ্রাহকদের অর্ডার: <span className="font-semibold text-slate-700">{report.chatLinkedOrders}টি</span> · আয়: <span className="font-semibold text-slate-700">{money(report.chatLinkedRevenueMinor, report.chatLinkedCurrency)}</span></div>
+              {report.autopilot ? (
+                <div className="text-xs text-slate-500">🤖 Autopilot: পাঠানো <span className="font-semibold text-slate-700">{report.autopilot.autoSent}টি</span> (LLM {report.autopilot.llmSent}টি) · Draft সাজেস্ট <span className="font-semibold text-slate-700">{report.autopilot.draftsSuggested}টি</span> · এখন থেমে আছে <span className="font-semibold text-slate-700">{report.autopilot.escalatedNow}টি</span> কথোপকথনে</div>
+              ) : null}
               {(report.perAgent ?? []).length ? (
                 <div className="space-y-1">
                   {report.perAgent.map((a: any) => (
                     <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
                       <span className="font-medium">{memberName(a.userId)}</span>
-                      <span>দায়িত্ব {a.assigned} · বন্ধ {a.closed} · গড় উত্তর {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes} মিনিট` : "—"}</span>
+                      <span>দায়িত্ব {a.assigned} · খোলা {a.openNow ?? 0} · বন্ধ {a.closed} · গড় উত্তর {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes} মিনিট` : "—"} · সমাধান {a.avgResolutionMinutes != null ? `${a.avgResolutionMinutes} মিনিট` : "—"}{a.csatAvg != null ? ` · ⭐ ${a.csatAvg}` : ""}</span>
                     </div>
                   ))}
                 </div>
               ) : null}
             </div>
           ) : <p className="text-xs text-slate-400">রিপোর্ট লোড হচ্ছে...</p>}
+        </div>
+
+        <div className="card space-y-3 p-5">
+          <div className="section-title">👥 টিম ও এজেন্ট</div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-500">আমার অবস্থা:</span>
+            {([["online", "🟢 Online"], ["busy", "🟠 ব্যস্ত"], ["away", "⚪ Away"]] as const).map(([v, label]) => (
+              <button key={v} className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${myStatus === v ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200"}`}
+                onClick={async () => {
+                  setMyStatus(v);
+                  const orgId = getOrganizationId(); if (!orgId) return;
+                  await apiFetch(`/organizations/${orgId}/inbox/agent-state`, { method: "POST", body: JSON.stringify({ status: v }) }).catch(() => undefined);
+                  loadTeams();
+                }}>{label}</button>
+            ))}
+            <span className="text-xs text-slate-400">Away থাকলে নতুন অ্যাসাইনমেন্ট আসবে না; পুরনো খোলা কথোপকথন Sweep এ সরে যাবে।</span>
+          </div>
+          {agentStates.length ? (
+            <div className="space-y-1">
+              {agentStates.map((a) => (
+                <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                  <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span></span>
+                  <span>খোলা {a.openCount}/{a.capacity}{a.teams?.length ? ` · ${a.teams.join(", ")}` : ""}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-xs text-slate-400">এজেন্ট তালিকা লোড হচ্ছে...</p>}
+          <div className="space-y-2 border-t pt-3">
+            <div className="flex flex-wrap gap-2">
+              <input className="input w-44" placeholder="নতুন টিমের নাম (যেমন: সেলস)" value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} />
+              {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                <label key={ch} className="flex items-center gap-1 text-xs">
+                  <input type="checkbox" checked={teamForm.channels.includes(ch)} onChange={(e) => setTeamForm({ ...teamForm, channels: e.target.checked ? [...teamForm.channels, ch] : teamForm.channels.filter((x) => x !== ch) })} />
+                  <ChannelChip channel={ch} />
+                </label>
+              ))}
+              <button className="btn-primary btn-sm" disabled={!teamForm.name.trim() || busy !== ""} onClick={async () => {
+                const orgId = getOrganizationId(); if (!orgId) return;
+                setBusy("team");
+                try { await apiFetch(`/organizations/${orgId}/inbox/teams`, { method: "POST", body: JSON.stringify(teamForm) }); setTeamForm({ name: "", channels: [] }); loadTeams(); setNotice("টিম তৈরি হয়েছে।"); }
+                catch (e) { setError(e instanceof Error ? e.message : "টিম তৈরি ব্যর্থ"); }
+                finally { setBusy(""); }
+              }}>টিম তৈরি</button>
+            </div>
+            <p className="text-[11px] text-slate-400">চ্যানেল না বাছলে টিম সব চ্যানেল নেবে। Smart Assignment চালু থাকলে নতুন কথোপকথন টিমের সদস্যদের মধ্যে ভাগ হয় — Capacity পূর্ণ বা Away সদস্য বাদ পড়ে।</p>
+            {teams.map((t) => (
+              <div key={t.id} className="rounded-xl border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold">{t.name} <span className="ml-1 font-normal text-xs text-slate-400">খোলা {t.openCount}টি</span></div>
+                  <div className="flex flex-wrap gap-1">{(t.channels ?? []).length ? (t.channels as string[]).map((ch) => <ChannelChip key={ch} channel={ch} />) : <span className="text-[11px] text-slate-400">সব চ্যানেল</span>}</div>
+                </div>
+                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                  {members.map((mb) => {
+                    const draft = teamDraft[t.id] ?? {};
+                    const on = mb.user.id in draft;
+                    return (
+                      <label key={mb.user.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-xs">
+                        <input type="checkbox" checked={on} onChange={(e) => {
+                          const next = { ...(teamDraft[t.id] ?? {}) };
+                          if (e.target.checked) next[mb.user.id] = next[mb.user.id] ?? 20; else delete next[mb.user.id];
+                          setTeamDraft({ ...teamDraft, [t.id]: next });
+                        }} />
+                        <span className="flex-1 truncate">{mb.user.name ?? mb.user.email}</span>
+                        <span className="text-slate-400">ধারণক্ষমতা</span>
+                        <input type="number" min={1} max={200} className="w-16 rounded border px-1.5 py-0.5" disabled={!on} value={draft[mb.user.id] ?? 20}
+                          onChange={(e) => setTeamDraft({ ...teamDraft, [t.id]: { ...(teamDraft[t.id] ?? {}), [mb.user.id]: Number(e.target.value) || 20 } })} />
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    setBusy("team");
+                    try {
+                      await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}/members`, { method: "POST", body: JSON.stringify({ members: Object.entries(teamDraft[t.id] ?? {}).map(([userId, capacity]) => ({ userId, capacity })) }) });
+                      loadTeams(); setNotice("টিমের সদস্য সংরক্ষণ হয়েছে।");
+                    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+                    finally { setBusy(""); }
+                  }}>সদস্য সংরক্ষণ</button>
+                  <button className="text-xs text-red-500" onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId || !window.confirm(`"${t.name}" টিম মুছে ফেলবেন?`)) return;
+                    await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}`, { method: "DELETE" }).catch(() => undefined);
+                    loadTeams();
+                  }}>টিম মুছুন</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="card space-y-4 p-5">
+        <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="space-y-2 rounded-xl border p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="telegram" lg /> Bot Channel</div>
+            <p className="text-xs text-slate-500">BotFather থেকে পাওয়া Bot Token দিন — যাচাই (getMe) সফল হলেই কানেক্ট হবে। Message এই Inbox এই আসবে, একই Assignment/Autopilot চলবে।</p>
+            <input className="input" type="password" placeholder="Bot Token (123456:ABC...)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
+            <button className="btn-primary btn-sm" disabled={!tgToken || busy !== ""} onClick={async () => {
+              const orgId = getOrganizationId(); if (!orgId) return;
+              setBusy("tg"); setTgResult("");
+              try {
+                const r = await apiFetch<any>(`/organizations/${orgId}/inbox/connect/telegram`, { method: "POST", body: JSON.stringify({ botToken: tgToken }) });
+                setTgResult(`কানেক্ট হয়েছে: ${r.bot} · Webhook: ${r.webhook?.registered ? "নিবন্ধিত ✅" : `হয়নি — ${r.webhook?.error ?? ""}`}`);
+                setTgToken("");
+              } catch (e) { setTgResult(e instanceof Error ? e.message : "কানেক্ট ব্যর্থ"); }
+              finally { setBusy(""); }
+            }}>{busy === "tg" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট"}</button>
+            {tgResult ? <p className="text-xs text-slate-600">{tgResult}</p> : null}
+          </div>
+          <div className="space-y-2 rounded-xl border p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="email" lg /> Mailbox Lane</div>
+            <p className="text-xs text-slate-500">নিজের Mailbox এর IMAP + SMTP দিন — দুই দিকই যাচাই সফল হলেই কানেক্ট হবে। অপঠিত মেইল Sync হয়ে এই Inbox এ আসবে (Automation এ "email_sync" Job চালু করুন)।</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              <input className="input !text-xs" placeholder="IMAP Host" value={emailForm.imapHost} onChange={(e) => setEmailForm({ ...emailForm, imapHost: e.target.value })} />
+              <input className="input !text-xs" type="number" placeholder="IMAP Port" value={emailForm.imapPort} onChange={(e) => setEmailForm({ ...emailForm, imapPort: Number(e.target.value) || 993 })} />
+              <input className="input !text-xs" placeholder="SMTP Host" value={emailForm.smtpHost} onChange={(e) => setEmailForm({ ...emailForm, smtpHost: e.target.value })} />
+              <input className="input !text-xs" type="number" placeholder="SMTP Port" value={emailForm.smtpPort} onChange={(e) => setEmailForm({ ...emailForm, smtpPort: Number(e.target.value) || 587 })} />
+            </div>
+            <input className="input" placeholder="ইমেইল ঠিকানা" value={emailForm.user} onChange={(e) => setEmailForm({ ...emailForm, user: e.target.value })} />
+            <input className="input" type="password" placeholder="Password / App Password" value={emailForm.password} onChange={(e) => setEmailForm({ ...emailForm, password: e.target.value })} />
+            <div className="flex gap-2">
+              <button className="btn-primary btn-sm" disabled={!emailForm.imapHost || !emailForm.user || busy !== ""} onClick={async () => {
+                const orgId = getOrganizationId(); if (!orgId) return;
+                setBusy("email"); setEmailResult("");
+                try {
+                  const r = await apiFetch<any>(`/organizations/${orgId}/inbox/connect/email`, { method: "POST", body: JSON.stringify(emailForm) });
+                  setEmailResult(`কানেক্ট হয়েছে: ${r.mailbox}`);
+                } catch (e) { setEmailResult(e instanceof Error ? e.message : "কানেক্ট ব্যর্থ"); }
+                finally { setBusy(""); }
+              }}>{busy === "email" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট"}</button>
+              <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
+                const orgId = getOrganizationId(); if (!orgId) return;
+                setBusy("emailsync");
+                try {
+                  const r = await apiFetch<any>(`/organizations/${orgId}/inbox/email/sync`, { method: "POST" });
+                  setEmailResult(`Sync: ${r.stored}টি নতুন, ${r.duplicates}টি আগের`);
+                } catch (e) { setEmailResult(e instanceof Error ? e.message : "Sync ব্যর্থ"); }
+                finally { setBusy(""); }
+              }}>এখন Sync</button>
+            </div>
+            {emailResult ? <p className="text-xs text-slate-600">{emailResult}</p> : null}
+          </div>
+          <div className="space-y-2 rounded-xl border border-dashed p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="tiktok" lg /> Business Messaging</div>
+            <p className="text-xs text-amber-700">⏳ Partner অনুমোদন প্রয়োজন — TikTok এই API Self-serve দেয় না।</p>
+            {tiktokPack ? (
+              <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-500">
+                {(tiktokPack.steps as string[]).map((step: string, i: number) => <li key={i}>{step}</li>)}
+              </ol>
+            ) : <p className="text-xs text-slate-400">তথ্য লোড হচ্ছে...</p>}
+          </div>
         </div>
       </div>
 

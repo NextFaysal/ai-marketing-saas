@@ -6,10 +6,15 @@ import { InboxService } from "./inbox.service";
 import { WebchatService } from "./webchat.service";
 import { RealtimeService } from "./realtime.service";
 import { LlmFactory } from "../ai/llm/llm.factory";
+import { TelegramService } from "./channels/telegram.service";
+import { EmailChannelService } from "./channels/email.service";
+import { TelegramWebhookController } from "./channels/telegram-webhook.controller";
+import { OrdersModule } from "../orders/orders.module";
 
 @Module({
-  controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController],
-  providers: [InboxService, WebchatService, RealtimeService, LlmFactory],
-  exports: [InboxService, RealtimeService],
+  imports: [OrdersModule],
+  controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController],
+  providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService],
+  exports: [InboxService, RealtimeService, TelegramService, EmailChannelService],
 })
 export class InboxModule {}

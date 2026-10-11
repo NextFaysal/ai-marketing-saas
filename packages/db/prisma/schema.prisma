@@ -69,6 +69,13 @@ model Organization {
   attributionWindowDays Int       @default(30)
   timezone       String          @default("Asia/Dhaka")
   currency       String          @default("BDT")
+  // Milestone 59 (Agency White-Label v1): per-org branding.
+  // All additive + nullable; absence means the platform defaults.
+  brandName       String?
+  logoUrl         String?
+  logoContentType String?
+  primaryColor    String?
+  customDomain    String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   memberships    Membership[]
@@ -93,6 +100,8 @@ model Organization {
   aiConversations AIConversation[]
   aiReports      AIReport[]
   aiActions      AIAction[]
+  aiActionProposals AIActionProposal[]
+  aiProactiveSetting AIProactiveSetting?
   aiUsageRecords AIUsageRecord[]
   channelConversations ChannelConversation[]
   leads          Lead[]
@@ -459,6 +468,9 @@ model Order {
   // Conversation this order was created from (chat / bot orders), so
   // courier updates can be sent back into the same thread.
   conversationId  String?
+  // Unified Inbox U3: delivery address captured in chat (bot v2 /
+  // chat orders); previously it lived only in an internal note.
+  address         String?
   currency       String       @default("BDT")
   subtotalMinor  BigInt       @default(0)
   shippingMinor  BigInt       @default(0)
@@ -716,6 +728,8 @@ model AIConversation {
   organizationId String
   userId         String
   title          String?
+  // Milestone 45: pinned conversations sort first in the assistant.
+  pinnedAt       DateTime?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -752,6 +766,34 @@ model AIAction {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, createdAt])
+}
+
+// Milestone 47: write actions proposed by the AI assistant. A proposal
+// NEVER executes on creation — a human must approve it, and execution
+// goes through the existing confirmed service paths. The full
+// lifecycle (proposed/approved/rejected/executed/failed) is stored so
+// a platform failure is recorded as failure, never as success.
+model AIActionProposal {
+  id               String    @id @default(uuid())
+  organizationId   String
+  userId           String // proposer
+  conversationId   String?
+  recommendationId String?
+  type             String // pause_campaign | pause_ad_set | create_broadcast_draft
+  title            String
+  preview          String // exact human-readable statement of what approval will do
+  payload          Json // server-validated arguments (ids / draft fields)
+  status           String    @default("proposed") // proposed | approved | rejected | executed | failed
+  decidedById      String?
+  decidedAt        DateTime?
+  executedAt       DateTime?
+  result           Json?
+  error            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
 }
 
 model AIReport {
@@ -807,6 +849,18 @@ model AIUsageRecord {
   @@index([organizationId, createdAt])
 }
 
+// Milestone 48: per-org proactive assistant switches. Absence of a row
+// means the defaults (briefing on, anomaly alerts on).
+model AIProactiveSetting {
+  id                   String     @id @default(uuid())
+  organizationId       String     @unique
+  briefingEnabled      Boolean    @default(true)
+  anomalyAlertsEnabled Boolean    @default(true)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
 // ---------- Milestone 7: unified inbox + leads/CRM ----------
 
 model ChannelConversation {
@@ -823,6 +877,23 @@ model ChannelConversation {
   leadId         String?
   status         String   @default("open") // open | pending | closed
   assignedUserId String?
+  teamId         String?
+  // Unified Inbox U3: autopilot paused for this conversation after
+  // an escalation (human ask, complaint, dispute, high value...).
+  // A human reply resumes it.
+  autoReplyPaused Boolean @default(false)
+  // Unified Inbox U4: email lane — the thread's subject line.
+  subject         String?
+  // Unified Inbox U5: sales pipeline stage (new | talking |
+  // ordered | delivered | repeat) — advanced by real events
+  // (first reply, chat order) and movable by agents; "delivered"
+  // is also derived at read time from the linked order/shipment.
+  pipelineStage   String   @default("new")
+  // Unified Inbox U5: outcome recorded when the thread closes
+  // (sale | no_sale_price | no_sale_stock | no_sale_undecided |
+  // support_resolved | spam | other) — feeds analytics.
+  outcome         String?
+  outcomeReason   String?
   tags           String[] @default([])
   // Last time the CUSTOMER messaged us. Drives the WhatsApp 24h
   // customer-service window (window = lastCustomerMessageAt + 24h).
@@ -874,6 +945,13 @@ model ChannelMessage {
   // WhatsApp media id (Messenger attachments carry a direct mediaUrl).
   // Bytes are fetched through the API media proxy, never exposed raw.
   mediaId        String?
+  // Unified Inbox U6: bytes persisted to the media pipeline
+  // (S3-compatible or local store) at capture time, because
+  // platform media ids/urls expire. Served via signed URL or the
+  // authenticated proxy.
+  mediaStorageKey   String?
+  mediaContentType  String?
+  mediaSizeBytes    Int?
   // Rule-based intent classification at ingest (price | stock | delivery
   // | order_status | payment | complaint | greeting | other) with a
   // 0-100 confidence. A heuristic label, shown to agents as an estimate.
@@ -1142,6 +1220,21 @@ model CampaignPublishLog {
 
 // ---------- Milestone 10: scheduling + automation ----------
 
+// Milestone 57: jobs that exhausted their worker retries land
+// here (dead-letter queue) for operator inspection + replay.
+model DeadLetterJob {
+  id             String    @id @default(uuid())
+  organizationId String?
+  scheduledJobId String?
+  jobType        String?
+  error          String
+  attempts       Int       @default(0)
+  createdAt      DateTime  @default(now())
+  replayedAt     DateTime?
+
+  @@index([createdAt])
+}
+
 model ScheduledJob {
   id             String   @id @default(uuid())
   organizationId String
@@ -1370,6 +1463,18 @@ model InboxSetting {
   // the bot does not quote a charge; the team confirms it later.
   botDeliveryChargeMinor Int?
   slaFirstResponseMinutes Int     @default(60)
+  // Unified Inbox U2: minutes before an away agent's open
+  // conversation is reassigned; team that receives escalations.
+  reassignAfterMinutes   Int?
+  // Unified Inbox U6: days after which CLOSED conversations are
+  // deleted by the inbox_retention job. Null = keep forever.
+  retentionDays          Int?
+  escalationTeamId       String?
+  // Unified Inbox U3: per-channel auto-reply modes
+  // { "whatsapp": "auto", ... } and the high-value escalation
+  // threshold (minor units) for autopilot.
+  perChannelModes          Json?
+  escalationThresholdMinor Int?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
@@ -1937,4 +2042,42 @@ model ChangelogEntry {
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+// Unified Inbox U2: agent teams, memberships with capacity, agent state.
+
+model InboxTeam {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  // Channels this team handles; empty = all channels.
+  channels       String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model InboxTeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  userId    String
+  // Max simultaneously-open assigned conversations for this member.
+  capacity  Int      @default(20)
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+}
+
+model AgentState {
+  id             String    @id @default(uuid())
+  organizationId String
+  userId         String
+  status         String    @default("online") // online | busy | away
+  lastAssignedAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
 }

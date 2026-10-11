@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
 import { useOverview, DailyBars } from "@/components/analytics-shared";
@@ -277,6 +278,7 @@ export default function AnalyticsPage() {
           <input type="date" className="rounded-lg border bg-white px-2 py-1.5" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
         </div>
       </div>
+      <Link href="/dashboard/analytics/cohorts" className="card block p-4 font-semibold text-indigo-700 transition hover:bg-slate-50">📊 Cohort ও Churn বিশ্লেষণ →</Link>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {data?.mixedCurrencies ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">সতর্কতা: এই রেঞ্জে একাধিক মুদ্রার ডেটা আছে ({data.currencies.join(", ")})। মোট সংখ্যা মুদ্রা রূপান্তর ছাড়াই যোগ করা হয়েছে, তাই ব্যাখ্যায় সাবধান হোন।</p> : null}
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : data ? (

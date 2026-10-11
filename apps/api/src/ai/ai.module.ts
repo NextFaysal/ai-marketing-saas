@@ -6,11 +6,16 @@ import { ToolsService } from "./tools.service";
 import { LlmFactory } from "./llm/llm.factory";
 import { AnalyticsModule } from "../analytics/analytics.module";
 import { AttributionModule } from "../attribution/attribution.module";
+import { CampaignsModule } from "../campaigns/campaigns.module";
+import { MessagingModule } from "../messaging/messaging.module";
+import { ProposalsService } from "./proposals.service";
+import { ProactiveService } from "./proactive.service";
+import { CreativeStudioService } from "./creative-studio.service";
 
 @Module({
-  imports: [AnalyticsModule, AttributionModule],
+  imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule],
   controllers: [AiController],
-  providers: [ReportsService, ChatService, ToolsService, LlmFactory],
-  exports: [ReportsService],
+  providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService],
+  exports: [ReportsService, ProposalsService, ProactiveService],
 })
 export class AiModule {}

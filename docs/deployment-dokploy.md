@@ -44,6 +44,13 @@ Open the stack's **Environment** tab and paste the contents of
   (must decode to exactly 32 bytes; **never change it later** —
   every stored credential in the system is encrypted with it)
 - `APP_DOMAIN` — the tenant app domain from step 0, no scheme.
+- `INTERNAL_JOB_SECRET` — generate: `openssl rand -hex 32`
+  (Milestone 57: shared secret between the API and the worker
+  service; the api dispatches scheduled jobs over BullMQ/Redis
+  and the worker executes them via this secret. The stack
+  includes the worker service — with this set, job execution
+  moves out of the API process and exhausted jobs land in the
+  Admin Console's Dead-Letter Queue.)
 
 Nothing else is required to boot. LLM keys, the Meta app, SMTP
 and SMS are configured AFTER deploy from the Admin Console
@@ -111,9 +118,33 @@ Follow `docs/m30-live-verification-sprint.md`. Practical points:
   Use Dokploy's backup feature or a scheduled
   `pg_dump` from the postgres container; test a restore once
   before you need it.
-- **The worker service is intentionally not in this stack** — its
-  processors are placeholders; all automation runs in the API
-  process (scheduler + workflow scans), which this stack runs.
-- **Scaling note:** the in-API scheduler assumes ONE api
-  instance. Keep api replicas at 1 until the BullMQ processors
-  land (tracked in the roadmap).
+- **Post-deploy smoke (Milestone 64):** after EVERY redeploy,
+  run `node scripts/deploy-smoke.mjs` with the SMOKE_*_URL env
+  vars pointing at the live domains (see the script header).
+  It checks the API health, public status/pricing, that the
+  internal job/webhook surfaces exist and are guarded, both
+  apps, and a full throwaway register → login → create-org
+  flow. With SMOKE_ADMIN_TOKEN set (a super-admin JWT) it also
+  compares current table counts against the backup manifest
+  recorded in the Admin Console (System page) and fails on a
+  shortfall. Exit code 1 means the deploy is NOT healthy —
+  do not announce the update yet.
+- **Restore drill:** restore a dump into a scratch database,
+  run `ANALYZE;` in it, start a throwaway api pointed at it,
+  and run the smoke script against that instance with
+  SMOKE_ADMIN_TOKEN: the backup check must PASS (the restored
+  counts cover the manifest). Do this once before you need a
+  real restore.
+- **The worker service IS in this stack** (Milestone 57): the
+  API dispatches scheduled jobs over BullMQ/Redis and the
+  worker executes them (retries + Dead-Letter Queue in the
+  Admin Console). It needs `INTERNAL_JOB_SECRET` set (above).
+- **Scaling note (updated Milestone 62):** with `REDIS_URL`
+  set on the api service (the compose file does this), the API
+  can run more than one replica: realtime fan-out (U6), job
+  dispatch dedupe (M57), rate-limit counters (M61) and the
+  periodic rule-evaluation / workflow-scan leader claims
+  (M62) are all cross-instance safe. The one documented
+  exception is realtime *presence*, which stays per-instance
+  (the DB AgentPresence heartbeat remains the shared record).
+  Without `REDIS_URL`, keep api replicas at 1.

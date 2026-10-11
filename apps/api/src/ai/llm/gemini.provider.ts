@@ -6,7 +6,14 @@ export class GeminiProvider implements LlmProvider {
   private readonly model: string;
   constructor(private readonly apiKey: string, model?: string, private readonly fetchFn: FetchFn = fetch) {
     if (!apiKey) throw new LlmConfigError("LLM_API_KEY is required for the Gemini provider");
-    this.model = model || "gemini-1.5-flash";
+    // Default model: the "gemini-flash-latest" alias Google itself
+    // points to. Dated defaults DIE for new accounts — gemini-1.5-flash
+    // (the previous default) returns 404 "no longer available to new
+    // users" on a fresh key even though ListModels still lists it
+    // (verified live 2026-10-10 with a new Gemini key). The operator
+    // can override the model in Admin Console -> Dynamic Platform
+    // Config (Milestone 33) without a code change.
+    this.model = model || "gemini-flash-latest";
   }
   async complete(messages: LlmMessage[], opts?: { jsonMode?: boolean; maxTokens?: number }): Promise<LlmResult> {
     const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");

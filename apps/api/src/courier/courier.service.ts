@@ -6,6 +6,7 @@ import { SteadfastClient, SteadfastError } from "./steadfast.client";
 import { PathaoClient, PathaoError, pathaoClientTokens, PATHAO_PROD_BASE } from "./pathao.client";
 import { RedxClient, RedxError, REDX_DEFAULT_BASE } from "./redx.client";
 import { InboxService } from "../inbox/inbox.service";
+import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -194,6 +195,97 @@ export class CourierService {
     return { ...shipment, codAmountMinor: String(shipment.codAmountMinor) };
   }
 
+  /**
+   * Milestone 52: delivery-charge quotation BEFORE booking, from
+   * each provider's OWN pricing surface:
+   *  - Pathao: merchant price-plan API (final_price as returned).
+   *  - RedX: charge calculator API (total as returned).
+   *  - Steadfast: NO quote API exists - the honest answer is an
+   *    explicit quotable:false state, never an invented number.
+   * A quote writes nothing; provider errors surface verbatim.
+   */
+  async quote(organizationId: string, dto: {
+    provider?: string; orderId?: string; weightKg?: number; weightGrams?: number;
+    pathao?: { storeId?: number; cityId?: number; zoneId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number };
+    redx?: { deliveryAreaId?: number; pickupAreaId?: number; parcelWeightKg?: number };
+  }) {
+    const provider = this.providerOf(dto.provider);
+    const client = await this.clientFor(organizationId, provider); // throws "যুক্ত নেই" when unconnected
+    if (provider === "steadfast") {
+      return {
+        provider, quotable: false, chargeMinor: null, currency: "BDT",
+        reason: "বুকিংয়ের পরে চার্জ জানা যাবে — Steadfast বুকিংয়ের আগে ডেলিভারি চার্জ জানার কোনো API দেয় না, তাই আন্দাজি সংখ্যা দেখানো হয় না।",
+      };
+    }
+    const weightKg = dto.pathao?.itemWeightKg ?? dto.redx?.parcelWeightKg ?? dto.weightKg
+      ?? (dto.weightGrams ? dto.weightGrams / 1000 : undefined) ?? 0.5;
+    try {
+      if (provider === "pathao") {
+        const c = client as PathaoClient;
+        const cityId = dto.pathao?.cityId;
+        const zoneId = dto.pathao?.zoneId;
+        if (!cityId || !zoneId) {
+          throw new BadRequestException("Pathao তে চার্জ জানতে প্রাপকের শহর ও জোন বেছে নিতে হবে — price plan API শহর/জোন ছাড়া দাম দিতে পারে না");
+        }
+        if (!(weightKg >= 0.5 && weightKg <= 10)) throw new BadRequestException("Pathao তে ওজন ০.৫–১০ কেজির মধ্যে হতে হয়");
+        let storeId = dto.pathao?.storeId;
+        if (!storeId) {
+          const stores = await c.getStores();
+          const first = stores.find((s: any) => s.is_active === 1 || s.is_active === true) ?? stores[0];
+          if (!first) throw new BadRequestException("Pathao অ্যাকাউন্টে কোনো স্টোর পাওয়া যায়নি — আগে Pathao Merchant Panel এ স্টোর তৈরি করুন");
+          storeId = Number(first.store_id);
+        }
+        const plan = await c.pricePlan({
+          store_id: storeId,
+          item_type: dto.pathao?.itemType ?? 2,
+          delivery_type: dto.pathao?.deliveryType ?? 48,
+          item_weight: weightKg,
+          recipient_city: cityId,
+          recipient_zone: zoneId,
+        });
+        return {
+          provider, quotable: true, chargeMinor: Math.round(plan.finalPrice * 100), currency: "BDT",
+          source: "pathao_price_plan",
+          detail: {
+            priceBdt: plan.price, discountBdt: plan.discount, promoDiscountBdt: plan.promoDiscount,
+            additionalChargeBdt: plan.additionalCharge, finalPriceBdt: plan.finalPrice,
+            codEnabled: plan.codEnabled, codPercentage: plan.codPercentage, planId: plan.planId,
+            storeId, weightKg,
+          },
+        };
+      }
+      // redx
+      const c = client as RedxClient;
+      if (!dto.redx?.deliveryAreaId) {
+        throw new BadRequestException("RedX এ চার্জ জানতে ডেলিভারি এলাকা (Area) বেছে নিতে হবে");
+      }
+      if (!(weightKg > 0 && weightKg <= 30)) throw new BadRequestException("RedX তে ওজন ০–৩০ কেজির মধ্যে হতে হয়");
+      let codMajor = 0;
+      if (dto.orderId) {
+        const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
+        if (!order) throw new NotFoundException("Order not found in this organization");
+        codMajor = order.isCod ? Number(BigInt(order.totalMinor)) / 100 : 0;
+      }
+      const charge = await c.calculateCharge({
+        delivery_area_id: dto.redx.deliveryAreaId,
+        pickup_area_id: dto.redx.pickupAreaId,
+        cash_collection_amount: Math.round(codMajor),
+        weight: Math.round(weightKg * 1000), // RedX expects grams
+      });
+      return {
+        provider, quotable: true, chargeMinor: Math.round(charge.totalCharge * 100), currency: "BDT",
+        source: "redx_charge_calculator",
+        detail: {
+          deliveryChargeBdt: charge.deliveryCharge, codChargeBdt: charge.codCharge, totalChargeBdt: charge.totalCharge,
+          deliveryAreaId: dto.redx.deliveryAreaId, weightGrams: Math.round(weightKg * 1000),
+        },
+      };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) throw e;
+      throw courierError(e);
+    }
+  }
+
   async bookShipment(organizationId: string, actorId: string, dto: {
     provider?: string;
     orderId: string; recipientName?: string; recipientPhone?: string; recipientAddress: string; note?: string;
@@ -309,6 +401,131 @@ export class CourierService {
       entityId: shipment.id, metadata: { provider, orderId: order.id, trackingCode, deliveryFeeMajor },
     });
     return { ...this.serialize(shipment), deliveryFeeMajor };
+  }
+
+  /**
+   * Milestone 53: bulk booking through the EXISTING single-booking
+   * path. Every order gets its own result; a failure never stops
+   * the rest; an order that already has an active shipment for the
+   * provider is SKIPPED (never double-booked); the batch is capped
+   * at 50 and audit-logged as a whole (each booking also audits
+   * itself inside bookShipment).
+   */
+  async bookBulk(organizationId: string, actorId: string, dto: {
+    provider?: string; orderIds: string[];
+    recipientName?: string; recipientPhone?: string; recipientAddress?: string; note?: string;
+    pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
+    redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
+  }) {
+    const provider = this.providerOf(dto.provider);
+    const orderIds = [...new Set((dto.orderIds ?? []).filter(Boolean))];
+    if (orderIds.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
+    if (orderIds.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি অর্ডার বুক করা যায়");
+    const results: { orderId: string; ok: boolean; skipped?: boolean; shipmentId?: string; trackingCode?: string; status?: string; error?: string }[] = [];
+    for (const orderId of orderIds) {
+      const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+      if (!order) { results.push({ orderId, ok: false, error: "Order not found in this organization" }); continue; }
+      const existing = await (this.prisma as any).courierShipment.findFirst({ where: { organizationId, orderId, provider } });
+      if (existing && !["cancelled", "returned"].includes(existing.status)) {
+        results.push({
+          orderId, ok: false, skipped: true, shipmentId: existing.id, trackingCode: existing.trackingCode ?? undefined,
+          status: existing.status,
+          error: `ইতিমধ্যে বুক করা আছে (Tracking: ${existing.trackingCode}, স্ট্যাটাস: ${existing.status})`,
+        });
+        continue;
+      }
+      try {
+        const shipment = await this.bookShipment(organizationId, actorId, {
+          provider, orderId,
+          recipientName: dto.recipientName, recipientPhone: dto.recipientPhone,
+          recipientAddress: dto.recipientAddress ?? order.address ?? "",
+          note: dto.note, pathao: dto.pathao, redx: dto.redx,
+        });
+        results.push({ orderId, ok: true, shipmentId: shipment.id, trackingCode: shipment.trackingCode, status: shipment.status });
+      } catch (e) {
+        results.push({ orderId, ok: false, error: e instanceof Error ? e.message : "Booking failed" });
+      }
+    }
+    const booked = results.filter((r) => r.ok).length;
+    const skipped = results.filter((r) => r.skipped).length;
+    const failed = results.length - booked - skipped;
+    await this.audit.log({
+      organizationId, userId: actorId, action: "courier.shipments.bulk_booked", entityType: "CourierShipment",
+      metadata: { provider, requested: results.length, booked, skipped, failed },
+    });
+    return { provider, requested: results.length, booked, skipped, failed, results };
+  }
+
+  private async orgSender(organizationId: string) {
+    const org = await (this.prisma as any).organization.findFirst({ where: { id: organizationId } });
+    const profile = await (this.prisma as any).businessProfile?.findUnique({ where: { organizationId } }).catch(() => null);
+    // Milestone 59: white-label — the brand/display name wins over
+    // the legal org name on customer-facing print, and the primary
+    // colour becomes the PDF accent. Absent branding = pre-M59 output.
+    return {
+      name: org?.brandName ?? org?.name ?? "Store", phone: profile?.contactPhone ?? null,
+      currency: org?.currency ?? "BDT", brandColor: org?.primaryColor ?? null,
+    };
+  }
+
+  private labelPageFor(shipment: any, sender: { name: string; phone: string | null; currency: string; brandColor?: string | null }) {
+    return shippingLabelPage({
+      orgName: sender.name, orgPhone: sender.phone, provider: shipment.provider,
+      recipientName: shipment.recipientName, recipientPhone: shipment.recipientPhone,
+      recipientAddress: shipment.recipientAddress, invoice: shipment.invoice,
+      trackingCode: String(shipment.trackingCode ?? shipment.consignmentId ?? ""),
+      codAmountMinor: shipment.codAmountMinor, currency: sender.currency,
+      brandColor: sender.brandColor ?? null,
+    });
+  }
+
+  /** Milestone 53: one shipment's shipping label as a real PDF. */
+  async labelPdf(organizationId: string, shipmentId: string): Promise<Buffer> {
+    const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
+    if (!shipment) throw new NotFoundException("Shipment not found");
+    if (!shipment.trackingCode && !shipment.consignmentId) throw new BadRequestException("Shipment has no tracking code yet");
+    const sender = await this.orgSender(organizationId);
+    return buildPdf([this.labelPageFor(shipment, sender)]);
+  }
+
+  /** Milestone 53: many shipments' labels in ONE PDF (one page each). */
+  async labelsPdf(organizationId: string, shipmentIds: string[]): Promise<Buffer> {
+    const ids = [...new Set((shipmentIds ?? []).filter(Boolean))];
+    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি পার্সেল বেছে নিন");
+    if (ids.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি লেবেল ডাউনলোড করা যায়");
+    const sender = await this.orgSender(organizationId);
+    const pages = [];
+    for (const id of ids) {
+      const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id, organizationId } });
+      if (!shipment) throw new NotFoundException(`Shipment not found: ${id}`);
+      if (!shipment.trackingCode && !shipment.consignmentId) throw new BadRequestException("Shipment has no tracking code yet");
+      pages.push(this.labelPageFor(shipment, sender));
+    }
+    return buildPdf(pages);
+  }
+
+  /** Milestone 53: per-order invoice as a real PDF (stored order data). */
+  async invoicePdf(organizationId: string, orderId: string): Promise<Buffer> {
+    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+    const items = ((await (this.prisma as any).orderItem?.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? []) as any[];
+    const customer = order.customerId
+      ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } })
+      : null;
+    const sender = await this.orgSender(organizationId);
+    return buildPdf([invoicePage({
+      orgName: sender.name, orgPhone: sender.phone,
+      invoiceNo: String(order.externalNumber ?? order.id),
+      date: (order.placedAt ?? order.createdAt ?? new Date()).toISOString().slice(0, 10),
+      customerName: [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || "Customer",
+      customerPhone: customer?.phone ?? null,
+      items: items.map((i: any) => ({ name: i.name, quantity: i.quantity, totalMinor: i.totalMinor })),
+      subtotalMinor: order.subtotalMinor, shippingMinor: order.shippingMinor,
+      discountMinor: order.discountMinor, totalMinor: order.totalMinor,
+      paymentLabel: order.isCod ? "Cash on Delivery (COD)" : (order.paymentMethod ?? "Prepaid"),
+      currency: order.currency ?? sender.currency,
+      brandColor: sender.brandColor,
+    })]);
   }
 
   async listShipments(organizationId: string, orderId?: string) {

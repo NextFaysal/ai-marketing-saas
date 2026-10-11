@@ -59,6 +59,25 @@ export default function LeadsPage() {
     if (detail?.id === lead.id) await openDetail(lead);
   }
 
+  // M51: drag-and-drop is a convenience over the SAME stage PATCH.
+  // The card moves optimistically; if the PATCH fails it snaps back
+  // and the error is shown. The select below keeps working (mobile).
+  async function dropStage(leadId: string, stage: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const lead = leads.find((l) => l.id === leadId);
+    if (!lead || lead.stage === stage) return;
+    const before = leads;
+    setLeads(leads.map((l) => (l.id === leadId ? { ...l, stage } : l)));
+    setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/leads/${leadId}`, { method: "PATCH", body: JSON.stringify({ stage }) });
+      await load();
+    } catch (e) {
+      setLeads(before);
+      setError(`Stage বদলানো যায়নি — কার্ডটি আগের জায়গায় ফিরে গেছে। ${e instanceof Error ? e.message : ""}`);
+    }
+  }
+
   async function addNote() {
     const orgId = getOrganizationId(); if (!orgId || !detail || !note.trim()) return;
     setDetail(await apiFetch<LeadDetail>(`/organizations/${orgId}/leads/${detail.id}/notes`, { method: "POST", body: JSON.stringify({ content: note }) }));
@@ -115,13 +134,16 @@ export default function LeadsPage() {
         </div>
       ) : null}
 
+      <div>
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         {STAGES.map((stage) => (
-          <div key={stage} className="rounded-xl border bg-slate-50 p-3">
+          <div key={stage} className="rounded-xl border bg-slate-50 p-3"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); if (id) void dropStage(id, stage); }}>
             <div className="flex items-center justify-between text-sm font-semibold">{STAGE_LABEL[stage]}<span className="rounded-full bg-white px-2 py-0.5 text-xs">{pipeline?.byStage[stage]?.count ?? 0}</span></div>
             <div className="mt-2 space-y-2">
               {leads.filter((l) => l.stage === stage).map((lead) => (
-                <div key={lead.id} className="rounded-lg border bg-white p-2.5 text-sm">
+                <div key={lead.id} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", lead.id)} className="cursor-grab rounded-lg border bg-white p-2.5 text-sm active:cursor-grabbing">
                   <button className="font-medium hover:underline" onClick={() => openDetail(lead)}>{lead.name}</button>
                   <div className="text-xs text-slate-400">{lead.phone ?? lead.email ?? ""} · {lead.source}</div>
                   {lead.valueMinor ? <div className="text-xs font-semibold">{formatMinor(BigInt(lead.valueMinor), lead.currency)}</div> : null}
@@ -134,6 +156,8 @@ export default function LeadsPage() {
           </div>
         ))}
       </div>
+      </div>
+      <p className="mt-2 text-[11px] text-slate-400">কার্ড Drag করে অন্য Stage-এর কলামে ছাড়লেই Stage বদলে যায় (একই API)। ব্যর্থ হলে কার্ড আগের জায়গায় ফিরে যায় ও কারণ দেখায়। মোবাইলে কার্ডের নিচের Stage মেনু ব্যবহার করুন। Inbox-এর কথোপকথনের Pipeline (New Lead → Talking → Order Placed → Shipped → Completed) Inbox পেজের “পাইপলাইন বোর্ড” ভিউতে আছে।</p>
       {leads.length === 0 ? <EmptyState title="কোনো Lead নেই" description="নিচের ফর্মে প্রথম Lead যোগ করুন, অথবা Inbox কানেক্ট করুন, নতুন গ্রাহক মেসেজ দিলেই Lead তৈরি হবে।" /> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">

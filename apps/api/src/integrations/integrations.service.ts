@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { EventsService } from "../common/events.service";
 import { CreateStoreDto, ConnectWooDto } from "./integrations.dto";
 import { encryptJson, decryptJson } from "./crypto";
 import { randomUUID } from "crypto";
@@ -14,7 +15,12 @@ export interface WooConnectionSecrets extends WooCredentials { webhookSecret?: s
 
 @Injectable()
 export class IntegrationsService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: import("../common/events.service").EventsService) {}
+  // NOTE: the events dependency MUST be a real class import —
+  // an inline import() type emits `Object` in design:paramtypes
+  // and Nest silently injects undefined, which disabled every
+  // order.created/order.delivered emission from store sync
+  // until Milestone 65 caught it live.
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService) {}
 
   // ---------- Stores ----------
   async createStore(organizationId: string, actorId: string, dto: CreateStoreDto) {
@@ -100,6 +106,37 @@ export class IntegrationsService {
     });
     if (!integration) throw new NotFoundException("Integration not found in this organization");
     return integration;
+  }
+
+  /**
+   * Milestone 63: process a recorded WooCommerce webhook event
+   * (the upsert half of the webhook controller). Shared by the
+   * inline path and the queued path (worker callback) so both
+   * behave identically. Payload-level failures are recorded on
+   * the event and reported as processed:false — never retried
+   * into a storm; infrastructure failures throw.
+   */
+  async processWooWebhookEvent(eventId: string): Promise<{ processed: boolean }> {
+    const event = await (this.prisma as any).webhookEvent.findFirst({ where: { id: eventId } });
+    if (!event) throw new NotFoundException("Webhook event not found");
+    const integration = await this.getIntegrationById(event.integrationId);
+    if (!integration) throw new NotFoundException("Integration not found");
+    const payload = (event.payload ?? {}) as any;
+    try {
+      if (event.topic?.startsWith("order.") && payload?.id) {
+        await this.upsertOrder(integration.organizationId, integration.storeId, normalizeWooOrder(payload));
+      } else if (event.topic?.startsWith("product.") && payload?.id) {
+        const currency = integration.store?.currency ?? "BDT";
+        await this.upsertProduct(integration.organizationId, normalizeWooProduct(payload, currency));
+      }
+      await (this.prisma as any).webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date(), error: null } });
+      return { processed: true };
+    } catch (e) {
+      await (this.prisma as any).webhookEvent.update({
+        where: { id: event.id }, data: { error: e instanceof Error ? e.message : "Processing failed" },
+      }).catch(() => undefined);
+      return { processed: false };
+    }
   }
 
   async getIntegrationById(integrationId: string) {

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
@@ -40,8 +41,15 @@ export class WorkflowsService implements OnModuleInit {
     // workflow runs paused on wait steps.
     if (process.env.DISABLE_SCHEDULER !== "true") {
       this.scanTimer = setInterval(() => {
-        void this.scanUnanswered().catch(() => undefined);
-        void this.resumeRuns().catch(() => undefined);
+        void (async () => {
+          // Milestone 62: one instance per scan cycle across
+          // replicas (the unanswered scan fires workflows —
+          // duplicates would double-send).
+          const claimed = await leaderClaim.tryClaim("workflow-scan", 270);
+          if (!claimed) return;
+          await this.scanUnanswered().catch(() => undefined);
+          await this.resumeRuns().catch(() => undefined);
+        })();
       }, 5 * 60_000);
     }
   }
@@ -49,10 +57,31 @@ export class WorkflowsService implements OnModuleInit {
   /** Resume runs paused on a wait step whose time has come. */
   async resumeRuns(now = new Date()): Promise<number> {
     const due = await (this.prisma as any).workflowRun.findMany({
-      where: { status: "waiting", resumeAt: { lte: now } }, take: 50,
+      // "resuming" rows are listed too: the claim below decides
+      // (fresh claims are skipped, stale ones reclaimed).
+      where: { status: { in: ["waiting", "resuming"] }, resumeAt: { lte: now } }, take: 50,
     });
     let resumed = 0;
     for (const run of due) {
+      // Milestone 62: claim the run atomically before touching
+      // it — with several API replicas (or overlapping scans)
+      // only the claim winner executes the steps; a run stuck
+      // in "resuming" for >15 minutes (crashed claimer) becomes
+      // claimable again via the stale branch below.
+      let claim: { count: number } = { count: 0 };
+      try {
+        claim = await (this.prisma as any).workflowRun.updateMany({
+          where: {
+            id: run.id,
+            OR: [
+              { status: "waiting" },
+              { status: "resuming", updatedAt: { lt: new Date(now.getTime() - 15 * 60_000) } },
+            ],
+          },
+          data: { status: "resuming" },
+        });
+      } catch { claim = { count: 0 }; }
+      if (!claim || claim.count === 0) continue;
       const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: run.workflowId } });
       if (!workflow || !workflow.enabled) {
         await (this.prisma as any).workflowRun.update({ where: { id: run.id }, data: { status: "failed", error: "Workflow disabled or deleted before resume" } });

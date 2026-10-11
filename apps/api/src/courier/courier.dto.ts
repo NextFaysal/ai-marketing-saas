@@ -1,4 +1,4 @@
-import { IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export class ConnectCourierDto {
   @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx (default steadfast)
@@ -28,5 +28,35 @@ export class BookShipmentDto {
   };
   @IsOptional() @IsObject() redx?: {
     deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number;
+  };
+}
+
+/** Milestone 53: bulk booking — up to 50 orders through one provider. */
+export class BulkBookDto {
+  @IsOptional() @IsIn(["steadfast", "pathao", "redx"]) provider?: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsString({ each: true }) orderIds!: string[];
+  @IsOptional() @IsString() recipientName?: string;
+  @IsOptional() @IsString() recipientPhone?: string;
+  @IsOptional() @IsString() recipientAddress?: string;
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsObject() pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
+  @IsOptional() @IsObject() redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
+}
+
+/** Milestone 52: pre-booking delivery-charge quotation. */
+export class QuoteCourierDto {
+  @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx
+  @IsOptional() @IsString() orderId?: string; // derives the COD collection amount when present
+  // The schema carries no product/order weight, so the weight is
+  // explicit user input from the booking form (kg like the form,
+  // or raw grams); nothing is ever guessed.
+  @IsOptional() @IsNumber() weightKg?: number;
+  @IsOptional() @IsNumber() weightGrams?: number;
+  @IsOptional() @IsObject() pathao?: {
+    storeId?: number; cityId?: number; zoneId?: number;
+    deliveryType?: number; itemType?: number; itemWeightKg?: number;
+  };
+  @IsOptional() @IsObject() redx?: {
+    deliveryAreaId?: number; pickupAreaId?: number; parcelWeightKg?: number;
   };
 }

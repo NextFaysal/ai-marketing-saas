@@ -42,6 +42,36 @@ describe("keywordPlan", () => {
   });
 });
 
+describe("M46 deep-analysis tools", () => {
+  it("sanitizePlan whitelists the new tools and their args only", () => {
+    const plan = sanitizePlan([
+      { tool: "compare_periods", args: { from: "2026-10-01", to: "2026-10-30", evil: 1 } },
+      { tool: "get_product_profit", args: { limit: 500 } },
+      { tool: "get_customer_segments", args: { hacked: true } },
+    ]);
+    expect(plan[0]).toEqual({ tool: "compare_periods", args: { from: "2026-10-01", to: "2026-10-30" } });
+    expect(plan[1].args.limit).toBe(25);
+    expect(plan[2].args).toEqual({});
+  });
+  it("keywordPlan maps Bengali + English phrases for each new tool", () => {
+    expect(keywordPlan("কাস্টমার সেগমেন্টগুলো দেখাও").map((c) => c.tool)).toContain("get_customer_segments");
+    expect(keywordPlan("Show my customer segments").map((c) => c.tool)).toContain("get_customer_segments");
+    expect(keywordPlan("স্টকের অবস্থা কেমন?").map((c) => c.tool)).toContain("get_inventory_health");
+    expect(keywordPlan("Anything out of stock?").map((c) => c.tool)).toContain("get_inventory_health");
+    expect(keywordPlan("কুরিয়ারদের পারফরম্যান্স কেমন?").map((c) => c.tool)).toContain("get_courier_performance");
+    expect(keywordPlan("What is the courier delivery rate?").map((c) => c.tool)).toContain("get_courier_performance");
+    expect(keywordPlan("কোন পণ্যে সবচেয়ে বেশি লাভ হয়?").map((c) => c.tool)).toContain("get_product_profit");
+    expect(keywordPlan("Show per-product profit").map((c) => c.tool)).toContain("get_product_profit");
+    expect(keywordPlan("গত মাসের সাথে তুলনা করে দেখাও").map((c) => c.tool)).toContain("compare_periods");
+    expect(keywordPlan("Compare with the previous period").map((c) => c.tool)).toContain("compare_periods");
+  });
+  it("specific product-profit phrasing wins over the generic overview within the 3-call cap", () => {
+    const plan = keywordPlan("কোন পণ্যে সবচেয়ে বেশি লাভ হয়?");
+    expect(plan[0].tool).toBe("get_product_profit");
+    expect(plan.length).toBeLessThanOrEqual(3);
+  });
+});
+
 describe("detectLanguage", () => {
   it("detects Bengali script", () => {
     expect(detectLanguage("আজ বিক্রি কত?")).toBe("bn");

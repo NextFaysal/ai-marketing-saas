@@ -363,6 +363,10 @@ export class AdminController {
   // ---- Milestone 42 (Phase A6): reliability panel ----
   @Get("system/version") systemVersion() { return this.admin.systemVersion(); }
   @Get("system/queues") systemQueues() { return this.admin.systemQueues(); }
+  @Get("system/inbox-health") systemInboxHealth() { return this.admin.inboxHealth(); }
+  @Get("system/dlq") systemDlq() { return this.admin.listDlq(); }
+  @Post("system/dlq/:dlqId/replay") @AdminTier("SUPER", "SUPPORT")
+  systemDlqReplay(@Req() req: any, @Param("dlqId") dlqId: string) { return this.automation.replayDlq(dlqId, req.adminUser.id); }
   @Get("system/errors") systemErrors(@Query("hours") hours?: string) { return this.admin.systemErrors(hours ? Number(hours) : 24); }
   @Get("system/logs") systemLogs(@Query("take") take?: string, @Query("q") q?: string, @Query("organizationId") organizationId?: string) {
     return this.admin.systemLogs(take ? Number(take) : 100, q, organizationId);

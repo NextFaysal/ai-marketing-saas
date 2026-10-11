@@ -89,6 +89,35 @@ export class RedxClient {
     return { trackingId: String(trackingId), status: mapRedxStatus(data?.status ?? "pending") };
   }
 
+  /** Pre-booking charge calculation from RedX's OWN charge calculator.
+   * The quoted charge is the total RedX returns - never a locally
+   * computed estimate. weight is in GRAMS (as the API expects). */
+  async calculateCharge(payload: {
+    delivery_area_id: number; pickup_area_id?: number;
+    cash_collection_amount: number; weight: number; // grams
+  }): Promise<{ deliveryCharge: number; codCharge: number; totalCharge: number }> {
+    const clean: Record<string, unknown> = { ...payload };
+    if (clean.pickup_area_id === undefined || clean.pickup_area_id === null) delete clean.pickup_area_id;
+    const body = await this.call("/charge/charge_calculator", { method: "POST", body: JSON.stringify(clean) });
+    const data = body?.data ?? body?.charge ?? body;
+    const num = (v: unknown): number | null => {
+      if (v === undefined || v === null || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const delivery = num(data?.delivery_charge ?? data?.deliveryCharge);
+    const cod = num(data?.cod_charge ?? data?.codCharge);
+    const total = num(data?.total_charge ?? data?.totalCharge ?? data?.charge_amount);
+    if (delivery === null && total === null) {
+      throw new RedxError(`RedX charge response had no charge amount: ${body?.message ?? "unknown response"}`);
+    }
+    return {
+      deliveryCharge: delivery ?? Math.max(0, (total ?? 0) - (cod ?? 0)),
+      codCharge: cod ?? 0,
+      totalCharge: total ?? (delivery ?? 0) + (cod ?? 0),
+    };
+  }
+
   async parcelStatus(trackingId: string): Promise<string> {
     const body = await this.call(`/parcel/info/${encodeURIComponent(trackingId)}`);
     const data = body?.data ?? body?.parcel ?? body;

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices } from "../common/platform-settings";
 import { referralConfig, maybeRewardReferral } from "../common/referral";
 import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
+import { rateLimitStats } from "../common/throttler.guard";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
 import { EmailProvider } from "../messaging/email.provider";
 import { buildInvoiceHtml } from "../payments/payments.service";
@@ -21,6 +22,15 @@ export class AdminService {
     // Milestone 38: view-as token signing (AuthModule's JwtModule).
     @Optional() private readonly jwt?: JwtService,
   ) {}
+
+  /** Milestone 57: dead-letter queue visibility (replay is
+   * delegated by the controller to AutomationService). */
+  async listDlq() {
+    const rows = await (this.prisma as any).deadLetterJob.findMany({
+      orderBy: { createdAt: "desc" }, take: 50,
+    }).catch(() => []);
+    return { entries: rows, pending: rows.filter((r: any) => !r.replayedAt).length };
+  }
 
   private async logAdmin(actor: any, action: string, entityType: string, entityId: string, metadata?: Record<string, unknown>, ip?: string) {
     await this.audit.log({ userId: actor.id, action: `admin.${action}`, entityType, entityId, metadata, ipAddress: ip });
@@ -1801,11 +1811,65 @@ export class AdminService {
       uptimeSeconds: Math.floor((Date.now() - AdminService.BOOT_TIME.getTime()) / 1000),
       migrations,
       database: { reachable: dbReachable, latencyMs: dbLatencyMs },
+      // Milestone 61: abuse-shield counters (this process).
+      rateLimits: rateLimitStats.snapshot(),
     };
   }
 
   /** Work queues as they actually exist in this system: scheduled
    * jobs, store syncs, message deliveries, workflow runs. */
+  /** Unified Inbox U6: platform-wide inbox health for the A6
+   * reliability board — failed sends, webhook errors, channel
+   * connection state and the unassigned backlog, all counted
+   * from real rows. */
+  async inboxHealth() {
+    const since24 = new Date(Date.now() - 24 * 3600_000);
+    const p = this.prisma as any;
+    const failedSends = await p.channelMessage.count({
+      where: { status: "failed", createdAt: { gte: since24 } },
+    }).catch(() => 0);
+    const latestFailures = await p.channelMessage.findMany({
+      where: { status: "failed", createdAt: { gte: since24 } },
+      orderBy: { createdAt: "desc" }, take: 5,
+      select: { id: true, error: true, createdAt: true, conversationId: true },
+    }).catch(() => []);
+    const webhookErrors = await p.webhookEvent.count({
+      where: { error: { not: null }, receivedAt: { gte: since24 } },
+    }).catch(() => 0);
+    const integrations = await p.integration.findMany({
+      where: { provider: { in: ["whatsapp", "messenger", "instagram", "telegram", "email"] } },
+      select: { provider: true, status: true, lastError: true, organizationId: true, updatedAt: true },
+      take: 500,
+    }).catch(() => []);
+    const channelStates = integrations.map((i: any) => ({
+      provider: i.provider, status: i.status, hasError: Boolean(i.lastError),
+      organizationId: i.organizationId, updatedAt: i.updatedAt,
+    }));
+    const backlog = await p.channelConversation.count({
+      where: { status: "open", assignedUserId: null },
+    }).catch(() => 0);
+    const oldestUnassigned = await p.channelConversation.findFirst({
+      where: { status: "open", assignedUserId: null },
+      orderBy: { createdAt: "asc" }, select: { createdAt: true },
+    }).catch(() => null);
+    const mediaStored = await p.channelMessage.count({
+      where: { mediaStorageKey: { not: null } },
+    }).catch(() => 0);
+    return {
+      windowHours: 24,
+      failedSends24h: failedSends,
+      latestFailures,
+      webhookErrors24h: webhookErrors,
+      channelStates,
+      unassignedOpenBacklog: backlog,
+      oldestUnassignedAt: oldestUnassigned?.createdAt ?? null,
+      mediaStoredTotal: mediaStored,
+      realtime: process.env.REDIS_URL
+        ? "Redis bus configured (cross-instance fan-out)"
+        : "In-process fan-out (single API instance; set REDIS_URL to scale out)",
+    };
+  }
+
   async systemQueues() {
     const p = this.prisma as any;
     const now = new Date();

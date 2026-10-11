@@ -17,6 +17,18 @@ export class PlanChangeRequestDto {
 export class AcceptInviteDto {
   @IsString() @MinLength(10) @MaxLength(200) token!: string;
 }
+/** Milestone 59: white-label branding. Field-level validation
+ * (hex colour, hostname shape, domain uniqueness) lives in the
+ * service so error messages stay in the product's voice. */
+export class UpdateBrandingDto {
+  @IsOptional() @IsString() @MaxLength(120) brandName?: string;
+  @IsOptional() @IsString() @MaxLength(20) primaryColor?: string;
+  @IsOptional() @IsString() @MaxLength(253) customDomain?: string;
+}
+export class UploadLogoDto {
+  @IsString() @MaxLength(3_200_000) dataBase64!: string;
+  @IsString() @MaxLength(60) contentType!: string;
+}
 export class UpdateBusinessProfileDto {
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
   @IsOptional() @IsString() @MaxLength(100) industry?: string;

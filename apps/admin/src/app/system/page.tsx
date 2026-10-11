@@ -41,6 +41,8 @@ export default function SystemPage() {
   const [backup, setBackup] = React.useState<BackupPanel | null>(null);
   const [logs, setLogs] = React.useState<LogRow[]>([]);
   const [logQ, setLogQ] = React.useState("");
+  const [inboxHealth, setInboxHealth] = React.useState<any>(null);
+  const [dlq, setDlq] = React.useState<any>(null);
   const [msg, setMsg] = React.useState("");
   const [bkLocation, setBkLocation] = React.useState("");
   const [bkNote, setBkNote] = React.useState("");
@@ -49,6 +51,8 @@ export default function SystemPage() {
   const load = React.useCallback(async () => {
     setVersion(await apiFetch<Version>("/admin/system/version").catch(() => null));
     setQueues(await apiFetch<Queues>("/admin/system/queues").catch(() => null));
+    setInboxHealth(await apiFetch<any>("/admin/system/inbox-health").catch(() => null));
+    setDlq(await apiFetch<any>("/admin/system/dlq").catch(() => null));
     setErrors(await apiFetch<Errors>("/admin/system/errors").catch(() => null));
     setGrowth(await apiFetch<Growth>("/admin/system/db-growth").catch(() => null));
     const bk = await apiFetch<BackupPanel>("/admin/system/backup").catch(() => null);
@@ -90,6 +94,49 @@ export default function SystemPage() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="acard mt-4">
+        <div className="mb-2 font-semibold">💬 Inbox Health (Unified Inbox U6)</div>
+        {!inboxHealth ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          <div className="space-y-1.5 text-sm">
+            <div>ব্যর্থ Send (২৪ ঘণ্টা): <b>{inboxHealth.failedSends24h}</b> · Webhook Error (২৪ ঘণ্টা): <b>{inboxHealth.webhookErrors24h}</b></div>
+            {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — {f.error ?? ""}</div>)}
+            <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${new Date(inboxHealth.oldestUnassignedAt).toLocaleString("bn-BD")}` : ""}</div>
+            <div>সংরক্ষিত মিডিয়া (Pipeline): <b>{inboxHealth.mediaStoredTotal}</b>টি ফাইল</div>
+            <div className="text-xs text-slate-400">{inboxHealth.realtime}</div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {(inboxHealth.channelStates ?? []).map((c: any, i: number) => (
+                <span key={i} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${c.status === "CONNECTED" && !c.hasError ? "bg-emerald-500/15 text-emerald-500" : "bg-red-500/15 text-red-400"}`}>{c.provider}: {c.status}{c.hasError ? " (error)" : ""}</span>
+              ))}
+              {(inboxHealth.channelStates ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো Channel Integration নেই</span> : null}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="acard mt-4">
+        <div className="mb-2 font-semibold">☠️ Dead-Letter Queue (M57) {dlq ? `— মুলতুবি ${dlq.pending}টি` : ""}</div>
+        {!dlq ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : dlq.entries.length === 0 ? (
+          <p className="text-sm text-slate-500">কোনো Dead-letter Job নেই — সব নির্ধারিত Job সফল বা Retry তে আছে।</p>
+        ) : (
+          <div className="space-y-1.5">
+            {dlq.entries.map((e: any) => (
+              <div key={e.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
+                <span className="font-semibold">{e.jobType ?? "job"}</span>
+                <span className="text-slate-400">{e.createdAt ? new Date(e.createdAt).toLocaleString("bn-BD") : ""} · {e.attempts} বার চেষ্টা</span>
+                <span className="min-w-0 flex-1 truncate" title={e.error}>{e.error}</span>
+                {e.replayedAt ? <span className="text-emerald-500">↻ Replay হয়েছে</span> : (
+                  <button className="rounded bg-white/10 px-2 py-0.5 font-semibold hover:bg-white/20" onClick={async () => {
+                    await apiFetch(`/admin/system/dlq/${e.id}/replay`, { method: "POST" }).catch(() => undefined);
+                    load();
+                  }}>↻ Replay</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-slate-500">Worker ৩ বার ব্যর্থ হলে Job এখানে আসে। Replay করলে আবার Queue তে (বা Inline) চলবে।</p>
       </div>
 
       <div className="acard mt-4">

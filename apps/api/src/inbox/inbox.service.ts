@@ -12,9 +12,11 @@ import { LlmFactory } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { RealtimeService } from "./realtime.service";
+import { MediaStore, mediaKeyFor } from "./media-store";
 import { classifyIntent, parseCodReply, type Classification } from "./intent";
 import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
+import { RiskService } from "../orders/risk.service";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
 
@@ -38,6 +40,7 @@ export class InboxService {
     private readonly llm: LlmFactory,
     @Optional() private readonly events?: EventsService,
     @Optional() private readonly realtime?: RealtimeService,
+    @Optional() private readonly risk?: RiskService,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -177,6 +180,9 @@ export class InboxService {
         },
       });
       this.rtMessage(organizationId, conversation.id, stored);
+      if (stored.mediaId || stored.mediaUrl) {
+        await this.captureMessageMedia(organizationId, conversation, stored).catch(() => undefined);
+      }
       received++;
       // Intelligence layer: classification, COD replies, workflow events,
       // grounded auto-reply. Each step is isolated - a failure here must
@@ -204,6 +210,51 @@ export class InboxService {
       }
     }
     return { received, duplicates, statusesApplied, leadgenReceived };
+  }
+
+  /**
+   * Generic channel ingest (Unified Inbox U4): the single entry
+   * every non-Meta channel uses to land a customer message —
+   * dedupe by external id, conversation upsert, unread + realtime,
+   * then the full intelligence pipeline (classification,
+   * assignment, bot, autopilot). Returns "duplicate" when the
+   * platform re-delivers an already-stored message.
+   */
+  async ingestExternalMessage(input: {
+    organizationId: string; integrationId: string; channel: string;
+    externalContactId: string; contactName?: string; contactPhone?: string;
+    externalId: string; content: string; timestamp?: Date; subject?: string;
+  }): Promise<"stored" | "duplicate"> {
+    const conversation = await this.findOrCreateConversation(
+      input.organizationId, input.integrationId, input.channel, input.externalContactId, input.contactName,
+    );
+    if (input.subject && !(conversation as any).subject) {
+      await (this.prisma as any).channelConversation.update({
+        where: { id: conversation.id }, data: { subject: input.subject },
+      }).catch(() => undefined);
+    }
+    const existing = await (this.prisma as any).channelMessage.findFirst({
+      where: { conversationId: conversation.id, externalId: input.externalId },
+    });
+    if (existing) return "duplicate";
+    const at = input.timestamp ?? new Date();
+    const stored = await (this.prisma as any).channelMessage.create({
+      data: {
+        conversationId: conversation.id, direction: "in", externalId: input.externalId,
+        type: "text", content: input.content, status: "received", platformTimestamp: at,
+      },
+    });
+    await (this.prisma as any).channelConversation.update({
+      where: { id: conversation.id },
+      data: {
+        unreadCount: { increment: 1 }, lastMessageAt: at, lastCustomerMessageAt: at,
+        lastMessagePreview: input.content.slice(0, 120), status: "open",
+        ...(input.contactPhone && !conversation.contactPhone ? { contactPhone: input.contactPhone } : {}),
+      },
+    });
+    this.rtMessage(input.organizationId, conversation.id, stored);
+    await this.processInboundIntelligence(input.organizationId, conversation, stored, { content: input.content }).catch(() => undefined);
+    return "stored";
   }
 
   /** Meta Lead Ads: a leadgen webhook carries only an id; the actual
@@ -299,6 +350,11 @@ export class InboxService {
       perIntent: row?.perIntent ?? {},
       smartAssign: row?.smartAssign ?? "off",
       slaFirstResponseMinutes: row?.slaFirstResponseMinutes ?? 60,
+      reassignAfterMinutes: row?.reassignAfterMinutes ?? null,
+      escalationTeamId: row?.escalationTeamId ?? null,
+      perChannelModes: row?.perChannelModes ?? {},
+      escalationThresholdMinor: row?.escalationThresholdMinor ?? null,
+      retentionDays: row?.retentionDays ?? null,
       botEnabled: row?.botEnabled ?? false,
       botDeliveryChargeMinor: row?.botDeliveryChargeMinor ?? null,
     };
@@ -308,6 +364,9 @@ export class InboxService {
     autoReplyMode?: string; confidenceThreshold?: number; perIntent?: Record<string, string>;
     smartAssign?: string; slaFirstResponseMinutes?: number;
     botEnabled?: boolean; botDeliveryChargeMinor?: number | null;
+    reassignAfterMinutes?: number | null; escalationTeamId?: string | null;
+    perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null;
+    retentionDays?: number | null;
   }) {
     const modes = ["off", "draft", "auto"];
     if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw new BadRequestException("autoReplyMode must be off | draft | auto");
@@ -319,6 +378,12 @@ export class InboxService {
         if (!modes.includes(mode)) throw new BadRequestException(`Invalid mode for ${intent}: ${mode}`);
       }
     }
+    if (dto.perChannelModes) {
+      for (const [channel, m] of Object.entries(dto.perChannelModes)) {
+        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
+        if (!modes.includes(m)) throw new BadRequestException(`Invalid mode for channel ${channel}: ${m}`);
+      }
+    }
     const data = {
       ...(dto.autoReplyMode ? { autoReplyMode: dto.autoReplyMode } : {}),
       ...(dto.confidenceThreshold !== undefined ? { confidenceThreshold: Math.round(dto.confidenceThreshold) } : {}),
@@ -327,6 +392,11 @@ export class InboxService {
       ...(dto.slaFirstResponseMinutes !== undefined ? { slaFirstResponseMinutes: Math.max(1, Math.round(dto.slaFirstResponseMinutes)) } : {}),
       ...(dto.botEnabled !== undefined ? { botEnabled: Boolean(dto.botEnabled) } : {}),
       ...(dto.botDeliveryChargeMinor !== undefined ? { botDeliveryChargeMinor: dto.botDeliveryChargeMinor === null ? null : Math.max(0, Math.round(dto.botDeliveryChargeMinor)) } : {}),
+      ...(dto.reassignAfterMinutes !== undefined ? { reassignAfterMinutes: dto.reassignAfterMinutes === null ? null : Math.min(10080, Math.max(5, Math.round(dto.reassignAfterMinutes))) } : {}),
+      ...(dto.escalationTeamId !== undefined ? { escalationTeamId: dto.escalationTeamId || null } : {}),
+      ...(dto.perChannelModes ? { perChannelModes: dto.perChannelModes } : {}),
+      ...(dto.escalationThresholdMinor !== undefined ? { escalationThresholdMinor: dto.escalationThresholdMinor === null ? null : Math.max(0, Math.round(dto.escalationThresholdMinor)) } : {}),
+      ...(dto.retentionDays !== undefined ? { retentionDays: dto.retentionDays === null ? null : Math.min(3650, Math.max(7, Math.round(dto.retentionDays))) } : {}),
     };
     const existing = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     const saved = existing
@@ -337,30 +407,241 @@ export class InboxService {
   }
 
   /** Round-robin / least-busy assignment among support-capable members. */
+  // ----- Unified Inbox U2: teams, agent state, assignment engine -----
+
+  // Unified Inbox U5: control center.
+  static readonly PIPELINE_STAGES = ["new", "talking", "ordered", "delivered", "repeat"] as const;
+  static readonly CONVERSATION_OUTCOMES = ["sale", "no_sale_price", "no_sale_stock", "no_sale_undecided", "support_resolved", "spam", "other"] as const;
+  private static readonly STAGE_RANK: Record<string, number> = { new: 0, talking: 1, ordered: 2, delivered: 3, repeat: 4 };
+
+  static readonly TEAM_CHANNELS = ["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"];
+  static readonly AGENT_STATUSES = ["online", "busy", "away"];
+
+  async listTeams(organizationId: string) {
+    const p = this.prisma as any;
+    const teams = await p.inboxTeam?.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" } }).catch(() => []) ?? [];
+    const out: any[] = [];
+    for (const t of teams as any[]) {
+      const members = await p.inboxTeamMember?.findMany({ where: { teamId: t.id } }).catch(() => []) ?? [];
+      const open = await p.channelConversation.count({ where: { organizationId, teamId: t.id, status: "open" } }).catch(() => 0);
+      out.push({ ...t, members, openCount: open });
+    }
+    return out;
+  }
+
+  async createTeam(organizationId: string, actorId: string, dto: { name: string; channels?: string[] }) {
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException("Team name is required");
+    const channels = (dto.channels ?? []).filter((c) => InboxService.TEAM_CHANNELS.includes(c));
+    const row = await (this.prisma as any).inboxTeam.create({ data: { organizationId, name: name.slice(0, 80), channels } });
+    await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.created", entityType: "InboxTeam", entityId: row.id, metadata: { name, channels } });
+    return row;
+  }
+
+  async updateTeam(organizationId: string, actorId: string, teamId: string, dto: { name?: string; channels?: string[] }) {
+    const p = this.prisma as any;
+    const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
+    if (!team) throw new NotFoundException("Team not found");
+    const data: any = {};
+    if (dto.name !== undefined) { if (!dto.name.trim()) throw new BadRequestException("Team name is required"); data.name = dto.name.trim().slice(0, 80); }
+    if (dto.channels !== undefined) data.channels = dto.channels.filter((c: string) => InboxService.TEAM_CHANNELS.includes(c));
+    const row = await p.inboxTeam.update({ where: { id: teamId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.updated", entityType: "InboxTeam", entityId: teamId, metadata: data });
+    return row;
+  }
+
+  async deleteTeam(organizationId: string, actorId: string, teamId: string) {
+    const p = this.prisma as any;
+    const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
+    if (!team) throw new NotFoundException("Team not found");
+    await p.inboxTeamMember?.deleteMany({ where: { teamId } }).catch(() => undefined);
+    await p.channelConversation.updateMany({ where: { organizationId, teamId }, data: { teamId: null } }).catch(() => undefined);
+    await p.inboxTeam.delete({ where: { id: teamId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.deleted", entityType: "InboxTeam", entityId: teamId, metadata: { name: team.name } });
+    return { deleted: true };
+  }
+
+  async setTeamMembers(organizationId: string, actorId: string, teamId: string, members: { userId: string; capacity?: number }[]) {
+    const p = this.prisma as any;
+    const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
+    if (!team) throw new NotFoundException("Team not found");
+    const cleaned: { userId: string; capacity: number }[] = [];
+    for (const m of members ?? []) {
+      const membership = await p.membership.findFirst({ where: { organizationId, userId: m.userId } });
+      if (!membership) throw new BadRequestException(`User ${m.userId} is not a member of this organization`);
+      cleaned.push({ userId: m.userId, capacity: Math.min(200, Math.max(1, Math.round(Number(m.capacity ?? 20)) || 20)) });
+    }
+    await p.inboxTeamMember.deleteMany({ where: { teamId } });
+    for (const m of cleaned) {
+      await p.inboxTeamMember.create({ data: { teamId, userId: m.userId, capacity: m.capacity } });
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.members_set", entityType: "InboxTeam", entityId: teamId, metadata: { count: cleaned.length } });
+    return this.listTeams(organizationId);
+  }
+
+  async setAgentState(organizationId: string, userId: string, status: string) {
+    if (!InboxService.AGENT_STATUSES.includes(status)) throw new BadRequestException("status must be online | busy | away");
+    const p = this.prisma as any;
+    const row = await p.agentState.upsert({
+      where: { organizationId_userId: { organizationId, userId } },
+      create: { organizationId, userId, status },
+      update: { status },
+    });
+    return { userId, status: row.status, updatedAt: row.updatedAt };
+  }
+
+  async listAgentStates(organizationId: string) {
+    const p = this.prisma as any;
+    const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 });
+    const states = await p.agentState?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const stateOf = new Map((states as any[]).map((r) => [r.userId, r]));
+    const teamMembers = await p.inboxTeamMember?.findMany({ where: { teamId: { in: ((await p.inboxTeam?.findMany({ where: { organizationId } }).catch(() => []) ?? []) as any[]).map((t) => t.id) } } }).catch(() => []) ?? [];
+    const capOf = new Map<string, number>();
+    const teamsOf = new Map<string, string[]>();
+    const teamName = new Map(((await p.inboxTeam?.findMany({ where: { organizationId } }).catch(() => []) ?? []) as any[]).map((t) => [t.id, t.name]));
+    for (const m of teamMembers as any[]) {
+      capOf.set(m.userId, Math.max(capOf.get(m.userId) ?? 0, m.capacity ?? 20));
+      teamsOf.set(m.userId, [...(teamsOf.get(m.userId) ?? []), teamName.get(m.teamId) ?? m.teamId]);
+    }
+    const open = await p.channelConversation.findMany({ where: { organizationId, status: "open", assignedUserId: { not: null } }, take: 2000 }).catch(() => []);
+    const openOf = new Map<string, number>();
+    for (const c of open as any[]) openOf.set(c.assignedUserId, (openOf.get(c.assignedUserId) ?? 0) + 1);
+    return (memberships as any[])
+      .filter((m) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(m.role))
+      .map((m) => ({
+        userId: m.userId,
+        name: m.user?.name ?? m.user?.email ?? "Agent",
+        email: m.user?.email ?? null,
+        role: m.role,
+        status: stateOf.get(m.userId)?.status ?? "online",
+        capacity: capOf.get(m.userId) ?? 20,
+        openCount: openOf.get(m.userId) ?? 0,
+        teams: teamsOf.get(m.userId) ?? [],
+        lastAssignedAt: stateOf.get(m.userId)?.lastAssignedAt ?? null,
+      }));
+  }
+
+  /** Candidate pool for assignment: team-routed when teams exist. */
+  private async assignmentPool(organizationId: string, conversation: any, settings: any) {
+    const p = this.prisma as any;
+    const teams = await p.inboxTeam?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    if (!(teams as any[]).length) return null; // null => legacy org-wide pool
+    const escalated = conversation.priority === "high" || conversation.sentimentFlag === "negative";
+    let selected = (teams as any[]).filter((t) => !(t.channels as string[])?.length || (t.channels as string[]).includes(conversation.channel));
+    if (escalated && settings.escalationTeamId) {
+      const esc = (teams as any[]).find((t) => t.id === settings.escalationTeamId);
+      if (esc) selected = [esc];
+    }
+    if (!selected.length) selected = teams as any[];
+    const members = await p.inboxTeamMember?.findMany({ where: { teamId: { in: selected.map((t: any) => t.id) } } }).catch(() => []) ?? [];
+    const teamOf = new Map<string, string>();
+    const capOf = new Map<string, number>();
+    for (const t of selected) {
+      for (const m of members as any[]) {
+        if (m.teamId !== t.id) continue;
+        if (!teamOf.has(m.userId)) teamOf.set(m.userId, t.id);
+        capOf.set(m.userId, Math.max(capOf.get(m.userId) ?? 0, m.capacity ?? 20));
+      }
+    }
+    return [...teamOf.entries()].map(([userId, teamId]) => ({ userId, teamId: teamId as string | null, capacity: capOf.get(userId) ?? 20 }));
+  }
+
+  /**
+   * Assignment engine v2: team routing (channel match, escalation
+   * team for high-priority/negative), agent-state aware (away is
+   * skipped), capacity-capped, round-robin or least-busy within
+   * the pool. Without teams it keeps the original org-wide
+   * behavior — now also state/capacity aware.
+   */
   private async maybeSmartAssign(organizationId: string, conversation: any) {
     const settings = await this.getSettings(organizationId);
     if (settings.smartAssign === "off") return conversation;
-    const memberships = await (this.prisma as any).membership.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" }, take: 100 });
-    const eligible = memberships.filter((m: any) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(m.role));
-    if (eligible.length === 0) return conversation;
-    let chosen: any = eligible[0];
-    if (settings.smartAssign === "round_robin") {
-      const row = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
-      const idx = eligible.findIndex((m: any) => m.userId === row?.lastAssignedUserId);
-      chosen = eligible[(idx + 1) % eligible.length];
-      if (row) await (this.prisma as any).inboxSetting.update({ where: { organizationId }, data: { lastAssignedUserId: chosen.userId } });
-      else await (this.prisma as any).inboxSetting.create({ data: { organizationId, smartAssign: settings.smartAssign, lastAssignedUserId: chosen.userId } });
-    } else {
-      const open = await (this.prisma as any).channelConversation.findMany({
-        where: { organizationId, status: "open", assignedUserId: { in: eligible.map((m: any) => m.userId) } }, take: 1000,
-      });
-      const counts = new Map<string, number>(eligible.map((m: any) => [m.userId, 0]));
-      for (const c of open) counts.set(c.assignedUserId, (counts.get(c.assignedUserId) ?? 0) + 1);
-      chosen = [...eligible].sort((a: any, b: any) => (counts.get(a.userId) ?? 0) - (counts.get(b.userId) ?? 0))[0];
-    }
-    return (this.prisma as any).channelConversation.update({
-      where: { id: conversation.id }, data: { assignedUserId: chosen.userId },
+    const p = this.prisma as any;
+    const memberships = await p.membership.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" }, take: 100 });
+    const supportRoles = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
+    const roleOf = new Map((memberships as any[]).map((m) => [m.userId, m.role]));
+    const pool = await this.assignmentPool(organizationId, conversation, settings);
+    let candidates: { userId: string; teamId: string | null; capacity: number }[] =
+      pool ?? (memberships as any[]).filter((m) => supportRoles.includes(m.role)).map((m) => ({ userId: m.userId, teamId: null, capacity: 20 }));
+    candidates = candidates.filter((c) => supportRoles.includes(roleOf.get(c.userId) ?? ""));
+    if (!candidates.length) return conversation;
+    const states = await p.agentState?.findMany({ where: { organizationId, userId: { in: candidates.map((c) => c.userId) } } }).catch(() => []) ?? [];
+    const away = new Set((states as any[]).filter((r) => r.status === "away").map((r) => r.userId));
+    candidates = candidates.filter((c) => !away.has(c.userId));
+    if (!candidates.length) return conversation;
+    const open = await p.channelConversation.findMany({
+      where: { organizationId, status: "open", assignedUserId: { in: candidates.map((c) => c.userId) } }, take: 2000,
     });
+    const counts = new Map<string, number>(candidates.map((c) => [c.userId, 0]));
+    for (const c of open as any[]) counts.set(c.assignedUserId, (counts.get(c.assignedUserId) ?? 0) + 1);
+    candidates = candidates.filter((c) => (counts.get(c.userId) ?? 0) < c.capacity);
+    if (!candidates.length) return conversation;
+    let chosen = candidates[0];
+    if (settings.smartAssign === "round_robin") {
+      const row = await p.inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
+      const idx = candidates.findIndex((c) => c.userId === row?.lastAssignedUserId);
+      chosen = candidates[(idx + 1) % candidates.length];
+      if (row) await p.inboxSetting.update({ where: { organizationId }, data: { lastAssignedUserId: chosen.userId } });
+      else await p.inboxSetting.create({ data: { organizationId, smartAssign: settings.smartAssign, lastAssignedUserId: chosen.userId } });
+    } else {
+      chosen = [...candidates].sort((a, b) => (counts.get(a.userId) ?? 0) - (counts.get(b.userId) ?? 0))[0];
+    }
+    const updated = await p.channelConversation.update({
+      where: { id: conversation.id },
+      data: { assignedUserId: chosen.userId, ...(chosen.teamId ? { teamId: chosen.teamId } : {}) },
+    });
+    try {
+      await p.agentState?.upsert({
+        where: { organizationId_userId: { organizationId, userId: chosen.userId } },
+        create: { organizationId, userId: chosen.userId, status: "online", lastAssignedAt: new Date() },
+        update: { lastAssignedAt: new Date() },
+      });
+    } catch { /* state bookkeeping never blocks assignment */ }
+    await this.notify(organizationId, chosen.userId, "assigned",
+      `নতুন কথোপকথন অ্যাসাইন হয়েছে: ${updated.contactName ?? updated.externalContactId ?? "গ্রাহক"}`,
+      (updated.lastMessagePreview ?? "").slice(0, 120) || null, conversation.id).catch(() => undefined);
+    this.rtConversation(organizationId, conversation.id, { assignedUserId: chosen.userId, teamId: chosen.teamId });
+    return updated;
+  }
+
+  /**
+   * Assignment sweep (scheduler job "inbox_assignment_sweep"):
+   * assigns the unassigned backlog and reassigns stale open
+   * conversations away from agents marked away.
+   */
+  async sweepAssignments(organizationId: string) {
+    const settings = await this.getSettings(organizationId);
+    if (settings.smartAssign === "off") return { assigned: 0, reassigned: 0, skipped: "policy_off" as const };
+    const p = this.prisma as any;
+    const reassignAfter = (settings.reassignAfterMinutes ?? 30) * 60000;
+    let assigned = 0;
+    let reassigned = 0;
+    const backlog = await p.channelConversation.findMany({
+      where: { organizationId, status: "open", assignedUserId: null, createdAt: { lt: new Date(Date.now() - 5 * 60000) } },
+      take: 50,
+    }).catch(() => []);
+    for (const c of backlog as any[]) {
+      const after: any = await this.maybeSmartAssign(organizationId, c).catch(() => c);
+      if (after?.assignedUserId) assigned++;
+    }
+    const awayStates = await p.agentState?.findMany({ where: { organizationId, status: "away" } }).catch(() => []) ?? [];
+    if ((awayStates as any[]).length) {
+      const stale = await p.channelConversation.findMany({
+        where: {
+          organizationId, status: "open",
+          assignedUserId: { in: (awayStates as any[]).map((r) => r.userId) },
+          lastMessageAt: { lt: new Date(Date.now() - reassignAfter) },
+        },
+        take: 50,
+      }).catch(() => []);
+      for (const c of stale as any[]) {
+        const previousAssignee = c.assignedUserId;
+        const cleared = await p.channelConversation.update({ where: { id: c.id }, data: { assignedUserId: null } });
+        const after: any = await this.maybeSmartAssign(organizationId, cleared).catch(() => cleared);
+        if (after?.assignedUserId && after.assignedUserId !== previousAssignee) reassigned++;
+      }
+    }
+    return { assigned, reassigned };
   }
 
   // ----- Inbound intelligence -----
@@ -388,6 +669,16 @@ export class InboxService {
         conversation = { ...conversation, sentimentFlag: "negative", priority: "high" };
         await this.notifyUrgent(organizationId, conversation).catch(() => undefined);
       }
+    }
+
+    // Unified Inbox U2: assignment runs for EVERY channel here —
+    // the Meta webhook path assigns at creation, but webchat (and
+    // any future channel) reaches intelligence unassigned. Running
+    // it after classification lets escalation routing use the
+    // fresh priority/sentiment of this very message.
+    if (!conversation.assignedUserId) {
+      const assigned: any = await this.maybeSmartAssign(organizationId, conversation).catch(() => null);
+      if (assigned?.assignedUserId) conversation = assigned;
     }
 
     // COD confirmation replies resolve BEFORE any auto-reply.
@@ -493,6 +784,7 @@ export class InboxService {
         return true;
       }
       data.productId = product.id; data.productName = product.name;
+      data.pendingProductId = product.id; data.pendingProductName = product.name;
       await save("ask_quantity");
       await this.botSend(organizationId, conversation, session, `"${product.name}" — কয়টি নিতে চান? সংখ্যা লিখুন।`);
       return true;
@@ -503,9 +795,43 @@ export class InboxService {
         await this.botSend(organizationId, conversation, session, "সঠিক সংখ্যা লিখুন (১ থেকে ৫০)।");
         return true;
       }
+      // Bot v2 (U3): the cart holds any number of products.
+      const items: any[] = Array.isArray(data.items) ? data.items : [];
+      const pendingId = data.pendingProductId ?? data.productId;
+      const pendingName = data.pendingProductName ?? data.productName;
+      if (pendingId) {
+        const existing = items.find((i) => i.productId === pendingId);
+        if (existing) existing.quantity = Math.min(99, (existing.quantity ?? 0) + qty);
+        else items.push({ productId: pendingId, productName: pendingName, quantity: qty });
+        data.items = items;
+      }
       data.quantity = qty;
-      await save("ask_name");
-      await this.botSend(organizationId, conversation, session, "আপনার পুরো নাম লিখুন (ডেলিভারির জন্য)।");
+      delete data.pendingProductId; delete data.pendingProductName;
+      await save("ask_more");
+      const products = await prisma.product.findMany({ where: { organizationId, status: "ACTIVE" }, orderBy: { createdAt: "asc" }, take: 10 });
+      const cartLines = items.map((i) => `• ${i.productName} × ${i.quantity}`).join("\n");
+      const list = products.map((p: any, i: number) => `${i + 1}. ${p.name} — ${formatMinor(BigInt(p.priceMinor), p.currency)}`).join("\n");
+      await this.botSend(organizationId, conversation, session,
+        `কার্টে যোগ হয়েছে:\n${cartLines}\n\nআরো পণ্য নিতে চাইলে নম্বর লিখুন, শেষ করতে "শেষ" লিখুন:\n${list}`);
+      return true;
+    }
+    if (session.state === "ask_more") {
+      const doneWords = ["শেষ", "হয়ে গেছে", "হয়ে গেছে", "না", "আর না", "done", "no", "ses"];
+      if (doneWords.includes(text.trim().toLowerCase())) {
+        await save("ask_name");
+        await this.botSend(organizationId, conversation, session, "আপনার পুরো নাম লিখুন (ডেলিভারির জন্য)।");
+        return true;
+      }
+      const products = await prisma.product.findMany({ where: { organizationId, status: "ACTIVE" }, orderBy: { createdAt: "asc" }, take: 10 });
+      const num = Number(this.bnToEnDigits(text).replace(/[^0-9]/g, ""));
+      const product = num >= 1 && num <= products.length ? products[num - 1] : matchProduct(text, products);
+      if (!product) {
+        await this.botSend(organizationId, conversation, session, "বোঝা যায়নি — আরো পণ্যের নম্বর লিখুন, অথবা শেষ করতে \"শেষ\" লিখুন।");
+        return true;
+      }
+      data.pendingProductId = product.id; data.pendingProductName = product.name;
+      await save("ask_quantity");
+      await this.botSend(organizationId, conversation, session, `\"${product.name}\" — কয়টি নিতে চান? সংখ্যা লিখুন।`);
       return true;
     }
     if (session.state === "ask_name") {
@@ -536,18 +862,31 @@ export class InboxService {
         return true;
       }
       data.address = text.slice(0, 500);
-      const product = await prisma.product.findFirst({ where: { id: data.productId, organizationId } });
-      if (!product) { await this.botFail(organizationId, conversation, session, "পণ্যটি আর পাওয়া যাচ্ছে না"); return true; }
-      const unit = BigInt(product.priceMinor);
-      const subtotal = unit * BigInt(data.quantity);
+      // Bot v2 (U3): totals over the whole cart; legacy single-
+      // product sessions (started before v2) still resolve.
+      const cartItems: any[] = Array.isArray(data.items) && data.items.length
+        ? data.items
+        : [{ productId: data.productId, productName: data.productName, quantity: data.quantity ?? 1 }];
+      let subtotal = 0n;
+      let currency = "BDT";
+      const itemLines: string[] = [];
+      for (const item of cartItems) {
+        const product = await prisma.product.findFirst({ where: { id: item.productId, organizationId } });
+        if (!product) { await this.botFail(organizationId, conversation, session, "একটি পণ্য আর পাওয়া যাচ্ছে না"); return true; }
+        currency = product.currency ?? currency;
+        const lineTotal = BigInt(product.priceMinor) * BigInt(item.quantity);
+        subtotal += lineTotal;
+        itemLines.push(`পণ্য: ${product.name} × ${item.quantity} = ${formatMinor(lineTotal, product.currency)}`);
+      }
+      data.items = cartItems;
       const delivery = settings.botDeliveryChargeMinor;
-      data.unitPriceMinor = String(unit); data.subtotalMinor = String(subtotal);
+      data.subtotalMinor = String(subtotal);
       await save("confirm");
       const lines = [
         "অর্ডারের সারসংক্ষেপ:",
-        `পণ্য: ${product.name} × ${data.quantity} = ${formatMinor(subtotal, product.currency)}`,
-        delivery != null ? `ডেলিভারি চার্জ: ${formatMinor(BigInt(delivery), product.currency)}` : "ডেলিভারি চার্জ: আমাদের টিম কনফার্ম করবে",
-        delivery != null ? `সর্বমোট (COD): ${formatMinor(subtotal + BigInt(delivery), product.currency)}` : `মোট (ডেলিভারি ছাড়া): ${formatMinor(subtotal, product.currency)}`,
+        ...itemLines,
+        delivery != null ? `ডেলিভারি চার্জ: ${formatMinor(BigInt(delivery), currency)}` : "ডেলিভারি চার্জ: আমাদের টিম কনফার্ম করবে",
+        delivery != null ? `সর্বমোট (COD): ${formatMinor(subtotal + BigInt(delivery), currency)}` : `মোট (ডেলিভারি ছাড়া): ${formatMinor(subtotal, currency)}`,
         `নাম: ${data.name}`,
         `ফোন: ${data.phone}`,
         `ঠিকানা: ${data.address}`,
@@ -578,10 +917,14 @@ export class InboxService {
         });
         await prisma.channelConversation.update({ where: { id: conversation.id }, data: { customerId: customer.id } });
       }
+      const orderItems: any[] = Array.isArray(data.items) && data.items.length
+        ? data.items.map((i: any) => ({ productId: i.productId, quantity: i.quantity }))
+        : [{ productId: data.productId, quantity: data.quantity }];
       const order = await this.createChatOrder(organizationId, "system", conversation.id, {
-        items: [{ productId: data.productId, quantity: data.quantity }],
+        items: orderItems,
         shippingMinor: settings.botDeliveryChargeMinor ?? 0,
         isCod: true,
+        address: data.address,
       });
       await prisma.conversationNote.create({
         data: {
@@ -732,22 +1075,84 @@ export class InboxService {
     return null;
   }
 
+  // ----- Unified Inbox U3: autopilot (modes per intent/channel,
+  // escalation gate, rule replies, then an LLM tier that may only
+  // restate a verified fact pack) -----
+
+  private static readonly HUMAN_WORDS = ["এজেন্ট", "মানুষ চাই", "মানুষের সাথে", "agent", "human", "real person", "কাস্টমার কেয়ার", "কাস্টমার কেয়ার"];
+
+  /** Escalate to a human: pause autopilot on this conversation,
+   * raise priority, notify, audit. Returns true when escalated. */
+  private async escalateAutopilot(organizationId: string, conversation: any, reason: string) {
+    await (this.prisma as any).channelConversation.update({
+      where: { id: conversation.id },
+      data: { autoReplyPaused: true, priority: "high" },
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversation.id, { autoReplyPaused: true, priority: "high" });
+    await this.notifyUrgent(organizationId, { ...conversation, priority: "high" }).catch(() => undefined);
+    await this.audit.log({
+      organizationId, userId: "system", action: "inbox.autopilot.escalated", entityType: "ChannelConversation",
+      entityId: conversation.id, metadata: { reason },
+    }).catch(() => undefined);
+    return true;
+  }
+
   private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string) {
     const settings = await this.getSettings(organizationId);
     const perIntent = (settings.perIntent ?? {}) as Record<string, string>;
-    const mode = perIntent[classification.intent] ?? settings.autoReplyMode;
+    const perChannel = (settings.perChannelModes ?? {}) as Record<string, string>;
+    const mode = perIntent[classification.intent] ?? perChannel[conversation.channel] ?? settings.autoReplyMode;
     if (mode === "off") return;
-    if (!["price", "stock", "delivery", "order_status", "payment"].includes(classification.intent)) return;
-    if (classification.confidence < settings.confidenceThreshold) return;
-    const composed = await this.composeGroundedReply(organizationId, conversation, classification.intent, text);
-    if (!composed) return; // no verified data -> no reply, ever
 
-    // Judge the WhatsApp window from the FRESH row: the conversation
-    // object handed down from the webhook is a snapshot taken before
-    // lastCustomerMessageAt was stamped for this very message.
+    // Judge everything from the FRESH row: the conversation object
+    // handed down is a snapshot from before this message landed.
     const fresh = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversation.id } }).catch(() => null);
     const current = fresh ?? conversation;
-    const windowClosed = current.channel === "whatsapp" && this.whatsappWindow(current)?.open === false;
+    if (current.autoReplyPaused) return; // a human owns this thread now
+
+    // ---- Escalation gate (before any composing) ----
+    const lower = text.toLowerCase();
+    if (classification.sentiment === "negative" || classification.intent === "complaint") {
+      await this.escalateAutopilot(organizationId, current, classification.intent === "complaint" ? "complaint" : "negative_sentiment");
+      return;
+    }
+    if (InboxService.HUMAN_WORDS.some((w) => lower.includes(w))) {
+      await this.escalateAutopilot(organizationId, current, "human_requested");
+      return;
+    }
+    if (settings.escalationThresholdMinor != null && current.customerId) {
+      const openOrder = await (this.prisma as any).order.findFirst({
+        where: { organizationId, customerId: current.customerId, status: { in: ["pending", "on-hold", "processing"] } },
+        orderBy: { createdAt: "desc" },
+      }).catch(() => null);
+      if (openOrder && Number(openOrder.totalMinor) > settings.escalationThresholdMinor) {
+        await this.escalateAutopilot(organizationId, current, "high_value_order");
+        return;
+      }
+    }
+    if (classification.intent === "other" && classification.confidence < 40) {
+      // Two consecutive ununderstood messages -> stop guessing.
+      const recent = await (this.prisma as any).channelMessage.findMany({
+        where: { conversationId: conversation.id, direction: "in" }, orderBy: { createdAt: "desc" }, take: 2,
+      }).catch(() => []);
+      if (recent.length >= 2 && recent.every((m: any) => (m.intent ?? "other") === "other")) {
+        await this.escalateAutopilot(organizationId, current, "repeated_ununderstood");
+        return;
+      }
+    }
+
+    if (!["price", "stock", "delivery", "order_status", "payment"].includes(classification.intent)) return;
+    if (classification.confidence < settings.confidenceThreshold) return;
+    let composed: { content: string; evidence: any } | null = await this.composeGroundedReply(organizationId, current, classification.intent, text);
+    if (!composed) {
+      // LLM tier: may only restate the verified fact pack. No
+      // facts, no provider, guard failure -> still no reply.
+      composed = await this.composeLlmGroundedReply(organizationId, current, classification.intent, text).catch(() => null);
+    }
+    if (!composed) return; // no verified data -> no reply, ever
+
+    conversation = current;
+    const windowClosed = conversation.channel === "whatsapp" && this.whatsappWindow(conversation)?.open === false;
     if (mode === "draft" || windowClosed) {
       await (this.prisma as any).messageDraft.create({
         data: {
@@ -758,7 +1163,6 @@ export class InboxService {
       return;
     }
 
-    conversation = current;
     // Rate limit: at most one auto-reply per conversation per 10 minutes.
     const lastAuto = await (this.prisma as any).channelMessage.findFirst({
       where: { conversationId: conversation.id, autoReply: true }, orderBy: { createdAt: "desc" },
@@ -768,7 +1172,7 @@ export class InboxService {
     const message = await (this.prisma as any).channelMessage.create({
       data: {
         conversationId: conversation.id, direction: "out", type: "text", content: composed.content,
-        status: "queued", autoReply: true, autoReplyEvidence: JSON.stringify(composed.evidence),
+        status: "queued", autoReply: true, autoReplyEvidence: JSON.stringify({ via: "autopilot", ...composed.evidence }),
       },
     });
     try {
@@ -796,6 +1200,96 @@ export class InboxService {
     }
   }
 
+  /**
+   * The verified fact pack an LLM may restate — the same sources
+   * the rule composer uses, nothing else. Returns null when there
+   * is nothing verified to say.
+   */
+  private async buildFactPack(organizationId: string, conversation: any, intent: string, text: string) {
+    const p = this.prisma as any;
+    const facts: string[] = [];
+    const sources: any[] = [];
+    if (intent === "price" || intent === "stock") {
+      const products = await p.product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
+      const product = matchProduct(text, products);
+      if (!product) return null;
+      facts.push(`পণ্য: ${product.name}`);
+      facts.push(`দাম: ${formatMinor(BigInt(product.priceMinor), product.currency)} (${product.currency})`);
+      if (product.stockQuantity != null) facts.push(`স্টক: ${product.stockQuantity}টি`);
+      sources.push({ type: "product", productId: product.id });
+    }
+    if (intent === "delivery" || intent === "payment") {
+      const policy = await p.businessPolicy.findFirst({ where: { organizationId, type: intent === "delivery" ? "shipping" : "payment" } });
+      if (!policy?.content) return null;
+      facts.push(`${intent === "delivery" ? "ডেলিভারি" : "পেমেন্ট"} নীতি: ${String(policy.content).replace(/\s+/g, " ").slice(0, 500)}`);
+      sources.push({ type: "business_policy", policyId: policy.id });
+    }
+    if (intent === "order_status") {
+      if (!conversation.customerId) return null;
+      const order = await p.order.findFirst({ where: { organizationId, customerId: conversation.customerId }, orderBy: { createdAt: "desc" } });
+      if (!order) return null;
+      facts.push(`সর্বশেষ অর্ডার নম্বর: ${order.externalNumber ?? order.id}`);
+      facts.push(`অর্ডারের অবস্থা: ${order.status}`);
+      facts.push(`অর্ডারের মোট: ${formatMinor(BigInt(order.totalMinor), order.currency)}`);
+      sources.push({ type: "order_status", orderId: order.id, status: order.status });
+    }
+    if (!facts.length) return null;
+    const profile = await p.businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+    if (profile?.name) facts.unshift(`ব্যবসার নাম: ${profile.name}`);
+    return { factsText: facts.join("\n"), sources };
+  }
+
+  /** Numbers in a text, normalized (Bengali digits -> Latin,
+   * separators stripped) for the hallucination guard. */
+  private static extractNumbers(input: string): string[] {
+    const normalized = input.replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).replace(/,/g, "");
+    return (normalized.match(/\d+(?:\.\d+)?/g) ?? []).map((n) => String(Number(n)));
+  }
+
+  /**
+   * LLM autopilot tier. The model receives ONLY the fact pack and
+   * the customer's message; its reply is admitted only if every
+   * number in it appears in the pack (a deterministic guard
+   * against invented prices/totals). Anything else -> no reply.
+   */
+  private async composeLlmGroundedReply(organizationId: string, conversation: any, intent: string, text: string) {
+    const pack = await this.buildFactPack(organizationId, conversation, intent, text);
+    if (!pack) return null;
+    let provider: any;
+    try { provider = this.llm.getProvider(); } catch { return null; }
+    if (!provider?.isRealLlm) return null; // dev templates never autopilot
+    const result = await provider.complete([
+      {
+        role: "system",
+        content: [
+          "You are the customer-support autopilot of a Bangladeshi ecommerce business.",
+          "Answer the customer using ONLY the verified facts below. Never invent prices, stock, discounts, delivery times or promises.",
+          "Reply in the customer's language and style (Bengali, English, or mixed as they wrote). Keep it short and helpful.",
+          "If the facts do not answer the question, reply with exactly: NO_ANSWER",
+          "",
+          "VERIFIED FACTS:",
+          pack.factsText,
+        ].join("\n"),
+      },
+      { role: "user", content: text },
+    ], { maxTokens: 400 });
+    const reply = (result.text ?? "").trim();
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: "system", feature: "autopilot", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+    if (!reply || reply.toUpperCase().includes("NO_ANSWER")) return null;
+    const factNumbers = new Set(InboxService.extractNumbers(pack.factsText));
+    const invented = InboxService.extractNumbers(reply).filter((n) => !factNumbers.has(n));
+    if (invented.length) {
+      await this.audit.log({
+        organizationId, userId: "system", action: "inbox.autopilot.guard_rejected", entityType: "ChannelConversation",
+        entityId: conversation.id, metadata: { intent, inventedNumbers: invented },
+      }).catch(() => undefined);
+      return null;
+    }
+    return { content: reply.slice(0, 1500), evidence: { tier: "llm", provider: provider.name, sources: pack.sources } };
+  }
+
   // ----- COD confirmation -----
   async requestCodConfirmation(organizationId: string, actorId: string, conversationId: string, orderId: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
@@ -817,6 +1311,333 @@ export class InboxService {
       data: { codConfirmationStatus: "awaiting", codConfirmationSentAt: new Date(), codConversationId: conversationId },
     });
     return { ...updated, totalMinor: String(updated.totalMinor) };
+  }
+
+  /** Forward-only pipeline advance: real events move a thread
+   * along the pipeline (first reply -> talking, chat order ->
+   * ordered/repeat); agents can also move it manually. */
+  private async advanceStage(organizationId: string, conversation: any, to: string) {
+    try {
+      const rank = InboxService.STAGE_RANK;
+      if ((rank[conversation.pipelineStage ?? "new"] ?? 0) >= (rank[to] ?? 0)) return;
+      const updated = await (this.prisma as any).channelConversation.update({
+        where: { id: conversation.id }, data: { pipelineStage: to },
+      });
+      conversation.pipelineStage = updated.pipelineStage;
+      this.rtConversation(organizationId, conversation.id, { pipelineStage: to });
+    } catch { /* a stage must never break messaging */ }
+  }
+
+  /** M51: stages shown on the board. "shipped" is DERIVED ONLY —
+   * it is never stored and cannot be set manually: a conversation
+   * whose stored stage is "ordered" shows as "shipped" while a linked
+   * order's courier shipment is in transit, and as "delivered" once
+   * delivered (the U5 derivation). Stored stages stay the U5 set. */
+  static readonly BOARD_STAGES = ["new", "talking", "ordered", "shipped", "delivered", "repeat"] as const;
+
+  private effectiveStage(conv: any, linkedOrders: any[], shipments: any[] = []): string {
+    const stored = conv.pipelineStage ?? "new";
+    if (stored !== "ordered") return stored;
+    const delivered = linkedOrders.some((o: any) =>
+      ["completed", "delivered"].includes(String(o.status ?? "").toLowerCase()))
+      || shipments.some((s: any) => ["delivered", "partial_delivered"].includes(String(s.status ?? "").toLowerCase()));
+    if (delivered) return "delivered";
+    const inTransit = shipments.some((s: any) => String(s.status ?? "").toLowerCase() === "in_transit");
+    return inTransit ? "shipped" : stored;
+  }
+
+  /** Pipeline board: active conversations grouped by stage, with
+   * the money actually attached to each stage — the totals of the
+   * orders linked to those conversations (real rows, labelled as
+   * linked pipeline value, never a forecast). */
+  async getPipelineBoard(organizationId: string) {
+    const convs = await (this.prisma as any).channelConversation.findMany({
+      where: { organizationId, status: { not: "closed" } },
+      orderBy: { lastMessageAt: "desc" }, take: 300,
+    });
+    const ids = convs.map((c: any) => c.id);
+    const orders = ids.length ? await (this.prisma as any).order.findMany({
+      where: { organizationId, conversationId: { in: ids } }, orderBy: { createdAt: "desc" }, take: 600,
+    }).catch(() => []) : [];
+    const ordersByConv = new Map<string, any[]>();
+    for (const o of orders) {
+      const list = ordersByConv.get(o.conversationId) ?? [];
+      list.push(o); ordersByConv.set(o.conversationId, list);
+    }
+    // M51: shipments of the linked orders drive the derived
+    // "shipped" stage (courier status vocabulary: in_transit).
+    const orderIds = orders.map((o: any) => o.id);
+    const shipments = orderIds.length ? await (this.prisma as any).courierShipment.findMany({
+      where: { organizationId, orderId: { in: orderIds } }, take: 1200,
+    }).catch(() => []) : [];
+    const shipmentsByOrder = new Map<string, any[]>();
+    for (const s of shipments) {
+      const list = shipmentsByOrder.get(s.orderId) ?? [];
+      list.push(s); shipmentsByOrder.set(s.orderId, list);
+    }
+    const stages: Record<string, { count: number; valueMinor: string; cards: any[] }> = {};
+    for (const stage of InboxService.BOARD_STAGES) stages[stage] = { count: 0, valueMinor: "0", cards: [] };
+    for (const conv of convs) {
+      const linked = ordersByConv.get(conv.id) ?? [];
+      const linkedShipments = linked.flatMap((o: any) => shipmentsByOrder.get(o.id) ?? []);
+      const stage = this.effectiveStage(conv, linked, linkedShipments);
+      const bucket = stages[stage] ?? stages.talking;
+      bucket.count++;
+      const latestTotal = linked[0] ? BigInt(linked[0].totalMinor) : 0n;
+      bucket.valueMinor = String(BigInt(bucket.valueMinor) + latestTotal);
+      if (bucket.cards.length < 60) {
+        bucket.cards.push({
+          id: conv.id, channel: conv.channel, contactName: conv.contactName, contactPhone: conv.contactPhone,
+          lastMessagePreview: conv.lastMessagePreview, lastMessageAt: conv.lastMessageAt,
+          unreadCount: conv.unreadCount, assignedUserId: conv.assignedUserId, priority: conv.priority,
+          pipelineStage: stage, storedStage: conv.pipelineStage ?? "new",
+          latestOrderTotalMinor: linked[0] ? String(linked[0].totalMinor) : null,
+          latestOrderStatus: linked[0]?.status ?? null,
+          latestShipmentStatus: linkedShipments[0]?.status ?? null,
+        });
+      }
+    }
+    return { stages, totalActive: convs.length };
+  }
+
+  /** Customer Command Profile: everything known about the person
+   * behind this thread, assembled from real rows — all-channel
+   * conversations, orders with shipments and payment facts, the
+   * lead, ad origin, RFM + lifetime value. */
+  async getCommandProfile(organizationId: string, conversationId: string) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const context = await this.customerContext(organizationId, conv);
+    const convWhere: any = conv.customerId
+      ? { organizationId, customerId: conv.customerId }
+      : { organizationId, channel: conv.channel, externalContactId: conv.externalContactId };
+    const allConversations = await (this.prisma as any).channelConversation.findMany({
+      where: convWhere, orderBy: { lastMessageAt: "desc" }, take: 20,
+    }).catch(() => []);
+    const verifications = await (((this.prisma as any).paymentVerification?.findMany({
+      where: { organizationId, conversationId }, orderBy: { createdAt: "desc" }, take: 10,
+    }))?.catch(() => []) ?? []);
+    let rfm: any = null;
+    if (context.lifetime && context.lifetime.orderCount > 0) {
+      const lastOrderAt = context.lifetime.lastOrderAt ? new Date(context.lifetime.lastOrderAt) : null;
+      const recencyDays = lastOrderAt ? Math.floor((Date.now() - lastOrderAt.getTime()) / 86400000) : null;
+      const frequency = context.lifetime.orderCount;
+      const monetaryMinor = context.lifetime.totalSpentMinor;
+      const segment = frequency >= 3 && (recencyDays ?? 999) <= 90 ? "champion"
+        : frequency >= 2 && (recencyDays ?? 999) <= 90 ? "loyal"
+        : (recencyDays ?? 999) <= 30 ? "recent"
+        : (recencyDays ?? 999) > 180 ? "dormant" : "standard";
+      rfm = { recencyDays, frequency, monetaryMinor, segment };
+    }
+    return {
+      conversation: {
+        id: conv.id, channel: conv.channel, contactName: conv.contactName, contactPhone: conv.contactPhone,
+        pipelineStage: conv.pipelineStage ?? "new", outcome: conv.outcome ?? null, status: conv.status,
+        assignedUserId: conv.assignedUserId, teamId: conv.teamId ?? null,
+      },
+      customer: context.customer, lead: context.lead, lifetime: context.lifetime, orders: context.orders,
+      conversations: allConversations.map((c: any) => ({
+        id: c.id, channel: c.channel, status: c.status, lastMessageAt: c.lastMessageAt,
+        lastMessagePreview: c.lastMessagePreview, pipelineStage: c.pipelineStage ?? "new",
+      })),
+      payments: {
+        verifications: verifications.map((v: any) => ({
+          id: v.id, provider: v.provider, verdict: v.verdict, trxId: v.trxId,
+          amountMinor: v.amountMinor != null ? String(v.amountMinor) : null, createdAt: v.createdAt,
+        })),
+      },
+      adOrigin: {
+        ctwaSourceId: conv.ctwaSourceId ?? null,
+        leadSource: context.lead?.source ?? null,
+      },
+      rfm,
+    };
+  }
+
+  /** One-click: send the customer their tracking info through the
+   * confirmed send path (counts only when the platform confirms). */
+  async shareTracking(organizationId: string, actorId: string, conversationId: string) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const orders = await (this.prisma as any).order.findMany({
+      where: { organizationId, conversationId }, orderBy: { createdAt: "desc" }, take: 5,
+    }).catch(() => []);
+    let allOrderIds = orders.map((o: any) => o.id);
+    if (conv.customerId) {
+      const customerOrders = await (this.prisma as any).order.findMany({
+        where: { organizationId, customerId: conv.customerId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true },
+      }).catch(() => []);
+      allOrderIds = [...new Set([...allOrderIds, ...customerOrders.map((o: any) => o.id)])];
+    }
+    if (!allOrderIds.length) throw new BadRequestException("এই গ্রাহকের কোনো অর্ডার পাওয়া যায়নি");
+    const shipment = await (this.prisma as any).courierShipment.findFirst({
+      where: { organizationId, orderId: { in: allOrderIds } }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (!shipment?.trackingCode) throw new BadRequestException("এই অর্ডারের কোনো কুরিয়ার বুকিং/ট্র্যাকিং এখনো নেই");
+    const text = `আপনার পার্সেলটি ${shipment.provider} কুরিয়ারে পাঠানো হয়েছে। Tracking: ${shipment.trackingCode} (স্ট্যাটাস: ${shipment.status})। ধন্যবাদ!`;
+    const sent = await this.sendAutomatedMessage(organizationId, conversationId, text, "tracking_share");
+    return { sent: true, trackingCode: shipment.trackingCode, provider: shipment.provider, messageId: sent.id };
+  }
+
+  /** One-click: file a refund REQUEST for the billing owner — a
+   * real internal record (note + notification + audit). It does
+   * NOT move money; the business settles refunds itself. */
+  async requestRefund(organizationId: string, actorId: string, conversationId: string, dto: { reason?: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const reason = (dto.reason ?? "").trim().slice(0, 300);
+    await this.createNoteInternal(organizationId, actorId, conversationId,
+      `💸 রিফান্ড অনুরোধ: ${reason || "(কারণ দেওয়া হয়নি)"} — বিলিং মালিকের পর্যালোচনার জন্য।`);
+    const owners = await (this.prisma as any).membership.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, take: 10,
+    }).catch(() => []);
+    for (const m of owners) {
+      if (m.userId === actorId) continue;
+      await this.notify(organizationId, m.userId, "refund_request",
+        `রিফান্ড অনুরোধ: ${conv.contactName ?? conv.externalContactId ?? "গ্রাহক"}`,
+        reason || null, conversationId).catch(() => undefined);
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.refund_requested", entityType: "ChannelConversation",
+      entityId: conversationId, metadata: { reason: reason || null },
+    }).catch(() => undefined);
+    return { requested: true, notified: owners.filter((m: any) => m.userId !== actorId).length };
+  }
+
+  // ----- Unified Inbox U6: media pipeline, export, retention -----
+
+  /** A short-lived signed URL for a stored media object (S3
+   * mode). Local mode returns null — the client uses the
+   * authenticated proxy instead. */
+  async getMediaSignedUrl(organizationId: string, conversationId: string, messageId: string) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
+    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message.mediaStorageKey) return { url: null, stored: false, mode: this.mediaStore().mode };
+    const url = this.mediaStore().signedUrl(message.mediaStorageKey, 900);
+    return { url, stored: true, mode: this.mediaStore().mode, expiresInSeconds: url ? 900 : null };
+  }
+
+  /** Media search across the org's inbox: newest stored/linked
+   * media first, filterable by message type and free text on the
+   * contact. Only real media rows are returned. */
+  async searchMedia(organizationId: string, opts: { type?: string; q?: string; days?: number } = {}) {
+    const since = new Date(Date.now() - Math.min(365, Math.max(1, opts.days ?? 90)) * 86400000);
+    const messages = await (this.prisma as any).channelMessage.findMany({
+      where: {
+        createdAt: { gte: since },
+        ...(opts.type ? { type: opts.type } : {}),
+        OR: [{ mediaId: { not: null } }, { mediaUrl: { not: null } }, { mediaStorageKey: { not: null } }],
+      },
+      orderBy: { createdAt: "desc" }, take: 200,
+    }).catch(() => []);
+    // The fake/real relation filter above may not exist on every
+    // client shape; verify org ownership through the conversations.
+    const convIds = [...new Set(messages.map((m: any) => m.conversationId))];
+    const convs = convIds.length ? await (this.prisma as any).channelConversation.findMany({
+      where: { organizationId, id: { in: convIds } },
+    }).catch(() => []) : [];
+    const convById = new Map<string, any>(convs.map((c: any) => [c.id, c] as [string, any]));
+    const q = (opts.q ?? "").toLowerCase();
+    return messages
+      .filter((m: any) => convById.has(m.conversationId))
+      .filter((m: any) => !q || (convById.get(m.conversationId)?.contactName ?? "").toLowerCase().includes(q)
+        || (convById.get(m.conversationId)?.contactPhone ?? "").includes(q))
+      .slice(0, 100)
+      .map((m: any) => ({
+        id: m.id, conversationId: m.conversationId, type: m.type, direction: m.direction,
+        contentType: m.mediaContentType ?? null, sizeBytes: m.mediaSizeBytes ?? null,
+        stored: Boolean(m.mediaStorageKey), createdAt: m.createdAt,
+        contactName: convById.get(m.conversationId)?.contactName ?? null,
+        channel: convById.get(m.conversationId)?.channel ?? null,
+      }));
+  }
+
+  /** Export one thread (JSON structure or CSV of its messages). */
+  async exportConversation(organizationId: string, conversationId: string, format: "json" | "csv" = "json") {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const messages = await (this.prisma as any).channelMessage.findMany({
+      where: { conversationId }, orderBy: { createdAt: "asc" }, take: 5000,
+    });
+    if (format === "csv") {
+      const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const lines = ["created_at,direction,type,status,content,external_id"];
+      for (const m of messages) lines.push([m.createdAt?.toISOString?.() ?? m.createdAt, m.direction, m.type, m.status, esc(m.content), m.externalId ?? ""].join(","));
+      // direction/type/status are token-safe; only content needed escaping above.
+      return { format, filename: `conversation-${conversationId}.csv`, contentType: "text/csv", body: lines.join("\n") };
+    }
+    return {
+      format, filename: `conversation-${conversationId}.json`, contentType: "application/json",
+      body: JSON.stringify({
+        exportedAt: new Date().toISOString(),
+        conversation: {
+          id: conv.id, channel: conv.channel, contactName: conv.contactName, contactPhone: conv.contactPhone,
+          status: conv.status, pipelineStage: conv.pipelineStage ?? "new", outcome: conv.outcome ?? null,
+          assignedUserId: conv.assignedUserId, createdAt: conv.createdAt,
+        },
+        messages: messages.map((m: any) => ({
+          id: m.id, direction: m.direction, type: m.type, content: m.content, status: m.status,
+          externalId: m.externalId, createdAt: m.createdAt, hasMedia: Boolean(m.mediaId || m.mediaUrl || m.mediaStorageKey),
+          mediaStored: Boolean(m.mediaStorageKey),
+        })),
+      }, null, 2),
+    };
+  }
+
+  /** Org-wide period export (JSON), capped and self-describing
+   * about truncation so a partial export is never mistaken for
+   * a complete one. */
+  async exportInbox(organizationId: string, opts: { from?: string; to?: string } = {}) {
+    const from = opts.from ? new Date(opts.from) : new Date(Date.now() - 30 * 86400000);
+    const to = opts.to ? new Date(opts.to) : new Date();
+    const convs = await (this.prisma as any).channelConversation.findMany({
+      where: { organizationId, createdAt: { gte: from, lte: to } },
+      orderBy: { createdAt: "asc" }, take: 501,
+    });
+    const truncated = convs.length > 500;
+    const out: any[] = [];
+    for (const conv of convs.slice(0, 500)) {
+      const messages = await (this.prisma as any).channelMessage.findMany({
+        where: { conversationId: conv.id }, orderBy: { createdAt: "asc" }, take: 2000,
+      });
+      out.push({
+        id: conv.id, channel: conv.channel, contactName: conv.contactName, contactPhone: conv.contactPhone,
+        status: conv.status, pipelineStage: conv.pipelineStage ?? "new", outcome: conv.outcome ?? null, createdAt: conv.createdAt,
+        messages: messages.map((m: any) => ({ direction: m.direction, type: m.type, content: m.content, status: m.status, createdAt: m.createdAt })),
+      });
+    }
+    return {
+      exportedAt: new Date().toISOString(), from, to, truncated,
+      conversationCount: out.length, conversations: out,
+    };
+  }
+
+  /** Retention: delete CLOSED conversations resolved longer ago
+   * than the org's retentionDays (with their messages, notes,
+   * drafts and bot sessions). Open threads are never touched.
+   * No policy set -> nothing is deleted. */
+  async applyRetention(organizationId: string) {
+    const settings = await this.getSettings(organizationId).catch(() => null);
+    const days = settings?.retentionDays ?? null;
+    if (!days) return { deleted: 0, skipped: "no_policy" };
+    const cutoff = new Date(Date.now() - days * 86400000);
+    const stale = await (this.prisma as any).channelConversation.findMany({
+      where: { organizationId, status: "closed", resolvedAt: { lt: cutoff } },
+      take: 500, select: { id: true },
+    }).catch(() => []);
+    let deletedMessages = 0;
+    for (const conv of stale) {
+      const id = conv.id;
+      deletedMessages += await (this.prisma as any).channelMessage.deleteMany({ where: { conversationId: id } }).then((r: any) => r?.count ?? 0).catch(() => 0);
+      await (this.prisma as any).conversationNote?.deleteMany({ where: { conversationId: id } }).catch(() => undefined);
+      await (this.prisma as any).messageDraft?.deleteMany({ where: { conversationId: id } }).catch(() => undefined);
+      await (this.prisma as any).botSession?.deleteMany({ where: { conversationId: id } }).catch(() => undefined);
+      await (this.prisma as any).channelConversation.delete({ where: { id } }).catch(() => undefined);
+    }
+    if (stale.length) {
+      await this.audit.log({
+        organizationId, userId: "system", action: "inbox.retention_applied", entityType: "Organization",
+        entityId: organizationId, metadata: { retentionDays: days, conversationsDeleted: stale.length, messagesDeleted: deletedMessages },
+      }).catch(() => undefined);
+    }
+    return { deleted: stale.length, messagesDeleted: deletedMessages, retentionDays: days };
   }
 
   // ----- SLA / team report -----
@@ -845,18 +1666,41 @@ export class InboxService {
     const breachCutoff = Date.now() - settings.slaFirstResponseMinutes * 60000;
     const currentBreaches = openNow.filter((c: any) => !c.firstResponseAt && new Date(c.createdAt).getTime() < breachCutoff).length;
 
-    const perAgentMap = new Map<string, { userId: string; assigned: number; closed: number; resp: number[] }>();
+    const perAgentMap = new Map<string, { userId: string; assigned: number; closed: number; resp: number[]; res: number[]; csat: number[]; openNow: number }>();
+    const agentRow = (uid: string) => {
+      const row = perAgentMap.get(uid) ?? { userId: uid, assigned: 0, closed: 0, resp: [] as number[], res: [] as number[], csat: [] as number[], openNow: 0 };
+      perAgentMap.set(uid, row);
+      return row;
+    };
     for (const c of convs) {
       if (!c.assignedUserId) continue;
-      const row = perAgentMap.get(c.assignedUserId) ?? { userId: c.assignedUserId, assigned: 0, closed: 0, resp: [] as number[] };
+      const row = agentRow(c.assignedUserId);
       row.assigned++;
       if (c.resolvedAt) row.closed++;
       if (c.firstResponseAt) row.resp.push((new Date(c.firstResponseAt).getTime() - new Date(c.createdAt).getTime()) / 60000);
-      perAgentMap.set(c.assignedUserId, row);
     }
+    for (const c of closed) {
+      if (!c.assignedUserId || !c.resolvedAt) continue;
+      const minutes = (new Date(c.resolvedAt).getTime() - new Date(c.createdAt).getTime()) / 60000;
+      if (minutes >= 0) agentRow(c.assignedUserId).res.push(minutes);
+    }
+    for (const c of rated) {
+      if (c.assignedUserId && c.csatRating) agentRow(c.assignedUserId).csat.push(c.csatRating);
+    }
+    for (const c of openNow) {
+      if (c.assignedUserId) agentRow(c.assignedUserId).openNow++;
+    }
+    const memberRows = await (this.prisma as any).membership.findMany({
+      where: { organizationId, userId: { in: [...perAgentMap.keys()] } }, include: { user: true }, take: 100,
+    }).catch(() => []);
+    const nameOf = new Map((memberRows as any[]).map((m) => [m.userId, m.user?.name ?? m.user?.email ?? "Agent"]));
     const perAgent = [...perAgentMap.values()].map((r) => ({
-      userId: r.userId, assigned: r.assigned, closed: r.closed,
+      userId: r.userId, name: nameOf.get(r.userId) ?? "Agent",
+      assigned: r.assigned, closed: r.closed, openNow: r.openNow,
       avgFirstResponseMinutes: r.resp.length ? Math.round(r.resp.reduce((a, b) => a + b, 0) / r.resp.length) : null,
+      avgResolutionMinutes: r.res.length ? Math.round(r.res.reduce((a, b) => a + b, 0) / r.res.length) : null,
+      csatAvg: r.csat.length ? Math.round((r.csat.reduce((a, b) => a + b, 0) / r.csat.length) * 10) / 10 : null,
+      csatResponses: r.csat.length,
     }));
 
     const customerIds = [...new Set(convs.map((c: any) => c.customerId).filter(Boolean))];
@@ -870,11 +1714,53 @@ export class InboxService {
       chatLinkedRevenueMinor = String(billable.reduce((sum: bigint, o: any) => sum + BigInt(o.totalMinor), 0n));
       chatLinkedCurrency = billable[0]?.currency ?? "BDT";
     }
+    // Unified Inbox U3: autopilot analytics from real rows.
+    const windowConvIds = [...new Set([...convs, ...closed, ...rated, ...openNow].map((c: any) => c.id))];
+    let autoSent = 0;
+    let llmSent = 0;
+    if (windowConvIds.length) {
+      const autoMsgs = await (this.prisma as any).channelMessage.findMany({
+        where: { conversationId: { in: windowConvIds }, autoReply: true, status: "sent" }, take: 2000,
+      }).catch(() => []);
+      // Only genuine autopilot sends count — the order bot and
+      // workflow automations also set autoReply with their own
+      // evidence shapes, and must not inflate the autopilot stat.
+      const autopilotMsgs = (autoMsgs as any[]).filter((m) => {
+        try { return JSON.parse(m.autoReplyEvidence ?? "{}").via === "autopilot"; } catch { return false; }
+      });
+      autoSent = autopilotMsgs.length;
+      llmSent = autopilotMsgs.filter((m) => {
+        try { return JSON.parse(m.autoReplyEvidence ?? "{}").tier === "llm"; } catch { return false; }
+      }).length;
+    }
+    let draftsSuggested = 0;
+    try {
+      draftsSuggested = await (this.prisma as any).messageDraft.count({
+        where: { organizationId, provider: "auto-reply", createdAt: { gte: since } },
+      });
+    } catch { draftsSuggested = 0; }
+    let escalatedNow = 0;
+    try {
+      escalatedNow = await (this.prisma as any).channelConversation.count({
+        where: { organizationId, autoReplyPaused: true },
+      });
+    } catch { escalatedNow = 0; }
+
+    // U5: close outcomes feed analytics — counted from the real
+    // outcome field recorded when threads were closed.
+    const outcomes: Record<string, number> = {};
+    for (const c of closed) {
+      const key = (c as any).outcome ?? "unset";
+      outcomes[key] = (outcomes[key] ?? 0) + 1;
+    }
+
     return {
       days, slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
       opened: convs.length, closed: closed.length,
       avgFirstResponseMinutes: avg, currentBreaches,
       perAgent, chatLinkedOrders, chatLinkedRevenueMinor, chatLinkedCurrency, csatAvg, csatResponses,
+      autopilot: { autoSent, llmSent, draftsSuggested, escalatedNow },
+      outcomes,
       chatLinkedNote: "Orders/revenue of customers who have an inbox conversation in the period (linked, not platform-attributed).",
     };
   }
@@ -983,9 +1869,15 @@ export class InboxService {
    */
   async sendAutomatedMessage(organizationId: string, conversationId: string, content: string, sourceTag: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
-    const integration = await this.integrationForConversation(conv);
-    const secrets = await this.secretsFor(integration.id);
-    const client = new MetaMessagingClient(secrets);
+    // Webchat delivery needs no Meta integration (deliverText
+    // serves it in-process). Gating webchat on a Meta integration
+    // made the order bot / automated messages unusable on the
+    // website channel — found live in U3 verification.
+    if (!["webchat", "telegram", "email"].includes(conv.channel)) {
+      const integration = await this.integrationForConversation(conv);
+      const secrets = await this.secretsFor(integration.id);
+      void new MetaMessagingClient(secrets); // config gate for Meta channels
+    }
     const message = await (this.prisma as any).channelMessage.create({
       data: {
         conversationId, direction: "out", type: "text", content, status: "queued",
@@ -1009,6 +1901,7 @@ export class InboxService {
         entityId: conversationId, metadata: { source: sourceTag },
       });
       this.rtMessage(organizationId, conversationId, sent);
+      await this.advanceStage(organizationId, conv, "talking");
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Platform send failed";
@@ -1026,7 +1919,7 @@ export class InboxService {
   // ----- Order from chat -----
   async createChatOrder(organizationId: string, actorId: string, conversationId: string, dto: {
     items: { productId: string; variantId?: string; quantity: number }[];
-    shippingMinor?: number; isCod?: boolean;
+    shippingMinor?: number; isCod?: boolean; address?: string;
   }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException("At least one item is required");
@@ -1075,6 +1968,7 @@ export class InboxService {
         subtotalMinor: subtotal, shippingMinor, discountMinor: 0n, taxMinor: 0n,
         totalMinor: subtotal + shippingMinor, refundedMinor: 0n,
         placedAt: new Date(), storeSyncStatus: "local_only", conversationId,
+        address: dto.address?.slice(0, 500) ?? null,
       },
     });
     for (const line of lines) {
@@ -1109,7 +2003,7 @@ export class InboxService {
             payment_method: order.isCod ? "cod" : "bacs",
             payment_method_title: order.isCod ? "Cash on delivery" : "Direct bank transfer",
             set_paid: false, status: "pending",
-            billing: { first_name: customer.firstName ?? "", phone: customer.phone ?? "" },
+            billing: { first_name: customer.firstName ?? "", phone: customer.phone ?? "", ...(dto.address ? { address_1: dto.address.slice(0, 200) } : {}) },
             line_items: lines.map((l) => ({
               product_id: Number(l.product.externalId),
               ...(l.variant?.externalId && /^\d+$/.test(String(l.variant.externalId)) ? { variation_id: Number(l.variant.externalId) } : {}),
@@ -1148,12 +2042,40 @@ export class InboxService {
         },
       });
     } catch { /* workflows never block order creation */ }
+    // U5: the pipeline follows the sale — a first order moves the
+    // thread to "ordered"; a customer who already ordered before
+    // makes it a "repeat" thread.
+    try {
+      const prior = await (this.prisma as any).order.count({
+        where: { organizationId, customerId: customer.id, id: { not: order.id } },
+      }).catch(() => 0);
+      const convRow = await this.getConversationOrThrow(organizationId, conversationId).catch(() => null);
+      if (convRow) await this.advanceStage(organizationId, convRow, prior > 0 ? "repeat" : "ordered");
+    } catch { /* stage never blocks an order */ }
     const items = await (this.prisma as any).orderItem.findMany({ where: { orderId: order.id }, take: 100 });
     const fresh = await (this.prisma as any).order.findFirst({ where: { id: order.id } });
+    // M50: attach the return-risk warning for the AGENT (merchant
+    // side only — never shown to the customer, never blocks the
+    // order). Recorded in the audit trail with the order.
+    let risk: any = null;
+    if (this.risk) {
+      try {
+        risk = await this.risk.forOrder(organizationId, fresh);
+        if (risk && risk.band !== "low") {
+          await this.audit.log({
+            organizationId, userId: actorId, action: "inbox.order.risk_warning", entityType: "Order", entityId: order.id,
+            metadata: { band: risk.band, score: risk.score, decided: risk.decided },
+          }).catch(() => undefined);
+        }
+      } catch { risk = null; }
+    }
     return {
       ...fresh, subtotalMinor: String(fresh.subtotalMinor), shippingMinor: String(fresh.shippingMinor),
-      totalMinor: String(fresh.totalMinor), storeSyncStatus: fresh.storeSyncStatus ?? syncStatus,
+      totalMinor: String(fresh.totalMinor), discountMinor: String(fresh.discountMinor ?? 0),
+      taxMinor: String(fresh.taxMinor ?? 0), refundedMinor: String(fresh.refundedMinor ?? 0),
+      storeSyncStatus: fresh.storeSyncStatus ?? syncStatus,
       items: items.map((i: any) => ({ ...i, priceMinor: String(i.priceMinor), totalMinor: String(i.totalMinor) })),
+      risk,
     };
   }
 
@@ -1367,6 +2289,7 @@ export class InboxService {
       id: o.id, externalNumber: o.externalNumber, status: o.status, source: o.source,
       isCod: o.isCod, currency: o.currency, totalMinor: String(o.totalMinor), createdAt: o.createdAt,
       codConfirmationStatus: o.codConfirmationStatus ?? null,
+      address: o.address ?? null,
       shipment: shipByOrder.get(o.id) ? { trackingCode: shipByOrder.get(o.id).trackingCode, status: shipByOrder.get(o.id).status, provider: shipByOrder.get(o.id).provider } : null,
     }));
     const billable = orders.filter((o: any) => o.status !== "cancelled");
@@ -1474,7 +2397,7 @@ export class InboxService {
     return updated;
   }
 
-  async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; tags?: string[]; spamFlag?: boolean }) {
+  async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; tags?: string[]; spamFlag?: boolean; autoReplyPaused?: boolean; pipelineStage?: string; outcome?: string | null; outcomeReason?: string | null }) {
     const before = await this.getConversationOrThrow(organizationId, conversationId);
     const beforeAssignee = before.assignedUserId ?? null;
     if (dto.status && !["open", "pending", "closed"].includes(dto.status)) throw new BadRequestException("Invalid status");
@@ -1489,6 +2412,16 @@ export class InboxService {
     if (dto.status === "closed") data.resolvedAt = new Date();
     if (dto.status === "open" || dto.status === "pending") data.resolvedAt = null;
     if (dto.spamFlag !== undefined) { data.spamFlag = dto.spamFlag; if (dto.spamFlag === false) data.spamReason = null; }
+    if (dto.autoReplyPaused !== undefined) data.autoReplyPaused = Boolean(dto.autoReplyPaused);
+    if (dto.pipelineStage !== undefined) {
+      if (!(InboxService.PIPELINE_STAGES as readonly string[]).includes(dto.pipelineStage)) throw new BadRequestException("Invalid pipeline stage");
+      data.pipelineStage = dto.pipelineStage;
+    }
+    if (dto.outcome !== undefined) {
+      if (dto.outcome !== null && !(InboxService.CONVERSATION_OUTCOMES as readonly string[]).includes(dto.outcome)) throw new BadRequestException("Invalid conversation outcome");
+      data.outcome = dto.outcome;
+    }
+    if (dto.outcomeReason !== undefined) data.outcomeReason = dto.outcomeReason ? String(dto.outcomeReason).slice(0, 300) : null;
     if (dto.tags !== undefined) data.tags = normalizeTags(dto.tags);
     const updated = await (this.prisma as any).channelConversation.update({ where: { id: conversationId }, data });
     // Closing a real conversation invites a CSAT rating - once, and
@@ -1508,7 +2441,7 @@ export class InboxService {
         } catch { /* window closed or platform error: no CSAT this time */ }
       }
     }
-    this.rtConversation(organizationId, conversationId, { status: updated.status, assignedUserId: updated.assignedUserId, tags: updated.tags });
+    this.rtConversation(organizationId, conversationId, { status: updated.status, assignedUserId: updated.assignedUserId, tags: updated.tags, pipelineStage: updated.pipelineStage, outcome: updated.outcome });
     if (dto.assignedUserId && dto.assignedUserId !== actorId && dto.assignedUserId !== beforeAssignee) {
       await this.notify(organizationId, dto.assignedUserId, "assigned",
         `নতুন কথোপকথন অ্যাসাইন হয়েছে: ${updated.contactName ?? updated.externalContactId ?? "গ্রাহক"}`,
@@ -1526,6 +2459,14 @@ export class InboxService {
   private async deliverText(conv: any, content: string): Promise<string> {
     if (conv.channel === "webchat") {
       return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    if (conv.channel === "telegram" || conv.channel === "email") {
+      // Resolved lazily to avoid a module cycle at boot; the
+      // channel services live under inbox/channels and use the
+      // integration's own encrypted credentials. A send counts
+      // only when the channel API confirms it.
+      const { ChannelSendService } = await import("./channels/channel-send.service");
+      return new ChannelSendService(this.prisma as any).sendText(conv, content);
     }
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
@@ -1560,6 +2501,9 @@ export class InboxService {
         data: {
           lastMessageAt: new Date(), lastMessagePreview: content.slice(0, 120),
           ...(conv.firstResponseAt ? {} : { firstResponseAt: new Date() }),
+          // Unified Inbox U3: a human reply resumes autopilot if
+          // an escalation had paused it.
+          ...(conv.autoReplyPaused ? { autoReplyPaused: false } : {}),
         },
       });
       // A human reply takes the conversation over from the order bot.
@@ -1570,6 +2514,7 @@ export class InboxService {
         await (this.prisma as any).messageDraft.update({ where: { id: opts.viaDraftId }, data: { status: "sent" } });
       }
       this.rtMessage(organizationId, conversationId, sent);
+      await this.advanceStage(organizationId, conv, "talking");
       return sent;
     } catch (e) {
       const error = e instanceof Error ? e.message : "Send failed";
@@ -1693,19 +2638,58 @@ export class InboxService {
    * the Graph API with the integration token. Bytes are proxied, the
    * platform token never reaches the browser.
    */
-  async getMessageMedia(organizationId: string, conversationId: string, messageId: string): Promise<{ bytes: Buffer; contentType: string }> {
-    const conv = await this.getConversationOrThrow(organizationId, conversationId);
-    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+  private mediaStore(): MediaStore {
+    if (!this._mediaStore) this._mediaStore = MediaStore.fromEnv();
+    return this._mediaStore;
+  }
+  private _mediaStore: MediaStore | null = null;
+
+  /** U6: persist a message's platform media into durable storage
+   * (platform ids/urls expire). Best effort — a capture failure
+   * never blocks the conversation; the proxy can retry later. */
+  async captureMessageMedia(organizationId: string, conv: any, message: any, prefetched?: { bytes: Buffer; contentType: string }): Promise<boolean> {
+    if (message.mediaStorageKey) return true;
+    if (!message.mediaId && !message.mediaUrl) return false;
+    const { bytes, contentType } = prefetched ?? await this.fetchPlatformMedia(conv, message);
+    const key = mediaKeyFor(organizationId, message.id, contentType);
+    await this.mediaStore().put(key, bytes, contentType);
+    await (this.prisma as any).channelMessage.update({
+      where: { id: message.id },
+      data: { mediaStorageKey: key, mediaContentType: contentType, mediaSizeBytes: bytes.length },
+    });
+    return true;
+  }
+
+  private async fetchPlatformMedia(conv: any, message: any): Promise<{ bytes: Buffer; contentType: string }> {
     if (message.mediaId) {
       const integration = await this.integrationForConversation(conv);
       const secrets = await this.secretsFor(integration.id);
       return new MetaMessagingClient(secrets).downloadWhatsAppMedia(message.mediaId);
     }
+    const res = await fetch(message.mediaUrl);
+    if (!res.ok) throw new BadRequestException(`Media fetch failed (${res.status})`);
+    return { bytes: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? "application/octet-stream" };
+  }
+
+  async getMessageMedia(organizationId: string, conversationId: string, messageId: string): Promise<{ bytes: Buffer; contentType: string }> {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
+    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (message.mediaStorageKey) {
+      const stored = await this.mediaStore().get(message.mediaStorageKey).catch(() => null);
+      if (stored) return { bytes: stored, contentType: message.mediaContentType ?? "application/octet-stream" };
+    }
+    if (message.mediaId) {
+      const integration = await this.integrationForConversation(conv);
+      const secrets = await this.secretsFor(integration.id);
+      const got = await new MetaMessagingClient(secrets).downloadWhatsAppMedia(message.mediaId);
+      await this.captureMessageMedia(organizationId, conv, message, got).catch(() => undefined);
+      return got;
+    }
     if (message.mediaUrl) {
-      const res = await fetch(message.mediaUrl);
-      if (!res.ok) throw new BadRequestException(`Media fetch failed (${res.status})`);
-      return { bytes: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? "application/octet-stream" };
+      const got = await this.fetchPlatformMedia(conv, message);
+      await this.captureMessageMedia(organizationId, conv, message, got).catch(() => undefined);
+      return got;
     }
     throw new NotFoundException("This message has no media");
   }

@@ -14,6 +14,11 @@
  *   GET  /aladdin/api/v1/zones/:id/area-list
  *   POST /aladdin/api/v1/orders {...}      -> data {consignment_id,
  *          merchant_order_id, order_status, delivery_fee}
+ *   POST /aladdin/api/v1/merchant/price-plan {store_id, item_type,
+ *          delivery_type, item_weight (kg), recipient_city,
+ *          recipient_zone} -> data {price, discount, promo_discount,
+ *          plan_id, cod_enabled, cod_percentage, additional_charge,
+ *          final_price}  (pre-booking price calculation)
  *   GET  /aladdin/api/v1/orders/:consignmentId/info
  *          -> data {order_status, order_status_slug, ...}
  * A booking counts ONLY when the response carries a consignment_id.
@@ -167,6 +172,33 @@ export class PathaoClient {
       consignmentId: String(data.consignment_id),
       status: mapPathaoStatus(data.order_status),
       deliveryFee: data.delivery_fee !== undefined ? Number(data.delivery_fee) : null,
+    };
+  }
+
+  /** Pre-booking price calculation from Pathao's OWN price-plan API.
+   * The quoted charge is final_price exactly as Pathao returns it -
+   * never a locally computed estimate. */
+  async pricePlan(payload: {
+    store_id: number; item_type: number; delivery_type: number;
+    item_weight: number; recipient_city: number; recipient_zone: number;
+  }): Promise<{
+    price: number; discount: number; promoDiscount: number; planId: number | null;
+    codEnabled: boolean; codPercentage: number; additionalCharge: number; finalPrice: number;
+  }> {
+    const body = await this.call("/aladdin/api/v1/merchant/price-plan", { method: "POST", body: JSON.stringify(payload) });
+    const data = body?.data;
+    if (!data || data.final_price === undefined || data.final_price === null) {
+      throw new PathaoError(`Pathao price plan response had no final_price: ${body?.message ?? "unknown response"}`);
+    }
+    return {
+      price: Number(data.price ?? 0),
+      discount: Number(data.discount ?? 0),
+      promoDiscount: Number(data.promo_discount ?? 0),
+      planId: data.plan_id !== undefined && data.plan_id !== null ? Number(data.plan_id) : null,
+      codEnabled: Number(data.cod_enabled ?? 0) === 1,
+      codPercentage: Number(data.cod_percentage ?? 0),
+      additionalCharge: Number(data.additional_charge ?? 0),
+      finalPrice: Number(data.final_price),
     };
   }
 

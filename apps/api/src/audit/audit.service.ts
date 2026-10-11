@@ -10,7 +10,11 @@ export class AuditService {
       await (this.prisma as any).auditLog.create({
         data: {
           organizationId: input.organizationId ?? null,
-          userId: input.userId ?? null,
+          // AuditLog.userId is a real FK: the literal "system" used
+          // by automated actors is not a user row and made every
+          // system audit insert fail (silently) on a real database.
+          // System actions record a null actor instead.
+          userId: !input.userId || input.userId === "system" ? null : input.userId,
           action: input.action,
           entityType: input.entityType,
           entityId: input.entityId ?? null,

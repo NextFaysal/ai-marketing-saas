@@ -10,12 +10,13 @@
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@repo/ui": "workspace:*",
+    "@fontsource-variable/inter": "^5.1.0",
     "@repo/contracts": "workspace:*",
+    "@repo/ui": "workspace:*",
+    "@xyflow/react": "^12.12.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@fontsource-variable/inter": "^5.1.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",

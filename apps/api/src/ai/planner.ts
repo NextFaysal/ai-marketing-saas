@@ -8,6 +8,11 @@ export const TOOL_CATALOG = [
   { name: "get_orders_attention", description: "Orders needing follow-up: old pending/on-hold and failed orders. No args." },
   { name: "get_anomalies", description: "Detected anomalies in recent daily metrics. Args: days." },
   { name: "get_business_knowledge", description: "The business profile, policies and FAQ knowledge. No args." },
+  { name: "get_customer_segments", description: "RFM customer segments with customer counts and revenue share. No args." },
+  { name: "get_inventory_health", description: "Stock health: out-of-stock, low-stock and high-stock products from real stock quantities. No args." },
+  { name: "get_courier_performance", description: "Per-courier delivery and return rates from real shipments. No args." },
+  { name: "get_product_profit", description: "Per-product revenue, COGS, gross profit and contribution after revenue-share-allocated ad spend. Args: from, to, limit." },
+  { name: "compare_periods", description: "Overview metrics for a period side by side with the previous period of the same length, with percentage deltas. Args: from, to." },
 ] as const;
 
 export const ALLOWED_TOOLS = TOOL_CATALOG.map((t) => t.name) as readonly string[];
@@ -33,8 +38,10 @@ export function sanitizePlan(raw: unknown): PlannedToolCall[] {
     switch (tool) {
       case "get_analytics_overview":
       case "get_campaign_performance":
+      case "compare_periods":
+      case "get_product_profit":
         dateArg("from"); dateArg("to");
-        if (tool === "get_campaign_performance") {
+        if (tool === "get_campaign_performance" || tool === "get_product_profit") {
           const limit = Number(argsIn.limit ?? 10);
           args.limit = Number.isFinite(limit) ? Math.min(25, Math.max(1, Math.floor(limit))) : 10;
         }
@@ -75,6 +82,24 @@ function has(text: string, words: string[]): boolean {
  */
 export function keywordPlan(message: string): PlannedToolCall[] {
   const calls: PlannedToolCall[] = [];
+  // Milestone 46 deep-analysis tools are matched FIRST: their phrases
+  // are more specific than the generic sales/profit/product rules below
+  // (e.g. "কোন পণ্যে লাভ" must reach product profit, not just overview).
+  if (has(message, ["তুলনা", "compare", "গত মাসের সাথে", "আগের মাসের সাথে", "আগের সময়ের সাথে", "previous period", "vs previous"])) {
+    calls.push({ tool: "compare_periods", args: {} });
+  }
+  if (has(message, ["সেগমেন্ট", "segment", "rfm", "কাস্টমার গ্রুপ", "customer group", "সেরা কাস্টমার", "best customers", "হারানো কাস্টমার", "lost customers", "loyal customer", "অনুগত কাস্টমার"])) {
+    calls.push({ tool: "get_customer_segments", args: {} });
+  }
+  if (has(message, ["স্টক", "stock", "ইনভেন্টরি", "inventory", "মজুদ", "out of stock"])) {
+    calls.push({ tool: "get_inventory_health", args: {} });
+  }
+  if (has(message, ["কুরিয়ার", "courier", "ডেলিভারি রেট", "delivery rate", "রিটার্ন রেট", "return rate", "পার্সেল ডেলিভারি"])) {
+    calls.push({ tool: "get_courier_performance", args: {} });
+  }
+  if (has(message, ["পণ্যের লাভ", "product profit", "কোন পণ্যে লাভ", "কোন পণ্যে লোকসান", "per-product", "লাভজনক পণ্য", "profitable product", "কোন পণ্যে সবচেয়ে বেশি লাভ"])) {
+    calls.push({ tool: "get_product_profit", args: { limit: 10 } });
+  }
   if (has(message, ["ক্যাম্পেইন", "campaign", "বিজ্ঞাপন", "ad performance", "কোন বিজ্ঞাপন"])) {
     calls.push({ tool: "get_campaign_performance", args: { limit: 10 } });
   }

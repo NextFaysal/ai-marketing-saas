@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBusinessProfileDto } from "./organizations.dto";
+import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
+import { MediaStore } from "../inbox/media-store";
 import { EmailProvider } from "../messaging/email.provider";
 import { Role } from "@repo/db";
 
@@ -453,5 +454,102 @@ export class OrganizationsService {
     });
     await this.audit.log({ organizationId, userId: actorId, action: "org.business_profile.update", entityType: "BusinessProfile", entityId: profile.id });
     return profile;
+  }
+
+  // ---- Milestone 59: Agency White-Label v1 -------------------------
+  // Branding lives on the Organization row (migration
+  // 20261010590000_m59_white_label). The logo BYTES go through the
+  // existing U6 MediaStore; the row only keeps the public path +
+  // content type. Custom domains are settings + guidance only in
+  // v1: the codebase has no hostname->org resolution, so the field
+  // records the intended domain and the UI explains that routing is
+  // completed in the hosting panel (Dokploy). Nothing here pretends
+  // a domain is live before DNS + hosting actually route it.
+
+  private _mediaStore: MediaStore | null = null;
+  private mediaStore(): MediaStore {
+    if (!this._mediaStore) this._mediaStore = MediaStore.fromEnv();
+    return this._mediaStore;
+  }
+
+  static readonly LOGO_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+  static readonly LOGO_MAX_BYTES = 1_500_000;
+  static logoKey(organizationId: string) { return `branding/${organizationId}/logo`; }
+  static logoPath(organizationId: string) { return `/public/branding/${organizationId}/logo`; }
+
+  /** Magic-byte sniff: the declared content type must match the
+   * actual bytes, so a renamed executable can never become a "logo". */
+  static sniffLogoType(bytes: Buffer): string | null {
+    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+    if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+    return null;
+  }
+
+  async updateBranding(organizationId: string, actorId: string, dto: UpdateBrandingDto, ip?: string) {
+    const data: Record<string, string | null> = {};
+    if (dto.brandName !== undefined) {
+      const name = dto.brandName.trim();
+      data.brandName = name === "" ? null : name;
+    }
+    if (dto.primaryColor !== undefined) {
+      const color = dto.primaryColor.trim();
+      if (color === "") data.primaryColor = null;
+      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new BadRequestException("প্রাইমারি রঙ হতে হবে #RRGGBB ফরম্যাটে (যেমন #4F46E5)");
+      else data.primaryColor = color.toUpperCase();
+    }
+    if (dto.customDomain !== undefined) {
+      const domain = dto.customDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      if (domain === "") data.customDomain = null;
+      else {
+        if (!/^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/.test(domain)) {
+          throw new BadRequestException("ডোমেইনটি সঠিক ফরম্যাটে লিখুন (যেমন reports.youragency.com) — প্রোটোকল বা পাথ ছাড়া");
+        }
+        const taken = await (this.prisma as any).organization.findFirst({ where: { customDomain: domain, NOT: { id: organizationId } } });
+        if (taken) throw new ConflictException("এই ডোমেইনটি অন্য একটি Organization ইতিমধ্যে সংরক্ষণ করেছে");
+        data.customDomain = domain;
+      }
+    }
+    if (Object.keys(data).length === 0) throw new BadRequestException("পরিবর্তন করার মতো কোনো ফিল্ড পাঠানো হয়নি");
+    const org = await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "org.branding.update", entityType: "Organization", entityId: organizationId, metadata: data, ipAddress: ip });
+    return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
+  }
+
+  async uploadLogo(organizationId: string, actorId: string, dto: UploadLogoDto, ip?: string) {
+    if (!(OrganizationsService.LOGO_CONTENT_TYPES as readonly string[]).includes(dto.contentType)) {
+      throw new BadRequestException("লোগো হতে হবে PNG, JPEG অথবা WebP ছবি");
+    }
+    let bytes: Buffer;
+    try { bytes = Buffer.from(dto.dataBase64, "base64"); } catch { throw new BadRequestException("ছবির ডেটা পড়া যায়নি"); }
+    if (bytes.length === 0) throw new BadRequestException("ছবির ডেটা খালি");
+    if (bytes.length > OrganizationsService.LOGO_MAX_BYTES) throw new BadRequestException("লোগোর সাইজ সর্বোচ্চ ১.৫ MB হতে পারবে");
+    const sniffed = OrganizationsService.sniffLogoType(bytes);
+    if (sniffed !== dto.contentType) throw new BadRequestException("ছবির আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না");
+    await this.mediaStore().put(OrganizationsService.logoKey(organizationId), bytes, dto.contentType);
+    const org = await (this.prisma as any).organization.update({
+      where: { id: organizationId },
+      data: { logoUrl: OrganizationsService.logoPath(organizationId), logoContentType: dto.contentType },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "org.branding.logo_upload", entityType: "Organization", entityId: organizationId, metadata: { contentType: dto.contentType, bytes: bytes.length }, ipAddress: ip });
+    return { logoUrl: org.logoUrl, logoContentType: org.logoContentType };
+  }
+
+  async removeLogo(organizationId: string, actorId: string, ip?: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    await (this.prisma as any).organization.update({ where: { id: organizationId }, data: { logoUrl: null, logoContentType: null } });
+    await this.audit.log({ organizationId, userId: actorId, action: "org.branding.logo_remove", entityType: "Organization", entityId: organizationId, ipAddress: ip });
+    return { logoUrl: null };
+  }
+
+  /** Public logo bytes for the shared report page + shell. Returns
+   * null when the org has no logo (callers render the default mark). */
+  async publicLogo(organizationId: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org?.logoUrl || !org?.logoContentType) return null;
+    const bytes = await this.mediaStore().get(OrganizationsService.logoKey(organizationId)).catch(() => null);
+    if (!bytes) return null;
+    return { bytes, contentType: org.logoContentType };
   }
 }

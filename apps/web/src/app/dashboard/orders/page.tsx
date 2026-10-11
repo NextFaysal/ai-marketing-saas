@@ -1,6 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
@@ -11,7 +11,15 @@ interface Order {
   paymentMethod?: string | null; totalMinor: string; placedAt?: string | null;
   customer?: { firstName?: string | null; lastName?: string | null; phone?: string | null; email?: string | null } | null;
   items?: OrderItem[];
+  risk?: { band: string; score: number | null } | null;
 }
+interface RiskDetail { band: string; score: number | null; decided: number; reasons: string[]; suggestion: string | null; phone?: string | null }
+const RISK_LABEL: Record<string, { text: string; cls: string }> = {
+  high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-100 text-red-700" },
+  medium: { text: "ঝুঁকি: মাঝারি", cls: "bg-amber-100 text-amber-700" },
+  low: { text: "ঝুঁকি: কম", cls: "bg-emerald-100 text-emerald-700" },
+  unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
+};
 interface Stats { totalOrders: number; codOrders: number; codSharePercent: number; deliveredRevenueMinor: string; byStatus: { status: string; count: number }[] }
 interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string }
 
@@ -29,6 +37,10 @@ export default function OrdersPage() {
   const [courierForm, setCourierForm] = useState({ apiKey: "", secretKey: "" });
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [bookingFor, setBookingFor] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkProvider, setBulkProvider] = useState("steadfast");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{ requested: number; booked: number; skipped: number; failed: number; results: { orderId: string; ok: boolean; skipped?: boolean; trackingCode?: string; error?: string }[] } | null>(null);
   const [bookForm, setBookForm] = useState({ name: "", phone: "", address: "", note: "", provider: "steadfast", pStoreId: "", pCityId: "", pZoneId: "", pAreaId: "", weightKg: "0.5", rAreaId: "", rAreaName: "", rStoreId: "" });
   const [conns, setConns] = useState<{ provider: string; connected: boolean }[]>([]);
   const [pathaoForm, setPathaoForm] = useState({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
@@ -41,6 +53,17 @@ export default function OrdersPage() {
   const [rStores, setRStores] = useState<any[]>([]);
   const [courierBusy, setCourierBusy] = useState("");
   const [courierNotice, setCourierNotice] = useState("");
+  const [quoteOut, setQuoteOut] = useState<any>(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [riskDetail, setRiskDetail] = useState<(RiskDetail & { orderLabel: string }) | null>(null);
+
+  async function showRisk(o: Order) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const r = await apiFetch<RiskDetail>(`/organizations/${orgId}/orders/${o.id}/risk`);
+      setRiskDetail({ ...r, orderLabel: `#${o.externalNumber ?? o.id.slice(0, 8)}` });
+    } catch { /* endpoint is advisory */ }
+  }
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -138,6 +161,32 @@ export default function OrdersPage() {
     await loadCourier();
   }
 
+  async function fetchQuote(order: Order) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setQuoteBusy(true); setQuoteOut(null);
+    try {
+      const q = await apiFetch<any>(`/organizations/${orgId}/courier/quote`, {
+        method: "POST",
+        body: JSON.stringify({
+          provider: bookForm.provider, orderId: order.id,
+          weightKg: Number(bookForm.weightKg) || 0.5,
+          pathao: bookForm.provider === "pathao" ? {
+            storeId: bookForm.pStoreId ? Number(bookForm.pStoreId) : undefined,
+            cityId: bookForm.pCityId ? Number(bookForm.pCityId) : undefined,
+            zoneId: bookForm.pZoneId ? Number(bookForm.pZoneId) : undefined,
+            itemWeightKg: Number(bookForm.weightKg) || 0.5,
+          } : undefined,
+          redx: bookForm.provider === "redx" ? {
+            deliveryAreaId: bookForm.rAreaId ? Number(bookForm.rAreaId) : undefined,
+            parcelWeightKg: Number(bookForm.weightKg) || 0.5,
+          } : undefined,
+        }),
+      });
+      setQuoteOut(q);
+    } catch (err) { setQuoteOut({ quotable: false, reason: err instanceof Error ? err.message : "চার্জ জানা যায়নি" }); }
+    finally { setQuoteBusy(false); }
+  }
+
   async function bookShipment(order: Order) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setCourierBusy("book"); setCourierNotice("");
@@ -169,6 +218,55 @@ export default function OrdersPage() {
     } catch (err) { setCourierNotice(err instanceof Error ? err.message : "Booking ব্যর্থ"); }
     finally { setCourierBusy(""); }
   }
+  // Milestone 53: binary PDF download (apiFetch is JSON-only, so fetch the blob directly).
+  async function downloadPdf(path: string, filename: string) {
+    try {
+      const res = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+      if (!res.ok) { const body: any = await res.json().catch(() => ({})); throw new Error(body?.message ?? `HTTP ${res.status}`); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "PDF ডাউনলোড ব্যর্থ"); }
+  }
+
+  function toggleSelect(orderId: string, on: boolean) {
+    setSelected((prev) => {
+      if (on) return prev.includes(orderId) || prev.length >= 50 ? prev : [...prev, orderId];
+      return prev.filter((x) => x !== orderId);
+    });
+  }
+
+  async function bulkBook() {
+    const orgId = getOrganizationId(); if (!orgId || selected.length === 0) return;
+    setBulkBusy(true); setBulkResults(null);
+    try {
+      const out = await apiFetch<any>(`/organizations/${orgId}/courier/shipments/bulk`, {
+        method: "POST",
+        body: JSON.stringify({
+          provider: bulkProvider, orderIds: selected,
+          pathao: bulkProvider === "pathao" ? {} : undefined,
+          redx: bulkProvider === "redx" ? {
+            deliveryAreaId: bookForm.rAreaId ? Number(bookForm.rAreaId) : undefined,
+            deliveryArea: bookForm.rAreaName || undefined,
+            parcelWeightKg: 0.5,
+          } : undefined,
+        }),
+      });
+      setBulkResults(out);
+      setCourierNotice(`বাল্ক বুকিং শেষ: ${out.booked}টি বুক হয়েছে, ${out.skipped}টি আগে থেকেই বুক ছিল, ${out.failed}টি ব্যর্থ${out.failed || out.skipped ? " (আংশিক সফল)" : ""}`);
+      await loadCourier();
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "বাল্ক বুকিং ব্যর্থ"); }
+    finally { setBulkBusy(false); }
+  }
+
+  async function bulkLabels() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const ids = selected.map((oid) => shipmentFor(oid)?.id).filter(Boolean) as string[];
+    if (ids.length === 0) { setCourierNotice("বেছে নেওয়া অর্ডারগুলোর কোনো পার্সেল এখনো বুক হয়নি"); return; }
+    await downloadPdf(`/organizations/${orgId}/courier/labels.pdf?ids=${ids.join(",")}`, "labels.pdf");
+  }
+
   async function syncShipment(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setCourierBusy("sync");
@@ -182,6 +280,7 @@ export default function OrdersPage() {
       <div>
         <h1 className="page-title">Orders</h1>
         <p className="text-sm text-slate-500">মোট {total}টি অর্ডার (বর্তমান ফিল্টারে)। Delivered Revenue শুধুমাত্র completed অর্ডার থেকে হিসাব হয়।</p>
+        <a href="/dashboard/orders/manual" className="mt-2 inline-block text-sm font-semibold text-blue-600">+ ম্যানুয়াল অর্ডার / CSV ইমপোর্ট →</a>
       </div>
       {stats ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -268,22 +367,80 @@ export default function OrdersPage() {
         </div>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {riskDetail ? (
+        <div className="card space-y-2 border-amber-200 bg-amber-50/60">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">↩️ রিটার্ন ঝুঁকি — অর্ডার {riskDetail.orderLabel} <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[riskDetail.band]?.cls ?? ""}`}>{RISK_LABEL[riskDetail.band]?.text ?? riskDetail.band}{riskDetail.score != null ? ` · স্কোর ${riskDetail.score}/১০০` : ""}</span></h3>
+            <button className="btn-ghost btn-sm" onClick={() => setRiskDetail(null)}>বন্ধ করুন</button>
+          </div>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+            {riskDetail.reasons.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+          {riskDetail.suggestion ? <p className="text-sm font-medium text-amber-800">{riskDetail.suggestion}</p> : null}
+          <p className="text-xs text-slate-400">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
+        </div>
+      ) : null}
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : items.length === 0 ? (
         <EmptyState title="কোনো অর্ডার নেই" description="Stores & Integrations থেকে WooCommerce কানেক্ট করে Sync Orders চালান। অর্ডার Sync হলে এখানে দেখা যাবে।" />
       ) : (
+        <>
+        {selected.length > 0 ? (
+          <div className="card space-y-3 border-indigo-200 bg-indigo-50/60">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold">{selected.length}টি অর্ডার বেছে নেওয়া হয়েছে (সর্বোচ্চ ৫০)</span>
+              <select className="input w-auto" value={bulkProvider} onChange={async (e) => { setBulkProvider(e.target.value); await loadProviderLists(e.target.value); }}>
+                {(["steadfast", "pathao", "redx"] as const).map((p) => {
+                  const c = conns.find((x) => x.provider === p);
+                  const connected = c ? c.connected : p === "steadfast" ? !!courier?.connected : false;
+                  return <option key={p} value={p} disabled={!connected}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : "RedX"}{connected ? "" : " (যুক্ত নেই)"}</option>;
+                })}
+              </select>
+              {bulkProvider === "redx" ? (
+                <select className="input w-auto" value={bookForm.rAreaId} onChange={(e) => { const area = rAreas.find((a: any) => String(a.id) === e.target.value); setBookForm({ ...bookForm, rAreaId: e.target.value, rAreaName: area?.name ?? "" }); }}>
+                  <option value="">RedX ডেলিভারি এলাকা বেছে নিন</option>
+                  {rAreas.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              ) : null}
+              <button className="btn-primary btn-sm" disabled={bulkBusy} onClick={bulkBook}>{bulkBusy ? "বুক হচ্ছে..." : `🚚 একসাথে বুক করুন (${selected.length}টি)`}</button>
+              <button className="btn-secondary btn-sm" onClick={bulkLabels}>🏷️ সব লেবেল এক PDF এ</button>
+              <button className="btn-ghost btn-sm" onClick={() => { setSelected([]); setBulkResults(null); }}>সিলেকশন মুছুন</button>
+            </div>
+            <p className="text-xs text-slate-500">ঠিকানা প্রতিটি অর্ডারের নিজের সংরক্ষিত ঠিকানা থেকে নেওয়া হয়। যেটি আগে থেকেই বুক করা, সেটি আবার বুক হবে না — ফলাফলে আলাদা করে দেখানো হবে। একটি ব্যর্থ হলেও বাকিগুলো চলতে থাকবে।</p>
+            {bulkResults ? (
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">ফলাফল: {bulkResults.booked}টি বুক হয়েছে · {bulkResults.skipped}টি আগে থেকেই বুক ছিল · {bulkResults.failed}টি ব্যর্থ</p>
+                <ul className="space-y-0.5">
+                  {bulkResults.results.map((r) => { const o = items.find((x) => x.id === r.orderId); return (
+                    <li key={r.orderId} className={r.ok ? "text-emerald-700" : r.skipped ? "text-amber-700" : "text-red-600"}>
+                      {r.ok ? "✓" : r.skipped ? "⏭" : "✗"} #{o?.externalNumber ?? r.orderId.slice(0, 8)} — {r.ok ? `Tracking: ${r.trackingCode}` : r.error}
+                    </li> ); })}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="overflow-hidden card">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500"><tr>
+              <th className="px-4 py-3"><input type="checkbox" checked={items.length > 0 && items.every((o) => selected.includes(o.id))} onChange={(e) => setSelected(e.target.checked ? items.slice(0, 50).map((o) => o.id) : [])} /></th>
               <th className="px-4 py-3">অর্ডার</th><th className="px-4 py-3">কাস্টমার</th><th className="px-4 py-3">আইটেম</th>
               <th className="px-4 py-3">স্ট্যাটাস</th><th className="px-4 py-3">পেমেন্ট</th><th className="px-4 py-3">মোট</th><th className="px-4 py-3">তারিখ</th><th className="px-4 py-3">কুরিয়ার</th>
             </tr></thead>
             <tbody>
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
-                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}</td>
+                  <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
+                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button></td>
                   <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-400">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
-                  <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span></td>
+                  <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
+                    {o.risk ? (
+                      <button className={`mt-1 block rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band]?.cls ?? RISK_LABEL.unknown.cls}`}
+                        title="রিটার্ন ঝুঁকির কারণ দেখুন" onClick={() => showRisk(o)}>
+                        {RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}{o.risk.score != null ? ` · ${o.risk.score}` : ""}
+                      </button>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3">{o.isCod ? <span className="font-semibold text-amber-600">COD</span> : (o.paymentMethod ?? "—")}</td>
                   <td className="px-4 py-3">{formatMinor(BigInt(o.totalMinor))}</td>
                   <td className="px-4 py-3">{o.placedAt ? new Date(o.placedAt).toLocaleDateString() : "—"}</td>
@@ -292,11 +449,13 @@ export default function OrdersPage() {
                       <span className="inline-flex items-center gap-1" title={sh.provider}>
                         <span className="badge-indigo" title={sh.trackingCode ?? ""}>🚚 {sh.status}</span>
                         <button className="text-xs font-semibold text-brand-600 hover:underline" disabled={courierBusy !== ""} onClick={() => syncShipment(sh.id)}>স্ট্যাটাস যাচাই</button>
+                        <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️ লেবেল</button>
                       </span>
                     ) : courier?.connected ? (
                       <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={async () => {
                         const opening = bookingFor !== o.id;
                         setBookingFor(opening ? o.id : null);
+                        setQuoteOut(null);
                         const firstConnected = conns.find((c) => c.connected)?.provider ?? "steadfast";
                         setBookForm({ name: [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" "), phone: o.customer?.phone ?? "", address: "", note: "", provider: firstConnected, pStoreId: "", pCityId: "", pZoneId: "", pAreaId: "", weightKg: "0.5", rAreaId: "", rAreaName: "", rStoreId: "" });
                         if (opening) await loadProviderLists(firstConnected);
@@ -306,9 +465,9 @@ export default function OrdersPage() {
                 </tr>
               ))}
               {bookingFor ? (() => { const order = items.find((x) => x.id === bookingFor); if (!order) return null; return (
-                <tr className="border-t bg-indigo-50/60"><td colSpan={8} className="px-4 py-3">
+                <tr className="border-t bg-indigo-50/60"><td colSpan={9} className="px-4 py-3">
                   <div className="grid gap-2 sm:grid-cols-4">
-                    <select className="input" value={bookForm.provider} onChange={async (e) => { setBookForm({ ...bookForm, provider: e.target.value }); await loadProviderLists(e.target.value); }}>
+                    <select className="input" value={bookForm.provider} onChange={async (e) => { setBookForm({ ...bookForm, provider: e.target.value }); setQuoteOut(null); await loadProviderLists(e.target.value); }}>
                       {(["steadfast", "pathao", "redx"] as const).map((p) => {
                         const c = conns.find((x) => x.provider === p);
                         return <option key={p} value={p} disabled={c ? !c.connected : p !== "steadfast" ? true : !(courier?.connected)}>{p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : "RedX"}{c && !c.connected ? " (যুক্ত নেই)" : ""}</option>;
@@ -358,6 +517,14 @@ export default function OrdersPage() {
                         {rStores.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </>) : null}
+                    <div className="flex flex-wrap items-center gap-2 sm:col-span-4">
+                      <button className="btn-secondary btn-sm" disabled={quoteBusy} onClick={() => fetchQuote(order)}>{quoteBusy ? "হিসাব হচ্ছে..." : "💰 ডেলিভারি চার্জ দেখুন"}</button>
+                      {quoteOut ? (quoteOut.quotable ? (
+                        <span className="text-xs font-semibold text-emerald-700">ডেলিভারি চার্জ: {formatMinor(BigInt(quoteOut.chargeMinor ?? 0))} <span className="font-normal text-slate-500">({quoteOut.provider === "pathao" ? "Pathao" : "RedX"} এর নিজের প্রাইস API থেকে — বুকিংয়ের আগে)</span></span>
+                      ) : (
+                        <span className="text-xs text-amber-700">{quoteOut.reason}</span>
+                      )) : null}
+                    </div>
                     <button className="btn-primary" disabled={courierBusy !== "" || bookForm.address.trim().length < 8 || (bookForm.provider === "redx" && !bookForm.rAreaId)} onClick={() => bookShipment(order)}>{courierBusy === "book" ? "বুক হচ্ছে..." : `${bookForm.provider === "pathao" ? "Pathao" : bookForm.provider === "redx" ? "RedX" : "Steadfast"} এ বুক করুন${order.isCod ? ` (COD ${formatMinor(BigInt(order.totalMinor))})` : ""}`}</button>
                   </div>
                 </td></tr>
@@ -365,6 +532,7 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

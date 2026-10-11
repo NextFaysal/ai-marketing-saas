@@ -4,6 +4,7 @@ import { WorkflowsService } from "./workflows.service";
 
 function matches(row: any, where: any): boolean {
   return Object.entries(where ?? {}).every(([k, v]: [string, any]) => {
+    if (k === "OR" && Array.isArray(v)) return v.some((sub) => matches(row, sub));
     if (v === undefined) return true;
     if (v !== null && typeof v === "object" && !(v instanceof Date)) {
       if ("in" in v) return v.in.includes(row[k]);
@@ -32,6 +33,13 @@ function makeTable(name: string) {
       if (!row) return null;
       Object.assign(row, data);
       return row;
+    },
+    // Milestone 62: the resume path claims runs via updateMany —
+    // the fake models the real client (returns the match count).
+    updateMany: async ({ where, data }: any) => {
+      let count = 0;
+      for (const r of rows) if (matches(r, where ?? {})) { Object.assign(r, data); count++; }
+      return { count };
     },
   };
 }

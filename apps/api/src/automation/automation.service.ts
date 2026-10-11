@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
@@ -9,6 +10,9 @@ import { CompetitorsService } from "../competitors/competitors.service";
 import { CampaignsService } from "../campaigns/campaigns.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { AudiencesService } from "../audiences/audiences.service";
+import { InboxService } from "../inbox/inbox.service";
+import { EmailChannelService } from "../inbox/channels/email.service";
+import { ProactiveService } from "../ai/proactive.service";
 import { refreshPlatformConfig } from "../common/platform-config";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { platformSetting } from "../common/platform-settings";
@@ -16,8 +20,9 @@ import { platformSetting } from "../common/platform-settings";
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
-  "daily_report", "competitor_ads", "competitor_scan", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
+  "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
   "subscription_sweep", "dunning_reminders", "audit_retention",
+  "inbox_assignment_sweep", "email_sync", "inbox_retention",
 ] as const;
 
 export const RULE_METRICS = [
@@ -48,15 +53,132 @@ export class AutomationService implements OnModuleInit {
     private readonly campaigns: CampaignsService,
     @Optional() private readonly email?: EmailProvider,
     @Optional() private readonly audiences?: AudiencesService,
+    @Optional() private readonly inbox?: InboxService,
+    @Optional() private readonly emailChannel?: EmailChannelService,
+    @Optional() private readonly proactive?: ProactiveService,
   ) {}
+
+  // ---------- Milestone 57: BullMQ dispatch mode ----------
+  // When REDIS_URL is set, due jobs are ENQUEUED to the
+  // "scheduled-jobs" queue and executed by the dedicated worker
+  // (which calls back into POST /internal/jobs/execute). The
+  // BullMQ jobId is deterministic per scheduled run, so multiple
+  // API replicas enqueueing the same run collapse into one job.
+  // Without REDIS_URL, execution stays inline exactly as before.
+  private _queue: any = null;
+  private _queueFailed = false;
+  queueEnabled(): boolean {
+    return Boolean(process.env.REDIS_URL) && !this._queueFailed;
+  }
+  private async getQueue(): Promise<any> {
+    if (this._queue) return this._queue;
+    const { Queue } = await import("bullmq");
+    const { default: Redis } = await import("ioredis");
+    const connection = new Redis(process.env.REDIS_URL as string, { maxRetriesPerRequest: null });
+    this._queue = new Queue("scheduled-jobs", { connection });
+    return this._queue;
+  }
+  private async enqueueScheduled(job: any, runKey: string): Promise<string> {
+    const queue = await this.getQueue();
+    const backoffMs = Number(process.env.JOB_BACKOFF_MS ?? 30000);
+    const bull = await queue.add("execute", { scheduledJobId: job.id }, {
+      jobId: `sched-${job.id}-${runKey}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: backoffMs },
+      removeOnComplete: 200,
+      removeOnFail: false,
+    });
+    return String(bull.id);
+  }
+
+  /** Worker callback path: execute + record, but RE-THROW on
+   * failure so BullMQ's retry/DLQ semantics see the failure. */
+  async executeScheduledJobById(jobId: string) {
+    const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: jobId } });
+    if (!job) throw new NotFoundException("Scheduled job not found (deleted?)");
+    const startedAt = new Date();
+    try {
+      const result = await this.executeJob(job);
+      const summary = summarizeResult(result);
+      await (this.prisma as any).automationRun.create({
+        data: { organizationId: job.organizationId, kind: "schedule", refId: job.id, status: "success", detail: summary },
+      }).catch(() => undefined);
+      await (this.prisma as any).scheduledJob.update({
+        where: { id: job.id },
+        data: { lastRunAt: startedAt, lastStatus: "success", lastError: null },
+      });
+      return { ok: true, summary };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Job failed";
+      await (this.prisma as any).automationRun.create({
+        data: { organizationId: job.organizationId, kind: "schedule", refId: job.id, status: "error", detail: message },
+      }).catch(() => undefined);
+      await (this.prisma as any).scheduledJob.update({
+        where: { id: job.id },
+        data: { lastRunAt: startedAt, lastStatus: "error", lastError: message },
+      }).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /** Worker reports an exhausted job: park it in the DLQ table.
+   * Milestone 63: webhook jobs carry a label instead of a
+   * ScheduledJob id (`webhook:<source>:<integrationId>`) and
+   * pass their own jobType. */
+  async recordDlq(input: { scheduledJobId: string; error: string; attempts: number; jobType?: string }) {
+    const job = input.scheduledJobId.startsWith("webhook:")
+      ? null
+      : await (this.prisma as any).scheduledJob.findFirst({ where: { id: input.scheduledJobId } }).catch(() => null);
+    const row = await (this.prisma as any).deadLetterJob.create({
+      data: {
+        organizationId: job?.organizationId ?? null,
+        scheduledJobId: input.scheduledJobId,
+        jobType: input.jobType ?? job?.type ?? null,
+        error: String(input.error ?? "unknown error").slice(0, 2000),
+        attempts: input.attempts ?? 0,
+      },
+    });
+    await this.audit.log({
+      organizationId: job?.organizationId ?? null, userId: "system", action: "automation.job_dead_lettered",
+      entityType: "ScheduledJob", entityId: input.scheduledJobId,
+      metadata: { error: row.error, attempts: row.attempts },
+    }).catch(() => undefined);
+    return row;
+  }
+
+  async listDlq(take = 50) {
+    const rows = await (this.prisma as any).deadLetterJob.findMany({ orderBy: { createdAt: "desc" }, take }).catch(() => []);
+    return rows;
+  }
+
+  async replayDlq(dlqId: string, actorId: string) {
+    const row = await (this.prisma as any).deadLetterJob.findFirst({ where: { id: dlqId } });
+    if (!row) throw new NotFoundException("Dead-letter entry not found");
+    if (row.replayedAt) throw new BadRequestException("This entry was already replayed");
+    if (!row.scheduledJobId) throw new BadRequestException("Entry has no scheduled job to replay");
+    const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: row.scheduledJobId } });
+    if (!job) throw new BadRequestException("The scheduled job no longer exists");
+    await (this.prisma as any).deadLetterJob.update({ where: { id: dlqId }, data: { replayedAt: new Date() } });
+    await this.audit.log({
+      organizationId: row.organizationId, userId: actorId, action: "automation.dlq_replayed",
+      entityType: "DeadLetterJob", entityId: dlqId, metadata: { scheduledJobId: job.id },
+    }).catch(() => undefined);
+    if (this.queueEnabled()) {
+      const bullId = await this.enqueueScheduled(job, `replay-${Date.now()}`);
+      return { replayed: true, mode: "queued", bullJobId: bullId };
+    }
+    void this.executeScheduledJobById(job.id).catch(() => undefined);
+    return { replayed: true, mode: "inline" };
+  }
 
   onModuleInit() {
     if (process.env.DISABLE_SCHEDULER === "true") {
       this.logger.log("Scheduler disabled via DISABLE_SCHEDULER");
       return;
     }
-    // Single-instance in-process scheduler (monolith MVP). For multiple
-    // API instances, run exactly one with the scheduler enabled.
+    // In-process scheduler. Multi-replica safe when REDIS_URL is
+    // set: job dispatch dedupes via BullMQ job ids (M57) and the
+    // hourly rule evaluation is leader-claimed (M62).
     this.timer = setInterval(() => { void this.tick(); }, 60_000);
     this.timer.unref?.();
     this.logger.log("Scheduler started (60s tick)");
@@ -67,10 +189,20 @@ export class AutomationService implements OnModuleInit {
       // Keep the dynamic platform config snapshot fresh (Milestone 33).
       await refreshPlatformConfig(this.prisma as any).catch(() => undefined);
       await this.runDueJobs();
-      if (Date.now() - this.lastRuleEvaluation > 60 * 60 * 1000) {
+      const evalIntervalMs = Number(process.env.RULE_EVAL_INTERVAL_MS ?? 60 * 60 * 1000);
+      if (Date.now() - this.lastRuleEvaluation > evalIntervalMs) {
         this.lastRuleEvaluation = Date.now();
-        const orgs = await (this.prisma as any).organization.findMany({ select: { id: true }, take: 100 });
-        for (const org of orgs) await this.evaluateRules(org.id, null).catch((e) => this.logger.warn(`Rule evaluation failed for ${org.id}: ${e instanceof Error ? e.message : e}`));
+        // Milestone 62: with multiple API replicas every tick
+        // would evaluate the same rules — exactly one instance
+        // claims each round (Redis test-and-set; single-instance
+        // deployments always claim locally).
+        const claimed = await leaderClaim.tryClaim("rule-evaluation", Math.max(60, Math.floor(evalIntervalMs / 1000)));
+        if (!claimed) {
+          this.logger.log("Rule evaluation skipped: another instance holds the leader claim");
+        } else {
+          const orgs = await (this.prisma as any).organization.findMany({ select: { id: true }, take: 100 });
+          for (const org of orgs) await this.evaluateRules(org.id, null).catch((e) => this.logger.warn(`Rule evaluation failed for ${org.id}: ${e instanceof Error ? e.message : e}`));
+        }
       }
     } catch (e) {
       this.logger.warn(`Scheduler tick failed: ${e instanceof Error ? e.message : e}`);
@@ -131,10 +263,23 @@ export class AutomationService implements OnModuleInit {
       case "google_insights": return this.ads.syncGoogleInsights(orgId, actor, job.targetId, {});
       case "tiktok_insights": return this.ads.syncTikTokInsights(orgId, actor, job.targetId, {});
       case "daily_report": return this.reports.generate(orgId, actor, { type: "daily" });
+      case "daily_briefing": return this.proactive ? this.proactive.runDailyBriefing(orgId, actor) : { skipped: "proactive service unavailable" };
       case "competitor_ads": return this.competitors.syncAds(orgId, actor, job.targetId, {});
       case "competitor_scan": return this.competitors.scanWebsite(orgId, actor, job.targetId);
       case "weekly_ads_report": return this.sendWeeklyAdsReport(orgId);
       case "dunning_reminders": return this.sendDunningReminder(orgId);
+      case "inbox_assignment_sweep": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.sweepAssignments(orgId);
+      }
+      case "email_sync": {
+        if (!this.emailChannel) throw new BadRequestException("Email channel is not available in this deployment");
+        return this.emailChannel.syncOrganization(orgId);
+      }
+      case "inbox_retention": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.applyRetention(orgId);
+      }
       case "subscription_sweep": {
         const { sweepSubscription } = await import("../common/platform-settings");
         const result = await sweepSubscription(this.prisma as any, orgId);
@@ -162,6 +307,14 @@ export class AutomationService implements OnModuleInit {
 
   async runJobNow(organizationId: string, actorId: string, jobId: string) {
     const job = await this.getJobOrThrow(organizationId, jobId);
+    if (this.queueEnabled()) {
+      try {
+        const bullJobId = await this.enqueueScheduled(job, `manual-${Date.now()}`);
+        return { queued: true, bullJobId, jobId: job.id };
+      } catch (e) {
+        this.logger.warn(`Enqueue failed, running inline instead: ${e instanceof Error ? e.message : e}`);
+      }
+    }
     return this.runJob(job);
   }
 
@@ -194,6 +347,25 @@ export class AutomationService implements OnModuleInit {
       where: { enabled: true, nextRunAt: { lte: new Date() } },
       orderBy: { nextRunAt: "asc" }, take: 10,
     });
+    if (this.queueEnabled() && due.length) {
+      let dispatched = 0;
+      for (const job of due) {
+        try {
+          await this.enqueueScheduled(job, String(new Date(job.nextRunAt).getTime()));
+          // Advance the schedule at dispatch time; the outcome is
+          // recorded by the worker callback (lastStatus/lastRunAt).
+          await (this.prisma as any).scheduledJob.update({
+            where: { id: job.id },
+            data: { nextRunAt: new Date(Date.now() + job.intervalMinutes * 60000) },
+          });
+          dispatched++;
+        } catch (e) {
+          this.logger.warn(`Dispatch failed for job ${job.id}, running inline: ${e instanceof Error ? e.message : e}`);
+          await this.runJob(job);
+        }
+      }
+      return dispatched;
+    }
     for (const job of due) await this.runJob(job);
     return due.length;
   }

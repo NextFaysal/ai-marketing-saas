@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, MessageEvent, Param, Patch, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { Observable } from "rxjs";
 import { WebchatService } from "./webchat.service";
 import { CurrentUser, AuthUser, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -55,5 +56,13 @@ export class PublicChatController {
   @Header("Access-Control-Allow-Origin", "*")
   list(@Param("key") key: string, @Query("token") token: string) {
     return this.webchat.listMessages(key, token);
+  }
+
+  /** Milestone 66: realtime visitor stream (SSE). The widget
+   * falls back to polling whenever this is unavailable. */
+  @Sse(":key/stream")
+  @Header("Access-Control-Allow-Origin", "*")
+  async stream(@Param("key") key: string, @Query("token") token: string): Promise<Observable<MessageEvent>> {
+    return this.webchat.streamFor(key, token);
   }
 }

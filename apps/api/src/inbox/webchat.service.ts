@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional, UnauthorizedException } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
+import { RealtimeService } from "./realtime.service";
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -19,6 +20,8 @@ export class WebchatService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inbox: InboxService,
+    // Milestone 66: visitor realtime (same module's service).
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   // ----- Site management (authenticated) -----
@@ -126,6 +129,18 @@ export class WebchatService {
     // auto-reply, bot, workflows) - replies arrive via polling.
     await this.inbox.ingestChatMessage(site.organizationId, session.conversationId, message.id);
     return { id: message.id, createdAt: message.createdAt };
+  }
+
+  /**
+   * Milestone 66: the visitor's realtime stream. The
+   * conversation is derived from the session token alone —
+   * there is no way to subscribe to someone else's thread.
+   * Throws 401 for a bad token before any stream opens.
+   */
+  async streamFor(key: string, token: string) {
+    const { session } = await this.sessionByToken(key, token);
+    if (!this.realtime) throw new BadRequestException("Realtime is not available in this deployment");
+    return this.realtime.streamVisitor(session.conversationId);
   }
 
   async listMessages(key: string, token: string) {

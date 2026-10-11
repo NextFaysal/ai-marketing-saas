@@ -3,9 +3,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
+import { StepFields } from "@/components/step-fields";
+import WorkflowCanvas from "@/components/workflow-canvas";
+import { buildPayloadStep, parseConditionValue, type RawStep, type StepDraftLike, type WorkflowDefinition } from "@/lib/workflow-graph";
 
 interface Template { id: string; name: string; channel: string }
-interface StepDraft { type: string; templateId: string; text: string; minutes?: number; field?: string; op?: string; value?: string; whatsappTemplateId?: string }
+type StepDraft = StepDraftLike;
 interface Workflow { id: string; name: string; trigger: string; conditions?: { field: string; op: string; value: unknown }[] | null; steps: { type: string; templateId?: string; text?: string }[]; enabled: boolean }
 interface Run { id: string; trigger: string; status: string; stepsLog?: { step: string; status: string; detail: string }[] | null; error?: string | null; createdAt: string }
 
@@ -27,6 +30,11 @@ export default function WorkflowsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
+  const [editorView, setEditorView] = useState<"form" | "canvas">("form");
+  const [canvasDef, setCanvasDef] = useState<WorkflowDefinition>({ name: "", trigger: "order_created", steps: [{ type: "send_email", templateId: "" }] });
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
+  const [canvasScope, setCanvasScope] = useState("new");
+  const [canvasNote, setCanvasNote] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -47,15 +55,8 @@ export default function WorkflowsPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy("create"); setError("");
     try {
-      const parseVal = (v?: string): unknown => { if (v === "true") return true; if (v === "false") return false; if (v !== undefined && v !== "" && !Number.isNaN(Number(v))) return Number(v); return v; };
-      const payloadSteps = steps.map((s) => {
-        if (s.type === "add_lead_activity" || s.type === "add_conversation_note") return { type: s.type, text: s.text || undefined };
-        if (s.type === "wait") return { type: s.type, minutes: Number(s.minutes) || 60 };
-        if (s.type === "condition") return { type: s.type, field: s.field || "", op: s.op || "eq", value: parseVal(s.value) };
-        if (s.type === "send_inbox_message") return s.whatsappTemplateId ? { type: s.type, whatsappTemplateId: s.whatsappTemplateId } : { type: s.type, text: s.text || undefined };
-        return { type: s.type, templateId: s.templateId };
-      });
-      const conditions = form.condField ? [{ field: form.condField, op: form.condOp, value: Number.isNaN(Number(form.condValue)) || form.condValue === "" ? form.condValue : Number(form.condValue) }] : undefined;
+      const payloadSteps = steps.map(buildPayloadStep);
+      const conditions = form.condField ? [{ field: form.condField, op: form.condOp, value: parseConditionValue(form.condValue) }] : undefined;
       await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify({ name: form.name, trigger: form.trigger, conditions, steps: payloadSteps }) });
       setForm({ name: "", trigger: "order_created", condField: "", condOp: "gte", condValue: "" });
       setSteps([{ type: "send_email", templateId: "", text: "" }]);
@@ -63,6 +64,61 @@ export default function WorkflowsPage() {
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
+  }
+
+  function loadPreset(which: "recovery" | "complaint" | "escalation") {
+    const presets = {
+      recovery: {
+        form: { name: "Recovery Follow-up", trigger: "inbox_message_received", condField: "", condOp: "gte", condValue: "" },
+        steps: [
+          { type: "wait", templateId: "", text: "", minutes: 60 },
+          { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
+          { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আপনার বার্তা আমরা পেয়েছি। কোনো সাহায্য লাগলে জানাবেন।" },
+        ] as StepDraft[],
+      },
+      complaint: {
+        form: { name: "অভিযোগ সতর্কতা", trigger: "inbox_message_received", condField: "intent", condOp: "eq", condValue: "complaint" },
+        steps: [{ type: "add_conversation_note", templateId: "", text: "অভিযোগ এসেছে — অগ্রাধিকার দিয়ে দেখুন" }] as StepDraft[],
+      },
+      escalation: {
+        form: { name: "Unanswered Escalation", trigger: "inbox_unanswered", condField: "unansweredMinutes", condOp: "gte", condValue: "120" },
+        steps: [
+          { type: "add_conversation_note", templateId: "", text: "২ ঘণ্টা ধরে উত্তর হয়নি" },
+          { type: "wait", templateId: "", text: "", minutes: 1440 },
+          { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
+          { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আমরা আপনার বার্তাটি দেখেছি। এখনই সাহায্য করছি।" },
+        ] as StepDraft[],
+      },
+    } as const;
+    const preset = presets[which];
+    if (editorView === "canvas") {
+      const def: WorkflowDefinition = {
+        name: preset.form.name,
+        trigger: preset.form.trigger,
+        steps: preset.steps.map(buildPayloadStep),
+      };
+      if (preset.form.condField) def.conditions = [{ field: preset.form.condField, op: preset.form.condOp, value: parseConditionValue(preset.form.condValue) }];
+      setCanvasDef(def);
+      setCanvasScope(`preset-${which}-${Date.now()}`);
+      setCanvasNote("");
+      setCanvasEpoch((n) => n + 1);
+      return;
+    }
+    setForm({ ...preset.form });
+    setSteps(preset.steps.map((x) => ({ ...x })));
+  }
+
+  function openInCanvas(w: Workflow) {
+    setCanvasDef({
+      name: w.name,
+      trigger: w.trigger,
+      conditions: w.conditions ?? undefined,
+      steps: (w.steps ?? []) as RawStep[],
+    });
+    setCanvasScope(`wf-${w.id}`);
+    setCanvasNote("আপনি বিদ্যমান Workflow “" + w.name + "” ক্যানভাসে খুলেছেন। বিদ্যমান Workflow-র ধাপ বদলানোর কোনো API নেই — ক্যানভাস থেকে সংরক্ষণ করলে এটি নতুন Workflow হিসেবে তৈরি হবে, পুরোনোটি যেমন আছে তেমনই থাকবে।");
+    setCanvasEpoch((n) => n + 1);
+    setEditorView("canvas");
   }
 
   const inputCls = "input mt-1";
@@ -88,11 +144,27 @@ export default function WorkflowsPage() {
                 {` · ধাপ: ${w.steps.map((s) => s.type).join(" → ")}`}
               </div>
             </div>
-            <button className="rounded-lg border px-3 py-1.5" onClick={async () => { const o = getOrganizationId(); if (o) { await apiFetch(`/organizations/${o}/workflows/${w.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !w.enabled }) }); await load(); } }}>{w.enabled ? "বন্ধ করুন" : "চালু করুন"}</button>
+            <div className="flex gap-2">
+              <button className="rounded-lg border px-3 py-1.5" onClick={() => openInCanvas(w)}>ক্যানভাসে খুলুন</button>
+              <button className="rounded-lg border px-3 py-1.5" onClick={async () => { const o = getOrganizationId(); if (o) { await apiFetch(`/organizations/${o}/workflows/${w.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !w.enabled }) }); await load(); } }}>{w.enabled ? "বন্ধ করুন" : "চালু করুন"}</button>
+            </div>
           </div>
         ))}
 
-        <form onSubmit={createWorkflow} className="space-y-3 border-t pt-3">
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+          <span className="text-sm font-semibold">নতুন Workflow:</span>
+          <div className="flex overflow-hidden rounded-lg border">
+            <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "form" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("form")}>ফর্ম</button>
+            <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "canvas" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("canvas")}>ক্যানভাস (Visual)</button>
+          </div>
+        </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50 p-3">
+            <span className="text-xs font-semibold text-indigo-700">তৈরি Flow:</span>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => loadPreset("recovery")}>উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)</button>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => loadPreset("complaint")}>অভিযোগ এলে নোট</button>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => loadPreset("escalation")}>Unanswered Escalation</button>
+          </div>
+        <form onSubmit={createWorkflow} className={`space-y-3 ${editorView === "canvas" ? "hidden" : ""}`}>
           <div className="grid gap-3 lg:grid-cols-3">
             <label className="block text-sm">Workflow এর নাম<input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="বড় Order এ ধন্যবাদ" /></label>
             <label className="block text-sm">Trigger
@@ -115,71 +187,11 @@ export default function WorkflowsPage() {
               <label className="block text-sm">শর্তের মান<input className={inputCls} value={form.condValue} onChange={(e) => setForm({ ...form, condValue: e.target.value })} placeholder="1000 অথবা qualified" /></label>
             </> : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50 p-3">
-            <span className="text-xs font-semibold text-indigo-700">তৈরি Flow:</span>
-            <button type="button" className="btn-secondary btn-sm" onClick={() => {
-              setForm({ name: "Recovery Follow-up", trigger: "inbox_message_received", condField: "", condOp: "gte", condValue: "" });
-              setSteps([
-                { type: "wait", templateId: "", text: "", minutes: 60 },
-                { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
-                { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আপনার বার্তা আমরা পেয়েছি। কোনো সাহায্য লাগলে জানাবেন।" },
-              ]);
-            }}>উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)</button>
-            <button type="button" className="btn-secondary btn-sm" onClick={() => {
-              setForm({ name: "অভিযোগ সতর্কতা", trigger: "inbox_message_received", condField: "intent", condOp: "eq", condValue: "complaint" });
-              setSteps([{ type: "add_conversation_note", templateId: "", text: "অভিযোগ এসেছে — অগ্রাধিকার দিয়ে দেখুন" }]);
-            }}>অভিযোগ এলে নোট</button>
-            <button type="button" className="btn-secondary btn-sm" onClick={() => {
-              setForm({ name: "Unanswered Escalation", trigger: "inbox_unanswered", condField: "unansweredMinutes", condOp: "gte", condValue: "120" });
-              setSteps([
-                { type: "add_conversation_note", templateId: "", text: "২ ঘণ্টা ধরে উত্তর হয়নি" },
-                { type: "wait", templateId: "", text: "", minutes: 1440 },
-                { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
-                { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আমরা আপনার বার্তাটি দেখেছি। এখনই সাহায্য করছি।" },
-              ]);
-            }}>Unanswered Escalation</button>
-          </div>
           <div className="space-y-2">
             <div className="text-sm font-semibold">ধাপসমূহ</div>
             {steps.map((s, i) => (
               <div key={i} className="flex flex-wrap items-end gap-2">
-                <label className="block text-sm">ধরন
-                  <select className={inputCls} value={s.type} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, type: e.target.value } : x))}>
-                    <option value="send_email">Email পাঠান</option><option value="send_sms">SMS পাঠান</option><option value="add_lead_activity">Lead এ Note যোগ করুন</option><option value="add_conversation_note">Conversation এ Internal Note যোগ করুন</option><option value="send_inbox_message">Inbox এ বার্তা পাঠান</option><option value="wait">অপেক্ষা (Wait)</option><option value="condition">শর্ত (Branch)</option>
-                  </select>
-                </label>
-                {s.type === "wait" ? (
-                  <label className="block text-sm">মিনিট<input className={inputCls} type="number" min={1} max={43200} value={s.minutes ?? 60} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, minutes: Number(e.target.value) } : x))} /></label>
-                ) : s.type === "condition" ? (
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="block text-sm">Field<input className={inputCls} value={s.field ?? ""} placeholder="agentReplied / intent" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, field: e.target.value } : x))} /></label>
-                    <label className="block text-sm">Op
-                      <select className={inputCls} value={s.op ?? "eq"} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
-                        <option value="eq">eq</option><option value="neq">neq</option><option value="gt">gt</option><option value="gte">gte</option><option value="lt">lt</option><option value="lte">lte</option><option value="contains">contains</option>
-                      </select>
-                    </label>
-                    <label className="block text-sm">Value<input className={inputCls} value={s.value ?? ""} placeholder="false / complaint" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} /></label>
-                  </div>
-                ) : s.type === "send_inbox_message" ? (
-                  <div className="flex flex-1 flex-wrap items-end gap-2">
-                    <label className="block flex-1 text-sm">বার্তা ({"{{contactName}}"} ব্যবহার করা যায়)<input className={inputCls} value={s.text} placeholder="ফলো-আপ বার্তা" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, text: e.target.value, whatsappTemplateId: "" } : x))} /></label>
-                    <label className="block text-sm">অথবা WhatsApp Template
-                      <select className={inputCls} value={s.whatsappTemplateId ?? ""} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, whatsappTemplateId: e.target.value } : x))}>
-                        <option value="">নেই (টেক্সট যাবে)</option>
-                        {waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
-                      </select>
-                    </label>
-                  </div>
-                ) : (s.type === "add_lead_activity" || s.type === "add_conversation_note") ? (
-                  <label className="block flex-1 text-sm">Note<input className={inputCls} value={s.text} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} placeholder="Workflow note" /></label>
-                ) : (
-                  <label className="block text-sm">Template
-                    <select className={inputCls} value={s.templateId} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, templateId: e.target.value } : x))} required>
-                      <option value="">বেছে নিন</option>
-                      {templates.filter((t) => t.channel === (s.type === "send_email" ? "email" : "sms")).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </label>
-                )}
+                <StepFields draft={s} onChange={(next) => setSteps(steps.map((x, j) => (j === i ? next : x)))} templates={templates} waTemplates={waTemplates} inputCls={inputCls} />
                 {steps.length > 1 ? <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => setSteps(steps.filter((_, j) => j !== i))}>মুছুন</button> : null}
               </div>
             ))}
@@ -187,6 +199,19 @@ export default function WorkflowsPage() {
           </div>
           <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>Workflow তৈরি করুন</button>
         </form>
+        {editorView === "canvas" ? (
+          <div className="border-t pt-3">
+            <WorkflowCanvas
+              key={`${canvasScope}-${canvasEpoch}`}
+              initialDefinition={canvasDef}
+              scopeKey={canvasScope}
+              templates={templates}
+              waTemplates={waTemplates}
+              sourceNote={canvasNote || undefined}
+              onSaved={load}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="card p-5">

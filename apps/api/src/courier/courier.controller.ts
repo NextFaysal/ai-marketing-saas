@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Response } from "express";
 import { CourierService } from "./courier.service";
-import { BookShipmentDto, ConnectCourierDto } from "./courier.dto";
+import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -50,9 +51,45 @@ export class CourierController {
     return this.courier.listShipments(orgId, orderId);
   }
 
+  /** Milestone 52: pre-booking delivery-charge quote (provider's own pricing API). */
+  @Post("quote") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  quote(@Param("organizationId") orgId: string, @Body() dto: QuoteCourierDto) {
+    return this.courier.quote(orgId, dto);
+  }
+
   @Post("shipments") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   book(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BookShipmentDto) {
     return this.courier.bookShipment(orgId, user.userId, dto);
+  }
+
+  /** Milestone 53: bulk booking (max 50) through the single-booking path. */
+  @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  @Post("shipments/bulk")
+  bookBulk(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkBookDto) {
+    return this.courier.bookBulk(orgId, user.userId, dto);
+  }
+
+  /** Milestone 53: PDF downloads are binary responses. */
+  private sendPdf(@Res() res: Response, buf: Buffer, filename: string) {
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(buf.length));
+    res.end(buf);
+  }
+
+  @Get("shipments/:shipmentId/label.pdf")
+  async labelPdf(@Param("organizationId") organizationId: string, @Param("shipmentId") shipmentId: string, @Res() res: Response) {
+    this.sendPdf(res, await this.courier.labelPdf(organizationId, shipmentId), `label-${shipmentId}.pdf`);
+  }
+
+  @Get("labels.pdf")
+  async labelsPdf(@Param("organizationId") organizationId: string, @Query("ids") ids: string, @Res() res: Response) {
+    this.sendPdf(res, await this.courier.labelsPdf(organizationId, (ids ?? "").split(",").map((s) => s.trim())), "labels.pdf");
+  }
+
+  @Get("orders/:orderId/invoice.pdf")
+  async invoicePdf(@Param("organizationId") organizationId: string, @Param("orderId") orderId: string, @Res() res: Response) {
+    this.sendPdf(res, await this.courier.invoicePdf(organizationId, orderId), `invoice-${orderId}.pdf`);
   }
 
   @Post("shipments/:shipmentId/sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")

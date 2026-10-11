@@ -15,6 +15,12 @@ export class ImportsController {
     return this.imports.importProducts(orgId, user.userId, dto);
   }
 
+  /** Milestone 65: bulk order import (one row = one order). */
+  @Post("orders") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  importOrders(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportProductsCsvDto) {
+    return this.imports.importOrders(orgId, user.userId, dto);
+  }
+
   @Get()
   list(@Param("organizationId") orgId: string) { return this.imports.listJobs(orgId); }
 

@@ -1,6 +1,7 @@
 import { Controller, Get, Headers, Param, Post, Query, Req, Res, HttpStatus } from "@nestjs/common";
 import { Request, Response } from "express";
 import { InboxService } from "./inbox.service";
+import { webhookDispatcher } from "../common/webhook-dispatch";
 
 /** Public Meta webhook endpoint (no auth guard: authenticity comes from
  *  the hub verify token on GET and the X-Hub-Signature-256 HMAC on POST,
@@ -30,6 +31,13 @@ export class MetaWebhookController {
     @Res() res: Response,
   ) {
     const rawBody = (req as any).rawBody?.toString("utf8") ?? JSON.stringify(req.body ?? {});
+    // Milestone 63: queue mode acks Meta immediately; the worker
+    // re-runs handleWebhook (verification included) unchanged.
+    if (await webhookDispatcher.enqueue({
+      source: "meta", integrationId, rawBody, headers: { signature },
+    })) {
+      return res.status(HttpStatus.OK).json({ ok: true, queued: true });
+    }
     try {
       const result = await this.inbox.handleWebhook(integrationId, rawBody, signature);
       return res.status(HttpStatus.OK).json({ ok: true, ...result });

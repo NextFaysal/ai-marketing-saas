@@ -38,9 +38,15 @@ import { CatalogsModule } from "./catalogs/catalogs.module";
 import { PublishingModule } from "./publishing/publishing.module";
 import { ReportSharesModule } from "./reports/report-shares.module";
 import { JwtAuthGuard } from "./common/jwt-auth.guard";
+import { ThrottlerGuard } from "./common/throttler.guard";
 
 @Module({
   imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule],
-  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
+  // Milestone 61: the throttler runs BEFORE the JWT guard so
+  // brute force is rejected before any password verification.
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+  ],
 })
 export class AppModule {}

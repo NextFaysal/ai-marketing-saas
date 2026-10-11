@@ -20,6 +20,7 @@
   var color = "#6d28d9";
   var open = false;
   var pollTimer = null;
+  var es = null; // Milestone 66: realtime stream (polling is the fallback)
   var seen = {};
 
   var btn = document.createElement("button");
@@ -67,8 +68,38 @@
       .catch(function () { /* transient: keep polling */ });
   }
 
+  function startPolling() {
+    if (!pollTimer && open) pollTimer = setInterval(fetchMessages, 4000);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  /* Realtime (M66): subscribe to this conversation's stream.
+   * Any failure — old server, blocked EventSource, stream
+   * closed — quietly degrades to the 4s polling below. */
+  function connectStream() {
+    if (!token || es || typeof EventSource === "undefined") { startPolling(); return; }
+    try {
+      es = new EventSource(apiBase + "/public/chat/" + key + "/stream?token=" + encodeURIComponent(token));
+      es.onopen = function () { stopPolling(); };
+      es.onmessage = function (ev) {
+        try {
+          var d = JSON.parse(ev.data);
+          if (d && d.type === "message.created" && d.message) bubble(d.message);
+        } catch (e) { /* a bad frame never breaks the widget */ }
+      };
+      es.onerror = function () {
+        if (es && es.readyState === 2) { es.close(); es = null; startPolling(); }
+      };
+    } catch (e) { es = null; startPolling(); }
+  }
+  function closeStream() {
+    if (es) { try { es.close(); } catch (e) { /* noop */ } es = null; }
+  }
+
   function start() {
-    if (token) { fetchMessages(); return; }
+    if (token) { fetchMessages(); connectStream(); return; }
     fetch(apiBase + "/public/chat/" + key + "/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -87,6 +118,7 @@
         panel.querySelector("#wc-head").textContent = s.siteName ? s.siteName + " — Live Chat" : "Live Chat";
         if (s.greeting) systemLine(s.greeting);
         fetchMessages();
+        connectStream();
       })
       .catch(function () { systemLine("দুঃখিত, চ্যাট এখন উপলব্ধ নয়।"); });
   }
@@ -109,11 +141,11 @@
     panel.style.display = open ? "flex" : "none";
     if (open) {
       start();
-      pollTimer = setInterval(fetchMessages, 4000);
+      startPolling(); // connectStream stops this once the stream is live
       input.focus();
-    } else if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+    } else {
+      stopPolling();
+      closeStream();
     }
   });
   panel.querySelector("#wc-send").addEventListener("click", send);

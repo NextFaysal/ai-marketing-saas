@@ -120,6 +120,8 @@ describe("M15 order-taking bot", () => {
     await inbound(svc, "8801711111111", "1");
     expect(tables.botSession.rows[0].state).toBe("ask_quantity");
     await inbound(svc, "8801711111111", "২");
+    expect(tables.botSession.rows[0].state).toBe("ask_more"); // Bot v2 (U3): cart step
+    await inbound(svc, "8801711111111", "শেষ");
     expect(tables.botSession.rows[0].state).toBe("ask_name");
     await inbound(svc, "8801711111111", "Rahim Uddin");
     await inbound(svc, "8801711111111", "01711111111");
@@ -146,6 +148,7 @@ describe("M15 order-taking bot", () => {
     await inbound(svc, "8801722222222", "অর্ডার করতে চাই");
     await inbound(svc, "8801722222222", "2");
     await inbound(svc, "8801722222222", "1");
+    await inbound(svc, "8801722222222", "শেষ");
     await inbound(svc, "8801722222222", "Karim Islam");
     await inbound(svc, "8801722222222", "12345");
     expect(tables.botSession.rows[0].state).toBe("ask_phone"); // did not advance
@@ -176,6 +179,7 @@ describe("M15 order-taking bot", () => {
     await inbound(svc, "8801755555555", "অর্ডার করতে চাই");
     await inbound(svc, "8801755555555", "1");
     await inbound(svc, "8801755555555", "1");
+    await inbound(svc, "8801755555555", "শেষ");
     await inbound(svc, "8801755555555", "Test Name");
     await inbound(svc, "8801755555555", "01811111111");
     await inbound(svc, "8801755555555", "বাসা ১, রোড ১, ধানমন্ডি, ঢাকা");

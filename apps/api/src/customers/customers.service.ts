@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { RiskService } from "../orders/risk.service";
 
 const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(" ") || c.name || null;
 
@@ -12,7 +13,7 @@ const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(
  */
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly risk?: RiskService) {}
 
   async list(organizationId: string, q?: string) {
     const rows = await (this.prisma as any).customer.findMany({
@@ -52,9 +53,20 @@ export class CustomersService {
       where: { organizationId, customerId },
     }).catch(() => null) : null;
     const activeOrders = orders.filter((o: any) => o.status !== "cancelled");
+    // M50: return-risk summary for this customer (own org rows only).
+    let risk: any = null;
+    if (this.risk) {
+      try { risk = await this.risk.forCustomer(organizationId, customer); } catch { risk = null; }
+    }
     return {
+      risk,
       customer: { ...customer, name: customerName(customer) },
-      orders: orders.map((o: any) => ({ ...o, totalMinor: String(o.totalMinor), subtotalMinor: String(o.subtotalMinor ?? o.totalMinor) })),
+      orders: orders.map((o: any) => ({
+        ...o,
+        totalMinor: String(o.totalMinor), subtotalMinor: String(o.subtotalMinor ?? o.totalMinor),
+        shippingMinor: String(o.shippingMinor ?? 0), discountMinor: String(o.discountMinor ?? 0),
+        taxMinor: String(o.taxMinor ?? 0), refundedMinor: String(o.refundedMinor ?? 0),
+      })),
       conversations: conversations.map((c: any) => ({
         id: c.id, channel: c.channel, status: c.status, contactName: c.contactName,
         lastMessagePreview: c.lastMessagePreview, lastMessageAt: c.lastMessageAt, unreadCount: c.unreadCount,

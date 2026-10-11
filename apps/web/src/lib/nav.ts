@@ -13,6 +13,7 @@ export const NAV_ITEMS = [
   { label: "Creatives", href: "/dashboard/creatives", ready: true },
   { label: "Audiences", href: "/dashboard/audiences", ready: true },
   { label: "Campaign Builder", href: "/dashboard/campaign-builder", ready: true },
+  { label: "AI Creative Studio", href: "/dashboard/creative-studio", ready: true },
   { label: "Analytics", href: "/dashboard/analytics", ready: true },
   { label: "Attribution", href: "/dashboard/attribution", ready: true },
   { label: "Profit Intelligence", href: "/dashboard/profit", ready: true },

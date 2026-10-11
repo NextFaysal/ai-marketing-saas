@@ -1,0 +1,4 @@
+order_ref,customer_phone,customer_name,item_name,item_sku,quantity,unit_price,shipping,discount,is_cod,status,placed_at
+SHOP-1001,01712345678,রহিম উদ্দিন,Cotton Panjabi,PNJ-001,1,1250,60,0,yes,processing,2026-10-10
+SHOP-1002,01898765432,,Handloom Sharee,SHR-014,2,2400,80,100,yes,processing,2026-10-10
+SHOP-1003,01611223344,করিম শেখ,Dry Fruits 500g,DF-500,1,850,60,0,no,completed,2026-10-09

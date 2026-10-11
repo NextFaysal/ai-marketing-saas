@@ -1,6 +1,7 @@
 import { Controller, Headers, Param, Post, Req, Res, HttpStatus } from "@nestjs/common";
 import { Request, Response } from "express";
 import { ShopifyService } from "./shopify.service";
+import { webhookDispatcher } from "../../common/webhook-dispatch";
 
 /** Public Shopify webhook endpoint. Authenticity = HMAC-SHA256 (base64)
  *  header checked against the app secret stored encrypted at connect. */
@@ -18,6 +19,12 @@ export class ShopifyWebhookController {
     @Res() res: Response,
   ) {
     const rawBody = (req as any).rawBody?.toString("utf8") ?? JSON.stringify(req.body ?? {});
+    // Milestone 63: queue mode — see meta-webhook.controller.
+    if (await webhookDispatcher.enqueue({
+      source: "shopify", integrationId, rawBody, headers: { hmac, topic, webhookId },
+    })) {
+      return res.status(HttpStatus.OK).json({ ok: true, queued: true });
+    }
     try {
       const result = await this.shopify.handleWebhook(integrationId, rawBody, hmac, topic, webhookId);
       return res.status(HttpStatus.OK).json({ ok: true, ...result });

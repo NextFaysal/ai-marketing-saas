@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { IntegrationsService } from "./integrations.service";
 import { Public } from "../common/decorators";
 import { verifyWooSignature } from "./webhooks.service";
-import { normalizeWooOrder, normalizeWooProduct } from "./woocommerce/normalize";
+import { webhookDispatcher } from "../common/webhook-dispatch";
 
 /**
  * Public webhook endpoint for WooCommerce.
@@ -53,22 +53,15 @@ export class WooWebhooksController {
       },
     });
 
-    try {
-      if (topic?.startsWith("order.") && payload?.id) {
-        await this.integrations.upsertOrder(integration.organizationId, integration.storeId, normalizeWooOrder(payload));
-      } else if (topic?.startsWith("product.") && payload?.id) {
-        const currency = integration.store?.currency ?? "BDT";
-        await this.integrations.upsertProduct(integration.organizationId, normalizeWooProduct(payload, currency));
-      }
-      await (this.prisma as any).webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date() } });
-      return { received: true, processed: true };
-    } catch (e) {
-      await (this.prisma as any).webhookEvent.update({
-        where: { id: event.id }, data: { error: e instanceof Error ? e.message : "Processing failed" },
-      });
-      // Return 200 so Woo does not retry a payload we can never process;
-      // the failure is recorded on the event for inspection.
-      return { received: true, processed: false };
+    // Milestone 63: with a queue available, the upsert half runs
+    // in the worker (the event row above is the durable record
+    // either way); without one it processes inline as before.
+    if (await webhookDispatcher.enqueue({
+      source: "woocommerce", integrationId, eventId: event.id,
+    })) {
+      return { received: true, queued: true };
     }
+    const out = await this.integrations.processWooWebhookEvent(event.id);
+    return { received: true, processed: out.processed };
   }
 }

@@ -49,9 +49,33 @@ export class ReportSharesService {
     const toExclusive = new Date(to.getTime() + 86400000);
     const result: any = await this.analytics.computeRange(share.organizationId, from, toExclusive);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: share.organizationId } });
+    // Milestone 59: delivery summary for the same window, from the
+    // org's real CourierShipment rows (statuses as written by the
+    // courier integrations: delivered / partial_delivered / returned).
+    const shipmentTable = (this.prisma as any).courierShipment;
+    const shipments = shipmentTable ? await shipmentTable.findMany({
+      where: { organizationId: share.organizationId, createdAt: { gte: from, lt: toExclusive } },
+      select: { status: true },
+    }).catch(() => []) : [];
+    const delivered = shipments.filter((s: any) => s.status === "delivered" || s.status === "partial_delivered").length;
+    const returned = shipments.filter((s: any) => s.status === "returned").length;
+    const decided = delivered + returned;
     return {
       title: share.title,
       business: org?.name ?? "",
+      // Milestone 59: white-label branding for the public page.
+      // logoUrl is the API-relative public path (or null).
+      branding: {
+        name: org?.brandName ?? org?.name ?? "",
+        logoUrl: org?.logoUrl ?? null,
+        primaryColor: org?.primaryColor ?? null,
+      },
+      delivery: {
+        shipments: shipments.length,
+        delivered,
+        returned,
+        returnRatePercent: decided > 0 ? Math.round((returned / decided) * 1000) / 10 : null,
+      },
       generatedAt: new Date().toISOString(),
       days: share.days,
       totals: {

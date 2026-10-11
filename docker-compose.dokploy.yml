@@ -41,6 +41,9 @@ services:
       DATABASE_URL: postgresql://marketing:${POSTGRES_PASSWORD}@postgres:5432/marketing_saas?schema=public
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the Dokploy Environment tab}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in the Dokploy Environment tab}
+      # Milestone 57: queue dispatch mode + worker callback secret.
+      REDIS_URL: redis://redis:6379
+      INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the worker)}
       API_PORT: "4000"
       WEB_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in the Dokploy Environment tab}
     depends_on:
@@ -63,6 +66,20 @@ services:
       API_INTERNAL_URL: http://api:4000
     depends_on: [api]
     expose: ["3001"]
+
+  # Milestone 57: dedicated job worker. The API dispatches due
+  # ScheduledJobs to BullMQ (REDIS_URL set on the api service);
+  # this worker executes them via the API's internal callback
+  # (INTERNAL_JOB_SECRET must match on both sides). Exhausted
+  # jobs land in the DeadLetterJob table (Admin -> System -> DLQ).
+  worker:
+    image: ai-marketing-saas:latest
+    command: node apps/worker/dist/index.js
+    environment:
+      REDIS_URL: redis://redis:6379
+      API_INTERNAL_URL: http://api:4000
+      INTERNAL_JOB_SECRET: ${INTERNAL_JOB_SECRET:?Set INTERNAL_JOB_SECRET in the Dokploy Environment tab (must match the api)}
+    depends_on: [api, redis]
 
 volumes:
   postgres_data:

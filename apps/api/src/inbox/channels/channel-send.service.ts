@@ -1,0 +1,60 @@
+import { BadRequestException } from "@nestjs/common";
+import * as nodemailer from "nodemailer";
+import { decryptJson } from "../../integrations/crypto";
+import { TelegramAdapter } from "./telegram.service";
+import type { EmailCredentials } from "./email.service";
+
+/**
+ * Outbound dispatch for the U4 channels (used by InboxService's
+ * deliverText). Resolves the conversation's own integration and
+ * its encrypted credentials, then sends through the channel's
+ * real API — a send counts only when the channel confirms it
+ * (Telegram message_id / SMTP messageId).
+ */
+export class ChannelSendService {
+  constructor(private readonly prisma: any) {}
+
+  private async integrationFor(conv: any) {
+    if (conv.integrationId) {
+      const found = await this.prisma.integration.findUnique({ where: { id: conv.integrationId }, include: { credential: true } });
+      if (found?.credential) return found;
+    }
+    const latest = await this.prisma.integration.findFirst({
+      where: { organizationId: conv.organizationId, provider: conv.channel, status: "CONNECTED" },
+      include: { credential: true }, orderBy: { createdAt: "desc" },
+    });
+    if (!latest?.credential) throw new BadRequestException(`No connected ${conv.channel} integration for this organization`);
+    return latest;
+  }
+
+  async sendText(conv: any, content: string): Promise<string> {
+    const integration = await this.integrationFor(conv);
+    const creds = decryptJson<any>(integration.credential.encryptedData);
+    if (conv.channel === "telegram") {
+      const sent = await new TelegramAdapter().sendText(creds, conv.externalContactId, content);
+      return sent.externalId;
+    }
+    if (conv.channel === "email") {
+      const emailCreds = creds as EmailCredentials;
+      const transport = nodemailer.createTransport({
+        host: emailCreds.smtpHost, port: emailCreds.smtpPort, secure: emailCreds.smtpPort === 465,
+        auth: { user: emailCreds.user, pass: emailCreds.password },
+      });
+      // Thread onto the customer's last inbound message when known.
+      const lastInbound = await this.prisma.channelMessage.findFirst({
+        where: { conversationId: conv.id, direction: "in" }, orderBy: { createdAt: "desc" },
+      }).catch(() => null);
+      const subject = conv.subject ? (/^re:/i.test(conv.subject) ? conv.subject : `Re: ${conv.subject}`) : "Re: আপনার বার্তা";
+      const info = await transport.sendMail({
+        from: emailCreds.user,
+        to: conv.externalContactId,
+        subject,
+        text: content,
+        ...(lastInbound?.externalId ? { inReplyTo: lastInbound.externalId, references: lastInbound.externalId } : {}),
+      });
+      if (!info?.messageId) throw new BadRequestException("SMTP did not confirm the email send");
+      return String(info.messageId);
+    }
+    throw new BadRequestException(`ChannelSendService does not handle channel "${conv.channel}"`);
+  }
+}

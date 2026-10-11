@@ -1,15 +1,20 @@
-import { Injectable, MessageEvent } from "@nestjs/common";
+import { Injectable, Logger, MessageEvent } from "@nestjs/common";
 import { Observable, Subject, interval, merge } from "rxjs";
 import { map } from "rxjs/operators";
 
 /**
- * Realtime inbox transport (Unified Inbox U1).
+ * Realtime inbox transport (Unified Inbox U1 + U6).
  *
  * In-process pub/sub fanning out Server-Sent Events per
- * organization. Single-API-instance by design (the deployment
- * runs one API replica); U6 moves fan-out to Redis when that
- * changes. Presence (who is viewing/typing a thread) is
- * deliberately ephemeral — it lives here, never in the database.
+ * organization. Since U6, when REDIS_URL is configured the
+ * fan-out crosses API instances: emit() publishes to the Redis
+ * channel `inbox-events` and delivery happens through each
+ * instance's subscription (including the emitter's own), so all
+ * replicas show the same stream. Without REDIS_URL — or if
+ * Redis fails — emit() delivers locally; messaging never
+ * depends on realtime. Presence stays instance-ephemeral by
+ * design (the DB AgentPresence heartbeat is the durable
+ * cross-instance record).
  */
 export interface InboxRealtimeEvent {
   type: "message.created" | "conversation.updated" | "presence" | "notification";
@@ -24,10 +29,65 @@ export interface InboxRealtimeEvent {
 
 interface PresenceEntry { userId: string; userName?: string; typing: boolean; at: number }
 
+/** Minimal pub/sub transport the Redis bridge needs — ioredis
+ * clients satisfy it, and tests inject a fake bus. */
+export interface RealtimeBus {
+  publish(channel: string, payload: string): Promise<number>;
+  subscribe(channel: string, handler: (payload: string) => void): Promise<void>;
+}
+
 @Injectable()
 export class RealtimeService {
+  private readonly logger = new Logger("RealtimeService");
   private readonly subjects = new Map<string, Set<Subject<MessageEvent>>>();
   private readonly presence = new Map<string, Map<string, PresenceEntry>>();
+  private bus: RealtimeBus | null = null;
+  private busReady: Promise<void> | null = null;
+  static readonly BUS_CHANNEL = "inbox-events";
+
+  async onModuleInit() {
+    await this.attachRedisFromEnv();
+  }
+
+  /** Attach a cross-instance bus (U6). Called once at boot when
+   * REDIS_URL is set; failures degrade to local-only delivery. */
+  attachBus(bus: RealtimeBus) {
+    this.bus = bus;
+    this.busReady = bus.subscribe(RealtimeService.BUS_CHANNEL, (payload) => {
+      try {
+        const { organizationId, event } = JSON.parse(payload) as { organizationId: string; event: InboxRealtimeEvent };
+        if (organizationId && event) this.deliverLocal(organizationId, event);
+      } catch { /* a bad frame never breaks the stream */ }
+    }).catch((e) => {
+      this.logger.warn(`Realtime bus subscribe failed, local-only mode: ${e instanceof Error ? e.message : e}`);
+      this.bus = null;
+    });
+  }
+
+  /** Default production wiring: two ioredis clients (pub + sub)
+   * when REDIS_URL exists. Dynamic import keeps ioredis out of
+   * the local-only path and out of unit tests. */
+  async attachRedisFromEnv() {
+    const url = process.env.REDIS_URL;
+    if (!url || this.bus) return;
+    try {
+      const { default: Redis } = await import("ioredis");
+      const pub = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
+      const sub = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
+      await pub.connect();
+      const bus: RealtimeBus = {
+        publish: (channel, payload) => pub.publish(channel, payload),
+        subscribe: async (channel, handler) => {
+          sub.on("message", (ch: string, message: string) => { if (ch === channel) handler(message); });
+          await sub.subscribe(channel);
+        },
+      };
+      this.attachBus(bus);
+      this.logger.log("Realtime fan-out: Redis bus attached");
+    } catch (e) {
+      this.logger.warn(`Realtime Redis unavailable, local-only mode: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   /** Subscribe to an organization's inbox event stream (SSE). */
   stream(organizationId: string): Observable<MessageEvent> {
@@ -48,10 +108,69 @@ export class RealtimeService {
   }
 
   emit(organizationId: string, event: Omit<InboxRealtimeEvent, "at"> & { at?: string }) {
-    const set = this.subjects.get(organizationId);
-    if (!set || set.size === 0) return;
     const full: InboxRealtimeEvent = { ...event, at: event.at ?? new Date().toISOString() };
-    for (const subject of set) subject.next({ data: full } as MessageEvent);
+    if (this.bus) {
+      // Cross-instance: delivery (including to this instance's
+      // own subscribers) happens through the subscription, so
+      // every replica renders exactly one copy.
+      void this.bus.publish(RealtimeService.BUS_CHANNEL, JSON.stringify({ organizationId, event: full }))
+        .catch(() => this.deliverLocal(organizationId, full));
+      return;
+    }
+    this.deliverLocal(organizationId, full);
+  }
+
+  private deliverLocal(organizationId: string, full: InboxRealtimeEvent) {
+    const set = this.subjects.get(organizationId);
+    if (set) for (const subject of set) subject.next({ data: full } as MessageEvent);
+    this.deliverToVisitor(full);
+  }
+
+  // ---------- Milestone 66: webchat visitor streams ----------
+  // A visitor's browser subscribes to exactly ONE conversation
+  // (derived from their session token, never a client-supplied
+  // id). Delivery rides the same path as the org fan-out, so
+  // the Redis bus carries it across replicas unchanged.
+  private readonly visitorSubjects = new Map<string, Set<Subject<MessageEvent>>>();
+
+  streamVisitor(conversationId: string): Observable<MessageEvent> {
+    const subject = new Subject<MessageEvent>();
+    let set = this.visitorSubjects.get(conversationId);
+    if (!set) { set = new Set(); this.visitorSubjects.set(conversationId, set); }
+    set.add(subject);
+    const heartbeat = interval(25000).pipe(map(() => ({ type: "heartbeat", data: "" }) as MessageEvent));
+    const events = subject.asObservable();
+    return new Observable<MessageEvent>((subscriber) => {
+      const sub = merge(events, heartbeat).subscribe(subscriber);
+      return () => {
+        sub.unsubscribe();
+        set!.delete(subject);
+        if (set!.size === 0) this.visitorSubjects.delete(conversationId);
+      };
+    });
+  }
+
+  visitorSubscriberCount(conversationId: string): number {
+    return this.visitorSubjects.get(conversationId)?.size ?? 0;
+  }
+
+  /** Forward new messages to the conversation's visitor with a
+   * visitor-safe projection only (the exact fields the polling
+   * endpoint returns — never internal message metadata). */
+  private deliverToVisitor(full: InboxRealtimeEvent) {
+    if (full.type !== "message.created" || !full.conversationId) return;
+    const set = this.visitorSubjects.get(full.conversationId);
+    if (!set || set.size === 0) return;
+    const m = (full.message ?? {}) as Record<string, any>;
+    const projection = {
+      type: "message.created",
+      message: {
+        id: m.id, direction: m.direction, content: m.content,
+        type: m.type, createdAt: m.createdAt,
+      },
+      at: full.at,
+    };
+    for (const subject of set) subject.next({ data: projection } as MessageEvent);
   }
 
   subscriberCount(organizationId: string): number {

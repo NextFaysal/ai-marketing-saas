@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Req, StreamableFile, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { OrganizationsService } from "./organizations.service";
-import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBusinessProfileDto } from "./organizations.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
+import { CurrentUser, AuthUser, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -91,5 +91,43 @@ export class OrganizationsController {
   @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   updateProfile(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateBusinessProfileDto) {
     return this.orgs.updateBusinessProfile(id, user.userId, dto);
+  }
+
+  // ---- Milestone 59: white-label branding ----
+  @Patch(":organizationId/branding")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateBranding(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateBrandingDto, @Req() req: Request) {
+    return this.orgs.updateBranding(id, user.userId, dto, req.ip);
+  }
+
+  @Post(":organizationId/branding/logo")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  uploadLogo(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UploadLogoDto, @Req() req: Request) {
+    return this.orgs.uploadLogo(id, user.userId, dto, req.ip);
+  }
+
+  @Delete(":organizationId/branding/logo")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  removeLogo(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.removeLogo(id, user.userId, req.ip);
+  }
+}
+
+/** Public, unauthenticated logo bytes — the shared client report
+ * page (no login) must be able to render the org's logo. Only the
+ * logo is exposed here; nothing else about the org is public. */
+@Controller("public/branding")
+export class PublicBrandingController {
+  constructor(private readonly orgs: OrganizationsService) {}
+
+  @Public()
+  @Get(":organizationId/logo")
+  async logo(@Param("organizationId") id: string) {
+    const logo = await this.orgs.publicLogo(id);
+    if (!logo) throw new NotFoundException("No logo for this organization");
+    return new StreamableFile(logo.bytes, { type: logo.contentType, disposition: "inline" });
   }
 }

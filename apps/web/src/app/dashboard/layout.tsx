@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/lib/nav";
+import { InstallButton } from "@/components/pwa";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -57,13 +58,30 @@ function NavContent({ pathname, onNavigate }: { pathname: string; onNavigate?: (
   );
 }
 
-function Brand() {
+export interface OrgBrandingLite {
+  name?: string; brandName?: string | null; logoUrl?: string | null; primaryColor?: string | null;
+}
+
+/**
+ * Milestone 59: white-label shell brand. With an org logo + brand
+ * name the sidebar shows the ORG's identity (agency mode); without
+ * branding it renders the platform default, byte-for-byte as before.
+ * The logo URL is the API-relative public path from the org row.
+ */
+function Brand({ branding }: { branding?: OrgBrandingLite | null }) {
+  const branded = Boolean(branding?.brandName || branding?.logoUrl);
+  const title = branding?.brandName ?? branding?.name ?? "AI Marketing OS";
+  const initial = (branding?.brandName ?? branding?.name ?? "Q").slice(0, 1).toUpperCase();
   return (
     <div className="flex items-center gap-3 px-5 pb-5 pt-6">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-[17px] font-black text-white shadow-glow">Q</div>
+      {branding?.logoUrl ? (
+        <img src={`${API_URL}${branding.logoUrl}`} alt="" className="h-10 w-10 shrink-0 rounded-2xl bg-white object-contain p-0.5 shadow-glow" />
+      ) : (
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-[17px] font-black text-white shadow-glow">{branded ? initial : "Q"}</div>
+      )}
       <div className="min-w-0">
-        <div className="truncate text-[15px] font-bold leading-tight tracking-tight text-white">AI Marketing OS</div>
-        <div className="text-[11px] text-slate-400">by Qosprey</div>
+        <div className="truncate text-[15px] font-bold leading-tight tracking-tight text-white">{title}</div>
+        <div className="text-[11px] text-slate-400">{branded ? "AI Marketing OS" : "by Qosprey"}</div>
       </div>
       <span className="ml-auto rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300 ring-1 ring-inset ring-emerald-300/30">Live</span>
     </div>
@@ -154,6 +172,40 @@ function ViewAsBanner() {
   );
 }
 
+/**
+ * Milestone 60: inbox-first mobile bottom navigation. Small
+ * screens only (lg:hidden) — the desktop sidebar layout is
+ * untouched. "আরও" reuses the existing drawer (full nav), so this
+ * bar stays at four thumb-reachable targets. The bar is fixed, so
+ * the layout adds a matching spacer under <main> on mobile.
+ */
+function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () => void }) {
+  const items = [
+    { label: "ইনবক্স", href: "/dashboard/inbox", icon: "💬" },
+    { label: "অর্ডার", href: "/dashboard/orders", icon: "📦" },
+    { label: "AI সহকারী", href: "/dashboard/ai", icon: "🤖" },
+  ];
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }} aria-label="মোবাইল নেভিগেশন">
+      <div className="grid grid-cols-4">
+        {items.map((item) => {
+          const active = pathname.startsWith(item.href);
+          return (
+            <a key={item.href} href={item.href} aria-current={active ? "page" : undefined}
+              className={`flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${active ? "text-indigo-600" : "text-slate-500"}`}>
+              <span className="text-lg leading-none">{item.icon}</span>{item.label}
+            </a>
+          );
+        })}
+        <button onClick={onMore} className="flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium text-slate-500" aria-label="আরও অপশন">
+          <span className="text-lg leading-none">☰</span>আরও
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 interface PlatformStatus {
   maintenanceMode: boolean; signupOpen: boolean; supportContact: string;
   announcement: { title: string; body: string } | null;
@@ -241,6 +293,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [ready, setReady] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [email, setEmail] = useState("");
+  const [branding, setBranding] = useState<OrgBrandingLite | null>(null);
+
+  // Milestone 59: load the org's white-label branding once the org
+  // is resolved (org selection itself may resolve a beat later —
+  // same retry shape as SubscriptionBanner). Branding is cosmetic:
+  // any failure leaves the platform default shell untouched.
+  useEffect(() => {
+    let tries = 0;
+    let cancelled = false;
+    const attempt = () => {
+      const orgId = getOrganizationId();
+      if (!orgId) { if (++tries <= 4) setTimeout(attempt, 700); return; }
+      apiFetch<OrgBrandingLite>(`/organizations/${orgId}`)
+        .then((o) => { if (!cancelled) setBranding(o); })
+        .catch(() => undefined);
+    };
+    attempt();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!getToken()) { router.push("/login"); return; }
@@ -277,7 +348,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const sidebar = (
     <div className="flex h-full flex-col bg-ink-950 bg-gradient-to-b from-ink-950 via-[#0c1327] to-ink-950">
-      <Brand />
+      <Brand branding={branding} />
       <NavContent pathname={pathname} />
       <div className="border-t border-white/[0.07] p-3">
         <div className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
@@ -290,8 +361,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </div>
   );
 
+  // Milestone 59: the primary brand colour feeds the design system's
+  // existing --brand-from/--brand-to variables (btn-primary gradient,
+  // focus rings) for this dashboard subtree only — no theme rewrite.
+  const brandVars = branding?.primaryColor
+    ? ({ "--brand-from": branding.primaryColor, "--brand-to": branding.primaryColor } as React.CSSProperties)
+    : undefined;
+
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="min-h-screen lg:flex" style={brandVars}>
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-[268px] shrink-0 lg:block">{sidebar}</aside>
 
@@ -311,13 +389,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
             </button>
             <div className="flex items-center gap-2.5 lg:hidden">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-black text-white">Q</span>
+              {branding?.logoUrl ? (
+                <img src={`${API_URL}${branding.logoUrl}`} alt="" className="h-8 w-8 rounded-xl bg-white object-contain p-0.5 ring-1 ring-slate-200" />
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-black text-white">Q</span>
+              )}
             </div>
             <div className="min-w-0">
               <div className="truncate text-[15px] font-semibold tracking-tight text-slate-900">{current?.label ?? "Dashboard"}</div>
               <div className="hidden text-[11.5px] text-slate-400 sm:block">AI Marketing Operating System</div>
             </div>
             <div className="ml-auto flex items-center gap-2.5">
+              <InstallButton />
               <NotificationBell />
               <span className="badge-brand hidden sm:inline-flex">Demo Workspace</span>
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[13px] font-bold text-white ring-2 ring-white shadow" title={email}>{initials}</span>
@@ -329,7 +412,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <PlatformBanner />
         <SubscriptionBanner />
         <main className="mx-auto w-full max-w-[1440px] animate-rise px-4 py-5 sm:px-6 sm:py-7 lg:px-8">{children}</main>
+        {/* Spacer so the fixed mobile bottom bar never covers content */}
+        <div className="h-16 lg:hidden" />
       </div>
+      <MobileBottomNav pathname={pathname} onMore={() => setDrawer(true)} />
     </div>
   );
 }

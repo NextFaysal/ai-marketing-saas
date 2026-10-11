@@ -2,7 +2,10 @@ import { Body, Controller, Delete, Get, MessageEvent, Param, Patch, Post, Query,
 import { Observable } from "rxjs";
 import { InboxService } from "./inbox.service";
 import { RealtimeService } from "./realtime.service";
-import { AddNoteDto, CodConfirmationDto, ConnectMessagingDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMessageDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, SendDraftDto, WhatsAppTemplateDto } from "./inbox.dto";
+import { TelegramService } from "./channels/telegram.service";
+import { EmailChannelService } from "./channels/email.service";
+import { TIKTOK_APPLICATION_PACK } from "./channels/channel-adapter";
+import { AddNoteDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, WhatsAppTemplateDto } from "./inbox.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -10,13 +13,95 @@ import { RolesGuard } from "../common/roles.guard";
 @Controller("organizations/:organizationId/inbox")
 @UseGuards(TenantGuard)
 export class InboxController {
-  constructor(private readonly inbox: InboxService, private readonly realtime: RealtimeService) {}
+  constructor(
+    private readonly inbox: InboxService,
+    private readonly realtime: RealtimeService,
+    private readonly telegram: TelegramService,
+    private readonly emailChannel: EmailChannelService,
+  ) {}
 
   /** Unified Inbox U1: realtime event stream (SSE) for this org's
    * inbox — new messages, conversation updates, thread presence. */
   @Sse("conversations/stream")
   stream(@Param("organizationId") orgId: string): Observable<MessageEvent> {
     return this.realtime.stream(orgId);
+  }
+
+  // ---- Unified Inbox U4: Telegram / Email / TikTok ----
+  @Post("connect/telegram") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  connectTelegram(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectTelegramDto) {
+    return this.telegram.connect(orgId, user.userId, dto);
+  }
+  @Post("connect/email") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  connectEmail(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectEmailDto) {
+    return this.emailChannel.connect(orgId, user.userId, dto as any);
+  }
+  @Post("email/sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  syncEmail(@Param("organizationId") orgId: string) {
+    return this.emailChannel.syncOrganization(orgId);
+  }
+  // ---- Unified Inbox U5: control center ----
+  @Get("pipeline-board")
+  pipelineBoard(@Param("organizationId") orgId: string) {
+    return this.inbox.getPipelineBoard(orgId);
+  }
+  @Get("conversations/:conversationId/command-profile")
+  commandProfile(@Param("organizationId") orgId: string, @Param("conversationId") conversationId: string) {
+    return this.inbox.getCommandProfile(orgId, conversationId);
+  }
+  @Post("conversations/:conversationId/share-tracking") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  shareTracking(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") conversationId: string) {
+    return this.inbox.shareTracking(orgId, user.userId, conversationId);
+  }
+  @Post("conversations/:conversationId/refund-request") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  refundRequest(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Body() dto: RefundRequestDto) {
+    return this.inbox.requestRefund(orgId, user.userId, conversationId, dto);
+  }
+
+  // ---- Unified Inbox U6: media, export ----
+  @Get("media")
+  mediaSearch(@Param("organizationId") orgId: string, @Query("type") type?: string, @Query("q") q?: string, @Query("days") days?: string) {
+    return this.inbox.searchMedia(orgId, { type, q, days: days ? Number(days) : undefined });
+  }
+  @Get("export")
+  async exportInbox(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.inbox.exportInbox(orgId, { from, to });
+  }
+  @Get("conversations/:conversationId/export")
+  async exportConversation(@Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Query("format") format?: string) {
+    const out = await this.inbox.exportConversation(orgId, conversationId, format === "csv" ? "csv" : "json");
+    return new StreamableFile(Buffer.from(out.body, "utf8"), { type: out.contentType, disposition: `attachment; filename="${out.filename}"` });
+  }
+  @Get("conversations/:conversationId/messages/:messageId/media-url")
+  mediaSignedUrl(@Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Param("messageId") messageId: string) {
+    return this.inbox.getMediaSignedUrl(orgId, conversationId, messageId);
+  }
+
+  @Get("tiktok/status")
+  tiktokStatus() { return TIKTOK_APPLICATION_PACK; }
+
+  // ---- Unified Inbox U2: teams + agent state ----
+  @Get("teams") teams(@Param("organizationId") orgId: string) { return this.inbox.listTeams(orgId); }
+  @Post("teams") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  createTeam(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: TeamDto) {
+    return this.inbox.createTeam(orgId, user.userId, dto);
+  }
+  @Patch("teams/:teamId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  updateTeam(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("teamId") teamId: string, @Body() dto: UpdateTeamDto) {
+    return this.inbox.updateTeam(orgId, user.userId, teamId, dto);
+  }
+  @Delete("teams/:teamId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  deleteTeam(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("teamId") teamId: string) {
+    return this.inbox.deleteTeam(orgId, user.userId, teamId);
+  }
+  @Post("teams/:teamId/members") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  teamMembers(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("teamId") teamId: string, @Body() dto: TeamMembersDto) {
+    return this.inbox.setTeamMembers(orgId, user.userId, teamId, dto.members);
+  }
+  @Get("agent-states") agentStates(@Param("organizationId") orgId: string) { return this.inbox.listAgentStates(orgId); }
+  @Post("agent-state") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  agentState(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: AgentStateDto) {
+    return this.inbox.setAgentState(orgId, user.userId, dto.status);
   }
 
   @Post("connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
