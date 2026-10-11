@@ -146,7 +146,7 @@ export class SocialCommentsService {
         matchedProduct = {
           name: p.name,
           priceFormatted: formatMinor(BigInt(p.priceMinor), p.currency || "BDT"),
-          orderUrl: settings.salesOrderUrl || undefined,
+          orderUrl: p.slug ? `/checkout/${p.slug}` : (settings.salesOrderUrl || undefined),
         };
         break;
       }
@@ -160,7 +160,7 @@ export class SocialCommentsService {
           matchedProduct = {
             name: p.name,
             priceFormatted: formatMinor(BigInt(p.priceMinor), p.currency || "BDT"),
-            orderUrl: settings.salesOrderUrl || undefined,
+            orderUrl: p.slug ? `/checkout/${p.slug}` : (settings.salesOrderUrl || undefined),
           };
           break;
         }

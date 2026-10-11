@@ -22,6 +22,11 @@ export class ProductsController {
     return this.products.list(orgId, { search: q.search, category: q.category, status: q.status, page: q.page ? Number(q.page) : undefined, pageSize: q.pageSize ? Number(q.pageSize) : undefined });
   }
 
+  @Get("by-slug/:slug")
+  getBySlug(@Param("organizationId") orgId: string, @Param("slug") slug: string) {
+    return this.products.getBySlug(orgId, slug);
+  }
+
   @Get(":productId")
   getOne(@Param("organizationId") orgId: string, @Param("productId") id: string) { return this.products.getOne(orgId, id); }
 

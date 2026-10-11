@@ -26,6 +26,15 @@ export function toPublicProduct(p: any, currentCostMinor?: bigint | null) {
   };
 }
 
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
@@ -37,10 +46,16 @@ export class ProductsService {
       });
       if (dup) throw new ConflictException(`A product with SKU ${dto.sku} already exists in this organization`);
     }
+
+    const baseSlug = slugify(dto.name) || `prod-${Date.now().toString(36)}`;
+    const randomSuffix = Math.random().toString(36).substring(2, 6);
+    const slug = `${baseSlug}-${randomSuffix}`;
+
     const product = await (this.prisma as any).product.create({
       data: {
         organizationId,
         name: dto.name.trim(),
+        slug,
         description: dto.description, category: dto.category, sku: dto.sku || null,
         status: dto.status ?? "ACTIVE",
         priceMinor: parseMoney(dto.price, "price"),
@@ -52,6 +67,18 @@ export class ProductsService {
     });
     await this.audit.log({ organizationId, userId: actorId, action: "product.create", entityType: "Product", entityId: product.id });
     return toPublicProduct(product, null);
+  }
+
+  async getBySlug(organizationId: string, slug: string) {
+    const p = await (this.prisma as any).product.findFirst({
+      where: { organizationId, slug },
+      include: {
+        variants: { orderBy: { createdAt: "asc" } },
+        costs: { orderBy: { effectiveFrom: "desc" }, take: 1 },
+      },
+    });
+    if (!p) throw new NotFoundException("Product not found");
+    return toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
   }
 
   async list(organizationId: string, query: { search?: string; category?: string; status?: string; page?: number; pageSize?: number }) {
