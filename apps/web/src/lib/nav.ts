@@ -20,6 +20,7 @@ export const NAV_ITEMS = [
   { label: "Profit Intelligence", href: "/dashboard/profit", ready: true },
   { label: "Competitor Analysis", href: "/dashboard/competitors", ready: true },
   { label: "Inbox", href: "/dashboard/inbox", ready: true },
+  { label: "🤖 AI Instructions", href: "/dashboard/ai-instructions", ready: true },
   { label: "💬 Social Comments AI", href: "/dashboard/comments", ready: true },
   { label: "Leads & CRM", href: "/dashboard/leads", ready: true },
   { label: "Customers 360", href: "/dashboard/customers", ready: true },

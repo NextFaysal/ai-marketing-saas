@@ -24,6 +24,7 @@ interface Detail {
   lead: { id: string; stage: string; source: string } | null;
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string };
   risk?: { band: string; score: number | null; history: { total: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number }; reasons: string[]; suggestion: string | null } | null;
+  courierRecord?: { decided: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number; successRatePct: number | null; perCourier: { provider: string; decided: number; delivered: number; successRatePct: number | null }[]; lastDeliveryAt: string | null; totalShipments: number; riskBand: string; riskScore: number | null } | null;
 }
 const RISK_LABEL: Record<string, { text: string; cls: string }> = {
   high: { text: "ঝুঁকি: উচ্চ", cls: "bg-red-100 text-red-700" },
@@ -208,6 +209,40 @@ export default function CustomersPage() {
                     {detail.risk.reasons.slice(0, 4).map((r, i) => <li key={i}>{r}</li>)}
                   </ul>
                   {detail.risk.suggestion ? <p className="text-xs font-medium text-amber-700">{detail.risk.suggestion}</p> : null}
+                </div>
+              ) : null}
+              {detail.courierRecord ? (
+                <div className="card space-y-2">
+                  <h3 className="font-semibold">🚚 Courier Record</h3>
+                  {detail.courierRecord.decided === 0 ? (
+                    <p className="text-sm text-slate-500">এখনো কোনো ডেলিভারি ইতিহাস নেই</p>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <span className="text-3xl font-bold text-emerald-700">{detail.courierRecord.successRatePct}%</span>
+                        <span className="text-sm font-medium text-slate-600">ডেলিভারি সফলতার হার</span>
+                        <span className="text-xs text-slate-400">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
+                      </div>
+                      <p className="text-sm text-slate-600">রিটার্ন {detail.courierRecord.returned}টি · বাতিল/ব্যর্থ {detail.courierRecord.cancelledOrFailed}টি · রিফান্ড {detail.courierRecord.refunded}টি · মোট শিপমেন্ট {detail.courierRecord.totalShipments}টি{detail.courierRecord.lastDeliveryAt ? ` · সর্বশেষ ডেলিভারি: ${new Date(detail.courierRecord.lastDeliveryAt).toLocaleDateString("bn-BD")}` : ""}</p>
+                      {detail.courierRecord.perCourier.length > 0 ? (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-left text-xs text-slate-400"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
+                          </thead>
+                          <tbody>
+                            {detail.courierRecord.perCourier.map((p) => (
+                              <tr key={p.provider} className="border-b last:border-0">
+                                <td className="py-1 font-medium">{p.provider}</td>
+                                <td className="py-1">{p.decided}টি</td>
+                                <td className="py-1">{p.delivered}টি</td>
+                                <td className="py-1">{p.successRatePct != null ? `${p.successRatePct}%` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               ) : null}
               <div className="card">

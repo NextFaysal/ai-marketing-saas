@@ -109,7 +109,7 @@ describe("W6 governance", () => {
 
   it("presets install disabled with the catalog definition; unknown keys 404", async () => {
     const { svc, tables } = setup();
-    expect(WORKFLOW_PRESETS.length).toBe(8); // 6 classics + A1 refund_team_alert + A2 shipment_return_alert
+    expect(WORKFLOW_PRESETS.length).toBe(11); // 6 classics + A1 refund_team_alert + A2 shipment_return_alert + W7 cart_recovery_alert/vip_order_channel_alert/ai_inbox_reply_assist (owner series d39f02a, merged d851b40)
     const installed: any = await svc.installPreset("org", "u1", "delivered_review");
     expect(installed.enabled).toBe(false);
     expect(installed.trigger).toBe("order_delivered");

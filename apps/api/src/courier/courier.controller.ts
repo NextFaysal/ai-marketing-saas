@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } fro
 import { Response } from "express";
 import { CourierService } from "./courier.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
-import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -106,4 +106,22 @@ export class CourierController {
 
   @Post("sync-all") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   syncAll(@Param("organizationId") orgId: string) { return this.courier.syncAll(orgId); }
+
+  /** CX6: mint/return the shipment's public live-tracking link. */
+  @Post("shipments/:shipmentId/tracking-link") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  trackingLink(@Param("organizationId") orgId: string, @Param("shipmentId") id: string) {
+    return this.courier.trackingLinkForShipment(orgId, id);
+  }
+}
+
+/** CX6: public live-tracking page data — no auth; the unguessable
+ * token on the shipment row is the only credential (ReportShare
+ * pattern). Serves stored facts only; never recipient PII. */
+@Controller("public/tracking")
+export class PublicTrackingController {
+  constructor(private readonly courier: CourierService) {}
+
+  @Public()
+  @Get(":token")
+  view(@Param("token") token: string) { return this.courier.publicTracking(token); }
 }

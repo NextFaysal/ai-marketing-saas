@@ -3,11 +3,14 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { Markdown } from "@/components/markdown";
+import { streamAiMessage, type AiStreamToolCall } from "@/lib/ai-stream";
+import { AiRichAnswer, hasStoppedMarker, visibleToolCalls } from "@/components/ai-rich";
 
-interface Conversation { id: string; title?: string | null; updatedAt: string; pinnedAt?: string | null }
+interface Conversation { id: string; title?: string | null; updatedAt: string; pinnedAt?: string | null; tags?: string[] }
 interface Proposal { id: string; type: string; title: string; preview: string; status: string; error?: string | null; createdAt: string }
 interface ProposalTargets { campaigns: { id: string; name: string; metaStatus?: string | null }[]; adSets: { id: string; name: string; planId: string; planName: string }[] }
-interface Message { id: string; role: string; content: string; toolCalls?: { tool: string; status: string }[] | null }
+interface Message { id: string; role: string; content: string; toolCalls?: AiStreamToolCall[] | null }
+interface StreamStep { phase: "planning" | "tool"; tool?: string }
 
 const SUGGESTIONS = [
   "গত ৭ দিনে বিক্রি কেমন ছিল?",
@@ -39,7 +42,16 @@ export default function AiAssistantPage() {
   const [propNotice, setPropNotice] = useState("");
   const [proactive, setProactive] = useState({ briefingEnabled: true, anomalyAlertsEnabled: true });
   const [briefingResult, setBriefingResult] = useState("");
+  // AP1 Design v2: streaming bubble state + this-session usage totals
+  // (sums of the done events' usage only — real data this page holds).
+  const [streaming, setStreaming] = useState<{ text: string; steps: StreamStep[] } | null>(null);
+  const [sessionUsage, setSessionUsage] = useState({ count: 0, inputTokens: 0, outputTokens: 0, estimated: false });
+  const [convLoading, setConvLoading] = useState(true);
+  const [msgLoading, setMsgLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const streamConvRef = useRef<string>("");
+  const streamTextRef = useRef<string>("");
 
   const orgId = typeof window !== "undefined" ? getOrganizationId() : null;
 
@@ -49,12 +61,15 @@ export default function AiAssistantPage() {
       const query = q?.trim() ? `?search=${encodeURIComponent(q.trim())}` : "";
       setConversations(await apiFetch<Conversation[]>(`/organizations/${id}/ai/chat/conversations${query}`));
     } catch { /* a fresh account simply has none */ }
+    finally { setConvLoading(false); }
   }, []);
 
   const loadMessages = useCallback(async (convId: string) => {
     const id = getOrganizationId(); if (!id || !convId) return;
+    setMsgLoading(true);
     try { setMessages(await apiFetch<Message[]>(`/organizations/${id}/ai/chat/conversations/${convId}/messages`)); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load messages"); }
+    finally { setMsgLoading(false); }
   }, []);
 
   const loadProposals = useCallback(async () => {
@@ -115,7 +130,7 @@ export default function AiAssistantPage() {
     return () => clearTimeout(t);
   }, [search, loadConversations]);
   useEffect(() => { if (activeId) loadMessages(activeId); }, [activeId, loadMessages]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, sending]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, sending, streaming]);
 
   async function newConversation(): Promise<string | null> {
     if (!orgId) return null;
@@ -168,28 +183,82 @@ export default function AiAssistantPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট করা যায়নি"); }
   }
 
+  // AP1: send() goes through the SSE stream endpoint. The user bubble
+  // is optimistic; the assistant bubble streams in; `done` finalizes
+  // from its own payload (no loadMessages round-trip). An `error`
+  // event means nothing was persisted — the streaming bubble is
+  // dropped and the verbatim message shows in the error banner.
   async function send(text: string) {
     const content = text.trim();
     if (!content || sending) return;
     setError(""); setSending(true); setInput(""); setFollowUps([]);
+    let convId = activeId;
     try {
-      let convId = activeId;
-      if (!convId) { convId = (await newConversation()) ?? ""; if (!convId) return; }
-      setMessages((m) => [...m, { id: `tmp-${Date.now()}`, role: "user", content }]);
-      const res = await apiFetch<{ message: Message; provider: string; isRealLlm: boolean; suggestions?: string[]; proposal?: Proposal | null }>(
-        `/organizations/${orgId}/ai/chat/conversations/${convId}/messages`,
-        { method: "POST", body: JSON.stringify({ content }) });
-      setProvider(res.isRealLlm ? res.provider : "dev-template");
-      setMessages((m) => [...m, res.message]);
-      setFollowUps(res.suggestions ?? []);
-      if (res.proposal) {
-        setPropNotice(`একটি প্রস্তাব তৈরি হয়েছে: ${res.proposal.title} — অনুমোদন ছাড়া কিছুই করা হয়নি। নিচের প্রস্তাব প্যানেলে দেখুন।`);
-        await loadProposals();
-      }
-      await loadConversations(search);
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to send"); }
-    finally { setSending(false); }
+      if (!convId) { convId = (await newConversation()) ?? ""; if (!convId) { setSending(false); return; } }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send");
+      setSending(false);
+      return;
+    }
+    setMessages((m) => [...m, { id: `tmp-${Date.now()}`, role: "user", content }]);
+    streamConvRef.current = convId;
+    streamTextRef.current = "";
+    setStreaming({ text: "", steps: [] });
+    abortRef.current = streamAiMessage(orgId!, convId, content, {
+      onStep: (step) => setStreaming((cur) => (cur ? { ...cur, steps: [...cur.steps, step] } : cur)),
+      onDelta: (delta) => {
+        streamTextRef.current += delta;
+        setStreaming((cur) => (cur ? { ...cur, text: cur.text + delta } : cur));
+      },
+      onDone: (done) => {
+        setProvider(done.isRealLlm ? done.provider : "dev-template");
+        setSessionUsage((u) => ({
+          count: u.count + 1,
+          inputTokens: u.inputTokens + (done.usage?.inputTokens ?? 0),
+          outputTokens: u.outputTokens + (done.usage?.outputTokens ?? 0),
+          estimated: u.estimated || Boolean(done.usage?.estimated),
+        }));
+        setMessages((m) => [...m, { id: done.messageId, role: "assistant", content: streamTextRef.current, toolCalls: done.toolsUsed }]);
+        setStreaming(null);
+        setFollowUps(done.suggestions ?? []);
+        if (done.proposal) {
+          setPropNotice(`একটি প্রস্তাব তৈরি হয়েছে: ${done.proposal.title} — অনুমোদন ছাড়া কিছুই করা হয়নি। নিচের প্রস্তাব প্যানেলে দেখুন।`);
+          void loadProposals();
+        }
+        void loadConversations(search);
+        setSending(false);
+      },
+      onError: (message) => {
+        setStreaming(null);
+        setError(message);
+        setSending(false);
+      },
+    });
   }
+
+  // Stop button: abort the fetch — the server persists any non-empty
+  // partial with the stopped marker, so reload the real persisted
+  // state instead of guessing what was saved.
+  function stopStreaming() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(null);
+    setSending(false);
+    const convId = streamConvRef.current;
+    if (convId) void loadMessages(convId);
+    void loadConversations(search);
+  }
+
+  const providerBadge = provider === "dev-template"
+    ? <span className="ml-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Dev Template Mode: আসল LLM কনফিগার করা হয়নি, উত্তর টেমপ্লেট দিয়ে তৈরি</span>
+    : provider
+      ? <span className="ml-1 rounded bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">LLM: {provider}</span>
+      : null;
+
+  const pendingProposals = proposals.filter((p) => p.status === "proposed");
+  const recentConversation = conversations.length
+    ? conversations.reduce((a, b) => (new Date(b.updatedAt).getTime() > new Date(a.updatedAt).getTime() ? b : a))
+    : null;
 
   const conversationRow = (c: Conversation) => (
     <div key={c.id} className={`group rounded-lg px-3 py-2 text-sm ${c.id === activeId ? "bg-blue-50" : "hover:bg-slate-100"}`}>
@@ -197,6 +266,11 @@ export default function AiAssistantPage() {
         <span className={c.id === activeId ? "font-semibold" : ""}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</span>
         <span className="block text-xs text-slate-400">{new Date(c.updatedAt).toLocaleDateString()}</span>
       </button>
+      {c.tags && c.tags.length > 0 ? (
+        <span className="mt-1 flex flex-wrap gap-1">
+          {c.tags.map((t) => <span key={t} className="ai-tag-chip">{t}</span>)}
+        </span>
+      ) : null}
       <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
         <button className="rounded border px-1.5 py-0.5 hover:bg-white" title={c.pinnedAt ? "আনপিন করুন" : "পিন করুন"} onClick={() => patchConversation(c.id, { pinned: !c.pinnedAt })}>{c.pinnedAt ? "আনপিন" : "পিন"}</button>
         <button className="rounded border px-1.5 py-0.5 hover:bg-white" onClick={() => renameConversation(c)}>নাম বদল</button>
@@ -207,8 +281,26 @@ export default function AiAssistantPage() {
     </div>
   );
 
+  const toolTransparency = (m: Message) => {
+    const visible = visibleToolCalls(m.toolCalls);
+    const stopped = hasStoppedMarker(m.toolCalls);
+    if (visible.length === 0 && !stopped) return null;
+    return (
+      <div className="ai-tool-card">
+        {visible.map((t, i) => (
+          <span key={`${t.tool}-${i}`} className="ai-tool-chip">
+            {t.tool}
+            <span className={`ai-tool-status ${t.status === "success" ? "ai-tool-status-ok" : "ai-tool-status-err"}`}>{t.status}</span>
+          </span>
+        ))}
+        {stopped ? <span className="ai-tool-chip"><span className="ai-tool-status ai-tool-status-stopped">থামানো হয়েছে</span></span> : null}
+      </div>
+    );
+  };
+
   return (
-    <div className="flex gap-4">
+    <div className="flex flex-col gap-4 lg:flex-row">
+      {/* ── Left rail: conversations (desktop) ─────────────────────── */}
       <div className="hidden w-64 shrink-0 flex-col gap-2 md:flex">
         <button className="btn-primary btn-sm" onClick={() => newConversation()}>+ নতুন কথোপকথন</button>
         <input
@@ -217,146 +309,241 @@ export default function AiAssistantPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {conversations.length === 0 && search.trim() ? <p className="px-1 text-xs text-slate-400">কিছু পাওয়া যায়নি</p> : null}
+        {convLoading && conversations.length === 0 ? (
+          <div className="space-y-2" aria-hidden="true">
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
+          </div>
+        ) : null}
+        {conversations.length === 0 && search.trim() && !convLoading ? <p className="px-1 text-xs text-slate-400">কিছু পাওয়া যায়নি</p> : null}
         {conversations.map(conversationRow)}
       </div>
 
-      <div className="min-w-0 flex-1 space-y-4">
-        <div className="flex gap-2 md:hidden">
-          <select
-            className="min-w-0 flex-1 rounded-lg border bg-white px-2 py-2 text-sm"
-            value={activeId}
-            onChange={(e) => { setActiveId(e.target.value); setFollowUps([]); }}
-          >
-            <option value="">কথোপকথন বেছে নিন...</option>
-            {conversations.map((c) => <option key={c.id} value={c.id}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</option>)}
-          </select>
-          <button className="btn-primary btn-sm" onClick={() => newConversation()}>+ নতুন</button>
-        </div>
-        <div>
-          <h1 className="page-title">AI Assistant</h1>
-          <p className="text-sm text-slate-500">
-            শুধুমাত্র যাচাইকৃত ডেটা দিয়ে উত্তর দেয়। AI নিজে থেকে কিছু বদলায় না — কাজের প্রস্তাব দিতে পারে, কিন্তু অনুমোদন ছাড়া কিছুই হয় না (নিচের প্রস্তাব প্যানেল দেখুন)।
-            {provider === "dev-template" ? <span className="ml-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Dev Template Mode: আসল LLM কনফিগার করা হয়নি, উত্তর টেমপ্লেট দিয়ে তৈরি</span> : null}
-            {provider && provider !== "dev-template" ? <span className="ml-1 rounded bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">LLM: {provider}</span> : null}
-          </p>
-        </div>
-        {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-
-        <div className="min-h-80 space-y-3 card p-4">
-          {messages.length === 0 ? (
-            <div className="space-y-3">
-              <p className="text-sm text-slate-500">একটি প্রশ্ন দিয়ে শুরু করুন:</p>
-              <div className="flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} className="rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => send(s)}>{s}</button>
-                ))}
-              </div>
-            </div>
-          ) : messages.map((m) => (
-            <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-blue-600 text-white" : "bg-slate-100"}`}>
-                {m.role === "assistant" ? <Markdown text={m.content} /> : <p className="text-sm">{m.content}</p>}
-                {m.toolCalls && m.toolCalls.length > 0 ? (
-                  <div className="mt-2 border-t border-slate-200 pt-1 text-[11px] text-slate-500">
-                    ব্যবহৃত টুল: {m.toolCalls.map((t) => t.tool).join(", ")}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ))}
-          {sending ? <p className="text-sm text-slate-400">ভাবছি...</p> : null}
-          <div ref={bottomRef} />
-        </div>
-
-        {followUps.length > 0 && !sending ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-slate-400">এরপর জিজ্ঞেস করতে পারেন:</span>
-            {followUps.map((s) => (
-              <button key={s} className="rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => send(s)}>{s}</button>
-            ))}
+      {/* ── Centre canvas + right context panel ────────────────────── */}
+      <div className="flex min-w-0 flex-1 flex-col gap-4 xl:flex-row">
+        <div className="min-w-0 flex-1 space-y-4">
+          <div className="flex gap-2 md:hidden">
+            <select
+              className="min-w-0 flex-1 rounded-lg border bg-white px-2 py-2 text-sm"
+              value={activeId}
+              onChange={(e) => { setActiveId(e.target.value); setFollowUps([]); }}
+            >
+              <option value="">কথোপকথন বেছে নিন...</option>
+              {conversations.map((c) => <option key={c.id} value={c.id}>{c.pinnedAt ? "📌 " : ""}{c.title ?? "নতুন কথোপকথন"}</option>)}
+            </select>
+            <button className="btn-primary btn-sm" onClick={() => newConversation()}>+ নতুন</button>
           </div>
-        ) : null}
-
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); send(input); }}>
-          <input className="flex-1 rounded-lg border bg-white px-3 py-2.5 text-sm" placeholder="বাংলা বা ইংরেজিতে জিজ্ঞেস করুন..." value={input} onChange={(e) => setInput(e.target.value)} />
-          <button className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" disabled={sending}>পাঠান</button>
-        </form>
-
-        <div className="card space-y-3 p-4">
           <div>
-            <h2 className="font-semibold">কার্যক্রমের প্রস্তাব (অনুমোদন লাগবে)</h2>
-            <p className="text-sm text-slate-500">প্রস্তাব তৈরি হলেই কিছু হয় না। অনুমোদন দিলে তবেই আসল কাজটি হয় — ক্যাম্পেইন pause হলে Meta-র নিশ্চিতকরণ লাগে, broadcast শুধু draft তৈরি হয়, কখনো নিজে থেকে পাঠানো হয় না।</p>
+            <h1 className="page-title">AI Assistant</h1>
+            <p className="text-sm text-slate-500">
+              শুধুমাত্র যাচাইকৃত ডেটা দিয়ে উত্তর দেয়। AI নিজে থেকে কিছু বদলায় না — কাজের প্রস্তাব দিতে পারে, কিন্তু অনুমোদন ছাড়া কিছুই হয় না (নিচের প্রস্তাব প্যানেল দেখুন)।
+              {providerBadge}
+            </p>
           </div>
-          {propNotice ? <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-800">{propNotice}</p> : null}
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-sm">ধরন
-              <select className="ml-2 rounded-lg border px-2 py-2 text-sm" value={propKind} onChange={(e) => { setPropKind(e.target.value as typeof propKind); setPropTarget(""); }}>
-                <option value="pause_campaign">ক্যাম্পেইন Pause</option>
-                <option value="pause_ad_set">Ad Set Pause</option>
-                <option value="create_broadcast_draft">Broadcast Draft তৈরি</option>
-              </select>
-            </label>
-            {propKind !== "create_broadcast_draft" ? (
-              <label className="text-sm">লক্ষ্য
-                <select className="ml-2 min-w-52 rounded-lg border px-2 py-2 text-sm" value={propTarget} onChange={(e) => setPropTarget(e.target.value)}>
-                  <option value="">— বেছে নিন —</option>
-                  {propKind === "pause_campaign"
-                    ? targets.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}{c.metaStatus ? ` (${c.metaStatus})` : ""}</option>)
-                    : targets.adSets.map((a) => <option key={a.id} value={a.id}>{a.planName} / {a.name}</option>)}
-                </select>
-              </label>
+          {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+
+          {/* A3 recap card: real rows only — most recent conversation
+              title + the real pending-proposal count. No summary text. */}
+          {recentConversation ? (
+            <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">শেষ কথোপকথন</p>
+                <p className="truncate font-semibold">{recentConversation.title ?? "নতুন কথোপকথন"}</p>
+                <p className="text-sm text-slate-500">Pending প্রস্তাব: {pendingProposals.length}টি</p>
+              </div>
+              <button className="btn-primary btn-sm" onClick={() => { setActiveId(recentConversation.id); setFollowUps([]); }}>চালিয়ে যান</button>
+            </div>
+          ) : null}
+
+          <div className="min-h-80 space-y-3 card p-4">
+            {msgLoading && messages.length === 0 ? (
+              <div className="space-y-3" aria-hidden="true">
+                <div className="skeleton h-14 w-3/4" />
+                <div className="skeleton ml-auto h-10 w-1/2" />
+                <div className="skeleton h-14 w-2/3" />
+              </div>
+            ) : messages.length === 0 && !streaming ? (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-500">একটি প্রশ্ন দিয়ে শুরু করুন:</p>
+                <div className="flex flex-wrap gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button key={s} className="rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => send(s)}>{s}</button>
+                  ))}
+                </div>
+              </div>
             ) : (
               <>
-                <input className="rounded-lg border px-2 py-2 text-sm" placeholder="Draft-এর নাম" value={propDraft.name} onChange={(e) => setPropDraft({ ...propDraft, name: e.target.value })} />
-                <select className="rounded-lg border px-2 py-2 text-sm" value={propDraft.channel} onChange={(e) => setPropDraft({ ...propDraft, channel: e.target.value })}>
-                  <option value="email">Email</option>
-                  <option value="sms">SMS</option>
-                </select>
-                {propDraft.channel === "email" ? <input className="rounded-lg border px-2 py-2 text-sm" placeholder="Subject" value={propDraft.subject} onChange={(e) => setPropDraft({ ...propDraft, subject: e.target.value })} /> : null}
-                <input className="min-w-52 flex-1 rounded-lg border px-2 py-2 text-sm" placeholder="Message body" value={propDraft.body} onChange={(e) => setPropDraft({ ...propDraft, body: e.target.value })} />
+                {messages.map((m) => (
+                  <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-blue-600 text-white" : "bg-slate-100"}`}>
+                      {m.role === "assistant" ? <Markdown text={m.content} /> : <p className="text-sm">{m.content}</p>}
+                      {m.role === "assistant" ? <AiRichAnswer toolCalls={m.toolCalls} /> : null}
+                      {m.role === "assistant" ? toolTransparency(m) : null}
+                    </div>
+                  </div>
+                ))}
+                {streaming ? (
+                  <div className="flex justify-start">
+                    <div className="max-w-[85%] rounded-2xl bg-slate-100 px-4 py-3">
+                      {streaming.steps.map((s, i) => (
+                        <p key={i} className="ai-step-row">
+                          <span className="ai-step-dot" />
+                          {s.phase === "planning" ? "পরিকল্পনা চলছে…" : `টুল চলছে… ${s.tool ?? ""}`}
+                        </p>
+                      ))}
+                      {streaming.text ? (
+                        <div className="ai-stream-caret mt-1"><Markdown text={streaming.text} /></div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </>
             )}
-            <button className="btn-primary btn-sm" onClick={() => createProposal()}>প্রস্তাব তৈরি করুন</button>
+            {sending && !streaming ? <p className="text-sm text-slate-400">ভাবছি...</p> : null}
+            <div ref={bottomRef} />
           </div>
-          <div className="space-y-2">
-            {proposals.length === 0 ? <p className="text-sm text-slate-400">কোনো প্রস্তাব নেই। চ্যাটে কোনো published ক্যাম্পেইনের নাম ধরে “pause করে দাও” বললেও প্রস্তাব তৈরি হবে।</p> : proposals.map((p) => (
+
+          {followUps.length > 0 && !sending ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-400">এরপর জিজ্ঞেস করতে পারেন:</span>
+              {followUps.map((s) => (
+                <button key={s} className="rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => send(s)}>{s}</button>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Composer v2: floating shell, ≥40px send target, provider
+              badge beside the composer, Stop while streaming. */}
+          <div className="ai-composer-shell">
+            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); send(input); }}>
+              <input className="min-h-[40px] flex-1 rounded-lg border bg-white px-3 py-2.5 text-sm" placeholder="বাংলা বা ইংরেজিতে জিজ্ঞেস করুন..." value={input} onChange={(e) => setInput(e.target.value)} />
+              {sending ? (
+                <button type="button" className="min-h-[40px] min-w-[64px] rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white" onClick={() => stopStreaming()}>থামান</button>
+              ) : (
+                <button className="min-h-[40px] min-w-[64px] rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" disabled={sending}>পাঠান</button>
+              )}
+            </form>
+            {provider ? <div className="mt-2 flex items-center gap-1 text-xs">{providerBadge}</div> : null}
+          </div>
+
+          <div className="card space-y-3 p-4" id="ai-proposals">
+            <div>
+              <h2 className="font-semibold">কার্যক্রমের প্রস্তাব (অনুমোদন লাগবে)</h2>
+              <p className="text-sm text-slate-500">প্রস্তাব তৈরি হলেই কিছু হয় না। অনুমোদন দিলে তবেই আসল কাজটি হয় — ক্যাম্পেইন pause হলে Meta-র নিশ্চিতকরণ লাগে, broadcast শুধু draft তৈরি হয়, কখনো নিজে থেকে পাঠানো হয় না।</p>
+            </div>
+            {propNotice ? <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-800">{propNotice}</p> : null}
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-sm">ধরন
+                <select className="ml-2 rounded-lg border px-2 py-2 text-sm" value={propKind} onChange={(e) => { setPropKind(e.target.value as typeof propKind); setPropTarget(""); }}>
+                  <option value="pause_campaign">ক্যাম্পেইন Pause</option>
+                  <option value="pause_ad_set">Ad Set Pause</option>
+                  <option value="create_broadcast_draft">Broadcast Draft তৈরি</option>
+                </select>
+              </label>
+              {propKind !== "create_broadcast_draft" ? (
+                <label className="text-sm">লক্ষ্য
+                  <select className="ml-2 min-w-52 rounded-lg border px-2 py-2 text-sm" value={propTarget} onChange={(e) => setPropTarget(e.target.value)}>
+                    <option value="">— বেছে নিন —</option>
+                    {propKind === "pause_campaign"
+                      ? targets.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}{c.metaStatus ? ` (${c.metaStatus})` : ""}</option>)
+                      : targets.adSets.map((a) => <option key={a.id} value={a.id}>{a.planName} / {a.name}</option>)}
+                  </select>
+                </label>
+              ) : (
+                <>
+                  <input className="rounded-lg border px-2 py-2 text-sm" placeholder="Draft-এর নাম" value={propDraft.name} onChange={(e) => setPropDraft({ ...propDraft, name: e.target.value })} />
+                  <select className="rounded-lg border px-2 py-2 text-sm" value={propDraft.channel} onChange={(e) => setPropDraft({ ...propDraft, channel: e.target.value })}>
+                    <option value="email">Email</option>
+                    <option value="sms">SMS</option>
+                  </select>
+                  {propDraft.channel === "email" ? <input className="rounded-lg border px-2 py-2 text-sm" placeholder="Subject" value={propDraft.subject} onChange={(e) => setPropDraft({ ...propDraft, subject: e.target.value })} /> : null}
+                  <input className="min-w-52 flex-1 rounded-lg border px-2 py-2 text-sm" placeholder="Message body" value={propDraft.body} onChange={(e) => setPropDraft({ ...propDraft, body: e.target.value })} />
+                </>
+              )}
+              <button className="btn-primary btn-sm" onClick={() => createProposal()}>প্রস্তাব তৈরি করুন</button>
+            </div>
+            <div className="space-y-2">
+              {proposals.length === 0 ? <p className="text-sm text-slate-400">কোনো প্রস্তাব নেই। চ্যাটে কোনো published ক্যাম্পেইনের নাম ধরে “pause করে দাও” বললেও প্রস্তাব তৈরি হবে।</p> : proposals.map((p) => (
+                <div key={p.id} className="rounded-lg border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{p.title}</span>
+                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${p.status === "executed" ? "bg-green-100 text-green-700" : p.status === "failed" ? "bg-red-100 text-red-700" : p.status === "rejected" ? "bg-slate-200 text-slate-600" : "bg-amber-100 text-amber-700"}`}>{p.status}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">{p.preview}</p>
+                  {p.error ? <p className="mt-1 text-sm text-red-600">ত্রুটি: {p.error}</p> : null}
+                  {p.status === "proposed" ? (
+                    <div className="mt-2 flex gap-2">
+                      <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={() => decideProposal(p, "approve")}>অনুমোদন দিন</button>
+                      <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => decideProposal(p, "reject")}>প্রত্যাখ্যান</button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Right context panel (stacked below the canvas on mobile) ── */}
+        <aside className="w-full shrink-0 space-y-4 xl:w-80">
+          <div className="card space-y-3 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-semibold">অপেক্ষমাণ প্রস্তাব</h2>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{pendingProposals.length}</span>
+            </div>
+            {pendingProposals.length === 0 ? (
+              <p className="text-sm text-slate-400">কোনো pending প্রস্তাব নেই।</p>
+            ) : pendingProposals.map((p) => (
               <div key={p.id} className="rounded-lg border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">{p.title}</span>
-                  <span className={`rounded px-2 py-0.5 text-xs font-semibold ${p.status === "executed" ? "bg-green-100 text-green-700" : p.status === "failed" ? "bg-red-100 text-red-700" : p.status === "rejected" ? "bg-slate-200 text-slate-600" : "bg-amber-100 text-amber-700"}`}>{p.status}</span>
+                  <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">{p.status}</span>
                 </div>
                 <p className="mt-1 text-sm text-slate-600">{p.preview}</p>
-                {p.error ? <p className="mt-1 text-sm text-red-600">ত্রুটি: {p.error}</p> : null}
-                {p.status === "proposed" ? (
-                  <div className="mt-2 flex gap-2">
-                    <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={() => decideProposal(p, "approve")}>অনুমোদন দিন</button>
-                    <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => decideProposal(p, "reject")}>প্রত্যাখ্যান</button>
-                  </div>
-                ) : null}
+                <div className="mt-2 flex gap-2">
+                  <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={() => decideProposal(p, "approve")}>অনুমোদন দিন</button>
+                  <button className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => decideProposal(p, "reject")}>প্রত্যাখ্যান</button>
+                </div>
               </div>
             ))}
+            <a href="#ai-proposals" className="block text-sm font-medium text-blue-600 hover:underline">সব প্রস্তাব প্যানেলে যান ↓</a>
           </div>
-        </div>
 
-        <div className="card space-y-3 p-4">
-          <div>
-            <h2 className="font-semibold">Proactive সহকারী (দৈনিক ব্রিফিং)</h2>
-            <p className="text-sm text-slate-500">প্রতিদিনের ব্রিফিং পেতে Automations পেজে একটি <b>Daily AI Briefing</b> job চালু করুন — ব্রিফিংটি নোটিফিকেশন হিসেবে OWNER/ADMIN-দের কাছে যাবে, শুধু আসল ডেটা থেকে তৈরি। ডেটা না থাকলে ব্রিফিংয়ে সেটাই লেখা থাকবে। Critical anomaly ধরা পড়লে আলাদা alert যাবে।</p>
+          <div className="card space-y-3 p-4">
+            <div>
+              <h2 className="font-semibold">Proactive সহকারী (দৈনিক ব্রিফিং)</h2>
+              <p className="text-sm text-slate-500">প্রতিদিনের ব্রিফিং পেতে Automations পেজে একটি <b>Daily AI Briefing</b> job চালু করুন — ব্রিফিংটি নোটিফিকেশন হিসেবে OWNER/ADMIN-দের কাছে যাবে, শুধু আসল ডেটা থেকে তৈরি। ডেটা না থাকলে ব্রিফিংয়ে সেটাই লেখা থাকবে। Critical anomaly ধরা পড়লে আলাদা alert যাবে।</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={proactive.briefingEnabled} onChange={(e) => toggleProactive("briefingEnabled", e.target.checked)} />
+              দৈনিক ব্রিফিং চালু
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={proactive.anomalyAlertsEnabled} onChange={(e) => toggleProactive("anomalyAlertsEnabled", e.target.checked)} />
+              Critical anomaly alert চালু
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-primary btn-sm" onClick={() => runBriefingNow()}>এখনই ব্রিফিং পাঠান</button>
+              {briefingResult ? <span className="text-sm text-slate-600">{briefingResult}</span> : null}
+            </div>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={proactive.briefingEnabled} onChange={(e) => toggleProactive("briefingEnabled", e.target.checked)} />
-            দৈনিক ব্রিফিং চালু
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={proactive.anomalyAlertsEnabled} onChange={(e) => toggleProactive("anomalyAlertsEnabled", e.target.checked)} />
-            Critical anomaly alert চালু
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-primary btn-sm" onClick={() => runBriefingNow()}>এখনই ব্রিফিং পাঠান</button>
-            {briefingResult ? <span className="text-sm text-slate-600">{briefingResult}</span> : null}
+
+          <div className="card space-y-2 p-4">
+            <h2 className="font-semibold">ব্যবহার (এই session)</h2>
+            {provider ? <div className="flex items-center gap-1 text-xs">{providerBadge}</div> : null}
+            {sessionUsage.count === 0 ? (
+              <p className="text-sm text-slate-400">এই session-এ এখনো কোনো streamed উত্তর আসেনি।</p>
+            ) : (
+              <div className="space-y-1 text-sm text-slate-600">
+                <p>Streamed উত্তর: {sessionUsage.count}টি</p>
+                <p>Input tokens: {sessionUsage.inputTokens}</p>
+                <p>Output tokens: {sessionUsage.outputTokens}</p>
+                {sessionUsage.estimated ? <p className="text-xs font-semibold text-amber-700">~আনুমানিক (কমপক্ষে একটি উত্তরের usage আনুমানিক)</p> : null}
+              </div>
+            )}
+            <p className="text-xs text-slate-400">শুধু এই পেজে এই session-এ আসা streamed উত্তরের done usage-এর যোগফল — কোনো cap বা limit-এর সংখ্যা এখানে দেখানো হয় না, কারণ এই পেজের হাতে সেই ডেটা নেই।</p>
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   );

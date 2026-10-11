@@ -476,42 +476,44 @@ export default function WorkflowsPage() {
         newStep = { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}..." };
         break;
       case "wait":
-        newStep = { type: "wait", minutes: 60 };
+        newStep = { type: "wait", templateId: "", text: "", minutes: 60 };
         break;
       case "condition":
-        newStep = { type: "condition", field: "total", op: "gte", value: "1000" };
+        newStep = { type: "condition", templateId: "", text: "", field: "total", op: "gte", value: "1000" };
         break;
       case "branch":
-        newStep = { type: "branch", field: "total", op: "gte", value: "1000", then: [], else: [] };
+        newStep = { type: "branch", templateId: "", text: "", field: "total", op: "gte", value: "1000", then: [], else: [] };
         break;
       case "ai_generate":
         newStep = {
           type: "ai_generate",
+          templateId: "",
+          text: "",
           prompt: "গ্রাহকের জন্য একটি ব্যক্তিগত বার্তা লিখুন...",
           action: "add_conversation_note",
           outputField: "aiResult",
         };
         break;
       case "notify_channel":
-        newStep = { type: "notify_channel", url: "", title: "🚨 সতর্কতা", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে।" };
+        newStep = { type: "notify_channel", templateId: "", url: "", title: "🚨 সতর্কতা", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে।" };
         break;
       case "notify_team":
-        newStep = { type: "notify_team", role: "OWNER", title: "টিম অ্যালার্ট", text: "{{contactName}} এর অর্ডার দেখুন।" };
+        newStep = { type: "notify_team", templateId: "", role: "OWNER", title: "টিম অ্যালার্ট", text: "{{contactName}} এর অর্ডার দেখুন।" };
         break;
       case "assign_conversation":
-        newStep = { type: "assign_conversation", userId: "" };
+        newStep = { type: "assign_conversation", templateId: "", text: "", userId: "" };
         break;
       case "change_lead_stage":
-        newStep = { type: "change_lead_stage", stage: "qualified" };
+        newStep = { type: "change_lead_stage", templateId: "", text: "", stage: "qualified" };
         break;
       case "add_tag":
-        newStep = { type: "add_tag", target: "lead", tag: "vip" };
+        newStep = { type: "add_tag", templateId: "", text: "", target: "lead", tag: "vip" };
         break;
       case "create_follow_up":
-        newStep = { type: "create_follow_up", days: 3, text: "{{contactName}} এর ফলো-আপ" };
+        newStep = { type: "create_follow_up", templateId: "", days: 3, text: "{{contactName}} এর ফলো-আপ" };
         break;
       case "http_webhook":
-        newStep = { type: "http_webhook", url: "", secret: "" };
+        newStep = { type: "http_webhook", templateId: "", text: "", url: "", secret: "" };
         break;
       default:
         newStep = { type: "send_sms", templateId: "", text: "" };

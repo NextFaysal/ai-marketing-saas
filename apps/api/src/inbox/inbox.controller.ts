@@ -6,7 +6,7 @@ import { TelegramService } from "./channels/telegram.service";
 import { EmailChannelService } from "./channels/email.service";
 import { TIKTOK_APPLICATION_PACK } from "./channels/channel-adapter";
 import { AddNoteDto, AgentScheduleDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMediaDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, UpdateSignatureDto, RebalanceDto, WhatsAppTemplateDto } from "./inbox.dto";
-import { BulkConversationsDto, GhostDto, SendProductDto, ToneRewriteDto } from "./inbox.dto";
+import { BulkConversationsDto, GhostDto, SendProductDto, SnoozeConversationDto, ToneRewriteDto } from "./inbox.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -332,9 +332,31 @@ export class InboxController {
     return this.inbox.updateConversation(orgId, user.userId, id, dto);
   }
 
+  // CX5: one-row action bar actions — snooze / wake, manual
+  // take-over, hand back to the AI.
+  @Post("conversations/:conversationId/snooze") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  snooze(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SnoozeConversationDto) {
+    return this.inbox.snoozeConversation(orgId, user.userId, id, dto);
+  }
+
+  @Post("conversations/:conversationId/unsnooze") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  unsnooze(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.unsnoozeConversation(orgId, user.userId, id);
+  }
+
+  @Post("conversations/:conversationId/take-over") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  takeOver(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.takeOverConversation(orgId, user.userId, id);
+  }
+
+  @Post("conversations/:conversationId/back-to-ai") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  backToAi(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.backToAiConversation(orgId, user.userId, id);
+  }
+
   @Post("conversations/:conversationId/messages") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   send(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto) {
-    return this.inbox.sendReply(orgId, user.userId, id, dto.content, { signature: true });
+    return this.inbox.sendReply(orgId, user.userId, id, dto.content, { signature: true, aiAssisted: dto.aiAssisted, quickReplyId: dto.quickReplyId });
   }
 
   // Milestone 73 (Team T4): agent self-service.

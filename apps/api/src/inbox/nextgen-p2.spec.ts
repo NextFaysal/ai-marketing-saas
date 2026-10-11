@@ -90,6 +90,7 @@ function fakePrisma(opts: { threshold?: number | null; orders?: any[]; products?
     channelConversation: {
       findMany: async ({ where }: any) => convRows.filter((c) => matchesWhere(c, where)),
       count: async ({ where }: any) => convRows.filter((c) => matchesWhere(c, where)).length,
+      aggregate: async ({ where }: any) => ({ _sum: { unreadCount: convRows.filter((c) => matchesWhere(c, where)).reduce((s, c) => s + (c.unreadCount ?? 0), 0) } }),
       findFirst: async ({ where }: any) => convRows.find((c) => c.id === where.id && c.organizationId === where.organizationId) ?? null,
       update: async ({ where, data }: any) => { const row = convRows.find((c) => c.id === where.id); Object.assign(row, data); return row; },
     },
@@ -159,6 +160,9 @@ describe("smart folders: server-side counts", () => {
     expect(counts.vip).toBe(1);
     expect(counts.vipThresholdMinor).toBe("100000");
     expect(counts.slaFirstResponseMinutes).toBe(60);
+    // UX1 Q2: unreadTotal is the org-wide sum of stored unreadCount
+    // (c-breach 2 + c-young 1 = 3); the other org's 3 never leaks in.
+    expect(counts.unreadTotal).toBe(3);
   });
 
   it("vip count is 0 and threshold null when unset", async () => {

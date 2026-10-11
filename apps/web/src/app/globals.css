@@ -32,6 +32,9 @@
       radial-gradient(900px 420px at -10% 0%, rgba(139,92,246,0.06), transparent 55%),
       #f5f6fa;
     color: #0f172a;
+    /* UX1 Q1: Latin renders in Inter Variable; Bengali glyphs (absent
+       from Inter) fall through per-glyph to Hind Siliguri. */
+    font-family: "Inter Variable", Inter, "Hind Siliguri", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
   }
   ::selection { background: rgba(99,102,241,0.25); }
@@ -190,7 +193,196 @@
   .msg-bubble-own { @apply rounded-tr-md text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
   .date-sep { @apply flex items-center gap-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400; }
   .date-sep::before, .date-sep::after { content: ""; height: 1px; flex: 1; background: rgba(226, 232, 240, 0.8); }
+
+  /* ---------- Inbox Design v2 primitives (additive) ---------- */
+
+  /* Live pulse dot next to the Inbox title (realtime stream cue). */
+  .live-pulse { @apply relative inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500; }
+  .live-pulse::after { content: ""; position: absolute; inset: -4px; border-radius: 9999px; border: 2px solid rgba(16, 185, 129, 0.45); animation: inbox-pulse 2s ease-out infinite; }
+
+  /* Segmented view switcher (কথোপকথন / বোর্ড / মিডিয়া / সেটিংস). */
+  .view-switch { @apply inline-flex items-center gap-0.5 rounded-full bg-slate-100 p-1 ring-1 ring-inset ring-slate-200/70; }
+  .view-switch-btn { @apply inline-flex min-h-[32px] items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-600 transition duration-150 hover:text-slate-900 active:scale-[0.97]; }
+  .view-switch-btn-active { @apply text-white shadow-sm hover:text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Power stat chip (header strip). Counts come only from the
+     already-fetched folderCounts / board data — never invented. */
+  .stat-chip { @apply inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition duration-150 hover:ring-slate-400 active:scale-[0.97]; }
+  .stat-chip-count { @apply rounded-full bg-slate-100 px-1.5 py-px text-[11px] font-bold text-slate-700; }
+  .stat-chip-active { @apply text-white ring-transparent hover:ring-transparent; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .stat-chip-active .stat-chip-count { background: rgba(255, 255, 255, 0.22); color: #fff; }
+  .stat-chip-danger { @apply text-red-700 ring-red-200 hover:ring-red-300; }
+  .stat-chip-danger .stat-chip-count { @apply bg-red-50 text-red-700; }
+
+  /* Conversation list card v2. */
+  .conv-card { @apply relative block w-full rounded-2xl border border-slate-200/70 bg-white px-3 py-3 text-left shadow-sm transition duration-150 hover:shadow-card-hover hover:-translate-y-px; }
+  .conv-card-active { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 70%); box-shadow: var(--shadow-card-v2); }
+  .conv-card-active::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 9999px; background-image: linear-gradient(180deg, var(--brand-from), var(--brand-to)); }
+  .conv-avatar { @apply relative flex h-10 w-10 shrink-0 select-none items-center justify-center rounded-full text-[13px] font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .conv-dot { @apply absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white; }
+  .conv-unread { @apply inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .sla-badge { @apply inline-flex items-center gap-0.5 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-inset ring-red-200; }
+  .mood-dot { @apply inline-block h-2 w-2 shrink-0 rounded-full; }
+  .agent-mini { @apply inline-flex h-5 w-5 shrink-0 select-none items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-600 ring-1 ring-white; }
+
+  /* Thread v2. */
+  .thread-head { @apply -mx-4 -mt-4 rounded-t-2xl border-b border-slate-200/70 bg-white/85 px-4 pb-3 pt-4 backdrop-blur; background-image: linear-gradient(180deg, var(--brand-soft), rgba(255,255,255,0) 130%); }
+  .thread-avatar { @apply flex h-10 w-10 shrink-0 select-none items-center justify-center rounded-full text-[13px] font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .status-switch { @apply inline-flex items-center gap-0.5 rounded-full bg-slate-100 p-0.5 ring-1 ring-inset ring-slate-200/70; }
+  .status-switch-btn { @apply rounded-full px-2.5 py-1 text-xs font-semibold text-slate-500 transition duration-150 hover:text-slate-900; }
+  .status-switch-btn-active { @apply bg-slate-900 text-white shadow-sm hover:text-white; }
+  .toolbar-v2 { @apply flex shrink-0 flex-wrap items-center gap-1.5 rounded-2xl bg-slate-50/80 px-2 py-1.5 ring-1 ring-inset ring-slate-200/60; }
+  .toolbar-divider { @apply mx-0.5 hidden h-5 w-px bg-slate-200 sm:block; }
+  .inbox-msg-in { @apply rounded-2xl rounded-tl-md border border-slate-200/80 bg-white px-3.5 py-2.5 text-sm shadow-sm; }
+  .inbox-msg-out { @apply rounded-2xl rounded-tr-md px-3.5 py-2.5 text-sm text-white shadow; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .inbox-msg-failed { @apply rounded-2xl rounded-tr-md bg-red-100 px-3.5 py-2.5 text-sm shadow-sm; }
+  .thread-scroll { background: radial-gradient(700px 260px at 50% -80px, var(--brand-soft), transparent 65%), #f8fafc; }
+
+  /* Composer v2: floating shell; note mode keeps its amber form. */
+  .composer-shell { @apply rounded-3xl bg-white p-2.5 ring-1 ring-slate-200/80; box-shadow: var(--shadow-pop); }
+  .composer-group { @apply inline-flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-50 px-1.5 py-1 ring-1 ring-inset ring-slate-200/60; }
+  .composer-group-ai { background: var(--brand-soft); }
+  .composer-group-label { @apply px-1 text-[10px] font-bold uppercase tracking-wider text-slate-400; }
+  .btn-ai { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-white shadow-sm transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Context panel v2. */
+  .ctx-hero { @apply relative overflow-hidden rounded-2xl p-4 text-white; background-image: radial-gradient(420px 180px at 90% -30%, rgba(255,255,255,0.22), transparent 60%), linear-gradient(120deg, var(--brand-from), var(--brand-to)); box-shadow: var(--shadow-card-v2); }
+  .ctx-hero-avatar { @apply flex h-12 w-12 shrink-0 select-none items-center justify-center rounded-2xl bg-white/15 text-base font-bold text-white ring-1 ring-inset ring-white/25 backdrop-blur-sm; }
+  .ctx-tile { @apply rounded-2xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200/50 transition duration-150 hover:bg-white hover:shadow-sm; }
+  .ctx-tile-label { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-400; }
+  .ctx-tile-value { @apply mt-0.5 text-[15px] font-bold tracking-tight text-slate-900; }
+  .ctx-order { @apply rounded-2xl bg-white px-3 py-2.5 text-xs ring-1 ring-slate-200/70 shadow-sm transition duration-150 hover:shadow-card-hover; }
+
+  /* Board + Media v2. */
+  .board-col { @apply min-h-[120px] rounded-2xl p-2 ring-1 ring-inset ring-slate-200/50; background: linear-gradient(180deg, #f8fafc, #ffffff); }
+  .board-col-head { @apply mb-1 flex items-center justify-between gap-2 px-1; }
+  .board-stage-dot { @apply inline-block h-2.5 w-2.5 shrink-0 rounded-full shadow-sm; }
+  .board-count { @apply rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200; }
+  .board-card { @apply cursor-pointer rounded-xl bg-white p-2.5 shadow-sm ring-1 ring-slate-200/60 transition duration-150 hover:shadow-card-hover hover:-translate-y-px; }
+  .board-card:hover { border-color: var(--brand-ring); }
+  .media-card { @apply rounded-2xl bg-white p-3 text-left ring-1 ring-slate-200/70 shadow-sm transition duration-150 hover:shadow-card-hover hover:-translate-y-px; }
+  .media-card:hover { border-color: var(--brand-ring); }
+  .media-icon-tile { @apply flex h-10 w-10 items-center justify-center rounded-2xl text-lg shadow-sm; background: var(--brand-soft); }
+
+  /* Indigo badge (Command Profile stage chip in the context panel). */
+  .badge-indigo { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200; }
+
+  /* ---------- Inbox Design v3 primitives (additive, deep polish) ---------- */
+
+  /* Micro-motion entrance. The global reduced-motion block below
+     collapses every animation to 0.01ms, so this settles instantly
+     for reduced-motion users with no extra code. */
+  .fade-rise { animation: fade-rise 0.35s ease both; }
+
+  /* Thread canvas tint: a whisper of the org's brand colour under
+     the white incoming bubbles (color-mix over the v2 thread-scroll
+     radial accent). */
+  .thread-canvas { background-color: color-mix(in srgb, var(--brand-from) 5%, #f8fafc); }
+
+  /* Internal note card (thread): warm amber gradient + lock header —
+     visually unmistakable as team-only, never a customer message. */
+  .note-card { @apply rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ring-1 ring-inset ring-amber-200/80; background: linear-gradient(135deg, #fffbeb, #fef3c7 140%); }
+  .note-author { @apply inline-flex h-5 w-5 shrink-0 select-none items-center justify-center rounded-full bg-amber-200/80 text-[9px] font-bold text-amber-800; }
+
+  /* AI Draft card: brand-tinted surface + brand ring, distinct from
+     both customer bubbles and amber notes. */
+  .draft-card { @apply rounded-2xl bg-white p-3 shadow-sm; border: 1px solid var(--brand-ring); background-image: linear-gradient(180deg, var(--brand-soft), #ffffff 55%); }
+
+  /* Filter row v2 (list pane, second row). */
+  .filter-select { @apply w-auto flex-1 rounded-xl border border-slate-300/90 bg-white px-2.5 py-2 text-sm text-slate-900 shadow-sm transition hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15; }
+  .toggle-pill { @apply inline-flex min-h-[34px] items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition duration-150 hover:ring-slate-400 active:scale-[0.97]; }
+  .toggle-pill-active { @apply text-white ring-transparent hover:ring-transparent; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .tag-input-icon { @apply pointer-events-none absolute left-2.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-[10px]; background: var(--brand-soft); }
+
+  /* Modal v2 (command palette + shortcuts). */
+  .modal-backdrop { @apply bg-slate-900/50 backdrop-blur-sm; }
+  .modal-shell { @apply w-full rounded-3xl bg-white; box-shadow: var(--shadow-pop); }
+  .modal-head { @apply border-b border-slate-200/70 px-4 py-3 text-sm font-semibold; background-image: linear-gradient(90deg, var(--brand-soft), transparent 70%); }
+  .modal-item { @apply flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 transition duration-150 hover:text-slate-900; }
+  .modal-item:hover { background-image: linear-gradient(90deg, var(--brand-soft), transparent 75%); }
+  .kbd { @apply inline-flex min-w-[22px] items-center justify-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-700 ring-1 ring-inset ring-slate-300/80; box-shadow: 0 1px 0 rgba(15, 23, 42, 0.12); }
+
+  /* Manage view v2. */
+  .manage-card { @apply card p-5; }
+  .manage-head { @apply flex items-center gap-3; }
+  .manage-icon { @apply flex h-10 w-10 shrink-0 select-none items-center justify-center rounded-2xl text-lg shadow-sm ring-1 ring-inset ring-slate-200/50; background: var(--brand-soft); }
+  .manage-nav { @apply sticky top-0 z-30 flex flex-wrap items-center gap-1.5 rounded-2xl bg-white/85 p-1.5 shadow-sm ring-1 ring-slate-200/70 backdrop-blur; }
+  .manage-nav-btn { @apply inline-flex min-h-[32px] items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-600 transition duration-150 hover:text-slate-900 active:scale-[0.97]; }
+  .manage-nav-btn:hover { background: var(--brand-soft); }
+  .setting-row { @apply flex flex-col gap-1.5 rounded-2xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-200/50 sm:flex-row sm:items-center sm:justify-between sm:gap-4; }
+  .setting-row-label { @apply text-sm font-medium text-slate-700 sm:max-w-[46%]; }
+  .setting-row-help { @apply mt-0.5 block text-[11px] font-normal leading-snug text-slate-400; }
+  .setting-row-control { @apply block w-full shrink-0 sm:w-56; }
+
+  /* Context panel lower half v2 (assign/tags/notes/order form). */
+  .ctx-card { @apply card space-y-3 p-4; }
+  .ctx-subcard { @apply rounded-2xl bg-slate-50/80 p-3 ring-1 ring-inset ring-slate-200/50; }
+
+  /* ---------- Competitors Design v2 primitives (additive) ---------- */
+
+  /* Brand gradient helpers. Every colour below derives from the two
+     white-label variables, exactly like the inbox v2 primitives. */
+  .comp-brand-bg { background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .comp-title-icon { @apply flex h-11 w-11 shrink-0 select-none items-center justify-center rounded-2xl text-xl text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .comp-icon-tile { @apply flex shrink-0 select-none items-center justify-center rounded-2xl; background: var(--brand-soft); color: var(--brand-from); }
+  .comp-avatar { @apply flex h-11 w-11 shrink-0 select-none items-center justify-center rounded-2xl text-base font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Sticky tab rail: one row, horizontally scrollable with scroll-snap
+     on small screens (never wraps), ≥40px touch targets. */
+  .comp-tab-rail { @apply sticky top-0 z-30 flex gap-1.5 overflow-x-auto rounded-2xl bg-white/85 p-1.5 shadow-sm ring-1 ring-slate-200/70 backdrop-blur; scroll-snap-type: x proximity; scrollbar-width: none; }
+  .comp-tab-rail::-webkit-scrollbar { display: none; }
+  .comp-tab-btn { @apply inline-flex min-h-[40px] shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-bold text-slate-600 transition duration-150 hover:text-slate-900 active:scale-[0.97]; }
+  .comp-tab-btn:not(.comp-tab-btn-active):hover { background: var(--brand-soft); }
+  .comp-tab-btn-active { @apply text-white shadow-sm hover:text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .comp-tab-count { @apply rounded-full bg-slate-100 px-1.5 py-px text-[11px] font-bold text-slate-700; }
+  .comp-tab-btn-active .comp-tab-count { background: rgba(255, 255, 255, 0.22); color: #fff; }
+  .comp-tab-note { @apply rounded-full px-1.5 py-px text-[9px] font-bold; }
+  .comp-tab-btn-active .comp-tab-note { background: rgba(255, 255, 255, 0.22); color: #fff; }
+
+  /* Selected competitor card: brand ring + soft wash (conv-card pattern). */
+  .comp-card-active { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 70%); box-shadow: var(--shadow-card-v2); }
+
+  /* Brand-soft action button (auto-sync, rule test, telegram test). */
+  .comp-soft-btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 transition duration-150 hover:text-slate-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50; background: var(--brand-soft); }
+  .comp-soft-btn:hover { background: var(--brand-soft-strong); }
+
+  /* Small filter chip active state (ad filter "সব", platform "সব"). */
+  .comp-chip-active { @apply text-white shadow-sm hover:text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Metric card with a brand top rule (SEO / funnel overview numbers —
+     values always come from the fetched report, never invented). */
+  .comp-metric { @apply card relative overflow-hidden p-4; }
+  .comp-metric::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background-image: linear-gradient(90deg, var(--brand-from), var(--brand-to)); }
+
+  /* Dark intelligence panel: the old slate-900→indigo-950 hero panels,
+     re-derived from the brand pair mixed into ink so white-label flows
+     while the panel stays dark. */
+  .comp-dark { @apply relative overflow-hidden rounded-2xl text-white; background-image: radial-gradient(480px 200px at 88% -30%, rgba(255, 255, 255, 0.16), transparent 60%), linear-gradient(135deg, color-mix(in srgb, var(--brand-from) 52%, #0f172a), color-mix(in srgb, var(--brand-to) 42%, #0f172a)); box-shadow: var(--shadow-card-v2); }
+  .comp-dark-panel { @apply rounded-xl bg-white/10 p-4 ring-1 ring-inset ring-white/15; }
+  .comp-dark-label { @apply text-[11px] font-bold uppercase tracking-wider text-white/70; }
+
+  /* Brand-soft inset panel (counter-ad hook breakdown, video hook card). */
+  .comp-soft-panel { @apply rounded-2xl p-4; background: var(--brand-soft); border: 1px solid var(--brand-ring); }
+
+  /* Enabled automation rule card. */
+  .comp-rule-on { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 70%); box-shadow: var(--shadow-card-v2); }
+  .comp-switch-on { background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Modal v2 sheet for this page: bottom sheet on small screens,
+     centred rounded-3xl dialog from sm up. Backdrop reuses the
+     shared .modal-backdrop primitive. */
+  .comp-sheet { @apply w-full overflow-y-auto bg-white p-5 sm:p-6; border-radius: 1.5rem 1.5rem 0 0; max-height: 94dvh; box-shadow: var(--shadow-pop); }
+  @media (min-width: 640px) { .comp-sheet { border-radius: 1.5rem; } }
+
+  /* Pricing matrix: first column stays visible while the table
+     scrolls sideways on small screens. */
+  .table-wrap .comp-sticky-col { position: sticky; left: 0; z-index: 1; background: #ffffff; box-shadow: 1px 0 0 rgba(226, 232, 240, 0.9); }
+  .table-wrap thead .comp-sticky-col { z-index: 2; background: #f8fafc; }
 }
+
+@keyframes fade-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes inbox-pulse { 0% { transform: scale(0.7); opacity: 1; } 100% { transform: scale(1.25); opacity: 0; } }
 
 @keyframes skel-wave { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
@@ -205,3 +397,38 @@
   }
   .skeleton::after { animation: none; }
 }
+
+/* ---------- AI Assistant Design v2 primitives (AP1, additive) ---------- */
+/* Plain CSS on the brand tokens (no @apply) so this block can live at
+   the end of the file without touching any existing rule. Values in
+   these components always come from stored tool-result displays. */
+.ai-rich { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.ai-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.ai-stat-tile { border-radius: 14px; background: #ffffff; padding: 10px 12px; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); display: flex; flex-direction: column; gap: 2px; }
+.ai-stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); }
+.ai-stat-value { font-size: 17px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; color: var(--ink-strong); word-break: break-word; }
+.ai-stat-hint { font-size: 11px; color: var(--ink-faint); }
+.ai-delta-up { color: #047857; font-weight: 700; }
+.ai-delta-down { color: #dc2626; font-weight: 700; }
+.ai-bars { display: flex; flex-direction: column; gap: 7px; border-radius: 14px; background: #ffffff; padding: 10px 12px; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); }
+.ai-bar-row { display: grid; grid-template-columns: minmax(70px, 34%) 1fr auto; align-items: center; gap: 8px; font-size: 12px; }
+.ai-bar-label { color: var(--ink-body); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-bar-track { height: 8px; border-radius: 9999px; background: #f1f5f9; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.6); }
+.ai-bar-fill { display: block; height: 100%; border-radius: 9999px; background-image: linear-gradient(90deg, var(--brand-from), var(--brand-to)); transition: width 0.5s ease; }
+.ai-bar-value { color: var(--ink-strong); font-weight: 700; white-space: nowrap; }
+.ai-table-wrap { overflow-x: auto; border-radius: 14px; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); }
+.ai-table { width: 100%; font-size: 13px; }
+.ai-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); background: #f8fafc; }
+.ai-table td { padding: 8px 12px; border-top: 1px solid #f1f5f9; color: var(--ink-body); }
+.ai-tool-card { margin-top: 10px; border-radius: 14px; background: rgba(255, 255, 255, 0.75); box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.9); padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-tool-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 9999px; background: #f1f5f9; padding: 2px 8px; font-size: 11px; font-weight: 600; color: var(--ink-body); }
+.ai-tool-status { border-radius: 9999px; padding: 1px 6px; font-size: 10px; font-weight: 700; }
+.ai-tool-status-ok { background: #ecfdf5; color: #047857; }
+.ai-tool-status-err { background: #fef2f2; color: #b91c1c; }
+.ai-tool-status-stopped { background: #fffbeb; color: #b45309; }
+.ai-stream-caret::after { content: "▍"; margin-left: 1px; color: var(--brand-from); animation: ai-caret-blink 1s steps(2, start) infinite; }
+.ai-step-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted); }
+.ai-step-dot { width: 8px; height: 8px; border-radius: 9999px; flex-shrink: 0; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); animation: ai-caret-blink 1.1s ease-in-out infinite; }
+.ai-composer-shell { border-radius: 24px; background: #ffffff; padding: 10px; box-shadow: var(--shadow-pop); border: 1px solid rgba(226, 232, 240, 0.8); }
+.ai-tag-chip { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 7px; font-size: 10px; font-weight: 700; background: var(--brand-soft); color: var(--brand-from); }
+@keyframes ai-caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }

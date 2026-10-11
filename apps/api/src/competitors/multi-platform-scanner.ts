@@ -1,9 +1,21 @@
 /**
- * Multi-Platform Competitor Ad & Search Intelligence Scanner
- * Supports:
- * 1. Google Ads (Google Transparency Center & SERP Ads)
- * 2. TikTok Commercial Content Library & Creative Center
- * 3. Bing Search & Sponsored Results
+ * Multi-Platform Competitor Search Intelligence Scanner
+ *
+ * Honesty boundary (HF1, 2026-10-12): this scanner only returns records it
+ * actually fetched. Platforms with no real public data source wired return
+ * an empty list — they NEVER fabricate ad copy, dates, or engagement.
+ *
+ * What is real here:
+ * - Google: a live fetch of DuckDuckGo's public HTML results for the
+ *   competitor's name/domain. These are ORGANIC SEARCH RESULTS, not ads —
+ *   every record is labeled as such (`raw.sourceType: "organic_search"`
+ *   and a "[Google Search Result]" creative prefix). A failed fetch or
+ *   zero matches returns [].
+ * - TikTok / Bing: no official public data source is connected, so both
+ *   return []. The sync layer reports them as unavailable instead of
+ *   inventing records (they used to fabricate ads — removed by HF1;
+ *   already-persisted fabrications are cleaned by
+ *   scripts/cleanup-fabricated-competitor-ads.ts).
  */
 
 export interface NormalizedCompetitorAd {
@@ -24,14 +36,15 @@ export class MultiPlatformScanner {
   constructor(private readonly fetchFn: typeof fetch = fetch) {}
 
   /**
-   * Google Ads Intelligence
-   * Extracts search ads, headlines, descriptions, and landing page URLs.
+   * Google organic search presence (NOT Google Ads).
+   * Fetches public DuckDuckGo HTML results and labels every record as an
+   * organic search result. No start date is known for a search result, so
+   * none is invented. Fetch failure or zero matches -> [].
    */
   async scanGoogleAds(competitorName: string, domain?: string): Promise<NormalizedCompetitorAd[]> {
     const results: NormalizedCompetitorAd[] = [];
     const query = domain ? `${domain}` : `${competitorName} official site`;
-    
-    // We query Google search with standard user-agent to inspect public sponsored snippets and ads
+
     try {
       const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
       const res = await this.fetchFn(searchUrl, {
@@ -43,9 +56,8 @@ export class MultiPlatformScanner {
 
       if (res.ok) {
         const html = await res.text();
-        // Look for ad / sponsored / official promotional snippets
         const matches = [...html.matchAll(/<a class="result__url"[^>]*href="([^"]+)"[^>]*>[\s\S]*?<h2[^>]*>([\s\S]*?)<\/h2>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi)];
-        
+
         for (let i = 0; i < Math.min(matches.length, 3); i++) {
           const match = matches[i];
           const rawUrl = match[1];
@@ -58,90 +70,35 @@ export class MultiPlatformScanner {
             pageName: `${competitorName} (Google Search)`,
             platform: "google",
             platforms: ["google", "google_search"],
-            startedAt: new Date(Date.now() - (i + 1) * 7 * 86400000), // estimated active running
+            // No startedAt: a search result has no known start date.
             isActive: true,
-            creativeText: `[Google Search Ad / Headline]\n${title}\n\n${snippet}`,
+            creativeText: `[Google Search Result]\n${title}\n\n${snippet}`,
             linkUrl,
             snapshotUrl: `https://adstransparency.google.com/?region=anywhere&domain=${domain ? encodeURIComponent(domain) : encodeURIComponent(competitorName)}`,
-            raw: { source: "google", title, snippet, domain },
+            raw: { source: "google", sourceType: "organic_search", title, snippet, domain },
           });
         }
       }
     } catch {
-      // Fallback structured simulation if network is blocked
-    }
-
-    if (results.length === 0) {
-      results.push(this.fallbackGoogleAd(competitorName, domain));
+      // Network failure is an honest empty result, never a fabricated ad.
     }
 
     return results;
   }
 
   /**
-   * TikTok Creative & Commercial Content Scanner
-   * Tracks competitor video promotions, hooks, and trending sales captions.
+   * TikTok: no official public data source is wired, so this returns [].
+   * Callers surface the platform as unavailable; nothing is synthesized.
    */
-  async scanTikTokAds(competitorName: string): Promise<NormalizedCompetitorAd[]> {
-    const results: NormalizedCompetitorAd[] = [];
-    const sanitizedName = competitorName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-
-    // Generate verified commercial creative records for the competitor on TikTok
-    const daysAgo = Math.floor(Math.random() * 15) + 5;
-    const adId = `tiktok_${Buffer.from(`${sanitizedName}_creative`).toString("base64url").slice(0, 24)}`;
-
-    results.push({
-      externalAdId: adId,
-      pageName: `@${sanitizedName} (TikTok Commercial)`,
-      platform: "tiktok",
-      platforms: ["tiktok"],
-      startedAt: new Date(Date.now() - daysAgo * 86400000),
-      isActive: true,
-      creativeText: `🔥 TikTok Video Ad Hook: "সবাই যখন এই সমস্যা ফেস করছে, তখন আমরা নিয়ে আসলাম ইনস্ট্যান্ট সমাধান!"\n\n🎯 Caption: Best deal for ${competitorName} lovers! অর্ডার করুন এখনই সীমিত সময়ের ডিসকাউন্টে। ক্যাশ অন ডেলিভারি এভেইলেবল।\n\n🏷️ Hashtags: #${sanitizedName} #viral #foryou #ecommercebd #shopping`,
-      linkUrl: `https://www.tiktok.com/tag/${sanitizedName}`,
-      snapshotUrl: `https://ads.tiktok.com/business/creativecenter/inspiration/popular/pc/en?period=7`,
-      raw: { source: "tiktok", competitorName, daysAgo },
-    });
-
-    return results;
+  async scanTikTokAds(_competitorName: string): Promise<NormalizedCompetitorAd[]> {
+    return [];
   }
 
   /**
-   * Bing Search & Microsoft Advertising Scanner
+   * Bing: no official public data source is wired, so this returns [].
+   * Callers surface the platform as unavailable; nothing is synthesized.
    */
-  async scanBingAds(competitorName: string, domain?: string): Promise<NormalizedCompetitorAd[]> {
-    const results: NormalizedCompetitorAd[] = [];
-    const adId = `bing_${Buffer.from(`${competitorName}_bing`).toString("base64url").slice(0, 24)}`;
-
-    results.push({
-      externalAdId: adId,
-      pageName: `${competitorName} (Bing / Microsoft Ads)`,
-      platform: "bing",
-      platforms: ["bing", "microsoft_ads"],
-      startedAt: new Date(Date.now() - 12 * 86400000),
-      isActive: true,
-      creativeText: `[Bing Sponsored Ad]\n${competitorName} Official Store - Best Deals & Fast Delivery.\nShop authentic collection online with cash on delivery & easy exchange.`,
-      linkUrl: domain ? `https://${domain}` : undefined,
-      snapshotUrl: `https://www.bing.com/search?q=${encodeURIComponent(`${competitorName} official site`)}`,
-      raw: { source: "bing", competitorName, domain },
-    });
-
-    return results;
-  }
-
-  private fallbackGoogleAd(competitorName: string, domain?: string): NormalizedCompetitorAd {
-    const targetDomain = domain || `${competitorName.toLowerCase().replace(/[^a-z0-9]/g, "")}.com`;
-    return {
-      externalAdId: `google_${Buffer.from(`${competitorName}_ad`).toString("base64url").slice(0, 24)}`,
-      pageName: `${competitorName} (Google Search)`,
-      platform: "google",
-      platforms: ["google", "google_search"],
-      startedAt: new Date(Date.now() - 10 * 86400000),
-      isActive: true,
-      creativeText: `[Google Search Ad]\nOfficial ${competitorName} - অর্ডার করুন হোম ডেলিভারিতে\nসেরা কোয়ালিটির আসল পণ্য কিনুন নিশ্চিন্তে। সারা দেশে ফ্রি ডেলিভারি ও দ্রুত সাপোর্ট।`,
-      linkUrl: `https://${targetDomain}`,
-      snapshotUrl: `https://adstransparency.google.com/?region=anywhere&domain=${encodeURIComponent(targetDomain)}`,
-      raw: { source: "google", competitorName, domain: targetDomain },
-    };
+  async scanBingAds(_competitorName: string, _domain?: string): Promise<NormalizedCompetitorAd[]> {
+    return [];
   }
 }

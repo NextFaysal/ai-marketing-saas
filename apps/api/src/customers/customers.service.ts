@@ -141,8 +141,17 @@ export class CustomersService {
     if (this.risk) {
       try { risk = await this.risk.forCustomer(organizationId, customer); } catch { risk = null; }
     }
+    // CX1: courier delivery record (delivery success rate +
+    // per-courier split) — an additive sibling of the risk block,
+    // computed by the same RiskService from the same history. It
+    // degrades to null exactly like the risk block does.
+    let courierRecord: any = null;
+    if (this.risk) {
+      try { courierRecord = await this.risk.courierRecordForCustomer(organizationId, customer.id); } catch { courierRecord = null; }
+    }
     return {
       risk,
+      courierRecord,
       customer: { ...customer, name: customerName(customer) },
       orders: orders.map((o: any) => ({
         ...o,

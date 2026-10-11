@@ -1,12 +1,12 @@
 import React from "react";
 
-export function EmptyState({ title, description, actionLabel }: { title: string; description: string; actionLabel?: string }) {
+export function EmptyState({ title, description, actionLabel, onAction }: { title: string; description: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-10 text-center">
       <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-lg">✦</div>
       <div className="font-semibold text-slate-900">{title}</div>
       <div className="mx-auto mt-1 max-w-md text-sm text-slate-500">{description}</div>
-      {actionLabel ? <div className="mt-3 text-sm font-semibold text-indigo-600">{actionLabel}</div> : null}
+      {actionLabel ? (onAction ? <button type="button" onClick={onAction} className="mt-3 text-sm font-semibold text-indigo-600 hover:underline">{actionLabel}</button> : <div className="mt-3 text-sm font-semibold text-indigo-600">{actionLabel}</div>) : null}
     </div>
   );
 }

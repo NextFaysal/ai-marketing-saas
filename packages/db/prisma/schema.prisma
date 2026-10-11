@@ -187,6 +187,10 @@ model BusinessProfile {
   // behaviour. Instructions steer style/conduct only — they
   // can never override the verified-facts discipline.
   aiInstructions      String?
+  // CX2 (AI Instructions Desk): the persistent DRAFT working copy.
+  // Consumers keep reading aiInstructions (the published text) only;
+  // the draft reaches customers solely through an explicit publish.
+  aiInstructionsDraft String?
   aiReplyLanguage     String?
   // Billing Package B5: who receives invoices/reminders
   // (up to 3 extra emails) + the buyer block on invoices.
@@ -978,6 +982,27 @@ model ChannelConversation {
   // an escalation (human ask, complaint, dispute, high value...).
   // A human reply resumes it.
   autoReplyPaused Boolean @default(false)
+  // CX3: wait-before-answering (debounce). When an AI reply is
+  // deferred, autoReplyDueAt is when the sweep may fire it and
+  // autoReplyBatchSince marks the start of the message batch the
+  // reply must cover. Both null = no pending deferred reply.
+  autoReplyDueAt DateTime?
+  autoReplyBatchSince DateTime?
+  // CX4: handover queue — the escalation reason and when the
+  // handover started (waiting clock), written by escalateAutopilot
+  // alongside autoReplyPaused. Null on pre-CX4 / never-escalated
+  // rows; the queue UI falls back to updatedAt for those.
+  handoverReason String?
+  handoverAt     DateTime?
+  // CX4: timed assignment — assignedAt is when the current
+  // assignment started (the sweep's "replied since assignment"
+  // reference), assignedUntil the timer deadline and
+  // assignmentKind "timed" | "normal" (null when unassigned).
+  assignedUntil  DateTime?
+  assignmentKind String?
+  assignedAt     DateTime?
+  // CX5: snooze — the conversation is parked until this time.
+  snoozedUntil   DateTime?
   // Unified Inbox U4: email lane — the thread's subject line.
   subject         String?
   // Unified Inbox U5: sales pipeline stage (new | talking |
@@ -1068,6 +1093,11 @@ model ChannelMessage {
   error          String?
   sentByUserId   String?
   sentByAiDraft  Boolean  @default(false)
+  // CX11ac: reply attribution — true when this outbound message was
+  // sent with AI assistance (ghost text / tone rewrite), and the
+  // QuickReply it came from, when it came from one.
+  sentWithAiAssist Boolean @default(false)
+  quickReplyId   String?
   platformTimestamp DateTime?
   createdAt      DateTime @default(now())
   conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1087,6 +1117,8 @@ model MessageDraft {
   content        String
   status         String   @default("suggested") // suggested | sent | dismissed
   provider       String // openai | anthropic | gemini | dev-template
+  // CX11ac: true when the agent edited this draft before sending it.
+  sentEdited     Boolean  @default(false)
   createdByUserId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1595,6 +1627,8 @@ model QuickReply {
   organizationId String
   title          String
   content        String
+  // CX11ac: how many times this quick reply has been used to send.
+  timesUsed      Int      @default(0)
   createdByUserId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1650,6 +1684,15 @@ model InboxSetting {
   // threshold (minor units) for autopilot.
   perChannelModes          Json?
   escalationThresholdMinor Int?
+  // CX3: seconds the autopilot waits before composing a reply
+  // (0 = immediate, the pre-CX3 behaviour). aiReplyDelayByChannel
+  // optionally overrides per channel: { "whatsapp": 45, ... }.
+  aiReplyDelaySeconds    Int      @default(0)
+  aiReplyDelayByChannel Json?
+  // CX12d: channel-wise AI schedule — { "whatsapp": { enabled,
+  // windows: [{ days: [0..6], start: "HH:mm", end: "HH:mm" }] } }
+  // in the organization's timezone. Null = no schedule anywhere.
+  aiScheduleByChannel   Json?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
@@ -1686,6 +1729,9 @@ model CourierShipment {
   recipientAddress   String
   lastNotifiedStatus String?
   lastCheckedAt      DateTime?
+  // CX6: public live-tracking token (ReportShare pattern — minted
+  // lazily on first customer update/share, unique when present).
+  trackingToken      String?  @unique
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -2641,6 +2687,14 @@ model SocialComment {
   privateDmText     String?
   confidenceScore   Float    @default(0.95)
   metadata          Json?
+  // CX3: when the (already-existing) replyDelaySeconds setting
+  // defers this comment's AI reply, aiReplyDueAt is when the
+  // comment sweep may fire it. aiReplyBatchOf is set on comments
+  // whose reply was covered by a later same-author/same-post
+  // comment's batched reply (value = that comment's
+  // externalCommentId).
+  aiReplyDueAt      DateTime?
+  aiReplyBatchOf    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -2670,5 +2724,44 @@ model SocialReplySetting {
   updatedAt          DateTime @updatedAt
 
   @@index([organizationId])
+}
+
+// ==========================================
+// CX2: AI Instructions Desk — versioned publish
+// history + the questions the autopilot could
+// not answer. Plain organizationId, no relation
+// (SocialComment/SocialReplySetting style).
+// ==========================================
+
+model AiInstructionVersion {
+  id             String   @id @default(uuid())
+  organizationId String
+  version        Int
+  instructions   String
+  replyLanguage  String?
+  note           String?
+  publishedById  String
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, version])
+  @@index([organizationId, version])
+}
+
+model AiUnansweredQuestion {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  conversationId     String?
+  channel            String
+  questionText       String
+  normalizedQuestion String
+  reason             String // no_answer | knowledge_gap | low_confidence
+  status             String    @default("open") // open | resolved | ignored
+  count              Int       @default(1)
+  lastSeenAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, normalizedQuestion])
 }
 

@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto, MineReviewsDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -112,9 +112,11 @@ export class CompetitorsController {
     return this.competitors.deconstructVideoScript(orgId, user.userId, id, dto);
   }
 
-  @Get(":competitorId/reviews-mine")
-  reviewsMine(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
-    return this.competitors.mineCustomerComplaints(orgId, id);
+  // HF4: POST with the owner-pasted real review text. There is no
+  // review source to GET from — without input the miner is unavailable.
+  @Post(":competitorId/reviews-mine") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ANALYST")
+  reviewsMine(@Param("organizationId") orgId: string, @Param("competitorId") id: string, @Body() dto: MineReviewsDto) {
+    return this.competitors.mineCustomerComplaints(orgId, id, dto?.reviewsText);
   }
 
   @Get("alert-settings")

@@ -27,13 +27,13 @@ export const EMOJIS: string[] = [
 
 export function EmojiPickerPanel({ onPick }: { onPick: (emoji: string) => void }) {
   return (
-    <div className="w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+    <div className="w-72 rounded-3xl border border-slate-200/80 bg-white p-2 shadow-pop">
       <div className="grid max-h-52 grid-cols-8 gap-0.5 overflow-y-auto">
         {EMOJIS.map((e) => (
           <button
             key={e}
             type="button"
-            className="rounded-lg p-1 text-lg leading-none hover:bg-slate-100"
+            className="rounded-xl p-1 text-lg leading-none transition hover:bg-slate-100 active:scale-95"
             onClick={() => onPick(e)}
             aria-label={`emoji ${e}`}
           >
@@ -148,7 +148,7 @@ export function VoiceRecorder({
   if (phase === "recording") {
     return (
       <span className="inline-flex items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 ring-1 ring-inset ring-red-200">
           <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" /> {mmss} রেকর্ড হচ্ছে…
         </span>
         <button type="button" className="btn-secondary btn-sm" onClick={stop}>⏹ থামান</button>

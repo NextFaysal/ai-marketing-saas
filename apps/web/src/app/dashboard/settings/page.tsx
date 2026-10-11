@@ -217,7 +217,7 @@ function BusinessHub() {
           bkashNumber: p.bkashNumber ?? "", nagadNumber: p.nagadNumber ?? "", paymentNote: p.paymentNote ?? "",
           advancePaymentPercent: p.advancePaymentPercent != null ? String(p.advancePaymentPercent) : "",
           returnWindowDays: p.returnWindowDays != null ? String(p.returnWindowDays) : "",
-          aiInstructions: p.aiInstructions ?? "", aiReplyLanguage: p.aiReplyLanguage ?? "auto",
+          aiReplyLanguage: p.aiReplyLanguage ?? "auto",
         });
         setCod(Boolean(p.codAvailable));
         if (p.businessHours?.windows) {
@@ -252,7 +252,7 @@ function BusinessHub() {
       deliveryDaysInside: intOrNull(form.deliveryDaysInside ?? ""), deliveryDaysOutside: intOrNull(form.deliveryDaysOutside ?? ""),
       codAvailable: cod, bkashNumber: form.bkashNumber, nagadNumber: form.nagadNumber, paymentNote: form.paymentNote,
       advancePaymentPercent: intOrNull(form.advancePaymentPercent ?? ""), returnWindowDays: intOrNull(form.returnWindowDays ?? ""),
-      aiInstructions: form.aiInstructions ?? "", aiReplyLanguage: form.aiReplyLanguage ?? "auto",
+      aiReplyLanguage: form.aiReplyLanguage ?? "auto",
     };
     if (hoursTouched) {
       const windows: Record<string, [string, string][]> = {};
@@ -397,9 +397,12 @@ function BusinessHub() {
       <section id="hub-ai" className="card scroll-mt-24 p-5 sm:p-6">
         <SectionHead icon="🤖" title="AI এর আচরণ — মালিকের নির্দেশনা" hint="AI Assistant ও Inbox Autopilot দুজনেই মানে — শুধু সুর ও আচরণের জন্য। তথ্য কখনো বদলায় না: দাম, চার্জ, নম্বর সবসময় এই পেজের সেট করা তথ্য থেকেই আসে।" />
         <div className="grid gap-4">
-          <label className={label}>AI এর জন্য নির্দেশনা
-            <textarea className={input} rows={3} maxLength={2000} value={form.aiInstructions ?? ""} onChange={set("aiInstructions")} placeholder="যেমন: সবসময় সালাম দিয়ে শুরু করবেন। উত্তর ছোট রাখবেন। কোনো ছাড়ের প্রতিশ্রুতি দেবেন না। অভিযোগ এলে আগে দুঃখ প্রকাশ করে এজেন্টকে পাঠাবেন…" />
-          </label>
+          <div className="rounded-xl bg-indigo-50/70 px-4 py-3.5 ring-1 ring-inset ring-indigo-100">
+            <p className="text-sm leading-relaxed text-slate-700">
+              AI নির্দেশনা এখন <b>AI Instructions Desk</b> থেকে Draft → Test → Publish করা হয় — যাতে যাচাই না করা নির্দেশনা সরাসরি customer-এর কাছে না যায়, আর প্রতিটি সংস্করণে ফিরে যাওয়া যায়।
+            </p>
+            <a href="/dashboard/ai-instructions" className="btn-secondary mt-3 inline-flex min-h-[40px] items-center px-4 text-sm">🤖 AI Instructions Desk খুলুন</a>
+          </div>
           <label className={`${label} sm:max-w-xs`}>AI উত্তরের ভাষা
             <select className={input} value={form.aiReplyLanguage ?? "auto"} onChange={(e) => setForm({ ...form, aiReplyLanguage: e.target.value })}>
               <option value="auto">স্বয়ংক্রিয় — গ্রাহক/ব্যবহারকারীর ভাষায়</option>

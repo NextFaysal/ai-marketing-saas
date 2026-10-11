@@ -1,4 +1,4 @@
-import { LlmProvider, LlmMessage, LlmResult, LlmConfigError, FetchFn } from "./llm.types";
+import { LlmProvider, LlmMessage, LlmResult, LlmStreamChunk, LlmConfigError, FetchFn, estimateTokens, iterateSseJson, throwStreamHttpError } from "./llm.types";
 
 export class GeminiProvider implements LlmProvider {
   readonly name = "gemini";
@@ -41,5 +41,38 @@ export class GeminiProvider implements LlmProvider {
       outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0,
       tokensEstimated: false,
     };
+  }
+
+  async *completeStream(messages: LlmMessage[], opts?: { jsonMode?: boolean; maxTokens?: number }): AsyncIterable<LlmStreamChunk> {
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    const contents = messages.filter((m) => m.role !== "system").map((m) => ({
+      role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }],
+    }));
+    const res = await this.fetchFn(`https://generativelanguage.googleapis.com/v1beta/models/${this.model}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "x-goog-api-key": this.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        contents,
+        generationConfig: {
+          ...(opts?.jsonMode ? { responseMimeType: "application/json" } : {}),
+          ...(opts?.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
+        },
+      }),
+    });
+    if (!res.ok) await throwStreamHttpError(res, "Gemini");
+    let text = "";
+    let usage: { promptTokenCount?: number; candidatesTokenCount?: number } | null = null;
+    for await (const payload of iterateSseJson((res as any).body)) {
+      if (payload?.usageMetadata) usage = payload.usageMetadata;
+      const delta: string = (payload?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
+      if (delta) { text += delta; yield { delta }; }
+    }
+    if (usage) {
+      yield { result: { text, model: this.model, inputTokens: usage.promptTokenCount ?? 0, outputTokens: usage.candidatesTokenCount ?? 0, tokensEstimated: false } };
+    } else {
+      const input = messages.map((m) => m.content).join("\n");
+      yield { result: { text, model: this.model, inputTokens: estimateTokens(input), outputTokens: estimateTokens(text), tokensEstimated: true } };
+    }
   }
 }

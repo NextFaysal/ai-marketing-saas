@@ -4,11 +4,12 @@ export class CreateJobDto {
   @IsString() name!: string;
   @IsString() type!: string;
   @IsString() targetId!: string;
-  @IsNumber() @Min(5) intervalMinutes!: number;
+  // CX3: min 1 (was 5) — the 1-minute reply-debounce sweeps must be creatable.
+  @IsNumber() @Min(1) intervalMinutes!: number;
 }
 export class UpdateJobDto {
   @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsNumber() @Min(5) intervalMinutes?: number;
+  @IsOptional() @IsNumber() @Min(1) intervalMinutes?: number;
   @IsOptional() @IsBoolean() enabled?: boolean;
 }
 export class CreateRuleDto {

@@ -64,7 +64,9 @@ describe("A4 template catalogue integrity", () => {
       expect((JOB_TYPES as readonly string[]).includes(tpl.type)).toBe(true);
       expect(keys.has(tpl.key)).toBe(false);
       keys.add(tpl.key);
-      expect(tpl.intervalMinutes).toBeGreaterThanOrEqual(5);
+      // CX3: the two reply-debounce sweep templates run every
+      // 1 minute, so the floor is 1 (createJob's minimum too).
+      expect(tpl.intervalMinutes).toBeGreaterThanOrEqual(1);
       expect(["org", "integration", "competitor"]).toContain(tpl.targetKind);
       expect(tpl.descriptionBn.length).toBeGreaterThan(10);
     }

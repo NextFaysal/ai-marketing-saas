@@ -907,6 +907,7 @@ export default function SocialCommentsPage() {
                   onChange={(e) => setSettings({ ...settings, replyDelaySeconds: Number(e.target.value) })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">এই Delay এখন সত্যিই কার্যকর: AI উত্তরটি এই সময় পর্যন্ত অপেক্ষা করবে, আর একই লেখক একই পোস্টে পরপর কমেন্ট করলে সবগুলো জমিয়ে একটাই উত্তর যাবে। স্প্যাম হাইড সঙ্গে সঙ্গেই হয় — Delay-র জন্য অপেক্ষা করে না। কার্যকর হতে Automations পেজ থেকে &apos;Comment Auto-Reply Sweep&apos; job চালু থাকতে হবে (কার্যকর বিলম্ব = Delay + সর্বোচ্চ ১ মিনিট)।</p>
               </div>
 
               <div>

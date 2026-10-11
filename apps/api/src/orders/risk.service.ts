@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { phoneKey, scoreRisk, classifyOutcome, RiskAssessment, OrderOutcomeInput } from "./risk-score";
+import { phoneKey, scoreRisk, classifyOutcome, summarizeHistory, RiskAssessment, OrderOutcomeInput } from "./risk-score";
 
 export interface OrderRisk extends RiskAssessment {
   phone: string | null;
@@ -26,7 +26,7 @@ export class RiskService {
         include: { customer: { select: { phone: true } } },
       }).catch(() => []),
       (this.prisma as any).courierShipment.findMany({
-        where: { organizationId }, select: { orderId: true, status: true, recipientPhone: true, recipientAddress: true }, take: 5000,
+        where: { organizationId }, select: { orderId: true, status: true, recipientPhone: true, recipientAddress: true, provider: true, createdAt: true, updatedAt: true }, take: 5000,
       }).catch(() => []),
       (this.prisma as any).channelConversation.findMany({
         where: { organizationId }, select: { id: true, contactPhone: true }, take: 5000,
@@ -109,5 +109,91 @@ export class RiskService {
     // customer profile that wording is still accurate per-order-set,
     // except the empty case which it already phrases neutrally.
     return { ...result, phone: customer?.phone ?? null, basis: "phone-history" };
+  }
+
+  /**
+   * CX1 — Customer Courier Record. The SAME history set (own orders
+   * + orders sharing the customer's phone, deduped) and the SAME
+   * M50 classification (classifyOutcome / summarizeHistory — no
+   * second classifier) as forCustomer(), presented as a DELIVERY
+   * record rather than a risk score:
+   * - successRatePct = delivered / decided × 100, rounded; null
+   *   when decided = 0 (no fake 0 — "এখনো কোনো ডেলিভারি ইতিহাস নেই").
+   *   This is a delivery SUCCESS rate; it is NOT the inverse of the
+   *   M50 risk score (which weighs returned/cancelled/refunded and
+   *   thin-history rules). Surfaces must label the two distinctly.
+   * - perCourier: each DECIDED order is attributed to the provider
+   *   of its LATEST shipment (by createdAt). Shipments stored
+   *   without a provider group as "অন্যান্য". Orders with no
+   *   shipment at all count in the totals only — never attributed.
+   * - lastDeliveryAt: the newest updatedAt among this history's
+   *   shipments whose stored status is delivered/partial_delivered
+   *   (there is no deliveredAt column; this is the last time a
+   *   delivered status was recorded, stated as such).
+   * - riskBand / riskScore ride along from the same scoreRisk()
+   *   pass so a surface can show both numbers side by side.
+   * Compute-on-read, org-scoped: loadOrgData only ever loads the
+   * given organization's rows, so another org's orders sharing the
+   * phone are invisible here (M50's isolation property).
+   */
+  async courierRecordForCustomer(organizationId: string, customerId: string) {
+    const empty = {
+      decided: 0, delivered: 0, returned: 0, cancelledOrFailed: 0, refunded: 0,
+      successRatePct: null as number | null,
+      perCourier: [] as { provider: string; decided: number; delivered: number; successRatePct: number | null }[],
+      lastDeliveryAt: null as string | null, totalShipments: 0,
+      riskBand: "unknown" as string, riskScore: null as number | null,
+    };
+    const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } }).catch(() => null);
+    if (!customer) return empty;
+    const { orders, shipByOrder, phoneOf } = await this.loadOrgData(organizationId);
+    const key = phoneKey(customer?.phone);
+    const own = orders.filter((o: any) => o.customerId === customer.id);
+    const byPhone = key ? orders.filter((o: any) => phoneKey(phoneOf(o)) === key) : [];
+    const seen = new Set<string>();
+    const historyOrders = [...own, ...byPhone].filter((o: any) => (seen.has(o.id) ? false : (seen.add(o.id), true)));
+    const toInput = (o: any): OrderOutcomeInput => ({
+      status: o.status, isCod: Boolean(o.isCod),
+      shipmentStatuses: (shipByOrder.get(o.id) ?? []).map((s: any) => s.status),
+    });
+    const inputs = historyOrders.map(toInput);
+    const history = summarizeHistory(inputs);
+    const decided = history.delivered + history.returned + history.cancelledOrFailed + history.refunded;
+    const risk = scoreRisk(inputs, {});
+    const buckets = new Map<string, { provider: string; decided: number; delivered: number }>();
+    let totalShipments = 0;
+    let lastDeliveryAt: Date | null = null;
+    for (const o of historyOrders) {
+      const ships = (shipByOrder.get(o.id) ?? []).slice().sort((a: any, b: any) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+      totalShipments += ships.length;
+      for (const s of ships) {
+        const st = String(s.status ?? "").toLowerCase();
+        if ((st === "delivered" || st === "partial_delivered") && s.updatedAt) {
+          const t = new Date(s.updatedAt);
+          if (!Number.isNaN(t.getTime()) && (!lastDeliveryAt || t.getTime() > lastDeliveryAt.getTime())) lastDeliveryAt = t;
+        }
+      }
+      const outcome = classifyOutcome(toInput(o));
+      if (outcome === "open" || ships.length === 0) continue;
+      const latest = ships[ships.length - 1];
+      const provider = latest?.provider && String(latest.provider).trim() ? String(latest.provider).trim() : "অন্যান্য";
+      const bucket = buckets.get(provider) ?? { provider, decided: 0, delivered: 0 };
+      bucket.decided += 1;
+      if (outcome === "delivered") bucket.delivered += 1;
+      buckets.set(provider, bucket);
+    }
+    const perCourier = [...buckets.values()]
+      .map((b) => ({ ...b, successRatePct: b.decided > 0 ? Math.round((b.delivered / b.decided) * 100) : null }))
+      .sort((a, b) => b.decided - a.decided);
+    return {
+      decided,
+      delivered: history.delivered, returned: history.returned,
+      cancelledOrFailed: history.cancelledOrFailed, refunded: history.refunded,
+      successRatePct: decided > 0 ? Math.round((history.delivered / decided) * 100) : null,
+      perCourier,
+      lastDeliveryAt: lastDeliveryAt ? lastDeliveryAt.toISOString() : null,
+      totalShipments,
+      riskBand: risk.band, riskScore: risk.score,
+    };
   }
 }

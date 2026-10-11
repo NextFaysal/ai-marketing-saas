@@ -1,157 +1,161 @@
+import {
+  FetchFn,
+  fetchText,
+  loadRobotsDisallows,
+  pageAllowed,
+  extractSameHostLinks,
+  metaContent,
+  pageTitle,
+  headingTexts,
+  hasProductSchema,
+} from "./site-audit";
+
 /**
- * Advanced Competitor SEO, Keywords & Organic Traffic Estimator
- * Reverse-engineers competitor SERP snippets, meta titles, product schemas,
- * and search rankings to estimate:
- * 1. Monthly Organic Traffic (using standard Google CTR position decay)
- * 2. Top Organic Ranking Keywords (Volume, Position, Intent, Difficulty)
- * 3. On-Page Meta Keyword Architecture
- * 4. Content & Keyword Gap Opportunities
+ * Competitor SEO — REAL on-page audit (HF2, replaces the invented
+ * "traffic estimator" removed in the Honesty Fix package).
+ *
+ * The old analyzer never fetched anything: keyword volumes, positions,
+ * Domain Authority, visits and traffic shares were name-template
+ * inventions. This auditor fetches the competitor's homepage under the
+ * WebsiteScanner discipline (own host, robots-respecting, honest UA)
+ * and reports OBSERVED FACTS ONLY:
+ * - the page's real <title> and meta description
+ * - H1/H2 heading texts (the phrases the site itself uses)
+ * - whether a Product JSON-LD schema is present
+ * - OpenGraph tags actually served
+ * - whether /sitemap.xml is served
+ * - internal shop/product/offer links found in the homepage HTML
+ *
+ * No website URL, a robots block, or an unreachable site produces an
+ * honest `available: false` with a reason — never a template report.
  */
 
-export interface OrganicKeyword {
-  keyword: string;
-  estimatedPosition: number;
-  searchVolume: number;
-  keywordDifficulty: number; // 0 - 100
-  intent: "Transactional" | "Commercial" | "Informational";
-  estimatedMonthlyClicks: number;
-  rankingUrl: string;
+export interface ObservedPhrase {
+  source: "title" | "h1" | "h2";
+  text: string;
 }
 
-export interface TopOrganicPage {
+export interface SeoInternalLink {
   url: string;
-  title: string;
-  estimatedTrafficShare: number; // percentage
-  primaryKeywords: string[];
+  kind: "shop" | "product" | "offer" | "page";
 }
 
-export interface SeoTrafficReport {
+export interface SeoOnPageAudit {
   domain: string;
-  estimatedMonthlyOrganicVisits: number;
-  domainAuthorityScore: number; // 1 - 100
-  totalIndexedKeywords: number;
-  topKeywords: OrganicKeyword[];
-  topPages: TopOrganicPage[];
-  intentDistribution: {
-    transactional: number; // percentage
-    commercial: number;
-    informational: number;
-  };
-  focusKeywordThemes: string[];
+  available: boolean;
+  /** Bengali, user-facing reason when available is false. */
+  reason?: string;
+  fetchedUrl?: string;
+  title?: string;
+  metaDescription?: string;
+  productSchemaPresent: boolean;
+  og: { title?: string; description?: string; image?: string };
+  sitemapPresent: boolean;
+  observedPhrases: ObservedPhrase[];
+  internalLinks: SeoInternalLink[];
 }
 
-export class SeoTrafficAnalyzer {
-  constructor(private readonly fetchFn: typeof fetch = fetch) {}
+function linkKind(url: string): SeoInternalLink["kind"] {
+  const path = (() => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  if (/offer|sale|discount|campaign|deal/.test(path)) return "offer";
+  if (/product|\/p\/|item/.test(path)) return "product";
+  if (/shop|collection|categor/.test(path)) return "shop";
+  return "page";
+}
 
-  /**
-   * Analyzes competitor website and public search presence
-   */
-  async analyze(competitorName: string, websiteUrl?: string): Promise<SeoTrafficReport> {
-    let domain = competitorName.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com";
-    if (websiteUrl) {
-      try {
-        domain = new URL(websiteUrl).hostname.replace(/^www\./, "");
-      } catch {
-        // fallback to sanitized domain
-      }
+const UNAVAILABLE_BASE: Omit<SeoOnPageAudit, "domain" | "available" | "reason"> = {
+  productSchemaPresent: false,
+  og: {},
+  sitemapPresent: false,
+  observedPhrases: [],
+  internalLinks: [],
+};
+
+export class SeoOnPageAuditor {
+  constructor(private readonly fetchFn: FetchFn = fetch) {}
+
+  async audit(competitorName: string, websiteUrl?: string): Promise<SeoOnPageAudit> {
+    if (!websiteUrl) {
+      return {
+        ...UNAVAILABLE_BASE,
+        domain: "",
+        available: false,
+        reason: "প্রতিযোগীর কোনো ওয়েবসাইট URL দেওয়া নেই — আসল পেজ ফেচ না করে SEO অডিট তৈরি হয় না",
+      };
     }
 
-    // Standard organic CTR distribution curve by Google rank position
-    const getCtrForPosition = (pos: number) => {
-      switch (pos) {
-        case 1: return 0.28;
-        case 2: return 0.15;
-        case 3: return 0.11;
-        case 4: return 0.08;
-        case 5: return 0.06;
-        case 6: return 0.04;
-        case 7: return 0.03;
-        default: return 0.02;
-      }
-    };
-
-    const cleanName = competitorName.trim();
-    const slugName = cleanName.toLowerCase();
-
-    // Dynamically generate intelligent keywords based on competitor name and domain theme
-    const keywordTemplates = [
-      { kw: `${cleanName} online shop`, pos: 1, baseVol: 3800, kd: 18, intent: "Transactional" as const },
-      { kw: `${cleanName} price in bangladesh`, pos: 2, baseVol: 2900, kd: 24, intent: "Commercial" as const },
-      { kw: `${cleanName} discount offer`, pos: 2, baseVol: 1800, kd: 19, intent: "Transactional" as const },
-      { kw: `buy ${cleanName} cash on delivery`, pos: 1, baseVol: 2400, kd: 15, intent: "Transactional" as const },
-      { kw: `best ${cleanName} collection 2026`, pos: 3, baseVol: 1600, kd: 32, intent: "Commercial" as const },
-      { kw: `${cleanName} reviews and feedback`, pos: 4, baseVol: 1200, kd: 22, intent: "Informational" as const },
-      { kw: `${cleanName} return and delivery policy`, pos: 2, baseVol: 950, kd: 12, intent: "Informational" as const },
-      { kw: `${cleanName} official website`, pos: 1, baseVol: 4500, kd: 14, intent: "Transactional" as const },
-      { kw: `${cleanName} premium products online`, pos: 3, baseVol: 1400, kd: 28, intent: "Commercial" as const },
-    ];
-
-    const keywords: OrganicKeyword[] = keywordTemplates.map((t) => {
-      const clicks = Math.round(t.baseVol * getCtrForPosition(t.pos));
+    let base: URL;
+    try {
+      base = new URL(websiteUrl);
+      if (!/^https?:$/.test(base.protocol)) throw new Error("protocol");
+    } catch {
       return {
-        keyword: t.kw,
-        estimatedPosition: t.pos,
-        searchVolume: t.baseVol,
-        keywordDifficulty: t.kd,
-        intent: t.intent,
-        estimatedMonthlyClicks: clicks,
-        rankingUrl: `https://${domain}/${t.intent === "Transactional" ? "shop" : "products"}`,
+        ...UNAVAILABLE_BASE,
+        domain: "",
+        available: false,
+        reason: "প্রতিযোগীর ওয়েবসাইট URL-টি সঠিক নয় — অডিট করা যায়নি",
       };
-    });
+    }
+    const domain = base.hostname.replace(/^www\./, "");
+    const homepage = base.toString();
 
-    const totalClicks = keywords.reduce((acc, k) => acc + k.estimatedMonthlyClicks, 0);
-    // Multiply by organic long-tail multiplier (~2.2x for unlisted long-tails)
-    const estimatedMonthlyOrganicVisits = Math.round(totalClicks * 2.4);
+    const disallows = await loadRobotsDisallows(this.fetchFn, base.origin);
+    if (!pageAllowed(homepage, disallows)) {
+      return {
+        ...UNAVAILABLE_BASE,
+        domain,
+        available: false,
+        reason: "robots.txt এই পেজটি স্ক্যান করার অনুমতি দেয় না — অডিট করা হয়নি",
+      };
+    }
 
-    const topPages: TopOrganicPage[] = [
-      {
-        url: `https://${domain}/`,
-        title: `${cleanName} - Official Online Shopping Store in Bangladesh`,
-        estimatedTrafficShare: 42,
-        primaryKeywords: [`${slugName}`, `${slugName} official website`, `${slugName} shop`],
-      },
-      {
-        url: `https://${domain}/shop`,
-        title: `All Products & New Arrivals - ${cleanName}`,
-        estimatedTrafficShare: 28,
-        primaryKeywords: [`buy ${slugName} online`, `${slugName} collection`],
-      },
-      {
-        url: `https://${domain}/offers`,
-        title: `Special Discount Deals & Free Shipping - ${cleanName}`,
-        estimatedTrafficShare: 18,
-        primaryKeywords: [`${slugName} discount offer`, `${slugName} price`],
-      },
-      {
-        url: `https://${domain}/reviews`,
-        title: `Customer Reviews & Experience - ${cleanName}`,
-        estimatedTrafficShare: 12,
-        primaryKeywords: [`${slugName} reviews`, `${slugName} quality`],
-      },
-    ];
+    const html = await fetchText(this.fetchFn, homepage);
+    if (!html) {
+      return {
+        ...UNAVAILABLE_BASE,
+        domain,
+        available: false,
+        reason: "প্রতিযোগীর ওয়েবসাইটে পৌঁছানো যায়নি — পরে আবার চেষ্টা করুন",
+      };
+    }
 
-    // Estimated domain authority (30 - 65 for active ecommerce stores)
-    const domainAuthorityScore = Math.min(85, Math.max(25, Math.round(Math.log10(estimatedMonthlyOrganicVisits + 10) * 14)));
+    const sitemapXml = await fetchText(this.fetchFn, `${base.origin}/sitemap.xml`);
+    const title = pageTitle(html);
+    const phrases: ObservedPhrase[] = [];
+    if (title) phrases.push({ source: "title", text: title });
+    for (const text of headingTexts(html, "h1").slice(0, 5)) phrases.push({ source: "h1", text });
+    for (const text of headingTexts(html, "h2").slice(0, 5)) phrases.push({ source: "h2", text });
+
+    const internalLinks = extractSameHostLinks(html, base)
+      .filter((u) => u !== homepage)
+      .slice(0, 30)
+      .map((url) => ({ url, kind: linkKind(url) }))
+      // Shop/product/offer links are the SEO-relevant ones; plain pages
+      // are only kept to fill the cap after them.
+      .sort((a, b) => (a.kind === "page" ? 1 : 0) - (b.kind === "page" ? 1 : 0))
+      .slice(0, 12);
 
     return {
       domain,
-      estimatedMonthlyOrganicVisits,
-      domainAuthorityScore,
-      totalIndexedKeywords: keywords.length * 12, // approx indexed variations
-      topKeywords: keywords,
-      topPages,
-      intentDistribution: {
-        transactional: 55,
-        commercial: 30,
-        informational: 15,
+      available: true,
+      fetchedUrl: homepage,
+      title,
+      metaDescription: metaContent(html, "name", "description"),
+      productSchemaPresent: hasProductSchema(html),
+      og: {
+        title: metaContent(html, "property", "og:title"),
+        description: metaContent(html, "property", "og:description"),
+        image: metaContent(html, "property", "og:image"),
       },
-      focusKeywordThemes: [
-        `${cleanName} Shopping`,
-        "Cash on Delivery",
-        "Best Price BD",
-        "Discount & Promo",
-        "Online Order",
-      ],
+      sitemapPresent: sitemapXml !== null,
+      observedPhrases: phrases,
+      internalLinks,
     };
   }
 }

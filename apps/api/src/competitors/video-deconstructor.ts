@@ -12,6 +12,11 @@ export interface ScriptScene {
 
 export interface DeconstructedVideoScript {
   competitorAdId: string;
+  /** HF5: how this draft was produced — "ai" = a real LLM generated it
+   *  from the ad's text; "template" = the built-in template draft. The
+   *  UI badges it ("AI খসড়া" / "টেমপ্লেট খসড়া"); neither is an analysis
+   *  of the competitor's actual video, which is never fetched. */
+  origin: "ai" | "template";
   format: "TikTok & Reels (9:16)" | "Feed Video (1:1)";
   totalDurationSeconds: number;
   hookCategory: "Shock Value" | "Curiosity Gap" | "Visual Transformation" | "Before & After" | "Pattern Interrupt";
@@ -75,8 +80,8 @@ export class VideoScriptDeconstructor {
         timeRange: "0:24 - 0:34",
         phase: "Social Proof & Urgency",
         visualCue: "Stack of packaged parcel boxes ready to ship with customer review screenshots popping on screen.",
-        audioVoiceover: "ইতিমধ্যেই হাজারো হ্যাপি কাস্টমারদের কাছে পৌঁছে গেছে আমাদের এই প্রিমিয়াম কালেকশন।",
-        onScreenText: "৪.৯★ রেটিং | ৫,০০০+ হ্যাপি কাস্টমার 📦",
+        audioVoiceover: "এই দেখুন প্রিমিয়াম কালেকশনটি সরাসরি, কোনো এডিট ছাড়াই — যেমন দেখছেন, হুবহু তেমনই পাবেন।",
+        onScreenText: "ক্যাশ অন ডেলিভারি | পণ্য দেখে পেমেন্ট 📦",
         directorNotes: "Fast-paced pop-up animations, trust reinforcement.",
       },
       {
@@ -91,13 +96,14 @@ export class VideoScriptDeconstructor {
 
     const fallback: DeconstructedVideoScript = {
       competitorAdId: adId,
+      origin: "template",
       format: "TikTok & Reels (9:16)",
       totalDurationSeconds: 45,
       hookCategory: "Pattern Interrupt",
       competitorHookBreakdown: {
-        firstThreeSecondsHook: `Competitor ${competitorName} uses relatable pain points to stop scroll on mobile feeds.`,
-        whyItRetainsViewers: "Uses curiosity gap and real video demonstrations rather than static graphics.",
-        coreEmotionalTrigger: "FOMO (Fear of Missing Out) and trust anxiety relief.",
+        firstThreeSecondsHook: `খসড়া অনুমান: ${competitorName}-এর বিজ্ঞাপনের টেক্সটের ভিত্তিতে হুকটি সম্ভবত ক্রেতার পরিচিত একটি সমস্যা দিয়ে শুরু হয় — আসল ভিডিওটি দেখা হয়নি, তাই এটি নিশ্চিত তথ্য নয়।`,
+        whyItRetainsViewers: "খসড়া অনুমান: curiosity gap ও সরাসরি প্রোডাক্ট ডেমো ধারণাটি এই টেমপ্লেটের ধারণা — পরিমাপ করা retention তথ্য নয়।",
+        coreEmotionalTrigger: "সম্ভাব্য ট্রিগার (খসড়া অনুমান): FOMO (Fear of Missing Out) ও trust anxiety relief।",
       },
       adaptedScript: {
         conceptTitle: `${productName} — High-Retention UGC Video Formula`,
@@ -194,6 +200,7 @@ Format as JSON matching this schema:
       if (parsed?.adaptedScript?.scenes?.length) {
         return {
           competitorAdId: adId,
+          origin: "ai",
           format: "TikTok & Reels (9:16)",
           totalDurationSeconds: 45,
           hookCategory: parsed.hookCategory || fallback.hookCategory,

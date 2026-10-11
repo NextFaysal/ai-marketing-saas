@@ -38,6 +38,9 @@ export class SyncMultiPlatformDto {
 export class GenerateSeoGapDto {
   @IsOptional() @IsString() ownProductId?: string;
 }
+export class MineReviewsDto {
+  @IsOptional() @IsString() @MaxLength(20000) reviewsText?: string;
+}
 export class DeconstructVideoScriptDto {
   @IsString() competitorAdId!: string;
   @IsOptional() @IsString() ownProductId?: string;

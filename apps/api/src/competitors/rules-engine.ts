@@ -58,15 +58,11 @@ export class RulesEngine {
         suggestedHeadline: "প্রতিযোগী স্টক শেষ! আমাদের ক্যাম্পেইন বাজেট ২৫% বৃদ্ধি করে মার্কেট দখল করুন",
       },
       enabled: true,
-      triggerCount: 3,
-      lastTriggeredAt: new Date(Date.now() - 3600 * 4000).toISOString(),
-      recentExecutions: [
-        {
-          timestamp: new Date(Date.now() - 3600 * 4000).toISOString(),
-          description: "দারাজ এ প্রিমিয়াম লেদার ওয়ালেট স্টক শেষ হওয়ায় ক্যাম্পেইন বাজেট ২৫% বুস্ট করা হয়েছে।",
-          status: "EXECUTED",
-        },
-      ],
+      // HF6: defaults ship with NO history. A trigger count or execution
+      // entry may only exist after a real evaluation produced it.
+      triggerCount: 0,
+      lastTriggeredAt: null,
+      recentExecutions: [],
     },
     {
       id: "rule-price-drop-defense",
@@ -81,15 +77,9 @@ export class RulesEngine {
         suggestedHeadline: "প্রতিযোগী ১০% দাম কমিয়েছে! কাউন্টার ৩-প্যাক বান্ডেল অফার অফার করুন",
       },
       enabled: true,
-      triggerCount: 1,
-      lastTriggeredAt: new Date(Date.now() - 3600 * 24000).toISOString(),
-      recentExecutions: [
-        {
-          timestamp: new Date(Date.now() - 3600 * 24000).toISOString(),
-          description: "প্রতিযোগী দাম ১২% হ্রাস করায় ৩-প্যাক বান্ডেল সেভিং অফার অ্যালার্ট চালু হয়েছে।",
-          status: "EXECUTED",
-        },
-      ],
+      triggerCount: 0,
+      lastTriggeredAt: null,
+      recentExecutions: [],
     },
     {
       id: "rule-price-hike-harvest",
@@ -118,15 +108,9 @@ export class RulesEngine {
         suggestedHeadline: "প্রতিযোগীর বিজ্ঞাপন ভাইরাল হচ্ছে! স্ক্রিপ্ট ডিকনস্ট্রাক্ট করে কাউন্টার অ্যাড রান করুন",
       },
       enabled: true,
-      triggerCount: 2,
-      lastTriggeredAt: new Date(Date.now() - 3600 * 12000).toISOString(),
-      recentExecutions: [
-        {
-          timestamp: new Date(Date.now() - 3600 * 12000).toISOString(),
-          description: "প্রতিযোগীর নতুন ৩-দিনের ভাইরাল UGC অ্যাডের জবাবে কাউন্টার অ্যাড জেনারেট করা হয়েছে।",
-          status: "EXECUTED",
-        },
-      ],
+      triggerCount: 0,
+      lastTriggeredAt: null,
+      recentExecutions: [],
     },
   ];
 

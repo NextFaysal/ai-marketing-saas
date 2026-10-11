@@ -6,7 +6,7 @@ import { decryptJson } from "../integrations/crypto";
 import { AdLibraryClient } from "./ad-library.client";
 import { WebsiteScanner } from "./website-scanner";
 import { MultiPlatformScanner } from "./multi-platform-scanner";
-import { SeoTrafficAnalyzer } from "./seo-analyzer";
+import { SeoOnPageAuditor } from "./seo-analyzer";
 import { VideoScriptDeconstructor } from "./video-deconstructor";
 import { ReviewMiner } from "./review-miner";
 import { FunnelAuditor } from "./funnel-auditor";
@@ -203,6 +203,9 @@ export class CompetitorsService {
     let totalCreated = 0;
     let totalUpdated = 0;
     const platformBreakdown: Record<string, number> = {};
+    // HF1: platforms that produced nothing report WHY, in words, instead
+    // of silently counting zero — and never contribute fabricated rows.
+    const unavailable: Record<string, string> = {};
 
     // 1. Meta / Facebook (if selected)
     if (targetPlatforms.includes("facebook")) {
@@ -217,6 +220,7 @@ export class CompetitorsService {
         platformBreakdown.facebook = metaRes.fetched;
       } catch (e) {
         platformBreakdown.facebook = 0;
+        unavailable.facebook = "Meta Ad Library sync সম্পন্ন হয়নি (টোকেন/সংযোগ যাচাই করুন)";
       }
     }
 
@@ -233,25 +237,32 @@ export class CompetitorsService {
     const scanner = new MultiPlatformScanner();
     const otherAds: any[] = [];
 
-    // 2. Google Ads & Transparency
+    // 2. Google organic search results (real fetch, honestly labeled —
+    // these are search results, not ads; see MultiPlatformScanner HF1 note)
     if (targetPlatforms.includes("google")) {
       const gAds = await scanner.scanGoogleAds(competitor.name, domain);
       otherAds.push(...gAds);
       platformBreakdown.google = gAds.length;
+      if (gAds.length === 0) {
+        unavailable.google = "কোনো সার্চ ফলাফল পাওয়া যায়নি";
+      }
     }
 
-    // 3. TikTok Ads & Creative Center
+    // 3. TikTok: no official public data source is wired — the scanner
+    // returns [] by design; report the platform as unavailable.
     if (targetPlatforms.includes("tiktok")) {
       const ttAds = await scanner.scanTikTokAds(competitor.name);
       otherAds.push(...ttAds);
       platformBreakdown.tiktok = ttAds.length;
+      unavailable.tiktok = "কোনো অফিসিয়াল public data source যুক্ত নেই";
     }
 
-    // 4. Bing Search & Sponsored Ads
+    // 4. Bing: same as TikTok — no source wired, nothing is invented.
     if (targetPlatforms.includes("bing")) {
       const bingAds = await scanner.scanBingAds(competitor.name, domain);
       otherAds.push(...bingAds);
       platformBreakdown.bing = bingAds.length;
+      unavailable.bing = "কোনো অফিসিয়াল public data source যুক্ত নেই";
     }
 
     // Store non-Meta ads safely into CompetitorAd
@@ -290,7 +301,7 @@ export class CompetitorsService {
       action: "competitor.multi_platform_synced",
       entityType: "Competitor",
       entityId: competitorId,
-      metadata: { totalFetched, totalCreated, totalUpdated, platformBreakdown },
+      metadata: { totalFetched, totalCreated, totalUpdated, platformBreakdown, unavailable },
     });
 
     return {
@@ -298,6 +309,7 @@ export class CompetitorsService {
       created: totalCreated,
       updated: totalUpdated,
       breakdown: platformBreakdown,
+      unavailable,
     };
   }
 
@@ -312,7 +324,11 @@ export class CompetitorsService {
       const started = a.startedAt ? new Date(a.startedAt).getTime() : null;
       const stopped = a.stoppedAt ? new Date(a.stoppedAt).getTime() : null;
       const daysRunning = started ? Math.max(1, Math.round(((stopped || now) - started) / (1000 * 60 * 60 * 24))) : 0;
-      // Winning ad definition: Active and running for at least 14 days (proven high ROI)
+      // "Winning" = active and running for at least 14 days. This is a
+      // longevity signal from the ad's real archive dates, not proof of
+      // ROI. Rows without a real startedAt (e.g. Google organic search
+      // results persisted by syncMultiPlatform) get daysRunning 0 and can
+      // never be "winning" (HF7 trace).
       const isWinning = a.isActive && daysRunning >= 14;
       const isFresh = a.isActive && daysRunning <= 3;
       return {
@@ -371,6 +387,8 @@ export class CompetitorsService {
         whyThisBeatsCompetitor: string;
       };
     };
+    // HF5: the UI badges the output as a draft with its origin.
+    let origin: "ai" | "template" = "template";
 
     if (provider.isRealLlm) {
       const prompt = `You are a world-class direct-response ecommerce copywriter and growth marketer.
@@ -410,6 +428,7 @@ Return strictly valid JSON with this format:
 
       try {
         strategyResult = JSON.parse(res.text);
+        origin = "ai";
       } catch {
         strategyResult = this.fallbackCounterAd(competitorName, competitorCreative, ownProduct);
       }
@@ -438,7 +457,7 @@ Return strictly valid JSON with this format:
       metadata: { competitorName, ownProductId: ownProduct?.id },
     });
 
-    return strategyResult;
+    return { ...strategyResult, origin };
   }
 
   private fallbackCounterAd(competitorName: string, competitorCreative: string, ownProduct: any) {
@@ -764,16 +783,29 @@ Return strictly valid JSON with this format:
     };
   }
 
+  // HF2: despite the historical name, this returns a REAL on-page audit
+  // (observed title/meta/headings/schema/links), never traffic estimates.
   async getSeoTrafficReport(organizationId: string, competitorId: string) {
     const competitor = await this.getOrThrow(organizationId, competitorId);
-    const analyzer = new SeoTrafficAnalyzer();
-    return analyzer.analyze(competitor.name, competitor.websiteUrl ?? undefined);
+    const auditor = new SeoOnPageAuditor();
+    return auditor.audit(competitor.name, competitor.websiteUrl ?? undefined);
   }
 
+  // HF2: the SEO gap strategy grounds ONLY in the real on-page audit
+  // (the competitor's own observed title/headings/links) plus the org's
+  // own product. The invented traffic/DA figures and the
+  // `estimatedCtrBoost` percentage are gone — a CTR effect cannot be
+  // known, so the strategy states its rationale in words and is labeled
+  // an AI suggestion in the UI.
   async generateSeoGapStrategy(organizationId: string, actorId: string, competitorId: string, ownProductId?: string) {
     const competitor = await this.getOrThrow(organizationId, competitorId);
-    const analyzer = new SeoTrafficAnalyzer();
-    const seoReport = await analyzer.analyze(competitor.name, competitor.websiteUrl ?? undefined);
+    const auditor = new SeoOnPageAuditor();
+    const seoAudit = await auditor.audit(competitor.name, competitor.websiteUrl ?? undefined);
+    if (!seoAudit.available) {
+      throw new BadRequestException(
+        seoAudit.reason ?? "প্রতিযোগীর ওয়েবসাইট থেকে আসল SEO ডেটা পাওয়া যায়নি — স্ট্র্যাটেজি তৈরি হয়নি",
+      );
+    }
 
     let ownProduct: { name: string; description?: string | null } | null = null;
     if (ownProductId) {
@@ -786,32 +818,9 @@ Return strictly valid JSON with this format:
 
     const provider = this.llm.getProvider();
     const targetTitle = ownProduct?.name || "Your Store Product";
-    const competitorKeywords = seoReport.topKeywords.slice(0, 5).map((k) => k.keyword).join(", ");
+    const observedPhrases = seoAudit.observedPhrases.map((p) => p.text);
 
-    const systemPrompt = "You are an elite e-commerce SEO and SERP copy strategist. You help DTC brands outrank competitors on Google.";
-    const userPrompt = `Competitor: ${competitor.name} (${seoReport.domain})
-Estimated Organic Monthly Traffic: ${seoReport.estimatedMonthlyOrganicVisits.toLocaleString()}
-Domain Authority: ${seoReport.domainAuthorityScore}/100
-Competitor Top Ranking Keywords: ${competitorKeywords}
-Target Product to Optimize: "${targetTitle}"
-
-Task:
-Generate a high-converting, high-CTR Google SEO package that hijacks the competitor's organic keyword dominance:
-1. Recommended Google SEO Meta Title (Under 60 chars, includes high-volume keyword + power word + CTR hook)
-2. Compelling Meta Description (Under 155 chars, highlighting COD / fast delivery / competitive advantage)
-3. 5 High-Intent Focus Keywords to tag on the product page
-4. "Why this outranks them" tactical reason.
-
-Format as a clean JSON with keys:
-{
-  "recommendedMetaTitle": "...",
-  "recommendedMetaDescription": "...",
-  "targetKeywords": ["...", "..."],
-  "outrankTactics": "...",
-  "estimatedCtrBoost": "..."
-}`;
-
-    let strategyResult = {
+    const templateStrategy = {
       recommendedMetaTitle: `${targetTitle} - Best Price in BD | Cash On Delivery`,
       recommendedMetaDescription: `Looking for authentic ${targetTitle}? Order today with fast home delivery & Cash on Delivery across Bangladesh. 100% genuine product guaranteed!`,
       targetKeywords: [
@@ -821,27 +830,55 @@ Format as a clean JSON with keys:
         `original ${targetTitle.toLowerCase()} shop bd`,
         `${competitor.name.toLowerCase()} alternative`,
       ],
-      outrankTactics: `Targets high-intent transactional search queries for ${competitor.name}'s niche by offering cash on delivery assurance and fast home delivery, yielding higher SERP CTR.`,
-      estimatedCtrBoost: "+35% higher SERP CTR",
+      outrankTactics: seoAudit.title
+        ? `প্রতিযোগীর হোমপেজের আসল শিরোনাম "${seoAudit.title}" — ওই পেজে ব্যবহৃত ফ্রেজের বিপরীতে আপনার প্রোডাক্টের নাম + দাম + ক্যাশ অন ডেলিভারি প্রতিশ্রুতি দিয়ে আলাদা, ক্লিক-যোগ্য মেটা সাজানো হয়েছে। এটি একটি পরামর্শমূলক খসড়া; প্রকৃত CTR প্রভাব আগে থেকে জানা যায় না।`
+        : `প্রতিযোগীর হোমপেজে কোনো title পাওয়া যায়নি — আপনার প্রোডাক্টের নাম + দাম + ক্যাশ অন ডেলিভারি প্রতিশ্রুতি দিয়ে মেটা সাজানো হয়েছে। এটি একটি পরামর্শমূলক খসড়া; প্রকৃত CTR প্রভাব আগে থেকে জানা যায় না।`,
     };
 
-    try {
-      const response = await provider.complete(
-        [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-        { jsonMode: true },
-      );
-      const parsed = JSON.parse(response.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
-      if (parsed.recommendedMetaTitle) {
-        strategyResult = {
-          recommendedMetaTitle: parsed.recommendedMetaTitle,
-          recommendedMetaDescription: parsed.recommendedMetaDescription || strategyResult.recommendedMetaDescription,
-          targetKeywords: Array.isArray(parsed.targetKeywords) ? parsed.targetKeywords : strategyResult.targetKeywords,
-          outrankTactics: parsed.outrankTactics || strategyResult.outrankTactics,
-          estimatedCtrBoost: parsed.estimatedCtrBoost || strategyResult.estimatedCtrBoost,
-        };
+    let strategyResult = templateStrategy;
+    let origin: "ai" | "template" = "template";
+
+    if (provider.isRealLlm) {
+      const systemPrompt = "You are an e-commerce SEO and SERP copy strategist. You work ONLY from the observed on-page facts provided — never invent traffic, rankings, or CTR percentages.";
+      const userPrompt = `Competitor: ${competitor.name} (${seoAudit.domain})
+Observed homepage title: ${seoAudit.title ?? "(none found)"}
+Observed meta description: ${seoAudit.metaDescription ?? "(none found)"}
+Observed heading phrases from their own site: ${observedPhrases.join(" | ") || "(none found)"}
+Product schema present on homepage: ${seoAudit.productSchemaPresent ? "yes" : "no"}
+Target Product to Optimize: "${targetTitle}"
+
+Task: draft an SEO package for OUR product page, informed by the phrases the competitor's own site actually uses:
+1. Recommended Google SEO Meta Title (under 60 chars)
+2. Meta Description (under 155 chars, highlighting COD / fast delivery)
+3. 5 focus keyword phrases to tag on the product page
+4. "Why this helps" tactical rationale IN WORDS. Do NOT state any CTR percentage or traffic estimate — the effect cannot be known in advance.
+
+Format as clean JSON with keys:
+{
+  "recommendedMetaTitle": "...",
+  "recommendedMetaDescription": "...",
+  "targetKeywords": ["...", "..."],
+  "outrankTactics": "..."
+}`;
+
+      try {
+        const response = await provider.complete(
+          [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+          { jsonMode: true },
+        );
+        const parsed = JSON.parse(response.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
+        if (parsed.recommendedMetaTitle) {
+          strategyResult = {
+            recommendedMetaTitle: parsed.recommendedMetaTitle,
+            recommendedMetaDescription: parsed.recommendedMetaDescription || templateStrategy.recommendedMetaDescription,
+            targetKeywords: Array.isArray(parsed.targetKeywords) ? parsed.targetKeywords : templateStrategy.targetKeywords,
+            outrankTactics: parsed.outrankTactics || templateStrategy.outrankTactics,
+          };
+          origin = "ai";
+        }
+      } catch {
+        // Keep the template draft (labeled via origin).
       }
-    } catch {
-      // Fallback to strategyResult
     }
 
     await this.audit.log({
@@ -857,15 +894,13 @@ Format as a clean JSON with keys:
       competitor: {
         id: competitor.id,
         name: competitor.name,
-        domain: seoReport.domain,
-        monthlyOrganicVisits: seoReport.estimatedMonthlyOrganicVisits,
-        domainAuthority: seoReport.domainAuthorityScore,
+        domain: seoAudit.domain,
       },
-      seoReport,
+      seoAudit,
       strategy: strategyResult,
+      origin,
     };
   }
-
   async deconstructVideoScript(
     organizationId: string,
     actorId: string,
@@ -911,10 +946,12 @@ Format as a clean JSON with keys:
     return result;
   }
 
-  async mineCustomerComplaints(organizationId: string, competitorId: string) {
+  // HF4: input-driven. Only the reviews the owner pastes are analyzed;
+  // without pasted text the miner returns an honest unavailable state.
+  async mineCustomerComplaints(organizationId: string, competitorId: string, reviewsText?: string) {
     const competitor = await this.getOrThrow(organizationId, competitorId);
     const miner = new ReviewMiner(this.llm);
-    return miner.mine(competitor.name, competitor.websiteUrl ?? undefined);
+    return miner.mine(competitor.name, reviewsText);
   }
 
   async getAlertSettings(organizationId: string): Promise<AlertChannelConfig> {

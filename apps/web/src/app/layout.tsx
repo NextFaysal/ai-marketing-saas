@@ -1,4 +1,12 @@
 import "@fontsource-variable/inter";
+// UX1 Q1: Bengali font — Inter has no Bengali glyphs, so without
+// this every Bengali string fell back to a per-device system font.
+// The stack in globals.css keeps Latin on Inter and lets Bengali
+// glyphs fall through to Hind Siliguri per-glyph.
+import "@fontsource/hind-siliguri/400.css";
+import "@fontsource/hind-siliguri/500.css";
+import "@fontsource/hind-siliguri/600.css";
+import "@fontsource/hind-siliguri/700.css";
 import "./globals.css";
 import React from "react";
 import type { Viewport } from "next";

@@ -75,6 +75,7 @@ interface Product {
 }
 
 interface CounterAdResult {
+  origin: "ai" | "template";
   hookBreakdown: {
     hookType: string;
     competitorAngle: string;
@@ -116,36 +117,18 @@ interface DossierData {
   strategicInsights: Insight[];
 }
 
-interface OrganicKeyword {
-  keyword: string;
-  estimatedPosition: number;
-  searchVolume: number;
-  keywordDifficulty: number;
-  intent: "Transactional" | "Commercial" | "Informational";
-  estimatedMonthlyClicks: number;
-  rankingUrl: string;
-}
-
-interface TopOrganicPage {
-  url: string;
-  title: string;
-  estimatedTrafficShare: number;
-  primaryKeywords: string[];
-}
-
-interface SeoTrafficReport {
+interface SeoOnPageAudit {
   domain: string;
-  estimatedMonthlyOrganicVisits: number;
-  domainAuthorityScore: number;
-  totalIndexedKeywords: number;
-  topKeywords: OrganicKeyword[];
-  topPages: TopOrganicPage[];
-  intentDistribution: {
-    transactional: number;
-    commercial: number;
-    informational: number;
-  };
-  focusKeywordThemes: string[];
+  available: boolean;
+  reason?: string;
+  fetchedUrl?: string;
+  title?: string;
+  metaDescription?: string;
+  productSchemaPresent: boolean;
+  og: { title?: string; description?: string; image?: string };
+  sitemapPresent: boolean;
+  observedPhrases: { source: "title" | "h1" | "h2"; text: string }[];
+  internalLinks: { url: string; kind: "shop" | "product" | "offer" | "page" }[];
 }
 
 interface SeoStrategyResult {
@@ -153,17 +136,15 @@ interface SeoStrategyResult {
     id: string;
     name: string;
     domain: string;
-    monthlyOrganicVisits: number;
-    domainAuthority: number;
   };
-  seoReport: SeoTrafficReport;
+  seoAudit: SeoOnPageAudit;
   strategy: {
     recommendedMetaTitle: string;
     recommendedMetaDescription: string;
     targetKeywords: string[];
     outrankTactics: string;
-    estimatedCtrBoost: string;
   };
+  origin: "ai" | "template";
 }
 
 interface ScriptScene {
@@ -177,6 +158,7 @@ interface ScriptScene {
 
 interface DeconstructedVideoScript {
   competitorAdId: string;
+  origin: "ai" | "template";
   format: string;
   totalDurationSeconds: number;
   hookCategory: string;
@@ -198,30 +180,37 @@ interface DeconstructedVideoScript {
 interface CustomerComplaintTheme {
   category: string;
   frequencyPercent: number;
+  itemCount: number;
   complaintSummary: string;
   sampleCustomerQuotes: string[];
   severity: "High" | "Medium" | "Critical";
 }
 
-interface CompetitorReviewMineReport {
-  competitorName: string;
-  domain: string;
-  overallRatingScore: number;
-  totalAnalyzedFeedback: number;
-  sentimentDistribution: {
-    satisfied: number;
-    neutral: number;
-    dissatisfied: number;
-  };
-  topComplaints: CustomerComplaintTheme[];
-  biggestVulnerability: string;
-  recommendedCounterAngles: {
-    hookHeadline: string;
-    trustMechanism: string;
-    guaranteeOffer: string;
-    whyBuyersSwitch: string;
-  }[];
+interface ReviewCounterAngle {
+  hookHeadline: string;
+  trustMechanism: string;
+  guaranteeOffer: string;
+  whyBuyersSwitch: string;
 }
+
+// HF4: discriminated union — without pasted input there is only an
+// honest unavailable state, never a fabricated report.
+type CompetitorReviewMineReport =
+  | { available: false; competitorName: string; reason: string }
+  | {
+      available: true;
+      competitorName: string;
+      totalAnalyzedFeedback: number;
+      overallRatingScore: number | null;
+      sentimentDistribution: {
+        satisfied: number;
+        neutral: number;
+        dissatisfied: number;
+      };
+      topComplaints: CustomerComplaintTheme[];
+      biggestVulnerability: string;
+      recommendedCounterAngles: ReviewCounterAngle[];
+    };
 
 interface AlertChannelConfig {
   telegramEnabled: boolean;
@@ -234,24 +223,19 @@ interface AlertChannelConfig {
   notifyOnWinningAd: boolean;
 }
 
-interface CheckoutBundleTier {
-  tierName: string;
-  quantity: number;
-  discountOffer: string;
-  perceivedValue: string;
-  popularityScore: number;
-}
-
 interface FunnelAuditReport {
   competitorName: string;
   domain: string;
-  checkoutType: string;
-  formFrictionScore: number;
-  requiredFields: string[];
+  scanned: boolean;
+  reason?: string;
+  pagesScanned: string[];
+  checkoutDetected: boolean;
+  checkoutFieldCount: number | null;
+  checkoutFields: string[];
   paymentGatewaysDetected: string[];
-  activeTrustBadges: string[];
-  bundleOffers: CheckoutBundleTier[];
-  conversionOptimizationTips: {
+  trustSignalsDetected: string[];
+  bundleHints: string[];
+  generalTips: {
     tactic: string;
     impact: "High" | "Medium" | "Critical";
     howToBeatThem: string;
@@ -309,7 +293,7 @@ export default function CompetitorsPage() {
   const [loadingDossier, setLoadingDossier] = useState(false);
 
   // SEO & Traffic Spy State
-  const [seoReport, setSeoReport] = useState<SeoTrafficReport | null>(null);
+  const [seoReport, setSeoReport] = useState<SeoOnPageAudit | null>(null);
   const [seoStrategy, setSeoStrategy] = useState<SeoStrategyResult | null>(null);
   const [loadingSeo, setLoadingSeo] = useState(false);
   const [generatingSeoGap, setGeneratingSeoGap] = useState(false);
@@ -324,6 +308,7 @@ export default function CompetitorsPage() {
 
   // Review Mine State
   const [reviewMineReport, setReviewMineReport] = useState<CompetitorReviewMineReport | null>(null);
+  const [reviewText, setReviewText] = useState("");
   const [loadingReviewMine, setLoadingReviewMine] = useState(false);
 
   // Alert Bot Modal State
@@ -556,7 +541,7 @@ export default function CompetitorsPage() {
     setLoadingSeo(true);
     setError("");
     try {
-      const report = await apiFetch<SeoTrafficReport>(`/organizations/${orgId}/competitors/${c.id}/seo-traffic`);
+      const report = await apiFetch<SeoOnPageAudit>(`/organizations/${orgId}/competitors/${c.id}/seo-traffic`);
       setSeoReport(report);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load SEO report");
@@ -611,22 +596,24 @@ export default function CompetitorsPage() {
     }
   }
 
-  const fetchReviewMine = useCallback(async (c: Competitor) => {
+  // HF4: analysis runs ONLY on the review text the owner pasted above.
+  async function analyzeReviews(c: Competitor) {
     const orgId = getOrganizationId();
     if (!orgId) return;
     setLoadingReviewMine(true);
     setError("");
     try {
       const res = await apiFetch<CompetitorReviewMineReport>(
-        `/organizations/${orgId}/competitors/${c.id}/reviews-mine`
+        `/organizations/${orgId}/competitors/${c.id}/reviews-mine`,
+        { method: "POST", body: JSON.stringify({ reviewsText: reviewText }) }
       );
       setReviewMineReport(res);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load review mine");
+      setError(e instanceof Error ? e.message : "Failed to analyze reviews");
     } finally {
       setLoadingReviewMine(false);
     }
-  }, []);
+  }
 
   const fetchFunnelAudit = useCallback(async (c: Competitor) => {
     const orgId = getOrganizationId();
@@ -662,15 +649,13 @@ export default function CompetitorsPage() {
       setObservations(o);
       if (activeTab === "seo") {
         fetchSeoReport(c);
-      } else if (activeTab === "complaints") {
-        fetchReviewMine(c);
       } else if (activeTab === "funnel") {
         fetchFunnelAudit(c);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load competitor details");
     }
-  }, [activeTab, fetchSeoReport, fetchReviewMine, fetchFunnelAudit]);
+  }, [activeTab, fetchSeoReport, fetchFunnelAudit]);
 
 
 
@@ -809,16 +794,20 @@ export default function CompetitorsPage() {
         created: number;
         updated: number;
         breakdown: Record<string, number>;
+        unavailable?: Record<string, string>;
       }>(`/organizations/${orgId}/competitors/${c.id}/sync-multi-platform`, {
         method: "POST",
         body: JSON.stringify({}),
       });
+      const unavailableNotes = Object.entries(res.unavailable ?? {})
+        .map(([platform, note]) => `${platform}: ${note}`)
+        .join("; ");
       setNotice(
-        `${c.name}: মাল্টি-প্ল্যাটফর্ম থেকে মোট ${res.fetched}টি বিজ্ঞাপন পাওয়া গেছে! (Facebook: ${
+        `${c.name}: মাল্টি-প্ল্যাটফর্ম থেকে মোট ${res.fetched}টি রেকর্ড পাওয়া গেছে (Facebook: ${
           res.breakdown?.facebook ?? 0
-        }, Google: ${res.breakdown?.google ?? 0}, TikTok: ${res.breakdown?.tiktok ?? 0}, Bing: ${
+        }, Google সার্চ ফলাফল: ${res.breakdown?.google ?? 0}, TikTok: ${res.breakdown?.tiktok ?? 0}, Bing: ${
           res.breakdown?.bing ?? 0
-        })`
+        })${unavailableNotes ? ` — পাওয়া যায়নি: ${unavailableNotes}` : ""}`
       );
       await load();
       if (active?.id === c.id) await openCompetitor(c);
@@ -932,111 +921,124 @@ export default function CompetitorsPage() {
     return true;
   });
 
+  // Header stat chips: totals derived only from data already fetched
+  // on this page (competitor list stats + alerts feed) — never invented.
+  const totalAds = competitors.reduce((sum, c) => sum + c.stats.ads, 0);
+  const totalActiveAds = competitors.reduce((sum, c) => sum + c.stats.activeAds, 0);
+  const totalObservations = competitors.reduce((sum, c) => sum + c.stats.priceObservations, 0);
+
   const inputCls = "input mt-1 w-full";
 
   function getPlatformBadge(platforms: string[]) {
     const pStr = platforms.join(" ").toLowerCase();
     if (pStr.includes("tiktok")) {
       return (
-        <span className="rounded-full bg-pink-100 text-pink-800 border border-pink-200 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1">
+        <span className="badge bg-pink-100 text-pink-800 ring-1 ring-inset ring-pink-200">
           🎵 TikTok
         </span>
       );
     }
     if (pStr.includes("google")) {
       return (
-        <span className="rounded-full bg-blue-100 text-blue-800 border border-blue-200 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1">
+        <span className="badge bg-blue-100 text-blue-800 ring-1 ring-inset ring-blue-200">
           🔍 Google Ads
         </span>
       );
     }
     if (pStr.includes("bing") || pStr.includes("microsoft")) {
       return (
-        <span className="rounded-full bg-cyan-100 text-cyan-800 border border-cyan-200 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1">
+        <span className="badge bg-cyan-100 text-cyan-800 ring-1 ring-inset ring-cyan-200">
           🌐 Bing
         </span>
       );
     }
     return (
-      <span className="rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1">
+      <span className="badge bg-indigo-100 text-indigo-800 ring-1 ring-inset ring-indigo-200">
         📘 Meta
       </span>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Header with Navigation Tabs */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="page-title">Competitor Intelligence Suite</h1>
-            <span className="rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-2.5 py-0.5 text-xs font-semibold text-white shadow-sm">
-              v2.0 Full Suite
-            </span>
+    <div className="space-y-5 sm:space-y-6">
+      {/* Power Header v2 */}
+      <div className="space-y-3.5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="comp-title-icon" aria-hidden="true">🕵️</span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="page-title">Competitor Intelligence Suite</h1>
+                <span className="badge-brand">
+                  v2.0 Full Suite
+                </span>
+              </div>
+              <p className="page-sub mt-0.5">
+                রিয়েল-টাইম অ্যাড স্পাই, প্রাইস ড্রপ অ্যালার্ট, স্টক-আউট অপরচুনিটি ও এআই কাউন্টার স্ট্র্যাটেজি ইঞ্জিন
+              </p>
+            </div>
           </div>
-          <p className="text-sm text-slate-500">
-            রিয়েল-টাইম অ্যাড স্পাই, প্রাইস ড্রপ অ্যালার্ট, স্টক-আউট অপরচুনিটি ও এআই কাউন্টার স্ট্র্যাটেজি ইঞ্জিন
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setIsAlertSettingsOpen(true)}
+              className="btn-secondary min-h-[40px] flex-1 text-xs sm:flex-none"
+            >
+              <span>📲 Telegram & WhatsApp Alert Bot</span>
+              <span className="badge-green px-1 py-0.2 text-[10px]">24/7</span>
+            </button>
+            <button
+              onClick={openDossierModalHandler}
+              className="btn-primary min-h-[40px] flex-1 text-xs sm:flex-none"
+            >
+              <span>📄 White-Label Agency Audit</span>
+              <span className="rounded bg-white/20 px-1 py-0.2 text-[10px] font-medium">Export</span>
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsAlertSettingsOpen(true)}
-            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 flex items-center gap-1.5"
-          >
-            <span>📲 Telegram & WhatsApp Alert Bot</span>
-            <span className="rounded bg-emerald-100 text-emerald-800 px-1 py-0.2 text-[10px] font-bold">24/7</span>
-          </button>
-          <button
-            onClick={openDossierModalHandler}
-            className="rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 flex items-center gap-1.5"
-          >
-            <span>📄 White-Label Agency Audit</span>
-            <span className="rounded bg-indigo-500/30 px-1 py-0.2 text-[10px] font-medium">Export</span>
-          </button>
+        {/* Live stat chips — only numbers already fetched on this page */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="stat-chip">
+            🏢 প্রতিযোগী <span className="stat-chip-count">{competitors.length}</span>
+          </span>
+          <span className="stat-chip">
+            📣 মোট বিজ্ঞাপন <span className="stat-chip-count">{totalAds}</span>
+          </span>
+          <span className="stat-chip">
+            🟢 সক্রিয় বিজ্ঞাপন <span className="stat-chip-count">{totalActiveAds}</span>
+          </span>
+          <span className="stat-chip">
+            🏷️ দাম রেকর্ড <span className="stat-chip-count">{totalObservations}</span>
+          </span>
+          <span className={`stat-chip ${alerts.length > 0 ? "stat-chip-danger" : ""}`}>
+            🚨 লাইভ অ্যালার্ট <span className="stat-chip-count">{alerts.length}</span>
+          </span>
         </div>
       </div>
 
 
-      {/* Main Feature Tabs */}
-      <div className="flex flex-wrap gap-2 border-b pb-2">
+      {/* Tab rail v2 — sticky, scroll-snap on mobile, one brand active state */}
+      <div className="comp-tab-rail">
         <button
           onClick={() => setActiveTab("spy")}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all ${
-            activeTab === "spy"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "spy" ? "comp-tab-btn-active" : ""}`}
         >
-          🌐 Multi-Platform Ad Spy ({ads.length})
+          🌐 Multi-Platform Ad Spy <span className="comp-tab-count">{ads.length}</span>
         </button>
         <button
           onClick={() => setActiveTab("swipefile")}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1 ${
-            activeTab === "swipefile"
-              ? "bg-indigo-600 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "swipefile" ? "comp-tab-btn-active" : ""}`}
         >
-          <span>💾 Swipe File & Inspiration ({savedSwipeIds.length})</span>
+          <span>💾 Swipe File & Inspiration</span> <span className="comp-tab-count">{savedSwipeIds.length}</span>
         </button>
         <button
           onClick={() => setActiveTab("pricing")}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all ${
-            activeTab === "pricing"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "pricing" ? "comp-tab-btn-active" : ""}`}
         >
           🏷️ Price & Stock Comparison
         </button>
         <button
           onClick={() => setActiveTab("playbook")}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all ${
-            activeTab === "playbook"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "playbook" ? "comp-tab-btn-active" : ""}`}
         >
           📊 Strategy & Offer Playbook
         </button>
@@ -1045,65 +1047,52 @@ export default function CompetitorsPage() {
             setActiveTab("seo");
             if (active) fetchSeoReport(active);
           }}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === "seo"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "seo" ? "comp-tab-btn-active" : ""}`}
         >
-          <span>🔍 SEO & Traffic Spy</span>
-          <span className="rounded bg-emerald-500/20 text-emerald-700 px-1 py-0.2 text-[9px] font-bold">New</span>
+          <span>🔍 SEO On-Page অডিট</span>
+          <span className="comp-tab-note bg-emerald-500/20 text-emerald-700">New</span>
         </button>
         <button
           onClick={() => {
             setActiveTab("complaints");
-            if (active) fetchReviewMine(active);
           }}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === "complaints"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "complaints" ? "comp-tab-btn-active" : ""}`}
         >
           <span>💬 Bad Review Mine</span>
-          <span className="rounded bg-rose-500/20 text-rose-700 px-1 py-0.2 text-[9px] font-bold">Hot</span>
+          <span className="comp-tab-note bg-rose-500/20 text-rose-700">Hot</span>
         </button>
         <button
           onClick={() => {
             setActiveTab("funnel");
             if (active) fetchFunnelAudit(active);
           }}
-          className={`rounded-lg px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === "funnel"
-              ? "bg-slate-900 text-white shadow"
-              : "bg-white text-slate-600 border hover:bg-slate-50"
-          }`}
+          className={`comp-tab-btn ${activeTab === "funnel" ? "comp-tab-btn-active" : ""}`}
         >
           <span>🛒 Checkout & Funnel Spy</span>
-          <span className="rounded bg-amber-500/20 text-amber-700 px-1 py-0.2 text-[9px] font-bold">+35% AOV</span>
+          <span className="comp-tab-note bg-amber-500/20 text-amber-700">+35% AOV</span>
         </button>
       </div>
 
 
 
 
-      {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+      {error ? <p className="alert alert-red">{error}</p> : null}
+      {notice ? <p className="alert alert-green">{notice}</p> : null}
 
-      {/* 🚨 Live Intelligence Alerts Banner */}
+      {/* 🚨 Live Intelligence Alerts Banner v2 */}
       {alerts.length > 0 ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 space-y-2">
-          <div className="flex items-center justify-between">
+        <div className="alert alert-amber fade-rise flex-col gap-3">
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping" />
+              <span className="flex h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 animate-ping" />
               <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900">
                 🚨 Live Opportunity & Threat Alerts ({alerts.length})
               </h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setIsAlertSettingsOpen(true)}
-                className="rounded-lg bg-amber-200/70 hover:bg-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-900 flex items-center gap-1 transition-colors"
+                className="rounded-lg bg-amber-200/70 hover:bg-amber-200 px-2.5 py-1.5 min-h-[32px] text-[11px] font-bold text-amber-900 flex items-center gap-1 transition-colors"
                 title="টেলিগ্রাম ও হোয়াটসঅ্যাপে ইনস্ট্যান্ট নোটিফিকেশন চালু করুন"
               >
                 📲 Telegram / WhatsApp বট
@@ -1112,9 +1101,9 @@ export default function CompetitorsPage() {
             </div>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid w-full gap-2 sm:grid-cols-2">
             {alerts.slice(0, 4).map((alt) => (
-              <div key={alt.id} className="rounded-lg bg-white p-2.5 text-xs border border-amber-200/80 shadow-xs">
+              <div key={alt.id} className="rounded-xl bg-white p-3 text-xs shadow-sm ring-1 ring-inset ring-amber-200/80">
                 <span className="font-bold text-slate-900">{alt.title}</span>
                 <p className="mt-1 text-slate-600 text-[11px] line-clamp-2">{alt.detail}</p>
               </div>
@@ -1123,42 +1112,43 @@ export default function CompetitorsPage() {
         </div>
       ) : null}
 
-      {/* Competitor Cards */}
+      {/* Competitor Cards v2 */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {competitors.map((c) => (
           <div
             key={c.id}
-            className={`card p-4 transition-all hover:shadow-md ${
-              active?.id === c.id ? "ring-2 ring-blue-500 bg-blue-50/20" : ""
+            className={`card card-hover p-4 sm:p-5 ${
+              active?.id === c.id ? "comp-card-active" : ""
             }`}
           >
-            <div className="flex items-start justify-between">
-              <div>
+            <div className="flex items-start gap-3">
+              <span className="comp-avatar" aria-hidden="true">{c.name.trim().charAt(0) || "?"}</span>
+              <div className="min-w-0 flex-1">
                 <button
-                  className="text-left font-bold text-slate-900 hover:text-blue-600 hover:underline"
+                  className="text-left font-bold text-slate-900 hover:text-brand-700 hover:underline"
                   onClick={() => openCompetitor(c)}
                 >
                   {c.name}
                 </button>
                 {c.websiteUrl ? (
-                  <p className="text-xs text-slate-400 truncate max-w-[220px]">
+                  <p className="truncate text-xs text-slate-400">
                     <a href={c.websiteUrl} target="_blank" rel="noreferrer" className="hover:underline">
                       {c.websiteUrl.replace(/^https?:\/\//, "")}
                     </a>
                   </p>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   onClick={() => setEditCompetitor(c)}
-                  className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 text-xs"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 text-sm"
                   title="এডিট"
                 >
                   ✏️
                 </button>
                 <button
                   onClick={() => deleteCompetitor(c.id, c.name)}
-                  className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 text-sm"
                   title="ডিলিট"
                 >
                   🗑️
@@ -1166,32 +1156,38 @@ export default function CompetitorsPage() {
               </div>
             </div>
 
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                বিজ্ঞাপন: {c.stats.ads} (সক্রিয় {c.stats.activeAds})
-              </span>
-              <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                দাম রেকর্ড: {c.stats.priceObservations}
-              </span>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="ctx-tile">
+                <div className="ctx-tile-label">বিজ্ঞাপন</div>
+                <div className="ctx-tile-value">{c.stats.ads}</div>
+              </div>
+              <div className="ctx-tile">
+                <div className="ctx-tile-label">সক্রিয়</div>
+                <div className="ctx-tile-value">{c.stats.activeAds}</div>
+              </div>
+              <div className="ctx-tile">
+                <div className="ctx-tile-label">দাম রেকর্ড</div>
+                <div className="ctx-tile-value">{c.stats.priceObservations}</div>
+              </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2 border-t pt-3">
+            <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:flex-wrap">
               <button
-                className="rounded-lg bg-gradient-to-r from-blue-700 to-indigo-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:from-blue-800 hover:to-indigo-800 shadow-sm"
+                className="btn-ai min-h-[40px] text-xs sm:flex-1"
                 disabled={busy !== ""}
                 onClick={() => syncMultiPlatform(c)}
               >
                 {busy === `multi-${c.id}` ? "Spying all platforms..." : "⚡ All-Platform Spy (FB+Google+TikTok+Bing)"}
               </button>
               <button
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 hover:bg-slate-50"
+                className="btn-secondary btn-sm min-h-[40px]"
                 disabled={busy !== "" || !c.websiteUrl}
                 onClick={() => scanWebsite(c)}
               >
                 {busy === `scan-${c.id}` ? "Scanning..." : "🌐 ওয়েবসাইট ও স্টক স্ক্যান"}
               </button>
               <button
-                className="rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-1.5 text-xs font-semibold text-indigo-800 disabled:opacity-50 hover:bg-indigo-100"
+                className="comp-soft-btn min-h-[40px]"
                 disabled={busy !== ""}
                 onClick={() => scheduleAutoSyncHandler(c)}
                 title="প্রতি রাতে স্বয়ংক্রিয় ব্যাকগ্রাউন্ড সিঙ্ক চালু/বন্ধ করুন"
@@ -1210,11 +1206,11 @@ export default function CompetitorsPage() {
         />
       ) : null}
 
-      {/* Edit Modal */}
+      {/* Edit Modal v2 */}
       {editCompetitor ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <form onSubmit={updateCompetitorHandler} className="card w-full max-w-md p-6 bg-white space-y-4">
-            <h3 className="font-bold text-lg">প্রতিযোগীর তথ্য সম্পাদনা করুন</h3>
+        <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
+          <form onSubmit={updateCompetitorHandler} className="comp-sheet space-y-4 sm:max-w-md">
+            <h3 className="modal-head -mx-5 -mt-5 px-5 sm:-mx-6 sm:-mt-6 sm:px-6 sm:rounded-t-3xl text-base font-bold text-slate-900">প্রতিযোগীর তথ্য সম্পাদনা করুন</h3>
             <div>
               <label className="text-xs font-semibold text-slate-600">নাম</label>
               <input
@@ -1240,15 +1236,15 @@ export default function CompetitorsPage() {
                 onChange={(e) => setEditCompetitor({ ...editCompetitor, websiteUrl: e.target.value })}
               />
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
               <button
                 type="button"
-                className="rounded-lg border px-4 py-2 text-sm font-semibold"
+                className="btn-secondary min-h-[40px]"
                 onClick={() => setEditCompetitor(null)}
               >
                 বাতিল
               </button>
-              <button type="submit" className="btn-primary">
+              <button type="submit" className="btn-primary min-h-[40px]">
                 সংরক্ষণ করুন
               </button>
             </div>
@@ -1257,8 +1253,8 @@ export default function CompetitorsPage() {
       ) : null}
 
       {/* Add New Competitor Form */}
-      <form onSubmit={create} className="card p-5 space-y-3 bg-white">
-        <div className="font-semibold text-slate-900">+ নতুন প্রতিযোগী যোগ করুন</div>
+      <form onSubmit={create} className="card p-4 space-y-3 bg-white sm:p-5">
+        <div className="section-title">+ নতুন প্রতিযোগী যোগ করুন</div>
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block text-xs font-medium text-slate-700">
             নাম *
@@ -1289,16 +1285,16 @@ export default function CompetitorsPage() {
             />
           </label>
         </div>
-        <button className="btn-primary text-xs py-2 px-4">প্রতিযোগী যুক্ত করুন</button>
+        <button className="btn-primary min-h-[40px] w-full text-xs py-2 px-4 sm:w-auto">প্রতিযোগী যুক্ত করুন</button>
       </form>
 
       {/* TAB 1 & 2: SPY & SWIPE FILE VIEW */}
       {(activeTab === "spy" || activeTab === "swipefile") && active ? (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="fade-rise grid gap-6 lg:grid-cols-2">
           {/* Ad Library Stream */}
-          <div className="card p-5 bg-white">
-            <div className="flex flex-col gap-2 border-b pb-3">
-              <div className="flex items-center justify-between">
+          <div className="card p-4 bg-white sm:p-5">
+            <div className="flex flex-col gap-2 border-b border-slate-100 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="font-bold text-slate-900">
                     {activeTab === "swipefile"
@@ -1310,24 +1306,24 @@ export default function CompetitorsPage() {
                 <div className="flex gap-1">
                   <button
                     onClick={() => setAdFilter("all")}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                      adFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                    className={`min-h-[32px] rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-[0.97] ${
+                      adFilter === "all" ? "comp-chip-active" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
                     সব
                   </button>
                   <button
                     onClick={() => setAdFilter("active")}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                      adFilter === "active" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
+                    className={`min-h-[32px] rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-[0.97] ${
+                      adFilter === "active" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
                     সক্রিয়
                   </button>
                   <button
                     onClick={() => setAdFilter("winning")}
-                    className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
-                      adFilter === "winning" ? "bg-amber-500 text-white" : "bg-amber-100 text-amber-800"
+                    className={`min-h-[32px] rounded-full px-3 py-1.5 text-xs font-semibold transition active:scale-[0.97] ${
+                      adFilter === "winning" ? "bg-amber-500 text-white" : "bg-amber-100 text-amber-800 hover:bg-amber-200/70"
                     }`}
                   >
                     🔥 Winning
@@ -1340,15 +1336,15 @@ export default function CompetitorsPage() {
                 <span className="text-[11px] font-semibold text-slate-400 self-center mr-1">ফিল্টার:</span>
                 <button
                   onClick={() => setPlatformFilter("all")}
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
-                    platformFilter === "all" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
+                    platformFilter === "all" ? "comp-chip-active" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
                   সব প্ল্যাটফর্ম
                 </button>
                 <button
                   onClick={() => setPlatformFilter("facebook")}
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
                     platformFilter === "facebook" ? "bg-indigo-600 text-white" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                   }`}
                 >
@@ -1356,7 +1352,7 @@ export default function CompetitorsPage() {
                 </button>
                 <button
                   onClick={() => setPlatformFilter("google")}
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
                     platformFilter === "google" ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
                   }`}
                 >
@@ -1364,7 +1360,7 @@ export default function CompetitorsPage() {
                 </button>
                 <button
                   onClick={() => setPlatformFilter("tiktok")}
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
                     platformFilter === "tiktok" ? "bg-pink-600 text-white" : "bg-pink-50 text-pink-700 hover:bg-pink-100"
                   }`}
                 >
@@ -1372,7 +1368,7 @@ export default function CompetitorsPage() {
                 </button>
                 <button
                   onClick={() => setPlatformFilter("bing")}
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
                     platformFilter === "bing" ? "bg-cyan-700 text-white" : "bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
                   }`}
                 >
@@ -1385,21 +1381,21 @@ export default function CompetitorsPage() {
               {filteredAds.map((a) => (
                 <div
                   key={a.id}
-                  className={`rounded-lg border p-3 text-sm transition-all ${
+                  className={`rounded-2xl border p-3.5 text-sm shadow-sm transition duration-150 hover:shadow-card-hover ${
                     a.isWinning
                       ? "border-amber-300 bg-amber-50/30"
-                      : "border-slate-200 bg-slate-50"
+                      : "border-slate-200/80 bg-white"
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-slate-500">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {getPlatformBadge(a.platforms)}
                       {a.isWinning ? (
-                        <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                        <span className="badge bg-amber-500 text-white shadow-sm ring-1 ring-inset ring-amber-600/30">
                           🔥 WINNING ({a.daysRunning || 14}+ দিন)
                         </span>
                       ) : a.isFresh ? (
-                        <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                        <span className="badge-brand">
                           ⚡ নতুন ({a.daysRunning || 1} দিন)
                         </span>
                       ) : (
@@ -1412,7 +1408,7 @@ export default function CompetitorsPage() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => toggleSwipeSave(a.id)}
-                        className={`rounded px-2 py-0.5 text-xs font-medium border transition-colors ${
+                        className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium border transition-colors ${
                           savedSwipeIds.includes(a.id)
                             ? "bg-amber-100 border-amber-300 text-amber-900"
                             : "bg-white text-slate-600 hover:bg-slate-100"
@@ -1438,10 +1434,10 @@ export default function CompetitorsPage() {
                     {a.creativeText ?? "(বিজ্ঞাপনের কোনো টেক্সট পাওয়া যায়নি)"}
                   </p>
 
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-200/60 pt-2">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
                     {a.linkUrl ? (
                       <a
-                        className="text-xs text-blue-600 hover:underline truncate max-w-[200px]"
+                        className="min-w-0 flex-1 truncate text-xs text-blue-600 hover:underline sm:max-w-[220px]"
                         href={a.linkUrl}
                         target="_blank"
                         rel="noreferrer"
@@ -1450,13 +1446,13 @@ export default function CompetitorsPage() {
                       </a>
                     ) : <span />}
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         onClick={() => {
                           setVideoModalAd(a);
                           setVideoScriptResult(null);
                         }}
-                        className="rounded border border-pink-200 bg-pink-50/70 px-2 py-1 text-xs font-semibold text-pink-700 hover:bg-pink-100 flex items-center gap-1 transition-colors"
+                        className="min-h-[36px] rounded-lg border border-pink-200 bg-pink-50/70 px-2.5 py-1.5 text-xs font-semibold text-pink-700 hover:bg-pink-100 flex items-center gap-1 transition-colors"
                         title="রিলস ও টিকটক ভিডিও স্ক্রিপ্ট ফ্রেম-বাই-ফ্রেম বিশ্লেষণ"
                       >
                         🎬 স্ক্রিপ্ট ডিকনস্ট্রাক্ট
@@ -1466,7 +1462,7 @@ export default function CompetitorsPage() {
                           setCounterModalAd(a);
                           setCounterAdResult(null);
                         }}
-                        className="rounded bg-gradient-to-r from-indigo-600 to-blue-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:from-indigo-700 hover:to-blue-700"
+                        className="btn-ai min-h-[36px] text-xs"
                       >
                         ⚡ Beat This Ad
                       </button>
@@ -1488,16 +1484,16 @@ export default function CompetitorsPage() {
 
           {/* Price & Stock Observations */}
           <div className="space-y-4">
-            <div className="card p-5 bg-white">
-              <div className="flex items-center justify-between border-b pb-2">
+            <div className="card p-4 bg-white sm:p-5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <div className="font-bold text-slate-900">দামের রেকর্ড ও স্টক ট্র্যাকিং</div>
-                <span className="text-xs text-slate-400">মোট: {observations.length}</span>
+                <span className="stat-chip-count">মোট: {observations.length}</span>
               </div>
               <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
                 {observations.map((o) => (
                   <div
                     key={o.id}
-                    className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs border"
+                    className="flex items-center justify-between gap-2 rounded-xl bg-slate-50/70 px-3 py-2.5 text-xs ring-1 ring-inset ring-slate-200/60"
                   >
                     <div>
                       <span className="font-medium text-slate-900">{o.productName}</span>
@@ -1528,40 +1524,40 @@ export default function CompetitorsPage() {
               </div>
 
               {/* Add Observation Form */}
-              <form onSubmit={addObservation} className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 border-t pt-3">
+              <form onSubmit={addObservation} className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 border-t border-slate-100 pt-3">
                 <input
-                  className="rounded-lg border px-2.5 py-1.5 text-xs w-full"
+                  className="input w-full text-xs"
                   placeholder="প্রোডাক্টের নাম"
                   value={obsForm.productName}
                   onChange={(e) => setObsForm({ ...obsForm, productName: e.target.value })}
                   required
                 />
                 <input
-                  className="rounded-lg border px-2.5 py-1.5 text-xs w-full"
+                  className="input w-full text-xs"
                   placeholder="দাম (যেমন: 1250)"
                   value={obsForm.price}
                   onChange={(e) => setObsForm({ ...obsForm, price: e.target.value })}
                   required
                 />
                 <input
-                  className="rounded-lg border px-2.5 py-1.5 text-xs w-full"
+                  className="input w-full text-xs"
                   placeholder="প্রমাণ URL"
                   value={obsForm.sourceUrl}
                   onChange={(e) => setObsForm({ ...obsForm, sourceUrl: e.target.value })}
                   required
                 />
-                <button className="sm:col-span-3 rounded-lg bg-slate-800 py-1.5 text-xs font-semibold text-white hover:bg-slate-700">
+                <button className="btn-dark btn-sm min-h-[40px] sm:col-span-3 w-full">
                   + দামের প্রমাণ সংরক্ষণ করুন
                 </button>
               </form>
             </div>
 
             {/* Quick Intelligence Summary */}
-            <div className="card p-4 bg-gradient-to-r from-slate-900 to-indigo-950 text-white">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+            <div className="comp-dark p-4 sm:p-5">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-white/60">
                 Omnichannel Advantage
               </h4>
-              <p className="mt-1 text-xs text-slate-200">
+              <p className="mt-1 text-xs leading-relaxed text-white/85">
                 {active.name} এর জন্য Facebook, Google, TikTok ও Bing থেকে সর্বমোট {ads.length}টি বিজ্ঞাপন সংরক্ষিত। প্রতিদ্বন্দীর সেরা ক্রিয়েটিভগুলোকে <b>Swipe File</b>-এ সেভ রাখুন যাতে যেকোনো সময় রেফারেন্স নেওয়া যায়।
               </p>
             </div>
@@ -1571,39 +1567,39 @@ export default function CompetitorsPage() {
 
       {/* TAB 3: PRICE COMPARISON TABLE */}
       {activeTab === "pricing" ? (
-        <div className="card p-5 bg-white">
+        <div className="card fade-rise p-4 bg-white sm:p-5">
           <div className="font-bold text-slate-900">আপনার প্রোডাক্টের দাম বনাম প্রতিযোগী (Direct Matrix)</div>
           <p className="text-xs text-slate-400">
             রিয়েল-টাইম তথ্য: যেখানে প্রমাণের সরাসরি লাইভ লিংক ও তারিখ সংরক্ষিত থাকে।
           </p>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600 text-xs">
+          <div className="table-wrap mt-3">
+            <table className="w-full text-left">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2.5">আপনার প্রোডাক্ট</th>
-                  <th className="px-3 py-2.5">আপনার দাম</th>
-                  <th className="px-3 py-2.5">প্রতিযোগীর দাম</th>
-                  <th className="px-3 py-2.5">পার্থক্য</th>
-                  <th className="px-3 py-2.5">প্রমাণ (Source)</th>
+                  <th className="comp-sticky-col">আপনার প্রোডাক্ট</th>
+                  <th>আপনার দাম</th>
+                  <th>প্রতিযোগীর দাম</th>
+                  <th>পার্থক্য</th>
+                  <th>প্রমাণ (Source)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y text-xs">
+              <tbody className="text-xs">
                 {comparison.map((row) =>
                   row.competitorPrices.length ? (
                     row.competitorPrices.map((cp, i) => (
-                      <tr key={`${row.productId}-${i}`} className="hover:bg-slate-50">
-                        <td className="px-3 py-2.5 font-medium text-slate-900">
+                      <tr key={`${row.productId}-${i}`}>
+                        <td className="comp-sticky-col font-medium text-slate-900">
                           {i === 0 ? row.productName : ""}
                         </td>
-                        <td className="px-3 py-2.5 font-semibold text-slate-700">
+                        <td className="font-semibold text-slate-700">
                           {i === 0 ? formatMinor(BigInt(row.ownPriceMinor), row.currency) : ""}
                         </td>
-                        <td className="px-3 py-2.5">
+                        <td>
                           <span className="font-semibold text-slate-900">{cp.competitorName}:</span>{" "}
                           {formatMinor(BigInt(cp.priceMinor), cp.currency)}
                         </td>
                         <td
-                          className={`px-3 py-2.5 font-bold ${
+                          className={`font-bold ${
                             cp.diffPercent === null
                               ? ""
                               : cp.diffPercent < 0
@@ -1617,7 +1613,7 @@ export default function CompetitorsPage() {
                             ? `প্রতিযোগী ${Math.abs(cp.diffPercent)}% কম`
                             : `আপনি ${cp.diffPercent}% কমে দিচ্ছেন`}
                         </td>
-                        <td className="px-3 py-2.5">
+                        <td>
                           <a
                             className="text-blue-600 hover:underline"
                             href={cp.sourceUrl}
@@ -1630,12 +1626,12 @@ export default function CompetitorsPage() {
                       </tr>
                     ))
                   ) : (
-                    <tr key={row.productId} className="hover:bg-slate-50">
-                      <td className="px-3 py-2.5 font-medium text-slate-900">{row.productName}</td>
-                      <td className="px-3 py-2.5 font-semibold text-slate-700">
+                    <tr key={row.productId}>
+                      <td className="comp-sticky-col font-medium text-slate-900">{row.productName}</td>
+                      <td className="font-semibold text-slate-700">
                         {formatMinor(BigInt(row.ownPriceMinor), row.currency)}
                       </td>
-                      <td className="px-3 py-2.5 text-slate-400" colSpan={3}>
+                      <td className="text-slate-400" colSpan={3}>
                         কোনো প্রতিযোগীর দামের রেকর্ড পাওয়া যায়নি
                       </td>
                     </tr>
@@ -1646,12 +1642,12 @@ export default function CompetitorsPage() {
           </div>
 
           {/* 🤖 AUTOMATED DYNAMIC PRICING & BUDGET RULE ENGINE */}
-          <div className="mt-8 border-t pt-6">
+          <div className="mt-8 border-t border-slate-100 pt-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-bold text-slate-900 text-base">🤖 Automated Dynamic Pricing & Budget Rule Engine</h3>
-                  <span className="rounded-full bg-indigo-100 text-indigo-700 font-bold px-2.5 py-0.5 text-[10px]">
+                  <span className="badge-brand">
                     Autonomous AI Pilot
                   </span>
                 </div>
@@ -1664,20 +1660,33 @@ export default function CompetitorsPage() {
                   type="button"
                   onClick={loadDynamicRules}
                   disabled={loadingRules}
-                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="btn-secondary btn-sm min-h-[40px]"
                 >
                   {loadingRules ? "লোড হচ্ছে..." : "🔄 রিফ্রেশ"}
                 </button>
               </div>
             </div>
 
+            {loadingRules && dynamicRules.length === 0 ? (
+              <div className="grid gap-4 md:grid-cols-2" aria-hidden="true">
+                {[0, 1].map((i) => (
+                  <div key={i} className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
+                    <div className="skeleton h-4 w-2/3" />
+                    <div className="skeleton h-3 w-full" />
+                    <div className="skeleton h-3 w-4/5" />
+                    <div className="skeleton h-8 w-full" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <div className="grid gap-4 md:grid-cols-2">
               {dynamicRules.map((rule) => (
                 <div
                   key={rule.id}
-                  className={`rounded-xl border p-4 transition-all ${
+                  className={`rounded-2xl border p-4 transition-all ${
                     rule.enabled
-                      ? "border-indigo-200 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm"
+                      ? "comp-rule-on"
                       : "border-slate-200 bg-slate-50/50 opacity-75"
                   }`}
                 >
@@ -1705,7 +1714,7 @@ export default function CompetitorsPage() {
                           ? `প্রতিযোগী দাম ${rule.conditions.priceIncreaseThresholdPercent || 10}% বৃদ্ধি করলে`
                           : "প্রতিযোগীর বিজ্ঞাপন ৩+ দিন টানা চললে ও উইনিং ঘোষণা হলে"}
                       </div>
-                      <div className="text-xs text-indigo-700 font-medium mt-1">
+                      <div className="text-xs text-brand-700 font-medium mt-1">
                         <b>অ্যাকশন:</b>{" "}
                         {rule.actionType === "BOOST_AD_BUDGET"
                           ? `ক্যাম্পেইন বাজেট +${rule.actions.budgetBoostPercent || 20}% অটো-স্কেল / বুস্ট`
@@ -1719,13 +1728,13 @@ export default function CompetitorsPage() {
                       type="button"
                       onClick={() => toggleRule(rule.id)}
                       disabled={isSavingRules}
-                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        rule.enabled ? "bg-indigo-600" : "bg-slate-300"
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        rule.enabled ? "comp-switch-on" : "bg-slate-300"
                       }`}
                     >
                       <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
-                          rule.enabled ? "translate-x-4" : "translate-x-0"
+                        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                          rule.enabled ? "translate-x-5" : "translate-x-0"
                         }`}
                       />
                     </button>
@@ -1748,7 +1757,7 @@ export default function CompetitorsPage() {
                       type="button"
                       disabled={simulatingRuleId === rule.id || !rule.enabled}
                       onClick={() => simulateRuleTriggerHandler(rule)}
-                      className="rounded bg-indigo-50 border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+                      className="comp-soft-btn min-h-[32px] px-2.5 py-1 text-[11px]"
                     >
                       {simulatingRuleId === rule.id ? "টেস্ট হচ্ছে..." : "⚡ টেস্ট ট্রিগার (Simulate)"}
                     </button>
@@ -1769,8 +1778,8 @@ export default function CompetitorsPage() {
 
       {/* TAB 4: STRATEGY & OFFER PLAYBOOK */}
       {activeTab === "playbook" ? (
-        <div className="card p-5 bg-white space-y-4">
-          <div className="flex items-center justify-between border-b pb-3">
+        <div className="card fade-rise p-4 bg-white space-y-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
               <h3 className="font-bold text-slate-900">Competitor Strategy & Tactics Playbook</h3>
               <p className="text-xs text-slate-500">
@@ -1778,7 +1787,7 @@ export default function CompetitorsPage() {
               </p>
             </div>
             <button
-              className="btn-primary text-xs py-1.5 px-3 disabled:opacity-50"
+              className="btn-primary min-h-[40px] text-xs py-1.5 px-3 disabled:opacity-50"
               disabled={busy !== ""}
               onClick={generateInsights}
             >
@@ -1787,19 +1796,19 @@ export default function CompetitorsPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-lg bg-blue-50/50 p-4 border border-blue-100">
+            <div className="rounded-2xl bg-blue-50/50 p-4 ring-1 ring-inset ring-blue-100">
               <span className="text-xs font-bold text-blue-900 uppercase">১. অফার প্যাটার্ন</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
                 প্রতিযোগীরা সাধারণত ক্যাশ অন ডেলিভারি (COD) এবং ফ্রি ডেলিভারির অফার বেশি ব্যবহার করছে। তাদের সবচেয়ে বেশি সক্রিয় বিজ্ঞাপনগুলোতে জরুরি অফারের ওপর জোর দেওয়া হয়েছে।
               </p>
             </div>
-            <div className="rounded-lg bg-emerald-50/50 p-4 border border-emerald-100">
+            <div className="rounded-2xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-100">
               <span className="text-xs font-bold text-emerald-900 uppercase">২. উইনিং হুক স্ট্র্যাটেজি</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
                 টিকটক ও ফেসবুকে তারা সমস্যার সমাধানমূলক (Problem-Agitation) ভিডিও কন্টেন্ট দিয়ে সর্বোচ্চ ভিউ ও এনগেজমেন্ট আদায় করছে।
               </p>
             </div>
-            <div className="rounded-lg bg-purple-50/50 p-4 border border-purple-100">
+            <div className="rounded-2xl bg-purple-50/50 p-4 ring-1 ring-inset ring-purple-100">
               <span className="text-xs font-bold text-purple-900 uppercase">৩. প্রাইসিং ট্যাকটিক্স</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
                 তারা বান্ডেল প্রাইসিং ও কম্বো সেলে বেশি জোর দিচ্ছে যাতে গড় অর্ডার ভ্যালু (AOV) বাড়ানো যায়।
@@ -1809,18 +1818,18 @@ export default function CompetitorsPage() {
         </div>
       ) : null}
 
-      {/* TAB 5: SEO & TRAFFIC SPY */}
+      {/* TAB 5: SEO ON-PAGE AUDIT (HF2: real fetched facts, no invented traffic metrics) */}
       {activeTab === "seo" ? (
-        <div className="space-y-6">
+        <div className="fade-rise space-y-6">
           {!active ? (
-            <div className="card p-8 bg-white text-center space-y-4">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-2xl text-indigo-600">
+            <div className="card p-6 bg-white text-center space-y-4 sm:p-8">
+              <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">
                 🔍
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  যে কোনো প্রতিযোগীর গুগল সার্চ ট্রাফিক, র‍্যাঙ্কিং কিওয়ার্ড, ডোমেন অথরিটি এবং পেজ মেটা টাইটেল অডিট করতে নিচে ক্লিক করুন।
+                  প্রতিযোগীর ওয়েবসাইটের আসল on-page SEO অডিট (title, meta, হেডিং, প্রোডাক্ট স্কিমা, ইন্টারনাল লিংক) দেখতে নিচে ক্লিক করুন।
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
@@ -1831,7 +1840,7 @@ export default function CompetitorsPage() {
                       openCompetitor(c);
                       fetchSeoReport(c);
                     }}
-                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                    className="btn-secondary btn-sm min-h-[40px]"
                   >
                     🏢 {c.name}
                   </button>
@@ -1841,264 +1850,204 @@ export default function CompetitorsPage() {
           ) : (
             <div className="space-y-6">
               {/* Header card */}
-              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="card p-4 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:p-5">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-slate-900">{active.name} — SEO & Organic Traffic Intelligence</h3>
-                    <span className="rounded bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 font-bold">
-                      Ahrefs / SEMrush Alternative
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-900">{active.name} — SEO On-Page অডিট</h3>
+                    <span className="badge-brand">
+                      আসল ফেচ করা ডেটা
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    অর্গানিক সার্চ প্রেজেন্স, কিওয়ার্ড ভলিউম এবং গুগলে তাদের শীর্ষ পেজসমূহের বিশ্লেষণ
+                    প্রতিযোগীর হোমপেজ সরাসরি ফেচ করে পাওয়া তথ্য — কোনো অনুমানভিত্তিক ট্রাফিক, র‍্যাংকিং বা Domain Authority সংখ্যা দেখানো হয় না
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    className="btn-secondary btn-sm min-h-[40px]"
                     disabled={loadingSeo}
                     onClick={() => fetchSeoReport(active)}
                   >
-                    {loadingSeo ? "অ্যানালাইজ হচ্ছে..." : "🔄 রি-স্ক্যান SEO"}
+                    {loadingSeo ? "অডিট হচ্ছে..." : "🔄 রি-স্ক্যান SEO"}
                   </button>
                 </div>
               </div>
 
               {loadingSeo ? (
-                <div className="card p-12 bg-white text-center text-sm text-slate-500">
-                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-indigo-600 border-r-transparent mb-3" />
-                  <p>সার্চ ইঞ্জিন ডেটা ও কিওয়ার্ড র্যাংকিং ফেচ করা হচ্ছে...</p>
+                <div className="card p-6 bg-white space-y-5 sm:p-8" aria-hidden="true">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="space-y-2">
+                        <div className="skeleton h-3 w-2/3" />
+                        <div className="skeleton h-8 w-1/2" />
+                        <div className="skeleton h-3 w-4/5" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="skeleton h-4 w-1/3" />
+                    <div className="skeleton h-10 w-full" />
+                    <div className="skeleton h-10 w-full" />
+                    <div className="skeleton h-10 w-full" />
+                  </div>
+                  <p className="text-center text-sm text-slate-500">প্রতিযোগীর ওয়েবসাইট ফেচ করে on-page SEO যাচাই করা হচ্ছে...</p>
+                </div>
+              ) : seoReport && !seoReport.available ? (
+                <div className="card p-8 bg-white text-center space-y-3">
+                  <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">🚫</div>
+                  <h4 className="font-bold text-slate-900 text-sm">SEO অডিট পাওয়া যায়নি</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {seoReport.reason ?? "প্রতিযোগীর ওয়েবসাইট থেকে আসল ডেটা পাওয়া যায়নি।"}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    ডেটা ছাড়া কোনো রিপোর্ট তৈরি করা হয় না — ওয়েবসাইট URL ঠিক আছে কিনা যাচাই করে আবার চেষ্টা করুন।
+                  </p>
                 </div>
               ) : seoReport ? (
                 <div className="space-y-6">
-                  {/* Metric Overview Cards */}
+                  {/* Observed facts overview */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="card p-4 bg-gradient-to-br from-indigo-50/50 to-white border border-indigo-100">
-                      <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
-                        মাসিক অর্গানিক ট্রাফিক
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        প্রোডাক্ট স্কিমা (JSON-LD)
                       </span>
-                      <p className="mt-2 text-2xl font-black text-indigo-700">
-                        {seoReport.estimatedMonthlyOrganicVisits.toLocaleString()}
+                      <p className="stat-value text-brand-700">
+                        {seoReport.productSchemaPresent ? "পাওয়া গেছে" : "পাওয়া যায়নি"}
                       </p>
-                      <span className="text-[10px] text-slate-500">গুগল অর্গানিক ক্লিক (CTR Weighted)</span>
+                      <span className="stat-hint block">হোমপেজের আসল মার্কআপ থেকে</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-emerald-50/50 to-white border border-emerald-100">
-                      <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider">
-                        Domain Authority (DA)
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        Sitemap.xml
                       </span>
-                      <div className="mt-2 flex items-baseline gap-2">
-                        <span className="text-2xl font-black text-emerald-700">{seoReport.domainAuthorityScore}</span>
-                        <span className="text-xs text-slate-400 font-semibold">/ 100</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500">সার্চ ইঞ্জিন র‍্যাঙ্কিং সক্ষমতা</span>
+                      <p className="stat-value text-emerald-700">
+                        {seoReport.sitemapPresent ? "আছে" : "পাওয়া যায়নি"}
+                      </p>
+                      <span className="stat-hint block">/sitemap.xml ফেচ করে যাচাই করা</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-blue-50/50 to-white border border-blue-100">
-                      <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider">
-                        টোটাল ইনডেক্সড কিওয়ার্ড
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        Meta Description
                       </span>
-                      <p className="mt-2 text-2xl font-black text-blue-700">
-                        ~{seoReport.totalIndexedKeywords}
+                      <p className="stat-value text-blue-700">
+                        {seoReport.metaDescription ? "আছে" : "নেই"}
                       </p>
-                      <span className="text-[10px] text-slate-500">সার্চে ইন্ডেক্স হওয়া ভ্যারিয়েশনস</span>
+                      <span className="stat-hint block">{seoReport.metaDescription ? `${seoReport.metaDescription.length} অক্ষর` : "পেজে meta description পাওয়া যায়নি"}</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-purple-50/50 to-white border border-purple-100">
-                      <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">
-                        অর্গানিক ট্রাফিকের মূল্য (PPC)
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        ইন্টারনাল লিংক (নমুনা)
                       </span>
-                      <p className="mt-2 text-2xl font-black text-purple-700">
-                        ৳{Math.round(seoReport.estimatedMonthlyOrganicVisits * 8.5).toLocaleString()}
+                      <p className="stat-value text-purple-700">
+                        {seoReport.internalLinks.length}টি
                       </p>
-                      <span className="text-[10px] text-slate-500">Google Ads দিলে যা খরচ হতো</span>
+                      <span className="stat-hint block">হোমপেজে পাওয়া shop/product/offer লিংক</span>
                     </div>
                   </div>
 
-                  {/* Intent Distribution & Focus Themes */}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="card p-4 bg-white space-y-3">
-                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        🎯 সার্চ ইনটেন্ট বন্টন (Search Intent)
-                      </span>
-                      <div className="space-y-2">
-                        <div>
-                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
-                            <span>Transactional (সরাসরি কেনাকাটা)</span>
-                            <span className="text-emerald-700">{seoReport.intentDistribution.transactional}%</span>
-                          </div>
-                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${seoReport.intentDistribution.transactional}%` }} />
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
-                            <span>Commercial (প্রোডাক্ট তুলনা ও যাচাই)</span>
-                            <span className="text-blue-700">{seoReport.intentDistribution.commercial}%</span>
-                          </div>
-                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${seoReport.intentDistribution.commercial}%` }} />
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
-                            <span>Informational (তথ্যমূলক অনুসন্ধান)</span>
-                            <span className="text-amber-700">{seoReport.intentDistribution.informational}%</span>
-                          </div>
-                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-500 rounded-full" style={{ width: `${seoReport.intentDistribution.informational}%` }} />
-                          </div>
-                        </div>
+                  {/* Title & meta as actually served */}
+                  <div className="card p-4 bg-white space-y-3 sm:p-5">
+                    <div className="border-b border-slate-100 pb-3">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        পেজের আসল Title ও Meta
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        {seoReport.fetchedUrl} থেকে সরাসরি ফেচ করা
+                      </p>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 border">
+                        <span className="font-bold text-slate-500 block text-[10px] uppercase">Title</span>
+                        <span className="font-semibold text-slate-900">{seoReport.title ?? "শনাক্ত হয়নি"}</span>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 border">
+                        <span className="font-bold text-slate-500 block text-[10px] uppercase">Meta Description</span>
+                        <span className="text-slate-700">{seoReport.metaDescription ?? "শনাক্ত হয়নি"}</span>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 border">
+                        <span className="font-bold text-slate-500 block text-[10px] uppercase">OpenGraph (og:title)</span>
+                        <span className="text-slate-700">{seoReport.og.title ?? "শনাক্ত হয়নি"}</span>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="card p-4 bg-white space-y-3">
-                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        🏷️ শীর্ষ কিওয়ার্ড থিম (Top SEO Pillars)
-                      </span>
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {seoReport.focusKeywordThemes.map((theme, i) => (
+                  {/* Phrases the site itself uses */}
+                  <div className="card p-4 bg-white space-y-4 sm:p-5">
+                    <div className="border-b border-slate-100 pb-3">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        সাইটের নিজের শিরোনামে ব্যবহৃত ফ্রেজ
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Title, H1 ও H2 থেকে হুবহু নেওয়া — এগুলোই তাদের on-page কিওয়ার্ড ফোকাসের আসল প্রমাণ
+                      </p>
+                    </div>
+                    {seoReport.observedPhrases.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {seoReport.observedPhrases.map((p, i) => (
                           <span key={i} className="rounded-lg bg-slate-100 text-slate-800 text-xs px-2.5 py-1 font-semibold border">
-                            #{theme}
+                            <span className="text-slate-400 uppercase text-[10px] mr-1">{p.source}</span>
+                            {p.text}
                           </span>
                         ))}
                       </div>
-                      <p className="text-[11px] text-slate-500 mt-2">
-                        প্রতিযোগী এই থিমগুলোতে গুগল সার্চ ট্রাফিকের সিংহভাগ নিয়ন্ত্রণ করছে।
-                      </p>
-                    </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">কোনো শিরোনাম ফ্রেজ শনাক্ত হয়নি।</p>
+                    )}
                   </div>
 
-                  {/* Top Organic Ranking Keywords Table */}
-                  <div className="card p-5 bg-white space-y-4">
-                    <div className="flex items-center justify-between border-b pb-3">
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">
-                          গুগল টপ র‍্যাঙ্কিং কিওয়ার্ড (Top Ranking Keywords)
-                        </h4>
-                        <p className="text-xs text-slate-500">
-                          যেসব কিওয়ার্ডে প্রতিযোগী গুগলের শীর্ষ ফলাফলে অবস্থান করছে
-                        </p>
-                      </div>
-                      <span className="text-xs text-slate-400 font-medium">{seoReport.topKeywords.length} টি শীর্ষ কিওয়ার্ড</span>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
-                          <tr>
-                            <th className="py-2.5 px-3">কিওয়ার্ড (Keyword)</th>
-                            <th className="py-2.5 px-3">র‍্যাঙ্ক (Position)</th>
-                            <th className="py-2.5 px-3">মাসিক সার্চ ভলিউম</th>
-                            <th className="py-2.5 px-3">KD (Difficulty)</th>
-                            <th className="py-2.5 px-3">ইনটেন্ট</th>
-                            <th className="py-2.5 px-3">আনুমানিক ক্লিক</th>
-                            <th className="py-2.5 px-3 text-right">অ্যাকশন</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y text-slate-700">
-                          {seoReport.topKeywords.map((kw, i) => (
-                            <tr key={i} className="hover:bg-slate-50/80">
-                              <td className="py-2.5 px-3 font-semibold text-slate-900">
-                                {kw.keyword}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className="inline-flex items-center justify-center rounded-md bg-blue-100 text-blue-800 px-2 py-0.5 font-bold text-[11px]">
-                                  #{kw.estimatedPosition}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 font-semibold">
-                                {kw.searchVolume.toLocaleString()} /mo
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                                  kw.keywordDifficulty < 20 ? "bg-green-100 text-green-800" :
-                                  kw.keywordDifficulty < 40 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
-                                }`}>
-                                  {kw.keywordDifficulty}% KD
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                  kw.intent === "Transactional" ? "bg-emerald-100 text-emerald-800" :
-                                  kw.intent === "Commercial" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"
-                                }`}>
-                                  {kw.intent}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 font-bold text-slate-900">
-                                ~{kw.estimatedMonthlyClicks.toLocaleString()}
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                <button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(kw.keyword);
-                                    setCopiedText(kw.keyword);
-                                    setTimeout(() => setCopiedText(""), 2000);
-                                  }}
-                                  className="rounded border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
-                                >
-                                  {copiedText === kw.keyword ? "কপি হয়েছে!" : "📋 কপি"}
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Top Organic Landing Pages */}
-                  <div className="card p-5 bg-white space-y-4">
-                    <div className="border-b pb-3">
+                  {/* Internal links found */}
+                  <div className="card p-4 bg-white space-y-4 sm:p-5">
+                    <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        প্রতিযোগীর শীর্ষ ট্রাফিক ড্রাইভকারী পেজ (Top Organic Pages)
+                        হোমপেজে পাওয়া ইন্টারনাল লিংক
                       </h4>
                       <p className="text-xs text-slate-500">
-                        কোন কোন ল্যান্ডিং পেজ ও মেটা টাইটেল দিয়ে তারা গুগল থেকে ক্রেতা পাচ্ছে
+                        কোন ধরনের পেজে তারা হোমপেজ থেকে ট্রাফিক পাঠায়
                       </p>
                     </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {seoReport.topPages.map((page, idx) => (
-                        <div key={idx} className="rounded-xl border p-3.5 bg-slate-50/50 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="font-bold text-slate-900 text-xs line-clamp-1">{page.title}</span>
-                            <span className="rounded bg-indigo-100 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5 shrink-0">
-                              {page.estimatedTrafficShare}% Traffic
+                    {seoReport.internalLinks.length ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {seoReport.internalLinks.map((l, i) => (
+                          <div key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              l.kind === "offer" ? "bg-amber-100 text-amber-800" :
+                              l.kind === "product" ? "bg-emerald-100 text-emerald-800" :
+                              l.kind === "shop" ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-700"
+                            }`}>
+                              {l.kind}
                             </span>
+                            <a href={l.url} target="_blank" rel="noreferrer" className="text-[11px] text-blue-600 truncate font-mono hover:underline">
+                              {l.url}
+                            </a>
                           </div>
-                          <p className="text-[11px] text-blue-600 truncate font-mono">{page.url}</p>
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {page.primaryKeywords.map((pk, kx) => (
-                              <span key={kx} className="rounded bg-white border border-slate-200 text-slate-600 text-[10px] px-1.5 py-0.5">
-                                {pk}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">কোনো ইন্টারনাল লিংক শনাক্ত হয়নি।</p>
+                    )}
                   </div>
 
-                  {/* ⚡ AI SEO Gap & Keyword Hijack Strategy Engine */}
-                  <div className="card p-6 bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-900 text-white space-y-5 rounded-2xl shadow-xl">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-700/60 pb-4">
+                  {/* ⚡ AI SEO Gap Strategy — grounded in the real audit above */}
+                  <div className="comp-dark p-5 space-y-5 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/15 pb-4">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-500 text-sm">⚡</span>
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15 text-sm">⚡</span>
                           <h4 className="font-bold text-base text-white">
-                            AI SEO Gap & Keyword Hijack Engine
+                            AI SEO Gap স্ট্র্যাটেজি
                           </h4>
                         </div>
-                        <p className="text-xs text-slate-300 mt-1">
-                          প্রতিযোগীর শীর্ষ র‍্যাঙ্কিং কিওয়ার্ডগুলো হাইজ্যাক করে আপনার প্রোডাক্টের মেটা টাইটেল ও ডিসক্রিপশন তৈরি করুন
+                        <p className="text-xs text-white/70 mt-1">
+                          উপরের আসল অডিটের ভিত্তিতে আপনার প্রোডাক্টের মেটা টাইটেল ও ডিসক্রিপশনের খসড়া পরামর্শ — কোনো CTR শতাংশের প্রতিশ্রুতি নয়
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <select
-                          className="rounded-lg bg-slate-800 border border-slate-700 text-xs text-white px-3 py-2 outline-none"
+                          className="min-h-[40px] rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs text-white outline-none"
                           value={selectedProductIdForSeo}
                           onChange={(e) => setSelectedProductIdForSeo(e.target.value)}
                         >
@@ -2110,19 +2059,25 @@ export default function CompetitorsPage() {
                         <button
                           onClick={() => generateSeoGapHandler(active)}
                           disabled={generatingSeoGap}
-                          className="rounded-lg bg-indigo-500 hover:bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all disabled:opacity-50 shrink-0"
+                          className="btn-ai min-h-[40px] shrink-0 px-4 py-2 text-xs"
                         >
-                          {generatingSeoGap ? "স্ট্র্যাটেজি তৈরি হচ্ছে..." : "🚀 মেটা টাইটেল ও কিওয়ার্ড হাইজ্যাক করুন"}
+                          {generatingSeoGap ? "স্ট্র্যাটেজি তৈরি হচ্ছে..." : "🚀 মেটা টাইটেল ও কিওয়ার্ড খসড়া বানান"}
                         </button>
                       </div>
                     </div>
 
                     {seoStrategy ? (
                       <div className="space-y-4 pt-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${seoStrategy.origin === "ai" ? "bg-emerald-500/20 text-emerald-300" : "bg-white/15 text-white/80"}`}>
+                            {seoStrategy.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                          </span>
+                          <span className="text-[11px] text-white/60">পরামর্শমূলক খসড়া — প্রকাশের আগে নিজে যাচাই করুন</span>
+                        </div>
                         <div className="grid sm:grid-cols-2 gap-4">
-                          <div className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+                          <div className="comp-dark-panel space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="comp-dark-label">
                                 🏷️ প্রস্তাবিত Google Meta Title (SERP Hook)
                               </span>
                               <button
@@ -2131,20 +2086,20 @@ export default function CompetitorsPage() {
                                   setCopiedText("metaTitle");
                                   setTimeout(() => setCopiedText(""), 2000);
                                 }}
-                                className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold"
+                                className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25"
                               >
                                 {copiedText === "metaTitle" ? "কপি হয়েছে!" : "📋 কপি"}
                               </button>
                             </div>
-                            <p className="font-bold text-sm text-emerald-400">
+                            <p className="font-bold text-sm text-emerald-300">
                               {seoStrategy.strategy.recommendedMetaTitle}
                             </p>
-                            <span className="text-[10px] text-slate-400">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaTitle.length} অক্ষর (গুগল অপটিমাল &lt; 60)</span>
+                            <span className="text-[10px] text-white/50">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaTitle.length} অক্ষর (গুগল অপটিমাল &lt; 60)</span>
                           </div>
 
-                          <div className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+                          <div className="comp-dark-panel space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="comp-dark-label">
                                 📝 High-CTR Meta Description
                               </span>
                               <button
@@ -2153,25 +2108,22 @@ export default function CompetitorsPage() {
                                   setCopiedText("metaDesc");
                                   setTimeout(() => setCopiedText(""), 2000);
                                 }}
-                                className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold"
+                                className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25"
                               >
                                 {copiedText === "metaDesc" ? "কপি হয়েছে!" : "📋 কপি"}
                               </button>
                             </div>
-                            <p className="text-xs text-slate-200 leading-relaxed">
+                            <p className="text-xs text-white/85 leading-relaxed">
                               {seoStrategy.strategy.recommendedMetaDescription}
                             </p>
-                            <span className="text-[10px] text-slate-400">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaDescription.length} অক্ষর (গুগল অপটিমাল &lt; 155)</span>
+                            <span className="text-[10px] text-white/50">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaDescription.length} অক্ষর (গুগল অপটিমাল &lt; 155)</span>
                           </div>
                         </div>
 
-                        <div className="rounded-xl bg-slate-800/50 p-4 border border-slate-700 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
-                              🎯 প্রোডাক্ট পেজে ট্যাগ করার জন্য ৫টি হাই-কনভার্টিং কিওয়ার্ড
-                            </span>
-                            <span className="rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold px-2 py-0.5">
-                              {seoStrategy.strategy.estimatedCtrBoost}
+                        <div className="comp-dark-panel space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="comp-dark-label">
+                              🎯 প্রোডাক্ট পেজে ট্যাগ করার জন্য ফোকাস কিওয়ার্ড ফ্রেজ
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-2 pt-1">
@@ -2183,7 +2135,7 @@ export default function CompetitorsPage() {
                                   setCopiedText(kw);
                                   setTimeout(() => setCopiedText(""), 2000);
                                 }}
-                                className="rounded-lg bg-indigo-950/70 border border-indigo-700/50 px-2.5 py-1 text-xs font-semibold text-indigo-200 hover:bg-indigo-900"
+                                className="min-h-[32px] rounded-lg bg-white/10 px-2.5 py-1 text-xs font-semibold text-white ring-1 ring-inset ring-white/20 transition hover:bg-white/20"
                               >
                                 {kw} {copiedText === kw ? "✓" : "+"}
                               </button>
@@ -2191,9 +2143,9 @@ export default function CompetitorsPage() {
                           </div>
                         </div>
 
-                        <div className="rounded-lg bg-indigo-950/40 p-3 border border-indigo-800/50 text-xs text-indigo-200 flex items-center gap-2">
+                        <div className="flex items-center gap-2 rounded-xl bg-white/10 p-3 text-xs text-white/85 ring-1 ring-inset ring-white/15">
                           <span>💡</span>
-                          <span><strong>কেন এটি প্রতিদ্বন্দীকে টেক্কা দেবে:</strong> {seoStrategy.strategy.outrankTactics}</span>
+                          <span><strong>কেন এটি সাহায্য করতে পারে:</strong> {seoStrategy.strategy.outrankTactics}</span>
                         </div>
                       </div>
                     ) : null}
@@ -2201,37 +2153,33 @@ export default function CompetitorsPage() {
                 </div>
               ) : (
                 <div className="card p-8 bg-white text-center text-xs text-slate-500">
-                  <p>সার্চ ইঞ্জিন ডেটা লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান SEO&rdquo; বাটনে ক্লিক করুন।</p>
+                  <p>SEO অডিট লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান SEO&rdquo; বাটনে ক্লিক করুন।</p>
                 </div>
               )}
             </div>
           )}
         </div>
       ) : null}
-
-      {/* TAB 6: BAD REVIEW & COMPLAINT MINE */}
+      {/* TAB 6: BAD REVIEW & COMPLAINT MINE (HF4: input-driven — only owner-pasted real reviews are analyzed) */}
       {activeTab === "complaints" ? (
-        <div className="space-y-6">
+        <div className="fade-rise space-y-6">
           {!active ? (
-            <div className="card p-8 bg-white text-center space-y-4">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-2xl text-rose-600">
+            <div className="card p-6 bg-white text-center space-y-4 sm:p-8">
+              <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">
                 💬
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  প্রতিযোগীর কাস্টমারদের নেগেটিভ রিভিউ, ডেলিভারি অসন্তোষ এবং দুর্বলতা মাইনিং করে কাউন্টার-অ্যাড তৈরি করতে সিলেক্ট করুন।
+                  প্রতিযোগীর পেজ থেকে কপি করা আসল কাস্টমার রিভিউ পেস্ট করে অভিযোগ বিশ্লেষণ করতে সিলেক্ট করুন — পেস্ট করা টেক্সট ছাড়া কোনো রিপোর্ট তৈরি হয় না।
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
                 {competitors.map((c) => (
                   <button
                     key={c.id}
-                    onClick={() => {
-                      openCompetitor(c);
-                      fetchReviewMine(c);
-                    }}
-                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                    onClick={() => openCompetitor(c)}
+                    className="btn-secondary btn-sm min-h-[40px]"
                   >
                     🏢 {c.name}
                   </button>
@@ -2241,54 +2189,103 @@ export default function CompetitorsPage() {
           ) : (
             <div className="space-y-6">
               {/* Header card */}
-              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="card p-4 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:p-5">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-bold text-slate-900">
                       {active.name} — Customer Sentiment & Complaint Mining
                     </h3>
-                    <span className="rounded bg-rose-100 text-rose-700 text-xs px-2 py-0.5 font-bold">
-                      দুর্বলতা কাজে লাগানো
+                    <span className="badge bg-rose-100 text-rose-700 ring-1 ring-inset ring-rose-200">
+                      আপনার পেস্ট করা আসল রিভিউ থেকে
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    ক্রেতাদের অসন্তোষ, দেরিতে ডেলিভারি, এবং খারাপ ফিডব্যাক বিশ্লেষণ করে ক্রেতাকে আপনার স্টোরে টানার কৌশল
+                    প্রতিযোগীর ফেসবুক পেজ/পোস্ট থেকে কপি করা আসল রিভিউ নিচে পেস্ট করুন — শুধু সেই টেক্সটই বিশ্লেষণ হবে, কোনো সংখ্যা বা উক্তি বানানো হয় না
                   </p>
                 </div>
-                <button
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  disabled={loadingReviewMine}
-                  onClick={() => fetchReviewMine(active)}
-                >
-                  {loadingReviewMine ? "মাইনিং হচ্ছে..." : "🔄 রি-স্ক্যান রিভিউ"}
-                </button>
+              </div>
+
+              {/* Paste real reviews */}
+              <div className="card p-4 bg-white space-y-3 sm:p-5">
+                <label className="text-xs font-bold text-slate-900 uppercase tracking-wider" htmlFor="review-paste-box">
+                  📋 আসল রিভিউ পেস্ট করুন (প্রতিটি রিভিউ আলাদা লাইনে বা ফাঁকা লাইন দিয়ে আলাদা করে)
+                </label>
+                <textarea
+                  id="review-paste-box"
+                  className="w-full min-h-[140px] rounded-xl border border-slate-200 p-3 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+                  placeholder={"যেমন:\nDelivery পেতে ১০ দিন লেগেছে, খুব দেরি হয়েছে। Rating 1/5\n\nকাপড়ের রঙ এক ধোয়াতেই ফেডে গেছে..."}
+                  value={reviewText}
+                  onChange={(e) => setReviewText(e.target.value)}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="btn-primary btn-sm min-h-[40px]"
+                    disabled={loadingReviewMine || !reviewText.trim()}
+                    onClick={() => analyzeReviews(active)}
+                  >
+                    {loadingReviewMine ? "বিশ্লেষণ হচ্ছে..." : "🔍 পেস্ট করা রিভিউ বিশ্লেষণ করুন"}
+                  </button>
+                  <span className="text-[11px] text-slate-400">
+                    সংখ্যা, রেটিং ও উক্তি — সবই শুধু এই টেক্সট থেকেই আসবে
+                  </span>
+                </div>
               </div>
 
               {loadingReviewMine ? (
-                <div className="card p-12 bg-white text-center text-sm text-slate-500">
-                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-rose-600 border-r-transparent mb-3" />
-                  <p>কাস্টমারদের রিভিউ ও সোশ্যাল ফিডব্যাক বিশ্লেষণ করা হচ্ছে...</p>
+                <div className="card p-6 bg-white space-y-5 sm:p-8" aria-hidden="true">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <div className="skeleton h-3 w-2/3" />
+                      <div className="skeleton h-9 w-1/3" />
+                      <div className="skeleton h-3 w-4/5" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="skeleton h-3 w-1/3" />
+                      <div className="skeleton h-2.5 w-full" />
+                      <div className="skeleton h-3 w-1/2" />
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="skeleton h-28 w-full" />
+                    ))}
+                  </div>
+                  <p className="text-center text-sm text-slate-500">পেস্ট করা রিভিউগুলো বিশ্লেষণ করা হচ্ছে...</p>
+                </div>
+              ) : reviewMineReport && !reviewMineReport.available ? (
+                <div className="card p-8 bg-white text-center space-y-3">
+                  <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">📋</div>
+                  <h4 className="font-bold text-slate-900 text-sm">রিপোর্ট তৈরি হয়নি</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {reviewMineReport.reason}
+                  </p>
                 </div>
               ) : reviewMineReport ? (
                 <div className="space-y-6">
                   {/* Satisfaction & Sentiment Overview */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="card p-4 bg-gradient-to-br from-rose-50/60 to-white border border-rose-100">
-                      <span className="text-[11px] font-bold text-rose-900 uppercase tracking-wider">
-                        কাস্টমার স্যাটিসফ্যাকশন স্কোর
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        গড় রেটিং (পেস্ট করা টেক্সট থেকে)
                       </span>
-                      <div className="mt-2 flex items-baseline gap-2">
-                        <span className="text-3xl font-black text-rose-700">{reviewMineReport.overallRatingScore}</span>
-                        <span className="text-xs text-slate-400 font-semibold">/ ৫.০</span>
+                      <div className="mt-1 flex items-baseline gap-2">
+                        <span className="text-3xl font-black text-rose-700">
+                          {reviewMineReport.overallRatingScore !== null ? reviewMineReport.overallRatingScore : "—"}
+                        </span>
+                        {reviewMineReport.overallRatingScore !== null ? (
+                          <span className="text-xs text-slate-400 font-semibold">/ ৫.০</span>
+                        ) : null}
                       </div>
-                      <span className="text-[10px] text-slate-500 mt-1 block">
-                        মোট বিশ্লেষিত ফিডব্যাক: {reviewMineReport.totalAnalyzedFeedback} টি
+                      <span className="stat-hint block">
+                        {reviewMineReport.overallRatingScore !== null
+                          ? `মোট বিশ্লেষিত রিভিউ: ${reviewMineReport.totalAnalyzedFeedback}টি`
+                          : "পেস্ট করা টেক্সটে কোনো রেটিং পাওয়া যায়নি — তাই গড় দেখানো হচ্ছে না"}
                       </span>
                     </div>
 
                     <div className="card p-4 bg-white md:col-span-2 space-y-2">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        📊 সেন্টিমেন্ট বন্টন (Sentiment Breakdown)
+                        📊 সেন্টিমেন্ট বন্টন (পেস্ট করা রিভিউয়ের কীওয়ার্ড-শ্রেণিবিভাগ)
                       </span>
                       <div className="space-y-2 pt-1">
                         <div>
@@ -2296,8 +2293,8 @@ export default function CompetitorsPage() {
                             <span>অসন্তুষ্ট ক্রেতা (Dissatisfied)</span>
                             <span className="text-rose-600 font-bold">{reviewMineReport.sentimentDistribution.dissatisfied}%</span>
                           </div>
-                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-rose-500 rounded-full" style={{ width: `${reviewMineReport.sentimentDistribution.dissatisfied}%` }} />
+                          <div className="meter">
+                            <div className="h-full rounded-full bg-rose-500 transition-[width] duration-500" style={{ width: `${reviewMineReport.sentimentDistribution.dissatisfied}%` }} />
                           </div>
                         </div>
                         <div className="flex justify-between text-xs text-slate-500 pt-1">
@@ -2309,11 +2306,11 @@ export default function CompetitorsPage() {
                   </div>
 
                   {/* Biggest Vulnerability Alert */}
-                  <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4 flex items-start gap-3">
+                  <div className="alert alert-red">
                     <span className="text-xl">🚨</span>
                     <div>
                       <h4 className="font-bold text-rose-950 text-sm">
-                        প্রতিযোগীর সবচেয়ে মারাত্মক দুর্বলতা (Core Vulnerability)
+                        পেস্ট করা রিভিউতে সবচেয়ে বড় দুর্বলতা
                       </h4>
                       <p className="mt-1 text-xs text-rose-800 leading-relaxed font-medium">
                         {reviewMineReport.biggestVulnerability}
@@ -2322,120 +2319,127 @@ export default function CompetitorsPage() {
                   </div>
 
                   {/* Recurring Complaint Categories */}
-                  <div className="card p-5 bg-white space-y-4">
-                    <div className="border-b pb-3">
+                  <div className="card p-4 bg-white space-y-4 sm:p-5">
+                    <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        শীর্ষ ৪টি গ্রাহক অসন্তোষের বিষয় (Top Customer Friction Points)
+                        গ্রাহক অসন্তোষের বিষয়সমূহ (পেস্ট করা রিভিউ থেকে গণনা করা)
                       </h4>
                       <p className="text-xs text-slate-500">
-                        যেসব কারণে ক্রেতারা প্রতিদ্বন্দীর ওপর ক্ষুব্ধ
+                        শতাংশ = পেস্ট করা মোট রিভিউর মধ্যে ওই বিষয়ে অভিযোগের অংশ
                       </p>
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {reviewMineReport.topComplaints.map((item, idx) => (
-                        <div key={idx} className="rounded-xl border p-4 bg-slate-50/50 space-y-2.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-900 text-xs">{item.category}</span>
-                            <div className="flex items-center gap-1.5">
-                              <span className="rounded bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5">
-                                {item.frequencyPercent}% অভিযোগ
-                              </span>
-                              <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
-                                item.severity === "Critical" ? "bg-red-500 text-white" : "bg-amber-100 text-amber-800"
-                              }`}>
-                                {item.severity}
-                              </span>
+                    {reviewMineReport.topComplaints.length ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {reviewMineReport.topComplaints.map((item, idx) => (
+                          <div key={idx} className="rounded-2xl p-4 bg-slate-50/50 space-y-2.5 ring-1 ring-inset ring-slate-200/60">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-900 text-xs">{item.category}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="rounded bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5">
+                                  {item.frequencyPercent}% ({item.itemCount}টি)
+                                </span>
+                                <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
+                                  item.severity === "Critical" ? "bg-red-500 text-white" : "bg-amber-100 text-amber-800"
+                                }`}>
+                                  {item.severity}
+                                </span>
+                              </div>
                             </div>
+                            <p className="text-xs text-slate-700 leading-relaxed">{item.complaintSummary}</p>
+                            {item.sampleCustomerQuotes.length ? (
+                              <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200/70">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">পেস্ট করা রিভিউ থেকে হুবহু:</span>
+                                {item.sampleCustomerQuotes.map((q, qi) => (
+                                  <p key={qi} className="text-[11px] text-slate-600 italic">
+                                    &ldquo;{q}&rdquo;
+                                  </p>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
-                          <p className="text-xs text-slate-700 leading-relaxed">{item.complaintSummary}</p>
-                          <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200/70">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase">ক্রেতাদের বাস্তব উক্তি:</span>
-                            {item.sampleCustomerQuotes.map((q, qi) => (
-                              <p key={qi} className="text-[11px] text-slate-600 italic">
-                                {q}
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* High-Converting Counter-Positioning Angles */}
-                  <div className="card p-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white space-y-4 rounded-2xl shadow-xl">
-                    <div className="border-b border-slate-700 pb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500 text-sm">🎯</span>
-                        <h4 className="font-bold text-base text-white">
-                          AI Reassurance Angles ("ক্রেতা ছিনতাই" কপি ও ট্রাস্ট অফার)
-                        </h4>
+                        ))}
                       </div>
-                      <p className="text-xs text-slate-300 mt-1">
-                        প্রতিযোগীর এই দুর্বলতাগুলো সমাধান করে বিজ্ঞাপনে কী প্রতিশ্রুতি দিলে ক্রেতারা সরাসরি আপনার থেকে কিনবে
-                      </p>
-                    </div>
-
-                    <div className="grid sm:grid-cols-2 gap-4 pt-1">
-                      {reviewMineReport.recommendedCounterAngles.map((angle, i) => (
-                        <div key={i} className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="font-bold text-sm text-emerald-400 leading-snug">
-                              &ldquo;{angle.hookHeadline}&rdquo;
-                            </span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(angle.hookHeadline);
-                                setCopiedText(`angle-${i}`);
-                                setTimeout(() => setCopiedText(""), 2000);
-                              }}
-                              className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-white font-semibold shrink-0"
-                            >
-                              {copiedText === `angle-${i}` ? "কপি হয়েছে!" : "📋 কপি"}
-                            </button>
-                          </div>
-
-                          <div className="space-y-2 text-xs">
-                            <div className="rounded bg-slate-900/60 p-2.5 border border-slate-700/60">
-                              <span className="font-semibold text-indigo-300 text-[11px] block">🛡️ বিশ্বাস অর্জনের মেকানিজম:</span>
-                              <p className="text-slate-200 mt-0.5">{angle.trustMechanism}</p>
-                            </div>
-                            <div className="rounded bg-slate-900/60 p-2.5 border border-slate-700/60">
-                              <span className="font-semibold text-amber-300 text-[11px] block">⚡ গ্যারান্টি অফার:</span>
-                              <p className="text-slate-200 mt-0.5">{angle.guaranteeOffer}</p>
-                            </div>
-                          </div>
-
-                          <div className="text-[11px] text-slate-400 italic pt-1 border-t border-slate-700/60">
-                            💡 ক্রেতা কেন সুইচ করবে: {angle.whyBuyersSwitch}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">পেস্ট করা রিভিউতে শ্রেণিবদ্ধ করা যায় এমন নেতিবাচক অভিযোগ পাওয়া যায়নি।</p>
+                    )}
                   </div>
+
+                  {/* Counter-Positioning Angles */}
+                  {reviewMineReport.recommendedCounterAngles.length ? (
+                    <div className="comp-dark p-5 space-y-4 sm:p-6">
+                      <div className="border-b border-white/15 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500 text-sm">🎯</span>
+                          <h4 className="font-bold text-base text-white">
+                            AI Reassurance Angles (&ldquo;ক্রেতা ছিনতাই&rdquo; কপি ও ট্রাস্ট অফার)
+                          </h4>
+                        </div>
+                        <p className="text-xs text-white/70 mt-1">
+                          উপরের আসল (পেস্ট করা) অভিযোগগুলোর ভিত্তিতে সাজানো খসড়া পরামর্শ — প্রতিযোগী সম্পর্কে নতুন কোনো দাবি নয়
+                        </p>
+                      </div>
+
+                      <div className="grid sm:grid-cols-2 gap-4 pt-1">
+                        {reviewMineReport.recommendedCounterAngles.map((angle, i) => (
+                          <div key={i} className="comp-dark-panel space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-bold text-sm text-emerald-300 leading-snug">
+                                &ldquo;{angle.hookHeadline}&rdquo;
+                              </span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(angle.hookHeadline);
+                                  setCopiedText(`angle-${i}`);
+                                  setTimeout(() => setCopiedText(""), 2000);
+                                }}
+                                className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25 shrink-0"
+                              >
+                                {copiedText === `angle-${i}` ? "কপি হয়েছে!" : "📋 কপি"}
+                              </button>
+                            </div>
+
+                            <div className="space-y-2 text-xs">
+                              <div className="rounded-lg bg-white/5 p-2.5 ring-1 ring-inset ring-white/10">
+                                <span className="font-semibold text-white/70 text-[11px] block">🛡️ বিশ্বাস অর্জনের মেকানিজম:</span>
+                                <p className="text-white/85 mt-0.5">{angle.trustMechanism}</p>
+                              </div>
+                              <div className="rounded-lg bg-white/5 p-2.5 ring-1 ring-inset ring-white/10">
+                                <span className="font-semibold text-amber-300 text-[11px] block">⚡ গ্যারান্টি অফার:</span>
+                                <p className="text-white/85 mt-0.5">{angle.guaranteeOffer}</p>
+                              </div>
+                            </div>
+
+                            <div className="text-[11px] text-white/60 italic pt-1 border-t border-white/10">
+                              💡 ক্রেতা কেন সুইচ করবে: {angle.whyBuyersSwitch}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="card p-8 bg-white text-center text-xs text-slate-500">
-                  <p>রিভিউ ও ফিডব্যাক লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান রিভিউ&rdquo; বাটনে ক্লিক করুন।</p>
+                  <p>উপরে আসল রিভিউ পেস্ট করে &ldquo;বিশ্লেষণ করুন&rdquo; বাটনে ক্লিক করুন — ডেটা ছাড়া রিপোর্ট তৈরি হয় না।</p>
                 </div>
               )}
             </div>
           )}
         </div>
       ) : null}
-
-      {/* TAB 7: FUNNEL & CHECKOUT SPY */}
+      {/* TAB 7: FUNNEL & CHECKOUT SPY (HF3: detected from real fetched pages; not-detected = শনাক্ত হয়নি) */}
       {activeTab === "funnel" ? (
-        <div className="space-y-6">
+        <div className="fade-rise space-y-6">
           {!active ? (
-            <div className="card p-8 bg-white text-center space-y-4">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 text-2xl text-amber-600">
+            <div className="card p-6 bg-white text-center space-y-4 sm:p-8">
+              <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">
                 🛒
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  প্রতিযোগীর চেকআউট ফর্ম, ট্রাস্ট ব্যাজ, পেমেন্ট মেথড এবং অফার বান্ডেল বিশ্লেষণ দেখতে নিচে ক্লিক করুন।
+                  প্রতিযোগীর আসল ওয়েবসাইট ফেচ করে চেকআউট ফর্ম, ট্রাস্ট সিগন্যাল ও পেমেন্ট মেথড শনাক্তকরণ দেখতে নিচে ক্লিক করুন।
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
@@ -2446,7 +2450,7 @@ export default function CompetitorsPage() {
                       openCompetitor(c);
                       fetchFunnelAudit(c);
                     }}
-                    className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400"
+                    className="btn-secondary btn-sm min-h-[40px]"
                   >
                     🏢 {c.name}
                   </button>
@@ -2456,22 +2460,22 @@ export default function CompetitorsPage() {
           ) : (
             <div className="space-y-6">
               {/* Header card */}
-              <div className="card p-5 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="card p-4 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:p-5">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-bold text-slate-900">
-                      {active.name} — Checkout Funnel & Conversion Architecture
+                      {active.name} — Checkout Funnel অডিট
                     </h3>
-                    <span className="rounded bg-amber-100 text-amber-800 text-xs px-2 py-0.5 font-bold">
-                      AOV & কনভার্সন অপ্টিমাইজার
+                    <span className="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200">
+                      আসল পেজ থেকে শনাক্ত
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    চেকআউট ফর্ম আর্কিটেকচার, পেমেন্ট মেথড, ট্রাস্ট উপাদান এবং গড় অর্ডার ভ্যালু (AOV) বৃদ্ধির কম্বো অফার
+                    শুধু যা আসল পেজে পাওয়া গেছে তাই দেখানো হয় — যা পাওয়া যায়নি তা &ldquo;শনাক্ত হয়নি&rdquo; হিসেবে থাকে, অনুমান করা হয় না
                   </p>
                 </div>
                 <button
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="btn-secondary btn-sm min-h-[40px]"
                   disabled={loadingFunnel}
                   onClick={() => fetchFunnelAudit(active)}
                 >
@@ -2480,161 +2484,193 @@ export default function CompetitorsPage() {
               </div>
 
               {loadingFunnel ? (
-                <div className="card p-12 bg-white text-center text-sm text-slate-500">
-                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-amber-600 border-r-transparent mb-3" />
-                  <p>চেকআউট ফ্লো এবং বান্ডেল অফার বিশ্লেষণ করা হচ্ছে...</p>
+                <div className="card p-6 bg-white space-y-5 sm:p-8" aria-hidden="true">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="space-y-2">
+                        <div className="skeleton h-3 w-2/3" />
+                        <div className="skeleton h-8 w-1/2" />
+                        <div className="skeleton h-3 w-4/5" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="skeleton h-24 w-full" />
+                    ))}
+                  </div>
+                  <p className="text-center text-sm text-slate-500">আসল পেজ ফেচ করে চেকআউট ফ্লো যাচাই করা হচ্ছে...</p>
+                </div>
+              ) : funnelReport && !funnelReport.scanned ? (
+                <div className="card p-8 bg-white text-center space-y-3">
+                  <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">🚫</div>
+                  <h4 className="font-bold text-slate-900 text-sm">ফানেল অডিট করা যায়নি</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {funnelReport.reason ?? "প্রতিযোগীর ওয়েবসাইট স্ক্যান করা যায়নি।"}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    স্ক্যান ছাড়া কোনো রিপোর্ট তৈরি করা হয় না।
+                  </p>
                 </div>
               ) : funnelReport ? (
                 <div className="space-y-6">
-                  {/* High-level metrics */}
+                  {/* Detection overview */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="card p-4 bg-gradient-to-br from-amber-50/60 to-white border border-amber-100">
-                      <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">
-                        চেকআউট টাইপ
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        চেকআউট পেজ/লিংক
                       </span>
                       <p className="mt-2 text-base font-black text-slate-900">
-                        {funnelReport.checkoutType}
+                        {funnelReport.checkoutDetected ? "শনাক্ত হয়েছে" : "শনাক্ত হয়নি"}
                       </p>
-                      <span className="text-[10px] text-slate-500">হাইপার-কনভার্টিং ডিরেক্ট চেকআউট</span>
+                      <span className="stat-hint block">{funnelReport.pagesScanned.length}টি পেজ স্ক্যান করা হয়েছে</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-emerald-50/60 to-white border border-emerald-100">
-                      <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider">
-                        ফর্ম ফ্রিকশন স্কোর
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        ফর্ম ফিল্ড সংখ্যা
                       </span>
-                      <div className="mt-2 flex items-baseline gap-2">
-                        <span className="text-2xl font-black text-emerald-700">{funnelReport.formFrictionScore}</span>
-                        <span className="text-xs text-slate-400 font-semibold">/ ১০০ (লো ফ্রিকশন)</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500">সহজেই অর্ডার সম্পন্ন করা যায়</span>
+                      <p className="stat-value text-brand-700">
+                        {funnelReport.checkoutFieldCount !== null ? `${funnelReport.checkoutFieldCount}টি` : "শনাক্ত হয়নি"}
+                      </p>
+                      <span className="stat-hint block">আসল ফর্ম থেকে গণনা করা</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-blue-50/60 to-white border border-blue-100">
-                      <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider">
-                        পেমেন্ট মেথড
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        পেমেন্ট গেটওয়ে
                       </span>
-                      <p className="mt-2 text-2xl font-black text-blue-700">
-                        {funnelReport.paymentGatewaysDetected.length} টি
+                      <p className="stat-value text-blue-700">
+                        {funnelReport.paymentGatewaysDetected.length}টি
                       </p>
-                      <span className="text-[10px] text-slate-500">COD, বিকাশ, নগদ সহ সক্রিয়</span>
+                      <span className="stat-hint block">পেজের টেক্সটে উল্লেখ পাওয়া গেছে</span>
                     </div>
 
-                    <div className="card p-4 bg-gradient-to-br from-purple-50/60 to-white border border-purple-100">
-                      <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">
-                        ট্রাস্ট ব্যাজ এলিমেন্ট
+                    <div className="comp-metric">
+                      <span className="stat-label">
+                        ট্রাস্ট সিগন্যাল
                       </span>
-                      <p className="mt-2 text-2xl font-black text-purple-700">
-                        {funnelReport.activeTrustBadges.length} টি
+                      <p className="stat-value text-purple-700">
+                        {funnelReport.trustSignalsDetected.length}টি
                       </p>
-                      <span className="text-[10px] text-slate-500">কনভার্সন বুস্টিং গ্যারান্টি</span>
+                      <span className="stat-hint block">পেজে ছাপানো প্রতিশ্রুতি থেকে</span>
                     </div>
                   </div>
 
-                  {/* Form fields & Payment Methods */}
+                  {/* Form fields & payment/trust detection */}
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="card p-4 bg-white space-y-3">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        📝 চেকআউটের আবশ্যকীয় ফিল্ডসমূহ (Required Fields)
+                        📝 শনাক্ত করা ফর্ম ফিল্ডসমূহ
                       </span>
-                      <div className="space-y-1.5 pt-1">
-                        {funnelReport.requiredFields.map((rf, i) => (
-                          <div key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border text-xs text-slate-800">
-                            <span className="text-emerald-600 font-bold">✓</span>
-                            <span>{rf}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        ৩টির বেশি ফিল্ড থাকলে কনভার্সন রেট ড্রপ করে। প্রতিযোগী লো-ফ্রিকশন ৩-ফিল্ড ব্যবহার করছে।
-                      </p>
+                      {funnelReport.checkoutFields.length ? (
+                        <div className="space-y-1.5 pt-1">
+                          {funnelReport.checkoutFields.map((rf, i) => (
+                            <div key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border text-xs text-slate-800">
+                              <span className="text-emerald-600 font-bold">✓</span>
+                              <span>{rf}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 pt-1">শনাক্ত হয়নি — স্ক্যান করা পেজগুলোতে কোনো ফর্ম পাওয়া যায়নি।</p>
+                      )}
                     </div>
 
                     <div className="card p-4 bg-white space-y-3">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        🛡️ সক্রিয় ট্রাস্ট ব্যাজ ও নিশ্চয়তা (Trust Badges)
+                        🛡️ শনাক্ত করা ট্রাস্ট সিগন্যাল
                       </span>
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {funnelReport.activeTrustBadges.map((badge, i) => (
-                          <span key={i} className="rounded-lg bg-emerald-50 text-emerald-800 text-xs px-2.5 py-1 font-semibold border border-emerald-200">
-                            🛡️ {badge}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="pt-2 border-t">
-                        <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">পেমেন্ট গেটওয়ে:</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {funnelReport.paymentGatewaysDetected.map((pg, i) => (
-                            <span key={i} className="rounded bg-slate-100 text-slate-700 text-[11px] px-2 py-0.5 font-medium">
-                              💳 {pg}
+                      {funnelReport.trustSignalsDetected.length ? (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {funnelReport.trustSignalsDetected.map((badge, i) => (
+                            <span key={i} className="rounded-lg bg-emerald-50 text-emerald-800 text-xs px-2.5 py-1 font-semibold border border-emerald-200">
+                              🛡️ {badge}
                             </span>
                           ))}
                         </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AOV Upsell Bundles */}
-                  <div className="card p-5 bg-white space-y-4">
-                    <div className="flex items-center justify-between border-b pb-3">
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">
-                          প্রতিযোগীর বান্ডেল অফার আর্কিটেকচার (AOV Boosters)
-                        </h4>
-                        <p className="text-xs text-slate-500">
-                          কীভাবে তারা একক পণ্যের জায়গায় ২ বা ৩টি পণ্য বিক্রি করে গড় অর্ডার ভ্যালু ৫০% বাড়াচ্ছে
-                        </p>
-                      </div>
-                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
-                        Order Bump Formula
-                      </span>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      {funnelReport.bundleOffers.map((tier, idx) => (
-                        <div key={idx} className={`rounded-xl border p-4 space-y-2.5 transition-all ${
-                          tier.popularityScore >= 50
-                            ? "bg-amber-50/50 border-amber-300 ring-1 ring-amber-300"
-                            : "bg-slate-50/50"
-                        }`}>
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-900 text-xs">{tier.tierName}</span>
-                            <span className="rounded bg-white text-slate-700 text-[10px] font-bold px-1.5 py-0.5 border">
-                              {tier.popularityScore}% ক্রেতা
-                            </span>
+                      ) : (
+                        <p className="text-xs text-slate-500 pt-1">শনাক্ত হয়নি।</p>
+                      )}
+                      <div className="pt-2 border-t">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">পেমেন্ট গেটওয়ে:</span>
+                        {funnelReport.paymentGatewaysDetected.length ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {funnelReport.paymentGatewaysDetected.map((pg, i) => (
+                              <span key={i} className="rounded bg-slate-100 text-slate-700 text-[11px] px-2 py-0.5 font-medium">
+                                💳 {pg}
+                              </span>
+                            ))}
                           </div>
-                          <p className="font-bold text-sm text-indigo-700">{tier.discountOffer}</p>
-                          <p className="text-xs text-slate-600 leading-relaxed">{tier.perceivedValue}</p>
-                        </div>
-                      ))}
+                        ) : (
+                          <p className="text-xs text-slate-500">শনাক্ত হয়নি।</p>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Conversion Optimization & How to Beat Them */}
-                  <div className="card p-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white space-y-4 rounded-2xl shadow-xl">
-                    <div className="border-b border-slate-700 pb-3">
-                      <div className="flex items-center gap-2">
+                  {/* Bundle / combo hints actually printed on the pages */}
+                  <div className="card p-4 bg-white space-y-4 sm:p-5">
+                    <div className="border-b border-slate-100 pb-3">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        পেজে পাওয়া বান্ডেল/কম্বো অফারের চিহ্ন
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        হুবহু পেজের টেক্সট থেকে নেওয়া অংশ — কোনো জনপ্রিয়তার শতাংশ অনুমান করা হয় না
+                      </p>
+                    </div>
+                    {funnelReport.bundleHints.length ? (
+                      <div className="space-y-2">
+                        {funnelReport.bundleHints.map((hint, idx) => (
+                          <div key={idx} className="rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4">
+                            <p className="text-xs text-slate-700 leading-relaxed">&ldquo;{hint}&rdquo;</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">শনাক্ত হয়নি — স্ক্যান করা পেজগুলোতে বান্ডেল/কম্বো অফারের কোনো উল্লেখ পাওয়া যায়নি।</p>
+                    )}
+                    <div className="pt-2 border-t">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">স্ক্যান করা পেজ:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {funnelReport.pagesScanned.map((u, i) => (
+                          <a key={i} href={u} target="_blank" rel="noreferrer" className="rounded bg-slate-100 text-blue-600 text-[11px] px-2 py-0.5 font-mono hover:underline truncate max-w-full">
+                            {u}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* General advice — clearly labeled as NOT competitor findings */}
+                  <div className="comp-dark p-5 space-y-4 sm:p-6">
+                    <div className="border-b border-white/15 pb-3">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500 text-sm">⚡</span>
                         <h4 className="font-bold text-base text-white">
-                          ফানেল অপ্টিমাইজেশন ও আউট-স্মার্ট কৌশল (Beat Their Funnel)
+                          ফানেল অপ্টিমাইজেশন কৌশল
                         </h4>
+                        <span className="rounded bg-white/15 text-white/85 text-[10px] font-bold px-2 py-0.5">
+                          সাধারণ পরামর্শ — প্রতিযোগীর ডেটা নয়
+                        </span>
                       </div>
-                      <p className="text-xs text-slate-300 mt-1">
-                        আপনার স্টোরের চেকআউট পেজে কী পরিবর্তন আনলে কনভার্সন রেট প্রতিদ্বন্দীর চেয়ে বেশি হবে
+                      <p className="text-xs text-white/70 mt-1">
+                        নিজের স্টোরের চেকআউটে প্রয়োগযোগ্য সাধারণ পরামর্শ; প্রতিযোগীর আসল ডেটা উপরের সেকশনগুলোতে
                       </p>
                     </div>
 
                     <div className="grid sm:grid-cols-3 gap-3 pt-1">
-                      {funnelReport.conversionOptimizationTips.map((tip, i) => (
-                        <div key={i} className="rounded-xl bg-slate-800/80 p-4 border border-slate-700 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-xs text-emerald-400">{tip.tactic}</span>
+                      {funnelReport.generalTips.map((tip, i) => (
+                        <div key={i} className="comp-dark-panel space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-xs text-emerald-300">{tip.tactic}</span>
                             <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
-                              tip.impact === "Critical" ? "bg-red-500 text-white" : "bg-indigo-500/30 text-indigo-300"
+                              tip.impact === "Critical" ? "bg-red-500 text-white" : "bg-white/15 text-white"
                             }`}>
                               {tip.impact}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                          <p className="text-xs text-white/80 leading-relaxed font-sans">
                             {tip.howToBeatThem}
                           </p>
                         </div>
@@ -2651,20 +2687,16 @@ export default function CompetitorsPage() {
           )}
         </div>
       ) : null}
-
-
-
-
-      {/* White-Label Agency Dossier Audit Modal */}
+      {/* White-Label Agency Dossier Audit Modal v2 */}
       {isDossierOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white p-6 sm:p-8 space-y-6">
-            <div className="flex items-center justify-between border-b pb-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-slate-900 text-white font-black text-xl px-3 py-1">
+        <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
+          <div className="comp-sheet space-y-6 sm:max-w-4xl sm:p-8">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="comp-brand-bg shrink-0 rounded-lg px-3 py-1 text-xl font-black text-white shadow-sm">
                   AGENCY AUDIT
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-lg font-bold text-slate-900">
                     {dossierData?.agencyBranding.organizationName || "Client"} Competitor Intelligence Dossier
                   </h3>
@@ -2676,13 +2708,13 @@ export default function CompetitorsPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => window.print()}
-                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+                  className="btn-dark btn-sm min-h-[40px]"
                 >
                   🖨️ প্রিন্ট / PDF ডাউনলোড
                 </button>
                 <button
                   onClick={() => setIsDossierOpen(false)}
-                  className="rounded p-1 text-slate-400 hover:text-slate-700 text-sm"
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 text-sm"
                 >
                   ✕
                 </button>
@@ -2690,24 +2722,39 @@ export default function CompetitorsPage() {
             </div>
 
             {loadingDossier ? (
-              <p className="text-center py-12 text-sm text-slate-500">
-                হোয়াইট-লেবেল অডিট রিপোর্ট প্রস্তুত হচ্ছে...
-              </p>
+              <div className="space-y-5 py-4" aria-hidden="true">
+                <div className="grid grid-cols-3 gap-3">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
+                      <div className="skeleton h-3 w-2/3" />
+                      <div className="skeleton h-8 w-1/3" />
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-2">
+                  <div className="skeleton h-4 w-1/3" />
+                  <div className="skeleton h-20 w-full" />
+                  <div className="skeleton h-20 w-full" />
+                </div>
+                <p className="text-center text-sm text-slate-500">
+                  হোয়াইট-লেবেল অডিট রিপোর্ট প্রস্তুত হচ্ছে...
+                </p>
+              </div>
             ) : dossierData ? (
               <div className="space-y-6 text-sm">
                 {/* Executive Summary Cards */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-xl border bg-slate-50 p-4">
-                    <span className="text-[11px] font-bold uppercase text-slate-400">ট্র্যাকড প্রতিযোগী</span>
-                    <p className="mt-1 text-2xl font-black text-slate-900">{dossierData.summary.totalCompetitorsTracked}</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
+                    <span className="stat-label">ট্র্যাকড প্রতিযোগী</span>
+                    <p className="stat-value">{dossierData.summary.totalCompetitorsTracked}</p>
                   </div>
-                  <div className="rounded-xl border bg-slate-50 p-4">
-                    <span className="text-[11px] font-bold uppercase text-slate-400">সক্রিয় অপরচুনিটি অ্যালার্ট</span>
-                    <p className="mt-1 text-2xl font-black text-amber-600">{dossierData.summary.totalAlertsActive}</p>
+                  <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
+                    <span className="stat-label">সক্রিয় অপরচুনিটি অ্যালার্ট</span>
+                    <p className="stat-value text-amber-600">{dossierData.summary.totalAlertsActive}</p>
                   </div>
-                  <div className="rounded-xl border bg-slate-50 p-4">
-                    <span className="text-[11px] font-bold uppercase text-slate-400">মূল্য পার্থক্যের রেকর্ড</span>
-                    <p className="mt-1 text-2xl font-black text-indigo-600">{dossierData.summary.priceGapsDetected}</p>
+                  <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
+                    <span className="stat-label">মূল্য পার্থক্যের রেকর্ড</span>
+                    <p className="stat-value text-brand-700">{dossierData.summary.priceGapsDetected}</p>
                   </div>
                 </div>
 
@@ -2717,9 +2764,9 @@ export default function CompetitorsPage() {
                     ১. প্রতিযোগী ব্র্যান্ড বিশ্লেষণ ও উইনিং ক্যাম্পেইন
                   </h4>
                   {dossierData.competitors.map((item, idx) => (
-                    <div key={idx} className="rounded-lg border p-4 bg-slate-50/50 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div>
+                    <div key={idx} className="rounded-2xl p-4 bg-slate-50/50 space-y-3 ring-1 ring-inset ring-slate-200/60">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
                           <span className="font-bold text-slate-900 text-base">{item.competitor.name}</span>
                           <span className="ml-2 text-xs text-slate-400">({item.competitor.websiteUrl || "No website"})</span>
                         </div>
@@ -2750,32 +2797,34 @@ export default function CompetitorsPage() {
                   <h4 className="font-bold text-slate-900 uppercase tracking-wider text-xs border-b pb-2">
                     ২. বাজার মূল্যের তুলনামূলক ম্যাট্রিক্স
                   </h4>
-                  <table className="w-full text-left text-xs border divide-y">
-                    <thead className="bg-slate-100">
-                      <tr>
-                        <th className="p-2">আপনার প্রোডাক্ট</th>
-                        <th className="p-2">আপনার দাম</th>
-                        <th className="p-2">প্রতিযোগীর দাম</th>
-                        <th className="p-2">মূল্যের পার্থক্য</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {dossierData.priceComparisonMatrix.slice(0, 8).map((p, i) => (
-                        <tr key={i}>
-                          <td className="p-2 font-medium">{p.productName}</td>
-                          <td className="p-2">{formatMinor(BigInt(p.ownPriceMinor), p.currency)}</td>
-                          <td className="p-2">
-                            {p.competitorPrices[0] ? `${p.competitorPrices[0].competitorName}: ${formatMinor(BigInt(p.competitorPrices[0].priceMinor), p.competitorPrices[0].currency)}` : "—"}
-                          </td>
-                          <td className="p-2 font-bold">
-                            {p.competitorPrices[0]?.diffPercent !== undefined && p.competitorPrices[0]?.diffPercent !== null
-                              ? `${p.competitorPrices[0].diffPercent}%`
-                              : "—"}
-                          </td>
+                  <div className="table-wrap">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr>
+                          <th>আপনার প্রোডাক্ট</th>
+                          <th>আপনার দাম</th>
+                          <th>প্রতিযোগীর দাম</th>
+                          <th>মূল্যের পার্থক্য</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {dossierData.priceComparisonMatrix.slice(0, 8).map((p, i) => (
+                          <tr key={i}>
+                            <td className="font-medium">{p.productName}</td>
+                            <td>{formatMinor(BigInt(p.ownPriceMinor), p.currency)}</td>
+                            <td>
+                              {p.competitorPrices[0] ? `${p.competitorPrices[0].competitorName}: ${formatMinor(BigInt(p.competitorPrices[0].priceMinor), p.competitorPrices[0].currency)}` : "—"}
+                            </td>
+                            <td className="font-bold">
+                              {p.competitorPrices[0]?.diffPercent !== undefined && p.competitorPrices[0]?.diffPercent !== null
+                                ? `${p.competitorPrices[0].diffPercent}%`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 {/* Footer disclaimer */}
@@ -2788,11 +2837,11 @@ export default function CompetitorsPage() {
         </div>
       ) : null}
 
-      {/* Counter-Ad Generator Modal */}
+      {/* Counter-Ad Generator Modal v2 */}
       {counterModalAd ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white p-6 space-y-4">
-            <div className="flex items-center justify-between border-b pb-3">
+        <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
+          <div className="comp-sheet space-y-4 sm:max-w-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">
                   ⚡ AI Counter-Ad & Strategy Generator
@@ -2803,14 +2852,14 @@ export default function CompetitorsPage() {
               </div>
               <button
                 onClick={() => setCounterModalAd(null)}
-                className="rounded p-1 text-slate-400 hover:text-slate-700"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
                 ✕
               </button>
             </div>
 
             {/* Competitor Ad Snippet */}
-            <div className="rounded-lg bg-slate-50 p-3 text-xs border">
+            <div className="rounded-2xl bg-slate-50 p-3.5 text-xs ring-1 ring-inset ring-slate-200/60">
               <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
                 প্রতিযোগীর অরিজিনাল অ্যাড ({counterModalAd.platforms.join(", ")}):
               </span>
@@ -2841,7 +2890,7 @@ export default function CompetitorsPage() {
             <button
               onClick={handleGenerateCounterAd}
               disabled={isGeneratingCounterAd}
-              className="btn-primary w-full py-2.5 text-sm flex items-center justify-center gap-2"
+              className="btn-primary min-h-[44px] w-full py-2.5 text-sm flex items-center justify-center gap-2"
             >
               {isGeneratingCounterAd ? (
                 <span>এআই অ্যানালাইসিস ও কপি তৈরি হচ্ছে...</span>
@@ -2852,10 +2901,16 @@ export default function CompetitorsPage() {
 
             {/* Results Display */}
             {counterAdResult ? (
-              <div className="space-y-4 border-t pt-4">
+              <div className="space-y-4 border-t border-slate-100 pt-4">
+                <div>
+                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${counterAdResult.origin === "ai" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
+                    {counterAdResult.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                  </span>
+                  <span className="ml-2 text-[11px] text-slate-400">খসড়া কপি — প্রকাশের আগে নিজে যাচাই করুন</span>
+                </div>
                 {/* Hook & Weakness Breakdown */}
-                <div className="rounded-lg bg-indigo-50/50 p-4 border border-indigo-100">
-                  <h4 className="font-bold text-xs uppercase tracking-wider text-indigo-900">
+                <div className="comp-soft-panel">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-slate-900">
                     🎯 প্রতিযোগীর Hook & Weakness Analysis:
                   </h4>
                   <p className="mt-1 text-xs text-slate-700">
@@ -2877,7 +2932,7 @@ export default function CompetitorsPage() {
                 </div>
 
                 {/* Generated Copy */}
-                <div className="rounded-lg bg-emerald-50/50 p-4 border border-emerald-100 space-y-3">
+                <div className="rounded-2xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-100 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">
                       🔥 আপনার জন্য প্রস্তুতকৃত কাউন্টার কপি:
@@ -2921,7 +2976,7 @@ export default function CompetitorsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="bg-white p-2 rounded border">
                       <span className="font-semibold text-slate-500">অফার পরামর্শ:</span>
                       <p className="font-medium text-emerald-700">
@@ -2943,7 +2998,7 @@ export default function CompetitorsPage() {
                   <div className="pt-2 border-t border-emerald-200/80">
                     <button
                       onClick={pushToCampaignBuilder}
-                      className="w-full rounded-lg bg-gradient-to-r from-emerald-600 to-teal-700 py-2.5 text-xs font-bold text-white shadow hover:from-emerald-700 hover:to-teal-800 flex items-center justify-center gap-2"
+                      className="w-full min-h-[44px] rounded-lg bg-gradient-to-r from-emerald-600 to-teal-700 py-2.5 text-xs font-bold text-white shadow hover:from-emerald-700 hover:to-teal-800 flex items-center justify-center gap-2"
                     >
                       <span>🚀 ১-ক্লিকে Campaign Builder-এ পাঠান (Create Ad)</span>
                       <span>➔</span>
@@ -2956,13 +3011,13 @@ export default function CompetitorsPage() {
         </div>
       ) : null}
 
-      {/* Video Script Deconstructor Modal */}
+      {/* Video Script Deconstructor Modal v2 */}
       {videoModalAd ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
-          <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white p-6 space-y-5">
-            <div className="flex items-center justify-between border-b pb-3">
+        <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
+          <div className="comp-sheet space-y-5 sm:max-w-4xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-pink-100 text-pink-700 text-lg">
+                <span className="comp-icon-tile h-10 w-10 text-lg">
                   🎬
                 </span>
                 <div>
@@ -2976,14 +3031,14 @@ export default function CompetitorsPage() {
               </div>
               <button
                 onClick={() => setVideoModalAd(null)}
-                className="rounded p-1 text-slate-400 hover:text-slate-700"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
                 ✕
               </button>
             </div>
 
             {/* Competitor Ad Snippet */}
-            <div className="rounded-xl bg-slate-50 p-3.5 text-xs border border-slate-200">
+            <div className="rounded-2xl bg-slate-50 p-3.5 text-xs ring-1 ring-inset ring-slate-200/60">
               <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
                 অরিজিনাল ভিডিও অ্যাড টেক্সট ({videoModalAd.platforms.join(", ")}):
               </span>
@@ -3032,7 +3087,7 @@ export default function CompetitorsPage() {
             <button
               onClick={deconstructVideoScriptHandler}
               disabled={isVideoDeconstructing}
-              className="w-full rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 py-3 text-xs font-bold text-white shadow-md hover:from-pink-700 hover:to-indigo-700 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+              className="btn-ai min-h-[44px] w-full py-3 text-xs"
             >
               {isVideoDeconstructing ? (
                 <>
@@ -3050,12 +3105,18 @@ export default function CompetitorsPage() {
             {/* Generated Script Results */}
             {videoScriptResult ? (
               <div className="space-y-5 pt-3 border-t">
+                <div>
+                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${videoScriptResult.origin === "ai" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
+                    {videoScriptResult.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                  </span>
+                  <span className="ml-2 text-[11px] text-slate-400">খসড়া স্ক্রিপ্ট — প্রতিযোগীর আসল ভিডিও বিশ্লেষণ নয়, তাদের বিজ্ঞাপনের টেক্সট থেকে সাজানো</span>
+                </div>
                 {/* Hook & Retention Breakdown Card */}
-                <div className="rounded-xl border border-pink-200 bg-pink-50/50 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-pink-900 uppercase tracking-wider flex items-center gap-1.5">
+                <div className="comp-soft-panel space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                       <span>🎯 ০-৩ সেকেন্ড হুক অ্যানালাইসিস</span>
-                      <span className="rounded bg-pink-200/80 text-pink-800 text-[10px] px-2 py-0.5 font-bold">
+                      <span className="badge-brand">
                         {videoScriptResult.hookCategory}
                       </span>
                     </span>
@@ -3064,60 +3125,60 @@ export default function CompetitorsPage() {
                     </span>
                   </div>
                   <div className="grid sm:grid-cols-3 gap-3 text-xs">
-                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                    <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
                       <span className="font-semibold text-slate-500 text-[11px]">স্ক্রোল থামানোর হুক:</span>
                       <p className="mt-1 font-bold text-slate-800">{videoScriptResult.competitorHookBreakdown.firstThreeSecondsHook}</p>
                     </div>
-                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                    <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
                       <span className="font-semibold text-slate-500 text-[11px]">ভিউয়ার ধরে রাখার কারণ (Retention):</span>
                       <p className="mt-1 text-slate-700">{videoScriptResult.competitorHookBreakdown.whyItRetainsViewers}</p>
                     </div>
-                    <div className="rounded-lg bg-white p-3 border border-pink-100">
+                    <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
                       <span className="font-semibold text-slate-500 text-[11px]">মানসিক ট্রিগার (Trigger):</span>
-                      <p className="mt-1 font-semibold text-indigo-700">{videoScriptResult.competitorHookBreakdown.coreEmotionalTrigger}</p>
+                      <p className="mt-1 font-semibold text-brand-700">{videoScriptResult.competitorHookBreakdown.coreEmotionalTrigger}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Scene-by-Scene Storyboard & Teleprompter */}
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h4 className="font-bold text-slate-900 text-sm">
                       🎬 সিন-বাই-সিন স্টোরিবোর্ড ও শুটিং গাইড ({videoScriptResult.adaptedScript.conceptTitle})
                     </h4>
                     <span className="text-xs text-slate-400">রিলস / টিকটক (৯:১৬) ফরম্যাট</span>
                   </div>
 
-                  <div className="overflow-x-auto rounded-xl border">
+                  <div className="table-wrap">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-100 text-slate-700 font-semibold border-b">
+                      <thead>
                         <tr>
-                          <th className="py-2.5 px-3 w-24">টাইমস্ট্যাম্প</th>
-                          <th className="py-2.5 px-3 w-36">ফেজ / পর্ব</th>
-                          <th className="py-2.5 px-3">ক্যামেরা ও বি-রোল নির্দেশিকা (Visual Shot)</th>
-                          <th className="py-2.5 px-3">স্পোকেন ডায়লগ / ভয়েসওভার (Audio)</th>
-                          <th className="py-2.5 px-3">স্ক্রিন টেক্সট / ক্যাপশন</th>
+                          <th className="w-24">টাইমস্ট্যাম্প</th>
+                          <th className="w-36">ফেজ / পর্ব</th>
+                          <th>ক্যামেরা ও বি-রোল নির্দেশিকা (Visual Shot)</th>
+                          <th>স্পোকেন ডায়লগ / ভয়েসওভার (Audio)</th>
+                          <th>স্ক্রিন টেক্সট / ক্যাপশন</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y text-slate-800">
+                      <tbody className="text-slate-800">
                         {videoScriptResult.adaptedScript.scenes.map((scene, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50">
-                            <td className="py-2.5 px-3 font-mono font-bold text-indigo-600">
+                          <tr key={idx}>
+                            <td className="font-mono font-bold text-brand-700">
                               {scene.timeRange}
                             </td>
-                            <td className="py-2.5 px-3">
-                              <span className="rounded bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5">
+                            <td>
+                              <span className="badge-brand">
                                 {scene.phase}
                               </span>
                             </td>
-                            <td className="py-2.5 px-3 text-slate-600">
+                            <td className="text-slate-600">
                               <span className="font-medium text-slate-900">{scene.visualCue}</span>
                               <p className="text-[10px] text-slate-400 mt-0.5">নোট: {scene.directorNotes}</p>
                             </td>
-                            <td className="py-2.5 px-3 font-semibold text-slate-900 leading-relaxed">
+                            <td className="font-semibold text-slate-900 leading-relaxed">
                               &ldquo;{scene.audioVoiceover}&rdquo;
                             </td>
-                            <td className="py-2.5 px-3 font-bold text-pink-700">
+                            <td className="font-bold text-pink-700">
                               {scene.onScreenText}
                             </td>
                           </tr>
@@ -3128,9 +3189,9 @@ export default function CompetitorsPage() {
                 </div>
 
                 {/* Teleprompter Box */}
-                <div className="rounded-xl bg-slate-900 text-white p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-pink-400">
+                <div className="comp-dark p-4 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="comp-dark-label">
                       🎙️ টেলিপ্রম্পটার ভয়েসওভার কপি (Full Voiceover Script)
                     </span>
                     <button
@@ -3139,12 +3200,12 @@ export default function CompetitorsPage() {
                         setCopiedText("voiceover");
                         setTimeout(() => setCopiedText(""), 2000);
                       }}
-                      className="rounded bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1 text-white font-semibold flex items-center gap-1 border border-slate-700"
+                      className="flex min-h-[32px] items-center gap-1 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-semibold text-white ring-1 ring-inset ring-white/20 hover:bg-white/25"
                     >
                       {copiedText === "voiceover" ? "কপি হয়েছে!" : "📋 কপি টেলিপ্রম্পটার"}
                     </button>
                   </div>
-                  <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                  <p className="text-xs text-white/85 leading-relaxed font-sans">
                     {videoScriptResult.adaptedScript.fullVoiceoverBangla}
                   </p>
                 </div>
@@ -3175,13 +3236,13 @@ export default function CompetitorsPage() {
         </div>
       ) : null}
 
-      {/* Alert Bot Settings Modal */}
+      {/* Alert Bot Settings Modal v2 */}
       {isAlertSettingsOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <form onSubmit={saveAlertSettingsHandler} className="card w-full max-w-lg bg-white p-6 space-y-5">
-            <div className="flex items-center justify-between border-b pb-3">
+        <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
+          <form onSubmit={saveAlertSettingsHandler} className="comp-sheet space-y-5 sm:max-w-lg">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 text-lg">
+                <span className="comp-icon-tile h-10 w-10 text-lg">
                   📲
                 </span>
                 <div>
@@ -3196,15 +3257,15 @@ export default function CompetitorsPage() {
               <button
                 type="button"
                 onClick={() => setIsAlertSettingsOpen(false)}
-                className="rounded p-1 text-slate-400 hover:text-slate-700"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
                 ✕
               </button>
             </div>
 
             {/* Telegram Settings */}
-            <div className="rounded-xl border p-4 bg-slate-50 space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="rounded-2xl p-4 bg-slate-50 space-y-3 ring-1 ring-inset ring-slate-200/60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="flex items-center gap-2 font-bold text-xs text-slate-900 cursor-pointer">
                   <input
                     type="checkbox"
@@ -3218,7 +3279,7 @@ export default function CompetitorsPage() {
                   type="button"
                   disabled={!alertConfig.telegramBotToken || !alertConfig.telegramChatId || isTestingAlert}
                   onClick={() => testAlertChannelHandler("telegram")}
-                  className="rounded border border-indigo-200 bg-white px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                  className="comp-soft-btn min-h-[32px] px-2.5 py-1 text-[11px]"
                 >
                   {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট মেসেজ পাঠান"}
                 </button>
@@ -3253,8 +3314,8 @@ export default function CompetitorsPage() {
             </div>
 
             {/* WhatsApp Settings */}
-            <div className="rounded-xl border p-4 bg-slate-50 space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="rounded-2xl p-4 bg-slate-50 space-y-3 ring-1 ring-inset ring-slate-200/60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="flex items-center gap-2 font-bold text-xs text-slate-900 cursor-pointer">
                   <input
                     type="checkbox"
@@ -3268,7 +3329,7 @@ export default function CompetitorsPage() {
                   type="button"
                   disabled={!alertConfig.whatsappWebhookUrl || isTestingAlert}
                   onClick={() => testAlertChannelHandler("whatsapp")}
-                  className="rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  className="min-h-[32px] rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                 >
                   {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট Webhook"}
                 </button>
@@ -3321,18 +3382,18 @@ export default function CompetitorsPage() {
             </div>
 
             {/* Modal Actions */}
-            <div className="flex justify-end gap-2 pt-2 border-t">
+            <div className="flex flex-col-reverse gap-2 pt-2 border-t border-slate-100 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => setIsAlertSettingsOpen(false)}
-                className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="btn-secondary min-h-[40px] text-xs"
               >
                 বাতিল
               </button>
               <button
                 type="submit"
                 disabled={isSavingAlertConfig}
-                className="btn-primary text-xs py-2 px-4 disabled:opacity-50"
+                className="btn-primary min-h-[40px] text-xs py-2 px-4 disabled:opacity-50"
               >
                 {isSavingAlertConfig ? "সংরক্ষণ হচ্ছে..." : "সেটিংস সংরক্ষণ করুন"}
               </button>
@@ -3344,8 +3405,8 @@ export default function CompetitorsPage() {
 
 
       {/* AI Market Intelligence Feed */}
-      <div className="card p-5 bg-white">
-        <div className="flex items-center justify-between border-b pb-3">
+      <div className="card fade-rise p-4 bg-white sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h3 className="font-bold text-slate-900">
               AI Market Intelligence {active ? `(${active.name})` : "(সব প্রতিযোগী)"}
@@ -3355,7 +3416,7 @@ export default function CompetitorsPage() {
             </p>
           </div>
           <button
-            className="btn-primary text-xs py-1.5 px-3 disabled:opacity-50"
+            className="btn-primary min-h-[40px] text-xs py-1.5 px-3 disabled:opacity-50"
             disabled={busy !== ""}
             onClick={generateInsights}
           >
@@ -3364,10 +3425,10 @@ export default function CompetitorsPage() {
         </div>
         <div className="mt-3 space-y-2">
           {insights.map((ins) => (
-            <div key={ins.id} className="rounded-lg bg-slate-50 p-3 text-xs border">
-              <div className="font-semibold text-slate-900 flex items-center justify-between">
+            <div key={ins.id} className="rounded-2xl bg-slate-50/70 p-3.5 text-xs ring-1 ring-inset ring-slate-200/60">
+              <div className="font-semibold text-slate-900 flex flex-wrap items-center justify-between gap-2">
                 <span>{ins.title}</span>
-                <span className="rounded bg-white px-2 py-0.5 text-[10px] text-slate-500 border">
+                <span className="badge-slate">
                   {ins.kind} · {ins.provider}
                 </span>
               </div>

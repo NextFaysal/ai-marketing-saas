@@ -10,10 +10,19 @@ export class ConnectMessagingDto {
   @IsOptional() @IsString() phoneNumberId?: string;
   @IsOptional() @IsString() pageId?: string;
 }
-export class SendMessageDto { @IsString() @MaxLength(4096) content!: string; }
+export class SendMessageDto {
+  @IsString() @MaxLength(4096) content!: string;
+  // CX11ac: composer-reported attribution (optional; absent =
+  // a plain hand-typed send).
+  @IsOptional() @IsBoolean() aiAssisted?: boolean;
+  @IsOptional() @IsString() @MaxLength(120) quickReplyId?: string;
+}
 export class UpdateConversationDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() assignedUserId?: string | null;
+  // CX4: timed assignment (minutes, 5..480 — range enforced in the
+  // service with a Bengali message; only valid with assignedUserId).
+  @IsOptional() @IsInt() assignForMinutes?: number;
   @IsOptional() @IsBoolean() spamFlag?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsBoolean() autoReplyPaused?: boolean;
@@ -21,6 +30,13 @@ export class UpdateConversationDto {
   @IsOptional() @IsString() pipelineStage?: string;
   @IsOptional() @IsString() outcome?: string | null;
   @IsOptional() @IsString() @MaxLength(300) outcomeReason?: string | null;
+}
+/** CX5: snooze a conversation — exactly one of minutes / until;
+ * the one-of rule and the ranges are enforced in the service with
+ * Bengali messages (minutes 5..10080, until a future ISO time). */
+export class SnoozeConversationDto {
+  @IsOptional() @IsInt() minutes?: number;
+  @IsOptional() @IsString() @MaxLength(64) until?: string;
 }
 export class RefundRequestDto {
   @IsOptional() @IsString() @MaxLength(300) reason?: string;
@@ -72,6 +88,11 @@ export class UpdateInboxSettingsDto {
   @IsOptional() @IsObject() perChannelModes?: Record<string, string>;
   @IsOptional() @IsInt() @Min(0) escalationThresholdMinor?: number | null;
   @IsOptional() @IsInt() @Min(7) @Max(3650) retentionDays?: number | null;
+  // CX3: wait-before-answering (seconds, 0 = immediate).
+  @IsOptional() @IsInt() @Min(0) @Max(600) aiReplyDelaySeconds?: number;
+  @IsOptional() @IsObject() aiReplyDelayByChannel?: Record<string, number>;
+  // CX12d: channel-wise AI schedule (deep-validated in the service).
+  @IsOptional() @IsObject() aiScheduleByChannel?: Record<string, unknown>;
 }
 export class CodConfirmationDto { @IsString() orderId!: string; }
 

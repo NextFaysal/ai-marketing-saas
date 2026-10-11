@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import { ReportsService, ReportType, ReportLanguage } from "./reports.service";
 import { ChatService } from "./chat.service";
 import { ToolsService } from "./tools.service";
@@ -88,6 +88,54 @@ export class AiController {
   @Post("chat/conversations/:conversationId/messages")
   sendMessage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto) {
     return this.chat.sendMessage(orgId, user.userId, id, dto.content);
+  }
+
+  /**
+   * AP1 streaming twin of the messages POST (same guards/roles/DTO).
+   * SSE frames are `event: <type>\ndata: <json>\n\n`. Exceptions raised
+   * before the first stream event (conversation lookup, kill switch,
+   * daily cap) are answered as ordinary HTTP errors with their status
+   * preserved; once streaming has started, failures arrive as a
+   * terminal `error` event. A client disconnect stops the generator
+   * (generator.return()), which persists any non-empty partial answer
+   * with the stopped marker.
+   */
+  @Post("chat/conversations/:conversationId/messages/stream")
+  async sendMessageStream(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto, @Req() req: any, @Res() res: any) {
+    const gen = this.chat.sendMessageStream(orgId, user.userId, id, dto.content);
+    let current: IteratorResult<any>;
+    try {
+      current = await gen.next();
+    } catch (e) {
+      const status = e instanceof HttpException ? e.getStatus() : (e as any)?.status ?? 500;
+      const message = e instanceof Error ? e.message : "Internal server error";
+      res.status(status).json({ statusCode: status, message });
+      return;
+    }
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+    let closed = false;
+    req?.on?.("close", () => { closed = true; });
+    try {
+      while (!current.done) {
+        const event = current.value;
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        if (closed) { await gen.return(undefined); break; }
+        try {
+          current = await gen.next();
+        } catch (e) {
+          const message = e instanceof Error ? e.message : "Internal server error";
+          res.write(`event: error\ndata: ${JSON.stringify({ type: "error", message })}\n\n`);
+          break;
+        }
+        if (closed) { await gen.return(undefined); break; }
+      }
+    } finally {
+      res.end();
+    }
   }
 
   // ----- Write-action proposals (Milestone 47) -----

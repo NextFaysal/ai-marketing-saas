@@ -1,4 +1,4 @@
-import { LlmProvider, LlmMessage, LlmResult, estimateTokens } from "./llm.types";
+import { LlmProvider, LlmMessage, LlmResult, LlmStreamChunk, estimateTokens, chunkTextByWords } from "./llm.types";
 
 /**
  * DEVELOPMENT-ONLY template adapter. This is NOT an AI model and must
@@ -18,5 +18,14 @@ export class DevTemplateProvider implements LlmProvider {
     const input = messages.map((m) => m.content).join("\n");
     const text = "[DEV TEMPLATE ADAPTER] No LLM is configured. Set LLM_PROVIDER and LLM_API_KEY to use a real model.";
     return { text, model: "dev-template-v1", inputTokens: estimateTokens(input), outputTokens: estimateTokens(text), tokensEstimated: true };
+  }
+
+  /** Streams complete()'s own labelled template text in word chunks —
+   *  the same chunking helper the chat dev path uses for its template
+   *  answers, so the labelled dev behaviour is identical everywhere. */
+  async *completeStream(messages: LlmMessage[]): AsyncIterable<LlmStreamChunk> {
+    const result = await this.complete(messages);
+    for (const delta of chunkTextByWords(result.text)) yield { delta };
+    yield { result };
   }
 }

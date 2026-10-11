@@ -1,4 +1,4 @@
-import { LlmProvider, LlmMessage, LlmResult, LlmConfigError, FetchFn } from "./llm.types";
+import { LlmProvider, LlmMessage, LlmResult, LlmStreamChunk, LlmConfigError, FetchFn, estimateTokens, iterateSseJson, throwStreamHttpError } from "./llm.types";
 
 export class OpenAiProvider implements LlmProvider {
   readonly name = "openai";
@@ -27,5 +27,35 @@ export class OpenAiProvider implements LlmProvider {
       outputTokens: body.usage?.completion_tokens ?? 0,
       tokensEstimated: false,
     };
+  }
+
+  async *completeStream(messages: LlmMessage[], opts?: { jsonMode?: boolean; maxTokens?: number }): AsyncIterable<LlmStreamChunk> {
+    const res = await this.fetchFn("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model, messages, stream: true,
+        stream_options: { include_usage: true },
+        ...(opts?.jsonMode ? { response_format: { type: "json_object" } } : {}),
+        ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+      }),
+    });
+    if (!res.ok) await throwStreamHttpError(res, "OpenAI");
+    let text = "";
+    let model = this.model;
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+    for await (const payload of iterateSseJson((res as any).body)) {
+      if (payload?.model) model = payload.model;
+      if (payload?.usage) usage = payload.usage;
+      const delta: string = payload?.choices?.[0]?.delta?.content ?? "";
+      if (delta) { text += delta; yield { delta }; }
+    }
+    if (usage) {
+      yield { result: { text, model, inputTokens: usage.prompt_tokens ?? 0, outputTokens: usage.completion_tokens ?? 0, tokensEstimated: false } };
+    } else {
+      // The vendor did not report usage: fall back to the labelled estimate.
+      const input = messages.map((m) => m.content).join("\n");
+      yield { result: { text, model, inputTokens: estimateTokens(input), outputTokens: estimateTokens(text), tokensEstimated: true } };
+    }
   }
 }

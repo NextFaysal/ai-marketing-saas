@@ -195,42 +195,94 @@ describe("CompetitorsService", () => {
     });
 
     expect(counter.hookBreakdown).toBeDefined();
+    // HF5: dev-template provider -> the draft is labeled "template".
+    expect(counter.origin).toBe("template");
     expect(counter.counterCampaign.headline).toBeDefined();
     expect(counter.counterCampaign.primaryText).toBeDefined();
     expect(counter.counterCampaign.callToAction).toBeDefined();
   });
 
-  it("getSeoTrafficReport calculates organic clicks, DA, keywords, and intent distribution", async () => {
+  it("getSeoTrafficReport returns a REAL on-page audit of observed facts only (HF2)", async () => {
     const prisma = fakePrisma();
     const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", {
       name: "Apex Footwear",
       websiteUrl: "https://apexfootwear.com",
     });
+    const SEO_HTML = `<html><head>
+      <title>Apex Footwear — Best Shoes in Bangladesh</title>
+      <meta name="description" content="Buy original Apex shoes online with cash on delivery.">
+      <meta property="og:title" content="Apex Footwear">
+      <script type="application/ld+json">{"@type":"Product","name":"Running Shoe","offers":{"price":"2500","priceCurrency":"BDT"}}</script>
+      </head><body>
+      <h1>Premium Shoes Collection</h1><h2>New Arrivals</h2>
+      <a href="https://apexfootwear.com/shop">Shop</a>
+      <a href="/products/running-shoe">Running Shoe</a>
+      <a href="/offers/eid-sale">Eid Sale</a>
+      </body></html>`;
+    (global as any).fetch = async (url: string) => {
+      if (url.endsWith("/robots.txt")) return { ok: true, status: 200, text: async () => "User-agent: *\nAllow: /" };
+      if (url.endsWith("/sitemap.xml")) return { ok: true, status: 200, text: async () => "<urlset></urlset>" };
+      return { ok: true, status: 200, text: async () => SEO_HTML };
+    };
 
     const report = await svc.getSeoTrafficReport("org-1", competitor.id);
+    expect(report.available).toBe(true);
     expect(report.domain).toBe("apexfootwear.com");
-    expect(report.estimatedMonthlyOrganicVisits).toBeGreaterThan(0);
-    expect(report.domainAuthorityScore).toBeGreaterThanOrEqual(25);
-    expect(report.topKeywords.length).toBeGreaterThan(0);
-    expect(report.topPages.length).toBeGreaterThan(0);
-    expect(report.intentDistribution.transactional).toBe(55);
+    expect(report.title).toContain("Apex Footwear");
+    expect(report.metaDescription).toContain("cash on delivery");
+    expect(report.productSchemaPresent).toBe(true);
+    expect(report.sitemapPresent).toBe(true);
+    expect(report.observedPhrases).toContainEqual({ source: "h1", text: "Premium Shoes Collection" });
+    expect(report.internalLinks.map((l: any) => l.kind)).toEqual(expect.arrayContaining(["product", "offer"]));
+    // The invented metrics are GONE from the response.
+    expect(report).not.toHaveProperty("estimatedMonthlyOrganicVisits");
+    expect(report).not.toHaveProperty("domainAuthorityScore");
+    expect(report).not.toHaveProperty("topKeywords");
   });
 
-  it("generateSeoGapStrategy creates high-CTR meta title, description and target keywords", async () => {
+  it("getSeoTrafficReport is honestly unavailable when the site is unreachable or missing (HF2)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const withSite = await svc.create("org-1", "u", { name: "Down Shop", websiteUrl: "https://down.example" });
+    (global as any).fetch = async () => { throw new Error("ECONNREFUSED"); };
+    const unreachable = await svc.getSeoTrafficReport("org-1", withSite.id);
+    expect(unreachable.available).toBe(false);
+    expect(unreachable.reason).toBeDefined();
+
+    const noSite = await svc.create("org-1", "u", { name: "No Site Shop" });
+    const missing = await svc.getSeoTrafficReport("org-1", noSite.id);
+    expect(missing.available).toBe(false);
+  });
+
+  it("generateSeoGapStrategy grounds in the real audit and carries no estimatedCtrBoost (HF2)", async () => {
     const prisma = fakePrisma();
     const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", {
       name: "Apex Footwear",
       websiteUrl: "https://apexfootwear.com",
     });
+    (global as any).fetch = async (url: string) => {
+      if (url.endsWith("/robots.txt")) return { ok: true, status: 200, text: async () => "User-agent: *\nAllow: /" };
+      if (url.endsWith("/sitemap.xml")) return { ok: true, status: 200, text: async () => "<urlset></urlset>" };
+      return { ok: true, status: 200, text: async () => `<html><head><title>Apex Footwear</title></head><body><h1>Shoes</h1></body></html>` };
+    };
 
     const gap = await svc.generateSeoGapStrategy("org-1", "u", competitor.id);
     expect(gap.competitor.name).toBe("Apex Footwear");
+    expect(gap.seoAudit.available).toBe(true);
     expect(gap.strategy.recommendedMetaTitle).toBeDefined();
     expect(gap.strategy.recommendedMetaDescription).toBeDefined();
     expect(gap.strategy.targetKeywords.length).toBe(5);
-    expect(gap.strategy.estimatedCtrBoost).toBe("+35% higher SERP CTR");
+    expect(gap.strategy).not.toHaveProperty("estimatedCtrBoost");
+  });
+
+  it("generateSeoGapStrategy refuses when the competitor site cannot be audited (HF2)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Down Shop", websiteUrl: "https://down.example" });
+    (global as any).fetch = async () => { throw new Error("ECONNREFUSED"); };
+    await expect(svc.generateSeoGapStrategy("org-1", "u", competitor.id)).rejects.toThrow();
   });
 
   it("deconstructVideoScript creates scene-by-scene storyboard and voiceover", async () => {
@@ -255,6 +307,10 @@ describe("CompetitorsService", () => {
     });
 
     expect(script.format).toBe("TikTok & Reels (9:16)");
+    // HF5: template draft is labeled, and its hook text is a labeled
+    // assumption — not a factual claim about the competitor's video.
+    expect(script.origin).toBe("template");
+    expect(script.competitorHookBreakdown.firstThreeSecondsHook).toContain("খসড়া অনুমান");
     expect(script.competitorHookBreakdown.firstThreeSecondsHook).toBeDefined();
     expect(script.adaptedScript.scenes.length).toBe(5);
     expect(script.adaptedScript.scenes[0].phase).toBe("Scroll-Stopping Hook");
@@ -262,7 +318,7 @@ describe("CompetitorsService", () => {
     expect(script.adaptedScript.creatorShootingChecklist.length).toBeGreaterThan(0);
   });
 
-  it("mineCustomerComplaints extracts top pain points and counter-positioning angles", async () => {
+  it("mineCustomerComplaints without pasted reviews is honestly unavailable — no report is invented (HF4)", async () => {
     const prisma = fakePrisma();
     const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", {
@@ -270,14 +326,51 @@ describe("CompetitorsService", () => {
       websiteUrl: "https://fastfashionbd.com",
     });
 
-    const report = await svc.mineCustomerComplaints("org-1", competitor.id);
-    expect(report.competitorName).toBe("Fast Fashion BD");
-    expect(report.overallRatingScore).toBe(3.8);
-    expect(report.sentimentDistribution.dissatisfied).toBe(24);
-    expect(report.topComplaints.length).toBe(4);
+    const noInput = await svc.mineCustomerComplaints("org-1", competitor.id);
+    expect(noInput.available).toBe(false);
+    if (!noInput.available) expect(noInput.reason).toContain("আসল রিভিউ পেস্ট করুন");
+
+    const emptyInput = await svc.mineCustomerComplaints("org-1", competitor.id, "   \n  ");
+    expect(emptyInput.available).toBe(false);
+  });
+
+  it("mineCustomerComplaints counts from the pasted input and quotes are verbatim from it (HF4)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Fast Fashion BD" });
+
+    const pasted = [
+      "Delivery took 10 days, very late and frustrating. Rating 1/5",
+      "ডেলিভারি পেতে অনেক দেরি হয়েছে, খুব খারাপ অভিজ্ঞতা",
+      "Fabric quality is bad, color faded after one wash. 2 stars",
+      "Good product, fast delivery, very happy!",
+    ].join("\n\n");
+
+    const report = await svc.mineCustomerComplaints("org-1", competitor.id, pasted);
+    expect(report.available).toBe(true);
+    if (!report.available) throw new Error("expected an available report");
+    expect(report.totalAnalyzedFeedback).toBe(4);
+    // Ratings parsed from the input itself: (1 + 2) / 2 — nothing invented.
+    expect(report.overallRatingScore).toBe(1.5);
+    expect(report.sentimentDistribution.dissatisfied).toBe(75);
+    expect(report.sentimentDistribution.satisfied).toBe(25);
     expect(report.topComplaints[0].category).toBe("Shipping & Delivery");
+    expect(report.topComplaints[0].itemCount).toBe(2);
+    // Every quote shown must be found verbatim in the pasted text.
+    for (const theme of report.topComplaints) {
+      for (const quote of theme.sampleCustomerQuotes) {
+        expect(pasted).toContain(quote);
+      }
+    }
     expect(report.recommendedCounterAngles.length).toBeGreaterThan(0);
-    expect(report.biggestVulnerability).toBeDefined();
+    expect(report.biggestVulnerability).toContain("Shipping & Delivery");
+  });
+
+  it("verifyQuotes drops invented quotes and keeps verbatim excerpts (HF4)", async () => {
+    const { verifyQuotes } = await import("./review-miner");
+    const input = "Delivery took 10 days, very late.\n\nFabric quality is bad.";
+    expect(verifyQuotes(["Delivery took 10 days", "Customers say the CEO is wonderful"], input))
+      .toEqual(["Delivery took 10 days"]);
   });
 
   it("saves and loads Telegram and WhatsApp alert configuration", async () => {
@@ -321,21 +414,53 @@ describe("CompetitorsService", () => {
     expect(res.success).toBe(true);
   });
 
-  it("auditCheckoutFunnel analyzes checkout type, friction score, and AOV bundles", async () => {
+  it("auditCheckoutFunnel detects gateways, trust signals and form fields from REAL fetched HTML (HF3)", async () => {
     const prisma = fakePrisma();
     const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", {
       name: "Smart Gadgets BD",
       websiteUrl: "https://smartgadgetsbd.com",
     });
+    (global as any).fetch = async (url: string) => {
+      if (url.endsWith("/robots.txt")) return { ok: true, status: 200, text: async () => "User-agent: *\nAllow: /" };
+      if (url.includes("/checkout")) return { ok: true, status: 200, text: async () => `<html><body><form action="/checkout" method="post"><input type="text" name="fullName"><input type="tel" name="phone"><textarea name="address"></textarea><input type="submit" value="Order"></form></body></html>` };
+      return { ok: true, status: 200, text: async () => `<html><body><a href="https://smartgadgetsbd.com/checkout">Checkout</a><p>Pay easily with bKash or Nagad. Cash on delivery available nationwide. Buy 2 get 1 free combo offer!</p></body></html>` };
+    };
 
     const funnel = await svc.auditCheckoutFunnel("org-1", competitor.id);
     expect(funnel.competitorName).toBe("Smart Gadgets BD");
-    expect(funnel.checkoutType).toBe("1-Page Express Checkout");
-    expect(funnel.formFrictionScore).toBe(28);
-    expect(funnel.bundleOffers.length).toBe(3);
-    expect(funnel.bundleOffers[1].popularityScore).toBe(50);
-    expect(funnel.conversionOptimizationTips.length).toBeGreaterThan(0);
+    expect(funnel.scanned).toBe(true);
+    expect(funnel.paymentGatewaysDetected).toEqual(expect.arrayContaining(["bKash (বিকাশ)", "Nagad (নগদ)", "Cash on Delivery (ক্যাশ অন ডেলিভারি)"]));
+    expect(funnel.trustSignalsDetected).toContain("ক্যাশ অন ডেলিভারি");
+    expect(funnel.checkoutDetected).toBe(true);
+    expect(funnel.checkoutFieldCount).toBe(3);
+    expect(funnel.checkoutFields).toContain("phone");
+    expect(funnel.bundleHints.length).toBeGreaterThan(0);
+    // Invented fields are GONE.
+    expect(funnel).not.toHaveProperty("formFrictionScore");
+    expect(funnel).not.toHaveProperty("bundleOffers");
+    expect(funnel.generalTips.length).toBeGreaterThan(0);
+  });
+
+  it("auditCheckoutFunnel reports not-detected honestly and scanned:false when unreachable (HF3)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const plain = await svc.create("org-1", "u", { name: "Plain Shop", websiteUrl: "https://plain.example" });
+    (global as any).fetch = async (url: string) => {
+      if (url.endsWith("/robots.txt")) return { ok: true, status: 200, text: async () => "User-agent: *\nAllow: /" };
+      return { ok: true, status: 200, text: async () => `<html><body><p>Welcome to our store.</p></body></html>` };
+    };
+    const funnel = await svc.auditCheckoutFunnel("org-1", plain.id);
+    expect(funnel.scanned).toBe(true);
+    expect(funnel.paymentGatewaysDetected).toEqual([]);
+    expect(funnel.checkoutFieldCount).toBeNull();
+    expect(funnel.bundleHints).toEqual([]);
+
+    const down = await svc.create("org-1", "u", { name: "Down Shop", websiteUrl: "https://down.example" });
+    (global as any).fetch = async () => { throw new Error("ECONNREFUSED"); };
+    const unreachable = await svc.auditCheckoutFunnel("org-1", down.id);
+    expect(unreachable.scanned).toBe(false);
+    expect(unreachable.reason).toBeDefined();
   });
 
   it("getDynamicRules and saveDynamicRules persist and retrieve rules configuration", async () => {
@@ -354,6 +479,47 @@ describe("CompetitorsService", () => {
 
     const fetched = await svc.getDynamicRules("org-1");
     expect(fetched[0].enabled).toBe(false);
+  });
+
+  it("syncMultiPlatform persists nothing for TikTok/Bing and reports them unavailable (HF1)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Rival", websiteUrl: "https://rival.example/" });
+    (global as any).fetch = async () => ({ ok: false, status: 503, text: async () => "" });
+    const res = await svc.syncMultiPlatform("org-1", "u", competitor.id, { platforms: ["google", "tiktok", "bing"] });
+    expect(res.fetched).toBe(0);
+    expect(res.created).toBe(0);
+    expect(prisma.competitorAd.rows).toHaveLength(0);
+    expect(res.unavailable.tiktok).toContain("public data source");
+    expect(res.unavailable.bing).toContain("public data source");
+    expect(res.unavailable.google).toBeDefined();
+  });
+
+  it("syncMultiPlatform persists real Google results labeled organic_search, with no invented start date (HF1)", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Rival", websiteUrl: "https://rival.example/" });
+    (global as any).fetch = async () => ({
+      ok: true, status: 200,
+      text: async () => `<html><body><a class="result__url" href="https://rival.example/shop"><h2 class="result__a">Rival Shop</h2></a><a class="result__snippet" href="https://rival.example/shop">Cash on delivery available.</a></body></html>`,
+    });
+    const res = await svc.syncMultiPlatform("org-1", "u", competitor.id, { platforms: ["google"] });
+    expect(res.fetched).toBe(1);
+    expect(prisma.competitorAd.rows).toHaveLength(1);
+    expect(prisma.competitorAd.rows[0].raw).toMatchObject({ sourceType: "organic_search" });
+    expect(prisma.competitorAd.rows[0].startedAt ?? null).toBeNull();
+    expect(prisma.competitorAd.rows[0].creativeText).toContain("[Google Search Result]");
+  });
+
+  it("default rules ship with zero history — no fake trigger counts or executions (HF6)", async () => {
+    const svc = new CompetitorsService(fakePrisma() as any, auditStub, devLlm);
+    const rules = await svc.getDynamicRules("org-1");
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) {
+      expect(r.triggerCount).toBe(0);
+      expect(r.lastTriggeredAt).toBeNull();
+      expect(r.recentExecutions ?? []).toEqual([]);
+    }
   });
 
   it("simulateRuleTrigger evaluates trigger condition and logs recent execution", async () => {

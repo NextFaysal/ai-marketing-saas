@@ -22,7 +22,9 @@ import { classifyIntent, moodFromMessages, parseCodReply, type Classification } 
 import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
 import { RiskService } from "../orders/risk.service";
+import { newTrackingToken, trackingLinkFor } from "../courier/tracking-token";
 import { LeadAssignmentService } from "../crm/lead-assignment.service";
+import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
@@ -452,7 +454,30 @@ export class InboxService {
       retentionDays: row?.retentionDays ?? null,
       botEnabled: row?.botEnabled ?? false,
       botDeliveryChargeMinor: row?.botDeliveryChargeMinor ?? null,
+      aiReplyDelaySeconds: row?.aiReplyDelaySeconds ?? 0,
+      aiReplyDelayByChannel: row?.aiReplyDelayByChannel ?? {},
+      // CX12d: a corrupt stored schedule must read as {} (no
+      // restriction), never crash the autopilot/settings reads.
+      aiScheduleByChannel: (() => { try { return parseAiSchedule(row?.aiScheduleByChannel ?? null); } catch { return {}; } })(),
     };
+  }
+
+  /** CX12d: the organization's timezone (defensive — a missing
+   * org row or a partial fake degrades to Asia/Dhaka, the schema
+   * default for Organization.timezone). */
+  private async orgTimezone(organizationId: string): Promise<string> {
+    try {
+      const org = await (this.prisma as any).organization?.findUnique?.({ where: { id: organizationId }, select: { timezone: true } })?.catch?.(() => null);
+      return org?.timezone || "Asia/Dhaka";
+    } catch { return "Asia/Dhaka"; }
+  }
+
+  /** CX12d: is the channel-wise AI schedule currently blocking
+   * AI for this channel? No schedule / disabled entry -> false. */
+  private async aiScheduleBlockedFor(organizationId: string, settings: any, channel?: string | null): Promise<boolean> {
+    if (!channel) return false;
+    const tz = await this.orgTimezone(organizationId);
+    return aiScheduleBlocks(settings?.aiScheduleByChannel ?? {}, channel, new Date(), tz);
   }
 
   async updateSettings(organizationId: string, actorId: string, dto: {
@@ -462,6 +487,8 @@ export class InboxService {
     reassignAfterMinutes?: number | null; escalationTeamId?: string | null;
     perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null;
     retentionDays?: number | null;
+    aiReplyDelaySeconds?: number; aiReplyDelayByChannel?: Record<string, number>;
+    aiScheduleByChannel?: Record<string, unknown>;
   }) {
     const modes = ["off", "draft", "auto"];
     if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw new BadRequestException("autoReplyMode must be off | draft | auto");
@@ -479,6 +506,25 @@ export class InboxService {
         if (!modes.includes(m)) throw new BadRequestException(`Invalid mode for channel ${channel}: ${m}`);
       }
     }
+    // CX3: reply delay is a bounded whole-second count (0..600);
+    // anything else is a client error, never silently clamped at
+    // the settings boundary (the fire path clamps defensively).
+    if (dto.aiReplyDelaySeconds !== undefined && (!Number.isInteger(dto.aiReplyDelaySeconds) || dto.aiReplyDelaySeconds < 0 || dto.aiReplyDelaySeconds > 600)) throw new BadRequestException("aiReplyDelaySeconds must be an integer 0..600");
+    if (dto.aiReplyDelayByChannel !== undefined) {
+      if (!dto.aiReplyDelayByChannel || typeof dto.aiReplyDelayByChannel !== "object" || Array.isArray(dto.aiReplyDelayByChannel)) throw new BadRequestException("aiReplyDelayByChannel must be an object mapping channel to seconds");
+      for (const [channel, v] of Object.entries(dto.aiReplyDelayByChannel)) {
+        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 600) throw new BadRequestException(`Invalid aiReplyDelaySeconds for channel ${channel}: must be an integer 0..600`);
+      }
+    }
+    // CX12d: the AI schedule is validated by the pure parser —
+    // an invalid map is a client error (400), never persisted;
+    // a valid one is stored in its normalized form.
+    let aiScheduleNormalized: Record<string, unknown> | undefined;
+    if (dto.aiScheduleByChannel !== undefined) {
+      try { aiScheduleNormalized = parseAiSchedule(dto.aiScheduleByChannel); }
+      catch { throw new BadRequestException("aiScheduleByChannel সঠিক নয় — প্রতিটি channel-এ enabled (true/false) ও সর্বোচ্চ ৮টি window (days 0–6, start/end HH:mm) থাকতে হবে"); }
+    }
     const data = {
       ...(dto.autoReplyMode ? { autoReplyMode: dto.autoReplyMode } : {}),
       ...(dto.confidenceThreshold !== undefined ? { confidenceThreshold: Math.round(dto.confidenceThreshold) } : {}),
@@ -492,6 +538,10 @@ export class InboxService {
       ...(dto.perChannelModes ? { perChannelModes: dto.perChannelModes } : {}),
       ...(dto.escalationThresholdMinor !== undefined ? { escalationThresholdMinor: dto.escalationThresholdMinor === null ? null : Math.max(0, Math.round(dto.escalationThresholdMinor)) } : {}),
       ...(dto.retentionDays !== undefined ? { retentionDays: dto.retentionDays === null ? null : Math.min(3650, Math.max(7, Math.round(dto.retentionDays))) } : {}),
+      ...(dto.aiReplyDelaySeconds !== undefined ? { aiReplyDelaySeconds: dto.aiReplyDelaySeconds } : {}),
+      ...(dto.aiReplyDelayByChannel !== undefined ? { aiReplyDelayByChannel: dto.aiReplyDelayByChannel } : {}),
+      // CX12d: validated + normalized by parseAiSchedule below.
+      ...(dto.aiScheduleByChannel !== undefined ? { aiScheduleByChannel: aiScheduleNormalized } : {}),
     };
     const existing = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     const saved = existing
@@ -1235,7 +1285,17 @@ export class InboxService {
       });
     } catch { /* workflow failures never affect message ingest */ }
 
-    const botHandled = !codHandled && !csatHandled && !spam && text
+    // CX12d: the order bot obeys the same channel AI schedule —
+    // off-hours it does not engage for this message (ingest,
+    // COD/CSAT/spam handling above and the team flow continue
+    // normally). The settings read happens only when the bot
+    // would otherwise be considered.
+    let botScheduleBlocked = false;
+    if (!codHandled && !csatHandled && !spam && text) {
+      const botSettings = await this.getSettings(organizationId).catch(() => null);
+      botScheduleBlocked = botSettings ? await this.aiScheduleBlockedFor(organizationId, botSettings, conversation.channel).catch(() => false) : false;
+    }
+    const botHandled = !codHandled && !csatHandled && !spam && text && !botScheduleBlocked
       ? await this.handleOrderBot(organizationId, conversation, text, classification).catch(() => false)
       : false;
     if (!codHandled && !csatHandled && !spam && !botHandled && text) {
@@ -1636,11 +1696,15 @@ export class InboxService {
   /** Escalate to a human: pause autopilot on this conversation,
    * raise priority, notify, audit. Returns true when escalated. */
   private async escalateAutopilot(organizationId: string, conversation: any, reason: string) {
+    // CX4: the reason + handover start are real fields now (the
+    // handover queue reads them directly instead of digging the
+    // reason out of audit metadata); the audit entry stays.
+    const handoverAt = new Date();
     await (this.prisma as any).channelConversation.update({
       where: { id: conversation.id },
-      data: { autoReplyPaused: true, priority: "high" },
+      data: { autoReplyPaused: true, priority: "high", handoverReason: reason, handoverAt },
     }).catch(() => undefined);
-    this.rtConversation(organizationId, conversation.id, { autoReplyPaused: true, priority: "high" });
+    this.rtConversation(organizationId, conversation.id, { autoReplyPaused: true, priority: "high", handoverReason: reason, handoverAt });
     await this.notifyUrgent(organizationId, { ...conversation, priority: "high" }).catch(() => undefined);
     await this.audit.log({
       organizationId, userId: "system", action: "inbox.autopilot.escalated", entityType: "ChannelConversation",
@@ -1649,7 +1713,7 @@ export class InboxService {
     return true;
   }
 
-  private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string) {
+  private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string, opts?: { firedFromDebounce?: boolean }) {
     const settings = await this.getSettings(organizationId);
     const perIntent = (settings.perIntent ?? {}) as Record<string, string>;
     const perChannel = (settings.perChannelModes ?? {}) as Record<string, string>;
@@ -1693,8 +1757,42 @@ export class InboxService {
       }
     }
 
+    // CX12d SCHEDULE GATE: after escalation (complaints / human
+    // requests still escalate off-hours, above) and before the
+    // intent whitelist. Off-hours the AI stays silent: no compose,
+    // no CX3 defer (so nothing is retro-answered when the window
+    // opens — the message simply waits for the team), and the
+    // CX2 low-confidence capture below does not fire either.
+    if (await this.aiScheduleBlockedFor(organizationId, settings, current.channel)) return;
+
     if (!["price", "stock", "delivery", "order_status", "payment"].includes(classification.intent)) return;
-    if (classification.confidence < settings.confidenceThreshold) return;
+    if (classification.confidence < settings.confidenceThreshold) {
+      // CX2: a whitelisted-intent question dropped ONLY for low
+      // confidence is an unanswered question the owner should see
+      // on the AI Instructions Desk — capture it (failure-isolated).
+      await this.recordUnansweredQuestion(organizationId, current, text, "low_confidence");
+      return;
+    }
+    // CX3 DEFER POINT: escalation, the intent whitelist and the
+    // confidence check have ALL already run above — complaints
+    // and human requests never wait. Only composing waits, so a
+    // customer who sends several messages in a burst gets ONE
+    // reply composed from the whole batch (see
+    // runDueAutoReplies). Mode "draft" defers too: the draft is
+    // composed at fire time from the full batch.
+    if (!opts?.firedFromDebounce) {
+      const delay = InboxService.effectiveReplyDelay(settings, current.channel);
+      if (delay > 0) {
+        await (this.prisma as any).channelConversation.update({
+          where: { id: current.id },
+          data: {
+            autoReplyDueAt: new Date(Date.now() + delay * 1000),
+            autoReplyBatchSince: current.autoReplyBatchSince ?? new Date(),
+          },
+        }).catch(() => undefined);
+        return;
+      }
+    }
     let composed: { content: string; evidence: any } | null = await this.composeGroundedReply(organizationId, current, classification.intent, text);
     if (!composed) {
       // LLM tier: may only restate the verified fact pack. No
@@ -1752,6 +1850,259 @@ export class InboxService {
     }
   }
 
+  /** CX3: the delay that applies to a channel — the per-channel
+   * override when present, else the org-wide seconds; always
+   * clamped to the settings boundary 0..600. */
+  private static effectiveReplyDelay(settings: any, channel?: string | null): number {
+    const byChannel = (settings?.aiReplyDelayByChannel ?? {}) as Record<string, unknown>;
+    const raw = (channel && byChannel[channel] !== undefined ? byChannel[channel] : settings?.aiReplyDelaySeconds) ?? 0;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(600, Math.max(0, Math.round(n)));
+  }
+
+  /**
+   * CX3 sweep (driven by the "inbox_autoreply_sweep" automation
+   * job, ~1 minute): fire every deferred auto-reply whose due
+   * time has passed for this org. The claim is a conditional
+   * updateMany on the EXACT due timestamp read — a second sweep
+   * (or a racing replica) claiming the same row gets count 0 and
+   * skips, so a batch can never be answered twice. A human reply
+   * inside the batch window, or a paused thread, discharges the
+   * batch with no AI send. Each conversation is failure-isolated.
+   */
+  async runDueAutoReplies(organizationId: string): Promise<{ fired: number; skipped: number }> {
+    const p = this.prisma as any;
+    let fired = 0;
+    let skipped = 0;
+    const rows = await p.channelConversation.findMany({
+      where: { organizationId, autoReplyDueAt: { not: null, lte: new Date() } },
+      orderBy: { autoReplyDueAt: "asc" },
+      take: 25,
+    }).catch(() => []);
+    const clearBatch = async (id: string) => {
+      await p.channelConversation.update({ where: { id }, data: { autoReplyBatchSince: null } }).catch(() => undefined);
+    };
+    const clearBatchConditional = async (id: string) => {
+      await p.channelConversation.updateMany({
+        where: { id, autoReplyDueAt: null },
+        data: { autoReplyBatchSince: null },
+      }).catch(() => undefined);
+    };
+    for (const row of rows as any[]) {
+      try {
+        const claim = await p.channelConversation.updateMany({
+          where: { id: row.id, organizationId, autoReplyDueAt: row.autoReplyDueAt },
+          data: { autoReplyDueAt: null },
+        });
+        if (!claim?.count) { skipped++; continue; }
+        const fresh = await p.channelConversation.findFirst({ where: { id: row.id } }).catch(() => null);
+        if (!fresh) { skipped++; continue; }
+        const batchSince = fresh.autoReplyBatchSince ?? fresh.createdAt;
+        if (fresh.autoReplyPaused) { await clearBatch(fresh.id); skipped++; continue; }
+        const humanReply = await p.channelMessage.findFirst({
+          where: { conversationId: fresh.id, direction: "out", sentByUserId: { not: null }, createdAt: { gte: batchSince } },
+        }).catch(() => null);
+        if (humanReply) { await clearBatch(fresh.id); skipped++; continue; }
+        const batch = await p.channelMessage.findMany({
+          where: { conversationId: fresh.id, direction: "in", createdAt: { gte: batchSince } },
+          orderBy: { createdAt: "asc" },
+          take: 10,
+        }).catch(() => []);
+        const batchText = (batch as any[]).map((m) => String(m.content ?? "").trim()).filter(Boolean).join("\n").slice(0, 1200);
+        if (!batchText) { await clearBatch(fresh.id); skipped++; continue; }
+        await this.maybeAutoReply(organizationId, fresh, classifyIntent(batchText), batchText, { firedFromDebounce: true });
+        fired++;
+        await clearBatchConditional(fresh.id);
+      } catch {
+        skipped++;
+      }
+    }
+    return { fired, skipped };
+  }
+
+  /**
+   * CX4: handover timer sweep (handover_timer_sweep job). A timed
+   * assignment whose deadline has passed either lapses to a normal
+   * assignment (the assignee DID reply after assignedAt — they are
+   * actively handling it, so only the timer is dropped) or returns
+   * to the AI: assignee cleared, autopilot resumed, a system note
+   * records the return, and the return is audited. Closed
+   * conversations are never touched. Per-conversation failures are
+   * isolated — one bad row never stops the sweep.
+   */
+  async runHandoverSweeps(organizationId: string): Promise<{ returned: number; lapsed: number; woken: number }> {
+    const p = this.prisma as any;
+    let returned = 0;
+    let lapsed = 0;
+    let woken = 0;
+    const rows = await p.channelConversation.findMany({
+      where: { organizationId, assignmentKind: "timed", assignedUntil: { lte: new Date() }, status: { not: "closed" } },
+      take: 100,
+    }).catch(() => []);
+    for (const conversation of rows as any[]) {
+      try {
+        const replied = await p.channelMessage.findFirst({
+          where: {
+            conversationId: conversation.id, direction: "out",
+            sentByUserId: conversation.assignedUserId,
+            createdAt: { gt: conversation.assignedAt ?? new Date(0) },
+          },
+        }).catch(() => null);
+        if (replied) {
+          await p.channelConversation.update({
+            where: { id: conversation.id },
+            data: { assignedUntil: null, assignmentKind: "normal" },
+          });
+          lapsed++;
+          continue;
+        }
+        const previousAssignee = conversation.assignedUserId ?? null;
+        await p.channelConversation.update({
+          where: { id: conversation.id },
+          data: { assignedUserId: null, assignedAt: null, assignedUntil: null, assignmentKind: null, autoReplyPaused: false },
+        });
+        await p.conversationNote.create({
+          data: {
+            organizationId, conversationId: conversation.id, authorUserId: "system",
+            content: "⏱️ নির্ধারিত সময় শেষ — কথোপকথনটি AI-এর কাছে ফেরত দেওয়া হয়েছে",
+          },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId, userId: "system", action: "inbox.handover.timer_returned", entityType: "ChannelConversation",
+          entityId: conversation.id, metadata: { previousAssignee },
+        }).catch(() => undefined);
+        this.rtConversation(organizationId, conversation.id, { assignedUserId: null, assignedAt: null, assignedUntil: null, assignmentKind: null, autoReplyPaused: false });
+        returned++;
+      } catch { /* one bad row never stops the sweep */ }
+    }
+    // CX5: snooze wake — the same sweep is the one home for timed
+    // conversation states. A snoozed conversation whose wake time
+    // has passed simply reappears: the field is cleared and a
+    // realtime patch refreshes any open list. No fake message row
+    // is created — nothing was ever sent to the customer. Closed
+    // conversations are never woken (resolving already cleared
+    // their snooze; this is belt-and-braces).
+    const snoozedRows = await p.channelConversation.findMany({
+      where: { organizationId, snoozedUntil: { lte: new Date(), not: null }, status: { not: "closed" } },
+      take: 100,
+    }).catch(() => []);
+    for (const conversation of snoozedRows as any[]) {
+      try {
+        await p.channelConversation.update({
+          where: { id: conversation.id },
+          data: { snoozedUntil: null },
+        });
+        this.rtConversation(organizationId, conversation.id, { snoozedUntil: null });
+        woken++;
+      } catch { /* one bad row never stops the sweep */ }
+    }
+    return { returned, lapsed, woken };
+  }
+
+  // ----- CX5: snooze + one-row action bar actions -----
+
+  /**
+   * CX5: snooze a conversation — it leaves every list view and
+   * folder count except the snoozed folder until the wake time
+   * (see listConversations / conversationFolderCounts), then the
+   * handover sweep wakes it. Snoozing does NOT pause the autopilot
+   * and does NOT change the assignment — it is purely "show me
+   * this later". Exactly one of minutes / until must be given.
+   */
+  async snoozeConversation(organizationId: string, actorId: string, conversationId: string, dto: { minutes?: number; until?: string }) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const hasMinutes = dto?.minutes !== undefined && dto?.minutes !== null;
+    const hasUntil = dto?.until !== undefined && dto?.until !== null && dto?.until !== "";
+    if (hasMinutes === hasUntil) {
+      throw new BadRequestException("Snooze-এর জন্য minutes অথবা until — ঠিক একটি দিন।");
+    }
+    let snoozedUntil: Date;
+    if (hasMinutes) {
+      if (!Number.isInteger(dto.minutes) || (dto.minutes as number) < 5 || (dto.minutes as number) > 10080) {
+        throw new BadRequestException("Snooze ৫ থেকে ১০০৮০ মিনিটের মধ্যে হতে হবে।");
+      }
+      snoozedUntil = new Date(Date.now() + (dto.minutes as number) * 60000);
+    } else {
+      const parsed = new Date(dto.until as string);
+      if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now() + 60000) {
+        throw new BadRequestException("Snooze-এর সময় ভবিষ্যতে হতে হবে (কমপক্ষে ১ মিনিট পরে)।");
+      }
+      snoozedUntil = parsed;
+    }
+    const updated = await (this.prisma as any).channelConversation.update({
+      where: { id: conversationId },
+      data: { snoozedUntil },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.snoozed", entityType: "ChannelConversation",
+      entityId: conversationId, metadata: { snoozedUntil: snoozedUntil.toISOString() },
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, { snoozedUntil });
+    return updated;
+  }
+
+  /** CX5: wake a snoozed conversation right now. */
+  async unsnoozeConversation(organizationId: string, actorId: string, conversationId: string) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const updated = await (this.prisma as any).channelConversation.update({
+      where: { id: conversationId },
+      data: { snoozedUntil: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.unsnoozed", entityType: "ChannelConversation",
+      entityId: conversationId, metadata: {},
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, { snoozedUntil: null });
+    return updated;
+  }
+
+  /**
+   * CX5: manual take-over — ONE update: the actor takes the
+   * conversation (any previous timer is dropped), the autopilot
+   * pauses, and the handover fields record it as a manual
+   * takeover so the handover queue explains itself.
+   */
+  async takeOverConversation(organizationId: string, actorId: string, conversationId: string) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const handoverAt = new Date();
+    const updated = await (this.prisma as any).channelConversation.update({
+      where: { id: conversationId },
+      data: {
+        assignedUserId: actorId, assignedAt: handoverAt, assignedUntil: null, assignmentKind: "normal",
+        autoReplyPaused: true, handoverReason: "manual_takeover", handoverAt,
+      },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.take_over", entityType: "ChannelConversation",
+      entityId: conversationId, metadata: {},
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, {
+      assignedUserId: actorId, assignedAt: handoverAt, assignedUntil: null, assignmentKind: "normal",
+      autoReplyPaused: true, handoverReason: "manual_takeover", handoverAt,
+    });
+    return updated;
+  }
+
+  /**
+   * CX5: hand the conversation back to the AI — the autopilot
+   * resumes and any assignment timer is cleared, but the assignee
+   * and the handover history (reason / time) stay as they are.
+   */
+  async backToAiConversation(organizationId: string, actorId: string, conversationId: string) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const updated = await (this.prisma as any).channelConversation.update({
+      where: { id: conversationId },
+      data: { autoReplyPaused: false, assignedUntil: null, assignmentKind: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.back_to_ai", entityType: "ChannelConversation",
+      entityId: conversationId, metadata: {},
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, { autoReplyPaused: false, assignedUntil: null, assignmentKind: null });
+    return updated;
+  }
+
   /**
    * The verified fact pack an LLM may restate — Milestone 76
    * (Business Brain v2): the Command Center profile (delivery
@@ -1760,7 +2111,7 @@ export class InboxService {
    * policy / order sources. Returns null only when there is
    * genuinely nothing verified to say.
    */
-  private async buildFactPack(organizationId: string, conversation: any, intent: string, text: string) {
+  private async buildFactPack(organizationId: string, conversation: any, intent: string, text: string, override?: { instructions?: string | null; replyLanguage?: string | null }) {
     const p = this.prisma as any;
     const facts: string[] = [];
     const sources: any[] = [];
@@ -1817,9 +2168,12 @@ export class InboxService {
     return {
       factsText: facts.join("\n"), sources,
       // Milestone 77: owner behaviour rides along; the number
-      // guard still decides what may be said.
-      ownerInstructions: profile?.aiInstructions ?? null,
-      replyLanguage: profile?.aiReplyLanguage ?? null,
+      // guard still decides what may be said. CX2: an explicit
+      // override (the Instructions Desk test path) replaces the
+      // published instructions/language for THIS compose only —
+      // the stored profile is never touched by a test.
+      ownerInstructions: override ? (override.instructions ?? null) : (profile?.aiInstructions ?? null),
+      replyLanguage: override ? (override.replyLanguage ?? null) : (profile?.aiReplyLanguage ?? null),
     };
   }
 
@@ -1831,14 +2185,69 @@ export class InboxService {
   }
 
   /**
+   * CX2: record a question the autopilot could not answer on the
+   * AI Instructions Desk (AiUnansweredQuestion). The same question
+   * (normalized) seen again within 24h while still OPEN bumps the
+   * existing row's count instead of piling up duplicates. FULLY
+   * failure-isolated: a capture failure must never break the
+   * autopilot or a compose — every prisma call is guarded and the
+   * whole body is wrapped.
+   */
+  private async recordUnansweredQuestion(organizationId: string, conversation: any, questionText: string, reason: string): Promise<void> {
+    try {
+      const raw = String(questionText ?? "");
+      const normalized = raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 300);
+      if (!normalized) return;
+      const p = this.prisma as any;
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const existing = (await p.aiUnansweredQuestion?.findFirst?.({
+        where: { organizationId, normalizedQuestion: normalized, status: "open", createdAt: { gte: since } },
+        orderBy: { createdAt: "desc" },
+      })?.catch?.(() => null)) ?? null;
+      if (existing) {
+        await p.aiUnansweredQuestion.update({
+          where: { id: existing.id },
+          data: { count: (existing.count ?? 1) + 1, lastSeenAt: new Date() },
+        }).catch(() => undefined);
+        return;
+      }
+      await p.aiUnansweredQuestion?.create?.({
+        data: {
+          organizationId,
+          conversationId: conversation?.id ?? null,
+          channel: conversation?.channel ?? "unknown",
+          questionText: raw.slice(0, 500),
+          normalizedQuestion: normalized,
+          reason,
+          status: "open",
+          count: 1,
+          lastSeenAt: new Date(),
+        },
+      })?.catch?.(() => undefined);
+    } catch { /* capture never breaks messaging */ }
+  }
+
+  /**
    * LLM autopilot tier. The model receives ONLY the fact pack and
    * the customer's message; its reply is admitted only if every
    * number in it appears in the pack (a deterministic guard
    * against invented prices/totals). Anything else -> no reply.
+   *
+   * CX2 opts: `override` swaps the owner instructions/language for
+   * this compose only (Desk test path); `usageFeature` labels the
+   * usage row (default "autopilot"); `captureUnanswered: false`
+   * suppresses the AiUnansweredQuestion capture (test path — a
+   * desk test is not a customer question left unanswered).
    */
-  private async composeLlmGroundedReply(organizationId: string, conversation: any, intent: string, text: string) {
-    const pack = await this.buildFactPack(organizationId, conversation, intent, text);
-    if (!pack) return null;
+  private async composeLlmGroundedReply(organizationId: string, conversation: any, intent: string, text: string, opts?: { override?: { instructions?: string | null; replyLanguage?: string | null }; usageFeature?: string; captureUnanswered?: boolean }) {
+    const pack = await this.buildFactPack(organizationId, conversation, intent, text, opts?.override);
+    if (!pack) {
+      // No verified facts at all — a genuine knowledge gap.
+      if (opts?.captureUnanswered !== false) {
+        await this.recordUnansweredQuestion(organizationId, conversation, text, "knowledge_gap");
+      }
+      return null;
+    }
     let provider: any;
     try { provider = this.llm.getProvider(); } catch { return null; }
     if (!provider?.isRealLlm) return null; // dev templates never autopilot
@@ -1863,9 +2272,15 @@ export class InboxService {
     ], { maxTokens: 400 });
     const reply = (result.text ?? "").trim();
     await (this.prisma as any).aIUsageRecord.create({
-      data: { organizationId, userId: "system", feature: "autopilot", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+      data: { organizationId, userId: "system", feature: opts?.usageFeature ?? "autopilot", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
     }).catch(() => undefined);
-    if (!reply || reply.toUpperCase().includes("NO_ANSWER")) return null;
+    if (!reply || reply.toUpperCase().includes("NO_ANSWER")) {
+      // The model had facts but still could not answer.
+      if (opts?.captureUnanswered !== false) {
+        await this.recordUnansweredQuestion(organizationId, conversation, text, "no_answer");
+      }
+      return null;
+    }
     const factNumbers = new Set(InboxService.extractNumbers(pack.factsText));
     const invented = InboxService.extractNumbers(reply).filter((n) => !factNumbers.has(n));
     if (invented.length) {
@@ -1876,6 +2291,33 @@ export class InboxService {
       return null;
     }
     return { content: reply.slice(0, 1500), evidence: { tier: "llm", provider: provider.name, sources: pack.sources } };
+  }
+
+  /**
+   * CX2 (AI Instructions Desk): "what would the AI compose for
+   * this question, under THESE instructions?" — the Desk's test
+   * seam. It reuses the REAL compose pipeline (deterministic tier
+   * first, then the LLM tier with the instructions override) so a
+   * test answer is the same answer the autopilot would compose.
+   * By design it bypasses routing rules (mode / escalation /
+   * rate-limit / paused threads): it answers what the AI WOULD
+   * compose, never sends anything, and never records an
+   * unanswered question. LLM usage is recorded under the
+   * "instructions_test" feature so the Desk test obeys the same
+   * kill-switch + daily-cap enforcement as other AI features.
+   */
+  async testComposeReply(organizationId: string, question: string, override?: { instructions?: string | null; replyLanguage?: string | null }) {
+    const classification = classifyIntent(question);
+    const stub: any = { id: "instructions-test", channel: "webchat", customerId: null };
+    const composed = (await this.composeGroundedReply(organizationId, stub, classification.intent, question).catch(() => null))
+      ?? (await this.composeLlmGroundedReply(organizationId, stub, classification.intent, question, { override, usageFeature: "instructions_test", captureUnanswered: false }).catch(() => null));
+    return {
+      answer: composed?.content ?? null,
+      noAnswer: !composed,
+      intent: classification.intent,
+      confidence: classification.confidence,
+      evidence: composed?.evidence ?? null,
+    };
   }
 
   // ----- COD confirmation -----
@@ -2061,8 +2503,19 @@ export class InboxService {
     }).catch(() => null);
     if (!shipment?.trackingCode) throw new BadRequestException("এই অর্ডারের কোনো কুরিয়ার বুকিং/ট্র্যাকিং এখনো নেই");
     const text = `আপনার পার্সেলটি ${shipment.provider} কুরিয়ারে পাঠানো হয়েছে। Tracking: ${shipment.trackingCode} (স্ট্যাটাস: ${shipment.status})। ধন্যবাদ!`;
-    const sent = await this.sendAutomatedMessage(organizationId, conversationId, text, "tracking_share");
-    return { sent: true, trackingCode: shipment.trackingCode, provider: shipment.provider, messageId: sent.id };
+    // CX6: the manual share also carries the public live-tracking
+    // link (token minted lazily on the shipment row, shared with
+    // the automated courier updates — one link everywhere).
+    let trackingLink: string | null = null;
+    if (shipment.trackingToken) trackingLink = trackingLinkFor(shipment.trackingToken);
+    else {
+      const token = newTrackingToken();
+      const upd = await (this.prisma as any).courierShipment.update({ where: { id: shipment.id }, data: { trackingToken: token } }).catch(() => null);
+      if (upd) trackingLink = trackingLinkFor(token);
+    }
+    const finalText = trackingLink ? `${text}\nলাইভ ট্র্যাকিং: ${trackingLink}` : text;
+    const sent = await this.sendAutomatedMessage(organizationId, conversationId, finalText, "tracking_share");
+    return { sent: true, trackingCode: shipment.trackingCode, provider: shipment.provider, messageId: sent.id, trackingLink };
   }
 
   /** One-click: file a refund REQUEST for the billing owner — a
@@ -2408,11 +2861,110 @@ export class InboxService {
     for (const c of closed) { if (c.resolvedAt) { const k = dayKey(new Date(c.resolvedAt)); if (trendMap.has(k)) trendMap.get(k)!.closed++; } }
     const dailyTrend = [...trendMap.values()];
 
+    // CX11ac: Reply Quality analytics — additive block, same
+    // `days` window, every query org-scoped. Rates/averages are
+    // null (never 0 or invented) when their denominator is 0;
+    // raw counts always ride alongside. Each sub-query degrades
+    // to its empty shape on failure, like the counters above, so
+    // the rest of the report never breaks.
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const replyQuality: any = {
+      drafts: { suggested: 0, sent: 0, dismissed: 0, sentEditedCount: 0, acceptanceRatePct: null as number | null, editedSharePct: null as number | null },
+      csat: {
+        aiOnly: { count: 0, avgRating: null as number | null },
+        humanOnly: { count: 0, avgRating: null as number | null },
+        mixed: { count: 0, avgRating: null as number | null },
+        unclassified: { count: 0, avgRating: null as number | null },
+      },
+      perAgentAssist: [] as any[],
+    };
+    try {
+      const draftRows = await (this.prisma as any).messageDraft.findMany({
+        where: { organizationId, createdAt: { gte: since } },
+      });
+      const sentDrafts = (draftRows as any[]).filter((d) => d.status === "sent");
+      const dismissedDrafts = (draftRows as any[]).filter((d) => d.status === "dismissed");
+      const sentEditedCount = sentDrafts.filter((d) => d.sentEdited).length;
+      const decided = sentDrafts.length + dismissedDrafts.length;
+      replyQuality.drafts = {
+        suggested: (draftRows as any[]).length,
+        sent: sentDrafts.length,
+        dismissed: dismissedDrafts.length,
+        sentEditedCount,
+        acceptanceRatePct: decided > 0 ? round1((100 * sentDrafts.length) / decided) : null,
+        editedSharePct: sentDrafts.length > 0 ? round1((100 * sentEditedCount) / sentDrafts.length) : null,
+      };
+    } catch { /* keep the empty drafts shape */ }
+    try {
+      const ratedRows = await (this.prisma as any).channelConversation.findMany({
+        where: { organizationId, csatRating: { not: null } }, take: 2000,
+      });
+      const inWindow = (ratedRows as any[]).filter((c) => {
+        const at = c.csatRatedAt ?? c.resolvedAt;
+        return at != null && new Date(at).getTime() >= since.getTime();
+      });
+      const ids = inWindow.map((c: any) => c.id);
+      const outMsgs = ids.length
+        ? await (this.prisma as any).channelMessage.findMany({
+            where: { conversationId: { in: ids }, direction: "out" },
+          }).catch(() => [])
+        : [];
+      const byConv = new Map<string, { hasAuto: boolean; hasHuman: boolean }>();
+      for (const m of outMsgs as any[]) {
+        const e = byConv.get(m.conversationId) ?? { hasAuto: false, hasHuman: false };
+        if (m.autoReply) e.hasAuto = true;
+        if (m.sentByUserId) e.hasHuman = true;
+        byConv.set(m.conversationId, e);
+      }
+      const buckets: Record<string, { count: number; sum: number }> = {
+        aiOnly: { count: 0, sum: 0 }, humanOnly: { count: 0, sum: 0 },
+        mixed: { count: 0, sum: 0 }, unclassified: { count: 0, sum: 0 },
+      };
+      for (const c of inWindow) {
+        const e = byConv.get(c.id) ?? { hasAuto: false, hasHuman: false };
+        const key = e.hasAuto && e.hasHuman ? "mixed" : e.hasAuto ? "aiOnly" : e.hasHuman ? "humanOnly" : "unclassified";
+        buckets[key].count++;
+        buckets[key].sum += c.csatRating ?? 0;
+      }
+      for (const key of ["aiOnly", "humanOnly", "mixed"] as const) {
+        replyQuality.csat[key] = {
+          count: buckets[key].count,
+          avgRating: buckets[key].count > 0 ? round1(buckets[key].sum / buckets[key].count) : null,
+        };
+      }
+      // Unclassified conversations are counted but excluded from
+      // the averages (no outbound evidence to attribute them to).
+      replyQuality.csat.unclassified = { count: buckets.unclassified.count, avgRating: null };
+    } catch { /* keep the empty csat shape */ }
+    try {
+      const assistMsgs = await (this.prisma as any).channelMessage.findMany({
+        where: {
+          direction: "out", sentByUserId: { not: null }, createdAt: { gte: since },
+          conversation: { organizationId },
+        },
+        take: 5000,
+      });
+      const byAgent = new Map<string, any>();
+      for (const m of assistMsgs as any[]) {
+        const row = byAgent.get(m.sentByUserId) ?? {
+          userId: m.sentByUserId, sent: 0, aiDraftCount: 0, aiAssistedCount: 0, quickReplyCount: 0,
+        };
+        row.sent++;
+        if (m.sentByAiDraft) row.aiDraftCount++;
+        else if (m.sentWithAiAssist) row.aiAssistedCount++;
+        if (m.quickReplyId != null) row.quickReplyCount++;
+        byAgent.set(m.sentByUserId, row);
+      }
+      replyQuality.perAgentAssist = [...byAgent.values()]
+        .sort((a, b) => b.sent - a.sent)
+        .slice(0, 50);
+    } catch { /* keep the empty per-agent shape */ }
+
     return {
       days, slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
       opened: convs.length, closed: closed.length,
       avgFirstResponseMinutes: avg, currentBreaches,
-      perAgent, perTeam, dailyTrend,
+      perAgent, perTeam, dailyTrend, replyQuality,
       scopedTeamId: scopedTeam?.id ?? null, scopedTeamName: scopedTeam?.name ?? null,
       chatLinkedOrders, chatLinkedRevenueMinor, chatLinkedCurrency, csatAvg, csatResponses,
       autopilot: { autoSent, llmSent, draftsSuggested, escalatedNow },
@@ -2834,8 +3386,25 @@ export class InboxService {
     // mirror the assignee filter; "sla" / "vip" add an AND clause
     // derived from real fields (see folderExtraWhere), so a folder
     // composes with status/channel/q/tag instead of replacing them.
+    // CX5: ONE snooze-visibility rule for every list view — an
+    // actively-snoozed conversation (snoozedUntil in the future)
+    // is hidden everywhere EXCEPT the snoozed folder itself. The
+    // clause is shared (notSnoozed) and AND-composes with the
+    // folder clauses below, mirroring conversationFolderCounts.
+    const now = new Date();
+    const notSnoozed = { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] };
+    if (filters.folder === "snoozed") {
+      where.AND = [...(where.AND ?? []), { snoozedUntil: { gt: now }, status: { in: ["open", "pending"] } }];
+    } else {
+      where.AND = [...(where.AND ?? []), notSnoozed];
+    }
     if (filters.folder === "mine" && actorId) where.assignedUserId = actorId;
     else if (filters.folder === "unassigned") where.assignedUserId = null;
+    else if (filters.folder === "handover") {
+      // CX4: the handover queue — autopilot paused (a human owns it
+      // now) and still open/pending. AND-composes like sla/vip.
+      where.AND = [...(where.AND ?? []), { autoReplyPaused: true, status: { in: ["open", "pending"] } }];
+    }
     else if (filters.folder === "sla" || filters.folder === "vip") {
       const extra = await this.folderExtraWhere(organizationId, filters.folder);
       where.AND = [...(where.AND ?? []), extra];
@@ -2853,6 +3422,18 @@ export class InboxService {
     });
     if (filters.sort === "unread") {
       rows.sort((a: any, b: any) => (b.unreadCount - a.unreadCount) || (new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime()));
+    }
+    if (filters.folder === "handover") {
+      // CX4: longest wait first. waitingSince = handoverAt ??
+      // updatedAt (legacy rows escalated before CX4 have no
+      // handoverAt — updatedAt is the honest fallback).
+      const waitingSince = (r: any) => new Date(r.handoverAt ?? r.updatedAt ?? 0).getTime();
+      rows.sort((a: any, b: any) => waitingSince(a) - waitingSince(b));
+    }
+    if (filters.folder === "snoozed") {
+      // CX5: earliest wake first — the folder is a "coming back"
+      // queue, so the next conversation to reappear leads.
+      rows.sort((a: any, b: any) => new Date(a.snoozedUntil ?? 0).getTime() - new Date(b.snoozedUntil ?? 0).getTime());
     }
     // Inbox Next-Gen P3: read-time mood + webchat visitor presence.
     // Per-message sentiment was never persisted (only intent), and
@@ -2877,11 +3458,22 @@ export class InboxService {
     const lastSeenByConv = new Map<string, string | null>(sessions.map((s: any) => [
       s.conversationId, s.lastSeenAt ? new Date(s.lastSeenAt).toISOString() : null,
     ]));
+    // CX12d: aiScheduleActive per row, computed ONCE per channel
+    // present (one settings + timezone lookup for the whole page).
+    const listSettings = await this.getSettings(organizationId).catch(() => null);
+    const listTz = await this.orgTimezone(organizationId);
+    const activeByChannel = new Map<string, boolean>();
+    for (const r of rows as any[]) {
+      if (!activeByChannel.has(r.channel)) {
+        activeByChannel.set(r.channel, isAiActive(listSettings?.aiScheduleByChannel ?? {}, r.channel, new Date(), listTz));
+      }
+    }
     return rows.map((r: any) => ({
       ...r,
       whatsappWindow: this.whatsappWindow(r),
       mood: this.moodOf(inboundByConv.get(r.id) ?? []),
       visitorLastSeenAt: r.channel === "webchat" ? (lastSeenByConv.get(r.id) ?? null) : null,
+      aiScheduleActive: activeByChannel.get(r.channel) ?? true,
     }));
   }
 
@@ -2941,15 +3533,33 @@ export class InboxService {
     const count = (where: any) => (this.prisma as any).channelConversation.count({ where }).catch(() => 0);
     const vipIds = await this.vipConversationIds(organizationId, settings.escalationThresholdMinor);
     const slaWhere = await this.folderExtraWhere(organizationId, "sla");
-    const [all, mine, unassigned, slaBreach] = await Promise.all([
-      count({ organizationId }),
-      count({ organizationId, assignedUserId: actorId }),
-      count({ organizationId, assignedUserId: null }),
-      count({ organizationId, ...slaWhere }),
+    // CX5: the counts obey the SAME snooze-visibility rule as the
+    // lists — actively-snoozed rows are excluded from every folder
+    // count and surface only in the snoozed count.
+    const now = new Date();
+    const notSnoozed = { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] };
+    const [all, mine, unassigned, slaBreach, unreadAgg] = await Promise.all([
+      count({ organizationId, ...notSnoozed }),
+      count({ organizationId, assignedUserId: actorId, ...notSnoozed }),
+      count({ organizationId, assignedUserId: null, ...notSnoozed }),
+      count({ organizationId, ...slaWhere, ...notSnoozed }),
+      // UX1 Q2: the REAL org-wide unread total (sum of the stored
+      // per-conversation unreadCount) for the browser tab badge —
+      // never a sum over the capped loaded list, which would lie.
+      (this.prisma as any).channelConversation.aggregate({
+        where: { organizationId }, _sum: { unreadCount: true },
+      }).catch(() => null),
     ]);
+    // CX4: handover queue count — same clause as the folder filter.
+    const handover = await count({ organizationId, autoReplyPaused: true, status: { in: ["open", "pending"] }, ...notSnoozed });
+    // CX5: snoozed count + the VIP count re-derived through the
+    // same exclusion (vipIds alone cannot see snooze state).
+    const snoozed = await count({ organizationId, snoozedUntil: { gt: now }, status: { in: ["open", "pending"] } });
+    const vip = vipIds ? await count({ organizationId, id: { in: vipIds }, ...notSnoozed }) : 0;
     return {
-      all, mine, unassigned, slaBreach,
-      vip: vipIds ? vipIds.length : 0,
+      all, mine, unassigned, slaBreach, handover, snoozed,
+      unreadTotal: unreadAgg?._sum?.unreadCount ?? 0,
+      vip,
       vipThresholdMinor: settings.escalationThresholdMinor != null ? String(settings.escalationThresholdMinor) : null,
       slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
     };
@@ -3092,6 +3702,14 @@ export class InboxService {
       where: { conversationId, status: "suggested" }, orderBy: { createdAt: "desc" }, take: 5,
     });
     const context = await this.customerContext(organizationId, conv);
+    // CX1: compact courier record for the context panel — the same
+    // compute-on-read record the Customer 360 shows (RiskService),
+    // riding inside the context payload the panel already loads.
+    // Failure-isolated: a record error never breaks the thread view.
+    let courierRecord: any = null;
+    if (conv.customerId && this.risk) {
+      try { courierRecord = await this.risk.courierRecordForCustomer(organizationId, conv.customerId); } catch { courierRecord = null; }
+    }
     // Inbox Next-Gen P3: mood from the newest inbound texts (the
     // fetched page is newest-first) + a per-message computed
     // sentiment for inbound rows — read-time only, same classifier
@@ -3103,10 +3721,15 @@ export class InboxService {
         ? classifyIntent(String(m.content)).sentiment
         : null,
     }));
+    // CX12d: is AI inside its schedule for this conversation's
+    // channel right now? (true when no schedule restricts it).
+    const detailSettings = await this.getSettings(organizationId).catch(() => null);
+    const detailTz = await this.orgTimezone(organizationId);
+    const aiScheduleActive = isAiActive(detailSettings?.aiScheduleByChannel ?? {}, conv.channel, new Date(), detailTz);
     return {
-      conversation: { ...conv, whatsappWindow: this.whatsappWindow(conv), mood },
+      conversation: { ...conv, whatsappWindow: this.whatsappWindow(conv), mood, aiScheduleActive },
       botSession: await this.getBotSession(conversationId),
-      messages: withSentiment.reverse(), drafts, context,
+      messages: withSentiment.reverse(), drafts, context: { ...context, courierRecord },
     };
   }
 
@@ -3324,10 +3947,20 @@ export class InboxService {
     return updated;
   }
 
-  async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; tags?: string[]; spamFlag?: boolean; autoReplyPaused?: boolean; pipelineStage?: string; outcome?: string | null; outcomeReason?: string | null }) {
+  async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; assignForMinutes?: number; tags?: string[]; spamFlag?: boolean; autoReplyPaused?: boolean; pipelineStage?: string; outcome?: string | null; outcomeReason?: string | null }) {
     const before = await this.getConversationOrThrow(organizationId, conversationId);
     const beforeAssignee = before.assignedUserId ?? null;
     if (dto.status && !["open", "pending", "closed"].includes(dto.status)) throw new BadRequestException("Invalid status");
+    // CX4: timed assignment — assignForMinutes is only meaningful
+    // together with an assignee in the same call.
+    if (dto.assignForMinutes !== undefined) {
+      if (!Number.isInteger(dto.assignForMinutes) || dto.assignForMinutes < 5 || dto.assignForMinutes > 480) {
+        throw new BadRequestException("টাইমড অ্যাসাইনমেন্ট ৫ থেকে ৪৮০ মিনিটের মধ্যে হতে হবে।");
+      }
+      if (!dto.assignedUserId) {
+        throw new BadRequestException("টাইমড অ্যাসাইনমেন্টের জন্য কাকে অ্যাসাইন করা হবে তা দিন।");
+      }
+    }
     if (dto.assignedUserId) {
       const member = await (this.prisma as any).membership.findFirst({ where: { organizationId, userId: dto.assignedUserId } });
       if (!member) throw new BadRequestException("Assignee is not a member of this organization");
@@ -3336,7 +3969,25 @@ export class InboxService {
       ...(dto.status ? { status: dto.status } : {}),
       ...(dto.assignedUserId !== undefined ? { assignedUserId: dto.assignedUserId } : {}),
     };
-    if (dto.status === "closed") data.resolvedAt = new Date();
+    // CX4: an assignment change in this call maintains the timer
+    // fields; calls without assignedUserId leave all four untouched.
+    if (dto.assignedUserId !== undefined) {
+      if (dto.assignedUserId) {
+        data.assignedAt = new Date();
+        if (dto.assignForMinutes !== undefined) {
+          data.assignedUntil = new Date(Date.now() + dto.assignForMinutes * 60000);
+          data.assignmentKind = "timed";
+        } else {
+          data.assignedUntil = null;
+          data.assignmentKind = "normal";
+        }
+      } else {
+        data.assignedAt = null;
+        data.assignedUntil = null;
+        data.assignmentKind = null;
+      }
+    }
+    if (dto.status === "closed") { data.resolvedAt = new Date(); data.snoozedUntil = null; } // CX5: resolving clears any snooze
     if (dto.status === "open" || dto.status === "pending") data.resolvedAt = null;
     if (dto.spamFlag !== undefined) { data.spamFlag = dto.spamFlag; if (dto.spamFlag === false) data.spamReason = null; }
     if (dto.autoReplyPaused !== undefined) data.autoReplyPaused = Boolean(dto.autoReplyPaused);
@@ -3561,7 +4212,7 @@ export class InboxService {
     };
   }
 
-  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean } = {}) {
+  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean; aiAssisted?: boolean; quickReplyId?: string; draftEdited?: boolean } = {}) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     // Milestone 73: a human sender's enabled signature rides
     // along (composer + approved drafts opt in; system
@@ -3571,6 +4222,12 @@ export class InboxService {
       data: {
         conversationId, direction: "out", type: "text", content, status: "queued",
         sentByUserId: actorId, sentByAiDraft: Boolean(opts.viaDraftId),
+        // CX11ac: attribution as reported by the composer UI —
+        // aiAssisted attests the UI path the text came through
+        // (ghost accept / tone rewrite / draft send), quickReplyId
+        // attests the picker path. Neither is proof of authorship.
+        sentWithAiAssist: Boolean(opts.aiAssisted),
+        quickReplyId: opts.quickReplyId ?? null,
       },
     });
     try {
@@ -3592,8 +4249,18 @@ export class InboxService {
       await (this.prisma as any).botSession?.updateMany?.({ where: { conversationId, status: "active" }, data: { status: "handed_off" } }).catch?.(() => undefined);
       const activeBot = await (this.prisma as any).botSession?.findFirst?.({ where: { conversationId, status: "active" } }).catch?.(() => null);
       if (activeBot) await (this.prisma as any).botSession.update({ where: { id: activeBot.id }, data: { status: "handed_off" } }).catch(() => undefined);
+      if (opts.quickReplyId) {
+        // CX11ac: usage counted ONLY on a confirmed send — a
+        // failed delivery must never inflate the counter.
+        await (this.prisma as any).quickReply.update({
+          where: { id: opts.quickReplyId }, data: { timesUsed: { increment: 1 } },
+        }).catch(() => undefined);
+      }
       if (opts.viaDraftId) {
-        await (this.prisma as any).messageDraft.update({ where: { id: opts.viaDraftId }, data: { status: "sent" } });
+        await (this.prisma as any).messageDraft.update({
+          where: { id: opts.viaDraftId },
+          data: { status: "sent", ...(opts.draftEdited !== undefined ? { sentEdited: opts.draftEdited } : {}) },
+        });
       }
       this.rtMessage(organizationId, conversationId, sent);
       await this.advanceStage(organizationId, conv, "talking");
@@ -3989,7 +4656,11 @@ export class InboxService {
     if (draft.status !== "suggested") throw new BadRequestException("Draft is no longer pending");
     const content = (editedContent ?? draft.content).trim();
     if (!content) throw new BadRequestException("Message content is empty");
-    return this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId, signature: true });
+    // CX11ac: a draft send is always AI-assisted (the text came
+    // from a draft); edited = the final content differs from the
+    // draft's own trimmed text.
+    const edited = content !== String(draft.content ?? "").trim();
+    return this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId, signature: true, aiAssisted: true, draftEdited: edited });
   }
 }
 

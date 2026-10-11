@@ -14,9 +14,10 @@ import { CrmModule } from "../crm/crm.module";
 import { PaymentsModule } from "../payments/payments.module";
 import { SocialModule } from "../social/social.module";
 import { ReportSharesModule } from "../reports/report-shares.module";
+import { CourierModule } from "../courier/courier.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService],
   exports: [AutomationService],

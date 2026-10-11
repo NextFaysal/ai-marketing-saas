@@ -187,6 +187,12 @@ const JOB_TYPES_BY_TARGET: Record<string, { value: string; label: string }[]> = 
     { value: "billing_reminders", label: "Billing Reminder (মেয়াদ শেষের সতর্কতা)" },
     { value: "auto_renew", label: "Auto-Renew Charge (bKash Agreement)" },
     { value: "audit_retention", label: "Audit Retention (পুরনো Audit Log পরিষ্কার)" },
+    { value: "dunning_reminders", label: "Dunning Reminder (Past Due হলে ইমেইল)" },
+    { value: "email_sync", label: "Email Sync (অপঠিত মেইল Inbox এ আনা)" },
+    { value: "inbox_retention", label: "Inbox Retention (মেয়াদ শেষে বন্ধ কথোপকথন মোছা — Settings এ দিন সেট করুন)" },
+    { value: "inbox_autoreply_sweep", label: "Inbox Auto-Reply Sweep (অপেক্ষমাণ AI উত্তর পাঠান — ১ মিনিট অন্তর চালান)" },
+    { value: "comment_autoreply_sweep", label: "Comment Auto-Reply Sweep (অপেক্ষমাণ AI কমেন্ট-উত্তর দিন — ১ মিনিট অন্তর চালান)" },
+    { value: "handover_timer_sweep", label: "Handover Timer Sweep (টাইমড অ্যাসাইনমেন্টের সময় শেষ হলে AI-এর কাছে ফেরত — ১ মিনিট অন্তর চালান)" },
   ],
 };
 
@@ -960,7 +966,7 @@ export default function AutomationsPage() {
                   <input
                     className={inputCls}
                     type="number"
-                    min={5}
+                    min={1}
                     value={jobForm.intervalMinutes}
                     onChange={(e) => setJobForm({ ...jobForm, intervalMinutes: Number(e.target.value) })}
                     required

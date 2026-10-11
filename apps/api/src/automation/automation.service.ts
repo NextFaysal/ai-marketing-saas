@@ -16,6 +16,8 @@ import { ProactiveService } from "../ai/proactive.service";
 import { LeadsService } from "../crm/leads.service";
 import { PaymentsService } from "../payments/payments.service";
 import { SocialPublishService } from "../social/social-publish.service";
+import { SocialCommentsService } from "../inbox/social-comments.service";
+import { CourierService } from "../courier/courier.service";
 import { ReportExportService } from "../reports/report-export.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { refreshPlatformConfig } from "../common/platform-config";
@@ -29,6 +31,8 @@ export const JOB_TYPES = [
   "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
   "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due",
+  "inbox_autoreply_sweep", "comment_autoreply_sweep", "handover_timer_sweep",
+  "courier_auto_sync",
 ] as const;
 
 
@@ -79,6 +83,14 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।" },
   { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
     descriptionBn: "প্রতি ৫ মিনিটে: শিডিউল করা Social পোস্টগুলোর সময় হয়ে গেলে সেগুলো Facebook Page / Instagram-এ প্রকাশ হবে। প্রকাশ ব্যর্থ হলে ব্যবধান রেখে আবার চেষ্টা হবে (সর্বোচ্চ ৩ বার), তারপর পোস্টটি Failed হবে ও Owner/Admin নোটিফিকেশন পাবেন।" },
+  { key: "inbox_autoreply_sweep", name: "Inbox Auto-Reply Sweep (টেমপ্লেট)", type: "inbox_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: Inbox সেটিংসে উত্তরের আগে অপেক্ষা (AI Reply Delay) চালু থাকলে, সময় হয়ে যাওয়া অপেক্ষমাণ AI উত্তরগুলো পাঠানো হবে — পরপর আসা মেসেজ জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = সেটিংসের অপেক্ষা + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)।" },
+  { key: "comment_autoreply_sweep", name: "Comment Auto-Reply Sweep (টেমপ্লেট)", type: "comment_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: Comments সেটিংসের Reply Delay অনুযায়ী অপেক্ষমাণ AI কমেন্ট-উত্তরগুলো দেওয়া হবে — একই লেখকের একই পোস্টে পরপর কমেন্ট জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = Delay সেটিং + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)। স্প্যাম হাইড সঙ্গে সঙ্গেই হয়, এই Job-এর জন্য অপেক্ষা করে না।" },
+  { key: "handover_timer_sweep", name: "Handover Timer Sweep (টেমপ্লেট)", type: "handover_timer_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: টাইমড অ্যাসাইনমেন্টের সময় শেষ হয়ে গেলে যাচাই হবে — দায়িত্বপ্রাপ্ত এজেন্ট এর মধ্যে উত্তর দিয়ে থাকলে অ্যাসাইনমেন্ট স্বাভাবিক হয়ে থাকবে, উত্তর না দিয়ে থাকলে কথোপকথনটি AI-এর কাছে ফেরত যাবে (Autopilot আবার চালু হবে)।" },
+  { key: "courier_auto_sync", name: "Courier Auto-Sync (টেমপ্লেট)", type: "courier_auto_sync", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: শেষ হয়নি এমন সব শিপমেন্টের স্ট্যাটাস কুরিয়ারের কাছ থেকে একে একে যাচাই হবে (সর্বশেষ ২০০টি); স্ট্যাটাস বদলালে গ্রাহক ট্র্যাকিং কার্ড পাবেন — চ্যাটে, না থাকলে SMS, না হলে ইমেইলে। একটি শিপমেন্ট ব্যর্থ হলে বাকিগুলো থামবে না; ফলাফলে ব্যর্থগুলো গণনা থাকবে।" },
 ];
 
 export const RULE_METRICS = [
@@ -116,6 +128,14 @@ export class AutomationService implements OnModuleInit {
     @Optional() private readonly payments?: PaymentsService,
     @Optional() private readonly socialPublish?: SocialPublishService,
     @Optional() private readonly reportExports?: ReportExportService,
+    // CX3: comment sweep — SocialCommentsService is exported by
+    // InboxModule (already imported here for InboxService), so
+    // this adds no module cycle.
+    @Optional() private readonly socialComments?: SocialCommentsService,
+    // CX6: courier auto-sync — CourierModule imports InboxModule
+    // (already here) + MessagingModule; nothing imports
+    // AutomationModule back, so this adds no cycle.
+    @Optional() private readonly courier?: CourierService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -432,7 +452,9 @@ export class AutomationService implements OnModuleInit {
   // ---------- Scheduled jobs ----------
   async createJob(organizationId: string, actorId: string, dto: { name: string; type: string; targetId: string; intervalMinutes: number }) {
     if (!(JOB_TYPES as readonly string[]).includes(dto.type)) throw new BadRequestException("Invalid job type");
-    if (!Number.isFinite(dto.intervalMinutes) || dto.intervalMinutes < 5) throw new BadRequestException("intervalMinutes must be at least 5");
+    // CX3: the minimum drops 5 -> 1 so the 1-minute reply-debounce
+    // sweep templates can actually be installed through this path.
+    if (!Number.isFinite(dto.intervalMinutes) || dto.intervalMinutes < 1) throw new BadRequestException("intervalMinutes must be at least 1");
     const job = await (this.prisma as any).scheduledJob.create({
       data: {
         organizationId, name: dto.name, type: dto.type, targetId: dto.targetId,
@@ -504,7 +526,7 @@ export class AutomationService implements OnModuleInit {
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.intervalMinutes !== undefined) {
-      if (dto.intervalMinutes < 5) throw new BadRequestException("intervalMinutes must be at least 5");
+      if (dto.intervalMinutes < 1) throw new BadRequestException("intervalMinutes must be at least 1");
       data.intervalMinutes = Math.floor(dto.intervalMinutes);
     }
     return (this.prisma as any).scheduledJob.update({ where: { id: jobId }, data });
@@ -564,6 +586,22 @@ export class AutomationService implements OnModuleInit {
       case "social_publish_due": {
         if (!this.socialPublish) throw new BadRequestException("Social publish service is not available in this deployment");
         return this.socialPublish.runDuePublishes(orgId);
+      }
+      case "inbox_autoreply_sweep": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.runDueAutoReplies(orgId);
+      }
+      case "comment_autoreply_sweep": {
+        if (!this.socialComments) throw new BadRequestException("Social comments service is not available in this deployment");
+        return this.socialComments.runDueCommentReplies(orgId);
+      }
+      case "handover_timer_sweep": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.runHandoverSweeps(orgId);
+      }
+      case "courier_auto_sync": {
+        if (!this.courier) throw new BadRequestException("Courier service is not available in this deployment");
+        return this.courier.syncAll(orgId);
       }
       case "auto_renew": {
         if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");

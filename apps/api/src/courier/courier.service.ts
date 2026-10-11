@@ -8,6 +8,9 @@ import { PathaoClient, PathaoError, pathaoClientTokens, PATHAO_PROD_BASE } from 
 import { RedxClient, RedxError, REDX_DEFAULT_BASE } from "./redx.client";
 import { InboxService } from "../inbox/inbox.service";
 import { EventsService } from "../common/events.service";
+import { SmsProvider, normalizeBdPhone as normalizeSmsPhone } from "../messaging/sms.provider";
+import { EmailProvider } from "../messaging/email.provider";
+import { newTrackingToken, trackingLinkFor } from "./tracking-token";
 import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { buildCourierPerformance } from "./courier-performance";
@@ -52,6 +55,12 @@ export class CourierService {
     // positional constructions in specs keep working.
     // EventsModule is @Global — Nest resolves it in the app.
     @Optional() private readonly events?: EventsService,
+    // CX6: appended LAST + @Optional (same discipline as events) —
+    // customer updates fall back to SMS / email when the order has
+    // no linked conversation. MessagingModule has no imports, so
+    // wiring it into CourierModule adds no cycle.
+    @Optional() private readonly sms?: SmsProvider,
+    @Optional() private readonly email?: EmailProvider,
   ) {}
 
   private providerOf(value?: string): Provider {
@@ -642,21 +651,162 @@ export class CourierService {
     return { checked: open.length, synced, changed, errors };
   }
 
-  /** Send courier status back into the originating chat thread, once per status. */
-  private async notifyCustomer(organizationId: string, shipment: any) {
-    if (!this.inbox) return;
-    const order = await (this.prisma as any).order.findFirst({ where: { id: shipment.orderId, organizationId } });
-    if (!order?.conversationId) return;
-    const notable = NOTIFY[shipment.status];
-    const shippedOnce = !notable && shipment.lastNotifiedStatus == null && !["in_review", "pending"].includes(shipment.status);
-    if (!notable && !shippedOnce) return;
-    if (shipment.lastNotifiedStatus === shipment.status) return;
-    const text = notable
-      ? `${notable} অর্ডার: ${order.externalNumber ?? ""}, Tracking: ${shipment.trackingCode}`
-      : `আপনার পার্সেলটি কুরিয়ারে দেওয়া হয়েছে। অর্ডার: ${order.externalNumber ?? ""}, Tracking: ${shipment.trackingCode} — এই কোড দিয়ে ডেলিভারি স্ট্যাটাস জানতে পারবেন।`;
-    await this.inbox.sendAutomatedMessage(organizationId, order.conversationId, text, "courier_update");
-    await (this.prisma as any).courierShipment.update({
-      where: { id: shipment.id }, data: { lastNotifiedStatus: shipment.status },
-    });
+  /**
+   * CX6 — mint (once) or return the shipment's public tracking
+   * token. Lazily created on the first customer update / manual
+   * share / tenant link request; the token is stored on the row
+   * and never rotated implicitly. A unique-collision retries once
+   * with a fresh token; persistent failure returns null and the
+   * caller simply sends without a link (never breaks the update).
+   */
+  async ensureTrackingToken(organizationId: string, shipment: any): Promise<string | null> {
+    if (shipment?.trackingToken) return shipment.trackingToken;
+    if (!shipment?.id) return null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const token = newTrackingToken();
+      try {
+        await (this.prisma as any).courierShipment.update({ where: { id: shipment.id }, data: { trackingToken: token } });
+        shipment.trackingToken = token;
+        return token;
+      } catch { if (attempt === 1) return null; }
+    }
+    return null;
+  }
+
+  /** CX6 — tenant-side: the public tracking link for a shipment. */
+  async trackingLinkForShipment(organizationId: string, shipmentId: string) {
+    const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
+    if (!shipment) throw new NotFoundException("Shipment not found");
+    const token = await this.ensureTrackingToken(organizationId, shipment);
+    if (!token) throw new BadGatewayException("ট্র্যাকিং লিংক তৈরি করা যায়নি — আবার চেষ্টা করুন");
+    return { token, link: trackingLinkFor(token) };
+  }
+
+  /**
+   * CX6 — public tracking page data (no auth; the token IS the
+   * credential, ReportShare pattern). Only facts actually stored:
+   * the courier's own status string verbatim, the booking time and
+   * the last status-write time. NO invented scan events, and NO
+   * recipient name/phone/address — a public link must never leak
+   * the customer's PII. The web page renders the Bengali stepper
+   * from the stored status via the existing lib/courier-status
+   * mapping (not forked here).
+   */
+  async publicTracking(token: string) {
+    const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { trackingToken: token } });
+    if (!shipment) throw new NotFoundException("এই ট্র্যাকিং লিংকটি পাওয়া যায়নি");
+    const org = await (this.prisma as any).organization.findFirst({ where: { id: shipment.organizationId } }).catch(() => null);
+    const order = await (this.prisma as any).order.findFirst({ where: { id: shipment.orderId, organizationId: shipment.organizationId }, select: { externalNumber: true } }).catch(() => null);
+    return {
+      provider: shipment.provider,
+      trackingCode: shipment.trackingCode ?? null,
+      status: shipment.status,
+      invoice: shipment.invoice ?? null,
+      orderNumber: order?.externalNumber ?? null,
+      bookedAt: shipment.createdAt,
+      statusAt: shipment.updatedAt,
+      lastCheckedAt: shipment.lastCheckedAt ?? null,
+      business: org?.name ?? "Store",
+      branding: {
+        name: org?.brandName ?? org?.name ?? "Store",
+        logoUrl: org?.logoUrl ?? null,
+        primaryColor: org?.primaryColor ?? null,
+      },
+    };
+  }
+
+  /**
+   * CX6 — customer courier update as a tracking CARD, on the best
+   * reachable channel. The card text keeps the established Bengali
+   * voice (provider line, headline, order, tracking code, status,
+   * footer) and adds the public live-tracking link.
+   *
+   * Channel precedence (ONE notification per status transition,
+   * across ALL channels): the order's chat conversation first;
+   * else SMS (customer phone, else the shipment recipient phone);
+   * else email (customer email). `lastNotifiedStatus` is stamped
+   * ONLY after a confirmed send on the winning channel — a status
+   * already stamped is never re-sent on another channel, and when
+   * no channel reaches the customer nothing is stamped, so a later
+   * sync can retry once a channel exists. An unconfigured SMS/SMTP
+   * is skipped silently (one log line) — it never throws into the
+   * sync path.
+   *
+   * State machine on lastNotifiedStatus (unchanged semantics):
+   * - null → opts.booked sends the one-time booking card and
+   *   stamps the pseudo-status "booked", so the first real movement
+   *   still sends the shipped card.
+   * - "booked" → first real movement sends the shipped card;
+   *   terminal states send their NOTIFY headline.
+   * - a raw status → that status was already sent; never resent.
+   */
+  private async notifyCustomer(organizationId: string, shipment: any, opts?: { booked?: boolean }) {
+    const rawStatus = String(shipment.status ?? "");
+    const last = shipment.lastNotifiedStatus ?? null;
+    let headline: string | null = null;
+    let stamp = rawStatus;
+    if (opts?.booked) {
+      if (last !== null) return; // already announced once
+      headline = "আপনার অর্ডারটি কুরিয়ারে বুক করা হয়েছে।";
+      stamp = "booked";
+    } else {
+      if (last === rawStatus) return;
+      const notable = NOTIFY[rawStatus];
+      const shippedOnce = !notable && (last === null || last === "booked") && !["in_review", "pending"].includes(rawStatus);
+      if (!notable && !shippedOnce) return;
+      headline = notable ?? "আপনার পার্সেলটি কুরিয়ারে দেওয়া হয়েছে — ডেলিভারির পথে আছে।";
+    }
+    if (!shipment.trackingCode && stamp !== "booked") return;
+    const order = await (this.prisma as any).order.findFirst({
+      where: { id: shipment.orderId, organizationId },
+      include: { customer: { select: { phone: true, email: true } } },
+    }).catch(() => null);
+    let link: string | null = null;
+    try {
+      const token = await this.ensureTrackingToken(organizationId, shipment);
+      if (token) link = trackingLinkFor(token);
+    } catch { link = null; }
+    const text = [
+      `🚚 ${shipment.provider} কুরিয়ার`,
+      headline,
+      order?.externalNumber ? `অর্ডার: ${order.externalNumber}` : null,
+      shipment.trackingCode ? `Tracking: ${shipment.trackingCode}` : null,
+      `স্ট্যাটাস: ${rawStatus}`,
+      link ? `লাইভ ট্র্যাকিং: ${link}` : null,
+      "কোনো সমস্যা হলে এই Tracking কোডটি জানিয়ে আমাদের মেসেজ করুন।",
+    ].filter(Boolean).join("\n");
+    const markSent = async () => {
+      await (this.prisma as any).courierShipment.update({
+        where: { id: shipment.id }, data: { lastNotifiedStatus: stamp },
+      }).catch(() => undefined);
+    };
+    // 1) conversation first
+    if (this.inbox && order?.conversationId) {
+      await this.inbox.sendAutomatedMessage(organizationId, order.conversationId, text, "courier_update");
+      await markSent();
+      return;
+    }
+    // 2) SMS (customer phone, else the shipment recipient phone)
+    const phone = normalizeSmsPhone(order?.customer?.phone ?? shipment.recipientPhone ?? "");
+    if (phone && this.sms) {
+      if (this.sms.isConfigured()) {
+        await this.sms.send({ to: phone, text, reference: `courier:${shipment.id}` });
+        await markSent();
+        return;
+      }
+      this.logger.log(`courier update for shipment ${shipment.id} skipped: SMS is not configured`);
+    }
+    // 3) email (customer email)
+    const emailTo = order?.customer?.email ?? null;
+    if (emailTo && this.email) {
+      if (this.email.isConfigured()) {
+        await this.email.send({ to: emailTo, subject: `🚚 ${headline}`, text });
+        await markSent();
+        return;
+      }
+      this.logger.log(`courier update for shipment ${shipment.id} skipped: SMTP is not configured`);
+    }
+    // No channel reached the customer: deliberately NOT stamped —
+    // a later sync retries when a channel exists.
   }
 }

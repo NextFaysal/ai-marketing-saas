@@ -8,6 +8,7 @@ import { EmojiPickerPanel, VoiceRecorder } from "@/components/inbox-extras";
 import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
 import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
 import { mergeTimeline } from "@/lib/timeline";
+import { SNOOZE_PRESETS, isActivelySnoozed, snoozeBodyForCustom, snoozeBodyForMinutes } from "@/lib/snooze";
 
 /** Inbox Next-Gen P1: browser-upload cap. Mirrors the API's decoded
  * cap (MEDIA_UPLOAD_MAX_BYTES = 2MB in InboxService). */
@@ -26,24 +27,37 @@ interface Conversation {
   priority?: string; sentimentFlag?: string | null; firstResponseAt?: string | null;
   spamFlag?: boolean; spamReason?: string | null;
   autoReplyPaused?: boolean;
+  aiScheduleActive?: boolean;
+  // CX4: handover queue fields (+ CX5's snoozedUntil, typed here
+  // for that batch; CX4's UI does not use it yet).
+  handoverReason?: string | null; handoverAt?: string | null;
+  assignedUntil?: string | null; assignmentKind?: string | null;
+  snoozedUntil?: string | null;
+  updatedAt?: string;
   pipelineStage?: string;
   outcome?: string | null;
   csatRating?: number | null; csatSentAt?: string | null;
   summaryText?: string | null; summaryProvider?: string | null; summaryAt?: string | null;
 }
+/** CX12d: channel-wise AI schedule (mirrors the API's ai-schedule types). */
+interface AiScheduleWindow { days: number[]; start: string; end: string }
+interface AiScheduleEntry { enabled: boolean; windows: AiScheduleWindow[] }
+type AiScheduleMap = Record<string, AiScheduleEntry>;
+
 interface Message {
   id: string; direction: string; content?: string | null; type: string; status: string;
   error?: string | null; createdAt: string; sentByAiDraft: boolean;
   mediaId?: string | null; mediaUrl?: string | null;
   mediaStorageKey?: string | null; mediaContentType?: string | null;
   intent?: string | null; intentConfidence?: number | null; autoReply?: boolean;
+  sentWithAiAssist?: boolean; quickReplyId?: string | null;
   sentiment?: "positive" | "negative" | null;
   transcription?: string | null; transcriptionProvider?: string | null;
 }
 interface PaymentVerification { id: string; messageId: string; verdict: string; provider?: string | null; trxId?: string | null; amountMinor?: string | null; expectedAmountMinor?: string | null; flags?: string[] | null }
 interface Draft { id: string; content: string; provider: string; createdAt: string }
 interface Note { id: string; content: string; authorUserId: string; createdAt: string }
-interface QuickReply { id: string; title: string; content: string }
+interface QuickReply { id: string; title: string; content: string; timesUsed?: number }
 interface WaTemplate { id: string; name: string; language: string; category?: string | null; bodyText?: string | null }
 interface Member { id: string; role: string; user: { id: string; name?: string | null; email: string } }
 interface ContextData {
@@ -51,12 +65,43 @@ interface ContextData {
   lead: { id: string; stage: string; source: string; valueMinor?: string | null; tags?: string[] } | null;
   orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; currency: string; totalMinor: string; createdAt: string; codConfirmationStatus?: string | null; shipment?: { id: string; trackingCode?: string | null; status: string; provider: string; consignmentId?: string | null; codAmountMinor?: string | null; lastCheckedAt?: string | null } | null }[];
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string } | null;
+  courierRecord?: { decided: number; delivered: number; successRatePct: number | null; riskBand: string; riskScore: number | null } | null;
 }
+
+const COURIER_RISK_BAND_BN: Record<string, string> = { low: "কম", medium: "মাঝারি", high: "উচ্চ", unknown: "তথ্য নেই" };
 
 const MOOD_TITLE = "কীওয়ার্ড-ভিত্তিক আনুমানিক সংকেত — সাম্প্রতিক গ্রাহক-বার্তার শব্দ দেখে হিসাব করা, মনের অবস্থা নয়";
 
 const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+// UX1 Q2: one soft two-tone beep (WebAudio, no asset). The context
+// is created lazily on first use; if the browser keeps it suspended
+// (autoplay policy before any user gesture) the beep is simply
+// silent — never an error, never a fake "played".
+let beepCtx: AudioContext | null = null;
+function beepOnce() {
+  try {
+    if (typeof window === "undefined") return;
+    const AC = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!AC) return;
+    beepCtx ??= new AC();
+    // Suspended (autoplay policy): kick a resume for next time and
+    // stay silent for this one.
+    if (beepCtx.state === "suspended") { void beepCtx.resume().catch(() => undefined); return; }
+    const t0 = beepCtx.currentTime;
+    for (const [i, freq] of [880, 660].entries()) {
+      const osc = beepCtx.createOscillator();
+      const gain = beepCtx.createGain();
+      osc.type = "sine"; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t0 + i * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.08, t0 + i * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.14 + 0.13);
+      osc.connect(gain).connect(beepCtx.destination);
+      osc.start(t0 + i * 0.14); osc.stop(t0 + i * 0.14 + 0.14);
+    }
+  } catch { /* sound is best-effort */ }
+}
 
 // ---- Unified Inbox U1: channel identity + day separators ----
 const CHANNEL_META: Record<string, { label: string; emoji: string; cls: string }> = {
@@ -79,6 +124,46 @@ function dayLabel(iso: string): string {
   if (d.toDateString() === today.toDateString()) return "আজ";
   if (d.toDateString() === yday.toDateString()) return "গতকাল";
   return d.toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric" });
+}
+
+// ---- Inbox Design v2 display helpers (pure formatting, no data change) ----
+function initialsOf(name?: string | null): string {
+  const t = (name ?? "").trim();
+  if (!t) return "গ্র";
+  const parts = t.split(/\s+/);
+  const out = ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).trim();
+  return out ? out.toUpperCase() : t.slice(0, 2);
+}
+function relTime(iso?: string | null): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  if (ms < 60000) return "এখনই";
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `${min}মি আগে`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}ঘ আগে`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}দিন আগে`;
+  return new Date(iso).toLocaleDateString("bn-BD", { day: "numeric", month: "short" });
+}
+/** CX4/CX5: handover reason labels — one mapping shared by the
+ * queue chips (CX4) and the CX5 autopilot-paused banner. */
+const HANDOVER_REASON_LABELS: Record<string, string> = {
+  complaint: "😠 অভিযোগ", human_requested: "🙋 মানুষ চেয়েছে", negative_sentiment: "😞 নেতিবাচক মনোভাব",
+  high_value_order: "⭐ বড় অর্ডার", manual_takeover: "🙋 টেকওভার", order_bot: "🤖 অর্ডার বট",
+};
+const CHANNEL_DOT: Record<string, string> = {
+  whatsapp: "bg-emerald-500", messenger: "bg-sky-500", instagram: "bg-fuchsia-500",
+  webchat: "bg-slate-400", tiktok: "bg-slate-900", telegram: "bg-cyan-500", email: "bg-amber-500",
+};
+function ConvAvatar({ name, phone, channel }: { name?: string | null; phone?: string | null; channel: string }) {
+  return (
+    <span className="conv-avatar" aria-hidden="true">
+      {initialsOf(name ?? phone)}
+      <span className={`conv-dot ${CHANNEL_DOT[channel] ?? "bg-slate-400"}`} />
+    </span>
+  );
 }
 
 function renderQuick(content: string, conv: Conversation): string {
@@ -112,7 +197,7 @@ function MediaView({ convId, message }: { convId: string; message: Message }) {
   }, [orgId, convId, message.id]);
 
   if (failed) return <span className="text-xs opacity-70">[মিডিয়া লোড হয়নি: {message.type}]</span>;
-  if (!url) return <span className="text-xs opacity-70">মিডিয়া লোড হচ্ছে...</span>;
+  if (!url) return <span className="skeleton inline-block h-24 w-44 align-middle" role="status" aria-label="মিডিয়া লোড হচ্ছে" />;
   if (message.type === "image" || message.type === "sticker") return <img src={url} alt={message.content ?? "ছবি"} className="max-h-56 rounded-lg" />;
   if (message.type === "audio") return <audio controls src={url} className="max-w-[240px]" />;
   if (message.type === "video") return <video controls src={url} className="max-h-56 rounded-lg" />;
@@ -133,7 +218,7 @@ function ShipmentWidget({ shipment, currency, syncing, onSync }: {
 }) {
   const view = courierStatusView(shipment.status);
   return (
-    <div className="mt-1.5 rounded-lg bg-white p-2 ring-1 ring-slate-200">
+    <div className="mt-2 rounded-xl bg-slate-50/70 p-2.5 shadow-sm ring-1 ring-slate-200/70">
       <div className="flex flex-wrap items-center justify-between gap-1">
         <span className="font-semibold">🚚 {shipment.provider}{shipment.trackingCode ? ` · ${shipment.trackingCode}` : ""}</span>
         <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title="কুরিয়ারের কাছ থেকে এখনই সর্বশেষ স্ট্যাটাস আনুন">
@@ -145,7 +230,7 @@ function ShipmentWidget({ shipment, currency, syncing, onSync }: {
           <div className="flex items-center gap-1">
             {COURIER_STEP_LABELS.map((label, i) => (
               <div key={label} className="flex flex-1 flex-col items-center gap-1">
-                <div className={`h-1.5 w-full rounded-full ${i <= view.step ? "bg-emerald-500" : "bg-slate-200"}`} />
+                <div className={`h-1.5 w-full rounded-full shadow-sm ${i <= view.step ? "bg-gradient-to-r from-emerald-500 to-teal-400" : "bg-slate-200"}`} />
                 <span className={`text-center text-[9px] leading-tight ${i === view.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
               </div>
             ))}
@@ -184,6 +269,13 @@ export default function InboxPage() {
   const ghostSeqRef = useRef(0);
   const ghostAbortRef = useRef<AbortController | null>(null);
   const ghostLastFetchRef = useRef("");
+  // CX11ac: composer attribution — set when the reply text came
+  // through an AI path (ghost accept / tone rewrite) or the
+  // quick-reply picker; reported to the API on send. Typing
+  // clears the quick-reply id (the text may no longer be the
+  // picker's) but never the AI-assist flag.
+  const [aiAssistUsed, setAiAssistUsed] = useState(false);
+  const [usedQuickReplyId, setUsedQuickReplyId] = useState<string | null>(null);
   // P3: tone rewriter — undo stash + menu visibility.
   const [showToneMenu, setShowToneMenu] = useState(false);
   const [prevReply, setPrevReply] = useState<string | null>(null);
@@ -200,12 +292,32 @@ export default function InboxPage() {
   const [tplVars, setTplVars] = useState("");
   const [tplId, setTplId] = useState("");
   const [tagInput, setTagInput] = useState("");
-  const [filters, setFilters] = useState({ q: "", channel: "", status: "", assignee: "", tag: "", unreadOnly: false, sort: "recent", spamOnly: false });
+  // UX1 Q3: last-used filters persist per agent (same localStorage
+  // pattern as the pane widths) — merged over the defaults so a
+  // stale/partial saved object can never break the shape.
+  const [filters, setFilters] = useState(() => {
+    const base = { q: "", channel: "", status: "", assignee: "", tag: "", unreadOnly: false, sort: "recent", spamOnly: false };
+    try { const raw = localStorage.getItem("inbox.filters"); if (raw) return { ...base, ...JSON.parse(raw) }; } catch { /* defaults */ }
+    return base;
+  });
   // Inbox Next-Gen P2: smart folders (server-side counts — the
   // list page itself is capped, so its length would lie) + bulk
   // selection state.
-  const [smartFolder, setSmartFolder] = useState<"" | "sla" | "vip">("");
-  const [folderCounts, setFolderCounts] = useState<{ all: number; mine: number; unassigned: number; slaBreach: number; vip: number; vipThresholdMinor: string | null; slaFirstResponseMinutes: number } | null>(null);
+  const [smartFolder, setSmartFolder] = useState<"" | "sla" | "vip" | "handover" | "snoozed">(() => {
+    try { const v = localStorage.getItem("inbox.folder"); return v === "sla" || v === "vip" || v === "handover" || v === "snoozed" ? v : ""; } catch { return ""; }
+  });
+  const [folderCounts, setFolderCounts] = useState<{ all: number; mine: number; unassigned: number; slaBreach: number; vip: number; handover: number; snoozed: number; vipThresholdMinor: string | null; slaFirstResponseMinutes: number } | null>(null);
+  // CX5: one-row action bar menu state (snooze / timer / mobile more).
+  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const [snoozeCustom, setSnoozeCustom] = useState("");
+  const [showTimerMenu, setShowTimerMenu] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  // CX4: 30s tick so the handover queue's waiting / timed chips move.
+  const [handoverTick, setHandoverTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setHandoverTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAssign, setBulkAssign] = useState("");
@@ -214,7 +326,8 @@ export default function InboxPage() {
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [qrForm, setQrForm] = useState({ title: "", content: "" });
   const [tplForm, setTplForm] = useState({ name: "", language: "bn", category: "UTILITY", bodyText: "" });
-  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null; reassignAfterMinutes?: number | null; escalationTeamId?: string | null; perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null; retentionDays?: number | null } | null>(null);
+  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null; reassignAfterMinutes?: number | null; escalationTeamId?: string | null; perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null; retentionDays?: number | null; aiReplyDelaySeconds?: number; aiReplyDelayByChannel?: Record<string, number>; aiScheduleByChannel?: AiScheduleMap } | null>(null);
+  const [scheduleDraft, setScheduleDraft] = useState<AiScheduleMap | null>(null);
   const [botSession, setBotSession] = useState<{ id: string; state: string; status: string } | null>(null);
   const [verifications, setVerifications] = useState<PaymentVerification[]>([]);
   const [presence, setPresence] = useState<{ userId: string; name: string; typing: boolean }[]>([]);
@@ -300,7 +413,54 @@ export default function InboxPage() {
   }, []);
 
   // U5: control center — board view, command profile, close outcome
-  const [viewMode, setViewMode] = useState<"list" | "board" | "media" | "manage">("list");
+  const [viewMode, setViewMode] = useState<"list" | "board" | "media" | "manage">(() => {
+    try { const v = localStorage.getItem("inbox.view"); return v === "board" || v === "media" || v === "manage" ? v : "list"; } catch { return "list"; }
+  });
+  // ---- UX1: attention + persistence state ----
+  // Q2: org-wide unread total from the counts endpoint (server
+  // aggregate — never a sum over the capped loaded list).
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  // Q2: per-agent, this-browser-only attention preferences. NOT org
+  // settings — the Manage toggles say so in plain words.
+  const [notifyOn, setNotifyOn] = useState(() => { try { return localStorage.getItem("inbox.notify") === "1"; } catch { return false; } });
+  const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("inbox.sound") !== "0"; } catch { return true; } });
+  const [paletteQ, setPaletteQ] = useState("");
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // The stream subscription is created once; this ref always points
+  // at the latest-render alert handler so it sees fresh state.
+  const uxAlertRef = useRef<(convId: string, msg: Message) => void>(() => undefined);
+  uxAlertRef.current = (convId, msg) => {
+    if (typeof document === "undefined" || !document.hidden) return;
+    if (soundOn) beepOnce();
+    if (!notifyOn || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      const n = new Notification("💬 নতুন মেসেজ এসেছে", {
+        body: (msg.content ?? "মিডিয়া মেসেজ").slice(0, 120),
+        tag: `inbox-${convId}`,
+      });
+      n.onclick = () => {
+        window.focus();
+        const c = conversations.find((x) => x.id === convId);
+        if (c) void openConversation(c);
+        else void openConversation({ id: convId } as Conversation);
+        n.close();
+      };
+    } catch { /* notifications are best-effort */ }
+  };
+  // Q3: persist the agent's filter / folder / view choices.
+  useEffect(() => { try { localStorage.setItem("inbox.filters", JSON.stringify(filters)); } catch { /* best-effort */ } }, [filters]);
+  useEffect(() => { try { localStorage.setItem("inbox.folder", smartFolder); } catch { /* best-effort */ } }, [smartFolder]);
+  useEffect(() => { try { localStorage.setItem("inbox.view", viewMode); } catch { /* best-effort */ } }, [viewMode]);
+  useEffect(() => { try { localStorage.setItem("inbox.notify", notifyOn ? "1" : "0"); } catch { /* best-effort */ } }, [notifyOn]);
+  useEffect(() => { try { localStorage.setItem("inbox.sound", soundOn ? "1" : "0"); } catch { /* best-effort */ } }, [soundOn]);
+  // Q2: tab title badge — "(n) ইনবক্স" while unread exist; the
+  // original title is restored at zero and on unmount.
+  useEffect(() => {
+    const original = "AI Marketing SaaS";
+    document.title = unreadTotal > 0 ? `(${unreadTotal}) ইনবক্স` : original;
+    return () => { document.title = original; };
+  }, [unreadTotal]);
   // Inbox Next-Gen P1: fixed workspace + resizable panes + composer extras.
   const [listW, setListW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.listW")) || 300, 230, 520); } catch { return 300; } });
   const [ctxW, setCtxW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.ctxW")) || 320, 260, 520); } catch { return 320; } });
@@ -392,7 +552,7 @@ export default function InboxPage() {
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     try { setIntegrations(await apiFetch<any[]>(`/organizations/${orgId}/inbox/integrations`)); } catch { /* none */ }
     // P2: folder counts are server-side totals (see counts endpoint).
-    try { setFolderCounts(await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/counts`)); } catch { /* counts are additive */ }
+    try { const c = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/counts`); setFolderCounts(c); setUnreadTotal(typeof c?.unreadTotal === "number" ? c.unreadTotal : 0); } catch { /* counts are additive */ }
   }, [filters, smartFolder]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
@@ -408,6 +568,11 @@ export default function InboxPage() {
     const unsub = subscribeInboxStream(orgId, (ev) => {
       if (ev.type === "message.created" && ev.message) {
         const msg = ev.message as unknown as Message;
+        // UX1 Q2: attention cue for inbound messages to OTHER
+        // conversations (the handler itself checks tab visibility).
+        if (msg.direction === "in" && ev.conversationId !== activeRef.current?.id) {
+          uxAlertRef.current(ev.conversationId as string, msg);
+        }
         if (activeRef.current && ev.conversationId === activeRef.current.id) {
           setMessages((prev) => {
             const i = prev.findIndex((m) => m.id === msg.id);
@@ -505,7 +670,7 @@ export default function InboxPage() {
   /** P2 smart folders: "সব / আমার / অনির্ধারিত" drive the existing
    * assignee filter; "sla" / "vip" set the server-side folder,
    * which AND-composes with whatever filters are active. */
-  function applyFolder(folderVal: "" | "sla" | "vip", assigneeVal?: string) {
+  function applyFolder(folderVal: "" | "sla" | "vip" | "handover" | "snoozed", assigneeVal?: string) {
     setVisibleCount(40); setFocusedIdx(0);
     setSmartFolder(folderVal);
     setSelectedIds(new Set());
@@ -579,7 +744,10 @@ export default function InboxPage() {
     // P3: ghost / tone state never carries across conversations.
     setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
     ghostAbortRef.current?.abort();
+    // CX11ac: attribution state never carries across either.
+    setAiAssistUsed(false); setUsedQuickReplyId(null);
     setPrevReply(null); setShowToneMenu(false); setComposerMode("reply");
+    setShowSnoozeMenu(false); setShowTimerMenu(false); setShowMoreMenu(false); setSnoozeCustom("");
     try {
       const res = await apiFetch<{ conversation: Conversation; messages: Message[]; drafts: Draft[]; context: ContextData; botSession?: { id: string; state: string; status: string } | null }>(`/organizations/${orgId}/inbox/conversations/${conv.id}`);
       setActive(res.conversation); setMessages(res.messages); setDrafts(res.drafts); setContext(res.context); setBotSession(res.botSession ?? null);
@@ -596,13 +764,35 @@ export default function InboxPage() {
 
   async function refreshActive() { if (active) await openConversation(active); }
 
-  async function patchConversation(patch: Partial<Conversation>) {
+  async function patchConversation(patch: Partial<Conversation> & { assignForMinutes?: number }) {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
     try {
       const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       setActive({ ...active, ...updated });
       loadConversations();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  /** CX5: action-bar POST actions (snooze / unsnooze / take-over /
+   * back-to-ai) — same post-action refresh pattern as
+   * patchConversation: merge the returned row into `active` and
+   * reload the list (a snoozed row leaves the current list view). */
+  async function conversationAction(action: "snooze" | "unsnooze" | "take-over" | "back-to-ai", body?: unknown) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    try {
+      const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}/${action}`, {
+        method: "POST", ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      setActive({ ...active, ...updated });
+      loadConversations();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  async function snoozeWith(body: { minutes: number } | { until: string } | null) {
+    if (!body) { setError("Snooze-এর সময় ঠিকমতো দিন — কমপক্ষে ৫ মিনিট বা ভবিষ্যতের একটি সময়।"); return; }
+    setShowSnoozeMenu(false); setShowMoreMenu(false);
+    await conversationAction("snooze", body);
+    setNotice("😴 কথোপকথনটি Snooze করা হয়েছে — সময় হলে তালিকায় আবার দেখা যাবে।");
   }
 
   async function connect(e: React.FormEvent) {
@@ -623,13 +813,60 @@ export default function InboxPage() {
     // addNote() there, and this guard is the belt-and-braces check.
     if (composerMode === "note") return;
     const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim()) return;
+    const convId = active.id;
+    const content = reply;
+    // CX11ac: attribution snapshot for THIS send (the flags are
+    // reset only on success).
+    const sendAiAssisted = aiAssistUsed;
+    const sendQuickReplyId = usedQuickReplyId;
+    // UX1 Q5: instant local pending bubble. It is labelled
+    // "পাঠানো হচ্ছে…" (status "sending") and only ever replaced by
+    // the server's real message row — it never poses as sent. The
+    // composer clears immediately; the BUBBLE keeps the content, so
+    // a failure is retried from the bubble, not re-typed.
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const temp: Message = { id: tempId, direction: "out", content, type: "text", status: "sending", createdAt: new Date().toISOString(), sentByAiDraft: false };
+    setMessages((m) => [...m, temp]);
+    setReply(""); setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
     setBusy("send"); setError("");
     try {
-      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${active.id}/messages`, { method: "POST", body: JSON.stringify({ content: reply }) });
-      setMessages((m) => [...m, msg]); setReply(""); setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
+      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content, aiAssisted: sendAiAssisted || undefined, quickReplyId: sendQuickReplyId ?? undefined }) });
+      setAiAssistUsed(false); setUsedQuickReplyId(null);
+      setMessages((prev) => {
+        // The realtime stream may have delivered the real row first.
+        if (prev.some((m) => m.id === msg.id)) return prev.filter((m) => m.id !== tempId);
+        return prev.map((m) => (m.id === tempId ? msg : m));
+      });
       loadConversations();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m)));
+      setError(e instanceof Error ? e.message : "Failed");
+    }
     finally { setBusy(""); }
+  }
+
+  /** UX1 Q5: retry a failed LOCAL pending bubble — the same content
+   * goes out as a NEW send (the failed bubble is the local record;
+   * no server message exists for it yet). On success the bubble is
+   * replaced by the server's real row, exactly like a fresh send. */
+  async function retryLocalSend(tempId: string) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    const local = messagesRef.current.find((m) => m.id === tempId);
+    if (!local?.content || local.status !== "failed") return;
+    const convId = active.id;
+    setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: "sending" } : m)));
+    setError("");
+    try {
+      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content: local.content }) });
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev.filter((m) => m.id !== tempId);
+        return prev.map((m) => (m.id === tempId ? msg : m));
+      });
+      loadConversations();
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m)));
+      setError(e instanceof Error ? e.message : "Failed");
+    }
   }
 
   async function sendImage() {
@@ -899,6 +1136,7 @@ export default function InboxPage() {
         body: JSON.stringify({ text: before, tone }),
       });
       setPrevReply(before);
+      setAiAssistUsed(true);
       setReply(r.text);
       setGhost(""); ghostForRef.current = "";
       setShowToneMenu(false);
@@ -934,11 +1172,16 @@ export default function InboxPage() {
     setTemplates((x) => x.filter((t) => t.id !== id));
   }
 
-  const inputCls = "input mt-1";
-  const statusIcon = (m: Message) => m.direction === "in" ? "" : m.status === "failed" ? " · ব্যর্থ" : m.status === "read" ? " · পঠিত" : m.status === "delivered" ? " · পৌঁছেছে" : " · পাঠানো হয়েছে";
+  const statusIcon = (m: Message) => m.direction === "in" ? "" : m.status === "sending" ? " · পাঠানো হচ্ছে…" : m.status === "failed" ? " · ব্যর্থ" : m.status === "read" ? " · পঠিত" : m.status === "delivered" ? " · পৌঁছেছে" : " · পাঠানো হয়েছে";
   const memberName = (userId?: string | null) => {
     const m = members.find((x) => x.user.id === userId);
     return m ? (m.user.name ?? m.user.email) : userId ? "টিম সদস্য" : "কেউ নয়";
+  };
+  // CX11ac: per-agent assist table name — members data when the
+  // agent is known, otherwise a short id (never an invented name).
+  const agentLabel = (userId: string) => {
+    const m = members.find((x) => x.user.id === userId);
+    return m ? (m.user.name ?? m.user.email) : userId.slice(0, 8);
   };
   const windowLeft = (w?: WaWindow | null): string => {
     if (!w?.expiresAt) return "";
@@ -967,16 +1210,71 @@ export default function InboxPage() {
     return null;
   };
 
+  // CX5: one-row action bar — shared segment renderers. The
+  // desktop row shows every segment; on small screens Later /
+  // Timer / Assign / Lead collapse into the ⋯ আরও menu, which
+  // reuses these same controls (Done / Take over / Back to AI
+  // stay visible in the row itself).
+  const cx5Btn = "rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium transition hover:bg-slate-200";
+  const cx5Menu = "absolute left-0 top-full z-20 mt-1 flex w-64 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg";
+  const cx5MenuItem = "rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 disabled:opacity-50";
+  const timerRemaining = active?.assignmentKind === "timed" && active?.assignedUntil
+    ? Math.max(0, Math.ceil((new Date(active.assignedUntil).getTime() - handoverTick) / 60000)) : null;
+  const renderSnoozeControls = () => (
+    <>
+      {SNOOZE_PRESETS.map((p) => (
+        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} পরে</button>
+      ))}
+      <span className="mt-1 flex items-center gap-1 border-t border-slate-100 pt-1.5">
+        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label="কাস্টম Snooze সময়" />
+        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>Snooze করুন</button>
+      </span>
+      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">Snooze AI বন্ধ করে না — কথোপকথন শুধু তালিকা থেকে সরে থাকে।</span>
+    </>
+  );
+  const renderTimerControls = () => (
+    <>
+      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">⏱️ আরও {timerRemaining} মিনিট বাকি (timed)</span> : null}
+      {([15, 30, 60, 120, 240] as const).map((n) => (
+        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{n} মিনিটের জন্য আমার কাছে</button>
+      ))}
+      {timerRemaining !== null ? (
+        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>টাইমার বাতিল</button>
+      ) : null}
+    </>
+  );
+  const renderAssignSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.assignedUserId ?? ""}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label="Assign করুন">
+      <option value="">👤 কেউ নয়</option>
+      {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
+    </select>
+  );
+  const renderLeadSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.pipelineStage ?? "new"}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ pipelineStage: e.target.value }); }} title="Pipeline Stage" aria-label="Lead Stage">
+      <option value="new">🎯 🆕 New Lead</option><option value="talking">🎯 💬 Talking</option>
+      <option value="ordered">🎯 🛒 Ordered</option><option value="delivered">🎯 ✅ Delivered</option><option value="repeat">🎯 🔁 Repeat</option>
+    </select>
+  );
+
   return (
     <div className={viewMode === "list" ? "flex h-[calc(100dvh-164px)] flex-col gap-3 sm:h-[calc(100dvh-180px)] lg:h-[calc(100dvh-116px)]" : "space-y-6"}>
-      <div className="shrink-0">
-        <h1 className="page-title">Inbox</h1>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "list" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("list")}>💬 কথোপকথন</button>
-          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "board" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("board")}>🗂️ পাইপলাইন বোর্ড</button>
-          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "media" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("media")}>🖼️ মিডিয়া</button>
-          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "manage" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("manage")}>⚙️ সেটিংস ও টিম</button>
-          <button className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold" onClick={async () => {
+      <div className="shrink-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="flex items-center gap-2.5 text-[22px] font-bold leading-tight tracking-tight text-slate-900"><span className="live-pulse" aria-hidden="true" /> ইনবক্স</h1>
+          <div className="view-switch" role="tablist" aria-label="ইনবক্স ভিউ">
+            <button className={`view-switch-btn ${viewMode === "list" ? "view-switch-btn-active" : ""}`} onClick={() => setViewMode("list")}>💬 কথোপকথন</button>
+            <button className={`view-switch-btn ${viewMode === "board" ? "view-switch-btn-active" : ""}`} onClick={() => setViewMode("board")}>🗂️ পাইপলাইন বোর্ড</button>
+            <button className={`view-switch-btn ${viewMode === "media" ? "view-switch-btn-active" : ""}`} onClick={() => setViewMode("media")}>🖼️ মিডিয়া</button>
+            <button className={`view-switch-btn ${viewMode === "manage" ? "view-switch-btn-active" : ""}`} onClick={() => setViewMode("manage")}>⚙️ সেটিংস ও টিম</button>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <span className="stat-chip" title="আমার বর্তমান অবস্থা (সেটিংস ও টিম ভিউ থেকে বদলানো যায়)">
+              <span className={`mood-dot ${myStatus === "online" ? "bg-emerald-500" : myStatus === "busy" ? "bg-orange-500" : "bg-slate-300"}`} />
+              {myStatus === "online" ? "Online" : myStatus === "busy" ? "ব্যস্ত" : "Away"}
+            </span>
+            <button className="btn-secondary btn-sm" onClick={async () => {
             const orgId = getOrganizationId(); if (!orgId) return;
             try {
               const data = await apiFetch<any>(`/organizations/${orgId}/inbox/export`);
@@ -984,11 +1282,33 @@ export default function InboxPage() {
               const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "inbox-export.json"; a.click(); URL.revokeObjectURL(a.href);
             } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
           }}>⬇ Export (৩০ দিন)</button>
+            <button className="btn-secondary btn-sm" onClick={() => setPaletteOpen(true)} aria-label="কমান্ড প্যালেট খুলুন">⌘K</button>
+          </div>
         </div>
-        <p className="text-sm text-slate-500">WhatsApp ও Messenger এক জায়গায়। AI শুধু Draft সাজেস্ট করে, পাঠানোর সিদ্ধান্ত সবসময় মানুষের। বার্তা "পাঠানো হয়েছে" দেখানো হয় শুধু প্ল্যাটফর্মের Message ID পেলে। Internal Note কখনোই গ্রাহকের কাছে যায় না।</p>
+        {viewMode === "list" ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([
+              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
+              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি (থ্রেশহোল্ড: ইনবক্স সেটিংস)`, onClick: () => applyFolder("sla") },
+              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
+              { key: "handover", label: "🤝 Handover কিউ", active: smartFolder === "handover", count: folderCounts?.handover, title: "মানুষের হাতে থাকা (Autopilot থেমে) কথোপকথন — সবচেয়ে বেশি অপেক্ষা করা আগে", onClick: () => applyFolder("handover") },
+              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: "Snooze করা কথোপকথন — জাগার সময় অনুযায়ী সাজানো, সময় হলে নিজে থেকে তালিকায় ফিরবে", onClick: () => applyFolder("snoozed") },
+            ]).map((chip) => (
+              <button key={chip.key} title={chip.title} onClick={chip.onClick}
+                className={`stat-chip ${chip.active ? "stat-chip-active" : ""} ${chip.key === "sla" && (chip.count ?? 0) > 0 && !chip.active ? "stat-chip-danger" : ""}`}>
+                {chip.label}{chip.count !== undefined && chip.count !== null ? <span className="stat-chip-count">{chip.count}</span> : null}
+              </button>
+            ))}
+            <span className="ml-1 min-w-0 truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</span>
+          </div>
+        ) : (
+          <p className="truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</p>
+        )}
       </div>
-      {error ? <p className="shrink-0 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="shrink-0 rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+      {error ? <p className="alert alert-red shrink-0">{error}</p> : null}
+      {notice ? <p className="alert alert-green shrink-0">{notice}</p> : null}
 
       {viewMode === "board" ? (
         <div className="card p-4">
@@ -996,10 +1316,20 @@ export default function InboxPage() {
             <div className="section-title">🗂️ সেলস পাইপলাইন {board ? `· মোট সক্রিয় ${board.totalActive}টি` : ""}</div>
             <button className="btn-secondary btn-sm" onClick={() => void loadBoard()}>↻ রিফ্রেশ</button>
           </div>
-          {!board ? <p className="text-sm text-slate-400">লোড হচ্ছে...</p> : (
+          {!board ? (
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6" role="status" aria-label="লোড হচ্ছে">
+              {["new", "talking", "ordered", "shipped", "delivered", "repeat"].map((s) => (
+                <div key={s} className="space-y-2 rounded-2xl bg-slate-50/60 p-2">
+                  <div className="skeleton h-5 w-2/3" />
+                  <div className="skeleton h-20 w-full" />
+                  <div className="skeleton h-20 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : (
             <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               {([["new", "🆕 New Lead"], ["talking", "💬 Talking"], ["ordered", "🛒 Order Placed"], ["shipped", "🚚 Shipped"], ["delivered", "✅ Completed"], ["repeat", "🔁 Repeat"]] as const).map(([stage, label]) => (
-                <div key={stage} className={`min-h-[120px] rounded-xl p-2 ${stage === "shipped" ? "bg-sky-50" : "bg-slate-50"}`}
+                <div key={stage} className="board-col" style={stage === "shipped" ? { background: "linear-gradient(180deg,#f0f9ff,#ffffff)" } : undefined}
                   title={stage === "shipped" ? "Shipped ধাপটি কুরিয়ারের স্ট্যাটাস থেকে নিজে থেকে আসে — এখানে কার্ড ফেলা যায় না" : undefined}
                   onDragOver={stage === "shipped" ? undefined : (e) => e.preventDefault()}
                   onDrop={stage === "shipped" ? undefined : async (e) => {
@@ -1009,9 +1339,9 @@ export default function InboxPage() {
                     await apiFetch(`/organizations/${orgId}/inbox/conversations/${convId}`, { method: "PATCH", body: JSON.stringify({ pipelineStage: stage }) }).catch(() => undefined);
                     void loadBoard();
                   }}>
-                  <div className="mb-1 flex items-baseline justify-between px-1">
-                    <span className="text-xs font-bold">{label}</span>
-                    <span className="text-[11px] text-slate-500">{board.stages[stage]?.count ?? 0}টি</span>
+                  <div className="board-col-head">
+                    <span className="flex items-center gap-1.5 text-xs font-bold"><span className="board-stage-dot" style={{ background: ({ new: "#0ea5e9", talking: "#8b5cf6", ordered: "#f59e0b", shipped: "#06b6d4", delivered: "#10b981", repeat: "#d946ef" } as Record<string, string>)[stage] }} />{label}</span>
+                    <span className="board-count">{board.stages[stage]?.count ?? 0}টি</span>
                   </div>
                   <div className="px-1 text-[11px] font-medium text-emerald-700">সংযুক্ত অর্ডার মূল্য: ৳{board.stages[stage] ? (Number(board.stages[stage].valueMinor) / 100).toLocaleString("bn-BD") : "০"}</div>
                   <div className="mt-2 space-y-1.5">
@@ -1019,15 +1349,15 @@ export default function InboxPage() {
                       <div key={card.id} draggable
                         onDragStart={(e) => e.dataTransfer.setData("text/plain", card.id)}
                         onClick={() => { setViewMode("list"); void openConversation({ id: card.id } as Conversation); }}
-                        className="cursor-pointer rounded-lg bg-white p-2 shadow-sm ring-1 ring-slate-100 hover:ring-indigo-200">
+                        className="board-card">
                         <div className="flex items-center justify-between gap-1">
-                          <span className="truncate text-xs font-semibold">{card.contactName ?? card.contactPhone ?? "গ্রাহক"}</span>
+                          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-semibold"><span className="agent-mini" style={{ width: 20, height: 20, fontSize: 9 }} aria-hidden="true">{initialsOf(card.contactName ?? card.contactPhone)}</span>{card.contactName ?? card.contactPhone ?? "গ্রাহক"}</span>
                           <ChannelChip channel={card.channel} />
                         </div>
-                        <div className="truncate text-[11px] text-slate-500">{card.lastMessagePreview ?? ""}</div>
-                        <div className="mt-0.5 flex items-center justify-between text-[10px] text-slate-400">
-                          <span>{card.lastMessageAt ? new Date(card.lastMessageAt).toLocaleString("bn-BD") : ""}</span>
-                          {card.unreadCount > 0 ? <span className="rounded-full bg-red-500 px-1.5 font-bold text-white">{card.unreadCount}</span> : null}
+                        <div className="mt-1 truncate text-[11px] text-slate-500">{card.lastMessagePreview ?? ""}</div>
+                        <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+                          <span title={card.lastMessageAt ? new Date(card.lastMessageAt).toLocaleString("bn-BD") : undefined}>{relTime(card.lastMessageAt)}</span>
+                          {card.unreadCount > 0 ? <span className="conv-unread !min-w-[18px] !px-1 !text-[10px]">{card.unreadCount}</span> : null}
                           {card.latestOrderTotalMinor ? <span className="font-semibold text-emerald-600">৳{(Number(card.latestOrderTotalMinor) / 100).toLocaleString("bn-BD")}</span> : null}
                         </div>
                       </div>
@@ -1054,10 +1384,10 @@ export default function InboxPage() {
           {mediaItems.length === 0 ? <p className="text-sm text-slate-400">কোনো মিডিয়া পাওয়া যায়নি।</p> : (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {mediaItems.map((m: any) => (
-                <button key={m.id} className="rounded-xl bg-slate-50 p-3 text-left ring-1 ring-slate-100 hover:ring-indigo-200"
+                <button key={m.id} className="media-card"
                   onClick={() => { setViewMode("list"); void openConversation({ id: m.conversationId } as Conversation); }}>
                   <div className="flex items-center justify-between">
-                    <span className="text-lg">{m.type === "image" ? "🖼️" : m.type === "audio" ? "🎙️" : m.type === "video" ? "🎬" : "📄"}</span>
+                    <span className="media-icon-tile">{m.type === "image" ? "🖼️" : m.type === "audio" ? "🎙️" : m.type === "video" ? "🎬" : "📄"}</span>
                     {m.stored ? <span className="badge-green">💾 সংরক্ষিত</span> : <span className="badge-amber">প্ল্যাটফর্মে</span>}
                   </div>
                   <div className="mt-1 truncate text-xs font-semibold">{m.contactName ?? "গ্রাহক"} · {m.channel}</div>
@@ -1104,37 +1434,28 @@ export default function InboxPage() {
         />
         {/* ---- Conversation list + filters ---- */}
         <div className={`${mobileChat ? "hidden lg:flex" : "flex"} min-h-0 flex-col gap-2`}>
-          <input id="inbox-search" className="input shrink-0" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
-          {/* P2 smart folders — counts are server-side totals (the list page is capped). */}
-          <div className="flex shrink-0 flex-wrap gap-1.5">
-            {([
-              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
-              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
-              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
-              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি (থ্রেশহোল্ড: ইনবক্স সেটিংস)`, onClick: () => applyFolder("sla") },
-              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
-            ]).map((chip) => (
-              <button key={chip.key} title={chip.title} onClick={chip.onClick}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 transition ${chip.active ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-400"}`}>
-                {chip.label}{chip.count !== undefined && chip.count !== null ? ` (${chip.count})` : ""}
-              </button>
-            ))}
+          <div className="relative shrink-0">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" aria-hidden="true">🔍</span>
+            <input id="inbox-search" className="input w-full !pl-9" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
           </div>
           <div className="flex shrink-0 flex-wrap gap-1.5">
-            <select className="input !w-auto flex-1" value={filters.channel} onChange={(e) => onFilter({ channel: e.target.value })}>
+            <select className="filter-select" value={filters.channel} onChange={(e) => onFilter({ channel: e.target.value })}>
               <option value="">সব চ্যানেল</option><option value="whatsapp">WhatsApp</option><option value="messenger">Messenger</option><option value="instagram">Instagram</option><option value="webchat">ওয়েবসাইট চ্যাট</option>
             </select>
-            <select className="input !w-auto flex-1" value={filters.assignee} onChange={(e) => onFilter({ assignee: e.target.value })}>
+            <select className="filter-select" value={filters.assignee} onChange={(e) => onFilter({ assignee: e.target.value })}>
               <option value="">সবাই</option><option value="me">আমারগুলো</option><option value="unassigned">অনির্ধারিত</option>
             </select>
-            <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.unreadOnly ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ unreadOnly: !filters.unreadOnly })}>অপঠিত</button>
-            <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.sort === "unread" ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ sort: filters.sort === "unread" ? "recent" : "unread" })}>অপঠিত আগে</button>
-            <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.spamOnly ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ spamOnly: !filters.spamOnly })}>🚫 Spam সন্দেহ</button>
-            <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${selectMode ? "bg-slate-900 text-white" : "bg-white"}`} title="একসাথে একাধিক কথোপকথন বেছে অ্যাকশন নিন (সর্বোচ্চ ২৫টি)" onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}>☑️ বাল্ক</button>
+            <button className={`toggle-pill ${filters.unreadOnly ? "toggle-pill-active" : ""}`} onClick={() => onFilter({ unreadOnly: !filters.unreadOnly })}>অপঠিত</button>
+            <button className={`toggle-pill ${filters.sort === "unread" ? "toggle-pill-active" : ""}`} onClick={() => onFilter({ sort: filters.sort === "unread" ? "recent" : "unread" })}>অপঠিত আগে</button>
+            <button className={`toggle-pill ${filters.spamOnly ? "toggle-pill-active" : ""}`} onClick={() => onFilter({ spamOnly: !filters.spamOnly })}>🚫 Spam সন্দেহ</button>
+            <button className={`toggle-pill ${selectMode ? "toggle-pill-active" : ""}`} title="একসাথে একাধিক কথোপকথন বেছে অ্যাকশন নিন (সর্বোচ্চ ২৫টি)" onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}>☑️ বাল্ক</button>
           </div>
-          <input className="input shrink-0" placeholder="Tag দিয়ে ফিল্টার (যেমন vip)" value={filters.tag} onChange={(e) => onFilter({ tag: e.target.value })} />
+          <div className="relative shrink-0">
+            <span className="tag-input-icon" aria-hidden="true">🏷️</span>
+            <input className="input w-full !pl-9" placeholder="Tag দিয়ে ফিল্টার (যেমন vip)" value={filters.tag} onChange={(e) => onFilter({ tag: e.target.value })} />
+          </div>
           {selectedIds.size > 0 ? (
-            <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
+            <div className="shrink-0 rounded-2xl bg-indigo-50 p-2.5 shadow-sm ring-1 ring-indigo-200">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-indigo-800">{selectedIds.size}টি নির্বাচিত</span>
                 <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setSelectedIds(new Set())}>সিলেকশন মুছুন</button>
@@ -1164,32 +1485,62 @@ export default function InboxPage() {
                 <EmptyState title="কোনো VIP কথোপকথন নেই" description="থ্রেশহোল্ডের সমান বা বড় সর্বশেষ অর্ডারওয়ালা কোনো কথোপকথন এখন নেই।" />
               ) : smartFolder === "sla" ? (
                 <EmptyState title="🎉 কোনো SLA breach নেই" description="প্রথম জবাবের অপেক্ষায় থ্রেশহোল্ডের বেশি সময় ধরে কোনো কথোপকথন আটকে নেই।" />
+              ) : smartFolder === "handover" ? (
+                <EmptyState title="🎉 Handover কিউ ফাঁকা" description="Autopilot থেমে মানুষের হাতে অপেক্ষা করা কোনো কথোপকথন এখন নেই।" />
+              ) : smartFolder === "snoozed" ? (
+                <EmptyState title="😴 কোনো Snoozed কথোপকথন নেই" description="কথোপকথন খুলে 😴 Later থেকে Snooze করলে তা এখানে থাকবে এবং সময় হলে নিজে থেকে মূল তালিকায় ফিরে আসবে।" />
               ) : (
                 <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
               )
-            ) : conversations.slice(0, visibleCount).map((c, ci) => (
-              <button key={c.id} id={`conv-${c.id}`} onClick={() => { if (selectMode) { toggleSelect(c.id); return; } setFocusedIdx(ci); openConversation(c); }} className={`relative block w-full rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow ${selectMode ? "pl-9" : ""} ${selectedIds.has(c.id) ? "border-indigo-500 ring-1 ring-indigo-400" : active?.id === c.id ? "border-brand-500 ring-1 ring-brand-500/40" : ""} ${focusedIdx === ci ? "ring-2 ring-indigo-300" : ""}`}>
+            ) : conversations.slice(0, visibleCount).map((c, ci) => {
+              const slaBreach = !c.firstResponseAt && c.status !== "closed" && Boolean(c.createdAt) && Date.now() - new Date(c.createdAt as string).getTime() > (settings?.slaFirstResponseMinutes ?? 60) * 60000;
+              const assigneeName = c.assignedUserId ? memberName(c.assignedUserId) : null;
+              // CX4: handover queue chips — reason (lightly mapped,
+              // raw value as fallback), live waiting time from
+              // handoverAt ?? updatedAt, and the timed-assignment
+              // countdown while a timed assignment is still running.
+              const handoverReasonLabel = smartFolder === "handover" && c.handoverReason
+                ? HANDOVER_REASON_LABELS[c.handoverReason] ?? c.handoverReason
+                : null;
+              const waitingMinutes = smartFolder === "handover" ? Math.max(0, Math.floor((handoverTick - new Date(c.handoverAt ?? c.updatedAt ?? handoverTick).getTime()) / 60000)) : 0;
+              const waitingLabel = waitingMinutes >= 60 ? `⏳ ${Math.floor(waitingMinutes / 60)} ঘণ্টা ${waitingMinutes % 60} মিনিট` : `⏳ ${waitingMinutes} মিনিট অপেক্ষা`;
+              const timedRemaining = smartFolder === "handover" && c.assignmentKind === "timed" && c.assignedUntil && new Date(c.assignedUntil).getTime() > handoverTick
+                ? Math.ceil((new Date(c.assignedUntil).getTime() - handoverTick) / 60000) : null;
+              return (
+              <button key={c.id} id={`conv-${c.id}`} onClick={() => { if (selectMode) { toggleSelect(c.id); return; } setFocusedIdx(ci); openConversation(c); }} className={`conv-card ${selectMode ? "pl-10" : ""} ${selectedIds.has(c.id) ? "!border-indigo-500 ring-1 ring-indigo-400" : active?.id === c.id ? "conv-card-active" : ""} ${focusedIdx === ci ? "ring-2 ring-indigo-300" : ""}`}>
                 {selectMode ? (
                   <span className={`absolute left-2.5 top-3 flex h-4.5 w-4.5 items-center justify-center rounded border text-[11px] ${selectedIds.has(c.id) ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-transparent"}`} style={{ width: 18, height: 18 }}>✓</span>
                 ) : null}
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{c.channel === "webchat" && isVisitorOnline(c) ? <span title="ওয়েবসাইট ভিজিটর এখন অনলাইন (শেষ কার্যকলাপের ভিত্তিতে)" className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" /> : null}{c.contactName ?? c.contactPhone ?? "(নাম নেই)"}</span>
-                  {c.unreadCount > 0 ? <span className="rounded-full bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">{c.unreadCount}</span> : null}
-                </div>
-                <div className="truncate text-xs text-slate-500">{c.lastMessagePreview ?? ""}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
-                  <ChannelChip channel={c.channel} /><span>· {c.status}</span>
-                  {/* P2: display-only SLA breach marker — same rule as the server folder (unanswered + older than the threshold). */}
-                  {!c.firstResponseAt && c.status !== "closed" && c.createdAt && Date.now() - new Date(c.createdAt).getTime() > (settings?.slaFirstResponseMinutes ?? 60) * 60000 ? <span className="font-semibold text-red-600">· ⏰ SLA breach</span> : null}
-                  {c.channel === "whatsapp" && c.whatsappWindow ? (c.whatsappWindow.open ? <span className="text-emerald-600">· Window খোলা</span> : <span className="text-amber-600">· Window বন্ধ</span>) : null}
-                  {c.spamFlag ? <span className="font-semibold text-amber-600">· 🚫 Spam সন্দেহ</span> : null}
-                  {c.priority === "high" ? <span className="font-semibold text-red-600">· 🔥 অগ্রাধিকার</span> : null}
-                  {c.mood === "negative" ? <span title={MOOD_TITLE} className="text-red-500">· 😡</span> : c.mood === "positive" ? <span title={MOOD_TITLE}>· 😃</span> : c.mood === "neutral" ? <span title={MOOD_TITLE} className="text-slate-400">· 😐</span> : null}
-                  {c.assignedUserId ? <span>· {memberName(c.assignedUserId)}</span> : null}
-                  {(c.tags ?? []).map((t) => <span key={t} className="badge-slate">{t}</span>)}
+                <div className="flex items-start gap-2.5">
+                  <ConvAvatar name={c.contactName} phone={c.contactPhone} channel={c.channel} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center truncate font-semibold text-slate-900">{c.channel === "webchat" && isVisitorOnline(c) ? <span title="ওয়েবসাইট ভিজিটর এখন অনলাইন (শেষ কার্যকলাপের ভিত্তিতে)" className="mr-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500 align-middle" /> : null}<span className="truncate">{c.contactName ?? c.contactPhone ?? "(নাম নেই)"}</span></span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-slate-400" title={c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString("bn-BD") : undefined}>{relTime(c.lastMessageAt)}</span>
+                        {c.unreadCount > 0 ? <span className="conv-unread">{c.unreadCount}</span> : null}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500">{c.lastMessagePreview ?? ""}</div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                      <ChannelChip channel={c.channel} /><span>{c.status}</span>
+                      {slaBreach ? <span className="sla-badge">⏰ SLA breach</span> : null}
+                      {smartFolder === "handover" && handoverReasonLabel ? <span className="badge-slate !px-1.5 !py-0 !text-[10px]">{handoverReasonLabel}</span> : null}
+                      {smartFolder === "handover" ? <span className="font-semibold text-amber-600">{waitingLabel}</span> : null}
+                      {timedRemaining !== null ? <span className="font-semibold text-indigo-600">⏱️ আরও {timedRemaining} মিনিট (timed)</span> : null}
+                      {smartFolder === "snoozed" && c.snoozedUntil ? <span className="font-semibold text-indigo-600">😴 {new Date(c.snoozedUntil).toLocaleString("bn-BD")}-এ জাগবে</span> : null}
+                      {c.channel === "whatsapp" && c.whatsappWindow ? (c.whatsappWindow.open ? <span className="font-medium text-emerald-600">Window খোলা</span> : <span className="font-medium text-amber-600">Window বন্ধ</span>) : null}
+                      {c.spamFlag ? <span className="font-semibold text-amber-600">🚫 Spam সন্দেহ</span> : null}
+                      {c.priority === "high" ? <span className="font-semibold text-red-600">🔥 অগ্রাধিকার</span> : null}
+                      {c.mood ? <span className={`mood-dot ${c.mood === "negative" ? "bg-red-500" : c.mood === "positive" ? "bg-emerald-500" : "bg-slate-300"}`} title={MOOD_TITLE} /> : null}
+                      {(c.tags ?? []).map((t) => <span key={t} className="badge-slate !px-1.5 !py-0 !text-[10px]">{t}</span>)}
+                      {assigneeName ? <span className="ml-auto"><span className="agent-mini" title={assigneeName}>{initialsOf(assigneeName)}</span></span> : null}
+                    </div>
+                  </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
             {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">আরও কথোপকথন লোড হচ্ছে… ({conversations.length - visibleCount} বাকি)</div> : null}
           </div>
         </div>
@@ -1213,10 +1564,11 @@ export default function InboxPage() {
                   <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">📎 ছেড়ে দিন — ফাইলটি পাঠানো হবে</span>
                 </div>
               ) : null}
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+              <div className="thread-head flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2.5">
                   <button className="rounded-lg border px-2 py-1 text-xs lg:hidden" onClick={() => setMobileChat(false)}>← তালিকা</button>
-                  <div className="flex flex-wrap items-center gap-2 font-semibold"><span>{active.contactName ?? active.contactPhone}</span> <ChannelChip channel={active.channel} lg />{moodChip(active.mood)}{active.channel === "webchat" ? (() => {
+                  <span className="thread-avatar" aria-hidden="true">{initialsOf(active.contactName ?? active.contactPhone)}</span>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 font-semibold"><span className="truncate">{active.contactName ?? active.contactPhone}</span> <ChannelChip channel={active.channel} lg />{moodChip(active.mood)}{active.autoReplyPaused ? <span className="badge-red">⏸️ Autopilot থেমে আছে</span> : <span className="badge-green">🤖 Autopilot: {settings?.autoReplyMode === "auto" ? "অটো" : settings?.autoReplyMode === "draft" ? "Draft" : "বন্ধ"}</span>}{active.aiScheduleActive === false ? <span className="rounded bg-slate-700 px-2 py-0.5 text-[11px] font-semibold text-white" title="এই channel-এর AI সময়সূচি অনুযায়ী AI এখন auto-reply দেবে না — টিম চাইলে নিজে উত্তর দিতে পারবে।">🌙 AI এখন সময়সূচির বাইরে</span> : null}{active.channel === "webchat" ? (() => {
                     const live = visitorLive[active.id];
                     const typingFresh = Boolean(live?.typing && nowTick - live.at < 8000);
                     if (typingFresh) return <span className="text-xs font-semibold text-emerald-600">✍️ গ্রাহক টাইপ করছেন…</span>;
@@ -1224,35 +1576,79 @@ export default function InboxPage() {
                     return null;
                   })() : null}</div>
                 </div>
-                <div className="flex gap-1.5 text-xs">
+                <div className="flex items-center gap-1.5 text-xs">
                   <button className="rounded-lg bg-slate-100 px-2 py-1 font-medium xl:hidden" onClick={() => setCtxOpen(true)}>👤 তথ্য</button>
+                  <span className="status-switch">
                   {(["open", "pending", "closed"] as const).map((s) => (
-                    <button key={s} className={`rounded-lg px-2 py-1 font-medium ${active.status === s ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => patchConversation({ status: s })}>{s}</button>
+                    <button key={s} className={`status-switch-btn ${active.status === s ? "status-switch-btn-active" : ""}`} onClick={() => patchConversation({ status: s })}>{s}</button>
                   ))}
+                  </span>
                 </div>
+              </div>
+
+              {/* CX5: ONE-row action bar — exactly these, in order:
+                  Done · Later (snooze) · Take over · Back to AI ·
+                  Timer · Assign · Lead. The close/reopen button,
+                  the assignee select and the pipeline-stage select
+                  were RELOCATED here (same handlers as before). On
+                  small screens Later/Timer/Assign/Lead collapse
+                  into the ⋯ আরও menu; the rest stay visible. */}
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
+                <button className={cx5Btn} onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}>{active.status === "closed" ? "↩️ আবার খুলুন" : "✓ বন্ধ করুন"}</button>
+                {isActivelySnoozed(active.snoozedUntil) ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="rounded-lg bg-indigo-50 px-2.5 py-1.5 font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200/70">😴 {new Date(active.snoozedUntil as string).toLocaleString("bn-BD")} পর্যন্ত snoozed</span>
+                    <button className={cx5Btn} onClick={() => void conversationAction("unsnooze")}>এখনই জাগান</button>
+                  </span>
+                ) : (
+                  <span className="relative hidden sm:inline-flex">
+                    <button className={cx5Btn} onClick={() => { setShowSnoozeMenu((v) => !v); setShowTimerMenu(false); }}>😴 Later</button>
+                    {showSnoozeMenu ? <span className={cx5Menu}>{renderSnoozeControls()}</span> : null}
+                  </span>
+                )}
+                <button className={cx5Btn} onClick={() => void conversationAction("take-over")}>🙋 Take over</button>
+                {active.autoReplyPaused ? (
+                  <button className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200/70 transition hover:bg-emerald-100" onClick={() => void conversationAction("back-to-ai")}>🤖 Back to AI</button>
+                ) : null}
+                <span className="relative hidden sm:inline-flex">
+                  <button className={cx5Btn} onClick={() => { setShowTimerMenu((v) => !v); setShowSnoozeMenu(false); }}>⏱️ Timer{timerRemaining !== null ? ` (${timerRemaining}মি)` : ""}</button>
+                  {showTimerMenu ? <span className={cx5Menu}>{renderTimerControls()}</span> : null}
+                </span>
+                <span className="hidden sm:inline-flex">{renderAssignSelect()}</span>
+                <span className="hidden sm:inline-flex">{renderLeadSelect()}</span>
+                <span className="relative inline-flex sm:hidden">
+                  <button className={cx5Btn} onClick={() => setShowMoreMenu((v) => !v)} aria-label="আরও অ্যাকশন">⋯ আরও</button>
+                  {showMoreMenu ? (
+                    <span className={`${cx5Menu} !w-72`}>
+                      {!isActivelySnoozed(active.snoozedUntil) ? (<><span className="px-2 pt-1 text-[11px] font-bold text-slate-400">😴 Later</span>{renderSnoozeControls()}</>) : null}
+                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">⏱️ Timer</span>
+                      {renderTimerControls()}
+                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">👤 Assign</span>
+                      {renderAssignSelect()}
+                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">🎯 Lead</span>
+                      {renderLeadSelect()}
+                    </span>
+                  ) : null}
+                </span>
               </div>
 
               <div className="flex shrink-0 flex-wrap gap-1.5 lg:hidden">
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
                 {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
-                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}>{active.status === "closed" ? "↩️ আবার খুলুন" : "✓ বন্ধ করুন"}</button>
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
               </div>
 
-              {/* U5 quick actions + pipeline/outcome controls */}
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
-                <select className="rounded-lg bg-slate-100 px-2 py-1.5 font-medium" value={active.pipelineStage ?? "new"}
-                  onChange={(e) => patchConversation({ pipelineStage: e.target.value })} title="Pipeline Stage">
-                  <option value="new">🆕 New</option><option value="talking">💬 Talking</option>
-                  <option value="ordered">🛒 Ordered</option><option value="delivered">✅ Delivered</option><option value="repeat">🔁 Repeat</option>
-                </select>
-                <button className="rounded-lg bg-sky-50 px-2.5 py-1.5 font-medium text-sky-700" disabled={busy !== ""}
+              {/* U5 quick actions + outcome controls (CX5: the
+                  pipeline-stage select moved UP into the action
+                  bar as 🎯 Lead — it is not duplicated here). */}
+              <div className="toolbar-v2 text-xs">
+                <button className="rounded-lg bg-sky-50 px-2.5 py-1.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200/70 transition hover:bg-sky-100" disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
                     try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}>🚚 ট্র্যাকিং পাঠান</button>
-                <button className="rounded-lg bg-violet-50 px-2.5 py-1.5 font-medium text-violet-700" disabled={busy !== ""}
+                <button className="rounded-lg bg-violet-50 px-2.5 py-1.5 font-medium text-violet-700 ring-1 ring-inset ring-violet-200/70 transition hover:bg-violet-100" disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
                     const order = context?.orders?.[0];
@@ -1269,7 +1665,7 @@ export default function InboxPage() {
                       await refreshActive();
                     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}>📦 কুরিয়ার বুকিং</button>
-                <button className="rounded-lg bg-amber-50 px-2.5 py-1.5 font-medium text-amber-700" disabled={busy !== ""}
+                <button className="rounded-lg bg-amber-50 px-2.5 py-1.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-200/70 transition hover:bg-amber-100" disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
                     const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
@@ -1277,7 +1673,7 @@ export default function InboxPage() {
                     try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)"); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}>💸 রিফান্ড অনুরোধ</button>
-                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-medium" disabled={busy !== ""}
+                <button className="rounded-lg bg-white px-2.5 py-1.5 font-medium ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50" disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
                     try {
@@ -1289,7 +1685,7 @@ export default function InboxPage() {
                       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
                     } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
                   }}>⬇ CSV Export</button>
-                <button className="rounded-lg bg-red-50 px-2.5 py-1.5 font-medium text-red-600" disabled={busy !== ""}
+                <button className="rounded-lg bg-red-50 px-2.5 py-1.5 font-medium text-red-600 ring-1 ring-inset ring-red-200/70 transition hover:bg-red-100" disabled={busy !== ""}
                   onClick={() => { if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}>🚫 ব্লক/Spam</button>
                 {active.status !== "closed" ? (
                   <span className="ml-auto flex items-center gap-1.5">
@@ -1313,17 +1709,19 @@ export default function InboxPage() {
                   header rows above and the composer below stay put. */}
               <div ref={threadScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
               {active.autoReplyPaused ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100">
-                  <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।</span>
-                  <button className="rounded-lg bg-white px-2 py-1 font-semibold text-red-600 ring-1 ring-red-200" onClick={() => patchConversation({ autoReplyPaused: false })}>▶️ আবার চালু করুন</button>
+                <div className="alert alert-red flex-wrap !items-center justify-between gap-2 text-xs font-medium">
+                  {/* CX5: passive strip now — resuming lives in the
+                      action bar (🤖 Back to AI); the handover reason
+                      rides along when one is recorded. */}
+                  <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।{active.handoverReason ? <> · কারণ: <b>{HANDOVER_REASON_LABELS[active.handoverReason] ?? active.handoverReason}</b></> : null}</span>
                 </div>
               ) : null}
 
               {active.channel === "whatsapp" ? (
                 active.whatsappWindow?.open ? (
-                  <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">WhatsApp Window খোলা আছে · আরও {windowLeft(active.whatsappWindow)} ফ্রি-ফর্ম বার্তা পাঠানো যাবে।</p>
+                  <p className="alert alert-green text-xs">WhatsApp Window খোলা আছে · আরও {windowLeft(active.whatsappWindow)} ফ্রি-ফর্ম বার্তা পাঠানো যাবে।</p>
                 ) : (
-                  <div className="space-y-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                  <div className="alert alert-amber flex-col !items-stretch gap-2 text-xs">
                     <p className="font-semibold">WhatsApp ২৪ ঘণ্টার Window বন্ধ। ফ্রি-ফর্ম বার্তা যাবে না, শুধু অনুমোদিত Template পাঠানো যাবে।</p>
                     {templates.length ? (
                       <div className="flex flex-wrap items-center gap-2">
@@ -1347,44 +1745,51 @@ export default function InboxPage() {
                 }
                 if (!merged.length) return null;
                 return (
-                  <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 ring-1 ring-amber-100">
+                  <p className="alert alert-amber text-xs font-medium">
                     ⚠️ {merged.map((o) => o.typing ? `${o.name} উত্তর লিখছেন ✍️` : `${o.name} এই কথোপকথনটি দেখছেন 👁`).join(" · ")} — ডুপ্লিকেট উত্তর এড়াতে সমন্বয় করুন।
                   </p>
                 );
               })()}
-              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+              <div className="thread-canvas thread-scroll flex flex-col gap-2 rounded-2xl p-3 ring-1 ring-inset ring-slate-200/50">
                 {timeline.map((item, i) => {
                   const prevDay = i > 0 ? new Date(timeline[i - 1].at).toDateString() : null;
                   const thisDay = new Date(item.at).toDateString();
-                  const daySep = prevDay !== thisDay ? <div className="py-1 text-center text-[11px] font-semibold text-slate-400">{dayLabel(item.at)}</div> : null;
+                  const daySep = prevDay !== thisDay ? <div className="date-sep">{dayLabel(item.at)}</div> : null;
                   if (item.kind === "note") {
                     const n = item.note;
                     return (
                       <React.Fragment key={`note-${n.id}`}>
                         {daySep}
                         <div className="flex justify-center">
-                          <div className="w-full max-w-[85%] rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm shadow-sm">
+                          <div className="note-card fade-rise w-full max-w-[85%]">
                             <div className="text-[11px] font-bold text-amber-700">🔒 প্রাইভেট নোট · শুধু টিম দেখবে</div>
                             <div className="mt-0.5 whitespace-pre-wrap text-slate-700">{n.content}</div>
-                            <div className="mt-0.5 text-[10px] text-amber-600/80">{memberName(n.authorUserId)} · {new Date(n.createdAt).toLocaleTimeString()}</div>
+                            <div className="mt-1 flex items-center gap-1.5 text-[10px] text-amber-600/80"><span className="note-author" aria-hidden="true">{initialsOf(memberName(n.authorUserId))}</span>{memberName(n.authorUserId)} · {new Date(n.createdAt).toLocaleTimeString()}</div>
                           </div>
                         </div>
                       </React.Fragment>
                     );
                   }
                   const m = item.message;
+                  // v3 grouping (render-only spacing): a message that
+                  // directly follows another message from the SAME
+                  // direction on the SAME day sits closer — the data
+                  // and order are untouched, only the gap shrinks.
+                  const prevItem = i > 0 ? timeline[i - 1] : null;
+                  const grouped = Boolean(prevItem && prevItem.kind === "message" && prevItem.message.direction === m.direction && prevDay === thisDay);
                   return (
                     <React.Fragment key={m.id}>
                       {daySep}
-                      <div className={m.direction === "in" ? "flex justify-start" : "flex justify-end"}>
-                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.direction === "in" ? "border bg-white" : m.status === "failed" ? "bg-red-100" : "bg-gradient-to-br from-brand-500 to-violet-500 text-white shadow"}`}>
+                      <div className={`${m.direction === "in" ? "flex justify-start" : "flex justify-end"}${grouped ? " -mt-1" : ""}`}>
+                    <div className={`max-w-[80%] ${m.direction === "in" ? "inbox-msg-in" : m.status === "failed" ? "inbox-msg-failed" : "inbox-msg-out"}${m.status === "sending" ? " opacity-70" : ""}`}>
                       {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
                       {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl || m.mediaStorageKey) ? null : <div>[{m.type}]</div>}
                       <div className={`mt-0.5 text-[10px] ${m.direction === "in" ? "text-slate-400" : "opacity-75"}`}>
-                        {new Date(m.createdAt).toLocaleTimeString()}{statusIcon(m)}{m.sentByAiDraft ? " · AI Draft থেকে" : ""}{m.autoReply ? " · 🤖 অটো-রিপ্লাই" : ""}
+                        {new Date(m.createdAt).toLocaleTimeString()}{statusIcon(m)}{m.sentByAiDraft ? " · AI Draft থেকে" : ""}{m.autoReply ? " · 🤖 অটো-রিপ্লাই" : ""}{!m.autoReply && !m.sentByAiDraft && m.sentWithAiAssist ? " · AI-সহায়তায়" : ""}
                         {m.direction === "in" && m.intent && m.intent !== "other" ? <span className="ml-1 rounded bg-indigo-50 px-1 py-px font-semibold text-indigo-600" title={`আস্থা ${m.intentConfidence ?? 0}%`}>{m.intent} · {m.intentConfidence}%</span> : null}
                         {m.direction === "in" && m.content ? <button className="ml-1 font-semibold text-indigo-500 hover:underline" onClick={() => translateMsg(m)}>অনুবাদ</button> : null}
                         {m.error ? <div className="text-red-600">{m.error}</div> : null}
+                        {m.status === "failed" && m.id.startsWith("local-") ? <button className="ml-1 font-bold text-red-600 underline hover:text-red-700" onClick={() => void retryLocalSend(m.id)}>↻ আবার পাঠান</button> : null}
                       </div>
                       {translations[m.id] ? <div className="mt-1 rounded bg-white/70 px-1.5 py-1 text-[11px] italic text-slate-600">🌐 {translations[m.id]}</div> : null}
                       {m.transcription ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-600">🎙️ {m.transcription} <span className="text-slate-400">({m.transcriptionProvider})</span></div> : null}
@@ -1418,15 +1823,15 @@ export default function InboxPage() {
                     </React.Fragment>
                   );
                 })}
-                {timeline.length === 0 ? <p className="text-sm text-slate-400">কোনো বার্তা নেই</p> : null}
+                {timeline.length === 0 ? <div className="py-10 text-center"><div className="text-3xl" aria-hidden="true">💬</div><p className="mt-2 text-sm font-semibold text-slate-600">কোনো বার্তা নেই</p><p className="mt-0.5 text-xs text-slate-400">এই কথোপকথনে এখনো কোনো বার্তা আসেনি।</p></div> : null}
               </div>
 
               {drafts.map((d) => (
-                <div key={d.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div key={d.id} className="draft-card fade-rise">
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-amber-700">AI Draft {d.provider === "dev-template" ? "(Dev Template)" : `(${d.provider})`} · পাঠানো হয়নি, আপনার অনুমোদন দরকার</div>
+                    <div className="text-xs font-semibold text-slate-700">✨ AI Draft {d.provider === "dev-template" ? "(Dev Template)" : `(${d.provider})`} · পাঠানো হয়নি, আপনার অনুমোদন দরকার</div>
                     <div className="flex gap-2">
-                      <button className="rounded bg-amber-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sendDraft(d)}>অনুমোদন ও পাঠান</button>
+                      <button className="btn-ai btn-sm" disabled={busy !== ""} onClick={() => sendDraft(d)}>অনুমোদন ও পাঠান</button>
                       <button className="text-xs text-slate-500" onClick={() => dismissDraft(d.id)}>বাদ দিন</button>
                     </div>
                   </div>
@@ -1436,17 +1841,17 @@ export default function InboxPage() {
 
               </div>
 
-              <div className={`relative shrink-0 ${composerMode === "note" ? "rounded-2xl bg-amber-50 p-2 ring-2 ring-amber-300" : ""}`}>
+              <div className={`relative shrink-0 ${composerMode === "note" ? "rounded-3xl bg-amber-50 p-2.5 shadow-sm ring-2 ring-amber-300" : "composer-shell"}`}>
                 {/* P3: composer mode toggle — reply (customer) vs note (internal whisper). */}
-                <div className="mb-1.5 flex gap-1.5">
-                  <button type="button" className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${composerMode === "reply" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`} onClick={() => setComposerMode("reply")}>💬 উত্তর</button>
-                  <button type="button" className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${composerMode === "note" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`} onClick={() => { setComposerMode("note"); setIAmTyping(false); setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); setGhost(""); ghostForRef.current = ""; }}>🔒 নোট</button>
+                <div className="mb-2 inline-flex gap-0.5 rounded-full bg-slate-100 p-1 ring-1 ring-inset ring-slate-200/70">
+                  <button type="button" className={`rounded-full px-3 py-1 text-xs font-semibold transition ${composerMode === "reply" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`} onClick={() => setComposerMode("reply")}>💬 উত্তর</button>
+                  <button type="button" className={`rounded-full px-3 py-1 text-xs font-semibold transition ${composerMode === "note" ? "bg-amber-500 text-white shadow-sm" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`} onClick={() => { setComposerMode("note"); setIAmTyping(false); setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); setGhost(""); ghostForRef.current = ""; }}>🔒 নোট</button>
                 </div>
                 {composerMode === "reply" && showQuick && quickMatches.length ? (
                   <div className="absolute bottom-full left-0 right-0 z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border bg-white shadow-lg">
                     {quickMatches.map((q) => (
-                      <button key={q.id} className="block w-full px-3 py-2 text-left text-sm hover:bg-brand-50" onClick={() => { setReply(renderQuick(q.content, active)); setShowQuick(false); focusComposer(); }}>
-                        <span className="font-semibold">{q.title}</span>
+                      <button key={q.id} className="block w-full px-3 py-2 text-left text-sm hover:bg-brand-50" onClick={() => { setReply(renderQuick(q.content, active)); setUsedQuickReplyId(q.id); setShowQuick(false); focusComposer(); }}>
+                        <span className="font-semibold">{q.title}{q.timesUsed ? ` · ${q.timesUsed} বার ব্যবহৃত` : ""}</span>
                         <span className="block truncate text-xs text-slate-500">{q.content}</span>
                       </button>
                     ))}
@@ -1473,7 +1878,7 @@ export default function InboxPage() {
                       </div>
                     ) : null}
                     <textarea id="inbox-reply" ref={replyRef} rows={2} className={`input relative z-10 max-h-36 w-full flex-1 resize-y ${ghostVisible ? "bg-transparent" : ""} ${composerMode === "note" ? "border-amber-300 bg-amber-50 focus:border-amber-400 focus:ring-amber-400/20" : ""}`} placeholder={composerMode === "note" ? "টিমের জন্য প্রাইভেট নোট লিখুন — গ্রাহক কখনোই দেখবে না…" : "উত্তর লিখুন... ( / চাপলে Quick Reply · Enter = পাঠান, Shift+Enter = নতুন লাইন )"} value={reply}
-                      onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
+                      onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setUsedQuickReplyId(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
                       onBlur={() => setIAmTyping(false)}
                       onFocus={() => { if (composerMode === "reply" && reply.startsWith("/")) setShowQuick(true); }}
                       onPaste={(e) => {
@@ -1482,7 +1887,7 @@ export default function InboxPage() {
                         if (files.length) { e.preventDefault(); void sendMediaFiles(files); }
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === "Tab" && ghostVisible) { e.preventDefault(); const accepted = reply + ghost; setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = ""; setReply(accepted); focusComposer(accepted.length, accepted.length); return; }
+                        if (e.key === "Tab" && ghostVisible) { e.preventDefault(); const accepted = reply + ghost; setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = ""; setAiAssistUsed(true); setReply(accepted); focusComposer(accepted.length, accepted.length); return; }
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (composerMode === "note") { void addNote(); } else { void sendReply(); } }
                         if (e.key === "Escape") { setGhost(""); ghostForRef.current = ""; setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); }
                       }} />
@@ -1491,7 +1896,8 @@ export default function InboxPage() {
                 </div>
                 {ghostVisible ? <div className="mt-1 text-[11px] text-slate-400">✨ AI সাজেশন — Tab চাপলে বসবে · Esc চাপলে যাবে</div> : null}
                 {composerMode === "reply" ? (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="composer-group"><span className="composer-group-label">যোগ করুন</span>
                   <button className="btn-secondary btn-sm" title="Quick Reply ( / চাপলেও আসে )" onClick={() => setShowQuick((s) => !s)}>⚡</button>
                   <button className="btn-secondary btn-sm" title="ইমোজি" onClick={() => setShowEmoji((s) => !s)}>😀</button>
                   {active.channel === "whatsapp" ? (
@@ -1505,9 +1911,10 @@ export default function InboxPage() {
                   <button className="btn-secondary btn-sm" title="URL দিয়ে ছবি পাঠান" onClick={() => setShowImage((s) => !s)}>🖼️</button>
                   <button className="btn-secondary btn-sm" title="ফাইল/ছবি আপলোড করে পাঠান (সর্বোচ্চ 2MB) — ড্র্যাগ-ড্রপ ও পেস্টও চলে" disabled={busy !== ""} onClick={() => fileInputRef.current?.click()}>📎 ফাইল</button>
                   <VoiceRecorder disabled={busy !== ""} onSend={(f) => void sendMediaFiles([f])} onError={(msg) => setError(msg)} />
-                  <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
+                  </span><span className="composer-group composer-group-ai"><span className="composer-group-label">AI</span>
+                  <button className="btn-ai btn-sm" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
                   <span className="relative inline-flex">
-                    <button className="btn-secondary btn-sm disabled:opacity-50" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>✨ টোন বদলান</button>
+                    <button className="btn-ai btn-sm" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>✨ টোন বদলান</button>
                     {showToneMenu ? (
                       <span className="absolute bottom-full left-0 z-20 mb-1 flex w-40 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg">
                         <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("polite")}>মার্জিত</button>
@@ -1523,6 +1930,7 @@ export default function InboxPage() {
                   {busy === "tone" ? <span className="text-xs font-medium text-slate-500">টোন বদলানো হচ্ছে…</span> : null}
                   <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,audio/*,video/mp4,video/webm,application/pdf"
                     onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) void sendMediaFiles(files); }} />
+                  </span>
                 </div>
                 ) : null}
               </div>
@@ -1550,7 +1958,7 @@ export default function InboxPage() {
                 </div>
               ) : null}
             </div>
-          ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
+          ) : <div className="card flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center"><div className="text-4xl" aria-hidden="true">💬</div><p className="text-sm font-semibold text-slate-700">একটি কথোপকথন বেছে নিন</p><p className="max-w-xs text-xs text-slate-400">বাম দিকের তালিকা থেকে কথোপকথন খুললে বার্তা, গ্রাহকের তথ্য ও অর্ডার এখানে দেখা যাবে। J/K দিয়ে তালিকায় ঘুরুন, ⌘K দিয়ে দ্রুত খুঁজুন।</p></div>}
         </div>
 
         {/* ---- Customer context + controls + notes ----
@@ -1568,16 +1976,21 @@ export default function InboxPage() {
                 <span className="text-sm font-bold">গ্রাহক ও নিয়ন্ত্রণ</span>
                 <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>✕ বন্ধ করুন</button>
               </div>
-            <div className="card space-y-3 p-4">
+            <div className="ctx-card">
               <div className="section-title">গ্রাহক</div>
               {context?.customer ? (
                 <div className="text-sm">
-                  <div className="font-semibold">{context.customer.name ?? active.contactName ?? "—"}</div>
-                  <div className="text-slate-500">{context.customer.phone ?? active.contactPhone ?? ""}{context.customer.email ? ` · ${context.customer.email}` : ""}</div>
+                  <div className="ctx-hero flex items-center gap-3">
+                    <span className="ctx-hero-avatar" aria-hidden="true">{initialsOf(context.customer.name ?? active.contactName)}</span>
+                    <div className="min-w-0">
+                      <div className="truncate font-bold">{context.customer.name ?? active.contactName ?? "—"}</div>
+                      <div className="truncate text-xs text-white/85">{context.customer.phone ?? active.contactPhone ?? ""}{context.customer.email ? ` · ${context.customer.email}` : ""}</div>
+                    </div>
+                  </div>
                   {context.lifetime ? (
                     <div className="mt-2 grid grid-cols-2 gap-2">
-                      <div className="rounded-xl bg-slate-50 p-2.5"><div className="text-[11px] uppercase text-slate-400">মোট অর্ডার</div><div className="font-bold">{context.lifetime.orderCount}টি</div></div>
-                      <div className="rounded-xl bg-slate-50 p-2.5"><div className="text-[11px] uppercase text-slate-400">Lifetime কেনাকাটা</div><div className="font-bold">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div></div>
+                      <div className="ctx-tile"><div className="ctx-tile-label">মোট অর্ডার</div><div className="ctx-tile-value">{context.lifetime.orderCount}টি</div></div>
+                      <div className="ctx-tile"><div className="ctx-tile-label">Lifetime কেনাকাটা</div><div className="ctx-tile-value">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div></div>
                     </div>
                   ) : null}
                 </div>
@@ -1590,12 +2003,26 @@ export default function InboxPage() {
                   {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
                 </div>
               ) : null}
+              {context?.courierRecord ? (
+                <div className="rounded-xl bg-slate-50/70 p-2.5 shadow-sm ring-1 ring-slate-200/70">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                    <span className="font-semibold">🚚 ডেলিভারি সফলতার হার:</span>
+                    {context.courierRecord.decided > 0 ? (
+                      <>
+                        <span className="font-bold text-emerald-700">{context.courierRecord.successRatePct}%</span>
+                        <span className="text-slate-500">· সিদ্ধান্ত হয়েছে {context.courierRecord.decided}টি অর্ডারে (ডেলিভারি {context.courierRecord.delivered}টি)</span>
+                      </>
+                    ) : <span className="text-slate-500">এখনো কোনো ডেলিভারি ইতিহাস নেই</span>}
+                    <span className="text-slate-500">· রিটার্ন ঝুঁকি: {COURIER_RISK_BAND_BN[context.courierRecord.riskBand] ?? context.courierRecord.riskBand}{context.courierRecord.riskScore != null ? ` (স্কোর ${context.courierRecord.riskScore}/১০০)` : ""}</span>
+                  </div>
+                </div>
+              ) : null}
               {context?.orders?.length ? (
                 <div>
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
                   <div className="space-y-1.5">
                     {context.orders.map((o) => (
-                      <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                      <div key={o.id} className="ctx-order">
                         <div className="flex items-center justify-between">
                           <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
                           <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
@@ -1619,7 +2046,7 @@ export default function InboxPage() {
             </div>
 
             {profile ? (
-              <div className="card space-y-3 p-4">
+              <div className="ctx-card">
                 <div className="section-title">🎯 Command Profile</div>
                 <div className="flex flex-wrap gap-1.5 text-[11px]">
                   <span className="badge-indigo">Stage: {profile.conversation.pipelineStage}</span>
@@ -1632,7 +2059,7 @@ export default function InboxPage() {
                     <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
                     <div className="space-y-1">
                       {profile.conversations.map((c: any) => (
-                        <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
+                        <button key={c.id} className="flex w-full items-center justify-between rounded-xl bg-slate-50 px-2 py-1.5 text-left text-xs ring-1 ring-inset ring-slate-200/50 transition hover:bg-slate-100"
                           onClick={() => { if (c.id !== active.id) void openConversation({ id: c.id } as Conversation); }}>
                           <span className="flex items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? "—"}</span></span>
                           <span className="shrink-0 text-slate-400">{c.status}</span>
@@ -1645,7 +2072,7 @@ export default function InboxPage() {
                   <div>
                     <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
                     {profile.payments.verifications.map((v: any) => (
-                      <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
+                      <div key={v.id} className="rounded-xl bg-slate-50 px-2 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
                         {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
                       </div>
                     ))}
@@ -1654,7 +2081,7 @@ export default function InboxPage() {
               </div>
             ) : null}
 
-            <div className="card space-y-3 p-4">
+            <div className="ctx-card">
               <div className="section-title">দায়িত্ব ও Tag</div>
               {active.spamFlag ? (
                 <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
@@ -1683,7 +2110,7 @@ export default function InboxPage() {
                   <button className="text-xs font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={summarize}>{busy === "summary" ? "তৈরি হচ্ছে..." : "তৈরি করুন"}</button>
                 </div>
                 {active.summaryText ? (
-                  <div className="whitespace-pre-line rounded-xl bg-slate-50 p-2.5 text-xs text-slate-600">{active.summaryText}
+                  <div className="ctx-subcard whitespace-pre-line text-xs text-slate-600">{active.summaryText}
                     <div className="mt-1 text-[10px] text-slate-400">{active.summaryProvider} · {active.summaryAt ? new Date(active.summaryAt).toLocaleString() : ""}</div>
                   </div>
                 ) : <p className="text-xs text-slate-400">এখনো সারসংক্ষেপ তৈরি হয়নি।</p>}
@@ -1694,7 +2121,7 @@ export default function InboxPage() {
                   <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
                 </div>
                 {orderOpen ? (
-                  <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
+                  <div className="ctx-subcard space-y-2">
                     {orderItems.map((it, idx) => (
                       <div key={idx} className="flex items-center gap-1.5">
                         <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
@@ -1715,12 +2142,9 @@ export default function InboxPage() {
                   </div>
                 ) : null}
               </div>
-              <label className="block text-sm">Assignee
-                <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
-                  <option value="">কেউ নয়</option>
-                  {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
-                </select>
-              </label>
+              {/* CX5: the Assignee select moved UP into the
+                  one-row action bar (👤 Assign) — not duplicated
+                  here. The panel keeps tags + everything else. */}
               <div>
                 <div className="mb-1 flex flex-wrap gap-1">
                   {(active.tags ?? []).map((t) => (
@@ -1741,49 +2165,89 @@ export default function InboxPage() {
         ) : null}
       </div>
 
+      {viewMode === "manage" ? (
+        <div className="manage-nav" role="navigation" aria-label="সেটিংস বিভাগ">
+          {([
+            { id: "inbox-manage-settings", icon: "⚙️", label: "সেটিংস" },
+            { id: "inbox-manage-performance", icon: "🙋", label: "পারফরম্যান্স" },
+            { id: "inbox-manage-report", icon: "📊", label: "রিপোর্ট" },
+            { id: "inbox-manage-teams", icon: "👥", label: "টিম" },
+            { id: "inbox-manage-connect", icon: "🔌", label: "কানেক্ট" },
+            { id: "inbox-manage-quick", icon: "⚡", label: "Quick Reply" },
+          ]).map((chip) => (
+            <button key={chip.id} className="manage-nav-btn" onClick={() => document.getElementById(chip.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{chip.icon} {chip.label}</button>
+          ))}
+        </div>
+      ) : null}
+
       <div className={`${viewMode === "list" ? "hidden" : ""} grid gap-4 xl:grid-cols-2`}>
-        <div className="card space-y-3 p-5">
-          <div className="section-title">🤖 Auto-Reply ও Inbox সেটিংস</div>
+        {/* UX1 Q2: attention preferences — per agent, this browser
+            only (localStorage). Deliberately NOT an org setting. */}
+        <div className="manage-card fade-rise space-y-3 xl:col-span-2">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🔔</span><div className="section-title">নতুন মেসেজের সাড়া</div></div>
+          <p className="text-xs text-slate-500">এই পছন্দগুলো শুধু আপনার, এই ব্রাউজারেই থাকে — পুরো টিম বা Organization-এর সেটিং নয়। ট্যাব পেছনে থাকা অবস্থায় অন্য কথোপকথনে গ্রাহকের মেসেজ এলেই সাড়া মিলবে; যে কথোপকথন খুলে রেখেছেন সেটায় নয়।</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`toggle-pill ${notifyOn ? "toggle-pill-active" : ""}`}
+              aria-pressed={notifyOn}
+              onClick={async () => {
+                if (notifyOn) { setNotifyOn(false); return; }
+                if (typeof Notification === "undefined") { setError("এই ব্রাউজার ডেস্কটপ নোটিফিকেশন সমর্থন করে না।"); return; }
+                try {
+                  const p = await Notification.requestPermission();
+                  if (p === "granted") { setNotifyOn(true); setNotice("ডেস্কটপ নোটিফিকেশন চালু হয়েছে (শুধু এই ব্রাউজারে, আপনার জন্য)।"); }
+                  else setError("নোটিফিকেশনের অনুমতি পাওয়া যায়নি — ব্রাউজারের Address bar-এর পাশের সাইট সেটিংস থেকে অনুমতি দিয়ে আবার চেষ্টা করুন।");
+                } catch { setError("নোটিফিকেশনের অনুমতি চাওয়া যায়নি এই ব্রাউজারে।"); }
+              }}
+            >🔔 ডেস্কটপ নোটিফিকেশন: {notifyOn ? "চালু" : "বন্ধ"}</button>
+            <button
+              className={`toggle-pill ${soundOn ? "toggle-pill-active" : ""}`}
+              aria-pressed={soundOn}
+              onClick={() => setSoundOn((v) => !v)}
+            >🔊 হালকা শব্দ: {soundOn ? "চালু" : "বন্ধ"}</button>
+          </div>
+        </div>
+        <div id="inbox-manage-settings" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🤖</span><div className="section-title">Auto-Reply ও Inbox সেটিংস</div></div>
           <p className="text-xs text-slate-500">অটো-রিপ্লাই শুধুমাত্র যাচাই করা ডেটা (আসল দাম/স্টক, নিজের Policy, আসল Order Status) দিয়ে উত্তর দেয়। ডেটা না মিললে কিছুই পাঠায় না। Complaint ও অজানা প্রশ্নে কখনো অটো-রিপ্লাই হয় না।</p>
           {settings ? (
             <div className="space-y-2.5 text-sm">
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block">মোড
-                  <select className="input mt-1" value={settings.autoReplyMode} onChange={(e) => saveSettings({ autoReplyMode: e.target.value })}>
+              <div className="space-y-2">
+                <label className="setting-row"><span className="setting-row-label">মোড</span>
+                  <span className="setting-row-control"><select className="input" value={settings.autoReplyMode} onChange={(e) => saveSettings({ autoReplyMode: e.target.value })}>
                     <option value="off">বন্ধ</option><option value="draft">শুধু Draft সাজেস্ট</option><option value="auto">অটো পাঠান</option>
-                  </select>
+                  </select></span>
                 </label>
-                <label className="block">আস্থার থ্রেশহোল্ড (%)
-                  <input className="input mt-1" type="number" min={0} max={100} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} onBlur={() => saveSettings({ confidenceThreshold: settings.confidenceThreshold })} />
+                <label className="setting-row"><span className="setting-row-label">আস্থার থ্রেশহোল্ড (%)</span>
+                  <span className="setting-row-control"><input className="input" type="number" min={0} max={100} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} onBlur={() => saveSettings({ confidenceThreshold: settings.confidenceThreshold })} /></span>
                 </label>
-                <label className="block">Smart Assignment
-                  <select className="input mt-1" value={settings.smartAssign} onChange={(e) => saveSettings({ smartAssign: e.target.value })}>
+                <label className="setting-row"><span className="setting-row-label">Smart Assignment</span>
+                  <span className="setting-row-control"><select className="input" value={settings.smartAssign} onChange={(e) => saveSettings({ smartAssign: e.target.value })}>
                     <option value="off">বন্ধ</option><option value="round_robin">Round-robin</option><option value="least_busy">কম ব্যস্তজনকে</option>
-                  </select>
+                  </select></span>
                 </label>
-                <label className="block">অর্ডার Bot
-                  <select className="input mt-1" value={settings.botEnabled ? "on" : "off"} onChange={(e) => saveSettings({ botEnabled: e.target.value === "on" })}>
+                <label className="setting-row"><span className="setting-row-label">অর্ডার Bot</span>
+                  <span className="setting-row-control"><select className="input" value={settings.botEnabled ? "on" : "off"} onChange={(e) => saveSettings({ botEnabled: e.target.value === "on" })}>
                     <option value="off">বন্ধ</option><option value="on">চালু (Order নেবে)</option>
-                  </select>
+                  </select></span>
                 </label>
-                <label className="block">Bot ডেলিভারি চার্জ (৳, ফাঁকা = টিম জানাবে)
-                  <input className="input mt-1" type="number" min={0} value={settings.botDeliveryChargeMinor != null ? Math.round(settings.botDeliveryChargeMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, botDeliveryChargeMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ botDeliveryChargeMinor: settings.botDeliveryChargeMinor ?? null })} />
+                <label className="setting-row"><span className="setting-row-label">Bot ডেলিভারি চার্জ (৳, ফাঁকা = টিম জানাবে)</span>
+                  <span className="setting-row-control"><input className="input" type="number" min={0} value={settings.botDeliveryChargeMinor != null ? Math.round(settings.botDeliveryChargeMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, botDeliveryChargeMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ botDeliveryChargeMinor: settings.botDeliveryChargeMinor ?? null })} /></span>
                 </label>
-                <label className="block">SLA প্রথম উত্তর (মিনিট)
-                  <input className="input mt-1" type="number" min={1} value={settings.slaFirstResponseMinutes} onChange={(e) => setSettings({ ...settings, slaFirstResponseMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaFirstResponseMinutes: settings.slaFirstResponseMinutes })} />
+                <label className="setting-row"><span className="setting-row-label">SLA প্রথম উত্তর (মিনিট)</span>
+                  <span className="setting-row-control"><input className="input" type="number" min={1} value={settings.slaFirstResponseMinutes} onChange={(e) => setSettings({ ...settings, slaFirstResponseMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaFirstResponseMinutes: settings.slaFirstResponseMinutes })} /></span>
                 </label>
-                <label className="block">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)
-                  <input className="input mt-1" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} />
+                <label className="setting-row"><span className="setting-row-label">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)</span>
+                  <span className="setting-row-control"><input className="input" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} /></span>
                 </label>
-                <label className="block">Retention — বন্ধ কথোপকথন মোছা (দিন, ফাঁকা = কখনো নয়)
-                  <input className="input mt-1" type="number" min={7} max={3650} placeholder="বন্ধ" value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} />
-                  <span className="text-[11px] text-slate-400">Automation এ "Inbox Retention" Job চালালে মেয়াদ শেষ বন্ধ Thread মুছে যাবে (খোলা Thread কখনো নয়)।</span>
+                <label className="setting-row"><span className="setting-row-label">Retention — বন্ধ কথোপকথন মোছা (দিন, ফাঁকা = কখনো নয়)<span className="setting-row-help">Automation এ "Inbox Retention" Job চালালে মেয়াদ শেষ বন্ধ Thread মুছে যাবে (খোলা Thread কখনো নয়)।</span></span>
+                  <span className="setting-row-control"><input className="input" type="number" min={7} max={3650} placeholder="বন্ধ" value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} /></span>
                 </label>
-                <label className="block">Escalation টিম (অভিযোগ/জরুরি)
-                  <select className="input mt-1" value={settings.escalationTeamId ?? ""} onChange={(e) => saveSettings({ escalationTeamId: e.target.value || null })}>
+                <label className="setting-row"><span className="setting-row-label">Escalation টিম (অভিযোগ/জরুরি)</span>
+                  <span className="setting-row-control"><select className="input" value={settings.escalationTeamId ?? ""} onChange={(e) => saveSettings({ escalationTeamId: e.target.value || null })}>
                     <option value="">কোনোটিই নয়</option>
                     {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
+                  </select></span>
                 </label>
               </div>
               <div>
@@ -1807,6 +2271,69 @@ export default function InboxPage() {
                 <p className="mt-1 text-[11px] text-slate-400">Escalation হয়: অভিযোগ/নেতিবাচক ভাব, "এজেন্ট চাই" জাতীয় অনুরোধ, পরপর ২টি বোঝা-যায়নি বার্তা, উচ্চ-মূল্যের অর্ডার। থামলে Thread এ ব্যানার আসবে; মানুষের উত্তর দিলেই আবার চালু হয়। LLM Tier শুধু যাচাই করা তথ্যই বলতে পারে — সংখ্যা মিল না খেলে পাঠানো হয় না।</p>
               </div>
               <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">⏳ উত্তরের আগে অপেক্ষা</div>
+                <label className="block text-xs">অপেক্ষা (সেকেন্ড, 0–600)
+                  <input className="input mt-0.5" type="number" min={0} max={600} value={settings.aiReplyDelaySeconds ?? 0} onChange={(e) => setSettings({ ...settings, aiReplyDelaySeconds: Number(e.target.value) })} onBlur={() => saveSettings({ aiReplyDelaySeconds: settings.aiReplyDelaySeconds ?? 0 })} />
+                </label>
+                <p className="mt-1 text-[11px] text-slate-400">0 = সঙ্গে সঙ্গে উত্তর (আগের আচরণ)। 30–60 সেকেন্ড রাখলে customer পরপর কয়েকটি message পাঠালে AI সবগুলো পড়ে একটাই উত্তর দেবে। কার্যকর হতে Automations পেজ থেকে &apos;Inbox Auto-Reply Sweep&apos; job চালু থাকতে হবে। অভিযোগ বা মানুষের অনুরোধ এলে অপেক্ষা না করে সঙ্গে সঙ্গে টিমের কাছে যাবে।</p>
+                <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                    <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
+                      <input className="input mt-0.5" type="number" min={0} max={600} placeholder="গ্লোবাল" value={settings.aiReplyDelayByChannel?.[ch] ?? ""} onChange={(e) => {
+                        const aiReplyDelayByChannel = { ...(settings.aiReplyDelayByChannel ?? {}) };
+                        if (e.target.value === "" || Number(e.target.value) === 0) delete aiReplyDelayByChannel[ch]; else aiReplyDelayByChannel[ch] = Number(e.target.value);
+                        setSettings({ ...settings, aiReplyDelayByChannel });
+                      }} onBlur={() => saveSettings({ aiReplyDelayByChannel: settings.aiReplyDelayByChannel ?? {} })} />
+                      <span className="text-[10px] text-slate-400">সেকেন্ড (ফাঁকা/0 = org মান)</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">🗓️ Channelভিত্তিক AI সময়সূচি</div>
+                {(() => {
+                  const draft: AiScheduleMap = scheduleDraft ?? settings.aiScheduleByChannel ?? {};
+                  const setEntry = (ch: string, entry: AiScheduleEntry) => setScheduleDraft({ ...draft, [ch]: entry });
+                  return (
+                    <>
+                      {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => {
+                        const entry: AiScheduleEntry = draft[ch] ?? { enabled: false, windows: [] };
+                        const setWindow = (wi: number, w: AiScheduleWindow) => setEntry(ch, { ...entry, windows: entry.windows.map((x, i) => (i === wi ? w : x)) });
+                        return (
+                          <div key={ch} className="mt-2 rounded-lg border border-slate-200 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <ChannelChip channel={ch} />
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input type="checkbox" checked={entry.enabled} onChange={(e) => setEntry(ch, { ...entry, enabled: e.target.checked })} /> সময়সূচি চালু
+                              </label>
+                            </div>
+                            {entry.windows.map((w, wi) => (
+                              <div key={wi} className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                                <span className="flex flex-wrap gap-1">
+                                  {(["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"] as const).map((label, d) => {
+                                    const on = w.days.includes(d);
+                                    return (
+                                      <button key={d} type="button" className={`rounded px-1.5 py-0.5 ring-1 ring-inset ${on ? "bg-brand-500 font-semibold text-white ring-brand-500" : "bg-slate-100 text-slate-600 ring-slate-200"}`} onClick={() => setWindow(wi, { ...w, days: on ? w.days.filter((x) => x !== d) : [...w.days, d].sort((a, b) => a - b) })}>{label}</button>
+                                    );
+                                  })}
+                                </span>
+                                <input className="input w-auto" type="time" value={w.start} onChange={(e) => setWindow(wi, { ...w, start: e.target.value })} />
+                                <span className="text-slate-400">–</span>
+                                <input className="input w-auto" type="time" value={w.end} onChange={(e) => setWindow(wi, { ...w, end: e.target.value })} />
+                                <button type="button" className="rounded bg-slate-100 px-2 py-1 font-medium text-slate-600" onClick={() => setEntry(ch, { ...entry, windows: entry.windows.filter((_, i) => i !== wi) })}>✕ সরান</button>
+                              </div>
+                            ))}
+                            <button type="button" className="mt-2 rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700" onClick={() => setEntry(ch, { ...entry, windows: [...entry.windows, { days: [0, 1, 2, 3, 4], start: "09:00", end: "22:00" }] })}>+ সময় যোগ করুন</button>
+                          </div>
+                        );
+                      })}
+                      <button type="button" className="mt-2 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white" onClick={async () => { await saveSettings({ aiScheduleByChannel: draft }); setScheduleDraft(null); }}>💾 সময়সূচি সেভ করুন</button>
+                      <p className="mt-1 text-[11px] text-slate-400">সময়সূচি চালু থাকলে AI শুধু নির্ধারিত সময়েই auto-reply ও order নেবে। সময়ের বাইরে message এলে AI উত্তর দেবে না — টিমের জন্য অপেক্ষা করবে (পরে নিজে থেকে উত্তর যাবে না)। অভিযোগ/মানুষের অনুরোধের escalation সময়সূচির বাইরেও সঙ্গে সঙ্গে হবে। Organization-এর timezone অনুযায়ী সময় ধরা হয়। চালু করে কোনো সময় না দিলে AI ওই channel-এ বন্ধ থাকবে।</p>
+                    </>
+                  );
+                })()}
+              </div>
+              <div>
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Intent অনুযায়ী মোড (ফাঁকা = গ্লোবাল)</div>
                 <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                   {(["price", "stock", "delivery", "order_status", "payment"] as const).map((intent) => (
@@ -1823,21 +2350,27 @@ export default function InboxPage() {
                 </div>
               </div>
             </div>
-          ) : <p className="text-xs text-slate-400">সেটিংস লোড হচ্ছে...</p>}
+          ) : (
+            <div className="space-y-2" role="status" aria-label="সেটিংস লোড হচ্ছে">
+              <div className="skeleton h-11 w-full" />
+              <div className="skeleton h-11 w-full" />
+              <div className="skeleton h-11 w-2/3" />
+            </div>
+          )}
         </div>
 
-        <div className="card space-y-3 p-5">
-          <div className="section-title">🙋 আমার পারফরম্যান্স ও স্বাক্ষর</div>
+        <div id="inbox-manage-performance" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🙋</span><div className="section-title">আমার পারফরম্যান্স ও স্বাক্ষর</div></div>
           {myPerf?.me ? (
             <div className="flex flex-wrap gap-1.5 text-xs">
-              <span className="rounded bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">সূচক {myPerf.me.indicator}/১০০{myPerf.rank ? ` · Rank #${myPerf.rank}/${myPerf.totalAgents}` : ""}</span>
-              <span className="rounded bg-slate-100 px-2 py-1">দায়িত্ব {myPerf.me.current.assigned}</span>
-              <span className="rounded bg-slate-100 px-2 py-1">বন্ধ {myPerf.me.current.closed}</span>
-              <span className="rounded bg-slate-100 px-2 py-1">জবাব {myPerf.me.current.replies}</span>
-              <span className="rounded bg-slate-100 px-2 py-1">গড় প্রথম উত্তর {myPerf.me.current.avgFirstResponseMinutes != null ? `${myPerf.me.current.avgFirstResponseMinutes} মিনিট` : "—"}</span>
-              <span className="rounded bg-slate-100 px-2 py-1">CSAT {myPerf.me.current.csatAvg != null ? `⭐ ${myPerf.me.current.csatAvg}` : "—"}</span>
-              {myPerf.today ? <span className="rounded bg-amber-100 px-2 py-1 text-amber-800">এখন আমার খোলা: {myPerf.today.openNow}টি</span> : null}
-              {myPerf.today ? <span className="rounded bg-slate-100 px-2 py-1">আজ: {myPerf.today.state === "active" ? "🟢 সক্রিয়" : myPerf.today.state === "idle" ? "🟡 অলস" : myPerf.today.state === "away" ? "⚪ দূরে" : "⚫ অফলাইন"} · জবাব {myPerf.today.repliesToday} · বন্ধ {myPerf.today.closedToday}</span> : null}
+              <span className="badge-indigo !px-2 !py-1 !text-xs">সূচক {myPerf.me.indicator}/১০০{myPerf.rank ? ` · Rank #${myPerf.rank}/${myPerf.totalAgents}` : ""}</span>
+              <span className="badge-slate !px-2 !py-1 !text-xs">দায়িত্ব {myPerf.me.current.assigned}</span>
+              <span className="badge-slate !px-2 !py-1 !text-xs">বন্ধ {myPerf.me.current.closed}</span>
+              <span className="badge-slate !px-2 !py-1 !text-xs">জবাব {myPerf.me.current.replies}</span>
+              <span className="badge-slate !px-2 !py-1 !text-xs">গড় প্রথম উত্তর {myPerf.me.current.avgFirstResponseMinutes != null ? `${myPerf.me.current.avgFirstResponseMinutes} মিনিট` : "—"}</span>
+              <span className="badge-slate !px-2 !py-1 !text-xs">CSAT {myPerf.me.current.csatAvg != null ? `⭐ ${myPerf.me.current.csatAvg}` : "—"}</span>
+              {myPerf.today ? <span className="badge-amber !px-2 !py-1 !text-xs">এখন আমার খোলা: {myPerf.today.openNow}টি</span> : null}
+              {myPerf.today ? <span className="badge-slate !px-2 !py-1 !text-xs">আজ: {myPerf.today.state === "active" ? "🟢 সক্রিয়" : myPerf.today.state === "idle" ? "🟡 অলস" : myPerf.today.state === "away" ? "⚪ দূরে" : "⚫ অফলাইন"} · জবাব {myPerf.today.repliesToday} · বন্ধ {myPerf.today.closedToday}</span> : null}
             </div>
           ) : <p className="text-xs text-slate-400">আপনার Role টি এজেন্ট হিসেবে গণনা হয় না, তাই নিজের স্কোরকার্ড নেই — পুরো হিসাব Team Performance পেজে।</p>}
           <div className="border-t pt-2">
@@ -1860,8 +2393,8 @@ export default function InboxPage() {
           </div>
         </div>
 
-        <div className="card space-y-3 p-5">
-          <div className="section-title">📊 টিম রিপোর্ট (শেষ ৭ দিন)</div>
+        <div id="inbox-manage-report" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">📊</span><div className="section-title">টিম রিপোর্ট (শেষ ৭ দিন)</div></div>
           <div className="mb-2 flex items-center gap-2 text-xs">
             <span className="text-slate-500">পরিসর:</span>
             <select className="input w-52" defaultValue="" onChange={async (e) => {
@@ -1879,19 +2412,69 @@ export default function InboxPage() {
           {report ? (
             <div className="space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div className="rounded-xl bg-slate-50 p-2.5"><div className="text-[11px] uppercase text-slate-400">নতুন কথোপকথন</div><div className="text-lg font-bold">{report.opened}</div></div>
-                <div className="rounded-xl bg-slate-50 p-2.5"><div className="text-[11px] uppercase text-slate-400">বন্ধ হয়েছে</div><div className="text-lg font-bold">{report.closed}</div></div>
-                <div className="rounded-xl bg-slate-50 p-2.5"><div className="text-[11px] uppercase text-slate-400">গড় প্রথম উত্তর</div><div className="text-lg font-bold">{report.avgFirstResponseMinutes != null ? `${report.avgFirstResponseMinutes} মিনিট` : "—"}</div></div>
-                <div className={`rounded-xl p-2.5 ${report.currentBreaches > 0 ? "bg-red-50" : "bg-slate-50"}`}><div className="text-[11px] uppercase text-slate-400">SLA ভঙ্গ (এখন)</div><div className={`text-lg font-bold ${report.currentBreaches > 0 ? "text-red-600" : ""}`}>{report.currentBreaches}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">নতুন কথোপকথন</div><div className="ctx-tile-value">{report.opened}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">বন্ধ হয়েছে</div><div className="ctx-tile-value">{report.closed}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">গড় প্রথম উত্তর</div><div className="ctx-tile-value">{report.avgFirstResponseMinutes != null ? `${report.avgFirstResponseMinutes} মিনিট` : "—"}</div></div>
+                <div className={`ctx-tile ${report.currentBreaches > 0 ? "!bg-red-50 ring-red-200/60" : ""}`}><div className="ctx-tile-label">SLA ভঙ্গ (এখন)</div><div className={`ctx-tile-value ${report.currentBreaches > 0 ? "!text-red-600" : ""}`}>{report.currentBreaches}</div></div>
               </div>
               <div className="text-xs text-slate-500">চ্যাট-যুক্ত গ্রাহকদের অর্ডার: <span className="font-semibold text-slate-700">{report.chatLinkedOrders}টি</span> · আয়: <span className="font-semibold text-slate-700">{money(report.chatLinkedRevenueMinor, report.chatLinkedCurrency)}</span></div>
               {report.autopilot ? (
                 <div className="text-xs text-slate-500">🤖 Autopilot: পাঠানো <span className="font-semibold text-slate-700">{report.autopilot.autoSent}টি</span> (LLM {report.autopilot.llmSent}টি) · Draft সাজেস্ট <span className="font-semibold text-slate-700">{report.autopilot.draftsSuggested}টি</span> · এখন থেমে আছে <span className="font-semibold text-slate-700">{report.autopilot.escalatedNow}টি</span> কথোপকথনে</div>
               ) : null}
+              {report.replyQuality ? (
+                <div className="space-y-2 border-t pt-2">
+                  <div className="text-xs font-semibold text-slate-500">🤖 Reply Quality</div>
+                  <div className="text-xs text-slate-500">
+                    AI Draft গ্রহণের হার: <span className="font-semibold text-slate-700">{report.replyQuality.drafts.acceptanceRatePct != null ? `${report.replyQuality.drafts.acceptanceRatePct}%` : "তথ্য নেই"}</span>
+                    <span> (পাঠানো {report.replyQuality.drafts.sent} · বাতিল {report.replyQuality.drafts.dismissed})</span>
+                    <div className="text-[11px] text-slate-400">সাজেস্ট করা ড্রাফটগুলোর মধ্যে যেগুলো আসলে পাঠানো হয়েছে; এখনো pending ড্রাফট এই হিসাবে নেই।</div>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    পাঠানোর আগে সম্পাদনা: <span className="font-semibold text-slate-700">{report.replyQuality.drafts.editedSharePct != null ? `${report.replyQuality.drafts.editedSharePct}%` : "তথ্য নেই"}</span>
+                    <div className="text-[11px] text-slate-400">পাঠানো ড্রাফটের কতগুলো এজেন্ট বদলে পাঠিয়েছেন।</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-semibold text-slate-500">CSAT ভাগ</div>
+                    {([["aiOnly", "🤖 শুধু AI"], ["humanOnly", "👤 শুধু মানব"], ["mixed", "🤝 মিশ্র"]] as const).map(([key, label]) => (
+                      <div key={key} className="flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
+                        <span className="font-medium">{label}</span>
+                        <span>{report.replyQuality.csat[key].avgRating != null ? `⭐ ${report.replyQuality.csat[key].avgRating}` : "তথ্য নেই"} · {report.replyQuality.csat[key].count}টি</span>
+                      </div>
+                    ))}
+                    <div className="text-[11px] text-slate-400">বন্ধ হওয়া কথোপকথনের CSAT — AI-handled মানে কোনো মানব-উত্তর ছাড়াই অটো-রিপ্লাইয়ে শেষ হয়েছে।</div>
+                  </div>
+                  {(report.replyQuality.perAgentAssist ?? []).length ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500">
+                            <th className="py-1 pr-2 font-semibold">এজেন্ট</th>
+                            <th className="py-1 pr-2 font-semibold">পাঠানো</th>
+                            <th className="py-1 pr-2 font-semibold">AI Draft</th>
+                            <th className="py-1 pr-2 font-semibold">AI-সহায়তা</th>
+                            <th className="py-1 font-semibold">Quick Reply</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.replyQuality.perAgentAssist.map((a: any) => (
+                            <tr key={a.userId} className="border-t border-slate-100">
+                              <td className="py-1 pr-2 font-medium">{agentLabel(a.userId)}</td>
+                              <td className="py-1 pr-2">{a.sent}</td>
+                              <td className="py-1 pr-2">{a.aiDraftCount}</td>
+                              <td className="py-1 pr-2">{a.aiAssistedCount}</td>
+                              <td className="py-1">{a.quickReplyCount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {(report.perAgent ?? []).length ? (
                 <div className="space-y-1">
                   {report.perAgent.map((a: any) => (
-                    <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                    <div key={a.userId} className="flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
                       <span className="font-medium">{memberName(a.userId)}</span>
                       <span>দায়িত্ব {a.assigned} · খোলা {a.openNow ?? 0} · বন্ধ {a.closed} · গড় উত্তর {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes} মিনিট` : "—"} · সমাধান {a.avgResolutionMinutes != null ? `${a.avgResolutionMinutes} মিনিট` : "—"}{a.csatAvg != null ? ` · ⭐ ${a.csatAvg}` : ""}</span>
                     </div>
@@ -1902,7 +2485,7 @@ export default function InboxPage() {
                 <div className="space-y-1 border-t pt-2">
                   <div className="text-xs font-semibold text-slate-500">টিম অনুযায়ী (একজন একাধিক টিমে থাকলে দুই জায়গাতেই গোনা হয়)</div>
                   {report.perTeam.map((t: any) => (
-                    <div key={t.teamId} className="flex items-center justify-between rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs">
+                    <div key={t.teamId} className="flex items-center justify-between rounded-xl bg-indigo-50 px-2.5 py-1.5 text-xs ring-1 ring-inset ring-indigo-200/50">
                       <span className="font-medium">{t.name}{t.leadUserId ? ` · লিড: ${memberName(t.leadUserId)}` : ""}</span>
                       <span>সদস্য {t.memberCount} · দায়িত্ব {t.assigned} · খোলা {t.openNow} · বন্ধ {t.closed} · গড় উত্তর {t.avgFirstResponseMinutes != null ? `${t.avgFirstResponseMinutes} মিনিট` : "—"}{t.csatAvg != null ? ` · ⭐ ${t.csatAvg}` : ""}</span>
                     </div>
@@ -1920,15 +2503,23 @@ export default function InboxPage() {
                 </div>
               ) : null}
             </div>
-          ) : <p className="text-xs text-slate-400">রিপোর্ট লোড হচ্ছে...</p>}
+          ) : (
+            <div className="space-y-2" role="status" aria-label="রিপোর্ট লোড হচ্ছে">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="skeleton h-16" /><div className="skeleton h-16" /><div className="skeleton h-16" /><div className="skeleton h-16" />
+              </div>
+              <div className="skeleton h-8 w-full" />
+              <div className="skeleton h-8 w-5/6" />
+            </div>
+          )}
         </div>
 
-        <div className="card space-y-3 p-5">
-          <div className="section-title">👥 টিম ও এজেন্ট</div>
+        <div id="inbox-manage-teams" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">👥</span><div className="section-title">টিম ও এজেন্ট</div></div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-slate-500">আমার অবস্থা:</span>
             {([["online", "🟢 Online"], ["busy", "🟠 ব্যস্ত"], ["away", "⚪ Away"]] as const).map(([v, label]) => (
-              <button key={v} className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${myStatus === v ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200"}`}
+              <button key={v} className={`toggle-pill !min-h-[30px] ${myStatus === v ? "toggle-pill-active" : ""}`}
                 onClick={async () => {
                   setMyStatus(v);
                   const orgId = getOrganizationId(); if (!orgId) return;
@@ -1941,13 +2532,19 @@ export default function InboxPage() {
           {agentStates.length ? (
             <div className="space-y-1">
               {agentStates.map((a) => (
-                <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                <div key={a.userId} className="flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
                   <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span>{a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-slate-600">অফ-শিফট</span> : null}</span>
                   <span>খোলা {a.openCount}/{a.capacity}{a.teams?.length ? ` · ${a.teams.join(", ")}` : ""}</span>
                 </div>
               ))}
             </div>
-          ) : <p className="text-xs text-slate-400">এজেন্ট তালিকা লোড হচ্ছে...</p>}
+          ) : (
+            <div className="space-y-1.5" role="status" aria-label="এজেন্ট তালিকা লোড হচ্ছে">
+              <div className="skeleton h-8 w-full" />
+              <div className="skeleton h-8 w-full" />
+              <div className="skeleton h-8 w-4/6" />
+            </div>
+          )}
           <div className="space-y-2 border-t pt-3">
             <div className="flex flex-wrap gap-2">
               <input className="input w-44" placeholder="নতুন টিমের নাম (যেমন: সেলস)" value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} />
@@ -1967,7 +2564,7 @@ export default function InboxPage() {
             </div>
             <p className="text-[11px] text-slate-400">চ্যানেল না বাছলে টিম সব চ্যানেল নেবে। Smart Assignment চালু থাকলে নতুন কথোপকথন টিমের সদস্যদের মধ্যে ভাগ হয় — Capacity পূর্ণ বা Away সদস্য বাদ পড়ে।</p>
             {teams.map((t) => (
-              <div key={t.id} className="rounded-xl border p-3">
+              <div key={t.id} className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold">{t.name} <span className="ml-1 font-normal text-xs text-slate-400">খোলা {t.openCount}টি</span></div>
                   <div className="flex flex-wrap gap-1">{(t.channels ?? []).length ? (t.channels as string[]).map((ch) => <ChannelChip key={ch} channel={ch} />) : <span className="text-[11px] text-slate-400">সব চ্যানেল</span>}</div>
@@ -1977,7 +2574,7 @@ export default function InboxPage() {
                     const draft = teamDraft[t.id] ?? {};
                     const on = mb.user.id in draft;
                     return (
-                      <label key={mb.user.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-xs">
+                      <label key={mb.user.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
                         <input type="checkbox" checked={on} onChange={(e) => {
                           const next = { ...(teamDraft[t.id] ?? {}) };
                           if (e.target.checked) next[mb.user.id] = next[mb.user.id] ?? 20; else delete next[mb.user.id];
@@ -2031,10 +2628,10 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <div className={`${viewMode === "list" ? "hidden" : ""} card space-y-4 p-5`}>
-        <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
+      <div id="inbox-manage-connect" className={`${viewMode === "list" ? "hidden" : ""} manage-card fade-rise scroll-mt-20 space-y-4`}>
+        <div className="manage-head"><span className="manage-icon" aria-hidden="true">🔌</span><div className="section-title">আরও চ্যানেল (Telegram · Email · TikTok)</div></div>
         <div className="grid gap-4 lg:grid-cols-3">
-          <div className="space-y-2 rounded-xl border p-3">
+          <div className="space-y-2 rounded-2xl border border-slate-200/80 p-3.5 shadow-sm">
             <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="telegram" lg /> Bot Channel</div>
             <p className="text-xs text-slate-500">BotFather থেকে পাওয়া Bot Token দিন — যাচাই (getMe) সফল হলেই কানেক্ট হবে। Message এই Inbox এই আসবে, একই Assignment/Autopilot চলবে।</p>
             <input className="input" type="password" placeholder="Bot Token (123456:ABC...)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
@@ -2050,7 +2647,7 @@ export default function InboxPage() {
             }}>{busy === "tg" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট"}</button>
             {tgResult ? <p className="text-xs text-slate-600">{tgResult}</p> : null}
           </div>
-          <div className="space-y-2 rounded-xl border p-3">
+          <div className="space-y-2 rounded-2xl border border-slate-200/80 p-3.5 shadow-sm">
             <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="email" lg /> Mailbox Lane</div>
             <p className="text-xs text-slate-500">নিজের Mailbox এর IMAP + SMTP দিন — দুই দিকই যাচাই সফল হলেই কানেক্ট হবে। অপঠিত মেইল Sync হয়ে এই Inbox এ আসবে (Automation এ "email_sync" Job চালু করুন)।</p>
             <div className="grid grid-cols-2 gap-1.5">
@@ -2083,25 +2680,31 @@ export default function InboxPage() {
             </div>
             {emailResult ? <p className="text-xs text-slate-600">{emailResult}</p> : null}
           </div>
-          <div className="space-y-2 rounded-xl border border-dashed p-3">
+          <div className="space-y-2 rounded-2xl border border-dashed border-slate-300/80 p-3.5">
             <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="tiktok" lg /> Business Messaging</div>
             <p className="text-xs text-amber-700">⏳ Partner অনুমোদন প্রয়োজন — TikTok এই API Self-serve দেয় না।</p>
             {tiktokPack ? (
               <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-500">
                 {(tiktokPack.steps as string[]).map((step: string, i: number) => <li key={i}>{step}</li>)}
               </ol>
-            ) : <p className="text-xs text-slate-400">তথ্য লোড হচ্ছে...</p>}
+            ) : (
+              <div className="space-y-1.5" role="status" aria-label="তথ্য লোড হচ্ছে">
+                <div className="skeleton h-4 w-full" />
+                <div className="skeleton h-4 w-5/6" />
+                <div className="skeleton h-4 w-4/6" />
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <div className={`${viewMode === "list" ? "hidden" : ""} grid gap-4 xl:grid-cols-2`}>
-        <div className="card space-y-3 p-5">
-          <div className="section-title">⚡ Quick Replies</div>
+        <div id="inbox-manage-quick" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">⚡</span><div className="section-title">Quick Replies</div></div>
           <p className="text-xs text-slate-500">বারবার লিখতে হয় এমন উত্তরের লাইব্রেরি। {"{{firstName}}"}, {"{{contactName}}"}, {"{{phone}}"} ব্যবহার করা যায়, পাঠানোর আগে আসল তথ্য বসে যাবে। Reply বক্সে / চাপলেই তালিকা আসবে।</p>
           <div className="space-y-1.5">
             {quickReplies.map((q) => (
-              <div key={q.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+              <div key={q.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50 transition hover:ring-slate-300">
                 <div className="min-w-0"><span className="font-semibold">{q.title}</span><span className="block truncate text-xs text-slate-500">{q.content}</span></div>
                 <button className="text-xs text-red-500" onClick={() => deleteQr(q.id)}>মুছুন</button>
               </div>
@@ -2115,12 +2718,12 @@ export default function InboxPage() {
           </form>
         </div>
 
-        <div className="card space-y-3 p-5">
-          <div className="section-title">🧩 WhatsApp Template রেজিস্ট্রি</div>
+        <div className="manage-card fade-rise space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🧩</span><div className="section-title">WhatsApp Template রেজিস্ট্রি</div></div>
           <p className="text-xs text-slate-500">Meta তে আগে থেকে অনুমোদিত Template গুলো এখানে রেজিস্ট্রি করুন (নাম ও ভাষা হুবহু Meta এর মতো হতে হবে)। ২৪ ঘণ্টার Window বন্ধ থাকলে Inbox থেকে এগুলোই পাঠানো যাবে। Template আসলে অনুমোদিত না হলে Meta এর এররটাই দেখানো হবে।</p>
           <div className="space-y-1.5">
             {templates.map((t) => (
-              <div key={t.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+              <div key={t.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50 transition hover:ring-slate-300">
                 <div className="min-w-0"><span className="font-semibold">{t.name}</span> <span className="badge-slate">{t.language}</span> {t.category ? <span className="badge-brand">{t.category}</span> : null}<span className="block truncate text-xs text-slate-500">{t.bodyText ?? ""}</span></div>
                 <button className="text-xs text-red-500" onClick={() => deleteTpl(t.id)}>মুছুন</button>
               </div>
@@ -2141,65 +2744,97 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <form onSubmit={connect} className={`${viewMode === "list" ? "hidden" : ""} card space-y-3 p-5`}>
-        <div className="section-title">WhatsApp / Messenger কানেক্ট করুন</div>
+      <form onSubmit={connect} className={`${viewMode === "list" ? "hidden" : ""} manage-card fade-rise space-y-3`}>
+        <div className="manage-head"><span className="manage-icon" aria-hidden="true">🔗</span><div className="section-title">WhatsApp / Messenger কানেক্ট করুন</div></div>
         <p className="text-sm text-slate-500">
           Meta App থেকে Page/System-User Access Token, App Secret ও নিজের পছন্দের Verify Token লাগবে। Token যাচাই ব্যর্থ হলে কিছুই সেভ হয় না।
           কানেক্টের পর Meta App এর Webhook সেটিংসে Callback URL দিন: <code className="rounded bg-slate-100 px-1">https://আপনার-ডোমেইন/webhooks/meta/ইন্টিগ্রেশন-ID</code>, একই Verify Token ব্যবহার করুন এবং <span className="font-medium">messages</span> ফিল্ড সাবস্ক্রাইব করুন।
           বর্তমান কানেকশন: {integrations.length ? integrations.map((i) => `${i.provider} (${i.externalAccountId})`).join(", ") : "নেই"}
         </p>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          <label className="block text-sm">চ্যানেল
-            <select className={inputCls} value={connectForm.channel} onChange={(e) => setConnectForm({ ...connectForm, channel: e.target.value })}>
+        <div className="space-y-2">
+          <label className="setting-row"><span className="setting-row-label">চ্যানেল</span>
+            <span className="setting-row-control"><select className="input" value={connectForm.channel} onChange={(e) => setConnectForm({ ...connectForm, channel: e.target.value })}>
               <option value="whatsapp">WhatsApp</option><option value="messenger">Messenger</option><option value="instagram">Instagram</option>
-            </select>
+            </select></span>
           </label>
-          <label className="block text-sm">Access Token<input className={inputCls} type="password" value={connectForm.accessToken} onChange={(e) => setConnectForm({ ...connectForm, accessToken: e.target.value })} required /></label>
-          <label className="block text-sm">App Secret (প্ল্যাটফর্ম অ্যাপ ব্যবহার করলে খালি রাখুন)<input className={inputCls} type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder="নিজের Meta অ্যাপ থাকলে দিন" /></label>
-          <label className="block text-sm">Verify Token (নিজে ঠিক করুন)<input className={inputCls} value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></label>
-          <label className="block text-sm">Phone Number ID (WhatsApp)<input className={inputCls} value={connectForm.phoneNumberId} onChange={(e) => setConnectForm({ ...connectForm, phoneNumberId: e.target.value })} /></label>
-          <label className="block text-sm">Page ID (Messenger/Instagram)<input className={inputCls} value={connectForm.pageId} onChange={(e) => setConnectForm({ ...connectForm, pageId: e.target.value })} /></label>
+          <label className="setting-row"><span className="setting-row-label">Access Token</span><span className="setting-row-control"><input className="input" type="password" value={connectForm.accessToken} onChange={(e) => setConnectForm({ ...connectForm, accessToken: e.target.value })} required /></span></label>
+          <label className="setting-row"><span className="setting-row-label">App Secret (প্ল্যাটফর্ম অ্যাপ ব্যবহার করলে খালি রাখুন)</span><span className="setting-row-control"><input className="input" type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder="নিজের Meta অ্যাপ থাকলে দিন" /></span></label>
+          <label className="setting-row"><span className="setting-row-label">Verify Token (নিজে ঠিক করুন)</span><span className="setting-row-control"><input className="input" value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></span></label>
+          <label className="setting-row"><span className="setting-row-label">Phone Number ID (WhatsApp)</span><span className="setting-row-control"><input className="input" value={connectForm.phoneNumberId} onChange={(e) => setConnectForm({ ...connectForm, phoneNumberId: e.target.value })} /></span></label>
+          <label className="setting-row"><span className="setting-row-label">Page ID (Messenger/Instagram)</span><span className="setting-row-control"><input className="input" value={connectForm.pageId} onChange={(e) => setConnectForm({ ...connectForm, pageId: e.target.value })} /></span></label>
         </div>
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট করুন"}</button>
       </form>
 
       {paletteOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-4 pt-24" onClick={() => setPaletteOpen(false)}>
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b px-4 py-3 text-sm font-semibold">⌘K — দ্রুত কাজ ও লাফ</div>
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center p-4 pt-24" onClick={() => setPaletteOpen(false)}>
+          <div className="modal-shell fade-rise max-w-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">⌘K — দ্রুত কাজ ও লাফ</div>
+            {/* UX1 Q4: search over the LOADED conversation list (the
+                honest limit is stated under the results). Full-text
+                search across everything stays in the list's own
+                search box, which queries the server. */}
+            <div className="border-b border-slate-100 p-2">
+              <input
+                className="input"
+                placeholder="নাম, ফোন বা বার্তা দিয়ে খুঁজুন…"
+                value={paletteQ}
+                onChange={(e) => setPaletteQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  const q = paletteQ.trim().toLowerCase(); if (!q) return;
+                  const hit = conversations.find((c) => (c.contactName ?? "").toLowerCase().includes(q) || (c.contactPhone ?? "").includes(q) || (c.lastMessagePreview ?? "").toLowerCase().includes(q));
+                  if (hit) { setPaletteOpen(false); setPaletteQ(""); void openConversation(hit); }
+                }}
+                aria-label="কথোপকথন খুঁজুন"
+              />
+              {paletteQ.trim() ? (
+                <div className="mt-1">
+                  {conversations.filter((c) => { const q = paletteQ.trim().toLowerCase(); return (c.contactName ?? "").toLowerCase().includes(q) || (c.contactPhone ?? "").includes(paletteQ.trim()) || (c.lastMessagePreview ?? "").toLowerCase().includes(q); }).slice(0, 8).map((c) => (
+                    <button key={c.id} className="modal-item" onClick={() => { setPaletteOpen(false); setPaletteQ(""); void openConversation(c); }}>
+                      <span className="truncate">{c.contactName ?? c.contactPhone ?? "গ্রাহক"}</span>
+                      <span className="shrink-0"><ChannelChip channel={c.channel} /></span>
+                    </button>
+                  ))}
+                  <p className="px-2 pt-1 text-[11px] text-slate-400">লোড করা কথোপকথন থেকে খোঁজা হয়েছে — সব কথোপকথনে খুঁজতে তালিকার ওপরের Search ঘর ব্যবহার করুন (ওটা সার্ভারে খোঁজে)।</p>
+                </div>
+              ) : null}
+            </div>
             <div className="max-h-80 overflow-y-auto p-2">
               {conversations.filter((c) => c.unreadCount > 0).slice(0, 5).map((c) => (
-                <button key={c.id} className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); void openConversation(c); }}>
+                <button key={c.id} className="modal-item" onClick={() => { setPaletteOpen(false); void openConversation(c); }}>
                   <span className="truncate">{c.contactName ?? c.contactPhone ?? "গ্রাহক"}</span>
                   <span className="shrink-0"><ChannelChip channel={c.channel} /> <span className="badge-slate">{c.unreadCount} অপঠিত</span></span>
                 </button>
               ))}
-              <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); onFilter({ unreadOnly: !filters.unreadOnly }); }}>🔵 {filters.unreadOnly ? "সব কথোপকথন দেখুন" : "শুধু অপঠিত দেখুন"}</button>
+              <button className="modal-item" onClick={() => { setPaletteOpen(false); onFilter({ unreadOnly: !filters.unreadOnly }); }}><span>🔵 {filters.unreadOnly ? "সব কথোপকথন দেখুন" : "শুধু অপঠিত দেখুন"}</span></button>
               {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
-                <button key={ch} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); onFilter({ channel: filters.channel === ch ? "" : ch }); }}>
-                  <ChannelChip channel={ch} /> {filters.channel === ch ? "ফিল্টার সরান" : "শুধু এই চ্যানেল"}
+                <button key={ch} className="modal-item" onClick={() => { setPaletteOpen(false); onFilter({ channel: filters.channel === ch ? "" : ch }); }}>
+                  <span className="flex items-center gap-2"><ChannelChip channel={ch} /> {filters.channel === ch ? "ফিল্টার সরান" : "শুধু এই চ্যানেল"}</span>
                 </button>
               ))}
-              {active && myId ? <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); void patchConversation({ assignedUserId: myId }); }}>👤 বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন (E)</button> : null}
-              <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setPaletteOpen(false); setShowShortcuts(true); }}>⌨️ কীবোর্ড Shortcut তালিকা</button>
+              {active && myId ? <button className="modal-item" onClick={() => { setPaletteOpen(false); void patchConversation({ assignedUserId: myId }); }}><span>👤 বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন (E)</span></button> : null}
+              {/* UX1 Q3: one-click reset of the persisted choices. */}
+              <button className="modal-item" onClick={() => { const d = { q: "", channel: "", status: "", assignee: "", tag: "", unreadOnly: false, sort: "recent", spamOnly: false }; setSmartFolder(""); setFilters(d); try { localStorage.removeItem("inbox.filters"); localStorage.removeItem("inbox.folder"); } catch { /* best-effort */ } loadConversations(d, ""); setPaletteOpen(false); }}><span>🧹 সব ফিল্টার রিসেট করুন</span></button>
+              <button className="modal-item" onClick={() => { setPaletteOpen(false); setShowShortcuts(true); }}><span>⌨️ কীবোর্ড Shortcut তালিকা</span></button>
             </div>
           </div>
         </div>
       ) : null}
 
       {showShortcuts ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setShowShortcuts(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowShortcuts(false)}>
+          <div className="modal-shell fade-rise max-w-md p-5" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 text-sm font-semibold">⌨️ কীবোর্ড Shortcut</div>
-            <ul className="space-y-1.5 text-sm text-slate-600">
-              <li><b>⌘K / Ctrl+K</b> — Command Palette</li>
-              <li><b>J / K</b> — তালিকায় নিচে / ওপরে</li>
-              <li><b>Enter</b> — বেছে নেওয়া কথোপকথন খুলুন</li>
-              <li><b>/</b> — খোঁজার ঘরে যান</li>
-              <li><b>R</b> — উত্তরের ঘরে যান</li>
-              <li><b>E</b> — বর্তমান কথোপকথন নিজেকে অ্যাসাইন</li>
-              <li><b>?</b> — এই তালিকা</li>
-              <li><b>Esc</b> — প্যানেল বন্ধ</li>
+            <ul className="space-y-2 text-sm text-slate-600">
+              <li className="flex items-center gap-2"><span className="kbd">⌘K</span><span className="kbd">Ctrl+K</span> — Command Palette</li>
+              <li className="flex items-center gap-2"><span className="kbd">J</span><span className="kbd">K</span> — তালিকায় নিচে / ওপরে</li>
+              <li className="flex items-center gap-2"><span className="kbd">Enter</span> — বেছে নেওয়া কথোপকথন খুলুন</li>
+              <li className="flex items-center gap-2"><span className="kbd">/</span> — খোঁজার ঘরে যান</li>
+              <li className="flex items-center gap-2"><span className="kbd">R</span> — উত্তরের ঘরে যান</li>
+              <li className="flex items-center gap-2"><span className="kbd">E</span> — বর্তমান কথোপকথন নিজেকে অ্যাসাইন</li>
+              <li className="flex items-center gap-2"><span className="kbd">?</span> — এই তালিকা</li>
+              <li className="flex items-center gap-2"><span className="kbd">Esc</span> — প্যানেল বন্ধ</li>
             </ul>
             <p className="mt-3 text-xs text-slate-400">লেখার ঘরে থাকলে Shortcut কাজ করবে না (⌘K ছাড়া)।</p>
           </div>

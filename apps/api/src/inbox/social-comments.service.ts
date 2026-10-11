@@ -11,6 +11,7 @@ import {
   IngestExternalCommentDto 
 } from "./social-comments.dto";
 import { formatMinor } from "@repo/contracts";
+import { aiScheduleBlocks, parseAiSchedule } from "./ai-schedule";
 
 @Injectable()
 export class SocialCommentsService {
@@ -122,15 +123,15 @@ export class SocialCommentsService {
     };
   }
 
-  async ingestComment(organizationId: string, dto: IngestExternalCommentDto) {
-    const settings = await this.getSettings(organizationId);
-    const classification = CommentClassifier.classify(dto.commentText, settings.bannedKeywords);
-
-    // Initial status determination
-    let initialStatus = "PENDING";
-    if (classification.shouldHideOrDelete && settings.autoHideSpam) {
-      initialStatus = "HIDDEN";
-    }
+  /**
+   * CX3: the reply-plan computation shared by ingest and the
+   * due-comment sweep — classification, product match, night-owl
+   * flag and the humanizer plan for a (possibly batched) comment
+   * text. Pure planning: no writes, no alerts, no leads; those
+   * side effects stay in ingestComment, immediate and unchanged.
+   */
+  private async buildReplyPlan(organizationId: string, settings: any, input: { authorName: string; commentText: string; postTitle?: string }) {
+    const classification = CommentClassifier.classify(input.commentText, settings.bannedKeywords);
 
     // Enhanced Multi-Product Smart Auto-Detector:
     // First, check if the customer specifically mentioned any product name in their comment text
@@ -140,7 +141,7 @@ export class SocialCommentsService {
       take: 20,
     });
 
-    const commentWords = dto.commentText.toLowerCase();
+    const commentWords = input.commentText.toLowerCase();
     for (const p of prods) {
       if (commentWords.includes(p.name.toLowerCase())) {
         matchedProduct = {
@@ -153,8 +154,8 @@ export class SocialCommentsService {
     }
 
     // Fallback: match by post title keywords if no specific product was mentioned in comment
-    if (!matchedProduct && dto.postTitle) {
-      const words = dto.postTitle.toLowerCase().split(/\s+/);
+    if (!matchedProduct && input.postTitle) {
+      const words = input.postTitle.toLowerCase().split(/\s+/);
       for (const p of prods) {
         if (words.some((w: string) => p.name.toLowerCase().includes(w))) {
           matchedProduct = {
@@ -172,14 +173,56 @@ export class SocialCommentsService {
     const isNightOwl = settings.nightOwlEnabled && (currentHour >= 0 && currentHour < 8);
 
     const aiPlan = CommentHumanizer.generateHumanReply({
-      authorName: dto.authorName,
-      commentText: dto.commentText,
+      authorName: input.authorName,
+      commentText: input.commentText,
       classification,
-      postTitle: dto.postTitle,
+      postTitle: input.postTitle,
       matchedProduct,
       tonePreference: settings.tonePreference,
       isNightOwl,
     });
+
+    return { classification, matchedProduct, isNightOwl, aiPlan };
+  }
+
+  /**
+   * CX12d: does the channel-wise AI schedule (InboxSetting.
+   * aiScheduleByChannel, organization timezone) currently block
+   * AI replies for this comment platform? facebook/instagram use
+   * the same channel keys as the inbox; other platforms simply
+   * have no entry unless the owner added one. Defensive: missing
+   * rows or a corrupt stored value -> not blocked.
+   */
+  private async aiScheduleBlocksFor(organizationId: string, platform: string): Promise<boolean> {
+    try {
+      const row = await (this.prisma as any).inboxSetting?.findUnique?.({ where: { organizationId } }).catch(() => null);
+      if (!row?.aiScheduleByChannel) return false;
+      let map: Record<string, any> = {};
+      try { map = parseAiSchedule(row.aiScheduleByChannel); } catch { return false; }
+      if (!map[platform]) return false;
+      const org = await (this.prisma as any).organization?.findUnique?.({ where: { id: organizationId }, select: { timezone: true } }).catch(() => null);
+      return aiScheduleBlocks(map, platform, new Date(), org?.timezone || "Asia/Dhaka");
+    } catch { return false; }
+  }
+
+  async ingestComment(organizationId: string, dto: IngestExternalCommentDto) {
+    const settings = await this.getSettings(organizationId);
+    // CX12d: the schedule gates ONLY the AI reply plan's
+    // application — classification/hide, Telegram alerts and lead
+    // creation below are unaffected.
+    const aiReplyEffective = settings.aiAutoReplyEnabled && !(await this.aiScheduleBlocksFor(organizationId, dto.platform));
+    const { classification, matchedProduct, isNightOwl, aiPlan } = await this.buildReplyPlan(organizationId, settings, {
+      authorName: dto.authorName,
+      commentText: dto.commentText,
+      postTitle: dto.postTitle,
+    });
+
+    // Initial status determination — hide/spam is a SAFETY action
+    // and stays immediate under CX3: it never waits for the delay.
+    let initialStatus = "PENDING";
+    if (classification.shouldHideOrDelete && settings.autoHideSpam) {
+      initialStatus = "HIDDEN";
+    }
 
     const comment = await (this.prisma as any).socialComment.upsert({
       where: {
@@ -207,10 +250,17 @@ export class SocialCommentsService {
         sentiment: classification.sentiment,
         intent: classification.intent,
         status: initialStatus,
-        replyText: settings.aiAutoReplyEnabled && initialStatus !== "HIDDEN" ? aiPlan.publicCommentReply : null,
-        repliedAt: settings.aiAutoReplyEnabled && initialStatus !== "HIDDEN" ? new Date() : null,
-        isPrivateDmSent: settings.aiAutoReplyEnabled && settings.sendPrivateDm && initialStatus !== "HIDDEN" ? aiPlan.shouldSendDm : false,
+        // CX3: with a reply delay configured, the reply is NOT
+        // applied at ingest — the plan is retained (metadata +
+        // privateDmText) and aiReplyDueAt schedules the sweep
+        // that will compose the final (possibly batched) reply.
+        // Delay 0 (or auto-reply off, or a hidden comment) keeps
+        // the pre-CX3 values exactly.
+        replyText: aiReplyEffective && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? aiPlan.publicCommentReply : null,
+        repliedAt: aiReplyEffective && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? new Date() : null,
+        isPrivateDmSent: aiReplyEffective && settings.sendPrivateDm && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? aiPlan.shouldSendDm : false,
         privateDmText: aiPlan.privateDmText,
+        aiReplyDueAt: aiReplyEffective && initialStatus !== "HIDDEN" && settings.replyDelaySeconds > 0 ? new Date(Date.now() + settings.replyDelaySeconds * 1000) : null,
         confidenceScore: classification.confidenceScore,
         metadata: {
           aiPlanned: aiPlan,
@@ -254,6 +304,112 @@ export class SocialCommentsService {
     }
 
     return comment;
+  }
+
+  /**
+   * CX3: apply a due comment's AI reply. Batching: earlier
+   * still-pending comments by the SAME author on the SAME post
+   * are claimed into this reply (their aiReplyBatchOf points at
+   * this comment) and discharged as AUTO_REPLIED with a
+   * metadata pointer — ONE reply, composed from the combined
+   * text, covers the whole burst. This is the seam a later
+   * package item gates with the channel AI schedule: keep any
+   * pre-reply check immediately before calling this method.
+   */
+  private async applyDueCommentReply(organizationId: string, settings: any, fresh: any): Promise<{ batched: number }> {
+    const p = this.prisma as any;
+    const earlier = await p.socialComment.findMany({
+      where: {
+        organizationId,
+        externalPostId: fresh.externalPostId,
+        status: "PENDING",
+        aiReplyDueAt: { not: null },
+        createdAt: { lt: fresh.createdAt },
+        ...(fresh.authorSocialId ? { authorSocialId: fresh.authorSocialId } : { authorName: fresh.authorName }),
+      },
+      orderBy: { createdAt: "asc" },
+    }).catch(() => []);
+    const covered: any[] = [];
+    for (const e of earlier as any[]) {
+      const c = await p.socialComment.updateMany({
+        where: { id: e.id, aiReplyDueAt: e.aiReplyDueAt },
+        data: { aiReplyDueAt: null, aiReplyBatchOf: fresh.externalCommentId },
+      }).catch(() => ({ count: 0 }));
+      if (c?.count) covered.push(e);
+    }
+    const batchText = [...covered, fresh].map((c: any) => c.commentText).join("\n").slice(0, 1200);
+    const plan = await this.buildReplyPlan(organizationId, settings, {
+      authorName: fresh.authorName,
+      commentText: batchText,
+      postTitle: fresh.postTitle ?? undefined,
+    });
+    await p.socialComment.update({
+      where: { id: fresh.id },
+      data: {
+        status: "AUTO_REPLIED",
+        replyText: plan.aiPlan.publicCommentReply,
+        repliedAt: new Date(),
+        isPrivateDmSent: settings.sendPrivateDm ? plan.aiPlan.shouldSendDm : false,
+        privateDmText: plan.aiPlan.privateDmText,
+      },
+    });
+    for (const e of covered) {
+      await p.socialComment.update({
+        where: { id: e.id },
+        data: {
+          status: "AUTO_REPLIED",
+          metadata: { ...((e.metadata as any) ?? {}), aiReplyBatch: { coveredBy: fresh.externalCommentId } },
+        },
+      }).catch(() => undefined);
+    }
+    return { batched: covered.length };
+  }
+
+  /**
+   * CX3 sweep (driven by the "comment_autoreply_sweep"
+   * automation job, ~1 minute): fire due comment replies for
+   * this org. Rows are taken newest-first so the latest comment
+   * of a burst claims first and batches the earlier ones into
+   * its reply. The claim is a conditional updateMany on the
+   * EXACT due timestamp — a double fire gets count 0 and skips,
+   * so a comment can never be replied to twice by the sweep.
+   * Each comment is failure-isolated.
+   */
+  async runDueCommentReplies(organizationId: string): Promise<{ fired: number; batched: number; skipped: number }> {
+    const p = this.prisma as any;
+    let fired = 0;
+    let batched = 0;
+    let skipped = 0;
+    const rows = await p.socialComment.findMany({
+      where: { organizationId, status: "PENDING", aiReplyDueAt: { not: null, lte: new Date() } },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+    }).catch(() => []);
+    for (const row of rows as any[]) {
+      try {
+        const claim = await p.socialComment.updateMany({
+          where: { id: row.id, aiReplyDueAt: row.aiReplyDueAt },
+          data: { aiReplyDueAt: null },
+        });
+        if (!claim?.count) { skipped++; continue; }
+        const fresh = await p.socialComment.findFirst({ where: { id: row.id } }).catch(() => null);
+        if (!fresh || fresh.status !== "PENDING") { skipped++; continue; }
+        const settings = await this.getSettings(organizationId);
+        if (!settings.aiAutoReplyEnabled) { skipped++; continue; }
+        // CX12d DROP SEMANTICS: the claim above already cleared
+        // aiReplyDueAt, so a comment whose fire time falls outside
+        // the AI schedule is NOT retried later — its pending AI
+        // reply is cancelled and the comment stays PENDING for
+        // the team to answer manually.
+        if (await this.aiScheduleBlocksFor(organizationId, fresh.platform)) { skipped++; continue; }
+        const applied = await this.applyDueCommentReply(organizationId, settings, fresh);
+        fired++;
+        batched += applied.batched;
+      } catch {
+        skipped++;
+      }
+    }
+    return { fired, batched, skipped };
   }
 
   private async dispatchUrgentTelegramAlert(token: string, chatId: string, payload: any) {
