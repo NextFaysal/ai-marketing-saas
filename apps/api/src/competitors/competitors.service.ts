@@ -10,8 +10,9 @@ import { SeoTrafficAnalyzer } from "./seo-analyzer";
 import { VideoScriptDeconstructor } from "./video-deconstructor";
 import { ReviewMiner } from "./review-miner";
 import { FunnelAuditor } from "./funnel-auditor";
+import { RulesEngine, DynamicPricingRule, RuleEvaluationResult } from "./rules-engine";
 import { AlertDispatcher, AlertChannelConfig, AlertNotificationPayload } from "./alert-dispatcher";
-import { DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto } from "./competitors.dto";
+import { DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
 
@@ -1010,7 +1011,101 @@ Format as a clean JSON with keys:
     const auditor = new FunnelAuditor();
     return auditor.audit(competitor.name, competitor.websiteUrl ?? undefined);
   }
+
+  async getDynamicRules(organizationId: string): Promise<DynamicPricingRule[]> {
+    const record = await (this.prisma as any).competitorInsight.findFirst({
+      where: {
+        organizationId,
+        provider: "dynamic_rules_config",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!record || !record.metadata) {
+      return RulesEngine.getDefaultRules();
+    }
+
+    try {
+      return record.metadata.rules as DynamicPricingRule[];
+    } catch {
+      return RulesEngine.getDefaultRules();
+    }
+  }
+
+  async saveDynamicRules(organizationId: string, actorId: string, dto: SaveDynamicRulesDto): Promise<{ success: boolean; rules: DynamicPricingRule[] }> {
+    const existing = await (this.prisma as any).competitorInsight.findFirst({
+      where: {
+        organizationId,
+        provider: "dynamic_rules_config",
+      },
+    });
+
+    if (existing) {
+      await (this.prisma as any).competitorInsight.update({
+        where: { id: existing.id },
+        data: {
+          summary: "Dynamic pricing and automated budget trigger rules",
+          metadata: { rules: dto.rules },
+        },
+      });
+    } else {
+      await (this.prisma as any).competitorInsight.create({
+        data: {
+          organizationId,
+          provider: "dynamic_rules_config",
+          summary: "Dynamic pricing and automated budget trigger rules",
+          metadata: { rules: dto.rules },
+        },
+      });
+    }
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "competitor.dynamic_rules_updated",
+      entityType: "DynamicRules",
+      entityId: organizationId,
+    });
+
+    return {
+      success: true,
+      rules: dto.rules,
+    };
+  }
+
+  async simulateRuleTrigger(organizationId: string, dto: SimulateRuleTriggerDto): Promise<{ triggeredCount: number; results: RuleEvaluationResult[] }> {
+    const rules = await this.getDynamicRules(organizationId);
+    const results = RulesEngine.evaluateEvent(rules, {
+      type: dto.triggerType,
+      competitorName: dto.competitorName || "Daraz Bangladesh",
+      productName: dto.productName || "Leather Wallet Combo",
+      percentageChange: dto.percentageChange || 12,
+    });
+
+    // Save updated trigger count and recent executions back to DB
+    const existing = await (this.prisma as any).competitorInsight.findFirst({
+      where: {
+        organizationId,
+        provider: "dynamic_rules_config",
+      },
+    });
+
+    if (existing) {
+      await (this.prisma as any).competitorInsight.update({
+        where: { id: existing.id },
+        data: {
+          metadata: { rules },
+        },
+      });
+    }
+
+    return {
+      triggeredCount: results.length,
+      results,
+    };
+  }
 }
+
 
 
 

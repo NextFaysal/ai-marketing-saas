@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 
 
@@ -144,6 +144,28 @@ export class CompetitorsController {
   @Get(":competitorId/funnel-audit")
   funnelAudit(@Param("organizationId") orgId: string, @Param("competitorId") id: string) {
     return this.competitors.auditCheckoutFunnel(orgId, id);
+  }
+
+  @Get("rules")
+  getRules(@Param("organizationId") orgId: string) {
+    return this.competitors.getDynamicRules(orgId);
+  }
+
+  @Post("rules") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  saveRules(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: SaveDynamicRulesDto,
+  ) {
+    return this.competitors.saveDynamicRules(orgId, user.userId, dto);
+  }
+
+  @Post("rules/simulate") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  simulateRule(
+    @Param("organizationId") orgId: string,
+    @Body() dto: SimulateRuleTriggerDto,
+  ) {
+    return this.competitors.simulateRuleTrigger(orgId, dto);
   }
 }
 

@@ -62,6 +62,18 @@ export class TestAlertChannelDto {
   @IsOptional() @IsString() whatsappWebhookUrl?: string;
 }
 
+export class SaveDynamicRulesDto {
+  rules!: any[];
+}
+
+export class SimulateRuleTriggerDto {
+  @IsString() triggerType!: "COMPETITOR_STOCK_OUT" | "COMPETITOR_PRICE_DROP" | "COMPETITOR_PRICE_INCREASE" | "COMPETITOR_NEW_WINNING_AD";
+  @IsOptional() @IsString() competitorName?: string;
+  @IsOptional() @IsString() productName?: string;
+  @IsOptional() percentageChange?: number;
+}
+
+
 
 
 

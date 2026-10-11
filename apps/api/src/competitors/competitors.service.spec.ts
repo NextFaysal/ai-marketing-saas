@@ -337,6 +337,38 @@ describe("CompetitorsService", () => {
     expect(funnel.bundleOffers[1].popularityScore).toBe(50);
     expect(funnel.conversionOptimizationTips.length).toBeGreaterThan(0);
   });
+
+  it("getDynamicRules and saveDynamicRules persist and retrieve rules configuration", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+
+    const defaultRules = await svc.getDynamicRules("org-1");
+    expect(defaultRules.length).toBeGreaterThan(0);
+    expect(defaultRules[0].triggerType).toBe("COMPETITOR_STOCK_OUT");
+
+    const customRules = [...defaultRules];
+    customRules[0].enabled = false;
+
+    const saved = await svc.saveDynamicRules("org-1", "u", { rules: customRules });
+    expect(saved.success).toBe(true);
+
+    const fetched = await svc.getDynamicRules("org-1");
+    expect(fetched[0].enabled).toBe(false);
+  });
+
+  it("simulateRuleTrigger evaluates trigger condition and logs recent execution", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+
+    const res = await svc.simulateRuleTrigger("org-1", {
+      triggerType: "COMPETITOR_STOCK_OUT",
+      competitorName: "Daraz Express",
+      productName: "Wireless Earbuds Pro",
+    });
+
+    expect(res.triggeredCount).toBeGreaterThan(0);
+    expect(res.results[0].actionTaken).toContain("স্বয়ংক্রিয়ভাবে অ্যাক্টিভ ক্যাম্পেইন বাজেট");
+  });
 });
 
 

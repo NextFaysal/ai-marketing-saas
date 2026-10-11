@@ -258,6 +258,30 @@ interface FunnelAuditReport {
   }[];
 }
 
+interface DynamicPricingRuleItem {
+  id: string;
+  name: string;
+  triggerType: "COMPETITOR_STOCK_OUT" | "COMPETITOR_PRICE_DROP" | "COMPETITOR_PRICE_INCREASE" | "COMPETITOR_NEW_WINNING_AD";
+  actionType: "BOOST_AD_BUDGET" | "SUGGEST_PRICE_MATCH" | "TRIGGER_FLASH_SALE_BUNDLE" | "PAUSE_UNDERPERFORMING_ADS";
+  conditions: {
+    priceDropThresholdPercent?: number;
+    priceIncreaseThresholdPercent?: number;
+  };
+  actions: {
+    budgetBoostPercent?: number;
+    priceAdjustmentPercent?: number;
+    suggestedHeadline?: string;
+  };
+  enabled: boolean;
+  lastTriggeredAt?: string | null;
+  triggerCount: number;
+  recentExecutions?: {
+    timestamp: string;
+    description: string;
+    status: "EXECUTED" | "SIMULATED" | "SKIPPED";
+  }[];
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
@@ -316,6 +340,12 @@ export default function CompetitorsPage() {
   });
   const [isSavingAlertConfig, setIsSavingAlertConfig] = useState(false);
   const [isTestingAlert, setIsTestingAlert] = useState(false);
+
+  // Dynamic Pricing & Automated Budget Rules State
+  const [dynamicRules, setDynamicRules] = useState<DynamicPricingRuleItem[]>([]);
+  const [loadingRules, setLoadingRules] = useState(false);
+  const [isSavingRules, setIsSavingRules] = useState(false);
+  const [simulatingRuleId, setSimulatingRuleId] = useState<string | null>(null);
 
   // Forms & Modals
 
@@ -389,7 +419,74 @@ export default function CompetitorsPage() {
   useEffect(() => {
     load();
     loadAlertSettings();
+    loadDynamicRules();
   }, [load]);
+
+  async function loadDynamicRules() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setLoadingRules(true);
+    try {
+      const res = await apiFetch<DynamicPricingRuleItem[]>(`/organizations/${orgId}/competitors/rules`);
+      if (res && Array.isArray(res)) setDynamicRules(res);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingRules(false);
+    }
+  }
+
+  async function toggleRule(ruleId: string) {
+    const updated = dynamicRules.map((r) =>
+      r.id === ruleId ? { ...r, enabled: !r.enabled } : r
+    );
+    setDynamicRules(updated);
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setIsSavingRules(true);
+    try {
+      await apiFetch(`/organizations/${orgId}/competitors/rules`, {
+        method: "POST",
+        body: JSON.stringify({ rules: updated }),
+      });
+      setNotice("স্বয়ংক্রিয় রুল আপডেট হয়েছে! 🤖");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update rule");
+    } finally {
+      setIsSavingRules(false);
+    }
+  }
+
+  async function simulateRuleTriggerHandler(rule: DynamicPricingRuleItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setSimulatingRuleId(rule.id);
+    setError("");
+    try {
+      const res = await apiFetch<{ triggeredCount: number; results: any[] }>(
+        `/organizations/${orgId}/competitors/rules/simulate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            triggerType: rule.triggerType,
+            competitorName: active?.name || "দারাজ বাংলাদেশ",
+            productName: "প্রিমিয়াম গ্যাজেট কম্বো",
+            percentageChange: rule.conditions.priceDropThresholdPercent || 15,
+          }),
+        }
+      );
+      if (res.triggeredCount > 0) {
+        setNotice(`⚡ রুল সফলভাবে ট্রিগার হয়েছে: ${res.results[0]?.actionTaken || "Action executed!"}`);
+        await loadDynamicRules();
+      } else {
+        setNotice("কোনো রুল ম্যাচ করেনি বা রুলটি বন্ধ রয়েছে।");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to trigger simulation");
+    } finally {
+      setSimulatingRuleId(null);
+    }
+  }
 
   async function loadAlertSettings() {
     const orgId = getOrganizationId();
@@ -1546,6 +1643,126 @@ export default function CompetitorsPage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* 🤖 AUTOMATED DYNAMIC PRICING & BUDGET RULE ENGINE */}
+          <div className="mt-8 border-t pt-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-slate-900 text-base">🤖 Automated Dynamic Pricing & Budget Rule Engine</h3>
+                  <span className="rounded-full bg-indigo-100 text-indigo-700 font-bold px-2.5 py-0.5 text-[10px]">
+                    Autonomous AI Pilot
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  প্রতিযোগী স্টক-আউট হলে স্বয়ংক্রিয়ভাবে নিজের ক্যাম্পেইন বাজেট বুস্ট (+২৫%) বা দাম কমালে বান্ডেল অফার ট্রিগার করুন।
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadDynamicRules}
+                  disabled={loadingRules}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {loadingRules ? "লোড হচ্ছে..." : "🔄 রিফ্রেশ"}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {dynamicRules.map((rule) => (
+                <div
+                  key={rule.id}
+                  className={`rounded-xl border p-4 transition-all ${
+                    rule.enabled
+                      ? "border-indigo-200 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm"
+                      : "border-slate-200 bg-slate-50/50 opacity-75"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 text-sm">{rule.name}</span>
+                        {rule.enabled ? (
+                          <span className="rounded bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 font-bold">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="rounded bg-slate-200 text-slate-600 text-[10px] px-1.5 py-0.5 font-semibold">
+                            Paused
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        <b>ট্রিগার শর্ত:</b>{" "}
+                        {rule.triggerType === "COMPETITOR_STOCK_OUT"
+                          ? "প্রতিযোগী সাইটে পণ্য স্টক শেষ (Out-of-Stock) হলে"
+                          : rule.triggerType === "COMPETITOR_PRICE_DROP"
+                          ? `প্রতিযোগী দাম ${rule.conditions.priceDropThresholdPercent || 10}% এর বেশি কমালে`
+                          : rule.triggerType === "COMPETITOR_PRICE_INCREASE"
+                          ? `প্রতিযোগী দাম ${rule.conditions.priceIncreaseThresholdPercent || 10}% বৃদ্ধি করলে`
+                          : "প্রতিযোগীর বিজ্ঞাপন ৩+ দিন টানা চললে ও উইনিং ঘোষণা হলে"}
+                      </div>
+                      <div className="text-xs text-indigo-700 font-medium mt-1">
+                        <b>অ্যাকশন:</b>{" "}
+                        {rule.actionType === "BOOST_AD_BUDGET"
+                          ? `ক্যাম্পেইন বাজেট +${rule.actions.budgetBoostPercent || 20}% অটো-স্কেল / বুস্ট`
+                          : rule.actionType === "TRIGGER_FLASH_SALE_BUNDLE"
+                          ? "অটো-ফ্ল্যাশ সেল বান্ডেল ও কাউন্টার অফার নোটিফিকেশন"
+                          : "প্রাইস অ্যাডজাস্টমেন্ট সুপারিশ"}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleRule(rule.id)}
+                      disabled={isSavingRules}
+                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        rule.enabled ? "bg-indigo-600" : "bg-slate-300"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                          rule.enabled ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {rule.actions.suggestedHeadline ? (
+                    <div className="mt-3 rounded-lg bg-amber-50/80 border border-amber-200/70 p-2 text-xs text-amber-900">
+                      💡 <b>অটো-মেসেজ / প্ল্যান:</b> {rule.actions.suggestedHeadline}
+                    </div>
+                  ) : null}
+
+                  {/* Executions & Simulator */}
+                  <div className="mt-3 border-t pt-2 flex items-center justify-between text-xs text-slate-500">
+                    <span>
+                      মোট কার্যকর: <b>{rule.triggerCount} বার</b>
+                      {rule.lastTriggeredAt ? ` • শেষ: ${new Date(rule.lastTriggeredAt).toLocaleDateString()}` : ""}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={simulatingRuleId === rule.id || !rule.enabled}
+                      onClick={() => simulateRuleTriggerHandler(rule)}
+                      className="rounded bg-indigo-50 border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+                    >
+                      {simulatingRuleId === rule.id ? "টেস্ট হচ্ছে..." : "⚡ টেস্ট ট্রিগার (Simulate)"}
+                    </button>
+                  </div>
+
+                  {rule.recentExecutions && rule.recentExecutions.length > 0 ? (
+                    <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded border border-slate-100">
+                      <div className="font-semibold text-slate-700 mb-0.5">সর্বশেষ ইভেন্ট লগ:</div>
+                      <div>• {rule.recentExecutions[0].description}</div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}
