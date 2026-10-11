@@ -29,11 +29,61 @@ export class AuthService {
     // valid code. A bad/unknown code never blocks registration.
     if (dto.referralCode) {
       try {
-        const referrer = await (this.prisma as any).user.findUnique({ where: { referralCode: dto.referralCode.trim().toUpperCase() } });
+        const code = dto.referralCode.trim().toUpperCase();
+        // Referral Advanced R4: campaign codes are checked
+        // FIRST. A live campaign (active, unexpired, under
+        // its use cap) records a campaign referral with its
+        // terms locked into a snapshot; anything else falls
+        // through to the user-code path below.
+        const campaign = await (this.prisma as any).referralCampaign?.findUnique?.({ where: { code } })?.catch?.(() => null);
+        const nowMs = Date.now();
+        if (
+          campaign && campaign.active &&
+          (!campaign.expiresAt || new Date(campaign.expiresAt).getTime() > nowMs) &&
+          (campaign.maxUses == null || campaign.usedCount < campaign.maxUses)
+        ) {
+          await (this.prisma as any).referral.create({
+            data: {
+              referrerUserId: null, referredUserId: user.id, code, sourceKind: "campaign",
+              termsSnapshot: {
+                // A campaign that names a flat amount but no
+                // mode MEANS flat — otherwise its rewardMinor
+                // would silently vanish under a percent
+                // program (live-caught in the R4 proof).
+                mode: campaign.mode ?? (campaign.rewardMinor != null ? "flat" : undefined),
+                rewardMinor: campaign.rewardMinor != null ? Number(campaign.rewardMinor) : undefined,
+                percentOfFirstPayment: campaign.percentOfFirstPayment ?? undefined,
+                refereeBonusMinor: campaign.refereeBonusMinor != null ? Number(campaign.refereeBonusMinor) : undefined,
+                minFirstPaymentMinor: campaign.minFirstPaymentMinor != null ? Number(campaign.minFirstPaymentMinor) : undefined,
+              },
+            },
+          });
+          await (this.prisma as any).referralCampaign.update({
+            where: { id: campaign.id }, data: { usedCount: campaign.usedCount + 1 },
+          }).catch(() => undefined);
+          return this.issueToken(user);
+        }
+        const referrer = await (this.prisma as any).user.findUnique({ where: { referralCode: code } });
         if (referrer && referrer.id !== user.id) {
           await (this.prisma as any).referral.create({
             data: { referrerUserId: referrer.id, referredUserId: user.id, code: dto.referralCode.trim().toUpperCase() },
           });
+          // Referral Advanced R3: tell the referrer someone
+          // signed up with their link (in-app, failure-safe).
+          const home = await (this.prisma as any).membership?.findFirst?.({
+            where: { userId: referrer.id, role: "OWNER" },
+          })?.catch?.(() => null) ?? await (this.prisma as any).membership?.findFirst?.({
+            where: { userId: referrer.id },
+          })?.catch?.(() => null);
+          if (home) {
+            await (this.prisma as any).agentNotification?.create?.({
+              data: {
+                organizationId: home.organizationId, userId: referrer.id, type: "referral",
+                title: "🎉 নতুন রেফারেল সাইন আপ",
+                body: `${dto.name.trim()} আপনার রেফারেল লিংক দিয়ে সাইন আপ করেছেন। তিনি প্রথম পেমেন্ট করলেই আপনি রিওয়ার্ড পাবেন।`,
+              },
+            })?.catch?.(() => null);
+          }
         }
       } catch { /* duplicate or unavailable — signup stands */ }
     }
@@ -53,26 +103,57 @@ export class AuthService {
       where: { id: { in: (rows as any[]).map((r) => r.referredUserId) } },
     }).catch(() => []);
     const byId = new Map((referredUsers as any[]).map((u) => [u.id, u]));
+    // Referral Advanced R2: show the referee's business +
+    // current plan, so the referrer sees real progress, not
+    // just an email address.
+    const ownerMemberships = await (this.prisma as any).membership?.findMany?.({
+      where: { userId: { in: (rows as any[]).map((r) => r.referredUserId) }, role: "OWNER" },
+    })?.catch?.(() => []) ?? [];
+    const orgByUser = new Map<string, string>((ownerMemberships as any[]).map((m) => [m.userId, m.organizationId]));
+    const orgIds = [...new Set((ownerMemberships as any[]).map((m) => m.organizationId))];
+    const orgs = orgIds.length ? await (this.prisma as any).organization?.findMany?.({ where: { id: { in: orgIds } } })?.catch?.(() => []) ?? [] : [];
+    const orgNameById = new Map((orgs as any[]).map((o) => [o.id, o.name]));
+    const subs = orgIds.length ? await (this.prisma as any).subscription?.findMany?.({
+      where: { organizationId: { in: orgIds } }, orderBy: { createdAt: "desc" },
+    })?.catch?.(() => []) ?? [] : [];
+    const planByOrg = new Map<string, string>();
+    for (const s of subs as any[]) if (!planByOrg.has(s.organizationId)) planByOrg.set(s.organizationId, s.plan);
     let earned = 0;
     const referrals = (rows as any[]).map((r) => {
       if (r.status === "rewarded") earned += Number(r.rewardMinor ?? 0);
       const u = byId.get(r.referredUserId);
+      const orgId = orgByUser.get(r.referredUserId);
       return {
         id: r.id, status: r.status, createdAt: r.createdAt, rewardedAt: r.rewardedAt,
         rewardMinor: r.rewardMinor != null ? Number(r.rewardMinor) : null,
+        refereeBonusMinor: r.refereeBonusMinor != null ? Number(r.refereeBonusMinor) : null,
+        sourceKind: r.sourceKind ?? "user",
         referredName: u?.name ?? null, referredEmail: u?.email ?? null,
+        referredOrgName: orgId ? (orgNameById.get(orgId) ?? null) : null,
+        referredPlan: orgId ? (planByOrg.get(orgId) ?? null) : null,
       };
     });
     const { referralConfig } = await import("../common/referral");
     const cfg = await referralConfig(this.prisma as any);
+    const rewardedCount = referrals.filter((r) => r.status === "rewarded").length;
     return {
       code,
       programEnabled: cfg.enabled,
       rewardMinor: cfg.rewardMinor,
+      // Referral Advanced R2: the full program terms, so the
+      // Referral Center can explain exactly how rewards work.
+      config: {
+        mode: cfg.mode, percentOfFirstPayment: cfg.percentOfFirstPayment,
+        perPlanMinor: cfg.perPlanMinor, refereeBonusMinor: cfg.refereeBonusMinor,
+        minFirstPaymentMinor: cfg.minFirstPaymentMinor, creditExpiryDays: cfg.creditExpiryDays,
+        milestones: cfg.milestones,
+      },
       stats: {
         signups: referrals.length,
-        rewarded: referrals.filter((r) => r.status === "rewarded").length,
+        rewarded: rewardedCount,
+        pending: referrals.filter((r) => r.status === "pending").length,
         earnedMinor: earned,
+        conversionPercent: referrals.length ? Math.round((rewardedCount / referrals.length) * 1000) / 10 : null,
       },
       referrals,
     };

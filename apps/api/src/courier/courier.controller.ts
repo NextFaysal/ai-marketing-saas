@@ -2,12 +2,13 @@ import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } fro
 import { Response } from "express";
 import { CourierService } from "./courier.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+@PermissionArea("courier")
 @Controller("organizations/:organizationId/courier")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class CourierController {
   constructor(private readonly courier: CourierService) {}
 

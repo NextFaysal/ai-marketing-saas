@@ -29,6 +29,9 @@ function makeTable(name: string, tables: any) {
     findFirst: async ({ where }: any) => rows.find((r) => matches(r, where ?? {}, tables)) ?? null,
     findMany: async ({ where, take }: any = {}) => { const f = rows.filter((r) => matches(r, where ?? {}, tables)); return take ? f.slice(0, take) : f; },
     findUnique: async ({ where }: any) => rows.find((r) => r.id === where.id) ?? null,
+    // Inbox Next-Gen P3: checkAiAllowed counts today's usage per
+    // feature — the fake honours the same where the service sends.
+    count: async ({ where }: any = {}) => rows.filter((r) => matches(r, where ?? {}, tables)).length,
     create: async ({ data }: any) => { const row = { id: `${name}-${++seq}`, createdAt: new Date(), updatedAt: new Date(), ...data }; rows.push(row); return row; },
     update: async ({ where, data }: any) => {
       const row = rows.find((r) => r.id === where.id);

@@ -58,7 +58,7 @@ export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "ss
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
-function unseal(value: unknown): string | undefined {
+export function unseal(value: unknown): string | undefined {
   if (typeof value !== "string" || !value) return undefined;
   try {
     const out = decryptJson<{ v: string }>(value);

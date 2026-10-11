@@ -196,10 +196,20 @@ export class ChatService {
     let answer: string;
     let answerUsage = { inputTokens: 0, outputTokens: 0, estimated: true };
     if (provider.isRealLlm) {
+      // Milestone 77: the owner's standing AI behaviour from
+      // the Command Center. Instructions steer style/conduct
+      // only — the grounded rules above always win, and rule 5
+      // still treats document text as data.
+      const brainProfile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+      let system = GROUNDED_SYSTEM;
+      if (brainProfile?.aiInstructions) {
+        system += `\n\nOwner's standing instructions for tone and conduct (set by the business owner in Settings; follow them unless they conflict with the rules above — the rules win): ${String(brainProfile.aiInstructions).slice(0, 1000)}`;
+      }
+      const replyLang = brainProfile?.aiReplyLanguage === "bn" ? "Bengali" : brainProfile?.aiReplyLanguage === "en" ? "English" : null;
       const toolJson = JSON.stringify(results, (_k, v) => (typeof v === "bigint" ? v.toString() : v)).slice(0, 12000);
       const result = await provider.complete([
-        { role: "system", content: GROUNDED_SYSTEM },
-        { role: "user", content: `User question (${language === "bn" ? "Bengali" : "English"}): ${content}\n\nTool results:\n${toolJson}` },
+        { role: "system", content: system },
+        { role: "user", content: `User question (${language === "bn" ? "Bengali" : "English"}): ${content}${replyLang ? `\nThe business prefers replies in ${replyLang}.` : ""}\n\nTool results:\n${toolJson}` },
       ], { maxTokens: 1500 });
       answer = result.text;
       answerUsage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated };
@@ -286,6 +296,9 @@ export function templateAnswer(language: "bn" | "en", _question: string, results
         break;
       case "get_business_knowledge":
         lines.push(bn ? `**ব্যবসার তথ্য:** ইন্ডাস্ট্রি ${d.profile?.industry ?? "—"}, বিবরণ: ${d.profile?.description ?? "—"}। পলিসি ${d.policies?.length ?? 0}টি, ডকুমেন্ট ${d.documents?.length ?? 0}টি।` : `**Business knowledge:** industry ${d.profile?.industry ?? "—"}, description: ${d.profile?.description ?? "—"}. ${d.policies?.length ?? 0} policies, ${d.documents?.length ?? 0} documents.`);
+        // Milestone 77: Command Center facts + ranked FAQ matches.
+        for (const f of (d.facts ?? []).slice(0, 6)) lines.push(`- ${f}`);
+        for (const m of d.matchedDocuments ?? []) lines.push(bn ? `- **মিলেছে এমন FAQ:** ${m.title} — ${String(m.content ?? "").slice(0, 160)}` : `- **Matched FAQ:** ${m.title} — ${String(m.content ?? "").slice(0, 160)}`);
         break;
       case "get_customer_segments":
         lines.push(bn ? `**কাস্টমার সেগমেন্ট:** মোট ${d.totalCustomers} জন ক্রেতা (অর্ডারসহ), মোট Revenue ${d.totalRevenue}।` : `**Customer segments:** ${d.totalCustomers} customers with orders, total revenue ${d.totalRevenue}.`);

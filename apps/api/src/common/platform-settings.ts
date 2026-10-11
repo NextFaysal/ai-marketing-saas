@@ -60,6 +60,24 @@ export async function planPrices(prisma: any): Promise<Record<string, number>> {
   return out;
 }
 
+/** Billing Package B3: yearly cycle prices. Defaults are
+ * the monthly price × 10 ("two months free") — operator
+ * configuration like the monthly prices, stored in
+ * SystemSetting "planYearlyPrices". */
+export const DEFAULT_PLAN_YEARLY_PRICES_MINOR: Record<string, number> = { FREE: 0, STARTER: 1500000, GROWTH: 3000000, AGENCY: 8000000 };
+
+export async function planYearlyPrices(prisma: any): Promise<Record<string, number>> {
+  const raw = (await platformSetting(prisma, "planYearlyPrices")) as any;
+  const out = { ...DEFAULT_PLAN_YEARLY_PRICES_MINOR };
+  for (const tier of PLAN_TIERS) if (typeof raw?.[tier] === "number" && raw[tier] >= 0) out[tier] = raw[tier];
+  return out;
+}
+
+/** Period length per billing cycle, in days. */
+export function cycleDays(cycle: unknown): number {
+  return cycle === "yearly" ? 365 : 30;
+}
+
 export async function orgPlan(prisma: any, organizationId: string): Promise<string> {
   try {
     const sub = await prisma.subscription?.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
@@ -95,6 +113,26 @@ export async function sweepSubscription(prisma: any, organizationId: string): Pr
     if (!sub?.currentPeriodEnd) return { changed: false };
     if (!["TRIALING", "ACTIVE"].includes(sub.status)) return { changed: false };
     if (new Date(sub.currentPeriodEnd) > new Date()) return { changed: false };
+    // Billing Package B2: a scheduled plan change lands
+    // FIRST. FREE means the cancellation takes effect —
+    // the org drops to the free plan, active, no period.
+    // A paid target becomes the plan now owed: the period
+    // still closes unpaid (PAST_DUE) at the lower price.
+    if (sub.pendingPlan) {
+      const target = String(sub.pendingPlan);
+      if (target === "FREE") {
+        await prisma.subscription.update({
+          where: { id: sub.id },
+          data: { plan: "FREE", status: "ACTIVE", currentPeriodEnd: null, pendingPlan: null, pendingPlanAt: null },
+        });
+        return { changed: true, status: "FREE" };
+      }
+      await prisma.subscription.update({
+        where: { id: sub.id },
+        data: { plan: target, status: "PAST_DUE", pendingPlan: null, pendingPlanAt: null },
+      });
+      return { changed: true, status: "PAST_DUE" };
+    }
     await prisma.subscription.update({ where: { id: sub.id }, data: { status: "PAST_DUE" } });
     return { changed: true, status: "PAST_DUE" };
   } catch {

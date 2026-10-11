@@ -313,6 +313,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => { cancelled = true; };
   }, []);
 
+  // Milestone 69 (Team W1): presence heartbeat — while the
+  // dashboard is open, stamp "I am here" about once a minute so
+  // the Team board can tell working / idle / offline apart.
+  // Failures are silent; presence must never break the shell.
+  useEffect(() => {
+    if (!getToken()) return;
+    let stopped = false;
+    const beat = () => {
+      const orgId = getOrganizationId();
+      if (orgId && !stopped) {
+        apiFetch(`/organizations/${orgId}/inbox/presence/heartbeat`, { method: "POST" }).catch(() => undefined);
+      }
+    };
+    beat();
+    const t = setInterval(beat, 60_000);
+    return () => { stopped = true; clearInterval(t); };
+  }, []);
+
   useEffect(() => {
     if (!getToken()) { router.push("/login"); return; }
     setEmail(userEmailFromToken());

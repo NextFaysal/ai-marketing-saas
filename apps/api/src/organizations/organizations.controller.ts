@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Req, StreamableFile, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { OrganizationsService } from "./organizations.service";
-import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
-import { CurrentUser, AuthUser, Public, Roles } from "../common/decorators";
+import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UploadLogoDto } from "./organizations.dto";
+import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -22,10 +22,12 @@ export class OrganizationsController {
   @UseGuards(TenantGuard)
   getOne(@Param("organizationId") id: string) { return this.orgs.getOne(id); }
 
+  @PermissionArea("team")
   @Get(":organizationId/members")
-  @UseGuards(TenantGuard)
+  @UseGuards(TenantGuard, RolesGuard)
   members(@Param("organizationId") id: string) { return this.orgs.listMembers(id); }
 
+  @PermissionArea("team")
   @Post(":organizationId/members/invite")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")
@@ -33,11 +35,13 @@ export class OrganizationsController {
     return this.orgs.invite(id, user.userId, dto, req.ip);
   }
 
+  @PermissionArea("billing")
   @Get(":organizationId/billing")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")
   billing(@Param("organizationId") id: string) { return this.orgs.getBilling(id); }
 
+  @PermissionArea("billing")
   @Post(":organizationId/billing/plan-request")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")
@@ -45,6 +49,7 @@ export class OrganizationsController {
     return this.orgs.requestPlanChange(id, user.userId, dto, req.ip);
   }
 
+  @PermissionArea("team")
   @Post(":organizationId/members/email-invite")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")
@@ -82,10 +87,71 @@ export class OrganizationsController {
     return this.orgs.resetMemberTotp(id, user.userId, userId, req.ip);
   }
 
-  @Get(":organizationId/business-profile")
+  // Milestone 67 (Team T1): member lifecycle + seat picture.
+  @Get(":organizationId/members/usage")
   @UseGuards(TenantGuard)
+  memberUsage(@Param("organizationId") id: string) { return this.orgs.seatUsage(id); }
+
+  // Milestone 72 (Team W3): custom access.
+  @Get(":organizationId/access-catalog")
+  @UseGuards(TenantGuard)
+  accessCatalog() { return this.orgs.accessCatalog(); }
+
+  @Get(":organizationId/members/:userId/access")
+  @UseGuards(TenantGuard)
+  memberAccess(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string) {
+    return this.orgs.getMemberAccess(id, user.userId, userId);
+  }
+
+  @Patch(":organizationId/members/:userId/access")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateMemberAccess(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Body() dto: UpdateMemberAccessDto, @Req() req: Request) {
+    return this.orgs.updateMemberAccess(id, user.userId, userId, dto, req.ip);
+  }
+
+  // Milestone 69 (Team W1): member activity feed.
+  @Get(":organizationId/members/activity-feed")
+  @UseGuards(TenantGuard)
+  memberActivityFeed(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Query("take") take?: string, @Query("userId") userId?: string) {
+    return this.orgs.memberActivityFeed(id, user.userId, { take: take ? Number(take) : undefined, userId });
+  }
+
+  @PermissionArea("team")
+  @Patch(":organizationId/members/:userId/role")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateMemberRole(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Body() dto: UpdateMemberRoleDto, @Req() req: Request) {
+    return this.orgs.updateMemberRole(id, user.userId, userId, dto.role, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Patch(":organizationId/members/:userId/status")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  setMemberStatus(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Body() dto: UpdateMemberStatusDto, @Req() req: Request) {
+    return this.orgs.setMemberStatus(id, user.userId, userId, dto.status, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Delete(":organizationId/members/:userId")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  removeMember(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Req() req: Request) {
+    return this.orgs.removeMember(id, user.userId, userId, req.ip);
+  }
+
+  @PermissionArea("settings")
+  @Get(":organizationId/business-profile")
+  @UseGuards(TenantGuard, RolesGuard)
   getProfile(@Param("organizationId") id: string) { return this.orgs.getBusinessProfile(id); }
 
+  // Milestone 75: Business Brain completeness + AI readiness.
+  @Get(":organizationId/business-profile/completeness")
+  @UseGuards(TenantGuard, RolesGuard)
+  profileCompleteness(@Param("organizationId") id: string) { return this.orgs.getProfileCompleteness(id); }
+
+  @PermissionArea("settings")
   @Patch(":organizationId/business-profile")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
@@ -94,6 +160,7 @@ export class OrganizationsController {
   }
 
   // ---- Milestone 59: white-label branding ----
+  @PermissionArea("settings")
   @Patch(":organizationId/branding")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")

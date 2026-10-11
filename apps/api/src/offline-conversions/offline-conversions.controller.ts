@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 import { OfflineConversionsService } from "./offline-conversions.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { RolesGuard } from "../common/roles.guard";
 import { TenantGuard } from "../common/tenant.guard";
 
@@ -21,8 +21,9 @@ class RecentDto {
   @IsOptional() @IsNumber() days?: number;
 }
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId/offline-conversions")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class OfflineConversionsController {
   constructor(private readonly svc: OfflineConversionsService) {}
 

@@ -49,6 +49,14 @@ class ChangelogDto {
 class ReferralConfigDto {
   @IsBoolean() enabled!: boolean;
   @IsNumber() rewardMinor!: number;
+  // Referral Advanced R1: smart reward engine fields.
+  @IsOptional() @IsIn(["flat", "percent", "per_plan"]) mode?: string;
+  @IsOptional() @IsNumber() percentOfFirstPayment?: number;
+  @IsOptional() @IsObject() perPlanMinor?: Record<string, number>;
+  @IsOptional() @IsNumber() refereeBonusMinor?: number;
+  @IsOptional() @IsNumber() minFirstPaymentMinor?: number;
+  @IsOptional() @IsNumber() creditExpiryDays?: number;
+  @IsOptional() @IsArray() milestones?: { count: number; bonusMinor: number }[];
 }
 class FlagDto { @IsString() @MinLength(1) key!: string; @IsBoolean() enabled!: boolean; }
 class LimitsDto {
@@ -266,6 +274,11 @@ export class AdminController {
   @Delete("changelog/:id") @AdminTier("SUPER")
   deleteChangelog(@Req() req: any, @Param("id") id: string) { return this.admin.deleteChangelog(req.adminUser, id, req.ip); }
   @Get("referrals") referrals() { return this.admin.referralsBoard(); }
+  @Get("referrals/campaigns") referralCampaigns() { return this.admin.listReferralCampaigns(); }
+  @Post("referrals/campaigns") @AdminTier("SUPER")
+  createReferralCampaign(@Req() req: any, @Body() dto: any) { return this.admin.createReferralCampaign(req.adminUser, dto, req.ip); }
+  @Patch("referrals/campaigns/:id") @AdminTier("SUPER")
+  updateReferralCampaign(@Req() req: any, @Param("id") id: string, @Body() dto: any) { return this.admin.updateReferralCampaign(req.adminUser, id, dto, req.ip); }
   @Patch("referrals/config") @AdminTier("SUPER")
   referralConfig(@Req() req: any, @Body() dto: ReferralConfigDto) { return this.admin.updateReferralConfig(req.adminUser, dto, req.ip); }
   @Get("feedback") feedback() { return this.admin.feedbackBoard(); }

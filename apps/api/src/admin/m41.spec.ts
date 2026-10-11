@@ -167,7 +167,13 @@ describe("Milestone 41 — growth ops", () => {
     const p = makePrisma();
     const svc = new AdminService(p, AUDIT);
     const cfg: any = await svc.updateReferralConfig(ADMIN, { enabled: true, rewardMinor: 75000 });
-    expect(cfg).toEqual({ enabled: true, rewardMinor: 75000 });
+    // Referral Advanced R1: the config grew the v2 fields;
+    // the M41 flat pair still round-trips exactly.
+    expect(cfg).toEqual({
+      enabled: true, rewardMinor: 75000, mode: "flat", percentOfFirstPayment: 0,
+      perPlanMinor: {}, refereeBonusMinor: 0, minFirstPaymentMinor: 0,
+      creditExpiryDays: 0, milestones: [],
+    });
     const board: any = await svc.referralsBoard();
     expect(board.totals.signups).toBe(1);
     expect(board.recent[0].referrerEmail).toBe("referrer@x.test");

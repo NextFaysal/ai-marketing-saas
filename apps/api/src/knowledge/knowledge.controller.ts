@@ -1,14 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { KnowledgeService } from "./knowledge.service";
 import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto } from "./knowledge.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 
+@PermissionArea("ai")
 @Controller("organizations/:organizationId")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class KnowledgeController {
   constructor(private readonly knowledge: KnowledgeService) {}
 

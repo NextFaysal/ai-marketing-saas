@@ -6,7 +6,7 @@
  * real business data backs the answer.
  */
 export type Intent = "price" | "stock" | "delivery" | "order_status" | "payment" | "complaint" | "greeting" | "order_intent" | "other";
-export interface Classification { intent: Intent; confidence: number; sentiment: "negative" | null }
+export interface Classification { intent: Intent; confidence: number; sentiment: "negative" | "positive" | null }
 
 interface Rule { intent: Intent; phrases: string[]; words: string[]; base: number }
 const RULES: Rule[] = [
@@ -22,11 +22,30 @@ const RULES: Rule[] = [
 
 const NEGATIVE_WORDS = ["খুব খারাপ", "বাজে", "প্রতারণা", "প্রতারক", "রাগ", "বিরক্তিকর", "হতাশ", "fraud", "angry", "বাজে সার্ভিস", "ধোঁকা", "😡", "😠"];
 
+/**
+ * Inbox Next-Gen P3: positive sentiment, curated BN + EN. Entries are
+ * chosen to avoid colliding with complaint / order / price phrases
+ * (e.g. bare "ভালো" is deliberately NOT here — "ভালো না" would flip a
+ * complaint positive; "ভালো লেগেছে" is the safe form). Negative
+ * always wins when both fire (see classifyIntent).
+ */
+const POSITIVE_WORDS = [
+  "ধন্যবাদ", "শুকরিয়া", "চমৎকার", "দারুণ", "অসাধারণ", "খুব সুন্দর", "সুন্দর হয়েছে",
+  "ভালো লেগেছে", "সুন্দর", "খুশি", "সন্তুষ্ট", "পারফেক্ট",
+  "thank you", "thanks", "great service", "excellent", "awesome", "amazing",
+  "love it", "loved it", "perfect", "very happy", "so happy", "satisfied",
+  "👍", "❤️", "😍", "😊", "🥰",
+];
+
 const GREETING_ONLY = /^(\s*)(আসসালামু আলাইকুম|আসসালামুয়ালাইকুম|সালাম|hello|hi|হ্যালো|হাই|ভাইয়া|আপু)(\s|!|।|\.)*$/i;
 
 export function classifyIntent(rawText: string): Classification {
   const text = ` ${String(rawText ?? "").toLowerCase()} `;
-  const sentiment: "negative" | null = NEGATIVE_WORDS.some((w) => text.includes(w)) ? "negative" : null;
+  // Negative ALWAYS wins: a complaint that also says "thanks" is
+  // still a complaint. Positive only fires when no negative hit.
+  const sentiment: Classification["sentiment"] = NEGATIVE_WORDS.some((w) => text.includes(w))
+    ? "negative"
+    : POSITIVE_WORDS.some((w) => text.includes(w)) ? "positive" : null;
   if (GREETING_ONLY.test(String(rawText ?? "").trim())) return { intent: "greeting", confidence: 90, sentiment };
 
   let best: { intent: Intent; score: number } = { intent: "other", score: 0 };
@@ -45,6 +64,25 @@ export function classifyIntent(rawText: string): Classification {
     return { intent: "complaint", confidence: Math.max(best.score, 72), sentiment };
   }
   return { intent: best.intent, confidence: best.score, sentiment };
+}
+
+/**
+ * Inbox Next-Gen P3: thread mood from a set of message texts,
+ * computed with the same deterministic classifier (used at read
+ * time — per-message sentiment was never persisted, only intent).
+ * negative = -1, positive = +1, unclassified = 0; the sign of the
+ * sum decides, an all-zero sum over a non-empty list is "neutral",
+ * and an empty list has no mood at all (null).
+ */
+export function moodFromMessages(texts: string[]): "positive" | "neutral" | "negative" | null {
+  if (!texts.length) return null;
+  let sum = 0;
+  for (const t of texts) {
+    const s = classifyIntent(t).sentiment;
+    if (s === "negative") sum -= 1;
+    else if (s === "positive") sum += 1;
+  }
+  return sum > 0 ? "positive" : sum < 0 ? "negative" : "neutral";
 }
 
 /** COD confirmation replies: short affirmative / negative answers only. */

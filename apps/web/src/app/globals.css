@@ -5,10 +5,27 @@
 :root {
   --brand-from: #6366f1;
   --brand-to: #8b5cf6;
+  /* Tenant Web Design v2 tokens. --brand-from/--brand-to above stay the
+     single source of brand colour: the M59 white-label shell overrides
+     exactly those two variables per org, and every v2 surface below
+     derives from them (via color-mix), so branding keeps working. */
+  --surface: #ffffff;
+  --surface-muted: #f8fafc;
+  --border-soft: rgba(226, 232, 240, 0.8);
+  --ink-strong: #0f172a;
+  --ink-body: #334155;
+  --ink-muted: #64748b;
+  --ink-faint: #94a3b8;
+  --brand-soft: color-mix(in srgb, var(--brand-from) 9%, white);
+  --brand-soft-strong: color-mix(in srgb, var(--brand-from) 16%, white);
+  --brand-ring: color-mix(in srgb, var(--brand-from) 38%, transparent);
+  --radius-card: 1rem;
+  --shadow-card-v2: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  --shadow-pop: 0 12px 40px -12px rgba(15, 23, 42, 0.25);
 }
 
 @layer base {
-  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; -webkit-tap-highlight-color: transparent; }
   body {
     background:
       radial-gradient(1200px 500px at 85% -10%, rgba(99,102,241,0.08), transparent 60%),
@@ -91,4 +108,100 @@
 
   .nav-link { @apply flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13.5px] font-medium text-slate-300/90 transition hover:bg-white/[0.07] hover:text-white; }
   .nav-link-active { @apply bg-gradient-to-r from-brand-500/90 to-violet-500/90 text-white shadow-glow hover:text-white; }
+
+  /* ---------- Tenant Web Design v2 primitives (additive) ---------- */
+
+  /* Skeleton loading blocks with a soft shimmer sweep. */
+  .skeleton { @apply relative overflow-hidden rounded-xl bg-slate-200/70; }
+  .skeleton::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.55) 50%, transparent 80%);
+    animation: skel-wave 1.4s infinite;
+  }
+
+  /* Gradient hero panel (dashboard welcome strip / billing plan hero).
+     Built from the brand variables, so a white-labelled org's colour
+     flows into the hero with zero extra code. */
+  .hero-panel {
+    @apply relative overflow-hidden rounded-3xl text-white;
+    background-image:
+      radial-gradient(560px 240px at 88% -30%, rgba(255, 255, 255, 0.22), transparent 60%),
+      linear-gradient(120deg, var(--brand-from), var(--brand-to));
+    box-shadow: 0 16px 40px -16px var(--brand-ring), var(--shadow-card-v2);
+  }
+  .hero-chip { @apply inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white ring-1 ring-inset ring-white/25 backdrop-blur-sm; }
+
+  /* KPI stat card with an icon chip (Overview v2). */
+  .stat-card { @apply card relative overflow-hidden p-5 transition duration-200 hover:shadow-card-hover hover:-translate-y-px; }
+  .stat-icon { @apply flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm; }
+  .stat-icon-brand { background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .stat-icon-green { background-image: linear-gradient(135deg, #059669, #34d399); }
+  .stat-icon-amber { background-image: linear-gradient(135deg, #d97706, #fbbf24); }
+  .stat-icon-sky { background-image: linear-gradient(135deg, #0284c7, #38bdf8); }
+  .stat-label { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500; }
+  .stat-value { @apply mt-1 text-[26px] font-bold leading-none tracking-tight text-slate-900; }
+  .stat-hint { @apply mt-2 text-xs text-slate-400; }
+
+  /* Quick-action tile inside the hero (real links, ≥44px targets). */
+  .quick-action { @apply flex min-h-[44px] items-center gap-2.5 rounded-2xl bg-white/10 px-3.5 py-2.5 text-sm font-semibold text-white ring-1 ring-inset ring-white/20 backdrop-blur-sm transition duration-150 hover:bg-white/20 active:scale-[0.98]; }
+
+  /* Usage meter (Billing v2). Width is always computed from the real
+     usage/limit pair by the page; tones are state, never decoration. */
+  .meter { @apply h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60; }
+  .meter-fill { @apply h-full rounded-full transition-[width] duration-500; background-image: linear-gradient(90deg, var(--brand-from), var(--brand-to)); }
+  .meter-fill-ok { background-image: linear-gradient(90deg, #059669, #34d399); }
+  .meter-fill-warn { background-image: linear-gradient(90deg, #d97706, #fbbf24); }
+  .meter-fill-danger { background-image: linear-gradient(90deg, #dc2626, #f87171); }
+
+  /* Pricing plan card (Billing v2 catalogue). */
+  .plan-card { @apply card relative flex flex-col p-5 transition duration-200 hover:shadow-card-hover; }
+  .plan-card-current { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 55%); box-shadow: var(--shadow-card-v2); }
+
+  /* Alert banners v2 (same texts/semantics as the legacy inline ones). */
+  .alert { @apply flex items-start gap-2.5 rounded-2xl px-4 py-3 text-sm ring-1 ring-inset; }
+  .alert-red { @apply bg-red-50 text-red-800 ring-red-200; }
+  .alert-amber { @apply bg-amber-50 text-amber-800 ring-amber-200; }
+  .alert-green { @apply bg-emerald-50 text-emerald-800 ring-emerald-200; }
+  .alert-slate { @apply bg-slate-100 text-slate-700 ring-slate-200; }
+
+  /* Payment-history mobile card (Billing v2, shown below 720px). */
+  .pay-card { @apply rounded-2xl border border-slate-200/80 bg-white p-4 shadow-card; }
+
+  /* ---------- Support Design v2 primitives (additive) ---------- */
+
+  /* Ticket list card (Support v2). The selected state is applied by
+     the page with brand-var inline styles — same pattern as the
+     onboarding checklist card — so white-label colour flows here too. */
+  .ticket-card { @apply w-full rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-card transition duration-150 hover:shadow-card-hover hover:-translate-y-px active:scale-[0.99]; }
+
+  /* Status summary chip (Support v2): a real count from the fetched
+     ticket list + its label. No other numbers ever appear here. */
+  .count-chip { @apply card flex items-center gap-3 px-4 py-3; }
+  .count-chip-value { @apply text-xl font-bold leading-none tracking-tight text-slate-900; }
+  .count-chip-label { @apply mt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500; }
+
+  /* Chat-style thread (Support v2). Own (tenant) bubbles take the
+     org's brand gradient; support bubbles stay on a white surface. */
+  .msg-avatar { @apply flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-[13px] font-bold text-white shadow-sm; }
+  .msg-avatar-support { background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .msg-avatar-own { background-color: #64748b; }
+  .msg-bubble { @apply max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm sm:max-w-[75%]; }
+  .msg-bubble-support { @apply rounded-tl-md border border-slate-200/80 bg-white text-slate-800; }
+  .msg-bubble-own { @apply rounded-tr-md text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .date-sep { @apply flex items-center gap-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400; }
+  .date-sep::before, .date-sep::after { content: ""; height: 1px; flex: 1; background: rgba(226, 232, 240, 0.8); }
+}
+
+@keyframes skel-wave { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+/* Design v2 motion discipline: honour reduced-motion everywhere —
+   shimmer, entrance rises and meter sweeps all settle instantly. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton::after { animation: none; }
 }

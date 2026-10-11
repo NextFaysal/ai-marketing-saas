@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { IsString, MaxLength } from "class-validator";
 import { CreativesService } from "./creatives.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -12,8 +12,9 @@ class UploadDto {
   @IsString() @MaxLength(2000) sourceUrl!: string;
 }
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId/creatives")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class CreativesController {
   constructor(private readonly creatives: CreativesService) {}
 

@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { IsString, MaxLength } from "class-validator";
 import { CatalogsService } from "./catalogs.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -14,8 +14,9 @@ class RegisterCatalogDto {
   @IsString() externalCatalogId!: string;
 }
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId/catalogs")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class CatalogsController {
   constructor(private readonly catalogs: CatalogsService) {}
 

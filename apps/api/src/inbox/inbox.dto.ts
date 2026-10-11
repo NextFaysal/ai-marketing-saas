@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from "class-validator";
 export class ConnectMessagingDto {
   @IsString() channel!: string;
   @IsString() accessToken!: string;
@@ -47,6 +47,18 @@ export class SendImageDto {
   @IsOptional() @IsString() @MaxLength(1024) caption?: string;
 }
 
+/** Inbox Next-Gen P1: browser-uploaded media (drag-drop / paste /
+ * voice recorder). Base64 in JSON like the M59 logo upload; the
+ * decoded cap (2MB in InboxService) keeps the payload inside the
+ * 3MB body limit. The declared contentType is never trusted for
+ * images/PDF — the service sniffs magic bytes. */
+export class SendMediaDto {
+  @IsString() @MaxLength(2900000) dataBase64!: string;
+  @IsOptional() @IsString() @MaxLength(200) fileName?: string;
+  @IsOptional() @IsString() @MaxLength(120) contentType?: string;
+  @IsOptional() @IsString() @MaxLength(1024) caption?: string;
+}
+
 export class UpdateInboxSettingsDto {
   @IsOptional() @IsString() autoReplyMode?: string;
   @IsOptional() @IsInt() @Min(0) @Max(100) confidenceThreshold?: number;
@@ -81,9 +93,22 @@ export class TeamDto {
   @IsString() @MinLength(1) @MaxLength(80) name!: string;
   @IsOptional() @IsArray() @IsString({ each: true }) channels?: string[];
 }
+/** Milestone 73 (Team T4): the agent's own chat signature. */
+export class UpdateSignatureDto {
+  @IsOptional() @IsString() @MaxLength(300) signature?: string;
+  @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
+/** Milestone 74 (Team T5): workload rebalance request. */
+export class RebalanceDto {
+  @IsOptional() @IsBoolean() dryRun?: boolean;
+}
+
 export class UpdateTeamDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) channels?: string[];
+  /** Milestone 71: the team's lead (org member id) or null to clear. */
+  @IsOptional() @IsString() @MaxLength(80) leadUserId?: string | null;
 }
 export class TeamMemberInputDto {
   @IsString() userId!: string;
@@ -94,6 +119,13 @@ export class TeamMembersDto {
 }
 export class AgentStateDto {
   @IsString() status!: string;
+}
+/** Milestone 68 (Team T2): weekly working hours. The windows
+ * object is shape-validated in the service (weekday keys with
+ * ["HH:MM","HH:MM"] pairs). */
+export class AgentScheduleDto {
+  @IsOptional() @IsString() @MaxLength(60) timezone?: string;
+  @IsObject() windows!: Record<string, [string, string][]>;
 }
 
 // Unified Inbox U4: channel connects.
@@ -107,4 +139,32 @@ export class ConnectEmailDto {
   @IsOptional() @IsInt() @Min(1) @Max(65535) smtpPort?: number;
   @IsString() @MaxLength(200) user!: string;
   @IsString() @MinLength(1) @MaxLength(400) password!: string;
+}
+
+/** Inbox Next-Gen P2: bulk conversation actions. The 25-id cap
+ * and the action vocabulary are enforced in the service as well;
+ * the DTO only shapes the payload. */
+export class BulkConversationsDto {
+  @IsArray() @IsString({ each: true }) ids!: string[];
+  @IsString() @MaxLength(20) action!: string; // close | assign | tag-add | mark-read
+  @IsOptional() @IsString() assignedUserId?: string | null;
+  @IsOptional() @IsString() @MaxLength(60) tag?: string;
+}
+
+/** Inbox Next-Gen P2: product showcase card send. */
+export class SendProductDto {
+  @IsString() productId!: string;
+  @IsOptional() @IsString() @MaxLength(500) caption?: string;
+}
+
+/** Inbox Next-Gen P3: ghost completion — the agent's half-written
+ * reply text the model should continue. */
+export class GhostDto {
+  @IsString() @MaxLength(2000) partial!: string;
+}
+
+/** Inbox Next-Gen P3: tone rewrite of the agent's own draft. */
+export class ToneRewriteDto {
+  @IsString() @MaxLength(2000) text!: string;
+  @IsIn(["polite", "professional", "sales"]) tone!: string;
 }

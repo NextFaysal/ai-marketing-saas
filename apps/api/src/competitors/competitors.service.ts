@@ -333,10 +333,12 @@ export class CompetitorsService {
   ) {
     const ad = await (this.prisma as any).competitorAd.findFirst({
       where: { id: dto.competitorAdId },
-      include: { competitor: true },
     });
     if (!ad) throw new NotFoundException("Competitor ad not found");
-    if (ad.competitor.organizationId !== organizationId) {
+    const adCompetitor = await (this.prisma as any).competitor.findFirst({
+      where: { id: ad.competitorId },
+    });
+    if (!adCompetitor || adCompetitor.organizationId !== organizationId) {
       throw new NotFoundException("Ad does not belong to this organization");
     }
 
@@ -354,7 +356,7 @@ export class CompetitorsService {
 
     const provider = this.llm.getProvider();
     const competitorCreative = ad.creativeText || "No text available";
-    const competitorName = ad.competitor.name;
+    const competitorName = adCompetitor.name;
     const daysRunning = ad.startedAt
       ? Math.max(1, Math.round((Date.now() - new Date(ad.startedAt).getTime()) / (1000 * 60 * 60 * 24)))
       : 1;
@@ -730,11 +732,11 @@ Return strictly valid JSON with this format:
     for (const c of competitors) {
       const ads = await this.listAds(organizationId, c.id);
       const observations = await this.listObservations(organizationId, c.id);
-      const winningAds = ads.filter((a) => a.isWinning);
+      const winningAds = ads.filter((a: any) => a.isWinning);
       competitorDossiers.push({
         competitor: c,
         totalAds: ads.length,
-        activeAds: ads.filter((a) => a.isActive).length,
+        activeAds: ads.filter((a: any) => a.isActive).length,
         winningAdsCount: winningAds.length,
         winningAds: winningAds.slice(0, 5),
         recentAds: ads.slice(0, 8),
@@ -773,17 +775,17 @@ Return strictly valid JSON with this format:
     const analyzer = new SeoTrafficAnalyzer();
     const seoReport = await analyzer.analyze(competitor.name, competitor.websiteUrl ?? undefined);
 
-    let ownProduct: { title: string; description?: string } | null = null;
+    let ownProduct: { name: string; description?: string | null } | null = null;
     if (ownProductId) {
       const p = await this.prisma.product.findFirst({
         where: { id: ownProductId, organizationId },
-        select: { title: true, description: true },
+        select: { name: true, description: true },
       });
       if (p) ownProduct = p;
     }
 
     const provider = this.llm.getProvider();
-    const targetTitle = ownProduct?.title || "Your Store Product";
+    const targetTitle = ownProduct?.name || "Your Store Product";
     const competitorKeywords = seoReport.topKeywords.slice(0, 5).map((k) => k.keyword).join(", ");
 
     const systemPrompt = "You are an elite e-commerce SEO and SERP copy strategist. You help DTC brands outrank competitors on Google.";
@@ -824,11 +826,10 @@ Format as a clean JSON with keys:
     };
 
     try {
-      const response = await provider.generateText({
-        systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        temperature: 0.3,
-      });
+      const response = await provider.complete(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+        { jsonMode: true },
+      );
       const parsed = JSON.parse(response.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
       if (parsed.recommendedMetaTitle) {
         strategyResult = {
@@ -843,13 +844,13 @@ Format as a clean JSON with keys:
       // Fallback to strategyResult
     }
 
-    await this.audit.record({
+    await this.audit.log({
       organizationId,
-      actorId,
+      userId: actorId,
       action: "COMPETITOR_SEO_GAP_GENERATED",
       entityType: "competitor",
       entityId: competitorId,
-      details: { competitorName: competitor.name, targetProduct: targetTitle },
+      metadata: { competitorName: competitor.name, targetProduct: targetTitle },
     });
 
     return {
@@ -883,9 +884,9 @@ Format as a clean JSON with keys:
     if (dto.ownProductId) {
       const product = await this.prisma.product.findFirst({
         where: { id: dto.ownProductId, organizationId },
-        select: { title: true },
+        select: { name: true },
       });
-      if (product) ownProductTitle = product.title;
+      if (product) ownProductTitle = product.name;
     }
 
     const deconstructor = new VideoScriptDeconstructor(this.llm);
@@ -898,13 +899,13 @@ Format as a clean JSON with keys:
       videoStyle: dto.videoStyle,
     });
 
-    await this.audit.record({
+    await this.audit.log({
       organizationId,
-      actorId,
+      userId: actorId,
       action: "COMPETITOR_VIDEO_SCRIPT_DECONSTRUCTED",
       entityType: "competitor_ad",
       entityId: ad.id,
-      details: { competitorName: competitor.name, targetProduct: ownProductTitle },
+      metadata: { competitorName: competitor.name, targetProduct: ownProductTitle },
     });
 
     return result;
@@ -967,13 +968,13 @@ Format as a clean JSON with keys:
       },
     });
 
-    await this.audit.record({
+    await this.audit.log({
       organizationId,
-      actorId,
+      userId: actorId,
       action: "COMPETITOR_ALERT_CONFIG_UPDATED",
       entityType: "organization",
       entityId: organizationId,
-      details: { telegramEnabled: updated.telegramEnabled, whatsappEnabled: updated.whatsappEnabled },
+      metadata: { telegramEnabled: updated.telegramEnabled, whatsappEnabled: updated.whatsappEnabled },
     });
 
     return updated;

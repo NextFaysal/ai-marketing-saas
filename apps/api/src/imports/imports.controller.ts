@@ -1,12 +1,13 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ImportsService } from "./imports.service";
 import { ImportProductsCsvDto } from "./imports.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+@PermissionArea("integrations")
 @Controller("organizations/:organizationId/imports")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class ImportsController {
   constructor(private readonly imports: ImportsService) {}
 

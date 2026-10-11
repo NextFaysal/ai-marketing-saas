@@ -185,11 +185,10 @@ Format as JSON matching this schema:
   }
 }`;
 
-      const res = await provider.generateText({
-        systemPrompt: "You are an award-winning TikTok, Reels & Meta video ad director.",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-      });
+      const res = await provider.complete(
+        [{ role: "system", content: "You are an award-winning TikTok, Reels & Meta video ad director." }, { role: "user", content: prompt }],
+        { jsonMode: true },
+      );
 
       const parsed = JSON.parse(res.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
       if (parsed?.adaptedScript?.scenes?.length) {

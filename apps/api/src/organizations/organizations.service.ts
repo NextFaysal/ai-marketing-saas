@@ -4,6 +4,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
+import { PERMISSION_AREAS, effectiveAccess, findUnknownAreas, normalizeOverrides } from "../common/permission-catalog";
+import { isValidTimezone, isValidWindows } from "../inbox/working-hours";
 import { EmailProvider } from "../messaging/email.provider";
 import { Role } from "@repo/db";
 
@@ -97,7 +99,7 @@ export class OrganizationsService {
       aiDaily: Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200),
       broadcastCap: Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000),
     };
-    const [sub, prices, limits, payments, seatsUsed, aiCallsToday, broadcasts30d] = await Promise.all([
+    const [sub, prices, limits, payments, seatsUsed, aiCallsToday, broadcasts30d, yearlyPrices] = await Promise.all([
       (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }),
       ps.planPrices(this.prisma as any),
       ps.effectiveLimits(this.prisma as any, organizationId, baseline),
@@ -109,18 +111,47 @@ export class OrganizationsService {
       (this.prisma as any).broadcast.count({
         where: { organizationId, createdAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } },
       }),
+      ps.planYearlyPrices(this.prisma as any),
     ]);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
     const pc = await import("../common/platform-config");
     await pc.ensurePlatformConfig(this.prisma as any).catch(() => null);
+    // Billing Package B6: next-invoice preview — what the
+    // renewal will actually ask for, computed from the same
+    // price books + credit the checkout uses. A scheduled
+    // change (B2) retargets the preview to the pending plan.
+    const nextInvoice = (() => {
+      if (!sub || !sub.currentPeriodEnd) return null;
+      const cycle = String(sub.billingCycle ?? "monthly");
+      const targetPlan = String(sub.pendingPlan ?? sub.plan);
+      if (targetPlan === "FREE") {
+        return { plan: "FREE", cycle, amountMinor: "0", creditAppliedMinor: "0", dueMinor: "0", dueDate: sub.currentPeriodEnd, scheduledChange: !!sub.pendingPlan };
+      }
+      const book = cycle === "yearly" ? yearlyPrices : prices;
+      const amount = BigInt(book[targetPlan] ?? 0);
+      const credit = BigInt(org?.creditMinor ?? 0);
+      const applied = credit > amount ? amount : credit;
+      return {
+        plan: targetPlan, cycle,
+        amountMinor: amount.toString(), creditAppliedMinor: applied.toString(),
+        dueMinor: (amount - applied).toString(), dueDate: sub.currentPeriodEnd,
+        scheduledChange: !!sub.pendingPlan,
+      };
+    })();
     return {
+      nextInvoice,
       subscription: sub
-        ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd, priceMinor: String(prices[sub.plan] ?? 0), currency: "BDT" }
+        ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd, pendingPlan: sub.pendingPlan ?? null, billingCycle: sub.billingCycle ?? "monthly", priceMinor: String((sub.billingCycle === "yearly" ? yearlyPrices : prices)[sub.plan] ?? 0), currency: "BDT" }
         : null,
       // Milestone 39: credit balance + which gateways the
       // platform team has actually configured (buttons in the
       // UI follow these flags, never assumptions).
       creditMinor: BigInt(org?.creditMinor ?? 0).toString(),
+      // Billing Package B4: auto-renew status (never the id).
+      autoRenew: await (async () => {
+        const row = await (this.prisma as any).autoRenewAgreement?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
+        return row ? { status: row.status, payerReference: row.payerReference, lastChargeAt: row.lastChargeAt ?? null, lastError: row.lastError ?? null } : null;
+      })(),
       gateways: {
         sslcommerz: pc.effectiveSslcommerzConfig() !== null,
         bkash: pc.effectiveBkashConfig() !== null,
@@ -130,6 +161,7 @@ export class OrganizationsService {
       plans: ps.PLAN_TIERS.map((tier) => ({
         tier,
         priceMinor: String(prices[tier] ?? 0),
+        yearlyPriceMinor: String(yearlyPrices[tier] ?? 0),
         currency: "BDT",
         limits: ps.DEFAULT_PLAN_LIMITS[tier],
       })),
@@ -442,18 +474,315 @@ export class OrganizationsService {
     return { ok: true, userId: targetUserId, totpEnabled: false };
   }
 
+  // ---------- Milestone 67 (Team T1): member lifecycle ----------
+
+  private async memberOrThrow(organizationId: string, targetUserId: string) {
+    const membership = await (this.prisma as any).membership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+    if (!membership) throw new NotFoundException("That user is not a member of this organization");
+    return membership;
+  }
+
+  /** Open conversations must never be stranded on a person who
+   * can no longer work them: hand them back to the pool
+   * (unassigned) so the assignment sweep redistributes them. */
+  private async handOverOpenConversations(organizationId: string, userId: string): Promise<number> {
+    const out = await (this.prisma as any).channelConversation.updateMany({
+      where: { organizationId, assignedUserId: userId, status: "open" },
+      data: { assignedUserId: null },
+    }).catch(() => ({ count: 0 }));
+    return out?.count ?? 0;
+  }
+
+  async updateMemberRole(organizationId: string, actorId: string, targetUserId: string, role: string, ip?: string) {
+    if (!INVITABLE_ROLES.includes(role as Role)) {
+      throw new BadRequestException("This role cannot be assigned (OWNER is never assignable here)");
+    }
+    const membership = await this.memberOrThrow(organizationId, targetUserId);
+    if (membership.role === "OWNER") throw new BadRequestException("The organization owner's role cannot be changed");
+    if (membership.role === role) return { ok: true, userId: targetUserId, role, unchanged: true };
+    const from = membership.role;
+    const updated = await (this.prisma as any).membership.update({
+      where: { id: membership.id }, data: { role },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.member_role_updated", entityType: "Membership", entityId: membership.id,
+      metadata: { targetUserId, memberEmail: membership.user?.email, from, to: role }, ipAddress: ip,
+    });
+    return { ok: true, userId: targetUserId, role: updated.role, from };
+  }
+
+  async setMemberStatus(organizationId: string, actorId: string, targetUserId: string, status: string, ip?: string) {
+    if (status !== "SUSPENDED" && status !== "ACTIVE") throw new BadRequestException("Status must be SUSPENDED or ACTIVE");
+    const membership = await this.memberOrThrow(organizationId, targetUserId);
+    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be suspended");
+    if (targetUserId === actorId) throw new BadRequestException("You cannot change your own status");
+    if (membership.status === status) return { ok: true, userId: targetUserId, status, unchanged: true };
+    let handedOver = 0;
+    if (status === "SUSPENDED") {
+      handedOver = await this.handOverOpenConversations(organizationId, targetUserId);
+      // The board must not show a suspended agent as available.
+      await (this.prisma as any).agentState.updateMany({
+        where: { organizationId, userId: targetUserId }, data: { status: "away" },
+      }).catch(() => undefined);
+    }
+    await (this.prisma as any).membership.update({ where: { id: membership.id }, data: { status } });
+    await this.audit.log({
+      organizationId, userId: actorId,
+      action: status === "SUSPENDED" ? "org.member_suspended" : "org.member_reactivated",
+      entityType: "Membership", entityId: membership.id,
+      metadata: { targetUserId, memberEmail: membership.user?.email, handedOver }, ipAddress: ip,
+    });
+    return { ok: true, userId: targetUserId, status, handedOver };
+  }
+
+  async removeMember(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
+    const membership = await this.memberOrThrow(organizationId, targetUserId);
+    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be removed");
+    if (targetUserId === actorId) throw new BadRequestException("You cannot remove yourself");
+    const handedOver = await this.handOverOpenConversations(organizationId, targetUserId);
+    // Leave no roster residue: inbox teams + agent state go too.
+    const teams = await (this.prisma as any).inboxTeam.findMany({
+      where: { organizationId }, select: { id: true },
+    }).catch(() => []);
+    if (teams.length) {
+      await (this.prisma as any).inboxTeamMember.deleteMany({
+        where: { userId: targetUserId, teamId: { in: teams.map((t: any) => t.id) } },
+      }).catch(() => undefined);
+    }
+    await (this.prisma as any).agentState.deleteMany({
+      where: { organizationId, userId: targetUserId },
+    }).catch(() => undefined);
+    await (this.prisma as any).membership.delete({ where: { id: membership.id } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.member_removed", entityType: "Membership", entityId: membership.id,
+      metadata: { targetUserId, memberEmail: membership.user?.email, role: membership.role, handedOver }, ipAddress: ip,
+    });
+    return { ok: true, userId: targetUserId, removed: true, handedOver };
+  }
+
+  // ---------- Milestone 72 (Team W3): custom access ----------
+
+  /** The permission catalog (for the access editor). */
+  accessCatalog() {
+    return PERMISSION_AREAS;
+  }
+
+  /** A member's access picture: role, stored overrides and the
+   * computed effective access. Managers see anyone; a member
+   * may view only their own. */
+  async getMemberAccess(organizationId: string, actorId: string, targetUserId: string) {
+    const p = this.prisma as any;
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    });
+    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    const isManager = ["OWNER", "ADMIN"].includes(actor.role);
+    if (!isManager && actorId !== targetUserId) throw new ForbiddenException("You can only view your own access");
+    const target = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+    });
+    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    const overrides = normalizeOverrides(target.permissionOverrides);
+    return {
+      userId: targetUserId, role: target.role,
+      overrides,
+      effective: effectiveAccess(target.role, target.permissionOverrides),
+    };
+  }
+
+  /** Replace a member's overrides (OWNER/ADMIN only — enforced
+   * at the controller). The OWNER's own access can never be
+   * overridden. Every change is audited with its diff. */
+  async updateMemberAccess(organizationId: string, actorId: string, targetUserId: string, dto: { grants?: string[]; denies?: string[] }, ip?: string) {
+    const unknown = findUnknownAreas(dto);
+    if (unknown.length) throw new BadRequestException(`Unknown permission areas: ${unknown.join(", ")}`);
+    const p = this.prisma as any;
+    const target = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+    });
+    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    if (target.role === "OWNER") throw new BadRequestException("The owner's access cannot be customized — the owner always has full access");
+    const before = normalizeOverrides(target.permissionOverrides);
+    const after = normalizeOverrides(dto);
+    const diff = {
+      grantsAdded: after.grants.filter((g) => !before.grants.includes(g)),
+      grantsRemoved: before.grants.filter((g) => !after.grants.includes(g)),
+      deniesAdded: after.denies.filter((d) => !before.denies.includes(d)),
+      deniesRemoved: before.denies.filter((d) => !after.denies.includes(d)),
+    };
+    await p.membership.update({ where: { id: target.id }, data: { permissionOverrides: after } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.member_access_updated",
+      entityType: "Membership", entityId: target.id,
+      metadata: { targetUserId, ...diff, grants: after.grants, denies: after.denies },
+      ipAddress: ip,
+    });
+    return this.getMemberAccess(organizationId, actorId, targetUserId);
+  }
+
+  /** Milestone 69 (Team W1): the member activity feed — real
+   * AuditLog rows for this org, newest first. Managers
+   * (OWNER/ADMIN/MARKETING_MANAGER) see everyone; anyone else
+   * only ever sees their own rows. */
+  async memberActivityFeed(organizationId: string, actorId: string, query: { take?: number; userId?: string }) {
+    const p = this.prisma as any;
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    });
+    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
+    const userId = isManager ? query.userId : actorId;
+    const take = Math.min(100, Math.max(1, Math.round(Number(query.take ?? 30)) || 30));
+    const rows = await p.auditLog.findMany({
+      where: { organizationId, ...(userId ? { userId } : {}) },
+      orderBy: { createdAt: "desc" },
+      take,
+    });
+    const members = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 200 });
+    const nameOf = new Map((members as any[]).map((m) => [m.userId, m.user?.name ?? m.user?.email ?? m.userId]));
+    return (rows as any[]).map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      actorName: r.userId ? nameOf.get(r.userId) ?? r.userId : "সিস্টেম",
+      action: r.action,
+      entityType: r.entityType,
+      createdAt: r.createdAt,
+    }));
+  }
+
+  /** Seat picture for the Team page: the plan limit (admin
+   * override → plan → unlimited), how many seats are actually
+   * used, and how many live invitations are holding one. */
+  async seatUsage(organizationId: string) {
+    const ps = await import("../common/platform-settings");
+    const overrides = await ps.orgLimitOverrides(this.prisma as any, organizationId);
+    const limit = overrides.seatLimit ?? ps.DEFAULT_PLAN_LIMITS[await ps.orgPlan(this.prisma as any, organizationId)]?.seats ?? null;
+    const [activeMembers, suspendedMembers, pendingInvites] = await Promise.all([
+      (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } }),
+      (this.prisma as any).membership.count({ where: { organizationId, status: "SUSPENDED" } }),
+      (this.prisma as any).memberInvitation.count({
+        where: { organizationId, status: "pending", expiresAt: { gt: new Date() } },
+      }),
+    ]);
+    return {
+      limit,
+      activeMembers, suspendedMembers, pendingInvites,
+      available: limit == null ? null : Math.max(0, limit - activeMembers - pendingInvites),
+    };
+  }
+
   async getBusinessProfile(organizationId: string) {
-    return (this.prisma as any).businessProfile.findUnique({ where: { organizationId } });
+    const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } });
+    return OrganizationsService.profileJson(profile);
+  }
+
+  /** BigInt money fields cannot cross JSON as-is ("Do not
+   * know how to serialize a BigInt" — the profile GET 500'd
+   * once a charge was set). Minor units travel as strings,
+   * matching how other money leaves this API. */
+  static profileJson(profile: any) {
+    if (!profile) return profile;
+    const out: Record<string, unknown> = { ...profile };
+    for (const k of ["monthlyBudgetMinor", "deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor"]) {
+      if (typeof out[k] === "bigint") out[k] = (out[k] as bigint).toString();
+    }
+    return out;
   }
 
   async updateBusinessProfile(organizationId: string, actorId: string, dto: UpdateBusinessProfileDto) {
+    // Milestone 75: validate + normalize the operational layer.
+    const data: Record<string, unknown> = { ...dto };
+    const MONEY = ["deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor"];
+    for (const key of MONEY) {
+      if (data[key] != null) data[key] = BigInt(Math.round(Number(data[key])));
+    }
+    for (const key of ["bkashNumber", "nagadNumber"] as const) {
+      const raw = data[key];
+      if (typeof raw === "string" && raw.trim()) {
+        const normalized = raw.replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).replace(/[\s-]/g, "");
+        if (!/^01\d{9}$/.test(normalized)) {
+          throw new BadRequestException(`${key === "bkashNumber" ? "বিকাশ" : "নগদ"} নম্বরটি সঠিক ১১ ডিজিটের মোবাইল নম্বর হতে হবে (01 দিয়ে শুরু)`);
+        }
+        data[key] = normalized;
+      }
+    }
+    // Billing Package B5: billing recipients are a bounded,
+    // validated email list (max 3, deduped); an empty list
+    // clears back to owner-only.
+    if (dto.billingEmails != null) {
+      const list = (Array.isArray(dto.billingEmails) ? dto.billingEmails : [])
+        .map((e) => String(e ?? "").trim().toLowerCase()).filter(Boolean);
+      if (list.length > 3) throw new BadRequestException("Billing ইমেইল সর্বোচ্চ ৩টি রাখা যাবে");
+      for (const e of list) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) throw new BadRequestException(`Billing ইমেইলটি সঠিক নয়: ${e}`);
+      }
+      (data as any).billingEmails = list.length ? [...new Set(list)] : null;
+    }
+    // Milestone 77: the AI reply language is a closed set.
+    if (dto.aiReplyLanguage != null && dto.aiReplyLanguage !== "") {
+      if (!["bn", "en", "auto"].includes(dto.aiReplyLanguage)) {
+        throw new BadRequestException("AI এর উত্তরের ভাষা bn, en বা auto হতে হবে");
+      }
+    }
+    if (dto.businessHours != null) {
+      const hours = dto.businessHours as { timezone?: string; windows?: unknown };
+      const tz = typeof hours.timezone === "string" && hours.timezone ? hours.timezone : "Asia/Dhaka";
+      if (!isValidTimezone(tz)) throw new BadRequestException("ব্যবসার সময়ের Timezone টি সঠিক নয়");
+      if (!isValidWindows(hours.windows)) throw new BadRequestException("ব্যবসার সময়ের উইন্ডোগুলো সঠিক ফরম্যাটে নয় (HH:MM–HH:MM)");
+      data.businessHours = { timezone: tz, windows: hours.windows ?? {} };
+    }
     const profile = await (this.prisma as any).businessProfile.upsert({
       where: { organizationId },
-      update: { ...dto },
-      create: { organizationId, ...dto },
+      update: data,
+      create: { organizationId, ...data },
     });
     await this.audit.log({ organizationId, userId: actorId, action: "org.business_profile.update", entityType: "BusinessProfile", entityId: profile.id });
-    return profile;
+    return OrganizationsService.profileJson(profile);
+  }
+
+  /**
+   * Milestone 75: how complete is the Business Brain? Computed
+   * from real rows only — a section is done when its facts
+   * exist, and the AI-readiness lines state plainly which
+   * customer questions the AI can answer from verified data.
+   */
+  async getProfileCompleteness(organizationId: string) {
+    const p = this.prisma as any;
+    const [profile, policies, faqCount, docCount, productCount] = await Promise.all([
+      p.businessProfile.findUnique({ where: { organizationId } }).catch(() => null),
+      p.businessPolicy.findMany({ where: { organizationId }, select: { type: true } }).catch(() => []),
+      p.knowledgeDocument.count({ where: { organizationId, kind: "faq" } }).catch(() => 0),
+      p.knowledgeDocument.count({ where: { organizationId } }).catch(() => 0),
+      p.product.count({ where: { organizationId, status: "ACTIVE" } }).catch(() => 0),
+    ]);
+    const policyTypes = new Set((policies as any[]).map((x) => x.type));
+    const has = (...vals: unknown[]) => vals.some((v) => v != null && v !== "" && v !== false);
+    const sections = [
+      { key: "identity", labelBn: "ব্যবসার পরিচিতি", done: has(profile?.description) && has(profile?.industry), missingBn: "বিবরণ ও ইন্ডাস্ট্রি দিন — AI ব্যবসাটা বুঝতে পারবে" },
+      { key: "contact", labelBn: "যোগাযোগ ও ঠিকানা", done: has(profile?.contactPhone, profile?.contactEmail) && has(profile?.address), missingBn: "ফোন/ইমেইল ও ঠিকানা দিন — গ্রাহক জিজ্ঞেস করলেই AI বলতে পারবে" },
+      { key: "hours", labelBn: "ব্যবসার সময়", done: Boolean(profile?.businessHours), missingBn: "খোলা-বন্ধের সময় দিন" },
+      { key: "delivery", labelBn: "ডেলিভারি তথ্য", done: profile?.deliveryChargeInsideMinor != null && profile?.deliveryDaysInside != null, missingBn: "ডেলিভারি চার্জ ও সময় দিন — সবচেয়ে বেশি জিজ্ঞেস করা প্রশ্ন" },
+      { key: "payments", labelBn: "পেমেন্ট তথ্য", done: profile?.codAvailable === true || has(profile?.bkashNumber, profile?.nagadNumber), missingBn: "COD আছে কিনা বা বিকাশ/নগদ নম্বর দিন" },
+      { key: "policies", labelBn: "নীতিমালা", done: policyTypes.has("shipping") && (policyTypes.has("return") || policyTypes.has("refund")), missingBn: "শিপিং ও রিটার্ন/রিফান্ড নীতি লিখুন (Knowledge পেজে)" },
+      { key: "knowledge", labelBn: "FAQ ও জ্ঞানভান্ডার", done: faqCount >= 1, missingBn: "অন্তত একটি FAQ যোগ করুন (Knowledge পেজে)" },
+      { key: "products", labelBn: "পণ্য তালিকা", done: productCount >= 1, missingBn: "পণ্য যোগ করুন — দাম/স্টকের উত্তর এর ওপর দাঁড়িয়ে" },
+    ];
+    const doneCount = sections.filter((s) => s.done).length;
+    return {
+      percent: Math.round((100 * doneCount) / sections.length),
+      doneCount, totalSections: sections.length, sections,
+      counts: { faq: faqCount, documents: docCount, products: productCount, policies: policyTypes.size },
+      aiCanAnswer: {
+        priceStock: productCount >= 1,
+        delivery: sections.find((s) => s.key === "delivery")!.done || policyTypes.has("shipping"),
+        payment: sections.find((s) => s.key === "payments")!.done || policyTypes.has("payment"),
+        contactHours: sections.find((s) => s.key === "contact")!.done || sections.find((s) => s.key === "hours")!.done,
+        faq: faqCount >= 1,
+      },
+    };
   }
 
   // ---- Milestone 59: Agency White-Label v1 -------------------------

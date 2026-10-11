@@ -2,13 +2,14 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@ne
 import { AttributionService } from "./attribution.service";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
-import { Roles } from "../common/decorators";
+import { Roles, PermissionArea } from "../common/decorators";
 import { AttributionModelName } from "./engine";
 
 const MODELS = ["FIRST_TOUCH", "LAST_TOUCH", "LAST_NON_DIRECT", "LINEAR"];
 
+@PermissionArea("analytics")
 @Controller("organizations/:organizationId/attribution")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AttributionController {
   constructor(private readonly attribution: AttributionService) {}
 

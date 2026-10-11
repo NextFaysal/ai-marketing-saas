@@ -4,6 +4,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
 import { RealtimeService } from "./realtime.service";
+import { LeadAssignmentService } from "../crm/lead-assignment.service";
+import { parseProductCard } from "./product-card";
+import { MediaStore } from "./media-store";
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -22,6 +25,8 @@ export class WebchatService {
     private readonly inbox: InboxService,
     // Milestone 66: visitor realtime (same module's service).
     @Optional() private readonly realtime?: RealtimeService,
+    // CRM C5: lead auto-assignment for visitor-created leads.
+    @Optional() private readonly leadAssignment?: LeadAssignmentService,
   ) {}
 
   // ----- Site management (authenticated) -----
@@ -85,6 +90,8 @@ export class WebchatService {
     await (this.prisma as any).leadActivity.create({
       data: { leadId: lead.id, type: "created", content: `Auto-created from website chat (${site.name})` },
     });
+    // CRM C5: the org's lead auto-assignment strategy applies.
+    await this.leadAssignment?.assignNewLead(site.organizationId, lead.id).catch(() => undefined);
     await (this.prisma as any).channelConversation.update({ where: { id: conversation.id }, data: { leadId: lead.id } });
     const session = await (this.prisma as any).liveChatSession.create({
       data: {
@@ -132,6 +139,27 @@ export class WebchatService {
   }
 
   /**
+   * Inbox Next-Gen P3: visitor presence heartbeat from the widget
+   * (the one channel where customer presence/typing honestly
+   * exists — both ends are ours). Token discipline is
+   * sessionByToken's: a bad token is a 401 before anything is
+   * recorded. The lastSeenAt write is throttled to one per 30s —
+   * the widget heartbeats far more often than the stored value
+   * needs — but the presence event to agents is always reported.
+   */
+  async visitorPresence(key: string, dto: { token: string; typing?: boolean }) {
+    const { site, session } = await this.sessionByToken(key, dto.token);
+    const lastSeen = session.lastSeenAt ? new Date(session.lastSeenAt).getTime() : 0;
+    if (!lastSeen || Date.now() - lastSeen > 30_000) {
+      await (this.prisma as any).liveChatSession.update({
+        where: { id: session.id }, data: { lastSeenAt: new Date() },
+      }).catch(() => undefined);
+    }
+    try { this.inbox.emitVisitorPresence(site.organizationId, session.conversationId, Boolean(dto.typing)); } catch { /* realtime is best-effort */ }
+    return { ok: true };
+  }
+
+  /**
    * Milestone 66: the visitor's realtime stream. The
    * conversation is derived from the session token alone —
    * there is no way to subscribe to someone else's thread.
@@ -150,6 +178,35 @@ export class WebchatService {
     });
     return rows.map((m: any) => ({
       id: m.id, direction: m.direction, content: m.content, type: m.type, createdAt: m.createdAt,
+      // Inbox Next-Gen P1: agent-uploaded media (stored by us) gets a
+      // token-guarded media path; platform-hosted media ids/URLs are
+      // never exposed to visitors. The token in the URL is the
+      // visitor's own session token — the only credential that can
+      // open it, and only for this conversation's messages.
+      mediaUrl: m.mediaStorageKey ? `/public/chat/${key}/messages/${m.id}/media?token=${encodeURIComponent(token)}` : null,
+      // Inbox Next-Gen P2: product showcase cards are recognised
+      // from the composed caption (see product-card.ts) so the
+      // widget can render a card + order button. Only the product
+      // name + formatted price are exposed — nothing internal.
+      product: parseProductCard(m),
     }));
+  }
+
+  /**
+   * Inbox Next-Gen P1: serve stored media bytes to the visitor who
+   * owns the session. The message must belong to the session's own
+   * conversation (derived from the token, never client-supplied)
+   * and must carry OUR stored copy — platform media is not proxied
+   * to visitors.
+   */
+  async getVisitorMedia(key: string, token: string, messageId: string): Promise<{ bytes: Buffer; contentType: string }> {
+    const { session } = await this.sessionByToken(key, token);
+    const message = await (this.prisma as any).channelMessage.findFirst({
+      where: { id: messageId, conversationId: session.conversationId },
+    });
+    if (!message?.mediaStorageKey) throw new NotFoundException("Media not found for this conversation");
+    const bytes = await MediaStore.fromEnv().get(message.mediaStorageKey).catch(() => null);
+    if (!bytes) throw new NotFoundException("Media not found for this conversation");
+    return { bytes, contentType: message.mediaContentType ?? "application/octet-stream" };
   }
 }

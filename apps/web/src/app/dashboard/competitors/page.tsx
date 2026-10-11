@@ -2104,7 +2104,7 @@ export default function CompetitorsPage() {
                         >
                           <option value="">জেনারেল স্টোর / সকল প্রোডাক্ট</option>
                           {products.map((p) => (
-                            <option key={p.id} value={p.id}>{p.title}</option>
+                            <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
                         </select>
                         <button

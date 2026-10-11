@@ -13,16 +13,19 @@ import { AudiencesService } from "../audiences/audiences.service";
 import { InboxService } from "../inbox/inbox.service";
 import { EmailChannelService } from "../inbox/channels/email.service";
 import { ProactiveService } from "../ai/proactive.service";
+import { LeadsService } from "../crm/leads.service";
+import { PaymentsService } from "../payments/payments.service";
 import { refreshPlatformConfig } from "../common/platform-config";
 import { orgFlagEnabled } from "../common/feature-flags";
-import { platformSetting } from "../common/platform-settings";
+import { platformSetting, effectiveLimits } from "../common/platform-settings";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
-  "subscription_sweep", "dunning_reminders", "audit_retention",
+  "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
+  "lead_followup_sweep", "auto_renew",
 ] as const;
 
 
@@ -57,6 +60,8 @@ export class AutomationService implements OnModuleInit {
     @Optional() private readonly inbox?: InboxService,
     @Optional() private readonly emailChannel?: EmailChannelService,
     @Optional() private readonly proactive?: ProactiveService,
+    @Optional() private readonly leads?: LeadsService,
+    @Optional() private readonly payments?: PaymentsService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -271,6 +276,7 @@ export class AutomationService implements OnModuleInit {
       case "weekly_ads_report": return this.sendWeeklyAdsReport(orgId);
 
       case "dunning_reminders": return this.sendDunningReminder(orgId);
+      case "billing_reminders": return this.sendBillingReminders(orgId);
       case "inbox_assignment_sweep": {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
         return this.inbox.sweepAssignments(orgId);
@@ -283,11 +289,19 @@ export class AutomationService implements OnModuleInit {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
         return this.inbox.applyRetention(orgId);
       }
+      case "lead_followup_sweep": {
+        if (!this.leads) throw new BadRequestException("Leads service is not available in this deployment");
+        return this.leads.sweepFollowUpReminders(orgId);
+      }
+      case "auto_renew": {
+        if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");
+        return this.payments.chargeAutoRenew(orgId);
+      }
       case "subscription_sweep": {
         const { sweepSubscription } = await import("../common/platform-settings");
         const result = await sweepSubscription(this.prisma as any, orgId);
         if (result.changed) {
-          await this.audit.log({ organizationId: orgId, action: "subscription.past_due", entityType: "Subscription", entityId: orgId, metadata: { via: "subscription_sweep" } });
+          await this.audit.log({ organizationId: orgId, action: result.status === "FREE" ? "subscription.plan_change_applied" : "subscription.past_due", entityType: "Subscription", entityId: orgId, metadata: { via: "subscription_sweep", status: result.status } });
         }
         return result;
       }
@@ -444,6 +458,156 @@ export class AutomationService implements OnModuleInit {
       if (res) deleted++;
     }
     return { retentionDays: days, cutoff: cutoff.toISOString(), candidates: (old as any[]).length, deleted, preservedAdminActions: (old as any[]).length - deletable.length };
+  }
+
+  /**
+   * Billing Package B1: pre-expiry + abandoned-checkout
+   * reminders. In-app notifications are the reliable channel;
+   * email is attempted when a provider exists and its outcome
+   * is reported honestly (sent count / skipped / error) —
+   * never claimed sent when it was not. Audit rows are the
+   * dedupe record, exactly like dunning: each expiry stage
+   * fires once per period, each checkout is reminded once.
+   */
+  async sendBillingReminders(organizationId: string) {
+    const p = this.prisma as any;
+    const now = new Date();
+    const out: any = { expiry: null, checkoutReminders: 0, notifications: 0, emailsSent: 0, emailStatus: this.email ? "attempted" : "no_provider" };
+    const memberships = (await p.membership.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] }, status: "ACTIVE" }, include: { user: true },
+    }).catch(() => [])) as any[];
+    const profile = (await p.businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
+    const extraEmails: string[] = Array.isArray(profile?.billingEmails) ? profile.billingEmails : [];
+    const recipients = [...new Set([...memberships.map((m) => m.user?.email).filter(Boolean), ...extraEmails])] as string[];
+    const org = await p.organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const notifyAdmins = async (title: string, body: string) => {
+      for (const m of memberships) {
+        const made = await p.agentNotification?.create?.({ data: { organizationId, userId: m.userId, type: "billing", title, body } })?.catch?.(() => null);
+        if (made) out.notifications++;
+      }
+    };
+    const mailAll = async (subject: string, text: string) => {
+      if (!this.email) return;
+      for (const to of recipients) {
+        try { await this.email.send({ to, subject, text }); out.emailsSent++; }
+        catch { out.emailStatus = "provider_error"; }
+      }
+    };
+    const metaOf = (a: any) => { try { return typeof a.metadata === "string" ? JSON.parse(a.metadata) : a.metadata ?? {}; } catch { return {}; } };
+
+    // --- subscription expiring soon (stages 7 / 3 / 1 days) ---
+    const sub = await p.subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }).catch(() => null);
+    if (sub && ["ACTIVE", "TRIALING"].includes(sub.status) && sub.currentPeriodEnd) {
+      const daysLeft = Math.ceil((new Date(sub.currentPeriodEnd).getTime() - now.getTime()) / 86400000);
+      const stage = daysLeft <= 0 ? null : daysLeft <= 1 ? 1 : daysLeft <= 3 ? 3 : daysLeft <= 7 ? 7 : null;
+      if (stage) {
+        const prior = (await p.auditLog.findMany({ where: { organizationId, action: "billing.expiry_reminder_sent" }, take: 50 }).catch(() => [])) as any[];
+        const already = prior.some((a) => metaOf(a)?.stage === stage && metaOf(a)?.periodEnd === new Date(sub.currentPeriodEnd).toISOString());
+        if (!already) {
+          const title = `⏳ সাবস্ক্রিপশনের মেয়াদ ${daysLeft} দিন বাকি`;
+          const body = `${org?.name ?? "আপনার"} ওয়ার্কস্পেসের ${sub.plan} প্ল্যানের মেয়াদ ${daysLeft} দিন পর শেষ হবে। সেবা নির্বিঘ্নে চালু রাখতে Billing পেজ থেকে নবায়ন করুন।`;
+          await notifyAdmins(title, body);
+          await mailAll(`সাবস্ক্রিপশন নবায়ন — ${daysLeft} দিন বাকি (${sub.plan})`, `${title}\n\n${body}\n\n— Qosprey AI Marketing টিম`);
+          await this.audit.log({
+            organizationId, action: "billing.expiry_reminder_sent", entityType: "Subscription", entityId: sub.id,
+            metadata: { stage, daysLeft, periodEnd: new Date(sub.currentPeriodEnd).toISOString(), notified: memberships.length, emailsSent: out.emailsSent, emailStatus: out.emailStatus },
+          });
+          out.expiry = { stage, daysLeft, sent: true };
+        } else out.expiry = { stage, daysLeft, sent: false, reason: "stage already sent" };
+      }
+    }
+
+    // --- abandoned checkouts (initiated 1h–3d ago), once each ---
+    const stale = (await p.planCheckout.findMany({
+      where: { organizationId, status: "initiated", createdAt: { lt: new Date(now.getTime() - 3600_000), gt: new Date(now.getTime() - 3 * 86400000) } },
+      take: 20,
+    }).catch(() => [])) as any[];
+    if (stale.length) {
+      const prior = (await p.auditLog.findMany({ where: { organizationId, action: "billing.checkout_reminder_sent" }, take: 100 }).catch(() => [])) as any[];
+      const reminded = new Set(prior.map((a) => metaOf(a)?.checkoutId).filter(Boolean));
+      for (const co of stale) {
+        if (reminded.has(co.id)) continue;
+        const made = await p.agentNotification?.create?.({
+          data: { organizationId, userId: co.createdById, type: "billing", title: "💳 অসম্পূর্ণ পেমেন্ট", body: `${co.plan} প্ল্যানের পেমেন্টটি অসম্পূর্ণ আছে (${co.tranId}) — Billing পেজ থেকে আবার চেষ্টা করে প্ল্যানটি চালু করুন।` },
+        })?.catch?.(() => null);
+        if (made) out.notifications++;
+        const creator = await p.user.findUnique({ where: { id: co.createdById } }).catch(() => null);
+        if (this.email && creator?.email) {
+          try { await this.email.send({ to: creator.email, subject: `অসম্পূর্ণ পেমেন্ট — ${co.plan} প্ল্যান`, text: `আপনার ${co.plan} প্ল্যানের পেমেন্টটি সম্পূর্ণ হয়নি। Billing পেজ থেকে আবার চেষ্টা করুন — মেয়াদ শেষ হওয়ার আগেই নবায়ন করলে সেবা বন্ধ হবে না।\n\n— Qosprey AI Marketing টিম` }); out.emailsSent++; }
+          catch { out.emailStatus = "provider_error"; }
+        }
+        await this.audit.log({
+          organizationId, action: "billing.checkout_reminder_sent", entityType: "PlanCheckout", entityId: co.id,
+          metadata: { checkoutId: co.id, plan: co.plan, tranId: co.tranId },
+        });
+        out.checkoutReminders++;
+      }
+    }
+
+    // --- Billing Package B6: usage alerts at 80% / 100% of
+    // the plan limits (seats + daily AI), once per metric +
+    // threshold per Asia/Dhaka day, audit-deduped. ---
+    out.usageAlerts = [];
+    try {
+      const limits = await effectiveLimits(p, organizationId, {
+        aiDaily: Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200),
+        broadcastCap: Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000),
+      });
+      const dayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+      const seatsUsed = await p.membership.count({ where: { organizationId, status: "ACTIVE" } }).catch(() => 0);
+      const aiUsed = (await p.aIUsageRecord?.count?.({ where: { organizationId, createdAt: { gte: dayStart } } })?.catch?.(() => 0)) ?? 0;
+      const dhakaDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(now);
+      const checks = [
+        { metric: "seats", label: "টিম সিট", used: Number(seatsUsed ?? 0), limit: limits.seats },
+        { metric: "aiDaily", label: "দৈনিক AI ব্যবহার", used: Number(aiUsed ?? 0), limit: limits.aiDaily },
+      ];
+      for (const c of checks) {
+        if (!c.limit || c.limit <= 0) continue;
+        const ratio = c.used / c.limit;
+        const threshold = ratio >= 1 ? 100 : ratio >= 0.8 ? 80 : null;
+        if (!threshold) continue;
+        const prior = (await p.auditLog.findMany({ where: { organizationId, action: "billing.usage_alert_sent" }, take: 100 }).catch(() => [])) as any[];
+        const already = prior.some((a) => { const m = metaOf(a); return m?.metric === c.metric && m?.threshold === threshold && m?.day === dhakaDay; });
+        if (already) continue;
+        const title = threshold === 100 ? `🚫 ${c.label} এর সীমা শেষ (${c.used}/${c.limit})` : `⚠️ ${c.label} সীমার ${threshold}% ব্যবহৃত (${c.used}/${c.limit})`;
+        const body = `${org?.name ?? "আপনার"} ওয়ার্কস্পেসে ${c.label}: ${c.used}/${c.limit} ব্যবহৃত হয়েছে। ${threshold === 100 ? "সীমা বাড়াতে বড় প্ল্যান নিন — Billing পেজ দেখুন।" : "সীমা শেষ হওয়ার আগেই বড় প্ল্যান নেওয়ার কথা ভাবুন।"}`;
+        await notifyAdmins(title, body);
+        await mailAll(title, `${title}\n\n${body}\n\n— Qosprey AI Marketing টিম`);
+        await this.audit.log({
+          organizationId, action: "billing.usage_alert_sent", entityType: "Organization", entityId: organizationId,
+          metadata: { metric: c.metric, threshold, used: c.used, limit: c.limit, day: dhakaDay },
+        });
+        out.usageAlerts.push({ metric: c.metric, threshold });
+      }
+    } catch (e) {
+      out.usageAlertsError = e instanceof Error ? e.message : "usage check failed";
+    }
+
+    // --- Referral Advanced R2: expire granted credit whose
+    // date has passed, FIFO over the credit ledger. ---
+    out.creditExpiredMinor = "0";
+    try {
+      const entries = (await p.creditLedger?.findMany?.({ where: { organizationId }, orderBy: { createdAt: "asc" }, take: 1000 })?.catch?.(() => [])) ?? [];
+      const due = computeExpiredUnspent(entries as any[], now);
+      if (due > 0n) {
+        const orgRow = await p.organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+        const balance = BigInt(orgRow?.creditMinor ?? 0);
+        const debit = due > balance ? balance : due;
+        if (debit > 0n) {
+          await p.organization.update({ where: { id: organizationId }, data: { creditMinor: balance - debit } });
+          await p.creditLedger.create({ data: { organizationId, deltaMinor: -debit, reason: "credit_expired" } });
+          await this.audit.log({
+            organizationId, action: "billing.credit_expired", entityType: "Organization", entityId: organizationId,
+            metadata: { expiredMinor: debit.toString() },
+          });
+          await notifyAdmins("⏰ কিছু বিলিং ক্রেডিটের মেয়াদ শেষ", `রেফারেল ক্রেডিটের মেয়াদ পেরিয়ে যাওয়ায় ৳${(Number(debit) / 100).toFixed(2)} বাদ গেছে। বিস্তারিত Billing পেজের ক্রেডিট ইতিহাসে দেখুন।`);
+          out.creditExpiredMinor = debit.toString();
+        }
+      }
+    } catch (e) {
+      out.creditExpiryError = e instanceof Error ? e.message : "credit expiry check failed";
+    }
+    return out;
   }
 
   async sendDunningReminder(organizationId: string) {
@@ -792,4 +956,36 @@ function summarizeResult(result: unknown): string {
   } catch {
     return "completed";
   }
+}
+
+/**
+ * Referral Advanced R2: how much granted credit has expired
+ * UNSPENT, FIFO over the ledger — spends and earlier expiry
+ * debits consume the oldest grants first. Only ledger-tracked
+ * credit can expire; pre-ledger balances are untracked by
+ * design (documented in the R2 acceptance).
+ */
+export function computeExpiredUnspent(
+  entries: { deltaMinor: bigint | number; reason: string; expiresAt?: Date | string | null; createdAt: Date | string }[],
+  now: Date,
+): bigint {
+  const sorted = [...entries].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
+  let spent = 0n;
+  let expiredAlready = 0n;
+  const grants: { amount: bigint; expiresAt: Date | null }[] = [];
+  for (const e of sorted) {
+    const d = BigInt(e.deltaMinor as any);
+    if (d > 0n) grants.push({ amount: d, expiresAt: e.expiresAt ? new Date(e.expiresAt) : null });
+    else if (e.reason === "credit_expired") expiredAlready += -d;
+    else spent += -d;
+  }
+  let consumed = spent + expiredAlready;
+  let due = 0n;
+  for (const g of grants) {
+    const usedHere = consumed > g.amount ? g.amount : consumed;
+    consumed -= usedHere;
+    const unspent = g.amount - usedHere;
+    if (unspent > 0n && g.expiresAt && g.expiresAt < now) due += unspent;
+  }
+  return due;
 }

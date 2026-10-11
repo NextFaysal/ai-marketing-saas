@@ -10,9 +10,11 @@ import { CampaignsModule } from "../campaigns/campaigns.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { AudiencesModule } from "../audiences/audiences.module";
 import { InboxModule } from "../inbox/inbox.module";
+import { CrmModule } from "../crm/crm.module";
+import { PaymentsModule } from "../payments/payments.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService],
   exports: [AutomationService],

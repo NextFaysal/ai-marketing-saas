@@ -8,12 +8,13 @@ import { API_URL } from "./api";
  * Parses SSE frames, reconnects with backoff, and stops cleanly.
  */
 export interface InboxStreamEvent {
-  type: "message.created" | "conversation.updated" | "presence" | "notification" | "heartbeat";
+  type: "message.created" | "conversation.updated" | "presence" | "notification" | "heartbeat" | "visitor.presence";
   conversationId?: string;
   message?: { id: string; [k: string]: unknown };
   patch?: Record<string, unknown>;
   userId?: string;
   typing?: boolean;
+  visitorTyping?: boolean;
   at?: string;
 }
 

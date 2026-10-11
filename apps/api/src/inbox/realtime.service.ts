@@ -1,6 +1,7 @@
 import { Injectable, Logger, MessageEvent } from "@nestjs/common";
 import { Observable, Subject, interval, merge } from "rxjs";
 import { map } from "rxjs/operators";
+import { parseProductCard } from "./product-card";
 
 /**
  * Realtime inbox transport (Unified Inbox U1 + U6).
@@ -17,13 +18,16 @@ import { map } from "rxjs/operators";
  * cross-instance record).
  */
 export interface InboxRealtimeEvent {
-  type: "message.created" | "conversation.updated" | "presence" | "notification";
+  type: "message.created" | "conversation.updated" | "presence" | "notification" | "visitor.presence";
   conversationId?: string;
   message?: unknown;
   patch?: Record<string, unknown>;
   userId?: string;
   userName?: string;
   typing?: boolean;
+  /** Inbox Next-Gen P3: a webchat visitor's typing state, carried
+   * on "visitor.presence" events to the AGENT stream. */
+  visitorTyping?: boolean;
   at: string;
 }
 
@@ -154,6 +158,18 @@ export class RealtimeService {
     return this.visitorSubjects.get(conversationId)?.size ?? 0;
   }
 
+  /** Inbox Next-Gen P3: tell THIS conversation's visitor that the
+   * agent is typing (the visitor-ward counterpart of the agent
+   * stream's "visitor.presence"). Only webchat can carry this —
+   * no other channel exposes a typing signal to customers. Local
+   * delivery to the visitor subjects, like deliverToVisitor. */
+  notifyVisitorTyping(conversationId: string, typing: boolean) {
+    const set = this.visitorSubjects.get(conversationId);
+    if (!set || set.size === 0) return;
+    const frame = { type: "typing", typing, at: new Date().toISOString() };
+    for (const subject of set) subject.next({ data: frame } as MessageEvent);
+  }
+
   /** Forward new messages to the conversation's visitor with a
    * visitor-safe projection only (the exact fields the polling
    * endpoint returns — never internal message metadata). */
@@ -167,6 +183,10 @@ export class RealtimeService {
       message: {
         id: m.id, direction: m.direction, content: m.content,
         type: m.type, createdAt: m.createdAt,
+        // Inbox Next-Gen P2: same product-card marker the polling
+        // projection returns (name + price parsed from the composed
+        // caption) so streamed cards render identically.
+        product: parseProductCard(m),
       },
       at: full.at,
     };

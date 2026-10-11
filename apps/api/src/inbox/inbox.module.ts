@@ -10,9 +10,13 @@ import { TelegramService } from "./channels/telegram.service";
 import { EmailChannelService } from "./channels/email.service";
 import { TelegramWebhookController } from "./channels/telegram-webhook.controller";
 import { OrdersModule } from "../orders/orders.module";
+import { CrmModule } from "../crm/crm.module";
 
 @Module({
-  imports: [OrdersModule],
+  // CRM C5: CrmModule provides LeadAssignmentService for the
+  // leads the inbox ingestion paths create (CrmModule imports
+  // nothing itself, so this adds no module cycle).
+  imports: [OrdersModule, CrmModule],
   controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController],
   providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService],
   exports: [InboxService, RealtimeService, TelegramService, EmailChannelService],

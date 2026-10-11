@@ -3,10 +3,11 @@ import { AnalyticsService } from "./analytics.service";
 import { CohortService } from "./cohort.service";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
-import { Roles } from "../common/decorators";
+import { Roles, PermissionArea } from "../common/decorators";
 
+@PermissionArea("analytics")
 @Controller("organizations/:organizationId/analytics")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,

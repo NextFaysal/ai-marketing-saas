@@ -6,12 +6,13 @@ import { GenerateReportDto, CreateConversationDto, SendMessageDto, UpdateRecomme
 import { ProposalsService } from "./proposals.service";
 import { ProactiveService } from "./proactive.service";
 import { CreativeStudioService } from "./creative-studio.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+@PermissionArea("ai")
 @Controller("organizations/:organizationId/ai")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AiController {
   constructor(
     private readonly reports: ReportsService,

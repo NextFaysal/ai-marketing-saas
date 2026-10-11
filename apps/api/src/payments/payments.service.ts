@@ -1,13 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { EmailProvider } from "../messaging/email.provider";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import {
   effectiveBkashConfig, effectiveSslcommerzConfig, ensurePlatformConfig,
-  bkashBase, sslcommerzBase,
+  bkashBase, sslcommerzBase, seal, unseal,
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
-import { PLAN_TIERS, planPrices } from "../common/platform-settings";
+import { PLAN_TIERS, planPrices, planYearlyPrices, cycleDays } from "../common/platform-settings";
 import { maybeRewardReferral } from "../common/referral";
 
 /**
@@ -30,7 +31,7 @@ import { maybeRewardReferral } from "../common/referral";
  *   from the later of now / the current period end.
  */
 
-const PERIOD_DAYS = 30;
+const PERIOD_DAYS = 30; // monthly quantum; yearly = cycleDays() (B3)
 
 /** SSLCommerz's documented IPN signature scheme: md5 of the
  * store password, append the value of every field named in
@@ -58,6 +59,8 @@ export interface CheckoutResult {
   sandbox?: boolean;
   viaCredit?: boolean;
   fullPriceMinor?: string;
+  prorationMinor?: string;
+  cycle?: string;
   ok?: boolean;
   activated?: boolean;
   currentPeriodEnd?: string;
@@ -70,6 +73,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Optional() private readonly email?: EmailProvider,
   ) {}
 
   private apiBase(): string {
@@ -184,7 +188,7 @@ export class PaymentsService {
     actor: { userId: string; email: string },
     planRaw: string,
     phoneRaw: string,
-    opts?: { couponCode?: string; gateway?: string },
+    opts?: { couponCode?: string; gateway?: string; cycle?: string },
   ): Promise<CheckoutResult> {
     await ensurePlatformConfig(this.prisma as any);
     const gateway = String(opts?.gateway ?? "sslcommerz").toLowerCase();
@@ -204,12 +208,43 @@ export class PaymentsService {
     if (!/^[+\d][\d\s-]{10,14}$/.test(phone)) {
       throw new BadRequestException("A valid phone number is required for the payment receipt.");
     }
-    const prices = await planPrices(this.prisma as any);
+    // Billing Package B3: the cycle picks the price book.
+    const cycle = opts?.cycle === "yearly" ? "yearly" : "monthly";
+    const prices = cycle === "yearly" ? await planYearlyPrices(this.prisma as any) : await planPrices(this.prisma as any);
     const priceMinor = BigInt(prices[plan] ?? 0);
     if (priceMinor <= 0n) throw new BadRequestException("This plan has no price configured. Please ask the platform team.");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
     const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+
+    // Billing Package B2: plan direction + proration. With a
+    // live period, a LOWER plan is a scheduled change, never
+    // an instant checkout; a HIGHER plan credits the unused
+    // part of the current plan (30-day periods).
+    const rank = (p: string) => (PLAN_TIERS as readonly string[]).indexOf(p);
+    const currentSub = await (this.prisma as any).subscription.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    const nowMs = Date.now();
+    const periodLive = !!currentSub && ["ACTIVE", "TRIALING"].includes(currentSub.status)
+      && currentSub.currentPeriodEnd && new Date(currentSub.currentPeriodEnd).getTime() > nowMs;
+    let prorationMinor = 0n;
+    if (periodLive) {
+      if (rank(plan) < rank(String(currentSub.plan))) {
+        throw new BadRequestException("Downgrades take effect at the period end — use the scheduled plan change on the Billing page (প্ল্যান বদল নির্ধারণ) so no paid days are lost.");
+      }
+      if (rank(plan) > rank(String(currentSub.plan))) {
+        // The unused value is priced in the CURRENT
+        // subscription's own cycle book over its own period
+        // length (B3: a yearly period prorates over 365).
+        const curCycle = String(currentSub.billingCycle ?? "monthly");
+        const curPrices = curCycle === "yearly" ? await planYearlyPrices(this.prisma as any) : await planPrices(this.prisma as any);
+        const oldPrice = BigInt(curPrices[String(currentSub.plan)] ?? 0);
+        const remainingMs = new Date(currentSub.currentPeriodEnd).getTime() - nowMs;
+        const raw = (oldPrice * BigInt(Math.max(0, remainingMs))) / BigInt(cycleDays(curCycle) * 86400000);
+        prorationMinor = raw > priceMinor ? priceMinor : raw;
+      }
+    }
 
     let discountMinor = 0n;
     let couponCode: string | null = null;
@@ -218,7 +253,7 @@ export class PaymentsService {
       discountMinor = v.discountMinor;
       couponCode = v.coupon.code;
     }
-    const afterDiscount = priceMinor - discountMinor;
+    const afterDiscount = priceMinor - discountMinor - prorationMinor;
     const creditBalance = BigInt(org.creditMinor ?? 0);
     const creditApplied = creditBalance > afterDiscount ? afterDiscount : creditBalance;
     const dueMinor = afterDiscount - creditApplied;
@@ -228,21 +263,24 @@ export class PaymentsService {
       data: {
         organizationId, plan, amountMinor: dueMinor, currency: "BDT", tranId,
         status: "initiated", createdById: actor.userId, gateway,
-        creditAppliedMinor: creditApplied, discountMinor, couponCode,
+        creditAppliedMinor: creditApplied, discountMinor, couponCode, prorationMinor, cycle,
       },
     });
 
     if (dueMinor === 0n) {
-      // Fully covered by coupon/credit: no gateway involved,
-      // nothing external to trust — activate directly and say so.
+      // Fully covered by coupon/credit/proration: no gateway
+      // involved, nothing external to trust — activate
+      // directly and say so.
       const out = await this.activate(checkout, "—", { via: "coupon_credit" });
-      return { ...out, viaCredit: true, tranId, plan, amountMinor: "0", fullPriceMinor: priceMinor.toString() };
+      return { ...out, viaCredit: true, tranId, plan, amountMinor: "0", fullPriceMinor: priceMinor.toString(), prorationMinor: prorationMinor.toString(), cycle };
     }
 
     if (gateway === "bkash") {
-      return this.startBkashCheckout(checkout, bkashCfg!, phone, dueMinor, tranId, plan);
+      const out = await this.startBkashCheckout(checkout, bkashCfg!, phone, dueMinor, tranId, plan);
+      return { ...out, prorationMinor: prorationMinor.toString(), cycle };
     }
-    return this.startSslCheckout(checkout, sslCfg!, org, profile, actor, phone, dueMinor, tranId, plan);
+    const out = await this.startSslCheckout(checkout, sslCfg!, org, profile, actor, phone, dueMinor, tranId, plan);
+    return { ...out, prorationMinor: prorationMinor.toString(), cycle };
   }
 
   private async startSslCheckout(checkout: any, cfg: SslcommerzConfig, org: any, profile: any, actor: { email: string }, phone: string, dueMinor: bigint, tranId: string, plan: string) {
@@ -563,24 +601,35 @@ export class PaymentsService {
     })?.catch?.(() => 1)) ?? 1;
     const creditApplied = BigInt(checkout.creditAppliedMinor ?? 0);
     const discount = BigInt(checkout.discountMinor ?? 0);
-    const fullValue = BigInt(checkout.amountMinor ?? 0) + creditApplied + discount;
+    const proration = BigInt(checkout.prorationMinor ?? 0);
+    const fullValue = BigInt(checkout.amountMinor ?? 0) + creditApplied + discount + proration;
     const gateway = String(checkout.gateway ?? "sslcommerz");
     const sub = await (this.prisma as any).subscription.findFirst({
       where: { organizationId: checkout.organizationId }, orderBy: { createdAt: "desc" },
     });
-    const base = sub?.currentPeriodEnd && new Date(sub.currentPeriodEnd) > now ? new Date(sub.currentPeriodEnd) : now;
-    const newEnd = new Date(base.getTime() + PERIOD_DAYS * 86400000);
+    // Billing Package B2: an UPGRADE that consumed proration
+    // starts a FRESH period now — the unused old-plan days
+    // were already returned as a discount, so extending from
+    // the old period end would pay them twice. Renewals keep
+    // extending from the current end. Any confirmed payment
+    // also clears a scheduled plan change.
+    const proratedUpgrade = BigInt(checkout.prorationMinor ?? 0) > 0n && sub && String(sub.plan) !== String(checkout.plan);
+    const base = !proratedUpgrade && sub?.currentPeriodEnd && new Date(sub.currentPeriodEnd) > now ? new Date(sub.currentPeriodEnd) : now;
+    // B3: the bought cycle sets the period length (365 for
+    // yearly) and is remembered on the subscription.
+    const newEnd = new Date(base.getTime() + cycleDays(checkout.cycle) * 86400000);
+    const boughtCycle = String(checkout.cycle ?? "monthly");
     if (sub) {
       await (this.prisma as any).subscription.update({
         where: { id: sub.id },
-        data: { plan: checkout.plan, status: "ACTIVE", currentPeriodEnd: newEnd },
+        data: { plan: checkout.plan, status: "ACTIVE", currentPeriodEnd: newEnd, pendingPlan: null, pendingPlanAt: null, billingCycle: boughtCycle },
       });
     } else {
       await (this.prisma as any).subscription.create({
-        data: { organizationId: checkout.organizationId, plan: checkout.plan, status: "ACTIVE", currentPeriodEnd: newEnd },
+        data: { organizationId: checkout.organizationId, plan: checkout.plan, status: "ACTIVE", currentPeriodEnd: newEnd, billingCycle: boughtCycle },
       });
     }
-    await (this.prisma as any).saasPayment.create({
+    const paymentRow = await (this.prisma as any).saasPayment.create({
       data: {
         organizationId: checkout.organizationId,
         amountMinor: fullValue,
@@ -603,6 +652,10 @@ export class PaymentsService {
         where: { id: checkout.organizationId },
         data: { creditMinor: balance > creditApplied ? balance - creditApplied : 0n },
       }).catch(() => null);
+      // Referral Advanced R1: the spend joins the credit ledger.
+      await (this.prisma as any).creditLedger?.create?.({
+        data: { organizationId: checkout.organizationId, deltaMinor: -creditApplied, reason: "checkout_credit_spend" },
+      })?.catch?.(() => null);
     }
     if (discount > 0n && checkout.couponCode) {
       const coupon = await (this.prisma as any).coupon?.findUnique({ where: { code: checkout.couponCode } }).catch(() => null);
@@ -630,24 +683,320 @@ export class PaymentsService {
       action: "billing.online_payment_completed", entityType: "PlanCheckout", entityId: checkout.id,
       metadata: {
         plan: checkout.plan, gateway, chargedMinor: BigInt(checkout.amountMinor ?? 0).toString(),
-        creditAppliedMinor: creditApplied.toString(), discountMinor: discount.toString(),
+        creditAppliedMinor: creditApplied.toString(), discountMinor: discount.toString(), prorationMinor: proration.toString(),
         couponCode: checkout.couponCode ?? null, tranId: checkout.tranId, periodEnd: newEnd.toISOString(),
       },
     });
     if (priorPayments === 0) {
-      try { await maybeRewardReferral(this.prisma as any, this.audit, checkout.organizationId); }
+      try { await maybeRewardReferral(this.prisma as any, this.audit, checkout.organizationId, { amountMinor: fullValue, plan: String(checkout.plan) }); }
       catch { /* a referral reward must never break a confirmed payment */ }
+    }
+    // Billing Package B5: email the invoice (text form, the
+    // same content as the printable invoice) to OWNER/ADMIN
+    // members + the profile's billing recipients. A courtesy
+    // copy only — a mail failure never affects the payment,
+    // and the send is audited only when it actually went out.
+    if (this.email) {
+      try {
+        const p = this.prisma as any;
+        const memberships = (await p.membership.findMany({
+          where: { organizationId: checkout.organizationId, role: { in: ["OWNER", "ADMIN"] }, status: "ACTIVE" }, include: { user: true },
+        }).catch(() => [])) as any[];
+        const prof = (await p.businessProfile?.findUnique?.({ where: { organizationId: checkout.organizationId } })?.catch?.(() => null)) ?? null;
+        const extra: string[] = Array.isArray(prof?.billingEmails) ? prof.billingEmails : [];
+        const recipients = [...new Set([...memberships.map((m) => m.user?.email).filter(Boolean), ...extra])] as string[];
+        if (recipients.length && paymentRow?.id) {
+          const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+          const text = [
+            `ইনভয়েস — ${checkout.plan} সাবস্ক্রিপশন`,
+            ``,
+            `ইনভয়েস নং: INV-${String(paymentRow.id).slice(-8).toUpperCase()}`,
+            `প্ল্যান: ${checkout.plan} (${boughtCycle === "yearly" ? "বার্ষিক" : "মাসিক"})`,
+            `পরিমাণ: BDT ${fmt(fullValue)}`,
+            `মেয়াদ শেষ: ${newEnd.toISOString().slice(0, 10)}`,
+            `রেফারেন্স: ${checkout.tranId}`,
+            ``,
+            `প্রিন্টযোগ্য ইনভয়েসটি Billing পেজের পেমেন্ট ইতিহাস থেকে যেকোনো সময় ডাউনলোড করা যাবে।`,
+            `— Qosprey AI Marketing টিম`,
+          ].join("\n");
+          let sent = 0;
+          for (const to of recipients) {
+            try { await this.email.send({ to, subject: `ইনভয়েস INV-${String(paymentRow.id).slice(-8).toUpperCase()} — ${checkout.plan}`, text }); sent++; }
+            catch { /* counted below — partial sends stay honest */ }
+          }
+          if (sent > 0) {
+            await this.audit.log({
+              organizationId: checkout.organizationId, action: "billing.invoice_emailed",
+              entityType: "SaasPayment", entityId: paymentRow.id, metadata: { recipients: sent, tranId: checkout.tranId },
+            });
+          }
+        }
+      } catch { /* courtesy copy only */ }
     }
     return { ok: true, activated: true, plan: checkout.plan, currentPeriodEnd: newEnd.toISOString() };
   }
 
+  /**
+   * Billing Package B2: schedule a downgrade — or FREE,
+   * which is a cancellation — for the current period's end.
+   * Nothing changes today; the subscription sweep applies
+   * the pending plan when the period closes, so no paid
+   * day is ever lost. Upgrades are NOT schedulable: they
+   * are immediate checkouts with proration.
+   */
+  async schedulePlanChange(organizationId: string, actorId: string, planRaw: string) {
+    const plan = String(planRaw ?? "").toUpperCase();
+    if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw new BadRequestException("Unknown plan");
+    const sub = await (this.prisma as any).subscription.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (!sub) throw new BadRequestException("No subscription to change");
+    const rank = (p: string) => (PLAN_TIERS as readonly string[]).indexOf(p);
+    if (rank(plan) >= rank(String(sub.plan))) {
+      throw new BadRequestException("Only a lower plan (or FREE to cancel) can be scheduled — upgrades are immediate via checkout.");
+    }
+    if (!sub.currentPeriodEnd) throw new BadRequestException("There is no live period to schedule against");
+    const updated = await (this.prisma as any).subscription.update({
+      where: { id: sub.id }, data: { pendingPlan: plan, pendingPlanAt: new Date() },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "billing.plan_change_scheduled",
+      entityType: "Subscription", entityId: sub.id,
+      metadata: { from: String(sub.plan), to: plan, effectiveAt: new Date(sub.currentPeriodEnd).toISOString() },
+    });
+    return { ok: true, pendingPlan: plan, effectiveAt: new Date(sub.currentPeriodEnd).toISOString(), subscriptionId: updated.id };
+  }
+
+  async cancelScheduledPlanChange(organizationId: string, actorId: string) {
+    const sub = await (this.prisma as any).subscription.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (!sub?.pendingPlan) throw new BadRequestException("No scheduled plan change to cancel");
+    await (this.prisma as any).subscription.update({
+      where: { id: sub.id }, data: { pendingPlan: null, pendingPlanAt: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "billing.plan_change_schedule_cancelled",
+      entityType: "Subscription", entityId: sub.id, metadata: { was: String(sub.pendingPlan) },
+    });
+    return { ok: true, pendingPlan: null };
+  }
+
+  // ---------------- Billing Package B4: bKash auto-renew ----------------
+  // Consent once via bKash's tokenized AGREEMENT flow; the
+  // agreement id is stored sealed and never leaves the
+  // server. Charges run through the normal PlanCheckout +
+  // activate() path and count ONLY on bKash's own Completed
+  // confirmation after execute — the same discipline as the
+  // one-off checkout. Endpoint shapes follow bKash's
+  // documented tokenized API (agreement/create,
+  // agreement/execute, agreement/cancel, checkout/create
+  // carrying agreementID); they must be confirmed against
+  // the platform's real merchant sandbox before production
+  // use (no live bKash merchant exists in development).
+
+  async getAutoRenew(organizationId: string) {
+    const row = await (this.prisma as any).autoRenewAgreement?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
+    if (!row) return null;
+    return {
+      status: row.status as string,
+      payerReference: row.payerReference as string,
+      lastChargeAt: row.lastChargeAt ?? null,
+      lastError: row.lastError ?? null,
+    };
+  }
+
+  async startAutoRenew(organizationId: string, actor: { userId: string }, phoneRaw: string): Promise<{ bkashURL: string }> {
+    await ensurePlatformConfig(this.prisma as any);
+    const cfg = effectiveBkashConfig();
+    if (!cfg) throw new BadRequestException("bKash is not configured by the platform team yet, so auto-renew cannot be enabled.");
+    const phone = String(phoneRaw ?? "").trim();
+    if (!/^01\d{9}$/.test(phone.replace(/[\s-]/g, ""))) throw new BadRequestException("A valid bKash number (01XXXXXXXXX) is required.");
+    const payerReference = phone.replace(/[\s-]/g, "");
+    const created = await this.bkashCall(cfg, "/checkout/agreement/create", {
+      payerReference,
+      callbackURL: `${this.apiBase()}/public/payments/bkash/agreement/callback`,
+    });
+    if (!created || String(created.statusCode) !== "0000" || !created.bkashURL || !created.paymentID) {
+      throw new BadRequestException(`bKash refused to start the agreement: ${created?.statusMessage ?? "unknown error"}`);
+    }
+    const data = { gateway: "bkash", payerReference, pendingPaymentId: String(created.paymentID), status: "pending", lastError: null as string | null };
+    const existing = await (this.prisma as any).autoRenewAgreement.findUnique({ where: { organizationId } }).catch(() => null);
+    if (existing) {
+      await (this.prisma as any).autoRenewAgreement.update({ where: { organizationId }, data });
+    } else {
+      await (this.prisma as any).autoRenewAgreement.create({ data: { organizationId, ...data } });
+    }
+    await this.audit.log({
+      organizationId, userId: actor.userId, action: "billing.autorenew_started",
+      entityType: "AutoRenewAgreement", entityId: organizationId, metadata: { payerReference },
+    });
+    return { bkashURL: String(created.bkashURL) };
+  }
+
+  /** bKash returns the browser with paymentID + status.
+   * Nothing is trusted from the redirect: the agreement is
+   * EXECUTED server-to-server and stored only when bKash
+   * confirms it. */
+  async handleBkashAgreementCallback(query: Record<string, any>): Promise<string> {
+    const paymentID = String(query?.paymentID ?? "");
+    const status = String(query?.status ?? "").toLowerCase();
+    const fail = `${this.webBase()}/dashboard/billing?autorenew=failed`;
+    if (!paymentID) return fail;
+    const row = await (this.prisma as any).autoRenewAgreement.findFirst({ where: { pendingPaymentId: paymentID } }).catch(() => null);
+    if (!row) return fail;
+    if (status !== "success") {
+      await (this.prisma as any).autoRenewAgreement.update({
+        where: { id: row.id }, data: { status: "failed", lastError: `bKash agreement ${status || "abandoned"} by user`, pendingPaymentId: null },
+      }).catch(() => null);
+      return fail;
+    }
+    const cfg = effectiveBkashConfig();
+    if (!cfg) return fail;
+    const executed = await this.bkashCall(cfg, "/checkout/agreement/execute", { paymentID }).catch(() => null);
+    const agreementID = executed?.agreementID ? String(executed.agreementID) : "";
+    if (!executed || String(executed.statusCode) !== "0000" || !agreementID) {
+      await (this.prisma as any).autoRenewAgreement.update({
+        where: { id: row.id }, data: { status: "failed", lastError: executed?.statusMessage ?? "agreement execute failed", pendingPaymentId: null },
+      }).catch(() => null);
+      return fail;
+    }
+    await (this.prisma as any).autoRenewAgreement.update({
+      where: { id: row.id },
+      data: { status: "active", agreementIdSealed: seal(agreementID), pendingPaymentId: null, lastError: null },
+    });
+    await this.audit.log({
+      organizationId: row.organizationId, action: "billing.autorenew_active",
+      entityType: "AutoRenewAgreement", entityId: row.id, metadata: { payerReference: row.payerReference },
+    });
+    return `${this.webBase()}/dashboard/billing?autorenew=active`;
+  }
+
+  async cancelAutoRenew(organizationId: string, actorId: string) {
+    const row = await (this.prisma as any).autoRenewAgreement.findUnique({ where: { organizationId } }).catch(() => null);
+    if (!row || row.status === "cancelled") throw new BadRequestException("Auto-renew is not active for this workspace");
+    const cfg = effectiveBkashConfig();
+    const agreementID = row.agreementIdSealed ? unseal(row.agreementIdSealed) : undefined;
+    let gatewayCancelled = false;
+    if (cfg && agreementID) {
+      const res = await this.bkashCall(cfg, "/checkout/agreement/cancel", { agreementID }).catch(() => null);
+      gatewayCancelled = !!res && String(res.statusCode) === "0000";
+    }
+    await (this.prisma as any).autoRenewAgreement.update({
+      where: { id: row.id }, data: { status: "cancelled", agreementIdSealed: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "billing.autorenew_cancelled",
+      entityType: "AutoRenewAgreement", entityId: row.id, metadata: { gatewayCancelled },
+    });
+    return { ok: true, gatewayCancelled };
+  }
+
+  /**
+   * The auto_renew job's entry point. Charges the agreement
+   * when the current period ends within 24h. The money
+   * order mirrors checkout (cycle price − account credit;
+   * no coupons for automated charges). Any failure is
+   * recorded on the agreement + audited and reported — the
+   * subscription then follows the normal sweep/dunning
+   * path; nothing is silently retried or faked.
+   */
+  async chargeAutoRenew(organizationId: string): Promise<Record<string, unknown>> {
+    await ensurePlatformConfig(this.prisma as any);
+    const row = await (this.prisma as any).autoRenewAgreement?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
+    if (!row || row.status !== "active") return { charged: false, reason: "no_active_agreement" };
+    const cfg = effectiveBkashConfig();
+    if (!cfg) return { charged: false, reason: "bkash_not_configured" };
+    const agreementID = row.agreementIdSealed ? unseal(row.agreementIdSealed) : undefined;
+    if (!agreementID) return { charged: false, reason: "agreement_id_missing" };
+    const sub = await (this.prisma as any).subscription.findFirst({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+    if (!sub || !["ACTIVE", "TRIALING"].includes(sub.status) || !sub.currentPeriodEnd) return { charged: false, reason: "no_live_subscription" };
+    if (String(sub.plan) === "FREE") return { charged: false, reason: "free_plan" };
+    const msLeft = new Date(sub.currentPeriodEnd).getTime() - Date.now();
+    if (msLeft > 24 * 3600_000) return { charged: false, reason: "not_due_yet", hoursLeft: Math.round(msLeft / 3600000) };
+    const cycle = String(sub.billingCycle ?? "monthly");
+    const prices = cycle === "yearly" ? await planYearlyPrices(this.prisma as any) : await planPrices(this.prisma as any);
+    const priceMinor = BigInt(prices[String(sub.plan)] ?? 0);
+    if (priceMinor <= 0n) return { charged: false, reason: "no_price_configured" };
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const creditBalance = BigInt(org?.creditMinor ?? 0);
+    const creditApplied = creditBalance > priceMinor ? priceMinor : creditBalance;
+    const dueMinor = priceMinor - creditApplied;
+    const tranId = `QA${Date.now().toString(36).toUpperCase()}${randomBytes(3).toString("hex").toUpperCase()}`;
+    const checkout = await (this.prisma as any).planCheckout.create({
+      data: {
+        organizationId, plan: String(sub.plan), amountMinor: dueMinor, currency: "BDT", tranId,
+        status: "initiated", createdById: "system", gateway: "bkash",
+        creditAppliedMinor: creditApplied, discountMinor: 0n, prorationMinor: 0n, cycle,
+      },
+    });
+    const fail = async (message: string) => {
+      await (this.prisma as any).planCheckout.update({ where: { id: checkout.id }, data: { status: "failed", gatewayDetail: { autoRenew: true, error: message } } }).catch(() => null);
+      await (this.prisma as any).autoRenewAgreement.update({ where: { id: row.id }, data: { lastError: message } }).catch(() => null);
+      await this.audit.log({
+        organizationId, action: "billing.autorenew_charge_failed", entityType: "PlanCheckout", entityId: checkout.id,
+        metadata: { plan: String(sub.plan), cycle, error: message },
+      });
+      return { charged: false, reason: message };
+    };
+    if (dueMinor === 0n) {
+      await this.activate(checkout, "—", { via: "autorenew_credit" });
+      await (this.prisma as any).autoRenewAgreement.update({ where: { id: row.id }, data: { lastChargeAt: new Date(), lastError: null } }).catch(() => null);
+      return { charged: true, viaCredit: true, tranId };
+    }
+    const created = await this.bkashCall(cfg, "/checkout/create", {
+      mode: "0001",
+      agreementID,
+      payerReference: row.payerReference,
+      callbackURL: `${this.apiBase()}/public/payments/bkash/callback`,
+      amount: (Number(dueMinor) / 100).toFixed(2),
+      currency: "BDT",
+      intent: "sale",
+      merchantInvoiceNumber: tranId,
+    }).catch((e) => ({ statusMessage: e instanceof Error ? e.message : "network error" }));
+    if (!created || String(created.statusCode) !== "0000" || !created.paymentID) {
+      return fail(`bKash charge refused: ${created?.statusMessage ?? "unknown error"}`);
+    }
+    const executed = await this.bkashCall(cfg, "/checkout/execute", { paymentID: String(created.paymentID) }).catch(() => null);
+    if (!executed || String(executed.statusCode) !== "0000" || String(executed.transactionStatus) !== "Completed") {
+      return fail(`bKash charge not completed: ${executed?.statusMessage ?? "unknown error"}`);
+    }
+    await this.activate(checkout, String(executed.trxID ?? executed.paymentID), { via: "autorenew", paymentID: String(created.paymentID) });
+    await (this.prisma as any).autoRenewAgreement.update({ where: { id: row.id }, data: { lastChargeAt: new Date(), lastError: null } }).catch(() => null);
+    return { charged: true, tranId, amountMinor: dueMinor.toString() };
+  }
+
   /** Printable invoice HTML for one payment (admin + tenant
    * routes both render through buildInvoiceHtml). */
+  /**
+   * Referral Advanced R2: the org's credit history — every
+   * grant, spend, clawback and expiry the ledger recorded,
+   * with the live balance. Pre-ledger movements (before R1)
+   * are not listed; the balance remains authoritative.
+   */
+  async creditLedger(organizationId: string) {
+    const p = this.prisma as any;
+    const org = await p.organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const rows = (await p.creditLedger?.findMany?.({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 100,
+    })?.catch?.(() => [])) ?? [];
+    return {
+      balanceMinor: org?.creditMinor != null ? BigInt(org.creditMinor).toString() : "0",
+      entries: (rows as any[]).map((r) => ({
+        id: r.id, deltaMinor: BigInt(r.deltaMinor).toString(), reason: r.reason,
+        referralId: r.referralId ?? null, expiresAt: r.expiresAt ?? null, createdAt: r.createdAt,
+      })),
+    };
+  }
+
   async invoiceHtmlForOrgPayment(organizationId: string, paymentId: string): Promise<string> {
     const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id: paymentId } });
     if (!payment || payment.organizationId !== organizationId) throw new NotFoundException("Payment not found");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
-    return buildInvoiceHtml({ payment, orgName: org?.name ?? organizationId });
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
+    return buildInvoiceHtml({ payment, orgName: org?.name ?? organizationId, buyer: { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null } });
   }
 
   /** Browser return mapping — informational only (SSLCommerz). */
@@ -664,7 +1013,7 @@ export class PaymentsService {
  * Print-to-PDF from the browser is the delivery mechanism (no
  * PDF dependency); every value comes from the stored record,
  * refunds netted and shown — never hidden. */
-export function buildInvoiceHtml(input: { payment: any; orgName: string }): string {
+export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?: { address?: string | null; bin?: string | null } }): string {
   const p = input.payment;
   const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -690,6 +1039,8 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string }): stri
   <div class="muted">Invoice ${invoiceNo} · Issued ${date}</div>
   <div class="box">
     <div><strong>Billed to:</strong> ${esc(input.orgName)}</div>
+    ${input.buyer?.address ? `<div class="muted">${esc(input.buyer.address)}</div>` : ""}
+    ${input.buyer?.bin ? `<div class="muted">BIN: ${esc(input.buyer.bin)}</div>` : ""}
     <div class="muted">Method: ${esc(p.method)}${p.reference ? ` · Reference: ${esc(p.reference)}` : ""}</div>
     ${p.periodEnd ? `<div class="muted">Service period ends: ${new Date(p.periodEnd).toISOString().slice(0, 10)}</div>` : ""}
     ${p.note ? `<div class="muted">Note: ${esc(p.note)}</div>` : ""}

@@ -1,14 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CampaignsService } from "./campaigns.service";
 import { CreatePlanDto, UpdatePlanDto, AddAdSetDto, AddAdDto, RejectDto, GenerateCopyDto, InstantiateBlueprintDto } from "./campaigns.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;
 
+@PermissionArea("campaigns")
 @Controller("organizations/:organizationId/campaign-plans")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class CampaignsController {
   constructor(private readonly campaigns: CampaignsService) {}
 

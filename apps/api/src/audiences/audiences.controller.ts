@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 import { AudiencesService } from "./audiences.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
@@ -23,8 +23,9 @@ class CreateSavedDto {
   targeting!: Record<string, unknown>;
 }
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId/audiences")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AudiencesController {
   constructor(private readonly audiences: AudiencesService) {}
   private write = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;

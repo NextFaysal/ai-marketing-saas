@@ -29,6 +29,9 @@ function table(store: Row[]) {
     findFirst: jest.fn(async ({ where }: any = {}) => store.find((r) => match(r, where)) ?? null),
     findUnique: jest.fn(async ({ where }: any = {}) => {
       if (where.organizationId_userId) return store.find((r) => r.organizationId === where.organizationId_userId.organizationId && r.userId === where.organizationId_userId.userId) ?? null;
+      // Milestone 72 repair: M71's roster rights look memberships
+      // up by the userId_organizationId composite key.
+      if (where.userId_organizationId) return store.find((r) => r.userId === where.userId_organizationId.userId && r.organizationId === where.userId_organizationId.organizationId) ?? null;
       return store.find((r) => Object.entries(where).every(([k, v]) => r[k] === v)) ?? null;
     }),
     create: jest.fn(async ({ data }: any) => { const row = { id: `row-${store.length + 1}-${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date(), updatedAt: new Date(), ...data }; store.push(row); return row; }),

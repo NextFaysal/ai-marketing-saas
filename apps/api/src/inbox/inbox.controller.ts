@@ -1,17 +1,19 @@
-import { Body, Controller, Delete, Get, MessageEvent, Param, Patch, Post, Query, Sse, StreamableFile, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, MessageEvent, Param, Patch, Post, Put, Query, Sse, StreamableFile, UseGuards } from "@nestjs/common";
 import { Observable } from "rxjs";
 import { InboxService } from "./inbox.service";
 import { RealtimeService } from "./realtime.service";
 import { TelegramService } from "./channels/telegram.service";
 import { EmailChannelService } from "./channels/email.service";
 import { TIKTOK_APPLICATION_PACK } from "./channels/channel-adapter";
-import { AddNoteDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, WhatsAppTemplateDto } from "./inbox.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { AddNoteDto, AgentScheduleDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMediaDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, UpdateSignatureDto, RebalanceDto, WhatsAppTemplateDto } from "./inbox.dto";
+import { BulkConversationsDto, GhostDto, SendProductDto, ToneRewriteDto } from "./inbox.dto";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+@PermissionArea("inbox")
 @Controller("organizations/:organizationId/inbox")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class InboxController {
   constructor(
     private readonly inbox: InboxService,
@@ -94,7 +96,9 @@ export class InboxController {
   deleteTeam(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("teamId") teamId: string) {
     return this.inbox.deleteTeam(orgId, user.userId, teamId);
   }
-  @Post("teams/:teamId/members") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  // Milestone 71: agents may reach this route so a team LEAD can
+  // manage their own roster — the service enforces lead/manager.
+  @Post("teams/:teamId/members") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   teamMembers(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("teamId") teamId: string, @Body() dto: TeamMembersDto) {
     return this.inbox.setTeamMembers(orgId, user.userId, teamId, dto.members);
   }
@@ -102,6 +106,41 @@ export class InboxController {
   @Post("agent-state") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   agentState(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: AgentStateDto) {
     return this.inbox.setAgentState(orgId, user.userId, dto.status);
+  }
+
+  // Milestone 69 (Team W1): presence heartbeat + activity board.
+  @Post("presence/heartbeat") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER")
+  heartbeat(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.heartbeat(orgId, user.userId);
+  }
+  @Get("team-activity")
+  teamActivity(@Param("organizationId") orgId: string, @Query("tz") tz?: string) { return this.inbox.teamActivity(orgId, tz); }
+
+  // Milestone 70 (Team W2): performance scorecard + CSV.
+  @Get("team-scorecard")
+  teamScorecard(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("days") days?: string, @Query("teamId") teamId?: string) {
+    return this.inbox.teamScorecard(orgId, Number(days ?? 7) || 7, { actorId: user.userId, teamId });
+  }
+  // Milestone 74 (Team T5): workload rebalance.
+  @Post("rebalance") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  rebalance(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: RebalanceDto) {
+    return this.inbox.rebalanceWorkload(orgId, user.userId, { dryRun: Boolean(dto?.dryRun) });
+  }
+
+  @Get("team-scorecard.csv") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=team-scorecard.csv")
+  async teamScorecardCsv(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("days") days?: string, @Query("teamId") teamId?: string) {
+    return this.inbox.teamScorecardCsv(orgId, Number(days ?? 7) || 7, { actorId: user.userId, teamId });
+  }
+
+  // Milestone 68 (Team T2): working-hours schedules.
+  @Get("agent-schedules") agentSchedules(@Param("organizationId") orgId: string) { return this.inbox.listAgentSchedules(orgId); }
+  @Put("agent-schedules/:userId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  setAgentSchedule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("userId") userId: string, @Body() dto: AgentScheduleDto) {
+    return this.inbox.setAgentSchedule(orgId, user.userId, userId, dto);
+  }
+  @Delete("agent-schedules/:userId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  deleteAgentSchedule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("userId") userId: string) {
+    return this.inbox.deleteAgentSchedule(orgId, user.userId, userId);
   }
 
   @Post("connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
@@ -118,8 +157,8 @@ export class InboxController {
   }
 
   @Get("team-report")
-  teamReport(@Param("organizationId") orgId: string, @Query("days") days?: string) {
-    return this.inbox.getTeamReport(orgId, Math.min(90, Math.max(1, Number(days ?? 7) || 7)));
+  teamReport(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("days") days?: string, @Query("teamId") teamId?: string) {
+    return this.inbox.getTeamReport(orgId, Math.min(90, Math.max(1, Number(days ?? 7) || 7)), user.userId, teamId);
   }
 
   @Get("integrations")
@@ -131,10 +170,26 @@ export class InboxController {
     @Query("status") status?: string, @Query("channel") channel?: string,
     @Query("q") q?: string, @Query("unread") unread?: string,
     @Query("assignee") assignee?: string, @Query("tag") tag?: string, @Query("sort") sort?: string,
+    @Query("folder") folder?: string,
   ) {
     return this.inbox.listConversations(orgId, {
-      status, channel, q, unreadOnly: unread === "1", assignee, tag, sort,
+      status, channel, q, unreadOnly: unread === "1", assignee, tag, sort, folder,
     }, user.userId);
+  }
+
+  // Inbox Next-Gen P2: smart-folder counts (server-side; the list
+  // itself is capped at 100 rows). Declared BEFORE
+  // conversations/:conversationId so "counts" is not read as an id.
+  @Get("conversations/counts")
+  conversationCounts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.conversationFolderCounts(orgId, user.userId);
+  }
+
+  // Inbox Next-Gen P2: one bulk endpoint (close / assign / tag-add
+  // / mark-read) with per-item results — no client-side PATCH loop.
+  @Post("conversations/bulk") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  bulkConversations(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkConversationsDto) {
+    return this.inbox.bulkUpdateConversations(orgId, user.userId, dto);
   }
 
   // ----- Quick replies -----
@@ -250,6 +305,19 @@ export class InboxController {
     return this.inbox.sendImageReply(orgId, user.userId, id, dto.imageUrl, dto.caption);
   }
 
+  /** Inbox Next-Gen P1: uploaded media (drag-drop / paste / voice). */
+  @Post("conversations/:conversationId/messages/media") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  sendMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMediaDto) {
+    return this.inbox.sendMediaReply(orgId, user.userId, id, dto);
+  }
+
+  /** Inbox Next-Gen P2: product showcase card (image + composed
+   * caption via the P1 media path; honest text fallback). */
+  @Post("conversations/:conversationId/messages/product") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  sendProduct(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendProductDto) {
+    return this.inbox.sendProductCard(orgId, user.userId, id, dto);
+  }
+
   @Get("conversations/:conversationId/messages/:messageId/media")
   async media(@Param("organizationId") orgId: string, @Param("conversationId") convId: string, @Param("messageId") messageId: string) {
     const { bytes, contentType } = await this.inbox.getMessageMedia(orgId, convId, messageId);
@@ -266,12 +334,41 @@ export class InboxController {
 
   @Post("conversations/:conversationId/messages") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   send(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto) {
-    return this.inbox.sendReply(orgId, user.userId, id, dto.content);
+    return this.inbox.sendReply(orgId, user.userId, id, dto.content, { signature: true });
+  }
+
+  // Milestone 73 (Team T4): agent self-service.
+  @Get("my-performance")
+  myPerformance(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("days") days?: string) {
+    return this.inbox.myPerformance(orgId, user.userId, Math.min(90, Math.max(1, Number(days ?? 7) || 7)));
+  }
+
+  @Get("my-signature")
+  mySignature(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.getMySignature(orgId, user.userId);
+  }
+
+  @Put("my-signature")
+  updateMySignature(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: UpdateSignatureDto) {
+    return this.inbox.updateMySignature(orgId, user.userId, dto);
   }
 
   @Post("conversations/:conversationId/drafts/suggest") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   suggestDraft(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
     return this.inbox.suggestDraft(orgId, user.userId, id);
+  }
+
+  /** Inbox Next-Gen P3: ghost completion (inline autocomplete for
+   * the composer; empty completion = nothing to suggest). */
+  @Post("conversations/:conversationId/ghost") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  ghost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: GhostDto) {
+    return this.inbox.ghostComplete(orgId, user.userId, id, dto.partial);
+  }
+
+  /** Inbox Next-Gen P3: tone rewrite of the agent's own draft. */
+  @Post("conversations/:conversationId/tone-rewrite") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  toneRewrite(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: ToneRewriteDto) {
+    return this.inbox.toneRewrite(orgId, user.userId, id, dto.text, dto.tone);
   }
 
   @Post("conversations/:conversationId/drafts/:draftId/send") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")

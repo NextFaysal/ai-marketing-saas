@@ -1,14 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { MessagingService } from "./messaging.service";
 import { CreateTemplateDto, UpdateTemplateDto, CreateBroadcastDto } from "./messaging.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 
+@PermissionArea("campaigns")
 @Controller("organizations/:organizationId/messaging")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
 

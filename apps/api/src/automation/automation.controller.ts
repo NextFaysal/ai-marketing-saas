@@ -1,14 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { AutomationService } from "./automation.service";
 import { CreateJobDto, UpdateJobDto, CreateRuleDto, UpdateRuleDto } from "./automation.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 
+@PermissionArea("automations")
 @Controller("organizations/:organizationId/automation")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AutomationController {
   constructor(private readonly automation: AutomationService) {}
 

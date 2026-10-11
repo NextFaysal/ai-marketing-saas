@@ -105,6 +105,7 @@ model Organization {
   aiUsageRecords AIUsageRecord[]
   channelConversations ChannelConversation[]
   leads          Lead[]
+  customFieldDefs CustomFieldDef[]
   competitors    Competitor[]
   competitorInsights CompetitorInsight[]
   campaignPlans  CampaignPlan[]
@@ -126,6 +127,11 @@ model Membership {
   organizationId String
   role           Role             @default(VIEWER)
   status         MembershipStatus @default(ACTIVE)
+  // Milestone 72 (Team W3): per-member custom access on top of
+  // the role — { grants: string[], denies: string[] } of
+  // permission-area keys (see common/permission-catalog.ts).
+  // Null = no overrides. Never applies to the OWNER.
+  permissionOverrides Json?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -151,6 +157,36 @@ model BusinessProfile {
   budgetCurrency  String       @default("BDT")
   contactEmail    String?
   contactPhone    String?
+  // Milestone 75 (Business Command Center): the operational
+  // layer the AI quotes daily — address, hours, delivery,
+  // payments. Money is integer minor units (BigInt, matching
+  // monthlyBudgetMinor). Null = not set; the AI must say it
+  // does not know rather than invent a value.
+  address         String?
+  city            String?
+  businessHours   Json?
+  deliveryChargeInsideMinor  BigInt?
+  deliveryChargeOutsideMinor BigInt?
+  freeDeliveryAboveMinor     BigInt?
+  deliveryDaysInside  Int?
+  deliveryDaysOutside Int?
+  codAvailable        Boolean?
+  minOrderMinor       BigInt?
+  bkashNumber         String?
+  nagadNumber         String?
+  paymentNote         String?
+  advancePaymentPercent Int?
+  returnWindowDays    Int?
+  // Milestone 77 (Business Command Center): owner-set AI
+  // behaviour. Instructions steer style/conduct only — they
+  // can never override the verified-facts discipline.
+  aiInstructions      String?
+  aiReplyLanguage     String?
+  // Billing Package B5: who receives invoices/reminders
+  // (up to 3 extra emails) + the buyer block on invoices.
+  billingEmails       Json?
+  billingAddress      String?
+  billingBin          String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -162,6 +198,13 @@ model Subscription {
   plan             SubscriptionPlan   @default(FREE)
   status           SubscriptionStatus @default(TRIALING)
   currentPeriodEnd DateTime?
+  // Billing Package B2: a downgrade (or FREE = cancel)
+  // scheduled for the period end; the sweep applies it.
+  pendingPlan      String?
+  pendingPlanAt    DateTime?
+  // Billing Package B3: the cycle the current period was
+  // bought on — drives renewal price + proration length.
+  billingCycle     String             @default("monthly")
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -434,6 +477,9 @@ model Customer {
   email          String?
   phone          String?
   address        Json?
+  // CRM C4: values for the org's CustomFieldDefs (entity
+  // "customer"), keyed by def.key. Validated server-side.
+  customFields   Json?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1017,6 +1063,9 @@ model Lead {
   notes          String?
   nextFollowUpAt DateTime?
   lastContactedAt DateTime?
+  // CRM C4: values for the org's CustomFieldDefs (entity "lead"),
+  // keyed by def.key. Validated server-side; never per-field columns.
+  customFields   Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1036,6 +1085,47 @@ model LeadActivity {
   lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([leadId, createdAt])
+}
+
+// CRM C4: per-org custom field definitions for leads and customers.
+// Values live ONLY in Lead.customFields / Customer.customFields
+// (JSON keyed by `key`); this table holds the definitions. A def's
+// key is immutable after create (stored values reference it), and
+// archiving (archivedAt) hides the field from validation/UI/exports
+// without deleting anyone's stored values.
+model CustomFieldDef {
+  id             String    @id @default(uuid())
+  organizationId String
+  entity         String // lead | customer
+  key            String // slug, unique per org+entity, immutable
+  label          String
+  type           String // text | number | date | select
+  options        Json? // string[] for type=select, else null
+  required       Boolean   @default(false)
+  sortOrder      Int       @default(0)
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, entity, key])
+  @@index([organizationId, entity])
+}
+
+// CRM C5 (Leads & CRM Package): the org's lead auto-assignment
+// setting — at most one row per org, InboxSetting-style (no row =
+// defaults). leadAssignStrategy: off | round_robin |
+// least_open_leads. rrCursorUserId is the round-robin cursor —
+// the member who received the most recent AUTO-assignment; it
+// advances only on an actual auto-assignment, never when a
+// caller supplies an explicit owner.
+model CrmSetting {
+  id                 String   @id @default(uuid())
+  organizationId     String   @unique
+  leadAssignStrategy String   @default("off")
+  rrCursorUserId     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 // ---------- Milestone 8: competitor intelligence (public data only) ----------
@@ -1904,6 +1994,24 @@ model MemberInvitation {
 // signature-verified IPN whose val_id the gateway's validation
 // API confirms for the exact amount — never via the browser
 // return. The resulting SaasPayment row is written at activation.
+// Billing Package B4: a tenant's consent to recurring
+// charges (bKash tokenized agreement). The agreement id is
+// stored SEALED (AES-256-GCM, platform-config seal) and is
+// never returned by any API — only status is.
+model AutoRenewAgreement {
+  id               String    @id @default(uuid())
+  organizationId   String    @unique
+  gateway          String    @default("bkash")
+  agreementIdSealed String?
+  payerReference   String
+  pendingPaymentId String?
+  status           String    @default("pending") // pending | active | cancelled | failed
+  lastChargeAt     DateTime?
+  lastError        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
 model PlanCheckout {
   id             String    @id @default(cuid())
   organizationId String
@@ -1917,6 +2025,11 @@ model PlanCheckout {
   gateway        String    @default("sslcommerz") // sslcommerz | bkash
   creditAppliedMinor BigInt @default(0)
   discountMinor  BigInt    @default(0)
+  // Billing Package B2: unused current-plan value credited
+  // on an upgrade; part of the money order.
+  prorationMinor BigInt    @default(0)
+  // Billing Package B3: monthly | yearly.
+  cycle          String    @default("monthly")
   couponCode     String?
   createdById    String
   completedAt    DateTime?
@@ -1997,16 +2110,78 @@ model AdminApiKey {
 
 model Referral {
   id             String    @id @default(cuid())
-  referrerUserId String
+  // Referral Advanced R4: null for campaign referrals
+  // (a campaign has no human referrer).
+  referrerUserId String?
   referredUserId String    @unique
   code           String
-  status         String    @default("pending") // pending | rewarded
+  status         String    @default("pending") // pending | rewarded | clawed_back
   rewardMinor    BigInt?
   rewardedOrgId  String?
   createdAt      DateTime  @default(now())
   rewardedAt     DateTime?
+  // Referral Advanced R1: what actually qualified the reward.
+  refereeBonusMinor BigInt?
+  firstPaymentMinor BigInt?
+  // Referral Advanced R4: user | campaign source.
+  sourceKind     String    @default("user")
+  // Campaign terms locked at signup (mode/reward/percent/
+  // bonus/minimum), so later edits never rewrite a deal.
+  termsSnapshot  Json?
 
   @@index([referrerUserId])
+}
+
+// Referral Advanced R4: operator-created campaign /
+// influencer codes. A signup with a campaign code records
+// a campaign referral; on the first payment the JOINING
+// org receives the campaign's credit (reward + welcome
+// fields both go to the new org — there is no referrer).
+model ReferralCampaign {
+  id                    String    @id @default(uuid())
+  code                  String    @unique
+  label                 String
+  mode                  String?
+  rewardMinor           BigInt?
+  percentOfFirstPayment Int?
+  refereeBonusMinor     BigInt?
+  minFirstPaymentMinor  BigInt?
+  maxUses               Int?
+  usedCount             Int       @default(0)
+  expiresAt             DateTime?
+  active                Boolean   @default(true)
+  createdById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// Referral Advanced R4: one row per (referrer, threshold)
+// — the unique constraint is the exactly-once guarantee.
+model ReferralMilestoneAward {
+  id             String   @id @default(uuid())
+  referrerUserId String
+  threshold      Int
+  bonusMinor     BigInt
+  orgId          String
+  createdAt      DateTime @default(now())
+
+  @@unique([referrerUserId, threshold])
+}
+
+// Referral Advanced R1/R2: every billing-credit movement for
+// an organization, so a balance is always explainable.
+// Organization.creditMinor stays the checkout's source of
+// truth; this ledger is the history + expiry layer.
+model CreditLedger {
+  id             String    @id @default(uuid())
+  organizationId String
+  deltaMinor     BigInt
+  reason         String    // referral_reward | referral_welcome | milestone_bonus | checkout_credit_spend | referral_clawback | credit_expired | admin_adjustment
+  referralId     String?
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, createdAt])
 }
 
 model Feedback {
@@ -2052,6 +2227,9 @@ model InboxTeam {
   name           String
   // Channels this team handles; empty = all channels.
   channels       String[] @default([])
+  // Milestone 71 (Team T3): the team's lead — may manage this
+  // team's roster and sees this team's scoped analytics.
+  leadUserId     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -2076,7 +2254,32 @@ model AgentState {
   userId         String
   status         String    @default("online") // online | busy | away
   lastAssignedAt DateTime?
+  // Milestone 69 (Team W1): last org-level heartbeat from the
+  // tenant web app — the "is this person at work" signal.
+  lastActiveAt   DateTime?
+  // Milestone 73 (Team T4): the agent's chat signature,
+  // appended to their own human replies when enabled.
+  signature         String?
+  signatureEnabled  Boolean @default(false)
   updatedAt      DateTime  @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+}
+
+// Milestone 68 (Team T2): an agent's weekly working-hours
+// schedule. windows is a JSON object keyed by weekday
+// ("mon".."sun") with a list of ["HH:MM","HH:MM"] windows in
+// the schedule's timezone; a window whose end <= start spans
+// midnight. No row = no schedule = always available.
+model AgentSchedule {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  timezone       String   @default("Asia/Dhaka")
+  windows        Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([organizationId, userId])
   @@index([organizationId])

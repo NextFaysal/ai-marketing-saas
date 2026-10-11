@@ -1,5 +1,5 @@
 import { ensurePlatformConfig, getPlatformConfigSync, resolveMessagingAppSecret } from "../common/platform-config";
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -12,13 +12,22 @@ import { LlmFactory } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { RealtimeService } from "./realtime.service";
+import { isValidTimezone, isValidWindows, isWithinSchedule } from "./working-hours";
+import { contactFactLines, deliveryFactLines, hoursFactLines, matchKnowledge, paymentFactLines } from "./business-brain";
 import { MediaStore, mediaKeyFor } from "./media-store";
-import { classifyIntent, parseCodReply, type Classification } from "./intent";
+import { detectMediaKind, defaultMediaFileName, type MediaKind } from "./media-sniff";
+import { composeProductCardText } from "./product-card";
+import { classifyIntent, moodFromMessages, parseCodReply, type Classification } from "./intent";
 import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
 import { RiskService } from "../orders/risk.service";
+import { LeadAssignmentService } from "../crm/lead-assignment.service";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
+
+/** Inbox Next-Gen P1: decoded-size cap for browser-uploaded media.
+ * 2MB of bytes is ~2.7MB of base64, inside the 3MB JSON body limit. */
+export const MEDIA_UPLOAD_MAX_BYTES = 2_000_000;
 
 export function verifyMetaSignature(rawBody: string, appSecret: string, header: string | undefined): boolean {
   if (!header?.startsWith("sha256=")) return false;
@@ -41,6 +50,10 @@ export class InboxService {
     @Optional() private readonly events?: EventsService,
     @Optional() private readonly realtime?: RealtimeService,
     @Optional() private readonly risk?: RiskService,
+    // CRM C5: lead auto-assignment for the leads this service
+    // creates directly (leadgen, first-message). Optional — a
+    // missing engine leaves those leads unassigned, as before.
+    @Optional() private readonly leadAssignment?: LeadAssignmentService,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -54,6 +67,57 @@ export class InboxService {
   emitInboxEvent(organizationId: string, event: { type: "message.created" | "conversation.updated"; conversationId: string; message?: unknown }) {
     if (event.type === "message.created") this.rtMessage(organizationId, event.conversationId, event.message);
     else this.rtConversation(organizationId, event.conversationId);
+  }
+
+  /** Inbox Next-Gen P3: a webchat visitor's presence/typing,
+   * fanned out to the org's agent stream (the agents' counterpart
+   * of notifyVisitorTyping, which goes visitor-ward). Public hook
+   * for WebchatService, mirroring emitInboxEvent. */
+  emitVisitorPresence(organizationId: string, conversationId: string, typing: boolean) {
+    try { this.realtime?.emit(organizationId, { type: "visitor.presence", conversationId, visitorTyping: typing }); } catch { /* realtime never breaks messaging */ }
+  }
+
+  // ----- Inbox Next-Gen P3: AI enforcement parity -----
+  /**
+   * The per-org AI kill switch + plan daily cap, per feature —
+   * the same enforcement ai/chat and ai/creative-studio already
+   * apply (audit item 10: inbox LLM features checked NEITHER).
+   * Applied to the AGENT-INITIATED features (draft, summary,
+   * translate, ghost_complete, tone_rewrite). The autopilot path
+   * (composeLlmGroundedReply / maybeAutoReply) is deliberately
+   * NOT gated here: it is not agent-initiated, it runs per inbound
+   * customer message under its own confidence/grounding rules, and
+   * charging it against the agent-facing daily cap would let a
+   * busy inbox silently disable drafting for the whole day.
+   */
+  private async checkAiAllowed(organizationId: string, feature: string) {
+    const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
+    const ks = await killSwitches(this.prisma as any);
+    if (ks.aiDisabledOrgIds.includes(organizationId)) {
+      throw new HttpException("AI features are temporarily disabled for this organization by the platform team.", 403);
+    }
+    const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
+    const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
+    const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
+    const used = await (this.prisma as any).aIUsageRecord.count({ where: { organizationId, feature, createdAt: { gte: startOfDay } } });
+    if (used >= limit) throw new HttpException(`Daily AI limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`, 429);
+  }
+
+  /** Defensive batch read for read-time projections: a partial
+   * fake (or a not-yet-migrated table) degrades to no rows instead
+   * of breaking the conversation list/detail. */
+  private async safeFindMany(table: string, args: any): Promise<any[]> {
+    try {
+      const rows = await (this.prisma as any)[table]?.findMany?.(args);
+      return Array.isArray(rows) ? rows : [];
+    } catch { return []; }
+  }
+
+  /** Inbox Next-Gen P3: thread mood from the newest inbound texts
+   * (rows arrive newest-first; empty contents are media rows). */
+  private moodOf(rows: { content?: string | null }[]): "positive" | "neutral" | "negative" | null {
+    const texts = rows.filter((r) => r.content && String(r.content).trim()).slice(0, 5).map((r) => String(r.content));
+    return moodFromMessages(texts);
   }
 
   // ----- Connection management -----
@@ -291,6 +355,10 @@ export class InboxService {
         content: `Facebook Lead Ads জমা: ${answers}${data?.ad_id ?? lg.adId ? ` | ad: ${data?.ad_id ?? lg.adId}` : ""}${data?.campaign_id ?? lg.campaignId ? ` | campaign: ${data?.campaign_id ?? lg.campaignId}` : ""}`,
       },
     }).catch(() => undefined);
+    // CRM C5: the org's lead auto-assignment strategy applies to
+    // ingested leads too (no actor here — the lead starts
+    // unassigned and only the strategy may give it an owner).
+    await this.leadAssignment?.assignNewLead(organizationId, lead.id).catch(() => undefined);
     await this.audit.log({ organizationId, userId: "system", action: "lead.ads_ingested", entityType: "Lead", entityId: lead.id, metadata: { leadgenId: lg.leadgenId } }).catch(() => undefined);
     try { this.events?.emit("lead.created", { organizationId, context: { leadId: lead.id, source: "facebook_lead_ads" } }); } catch { /* never block ingest */ }
     return true;
@@ -330,6 +398,8 @@ export class InboxService {
       await (this.prisma as any).leadActivity.create({
         data: { leadId: lead.id, type: "created", content: `Auto-created from first ${channel} message` },
       });
+      // CRM C5: same auto-assignment as every other creation path.
+      await this.leadAssignment?.assignNewLead(organizationId, lead.id).catch(() => undefined);
       conversation = await (this.prisma as any).channelConversation.update({
         where: { id: conversation.id }, data: { leadId: lead.id },
       });
@@ -417,14 +487,35 @@ export class InboxService {
   static readonly TEAM_CHANNELS = ["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"];
   static readonly AGENT_STATUSES = ["online", "busy", "away"];
 
+  /** Milestone 71: resolve a team + the actor's right to act
+   * on it. Managers (OWNER/ADMIN/MARKETING_MANAGER) act on any
+   * team; a team's lead acts on their own. Returns the team and
+   * its member ids. Throws 404 / 403 as appropriate. */
+  private async teamScope(organizationId: string, actorId: string, teamId: string) {
+    const p = this.prisma as any;
+    const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
+    if (!team) throw new NotFoundException("Team not found");
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    }).catch(() => null);
+    const isManager = actor && ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
+    if (!isManager && team.leadUserId !== actorId) {
+      throw new ForbiddenException("Only the team's lead or an organization manager can do this");
+    }
+    const roster = await p.inboxTeamMember?.findMany({ where: { teamId } }).catch(() => []) ?? [];
+    return { team, memberIds: (roster as any[]).map((r) => r.userId) };
+  }
+
   async listTeams(organizationId: string) {
     const p = this.prisma as any;
     const teams = await p.inboxTeam?.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" } }).catch(() => []) ?? [];
+    const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 }).catch(() => []);
+    const nameOf = new Map((memberships as any[]).map((m) => [m.userId, m.user?.name ?? m.user?.email ?? null]));
     const out: any[] = [];
     for (const t of teams as any[]) {
       const members = await p.inboxTeamMember?.findMany({ where: { teamId: t.id } }).catch(() => []) ?? [];
       const open = await p.channelConversation.count({ where: { organizationId, teamId: t.id, status: "open" } }).catch(() => 0);
-      out.push({ ...t, members, openCount: open });
+      out.push({ ...t, members, openCount: open, leadName: t.leadUserId ? nameOf.get(t.leadUserId) ?? null : null });
     }
     return out;
   }
@@ -438,13 +529,23 @@ export class InboxService {
     return row;
   }
 
-  async updateTeam(organizationId: string, actorId: string, teamId: string, dto: { name?: string; channels?: string[] }) {
+  async updateTeam(organizationId: string, actorId: string, teamId: string, dto: { name?: string; channels?: string[]; leadUserId?: string | null }) {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
     if (!team) throw new NotFoundException("Team not found");
     const data: any = {};
     if (dto.name !== undefined) { if (!dto.name.trim()) throw new BadRequestException("Team name is required"); data.name = dto.name.trim().slice(0, 80); }
     if (dto.channels !== undefined) data.channels = dto.channels.filter((c: string) => InboxService.TEAM_CHANNELS.includes(c));
+    // Milestone 71: setting the lead. The lead must be an org
+    // member (any role); null clears the lead.
+    if (dto.leadUserId !== undefined) {
+      if (dto.leadUserId === null) data.leadUserId = null;
+      else {
+        const member = await p.membership.findFirst({ where: { organizationId, userId: dto.leadUserId } });
+        if (!member) throw new BadRequestException("The lead must be a member of this organization");
+        data.leadUserId = dto.leadUserId;
+      }
+    }
     const row = await p.inboxTeam.update({ where: { id: teamId }, data });
     await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.updated", entityType: "InboxTeam", entityId: teamId, metadata: data });
     return row;
@@ -465,6 +566,15 @@ export class InboxService {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
     if (!team) throw new NotFoundException("Team not found");
+    // Milestone 71: org managers manage any roster; the team's
+    // own lead manages theirs. (The controller's @Roles admits
+    // agents so a lead can reach this; the right is enforced
+    // here.) OWNER/ADMIN keep their guard-level fast path.
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    }).catch(() => null);
+    const actorOk = actor && (["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role) || team.leadUserId === actorId);
+    if (!actorOk) throw new ForbiddenException("Only the team's lead or an organization manager can set the roster");
     const cleaned: { userId: string; capacity: number }[] = [];
     for (const m of members ?? []) {
       const membership = await p.membership.findFirst({ where: { organizationId, userId: m.userId } });
@@ -490,6 +600,384 @@ export class InboxService {
     return { userId, status: row.status, updatedAt: row.updatedAt };
   }
 
+  // ---------- Milestone 68 (Team T2): working hours ----------
+
+  /** Schedules for every agent-role member, with the live
+   * on-shift verdict computed for "now". */
+  async listAgentSchedules(organizationId: string) {
+    const p = this.prisma as any;
+    const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 });
+    const schedules = await p.agentSchedule?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const schedOf = new Map((schedules as any[]).map((s) => [s.userId, s]));
+    const now = new Date();
+    return (memberships as any[])
+      .filter((m) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(m.role))
+      .map((m) => {
+        const s = schedOf.get(m.userId);
+        return {
+          userId: m.userId,
+          name: m.user?.name ?? m.user?.email ?? "Agent",
+          email: m.user?.email ?? null,
+          role: m.role,
+          timezone: s?.timezone ?? "Asia/Dhaka",
+          windows: s?.windows ?? {},
+          hasSchedule: Boolean(s),
+          onShift: s ? isWithinSchedule(s as any, now) : true,
+        };
+      });
+  }
+
+  /** Managers (OWNER/ADMIN/MARKETING_MANAGER) set anyone's
+   * schedule; an agent may only set their own. */
+  async setAgentSchedule(organizationId: string, actorId: string, targetUserId: string, dto: { timezone?: string; windows: unknown }) {
+    const p = this.prisma as any;
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    });
+    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
+    if (!isManager && actorId !== targetUserId) throw new BadRequestException("Agents can only set their own schedule");
+    const target = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+    });
+    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    if (!isValidWindows(dto.windows)) {
+      throw new BadRequestException("Invalid windows: use weekday keys (mon..sun) with [\"HH:MM\",\"HH:MM\"] pairs; start and end must differ");
+    }
+    const timezone = dto.timezone?.trim() || "Asia/Dhaka";
+    if (!isValidTimezone(timezone)) throw new BadRequestException(`Unknown timezone: ${timezone}`);
+    const row = await p.agentSchedule.upsert({
+      where: { organizationId_userId: { organizationId, userId: targetUserId } },
+      create: { organizationId, userId: targetUserId, timezone, windows: dto.windows as any },
+      update: { timezone, windows: dto.windows as any },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.agent_schedule_updated", entityType: "AgentSchedule", entityId: row.id,
+      metadata: { targetUserId, timezone },
+    });
+    return { userId: targetUserId, timezone: row.timezone, windows: row.windows, onShift: isWithinSchedule(row as any, new Date()) };
+  }
+
+  async deleteAgentSchedule(organizationId: string, actorId: string, targetUserId: string) {
+    const p = this.prisma as any;
+    const actor = await p.membership.findUnique({
+      where: { userId_organizationId: { userId: actorId, organizationId } },
+    });
+    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
+    if (!isManager && actorId !== targetUserId) throw new BadRequestException("Agents can only manage their own schedule");
+    await p.agentSchedule.deleteMany({ where: { organizationId, userId: targetUserId } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.agent_schedule_cleared", entityType: "AgentSchedule", entityId: targetUserId,
+      metadata: { targetUserId },
+    });
+    return { ok: true, userId: targetUserId, hasSchedule: false };
+  }
+
+  // ---------- Milestone 69 (Team W1): activity & idle ----------
+
+  /** Org-level heartbeat from the tenant web app (~60s). Only
+   * stamps AgentState.lastActiveAt; never audited (too frequent). */
+  async heartbeat(organizationId: string, userId: string) {
+    const p = this.prisma as any;
+    const now = new Date();
+    await p.agentState.upsert({
+      where: { organizationId_userId: { organizationId, userId } },
+      create: { organizationId, userId, status: "online", lastActiveAt: now },
+      update: { lastActiveAt: now },
+    });
+    return { ok: true, lastActiveAt: now };
+  }
+
+  /** UTC instant of local midnight (start of today) in `tz`. */
+  private static dayStartUtc(tz: string, now: Date): Date {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+    const get = (t: string) => Number(parts.find((x) => x.type === t)?.value ?? 0);
+    const y = get("year"); const m = get("month"); const d = get("day");
+    let guess = Date.UTC(y, m - 1, d, 0, 0, 0);
+    for (let i = 0; i < 2; i++) {
+      const local = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(guess));
+      const g = (t: string) => Number(local.find((x) => x.type === t)?.value ?? 0);
+      const asUtc = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour") % 24, g("minute"), g("second"));
+      guess -= asUtc - Date.UTC(y, m - 1, d, 0, 0, 0);
+    }
+    return new Date(guess);
+  }
+
+  /**
+   * The owner's "who is working" board, compute-on-read from
+   * real rows: presence (AgentState), today's replies sent,
+   * conversations closed (assignee at close), audit actions,
+   * and the derived activity state:
+   *   away (manual) → away; a real action ≤15m ago → active;
+   *   app heartbeat fresh (≤3m) but no action for 15m+ → idle;
+   *   otherwise → offline. Actions are the work signal; the
+   *   heartbeat is presence only. The UI labels the rule
+   *   honestly — it is a signal, not proof of work.
+   */
+  async teamActivity(organizationId: string, tz = "Asia/Dhaka") {
+    const p = this.prisma as any;
+    const safeTz = isValidTimezone(tz) ? tz : "Asia/Dhaka";
+    const now = new Date();
+    const start = InboxService.dayStartUtc(safeTz, now);
+    const end = new Date(start.getTime() + 24 * 3600 * 1000);
+    const inWindow = { gte: start, lt: end };
+    const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 });
+    const states = await p.agentState?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const stateOf = new Map((states as any[]).map((r) => [r.userId, r]));
+    const schedules = await p.agentSchedule?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const schedOf = new Map((schedules as any[]).map((s) => [s.userId, s]));
+    const rows: any[] = [];
+    for (const m of (memberships as any[]).filter((x) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(x.role))) {
+      const userId = m.userId;
+      // ChannelMessage has no organizationId (scoped via its
+      // conversation) and records the sender as sentByUserId
+      // with direction "out"; auto-replies are not the agent's
+      // work and failed sends never reached the customer.
+      const myMessages = { conversation: { organizationId }, sentByUserId: userId, direction: "out", autoReply: false, status: { not: "failed" } };
+      const [repliesSent, closedToday, auditActions, openNow, lastMsg, lastAudit] = await Promise.all([
+        p.channelMessage.count({ where: { ...myMessages, createdAt: inWindow } }).catch(() => 0),
+        p.channelConversation.count({ where: { organizationId, assignedUserId: userId, status: "closed", resolvedAt: inWindow } }).catch(() => 0),
+        p.auditLog.count({ where: { organizationId, userId, createdAt: inWindow } }).catch(() => 0),
+        p.channelConversation.count({ where: { organizationId, assignedUserId: userId, status: "open" } }).catch(() => 0),
+        p.channelMessage.findFirst({ where: myMessages, orderBy: { createdAt: "desc" } }).catch(() => null),
+        p.auditLog.findFirst({ where: { organizationId, userId }, orderBy: { createdAt: "desc" } }).catch(() => null),
+      ]);
+      const st = stateOf.get(userId);
+      const heartbeatAt: Date | null = st?.lastActiveAt ? new Date(st.lastActiveAt) : null;
+      const actionTimes = [lastMsg?.createdAt, lastAudit?.createdAt].filter(Boolean).map((d) => new Date(d as any).getTime());
+      const lastActionAt = actionTimes.length ? new Date(Math.max(...actionTimes)) : null;
+      // The ladder: actions are the WORK signal; the heartbeat
+      // is only presence. Recent work → active; app open but no
+      // work for 15m+ → idle; neither → offline.
+      const actionAgeMin = lastActionAt ? (now.getTime() - lastActionAt.getTime()) / 60000 : null;
+      const heartbeatAgeMin = heartbeatAt ? (now.getTime() - heartbeatAt.getTime()) / 60000 : null;
+      let activityState: string;
+      if (st?.status === "away") activityState = "away";
+      else if (actionAgeMin !== null && actionAgeMin <= 15) activityState = "active";
+      else if (heartbeatAgeMin !== null && heartbeatAgeMin <= 3) activityState = "idle";
+      else activityState = "offline";
+      rows.push({
+        userId,
+        name: m.user?.name ?? m.user?.email ?? "Agent",
+        email: m.user?.email ?? null,
+        role: m.role,
+        membershipStatus: m.status,
+        presenceStatus: st?.status ?? "online",
+        activityState,
+        heartbeatAt,
+        lastActionAt,
+        onShift: schedOf.has(userId) ? isWithinSchedule(schedOf.get(userId) as any, now) : true,
+        hasSchedule: schedOf.has(userId),
+        today: { repliesSent, closedToday, auditActions, openNow },
+      });
+    }
+    return { timezone: safeTz, dayStart: start, idleAfterMinutes: 15, members: rows };
+  }
+
+  // ---------- Milestone 70 (Team W2): performance scorecard ----------
+
+  /**
+   * Windowed per-agent stats with getTeamReport's semantics:
+   * assigned/first-response by conversation createdAt, closed/
+   * resolution by resolvedAt, CSAT by csatRatedAt — plus human
+   * replies (M69's message rules). All attributed by assignee.
+   */
+  private async scoreWindow(organizationId: string, memberIds: string[], from: Date, to: Date) {
+    const p = this.prisma as any;
+    const win = { gte: from, lt: to };
+    const [created, resolved, rated, messages] = await Promise.all([
+      p.channelConversation.findMany({ where: { organizationId, createdAt: win }, take: 5000 }).catch(() => []),
+      p.channelConversation.findMany({ where: { organizationId, resolvedAt: win }, take: 5000 }).catch(() => []),
+      p.channelConversation.findMany({ where: { organizationId, csatRatedAt: win }, take: 5000 }).catch(() => []),
+      memberIds.length
+        ? p.channelMessage.findMany({
+            where: { conversation: { organizationId }, sentByUserId: { in: memberIds }, direction: "out", autoReply: false, status: { not: "failed" }, createdAt: win },
+            take: 5000,
+          }).catch(() => [])
+        : [],
+    ]);
+    const stats = new Map<string, { assigned: number; closed: number; resp: number[]; res: number[]; csat: number[]; replies: number }>();
+    const row = (uid: string) => {
+      let r = stats.get(uid);
+      if (!r) { r = { assigned: 0, closed: 0, resp: [], res: [], csat: [], replies: 0 }; stats.set(uid, r); }
+      return r;
+    };
+    for (const c of created as any[]) {
+      if (!c.assignedUserId) continue;
+      const r = row(c.assignedUserId); r.assigned++;
+      if (c.firstResponseAt) {
+        const mins = (new Date(c.firstResponseAt).getTime() - new Date(c.createdAt).getTime()) / 60000;
+        if (mins >= 0) r.resp.push(mins);
+      }
+    }
+    for (const c of resolved as any[]) {
+      if (!c.assignedUserId || !c.resolvedAt) continue;
+      const r = row(c.assignedUserId); r.closed++;
+      const mins = (new Date(c.resolvedAt).getTime() - new Date(c.createdAt).getTime()) / 60000;
+      if (mins >= 0) r.res.push(mins);
+    }
+    for (const c of rated as any[]) {
+      if (c.assignedUserId && c.csatRating) row(c.assignedUserId).csat.push(c.csatRating);
+    }
+    for (const m of messages as any[]) {
+      if (m.sentByUserId) row(m.sentByUserId).replies++;
+    }
+    const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+    const out = new Map<string, any>();
+    for (const [uid, r] of stats) {
+      out.set(uid, {
+        assigned: r.assigned, closed: r.closed, replies: r.replies,
+        avgFirstResponseMinutes: avg(r.resp), avgResolutionMinutes: avg(r.res),
+        csatAvg: r.csat.length ? Math.round((r.csat.reduce((a, b) => a + b, 0) / r.csat.length) * 10) / 10 : null,
+        csatResponses: r.csat.length,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * The owner's scorecard: current period vs the previous
+   * equal-length period, a TRANSPARENT indicator whose four
+   * components are returned (and printed in the UI), flags
+   * derived from org medians with their evidence, and a
+   * ranking. Nothing here is a black box.
+   *
+   * Indicator (0–100), each component capped:
+   *   volume     = min(30, closed)                      (cap 30)
+   *   speed      = first response ≤5m → 25, −1 per extra 3m (cap 25)
+   *   resolution = resolution ≤60m → 20, −1 per extra 30m (cap 20)
+   *   csat       = csatAvg / 5 × 25                     (cap 25)
+   * A missing metric scores 0 for its component AND lists the
+   * component in missingComponents — a new agent reads as
+   * "insufficient data", never as a fabricated zero-history.
+   */
+  async teamScorecard(organizationId: string, days = 7, opts?: { actorId?: string; teamId?: string }) {
+    const p = this.prisma as any;
+    const span = Math.min(90, Math.max(1, Math.round(Number(days) || 7))) * 24 * 3600 * 1000;
+    const now = new Date();
+    const curFrom = new Date(now.getTime() - span);
+    const prevFrom = new Date(now.getTime() - 2 * span);
+    const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 });
+    let members = (memberships as any[]).filter((m) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(m.role));
+    // Milestone 71: a team slice — the team's lead or a manager
+    // only; medians/flags/ranking then describe that team.
+    let scopedTeamName: string | null = null;
+    if (opts?.teamId) {
+      if (!opts.actorId) throw new ForbiddenException("A scoped team scorecard requires an identified viewer");
+      const scope = await this.teamScope(organizationId, opts.actorId, opts.teamId);
+      scopedTeamName = scope.team.name;
+      const roster = new Set(scope.memberIds);
+      members = members.filter((m) => roster.has(m.userId));
+    }
+    const ids = members.map((m) => m.userId);
+    const [cur, prev, activity] = await Promise.all([
+      this.scoreWindow(organizationId, ids, curFrom, now),
+      this.scoreWindow(organizationId, ids, prevFrom, curFrom),
+      this.teamActivity(organizationId).catch(() => null),
+    ]);
+    const activityOf = new Map(((activity?.members ?? []) as any[]).map((a) => [a.userId, a.activityState]));
+    const empty = { assigned: 0, closed: 0, replies: 0, avgFirstResponseMinutes: null, avgResolutionMinutes: null, csatAvg: null, csatResponses: 0 };
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+    const median = (xs: number[]) => {
+      if (!xs.length) return null;
+      const s = [...xs].sort((a, b) => a - b);
+      return s.length % 2 ? s[Math.floor(s.length / 2)] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    };
+    const rows = members.map((m) => {
+      const c = cur.get(m.userId) ?? empty;
+      const pv = prev.get(m.userId) ?? empty;
+      const components = {
+        volume: Math.min(30, c.closed),
+        speed: c.avgFirstResponseMinutes === null ? null : clamp(25 - Math.max(0, Math.round((c.avgFirstResponseMinutes - 5) / 3)), 0, 25),
+        resolution: c.avgResolutionMinutes === null ? null : clamp(20 - Math.max(0, Math.round((c.avgResolutionMinutes - 60) / 30)), 0, 20),
+        csat: c.csatAvg === null ? null : Math.round((c.csatAvg / 5) * 25),
+      };
+      const missingComponents = (Object.entries(components) as [string, number | null][]).filter(([, v]) => v === null).map(([k]) => k);
+      const indicator = Object.values(components).reduce((a: number, v) => a + (v ?? 0), 0);
+      const delta = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((a - b) * 10) / 10);
+      return {
+        userId: m.userId,
+        name: m.user?.name ?? m.user?.email ?? "Agent",
+        email: m.user?.email ?? null,
+        role: m.role,
+        membershipStatus: m.status,
+        current: c,
+        previous: pv,
+        deltas: {
+          assigned: c.assigned - pv.assigned, closed: c.closed - pv.closed, replies: c.replies - pv.replies,
+          avgFirstResponseMinutes: delta(c.avgFirstResponseMinutes, pv.avgFirstResponseMinutes),
+          avgResolutionMinutes: delta(c.avgResolutionMinutes, pv.avgResolutionMinutes),
+          csatAvg: delta(c.csatAvg, pv.csatAvg),
+        },
+        indicator,
+        components,
+        missingComponents,
+        insufficientData: c.closed === 0 && c.avgFirstResponseMinutes === null && c.csatAvg === null,
+        activityState: activityOf.get(m.userId) ?? null,
+        flags: [] as { code: string; label: string; detail: string }[],
+      };
+    });
+    // Flags vs org medians (evidence included in every flag).
+    const medianFR = median(rows.map((r) => r.current.avgFirstResponseMinutes).filter((x): x is number => x !== null));
+    const medianClosed = median(rows.map((r) => r.current.closed));
+    for (const r of rows) {
+      const c = r.current;
+      if (c.avgFirstResponseMinutes !== null && c.assigned >= 3 && medianFR !== null && medianFR > 0 && c.avgFirstResponseMinutes > 1.5 * medianFR) {
+        r.flags.push({ code: "slow_first_response", label: "প্রথম জবাব ধীর", detail: `গড় ${c.avgFirstResponseMinutes} মিনিট · টিমের মধ্যম ${medianFR} মিনিট` });
+      }
+      if (c.csatAvg !== null && c.csatResponses >= 2 && c.csatAvg < 3.5) {
+        r.flags.push({ code: "low_csat", label: "CSAT কম", detail: `গড় ${c.csatAvg}/5 (${c.csatResponses}টি রেটিং)` });
+      }
+      if (medianClosed !== null && medianClosed > 0 && c.assigned >= 5 && c.closed < 0.5 * medianClosed) {
+        r.flags.push({ code: "low_closures", label: "বন্ধ কম", detail: `${c.closed}টি বন্ধ · টিমের মধ্যম ${medianClosed}টি` });
+      }
+      if (r.activityState === "idle") {
+        r.flags.push({ code: "idle_now", label: "এখন নিষ্ক্রিয়", detail: "Dashboard খোলা, কিন্তু ১৫+ মিনিট কোনো কাজের চিহ্ন নেই" });
+      }
+      if (c.csatAvg !== null && c.csatResponses >= 2 && c.csatAvg >= 4.5) {
+        r.flags.push({ code: "customers_happy", label: "গ্রাহক খুশি", detail: `CSAT ${c.csatAvg}/5 (${c.csatResponses}টি রেটিং)` });
+      }
+    }
+    rows.sort((a, b) => b.indicator - a.indicator);
+    rows.forEach((r, i) => { (r as any).rank = r.insufficientData ? null : i + 1; });
+    return {
+      days: span / (24 * 3600 * 1000),
+      scopedTeamId: opts?.teamId ?? null, scopedTeamName,
+      currentWindow: { from: curFrom, to: now },
+      previousWindow: { from: prevFrom, to: curFrom },
+      formula: "সূচক (০–১০০) = বন্ধ কথোপকথন (সর্বোচ্চ ৩০) + প্রথম জবাবের গতি (সর্বোচ্চ ২৫) + সমাধানের গতি (সর্বোচ্চ ২০) + CSAT (সর্বোচ্চ ২৫)। কোনো মাপের তথ্য না থাকলে সেই অংশে ০ এবং 'তথ্য নেই' বলে চিহ্নিত।",
+      // Milestone 74 (Team T5): assignment fairness — each
+      // agent's share of the period's assignments vs the
+      // equal share, computed from the same rows.
+      fairness: buildFairness(rows),
+      agents: rows,
+    };
+  }
+
+  /** CSV rendering of the scorecard (same numbers, no new math). */
+  async teamScorecardCsv(organizationId: string, days = 7, opts?: { actorId?: string; teamId?: string }): Promise<string> {
+    const card = await this.teamScorecard(organizationId, days, opts);
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ["rank", "name", "email", "role", "indicator", "volume_pts", "speed_pts", "resolution_pts", "csat_pts",
+      "assigned", "assigned_prev", "closed", "closed_prev", "replies", "replies_prev",
+      "avg_first_response_min", "avg_first_response_prev", "avg_resolution_min", "avg_resolution_prev",
+      "csat_avg", "csat_prev", "csat_responses", "flags", "insufficient_data"];
+    const lines = [head.join(",")];
+    for (const a of card.agents as any[]) {
+      lines.push([
+        a.rank, a.name, a.email, a.role, a.indicator, a.components.volume, a.components.speed, a.components.resolution, a.components.csat,
+        a.current.assigned, a.previous.assigned, a.current.closed, a.previous.closed, a.current.replies, a.previous.replies,
+        a.current.avgFirstResponseMinutes, a.previous.avgFirstResponseMinutes, a.current.avgResolutionMinutes, a.previous.avgResolutionMinutes,
+        a.current.csatAvg, a.previous.csatAvg, a.current.csatResponses, a.flags.map((f: any) => f.code).join(";"), a.insufficientData,
+      ].map(esc).join(","));
+    }
+    return lines.join("\n");
+  }
+
   async listAgentStates(organizationId: string) {
     const p = this.prisma as any;
     const memberships = await p.membership.findMany({ where: { organizationId }, include: { user: true }, take: 100 });
@@ -506,6 +994,10 @@ export class InboxService {
     const open = await p.channelConversation.findMany({ where: { organizationId, status: "open", assignedUserId: { not: null } }, take: 2000 }).catch(() => []);
     const openOf = new Map<string, number>();
     for (const c of open as any[]) openOf.set(c.assignedUserId, (openOf.get(c.assignedUserId) ?? 0) + 1);
+    // Milestone 68: surface the shift verdict on the board.
+    const schedules = await p.agentSchedule?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const schedOf = new Map((schedules as any[]).map((s) => [s.userId, s]));
+    const nowForShift = new Date();
     return (memberships as any[])
       .filter((m) => ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"].includes(m.role))
       .map((m) => ({
@@ -518,6 +1010,8 @@ export class InboxService {
         openCount: openOf.get(m.userId) ?? 0,
         teams: teamsOf.get(m.userId) ?? [],
         lastAssignedAt: stateOf.get(m.userId)?.lastAssignedAt ?? null,
+        hasSchedule: schedOf.has(m.userId),
+        onShift: schedOf.has(m.userId) ? isWithinSchedule(schedOf.get(m.userId) as any, nowForShift) : true,
       }));
   }
 
@@ -569,6 +1063,23 @@ export class InboxService {
     const away = new Set((states as any[]).filter((r) => r.status === "away").map((r) => r.userId));
     candidates = candidates.filter((c) => !away.has(c.userId));
     if (!candidates.length) return conversation;
+    // Milestone 68: off-shift agents are skipped too. No schedule
+    // row = always available (pre-M68 behavior). Suspended
+    // members (M67) are never assigned either.
+    const statusOf = new Map((memberships as any[]).map((m) => [m.userId, m.status]));
+    candidates = candidates.filter((c) => statusOf.get(c.userId) !== "SUSPENDED");
+    const schedules = await p.agentSchedule?.findMany({
+      where: { organizationId, userId: { in: candidates.map((c) => c.userId) } },
+    }).catch(() => []) ?? [];
+    if ((schedules as any[]).length) {
+      const schedOf = new Map((schedules as any[]).map((s) => [s.userId, s]));
+      const now = new Date();
+      candidates = candidates.filter((c) => {
+        const s = schedOf.get(c.userId);
+        return !s || isWithinSchedule(s as any, now);
+      });
+      if (!candidates.length) return conversation;
+    }
     const open = await p.channelConversation.findMany({
       where: { organizationId, status: "open", assignedUserId: { in: candidates.map((c) => c.userId) } }, take: 2000,
     });
@@ -745,6 +1256,13 @@ export class InboxService {
       session = null;
     }
     const settings = await this.getSettings(organizationId);
+    // Milestone 76: the bot's delivery charge falls back to
+    // the Command Center profile (inside-Dhaka charge) when
+    // no bot-specific charge is set.
+    if (settings.botDeliveryChargeMinor == null) {
+      const profile = await prisma.businessProfile?.findUnique({ where: { organizationId } }).catch(() => null);
+      if (profile?.deliveryChargeInsideMinor != null) settings.botDeliveryChargeMinor = Number(profile.deliveryChargeInsideMinor);
+    }
     const trimmed = text.trim();
     const handoffWords = ["এজেন্ট", "মানুষ", "agent", "human", "stop", "থামুন", "বন্ধ করুন"];
 
@@ -1046,14 +1564,23 @@ export class InboxService {
       };
     }
     if (intent === "delivery" || intent === "payment") {
+      // Milestone 76: Command Center profile facts lead (the
+      // numbers customers actually ask for); the policy text
+      // follows when one exists. Neither -> stay silent.
+      const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+      const lines = intent === "delivery" ? deliveryFactLines(profile) : paymentFactLines(profile);
       const policy = await (this.prisma as any).businessPolicy.findFirst({
         where: { organizationId, type: intent === "delivery" ? "shipping" : "payment" },
       });
-      if (!policy?.content) return null;
-      const excerpt = String(policy.content).replace(/\s+/g, " ").slice(0, 350);
+      if (!lines.length && !policy?.content) return null;
+      const parts: string[] = [];
+      if (lines.length) parts.push(lines.join("। ") + "।");
+      if (policy?.content) parts.push(String(policy.content).replace(/\s+/g, " ").slice(0, 350));
       return {
-        content: `${intent === "delivery" ? "ডেলিভারি সংক্রান্ত তথ্য" : "পেমেন্ট সংক্রান্ত তথ্য"}: ${excerpt}`,
-        evidence: { type: "business_policy", policyId: policy.id, policyType: policy.type },
+        content: `${intent === "delivery" ? "ডেলিভারি সংক্রান্ত তথ্য" : "পেমেন্ট সংক্রান্ত তথ্য"}: ${parts.join(" ")}`,
+        evidence: lines.length
+          ? { type: "business_profile", area: intent }
+          : { type: "business_policy", policyId: policy.id, policyType: policy.type },
       };
     }
     if (intent === "order_status") {
@@ -1201,42 +1728,74 @@ export class InboxService {
   }
 
   /**
-   * The verified fact pack an LLM may restate — the same sources
-   * the rule composer uses, nothing else. Returns null when there
-   * is nothing verified to say.
+   * The verified fact pack an LLM may restate — Milestone 76
+   * (Business Brain v2): the Command Center profile (delivery
+   * charges/times, payment numbers, contact, hours) and
+   * keyword-matched knowledge/FAQ join the original product /
+   * policy / order sources. Returns null only when there is
+   * genuinely nothing verified to say.
    */
   private async buildFactPack(organizationId: string, conversation: any, intent: string, text: string) {
     const p = this.prisma as any;
     const facts: string[] = [];
     const sources: any[] = [];
+    const profile = (await p.businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
     if (intent === "price" || intent === "stock") {
       const products = await p.product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
       const product = matchProduct(text, products);
-      if (!product) return null;
-      facts.push(`পণ্য: ${product.name}`);
-      facts.push(`দাম: ${formatMinor(BigInt(product.priceMinor), product.currency)} (${product.currency})`);
-      if (product.stockQuantity != null) facts.push(`স্টক: ${product.stockQuantity}টি`);
-      sources.push({ type: "product", productId: product.id });
+      if (product) {
+        facts.push(`পণ্য: ${product.name}`);
+        facts.push(`দাম: ${formatMinor(BigInt(product.priceMinor), product.currency)} (${product.currency})`);
+        if (product.stockQuantity != null) facts.push(`স্টক: ${product.stockQuantity}টি`);
+        sources.push({ type: "product", productId: product.id });
+      }
     }
     if (intent === "delivery" || intent === "payment") {
+      const lines = intent === "delivery" ? deliveryFactLines(profile) : paymentFactLines(profile);
+      facts.push(...lines);
+      if (lines.length) sources.push({ type: "business_profile", area: intent });
       const policy = await p.businessPolicy.findFirst({ where: { organizationId, type: intent === "delivery" ? "shipping" : "payment" } });
-      if (!policy?.content) return null;
-      facts.push(`${intent === "delivery" ? "ডেলিভারি" : "পেমেন্ট"} নীতি: ${String(policy.content).replace(/\s+/g, " ").slice(0, 500)}`);
-      sources.push({ type: "business_policy", policyId: policy.id });
+      if (policy?.content) {
+        facts.push(`${intent === "delivery" ? "ডেলিভারি" : "পেমেন্ট"} নীতি: ${String(policy.content).replace(/\s+/g, " ").slice(0, 500)}`);
+        sources.push({ type: "business_policy", policyId: policy.id });
+      }
     }
-    if (intent === "order_status") {
-      if (!conversation.customerId) return null;
+    if (intent === "order_status" && conversation.customerId) {
       const order = await p.order.findFirst({ where: { organizationId, customerId: conversation.customerId }, orderBy: { createdAt: "desc" } });
-      if (!order) return null;
-      facts.push(`সর্বশেষ অর্ডার নম্বর: ${order.externalNumber ?? order.id}`);
-      facts.push(`অর্ডারের অবস্থা: ${order.status}`);
-      facts.push(`অর্ডারের মোট: ${formatMinor(BigInt(order.totalMinor), order.currency)}`);
-      sources.push({ type: "order_status", orderId: order.id, status: order.status });
+      if (order) {
+        facts.push(`সর্বশেষ অর্ডার নম্বর: ${order.externalNumber ?? order.id}`);
+        facts.push(`অর্ডারের অবস্থা: ${order.status}`);
+        facts.push(`অর্ডারের মোট: ${formatMinor(BigInt(order.totalMinor), order.currency)}`);
+        sources.push({ type: "order_status", orderId: order.id, status: order.status });
+      }
+    }
+    // Contact/hours questions map to no dedicated intent — the
+    // classifier calls them "other"; the brain answers them
+    // from the profile, and FAQ matching runs for EVERY intent.
+    if (intent === "other" || intent === "greeting") {
+      const lines = [...contactFactLines(profile), ...hoursFactLines(profile)];
+      facts.push(...lines);
+      if (lines.length) sources.push({ type: "business_profile", area: "contact_hours" });
+    }
+    // Defensive `?.()` chain: older spec fakes (and any partial
+    // prisma double) may lack these tables entirely — a missing
+    // table must mean "no facts", never a synchronous throw
+    // before .catch can attach.
+    const docs = (await p.knowledgeDocument?.findMany?.({ where: { organizationId }, take: 100 })?.catch?.(() => [])) ?? [];
+    for (const m of matchKnowledge(text, docs as any[])) {
+      facts.push(`জ্ঞানভান্ডার (${m.doc.title}): ${String(m.doc.content).replace(/\s+/g, " ").slice(0, 400)}`);
+      sources.push({ type: "knowledge", docId: m.doc.id, kind: m.doc.kind });
     }
     if (!facts.length) return null;
-    const profile = await p.businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
-    if (profile?.name) facts.unshift(`ব্যবসার নাম: ${profile.name}`);
-    return { factsText: facts.join("\n"), sources };
+    const org = (await p.organization?.findUnique?.({ where: { id: organizationId }, select: { name: true } })?.catch?.(() => null)) ?? null;
+    if (org?.name) facts.unshift(`ব্যবসার নাম: ${org.name}`);
+    return {
+      factsText: facts.join("\n"), sources,
+      // Milestone 77: owner behaviour rides along; the number
+      // guard still decides what may be said.
+      ownerInstructions: profile?.aiInstructions ?? null,
+      replyLanguage: profile?.aiReplyLanguage ?? null,
+    };
   }
 
   /** Numbers in a text, normalized (Bengali digits -> Latin,
@@ -1266,6 +1825,10 @@ export class InboxService {
           "Answer the customer using ONLY the verified facts below. Never invent prices, stock, discounts, delivery times or promises.",
           "Reply in the customer's language and style (Bengali, English, or mixed as they wrote). Keep it short and helpful.",
           "If the facts do not answer the question, reply with exactly: NO_ANSWER",
+          // Milestone 77: owner behaviour from the Command
+          // Center — conduct only; the facts rule stands.
+          ...((pack as any).ownerInstructions ? ["", `Owner's standing instructions for tone and conduct (never override the verified facts): ${String((pack as any).ownerInstructions).slice(0, 1000)}`] : []),
+          ...((pack as any).replyLanguage === "bn" ? ["Always reply in Bengali."] : (pack as any).replyLanguage === "en" ? ["Always reply in English."] : []),
           "",
           "VERIFIED FACTS:",
           pack.factsText,
@@ -1641,18 +2204,34 @@ export class InboxService {
   }
 
   // ----- SLA / team report -----
-  async getTeamReport(organizationId: string, days = 7) {
+  async getTeamReport(organizationId: string, days = 7, actorId?: string, teamId?: string) {
     const settings = await this.getSettings(organizationId);
     const since = new Date(Date.now() - days * 24 * 3600 * 1000);
-    const convs = await (this.prisma as any).channelConversation.findMany({
+    // Milestone 71: optional team scoping — the team's lead or a
+    // manager may view one team's slice. Conversations count
+    // toward the team when their assignee is on the roster or
+    // the conversation itself is stamped with the team.
+    let scopeIds: string[] | null = null;
+    let scopedTeam: any = null;
+    if (teamId) {
+      if (!actorId) throw new ForbiddenException("A scoped team report requires an identified viewer");
+      const scope = await this.teamScope(organizationId, actorId, teamId);
+      scopedTeam = scope.team;
+      scopeIds = scope.memberIds;
+    }
+    const inScope = (c: any) => !scopeIds || (c.assignedUserId && scopeIds.includes(c.assignedUserId)) || c.teamId === teamId;
+    let convs = await (this.prisma as any).channelConversation.findMany({
       where: { organizationId, createdAt: { gte: since } }, take: 1000,
     });
-    const closed = await (this.prisma as any).channelConversation.findMany({
+    let closed = await (this.prisma as any).channelConversation.findMany({
       where: { organizationId, resolvedAt: { gte: since } }, take: 1000,
     });
-    const rated = await (this.prisma as any).channelConversation.findMany({
+    let rated = await (this.prisma as any).channelConversation.findMany({
       where: { organizationId, csatRatedAt: { gte: since } }, take: 1000,
     }).catch(() => []);
+    if (scopeIds) {
+      convs = convs.filter(inScope); closed = closed.filter(inScope); rated = rated.filter(inScope);
+    }
     const csatResponses = rated.filter((c: any) => c.csatRating).length;
     const csatAvg = csatResponses ? Math.round((rated.reduce((sum: number, c: any) => sum + (c.csatRating ?? 0), 0) / csatResponses) * 10) / 10 : null;
     const responseMinutes = convs
@@ -1660,9 +2239,10 @@ export class InboxService {
       .map((c: any) => (new Date(c.firstResponseAt).getTime() - new Date(c.createdAt).getTime()) / 60000)
       .filter((m: number) => m >= 0);
     const avg = responseMinutes.length ? Math.round(responseMinutes.reduce((a: number, b: number) => a + b, 0) / responseMinutes.length) : null;
-    const openNow = await (this.prisma as any).channelConversation.findMany({
+    let openNow = await (this.prisma as any).channelConversation.findMany({
       where: { organizationId, status: "open" }, take: 1000,
     });
+    if (scopeIds) openNow = openNow.filter(inScope);
     const breachCutoff = Date.now() - settings.slaFirstResponseMinutes * 60000;
     const currentBreaches = openNow.filter((c: any) => !c.firstResponseAt && new Date(c.createdAt).getTime() < breachCutoff).length;
 
@@ -1736,14 +2316,24 @@ export class InboxService {
     let draftsSuggested = 0;
     try {
       draftsSuggested = await (this.prisma as any).messageDraft.count({
-        where: { organizationId, provider: "auto-reply", createdAt: { gte: since } },
+        where: {
+          organizationId, provider: "auto-reply", createdAt: { gte: since },
+          ...(scopeIds ? { conversationId: { in: [...new Set([...convs, ...closed, ...rated].map((c: any) => c.id))] } } : {}),
+        },
       });
     } catch { draftsSuggested = 0; }
     let escalatedNow = 0;
     try {
-      escalatedNow = await (this.prisma as any).channelConversation.count({
-        where: { organizationId, autoReplyPaused: true },
-      });
+      if (scopeIds) {
+        const paused = await (this.prisma as any).channelConversation.findMany({
+          where: { organizationId, autoReplyPaused: true }, take: 1000,
+        });
+        escalatedNow = paused.filter(inScope).length;
+      } else {
+        escalatedNow = await (this.prisma as any).channelConversation.count({
+          where: { organizationId, autoReplyPaused: true },
+        });
+      }
     } catch { escalatedNow = 0; }
 
     // U5: close outcomes feed analytics — counted from the real
@@ -1754,11 +2344,52 @@ export class InboxService {
       outcomes[key] = (outcomes[key] ?? 0) + 1;
     }
 
+    // Milestone 71: per-team aggregation (an agent on two teams
+    // counts toward both — noted in the UI) + a daily trend
+    // series bucketed by Asia/Dhaka calendar day. Zero-count
+    // days are real (nothing happened), not placeholders.
+    const pAny = this.prisma as any;
+    const allTeams = await pAny.inboxTeam?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const allTeamMembers = await pAny.inboxTeamMember?.findMany({
+      where: { teamId: { in: (allTeams as any[]).map((t) => t.id) } },
+    }).catch(() => []) ?? [];
+    const teamMembersOf = new Map<string, string[]>();
+    for (const tm of allTeamMembers as any[]) {
+      teamMembersOf.set(tm.teamId, [...(teamMembersOf.get(tm.teamId) ?? []), tm.userId]);
+    }
+    const avgOf = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+    const perTeam = (allTeams as any[]).map((t) => {
+      const ids = teamMembersOf.get(t.id) ?? [];
+      const rowsT = ids.map((uid) => perAgentMap.get(uid)).filter(Boolean) as any[];
+      const resp = rowsT.flatMap((r) => r.resp); const res = rowsT.flatMap((r) => r.res); const csat = rowsT.flatMap((r) => r.csat);
+      return {
+        teamId: t.id, name: t.name, leadUserId: t.leadUserId ?? null,
+        memberCount: ids.length,
+        assigned: rowsT.reduce((a, r) => a + r.assigned, 0),
+        closed: rowsT.reduce((a, r) => a + r.closed, 0),
+        openNow: rowsT.reduce((a, r) => a + r.openNow, 0),
+        avgFirstResponseMinutes: avgOf(resp),
+        avgResolutionMinutes: avgOf(res),
+        csatAvg: csat.length ? Math.round((csat.reduce((a, b) => a + b, 0) / csat.length) * 10) / 10 : null,
+      };
+    });
+    const dayKey = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    const trendMap = new Map<string, { date: string; created: number; closed: number }>();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+      trendMap.set(dayKey(d), { date: dayKey(d), created: 0, closed: 0 });
+    }
+    for (const c of convs) { const k = dayKey(new Date(c.createdAt)); if (trendMap.has(k)) trendMap.get(k)!.created++; }
+    for (const c of closed) { if (c.resolvedAt) { const k = dayKey(new Date(c.resolvedAt)); if (trendMap.has(k)) trendMap.get(k)!.closed++; } }
+    const dailyTrend = [...trendMap.values()];
+
     return {
       days, slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
       opened: convs.length, closed: closed.length,
       avgFirstResponseMinutes: avg, currentBreaches,
-      perAgent, chatLinkedOrders, chatLinkedRevenueMinor, chatLinkedCurrency, csatAvg, csatResponses,
+      perAgent, perTeam, dailyTrend,
+      scopedTeamId: scopedTeam?.id ?? null, scopedTeamName: scopedTeam?.name ?? null,
+      chatLinkedOrders, chatLinkedRevenueMinor, chatLinkedCurrency, csatAvg, csatResponses,
       autopilot: { autoSent, llmSent, draftsSuggested, escalatedNow },
       outcomes,
       chatLinkedNote: "Orders/revenue of customers who have an inbox conversation in the period (linked, not platform-attributed).",
@@ -2082,6 +2713,7 @@ export class InboxService {
   // ----- Translation + summary -----
   async translateMessage(organizationId: string, conversationId: string, messageId: string, target: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
+    await this.checkAiAllowed(organizationId, "translate");
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
     if (!message?.content) throw new NotFoundException("Message not found or has no text");
     if (!["en", "bn"].includes(target)) throw new BadRequestException("target must be en or bn");
@@ -2102,6 +2734,7 @@ export class InboxService {
 
   async summarizeConversation(organizationId: string, actorId: string, conversationId: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.checkAiAllowed(organizationId, "summary");
     const messages = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "desc" }, take: 50,
     });
@@ -2147,7 +2780,7 @@ export class InboxService {
 
   async listConversations(organizationId: string, filters: {
     status?: string; channel?: string; q?: string; unreadOnly?: boolean;
-    assignee?: string; tag?: string; sort?: string;
+    assignee?: string; tag?: string; sort?: string; folder?: string;
   } = {}, actorId?: string) {
     const where: any = {
       organizationId,
@@ -2159,6 +2792,16 @@ export class InboxService {
     if (filters.assignee === "me" && actorId) where.assignedUserId = actorId;
     else if (filters.assignee === "unassigned") where.assignedUserId = null;
     else if (filters.assignee) where.assignedUserId = filters.assignee;
+    // Inbox Next-Gen P2: smart folders. "mine" / "unassigned"
+    // mirror the assignee filter; "sla" / "vip" add an AND clause
+    // derived from real fields (see folderExtraWhere), so a folder
+    // composes with status/channel/q/tag instead of replacing them.
+    if (filters.folder === "mine" && actorId) where.assignedUserId = actorId;
+    else if (filters.folder === "unassigned") where.assignedUserId = null;
+    else if (filters.folder === "sla" || filters.folder === "vip") {
+      const extra = await this.folderExtraWhere(organizationId, filters.folder);
+      where.AND = [...(where.AND ?? []), extra];
+    }
     if (filters.q) {
       const q = filters.q.trim();
       where.OR = [
@@ -2173,7 +2816,227 @@ export class InboxService {
     if (filters.sort === "unread") {
       rows.sort((a: any, b: any) => (b.unreadCount - a.unreadCount) || (new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime()));
     }
-    return rows.map((r: any) => ({ ...r, whatsappWindow: this.whatsappWindow(r) }));
+    // Inbox Next-Gen P3: read-time mood + webchat visitor presence.
+    // Per-message sentiment was never persisted (only intent), and
+    // there is no schema change in this phase — mood is computed
+    // here from stored message text with the same deterministic
+    // classifier, in ONE batch query for the whole page of rows.
+    const ids = rows.map((r: any) => r.id);
+    const recentInbound = ids.length ? await this.safeFindMany("channelMessage", {
+      where: { conversationId: { in: ids }, direction: "in" }, orderBy: { createdAt: "desc" }, take: 500,
+    }) : [];
+    const inboundByConv = new Map<string, any[]>();
+    for (const m of recentInbound) {
+      if (!m.content || !String(m.content).trim()) continue;
+      const list = inboundByConv.get(m.conversationId) ?? [];
+      if (list.length < 5) { list.push(m); inboundByConv.set(m.conversationId, list); }
+    }
+    // Visitor last-seen exists only for our own webchat channel.
+    const webchatIds = rows.filter((r: any) => r.channel === "webchat").map((r: any) => r.id);
+    const sessions = webchatIds.length ? await this.safeFindMany("liveChatSession", {
+      where: { conversationId: { in: webchatIds } }, select: { conversationId: true, lastSeenAt: true },
+    }) : [];
+    const lastSeenByConv = new Map<string, string | null>(sessions.map((s: any) => [
+      s.conversationId, s.lastSeenAt ? new Date(s.lastSeenAt).toISOString() : null,
+    ]));
+    return rows.map((r: any) => ({
+      ...r,
+      whatsappWindow: this.whatsappWindow(r),
+      mood: this.moodOf(inboundByConv.get(r.id) ?? []),
+      visitorLastSeenAt: r.channel === "webchat" ? (lastSeenByConv.get(r.id) ?? null) : null,
+    }));
+  }
+
+  // ----- Inbox Next-Gen P2: smart folders -----
+
+  /**
+   * The SLA-breach / VIP where-clauses, shared by the list filter
+   * and the folder counts so the two can never drift apart.
+   *
+   * SLA breach (definition, also in docs/inbox-nextgen-p2-acceptance.md):
+   * a conversation still awaiting its FIRST response whose wait has
+   * passed the org threshold — firstResponseAt IS NULL, status is
+   * open or pending (not closed), and createdAt is older than
+   * now − InboxSetting.slaFirstResponseMinutes. This is the team
+   * report's currentBreaches rule (which counts status "open")
+   * widened to "pending" threads that never got a first response.
+   *
+   * VIP: the conversation's LATEST linked order (Order.conversationId,
+   * newest first — the pipeline board's linkage) totals at least
+   * InboxSetting.escalationThresholdMinor, the same high-value
+   * threshold the U3 autopilot escalates on. Unset/zero threshold
+   * → no VIP folder (empty id list, honest empty state in the UI).
+   */
+  private async folderExtraWhere(organizationId: string, folder: "sla" | "vip") {
+    const settings = await this.getSettings(organizationId);
+    if (folder === "sla") {
+      const cutoff = new Date(Date.now() - settings.slaFirstResponseMinutes * 60000);
+      return { firstResponseAt: null, createdAt: { lt: cutoff }, status: { in: ["open", "pending"] } };
+    }
+    const ids = await this.vipConversationIds(organizationId, settings.escalationThresholdMinor);
+    return { id: { in: ids ?? [] } };
+  }
+
+  /** Conversation ids whose latest linked order meets the VIP
+   * threshold; null when the org has no threshold configured. */
+  private async vipConversationIds(organizationId: string, thresholdMinor: number | null): Promise<string[] | null> {
+    if (thresholdMinor == null || thresholdMinor <= 0) return null;
+    const orders = await (this.prisma as any).order.findMany({
+      where: { organizationId, conversationId: { not: null } },
+      orderBy: { createdAt: "desc" }, take: 3000,
+      select: { conversationId: true, totalMinor: true },
+    }).catch(() => []);
+    const latest = new Map<string, bigint>();
+    for (const o of orders) {
+      if (o.conversationId && !latest.has(o.conversationId)) latest.set(o.conversationId, BigInt(o.totalMinor));
+    }
+    const threshold = BigInt(thresholdMinor);
+    return [...latest.entries()].filter(([, total]) => total >= threshold).map(([id]) => id);
+  }
+
+  /** Server-side folder counts. The list is capped at 100 rows,
+   * so counts MUST come from here — counting the loaded page
+   * would lie. Counts describe the folders themselves (org-wide),
+   * independent of the transient q/status filters. */
+  async conversationFolderCounts(organizationId: string, actorId: string) {
+    const settings = await this.getSettings(organizationId);
+    const count = (where: any) => (this.prisma as any).channelConversation.count({ where }).catch(() => 0);
+    const vipIds = await this.vipConversationIds(organizationId, settings.escalationThresholdMinor);
+    const slaWhere = await this.folderExtraWhere(organizationId, "sla");
+    const [all, mine, unassigned, slaBreach] = await Promise.all([
+      count({ organizationId }),
+      count({ organizationId, assignedUserId: actorId }),
+      count({ organizationId, assignedUserId: null }),
+      count({ organizationId, ...slaWhere }),
+    ]);
+    return {
+      all, mine, unassigned, slaBreach,
+      vip: vipIds ? vipIds.length : 0,
+      vipThresholdMinor: settings.escalationThresholdMinor != null ? String(settings.escalationThresholdMinor) : null,
+      slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
+    };
+  }
+
+  // ----- Inbox Next-Gen P2: bulk actions -----
+
+  /**
+   * One real bulk endpoint instead of N client-side PATCH loops.
+   * Every id runs through the SAME code path as its single-
+   * conversation equivalent (updateConversation for close / assign
+   * / tag-add — including its validation, CSAT-on-close behaviour
+   * and assignee notification; markRead for mark-read), so a bulk
+   * effect can never diverge from a manual one. Per-item results:
+   * one bad or foreign id reports its own error (org scoping makes
+   * foreign ids plain "not found" — nothing leaks) and never fails
+   * the batch. One summary audit entry is written for the batch.
+   */
+  async bulkUpdateConversations(organizationId: string, actorId: string, dto: {
+    ids: string[]; action: string; assignedUserId?: string | null; tag?: string;
+  }) {
+    const ids = [...new Set((dto.ids ?? []).map((s) => String(s).trim()).filter(Boolean))];
+    if (!ids.length) throw new BadRequestException("কমপক্ষে একটি কথোপকথন বেছে নিন।");
+    if (ids.length > 25) throw new BadRequestException("একবারে সর্বোচ্চ ২৫টি কথোপকথনে বাল্ক অ্যাকশন করা যাবে।");
+    const action = dto.action;
+    if (!["close", "assign", "tag-add", "mark-read"].includes(action)) {
+      throw new BadRequestException("Invalid bulk action (close | assign | tag-add | mark-read)");
+    }
+    if (action === "assign" && dto.assignedUserId === undefined) {
+      throw new BadRequestException("assignedUserId is required for the assign action");
+    }
+    const tag = (dto.tag ?? "").trim();
+    if (action === "tag-add" && !tag) throw new BadRequestException("tag is required for the tag-add action");
+    const results: { id: string; ok: boolean; error?: string }[] = [];
+    for (const id of ids) {
+      try {
+        if (action === "close") {
+          await this.updateConversation(organizationId, actorId, id, { status: "closed" });
+        } else if (action === "assign") {
+          await this.updateConversation(organizationId, actorId, id, { assignedUserId: dto.assignedUserId ?? null });
+        } else if (action === "mark-read") {
+          await this.markRead(organizationId, id);
+        } else {
+          const conv = await this.getConversationOrThrow(organizationId, id);
+          await this.updateConversation(organizationId, actorId, id, { tags: [...(conv.tags ?? []), tag] });
+        }
+        results.push({ id, ok: true });
+      } catch (e) {
+        results.push({ id, ok: false, error: e instanceof Error ? e.message : "Bulk item failed" });
+      }
+    }
+    const succeeded = results.filter((r) => r.ok).length;
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversations.bulk",
+      entityType: "ChannelConversation",
+      metadata: { bulkAction: action, requested: ids.length, succeeded, failed: ids.length - succeeded },
+    }).catch(() => undefined);
+    return { results, succeeded, failed: ids.length - succeeded };
+  }
+
+  // ----- Inbox Next-Gen P2: product showcase cards -----
+
+  /**
+   * Sends a product as a showcase card: the product's REAL catalog
+   * image with a composed caption (name, real price, stock state,
+   * order line — see composeProductCardText). Delivery rides the
+   * P1 media machinery (sendMediaReply), so the per-channel truth
+   * table is P1's: the caption travels with the image on WhatsApp,
+   * Telegram, Email and Webchat. Messenger/Instagram attachment
+   * uploads carry NO caption, so there the card text follows as
+   * its own message and the response says so (image+text).
+   *
+   * Honest fallbacks: when the product has no usable image (no
+   * URL, unfetchable, oversized, or not a sniffable image) the
+   * card goes as a plain TEXT message and sentAs says "text". A
+   * platform rejection inside sendMediaReply is NOT masked by a
+   * fallback — the failed row + verbatim error stand, exactly
+   * like every other send path.
+   */
+  async sendProductCard(organizationId: string, actorId: string, conversationId: string, dto: { productId: string; caption?: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
+    if (!product) throw new NotFoundException("Product not found in this organization");
+    const cardText = composeProductCardText(product, dto.caption);
+    const fetched = await this.fetchProductImage(product).catch(() => null);
+    if (fetched) {
+      const dataBase64 = fetched.bytes.toString("base64");
+      const fileName = defaultMediaFileName("image", fetched.contentType);
+      if (conv.channel === "messenger" || conv.channel === "instagram") {
+        const imageMessage = await this.sendMediaReply(organizationId, actorId, conversationId, {
+          dataBase64, fileName, contentType: fetched.contentType,
+        });
+        try {
+          const captionMessage = await this.sendReply(organizationId, actorId, conversationId, cardText);
+          return { sentAs: "image+text", message: imageMessage, captionMessage };
+        } catch (e) {
+          return {
+            sentAs: "image", message: imageMessage, captionDelivered: false,
+            captionError: e instanceof Error ? e.message : "Caption send failed",
+          };
+        }
+      }
+      const message = await this.sendMediaReply(organizationId, actorId, conversationId, {
+        dataBase64, fileName, contentType: fetched.contentType, caption: cardText,
+      });
+      return { sentAs: "image+caption", message };
+    }
+    const message = await this.sendReply(organizationId, actorId, conversationId, cardText);
+    return { sentAs: "text", message };
+  }
+
+  /** Downloads the catalog image and sniffs it with the same
+   * magic-byte discipline as uploads. ANY failure (no URL, non-200,
+   * empty/oversized body, not an image) returns null → the caller
+   * falls back to the text card. Nothing is sent from here. */
+  private async fetchProductImage(product: any): Promise<{ bytes: Buffer; contentType: string } | null> {
+    const url = String(product.imageUrl ?? "").trim();
+    if (!/^https:\/\//i.test(url)) return null;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (!bytes.length || bytes.length > MEDIA_UPLOAD_MAX_BYTES) return null;
+    const detected = detectMediaKind(bytes, res.headers.get("content-type") ?? undefined);
+    if (!detected || detected.kind !== "image") return null;
+    return { bytes, contentType: detected.contentType };
   }
 
   private async getConversationOrThrow(organizationId: string, conversationId: string) {
@@ -2191,10 +3054,21 @@ export class InboxService {
       where: { conversationId, status: "suggested" }, orderBy: { createdAt: "desc" }, take: 5,
     });
     const context = await this.customerContext(organizationId, conv);
+    // Inbox Next-Gen P3: mood from the newest inbound texts (the
+    // fetched page is newest-first) + a per-message computed
+    // sentiment for inbound rows — read-time only, same classifier
+    // as ingest, nothing persisted.
+    const mood = this.moodOf(messages.filter((m: any) => m.direction === "in"));
+    const withSentiment = messages.map((m: any) => ({
+      ...m,
+      sentiment: m.direction === "in" && m.content && String(m.content).trim()
+        ? classifyIntent(String(m.content)).sentiment
+        : null,
+    }));
     return {
-      conversation: { ...conv, whatsappWindow: this.whatsappWindow(conv) },
+      conversation: { ...conv, whatsappWindow: this.whatsappWindow(conv), mood },
       botSession: await this.getBotSession(conversationId),
-      messages: messages.reverse(), drafts, context,
+      messages: withSentiment.reverse(), drafts, context,
     };
   }
 
@@ -2241,8 +3115,14 @@ export class InboxService {
   /** Heartbeat: records that this agent is viewing (or typing in) the
    * conversation and returns OTHER agents active within 45 seconds. */
   async heartbeatPresence(organizationId: string, userId: string, conversationId: string, typing: boolean) {
-    await this.getConversationOrThrow(organizationId, conversationId);
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
     try { this.realtime?.notePresence(organizationId, conversationId, userId, typing); } catch { /* ephemeral */ }
+    // Inbox Next-Gen P3: on our OWN webchat channel the visitor can
+    // honestly be shown the agent is typing (visitor stream). Other
+    // channels expose no such signal to customers — nothing is sent.
+    if (conv.channel === "webchat") {
+      try { this.realtime?.notifyVisitorTyping(conversationId, typing); } catch { /* ephemeral */ }
+    }
     const existing = await (this.prisma as any).agentPresence?.findFirst({ where: { conversationId, userId } }).catch(() => null);
     if (existing) {
       await (this.prisma as any).agentPresence.update({ where: { id: existing.id }, data: { typing, lastSeenAt: new Date() } });
@@ -2290,7 +3170,16 @@ export class InboxService {
       isCod: o.isCod, currency: o.currency, totalMinor: String(o.totalMinor), createdAt: o.createdAt,
       codConfirmationStatus: o.codConfirmationStatus ?? null,
       address: o.address ?? null,
-      shipment: shipByOrder.get(o.id) ? { trackingCode: shipByOrder.get(o.id).trackingCode, status: shipByOrder.get(o.id).status, provider: shipByOrder.get(o.id).provider } : null,
+      // Inbox Next-Gen P2: the courier widget needs the shipment
+      // id (for the manual sync call), COD amount and last-check
+      // time — not just the badge triple it started with.
+      shipment: shipByOrder.get(o.id) ? {
+        id: shipByOrder.get(o.id).id,
+        trackingCode: shipByOrder.get(o.id).trackingCode, status: shipByOrder.get(o.id).status, provider: shipByOrder.get(o.id).provider,
+        consignmentId: shipByOrder.get(o.id).consignmentId ?? null,
+        codAmountMinor: shipByOrder.get(o.id).codAmountMinor != null ? String(shipByOrder.get(o.id).codAmountMinor) : null,
+        lastCheckedAt: shipByOrder.get(o.id).lastCheckedAt ?? null,
+      } : null,
     }));
     const billable = orders.filter((o: any) => o.status !== "cancelled");
     out.lifetime = {
@@ -2483,8 +3372,146 @@ export class InboxService {
    * it is marked "failed" with the platform's error, and an exception is
    * thrown so the UI never shows a false success.
    */
-  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string } = {}) {
+  // ---------- Milestone 73 (Team T4): self-service ----------
+
+  /** The signed-in member's own signature settings. */
+  async getMySignature(organizationId: string, userId: string) {
+    const table = (this.prisma as any).agentState;
+    if (!table?.findUnique) return { signature: "", enabled: false };
+    const row = await table.findUnique({
+      where: { organizationId_userId: { organizationId, userId } },
+    }).catch(() => null);
+    return { signature: row?.signature ?? "", enabled: Boolean(row?.signatureEnabled) };
+  }
+
+  /** Save the caller's own signature (plain text, ≤ 300
+   * chars; applies to their future human replies only). */
+  async updateMySignature(organizationId: string, userId: string, dto: { signature?: string; enabled?: boolean }) {
+    const signature = (dto.signature ?? "").trim().slice(0, 300);
+    const enabled = Boolean(dto.enabled) && signature.length > 0;
+    const p = this.prisma as any;
+    await p.agentState.upsert({
+      where: { organizationId_userId: { organizationId, userId } },
+      create: { organizationId, userId, status: "online", signature, signatureEnabled: enabled },
+      update: { signature, signatureEnabled: enabled },
+    });
+    return { signature, enabled };
+  }
+
+  /** Append the sender's signature when they enabled one.
+   * Only human sends opt in (see sendReply's opts.signature);
+   * system templates (COD/CSAT) and automations never carry
+   * a personal signature. */
+  async withSignature(organizationId: string, actorId: string, content: string): Promise<string> {
+    const { signature, enabled } = await this.getMySignature(organizationId, actorId);
+    return enabled && signature ? appendSignature(content, signature) : content;
+  }
+
+  /** The signed-in member's own performance picture: their
+   * scorecard row (with rank context), today's activity row,
+   * and their open queue. Nothing about anyone else leaks —
+   * the full scorecard stays manager/lead territory. */
+  async myPerformance(organizationId: string, userId: string, days: number) {
+    const card: any = await this.teamScorecard(organizationId, days);
+    const me = (card.agents ?? []).find((a: any) => a.userId === userId) ?? null;
+    const activity: any = await this.teamActivity(organizationId).catch(() => null);
+    const row = (activity?.members ?? []).find((a: any) => a.userId === userId) ?? null;
+    const today = row ? {
+      state: row.activityState, onShift: row.onShift,
+      repliesToday: row.today?.repliesSent ?? 0, closedToday: row.today?.closedToday ?? 0,
+      openNow: row.today?.openNow ?? 0,
+    } : null;
+    return {
+      days, rank: me?.rank ?? null, totalAgents: (card.agents ?? []).length,
+      me, today,
+    };
+  }
+
+  // ---------- Milestone 74 (Team T5): workload rebalance ----------
+
+  /**
+   * Move open conversations away from over-capacity agents to
+   * the least-busy eligible teammates. Eligibility mirrors the
+   * assignment engine: ACTIVE membership, not away, on shift
+   * (Milestone 68), under capacity (max team capacity, default
+   * 20). A conversation stamped with a team prefers a receiver
+   * on that team. The newest conversations move first (the
+   * donor has the least history in them). dryRun returns the
+   * plan untouched; a real run writes ONE summary audit row.
+   */
+  async rebalanceWorkload(organizationId: string, actorId: string, opts: { dryRun?: boolean } = {}) {
+    const p = this.prisma as any;
+    const board: any[] = await this.listAgentStates(organizationId);
+    const memberships = await p.membership.findMany({ where: { organizationId } });
+    const activeIds = new Set((memberships as any[]).filter((m) => m.status === "ACTIVE").map((m) => m.userId));
+    const teams = await p.inboxTeam?.findMany({ where: { organizationId } }).catch(() => []) ?? [];
+    const teamName = new Map((teams as any[]).map((t) => [t.id, t.name]));
+    const open = await p.channelConversation.findMany({
+      where: { organizationId, status: "open", assignedUserId: { not: null } },
+      orderBy: { createdAt: "desc" }, take: 2000,
+    });
+    const byAssignee = new Map<string, any[]>();
+    for (const c of open as any[]) {
+      const list = byAssignee.get(c.assignedUserId) ?? [];
+      list.push(c); byAssignee.set(c.assignedUserId, list);
+    }
+    const projected = new Map(board.map((b) => [b.userId, b.openCount]));
+    const receivers = board
+      .filter((b) => activeIds.has(b.userId) && b.status !== "away" && b.onShift)
+      .map((b) => ({ ...b }));
+    const donors = board
+      .filter((b) => (projected.get(b.userId) ?? 0) > b.capacity)
+      .sort((a, b) => (projected.get(b.userId) ?? 0) - (projected.get(a.userId) ?? 0));
+    const moves: { conversationId: string; fromUserId: string; toUserId: string }[] = [];
+    let skippedNoReceiver = 0;
+    for (const donor of donors) {
+      let excess = (projected.get(donor.userId) ?? 0) - donor.capacity;
+      const mine = byAssignee.get(donor.userId) ?? [];
+      for (const conv of mine) {
+        if (excess <= 0) break;
+        const eligible = receivers
+          .filter((r) => r.userId !== donor.userId && (projected.get(r.userId) ?? 0) < r.capacity)
+          .sort((a, b) => {
+            const teamA = conv.teamId && (a.teams ?? []).includes(teamName.get(conv.teamId)) ? 0 : 1;
+            const teamB = conv.teamId && (b.teams ?? []).includes(teamName.get(conv.teamId)) ? 0 : 1;
+            if (teamA !== teamB) return teamA - teamB;
+            return (projected.get(a.userId) ?? 0) - (projected.get(b.userId) ?? 0);
+          });
+        const target = eligible[0];
+        if (!target) { skippedNoReceiver++; continue; }
+        moves.push({ conversationId: conv.id, fromUserId: donor.userId, toUserId: target.userId });
+        projected.set(donor.userId, (projected.get(donor.userId) ?? 0) - 1);
+        projected.set(target.userId, (projected.get(target.userId) ?? 0) + 1);
+        excess--;
+      }
+    }
+    if (!opts.dryRun && moves.length) {
+      for (const mv of moves) {
+        await p.channelConversation.update({ where: { id: mv.conversationId }, data: { assignedUserId: mv.toUserId } });
+        await p.agentState?.upsert?.({
+          where: { organizationId_userId: { organizationId, userId: mv.toUserId } },
+          create: { organizationId, userId: mv.toUserId, status: "online", lastAssignedAt: new Date() },
+          update: { lastAssignedAt: new Date() },
+        }).catch?.(() => undefined);
+      }
+      await this.audit.log({
+        organizationId, userId: actorId, action: "inbox.workload_rebalanced",
+        entityType: "ChannelConversation", entityId: organizationId,
+        metadata: { movedCount: moves.length, moves },
+      });
+    }
+    return {
+      dryRun: Boolean(opts.dryRun), movedCount: moves.length, moves,
+      donorsConsidered: donors.length, skippedNoReceiver,
+    };
+  }
+
+  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean } = {}) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    // Milestone 73: a human sender's enabled signature rides
+    // along (composer + approved drafts opt in; system
+    // templates do not).
+    if (opts.signature) content = await this.withSignature(organizationId, actorId, content);
     const message = await (this.prisma as any).channelMessage.create({
       data: {
         conversationId, direction: "out", type: "text", content, status: "queued",
@@ -2528,6 +3555,7 @@ export class InboxService {
   // ----- AI draft replies: suggestion only, never auto-send -----
   async suggestDraft(organizationId: string, actorId: string, conversationId: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.checkAiAllowed(organizationId, "draft");
     const recent = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "desc" }, take: 10,
     });
@@ -2567,6 +3595,110 @@ export class InboxService {
       data: { organizationId, userId: actorId, feature: "draft", provider: provider.name, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, estimated: usage.estimated },
     });
     return draft;
+  }
+
+  // ----- Inbox Next-Gen P3: AI copilot (ghost completion + tone rewrite) -----
+
+  /**
+   * Ghost completion: continues the agent's half-written reply.
+   * Suggestion only — the agent accepts it explicitly (Tab) in the
+   * composer; nothing is ever sent from here. A ghost must NEVER
+   * break the composer: short partials, the dev template, provider
+   * failures and number-guard rejections all resolve to an empty
+   * completion instead of an error. Enforcement failures (kill
+   * switch / daily cap) DO throw — those are policy, not flakiness.
+   */
+  async ghostComplete(organizationId: string, actorId: string, conversationId: string, partialRaw: unknown): Promise<{ completion: string }> {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    void conv;
+    const partial = String(partialRaw ?? "");
+    if (partial.trim().length < 2) return { completion: "" };
+    await this.checkAiAllowed(organizationId, "ghost_complete");
+    const provider = this.llm.getProvider();
+    if (!provider.isRealLlm) return { completion: "" }; // dev template NEVER fabricates a ghost
+
+    const recent = await (this.prisma as any).channelMessage.findMany({
+      where: { conversationId }, orderBy: { createdAt: "desc" }, take: 10,
+    });
+    const history = [...recent].reverse();
+    const lastInbound = [...history].reverse().find((m: any) => m.direction === "in");
+    const [profile, policies, products] = await Promise.all([
+      (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }),
+      (this.prisma as any).businessPolicy.findMany({ where: { organizationId }, take: 10 }),
+      (this.prisma as any).product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 }),
+    ]);
+    const matchedProduct = matchProduct(lastInbound?.content ?? "", products);
+    const knowledge = JSON.stringify({
+      business: profile ? { industry: profile.industry, description: profile.description, brandVoice: profile.brandVoice } : null,
+      policies: policies.map((p: any) => ({ type: p.type, title: p.title, content: String(p.content).slice(0, 400) })),
+      matchedProduct: matchedProduct ? { name: matchedProduct.name, price: formatMinor(BigInt(matchedProduct.priceMinor), matchedProduct.currency), stock: matchedProduct.stockQuantity } : null,
+    });
+
+    let result: any;
+    try {
+      result = await provider.complete([
+        { role: "system", content: "You complete a support agent's half-written reply. Continue the partial text with ONE short natural continuation (max ~14 words) in the SAME language/script as the partial. Use ONLY the business knowledge provided: never invent prices, stock, discounts, delivery charges, dates or policies. If a safe grounded continuation is impossible, return an empty response. Return ONLY the continuation — do not repeat the partial text." },
+        { role: "user", content: `Business knowledge:\n${knowledge}\n\nConversation (oldest first):\n${history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n")}\n\nAgent's partial reply (continue this):\n${partial}` },
+      ], { maxTokens: 80 });
+    } catch { return { completion: "" }; }
+    // The provider call consumed quota even if the guard below
+    // drops the text — record it like every other inbox feature.
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: actorId, feature: "ghost_complete", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+
+    let completion = String(result.text ?? "").trim();
+    if (completion.startsWith(partial.trim())) completion = completion.slice(partial.trim().length).trim();
+    completion = completion.slice(0, 160);
+    // Number guard (same discipline as the autopilot): every
+    // number in the continuation must already exist in the
+    // partial, the thread, or the grounded knowledge.
+    const allowed = new Set(InboxService.extractNumbers(
+      `${partial}\n${history.map((m: any) => String(m.content ?? "")).join("\n")}\n${knowledge}`,
+    ));
+    const invented = InboxService.extractNumbers(completion).filter((n) => !allowed.has(n));
+    if (invented.length) return { completion: "" };
+    return { completion };
+  }
+
+  /**
+   * Tone rewrite: rewrites the AGENT'S OWN draft in a chosen tone.
+   * Facts are sacred — if the model changes any number, the
+   * rewrite is refused outright instead of silently applied.
+   */
+  async toneRewrite(organizationId: string, actorId: string, conversationId: string, textRaw: unknown, tone: string): Promise<{ text: string }> {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const text = String(textRaw ?? "").trim();
+    if (!text) throw new BadRequestException("লেখা খালি — আগে কিছু লিখুন।");
+    if (text.length > 2000) throw new BadRequestException("লেখা খুব লম্বা (সর্বোচ্চ ২০০০ অক্ষর)।");
+    if (!["polite", "professional", "sales"].includes(tone)) {
+      throw new BadRequestException("tone must be polite, professional or sales");
+    }
+    await this.checkAiAllowed(organizationId, "tone_rewrite");
+    const provider = this.llm.getProvider();
+    if (!provider.isRealLlm) {
+      // Honest boundary, same style as translateMessage.
+      throw new BadRequestException("টোন বদলাতে একটি আসল LLM provider দরকার (LLM_PROVIDER ও API key সেট করুন)। Dev template দিয়ে টোন বদলানো সম্ভব নয়।");
+    }
+    const toneInstruction = {
+      polite: "মার্জিত ও নম্র (polite and courteous)",
+      professional: "পেশাদার ও পরিষ্কার (professional and clear)",
+      sales: "বন্ধুসুলভ সেলস-বান্ধব, চাপাচাপি নয় (friendly and sales-aware, never pushy)",
+    }[tone as "polite" | "professional" | "sales"];
+    const result = await provider.complete([
+      { role: "system", content: `You rewrite a support agent's draft reply in this tone: ${toneInstruction}. Hard rules: preserve the meaning, the facts and EVERY number exactly as written; keep the SAME language/script as the input; return ONLY the rewritten text, no explanations.` },
+      { role: "user", content: text },
+    ], { maxTokens: 500 });
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: actorId, feature: "tone_rewrite", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+    const rewritten = String(result.text ?? "").trim();
+    const inputNumbers = new Set(InboxService.extractNumbers(text));
+    const invented = InboxService.extractNumbers(rewritten).filter((n) => !inputNumbers.has(n));
+    if (invented.length) {
+      throw new BadRequestException("AI সংখ্যা বদলে ফেলেছে, তাই এই রিরাইটটি প্রয়োগ করা হয়নি। আবার চেষ্টা করুন।");
+    }
+    return { text: rewritten };
   }
 
   /**
@@ -2630,6 +3762,100 @@ export class InboxService {
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
       throw new BadRequestException(`Image was NOT sent: ${error}`);
     }
+  }
+
+  /**
+   * Inbox Next-Gen P1: agent-uploaded media (drag-drop, paste,
+   * voice recorder). The bytes arrive base64-in-JSON (the M59 logo
+   * pattern), are sniffed by magic bytes (the declared type is never
+   * trusted for images/PDF), persisted into the SAME MediaStore the
+   * inbound pipeline uses — so the agent thread renders them through
+   * the existing media proxy — and then delivered per channel.
+   * Delivery follows the platform's real upload path per channel
+   * (Meta media upload, Messenger attachment upload, Telegram Bot
+   * API upload, SMTP attachment, webchat row). The row is "sent"
+   * only with the platform's confirmation id, exactly like
+   * sendReply/sendImageReply; any platform error marks it failed
+   * and is thrown verbatim.
+   */
+  async sendMediaReply(organizationId: string, actorId: string, conversationId: string, dto: { dataBase64: string; fileName?: string; contentType?: string; caption?: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const bytes = Buffer.from(String(dto.dataBase64 ?? ""), "base64");
+    if (!bytes.length) throw new BadRequestException("ফাইলটি খালি অথবা পড়া যায়নি।");
+    if (bytes.length > MEDIA_UPLOAD_MAX_BYTES) throw new BadRequestException(`ফাইল খুব বড় — সর্বোচ্চ ${Math.round(MEDIA_UPLOAD_MAX_BYTES / 100000) / 10}MB পর্যন্ত আপলোড করা যাবে।`);
+    const detected = detectMediaKind(bytes, dto.contentType);
+    if (!detected) throw new BadRequestException("এই ফাইল ফরম্যাটটি পাঠানো যায় না — ছবি (PNG/JPG/WebP/GIF), অডিও/ভয়েস, MP4/WebM ভিডিও অথবা PDF দিন।");
+    const kind = detected.kind;
+    const fileName = (dto.fileName ?? "").trim().slice(0, 200) || defaultMediaFileName(kind, detected.contentType);
+    const caption = dto.caption?.trim() ? dto.caption.trim().slice(0, 1024) : undefined;
+    const message = await (this.prisma as any).channelMessage.create({
+      data: {
+        conversationId, direction: "out", type: kind,
+        content: caption ?? (kind === "image" ? null : fileName),
+        status: "queued", sentByUserId: actorId,
+      },
+    });
+    // Persist first (best effort, like captureMessageMedia): the
+    // agent thread can render the bytes through the media proxy
+    // regardless of the platform outcome; a FAILED row shows its
+    // error, never a fake success.
+    try {
+      const key = mediaKeyFor(organizationId, message.id, detected.contentType);
+      await this.mediaStore().put(key, bytes, detected.contentType);
+      await (this.prisma as any).channelMessage.update({
+        where: { id: message.id },
+        data: { mediaStorageKey: key, mediaContentType: detected.contentType, mediaSizeBytes: bytes.length },
+      });
+    } catch { /* storage best-effort; delivery continues */ }
+    try {
+      const externalId = await this.deliverMedia(conv, { bytes, contentType: detected.contentType, kind, fileName, caption });
+      const sent = await (this.prisma as any).channelMessage.update({
+        where: { id: message.id }, data: { status: "sent", externalId },
+      });
+      const previewLabel = kind === "image" ? "[ছবি]" : kind === "audio" ? "[ভয়েস/অডিও]" : kind === "video" ? "[ভিডিও]" : "[ফাইল]";
+      await (this.prisma as any).channelConversation.update({
+        where: { id: conversationId },
+        data: {
+          lastMessageAt: new Date(), lastMessagePreview: (caption ?? previewLabel).slice(0, 120),
+          ...(conv.firstResponseAt ? {} : { firstResponseAt: new Date() }),
+          ...(conv.autoReplyPaused ? { autoReplyPaused: false } : {}),
+        },
+      });
+      const activeBot = await (this.prisma as any).botSession?.findFirst?.({ where: { conversationId, status: "active" } }).catch?.(() => null);
+      if (activeBot) await (this.prisma as any).botSession.update({ where: { id: activeBot.id }, data: { status: "handed_off" } }).catch(() => undefined);
+      this.rtMessage(organizationId, conversationId, sent);
+      await this.advanceStage(organizationId, conv, "talking");
+      return sent;
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "Media send failed";
+      await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
+      throw new BadRequestException(`Media was NOT sent: ${error}`);
+    }
+  }
+
+  /** Per-channel delivery for uploaded media — see sendMediaReply. */
+  private async deliverMedia(conv: any, media: { bytes: Buffer; contentType: string; kind: MediaKind; fileName: string; caption?: string }): Promise<string> {
+    if (conv.channel === "webchat") {
+      // Same as text: the stored row IS the delivery; the visitor
+      // fetches the bytes through the token-guarded public media
+      // route and the widget renders them.
+      return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    if (conv.channel === "telegram" || conv.channel === "email") {
+      const { ChannelSendService } = await import("./channels/channel-send.service");
+      return new ChannelSendService(this.prisma as any).sendMedia(conv, media);
+    }
+    const integration = await this.integrationForConversation(conv);
+    const secrets = await this.secretsFor(integration.id);
+    const client = new MetaMessagingClient(secrets);
+    if (conv.channel === "whatsapp") {
+      const { mediaId } = await client.uploadWhatsAppMedia(media.bytes, media.contentType, media.fileName);
+      const { messageId } = await client.sendWhatsAppMedia(conv.externalContactId, mediaId, media.kind, media.caption, media.fileName);
+      return messageId;
+    }
+    const { attachmentId } = await client.uploadMessengerAttachment(media.bytes, media.contentType, media.kind, media.fileName);
+    const { messageId } = await client.sendMessengerAttachment(conv.externalContactId, attachmentId, media.kind);
+    return messageId;
   }
 
   /**
@@ -2708,8 +3934,39 @@ export class InboxService {
     if (draft.status !== "suggested") throw new BadRequestException("Draft is no longer pending");
     const content = (editedContent ?? draft.content).trim();
     if (!content) throw new BadRequestException("Message content is empty");
-    return this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId });
+    return this.sendReply(organizationId, actorId, conversationId, content, { viaDraftId: draftId, signature: true });
   }
+}
+
+/** Milestone 74: assignment fairness from scorecard rows.
+ * sharePercent = the agent's slice of all assignments in the
+ * period; deviation = share − equal share (100 / headcount).
+ * Percentages are rounded to 0.1; with zero assignments the
+ * honest answer is all-zero shares, not an invented split. */
+export function buildFairness(rows: { userId: string; current: { assigned: number } }[]) {
+  const totalAssigned = rows.reduce((s, r) => s + (r.current?.assigned ?? 0), 0);
+  const equalSharePercent = rows.length ? Math.round((1000 / rows.length)) / 10 : 0;
+  const perAgent = rows.map((r) => {
+    const assigned = r.current?.assigned ?? 0;
+    const sharePercent = totalAssigned ? Math.round((1000 * assigned) / totalAssigned) / 10 : 0;
+    return {
+      userId: r.userId, assigned, sharePercent,
+      deviationPercent: Math.round((sharePercent - equalSharePercent) * 10) / 10,
+    };
+  });
+  const shares = perAgent.map((a) => a.sharePercent);
+  return {
+    totalAssigned, equalSharePercent,
+    spreadPercent: shares.length ? Math.round((Math.max(...shares) - Math.min(...shares)) * 10) / 10 : 0,
+    perAgent,
+  };
+}
+
+/** Milestone 73: how a signature joins a message body. */
+export function appendSignature(content: string, signature: string): string {
+  const sig = signature.trim();
+  if (!sig) return content;
+  return `${content}\n\n${sig}`;
 }
 
 export function matchProduct(text: string, products: any[]): any | null {

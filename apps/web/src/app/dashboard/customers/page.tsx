@@ -1,15 +1,23 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
+import {
+  CustomFieldsEditor, buildCustomFieldsPayload, customFieldsToRaw, fetchCustomFieldDefs,
+  type CustomFieldDef,
+} from "@/components/custom-fields";
 
 interface CustomerRow {
   id: string; name?: string | null; phone?: string | null; email?: string | null;
   source: string; createdAt: string; orderCount: number; totalSpentMinor: string;
 }
 interface Detail {
-  customer: { id: string; name?: string | null; phone?: string | null; email?: string | null; source: string; createdAt: string; mergedIntoId?: string | null };
+  customer: {
+    id: string; name?: string | null; firstName?: string | null; lastName?: string | null;
+    phone?: string | null; email?: string | null; source: string; createdAt: string; mergedIntoId?: string | null;
+    customFields?: Record<string, unknown> | null;
+  };
   orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; totalMinor: string; createdAt: string }[];
   conversations: { id: string; channel: string; status: string; lastMessagePreview?: string | null; lastMessageAt?: string | null; unreadCount: number }[];
   shipments: { id: string; trackingCode?: string | null; status: string; provider: string }[];
@@ -32,6 +40,9 @@ export default function CustomersPage() {
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [mergeTarget, setMergeTarget] = useState("");
+  const [custDefs, setCustDefs] = useState<CustomFieldDef[]>([]);
+  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", email: "", phone: "" });
+  const [editCf, setEditCf] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -47,11 +58,58 @@ export default function CustomersPage() {
     finally { setLoading(false); }
   }, [q]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchCustomFieldDefs("customer").then(setCustDefs).catch(() => undefined); }, []);
+
+  // CRM C3: CSV export — blob download with the auth header (same
+  // pattern as the orders PDF / scorecard CSV downloads).
+  async function downloadExport() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/organizations/${orgId}/customers/export`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+      if (!res.ok) { const body: any = await res.json().catch(() => ({})); throw new Error(body?.message ?? `HTTP ${res.status}`); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "customers-export.csv"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট ব্যর্থ"); }
+  }
 
   async function open(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    try { setDetail(await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`)); setMergeTarget(""); }
+    try {
+      const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
+      setDetail(d); setMergeTarget("");
+      setEditForm({
+        firstName: d.customer.firstName ?? "", lastName: d.customer.lastName ?? "",
+        email: d.customer.email ?? "", phone: d.customer.phone ?? "",
+      });
+      setEditCf(customFieldsToRaw(custDefs, d.customer.customFields));
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  // CRM C4: the first customer edit path — contact basics + custom
+  // fields via PATCH /customers/:id (audited server-side).
+  async function saveEdit() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    setBusy("edit"); setError(""); setNotice("");
+    try {
+      const customFields = buildCustomFieldsPayload(custDefs, editCf, detail.customer.customFields);
+      const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          firstName: editForm.firstName || null, lastName: editForm.lastName || null,
+          email: editForm.email || null, phone: editForm.phone || null,
+          ...(Object.keys(customFields).length ? { customFields } : {}),
+        }),
+      });
+      setDetail(out);
+      setEditCf(customFieldsToRaw(custDefs, out.customer.customFields));
+      setNotice("কাস্টমারের তথ্য সেভ হয়েছে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
   }
 
   async function doMerge() {
@@ -79,6 +137,7 @@ export default function CustomersPage() {
       {notice ? <p className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p> : null}
       <div className="flex gap-2">
         <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+        <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="card overflow-hidden p-0 lg:col-span-2">
@@ -117,6 +176,28 @@ export default function CustomersPage() {
                     </select>
                   </label>
                   <button className="btn-warning" disabled={!mergeTarget || busy !== ""} onClick={doMerge}>{busy === "merge" ? "মার্জ হচ্ছে..." : "মার্জ করুন"}</button>
+                </div>
+              </div>
+              <div className="card space-y-3">
+                <h3 className="font-semibold">✏️ তথ্য সম্পাদনা</h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block text-sm">নামের প্রথম অংশ
+                    <input className="input mt-1" value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} />
+                  </label>
+                  <label className="block text-sm">নামের শেষ অংশ
+                    <input className="input mt-1" value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} />
+                  </label>
+                  <label className="block text-sm">ফোন
+                    <input className="input mt-1" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                  </label>
+                  <label className="block text-sm">ইমেইল
+                    <input className="input mt-1" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                  </label>
+                  <CustomFieldsEditor defs={custDefs} raw={editCf} onChange={(k, v) => setEditCf({ ...editCf, [k]: v })} />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>
+                  <span className="text-xs text-slate-400">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
                 </div>
               </div>
               {detail.risk ? (

@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, Length, Matches, MaxLength, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsEmail, IsInt, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
 export class CreateOrganizationDto {
   @IsString() @MinLength(2) @MaxLength(120) name!: string;
   @IsString() @Matches(/^[a-z0-9-]+$/) @MinLength(3) @MaxLength(60) slug!: string;
@@ -16,6 +16,20 @@ export class PlanChangeRequestDto {
 }
 export class AcceptInviteDto {
   @IsString() @MinLength(10) @MaxLength(200) token!: string;
+}
+/** Milestone 67 (Team T1): member lifecycle. Role/status values
+ * are validated against the allowed sets in the service. */
+export class UpdateMemberRoleDto {
+  @IsString() @MaxLength(40) role!: string;
+}
+export class UpdateMemberStatusDto {
+  @IsString() @MaxLength(20) status!: string; // SUSPENDED | ACTIVE
+}
+/** Milestone 72 (Team W3): per-member custom access overrides.
+ * Area keys are validated against the catalog in the service. */
+export class UpdateMemberAccessDto {
+  @IsOptional() @IsArray() @IsString({ each: true }) grants?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) denies?: string[];
 }
 /** Milestone 59: white-label branding. Field-level validation
  * (hex colour, hostname shape, domain uniqueness) lives in the
@@ -39,4 +53,29 @@ export class UpdateBusinessProfileDto {
   @IsOptional() @IsString() @MaxLength(2000) uniqueSellingPoints?: string;
   @IsOptional() @IsString() @MaxLength(100) contactEmail?: string;
   @IsOptional() @IsString() @MaxLength(30) contactPhone?: string;
+  // Milestone 75 (Business Command Center): operational layer.
+  // Money arrives as integer minor units and is stored BigInt.
+  @IsOptional() @IsString() @MaxLength(500) address?: string;
+  @IsOptional() @IsString() @MaxLength(100) city?: string;
+  @IsOptional() @IsObject() businessHours?: Record<string, unknown>;
+  @IsOptional() @IsInt() @Min(0) deliveryChargeInsideMinor?: number;
+  @IsOptional() @IsInt() @Min(0) deliveryChargeOutsideMinor?: number;
+  @IsOptional() @IsInt() @Min(0) freeDeliveryAboveMinor?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(60) deliveryDaysInside?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(60) deliveryDaysOutside?: number;
+  @IsOptional() @IsBoolean() codAvailable?: boolean;
+  @IsOptional() @IsInt() @Min(0) minOrderMinor?: number;
+  @IsOptional() @IsString() @MaxLength(30) bkashNumber?: string;
+  @IsOptional() @IsString() @MaxLength(30) nagadNumber?: string;
+  @IsOptional() @IsString() @MaxLength(1000) paymentNote?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(100) advancePaymentPercent?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(365) returnWindowDays?: number;
+  // Milestone 77: owner-set AI behaviour.
+  @IsOptional() @IsString() @MaxLength(2000) aiInstructions?: string;
+  @IsOptional() @IsString() @MaxLength(10) aiReplyLanguage?: string;
+  // Billing Package B5: invoice/reminder recipients + the
+  // buyer block printed on invoices.
+  @IsOptional() @IsArray() billingEmails?: string[];
+  @IsOptional() @IsString() @MaxLength(300) billingAddress?: string;
+  @IsOptional() @IsString() @MaxLength(40) billingBin?: string;
 }

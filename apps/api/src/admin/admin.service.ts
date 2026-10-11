@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
-import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices } from "../common/platform-settings";
+import { platformSetting, PLAN_TIERS, DEFAULT_PLAN_LIMITS, planPrices, planYearlyPrices } from "../common/platform-settings";
 import { referralConfig, maybeRewardReferral } from "../common/referral";
 import { seal, refreshPlatformConfig, effectiveLlmConfig } from "../common/platform-config";
 import { rateLimitStats } from "../common/throttler.guard";
@@ -247,13 +247,14 @@ export class AdminService {
   }
 
   // ---------------- Platform settings, announcements, flags ----------------
-  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "maintenanceWindow", "auditRetentionDays"] as const;
+  static readonly SETTING_KEYS = ["maintenanceMode", "signupOpen", "supportContact", "killSwitches", "planPrices", "planYearlyPrices", "maintenanceWindow", "auditRetentionDays"] as const;
 
   async getSettings() {
     const out: Record<string, unknown> = {
       maintenanceMode: false, signupOpen: true, supportContact: "",
       killSwitches: { aiDisabledOrgIds: [], broadcastsPaused: false },
       planPrices: await planPrices(this.prisma as any),
+      planYearlyPrices: await planYearlyPrices(this.prisma as any),
       maintenanceWindow: null, auditRetentionDays: 365,
     };
     for (const key of AdminService.SETTING_KEYS) {
@@ -280,12 +281,12 @@ export class AdminService {
           throw new BadRequestException("killSwitches must be { aiDisabledOrgIds: string[], broadcastsPaused: boolean }");
         }
       }
-      if (key === "planPrices") {
+      if (key === "planPrices" || key === "planYearlyPrices") {
         const pp = value as any;
-        if (!pp || typeof pp !== "object") throw new BadRequestException("planPrices must be an object");
+        if (!pp || typeof pp !== "object") throw new BadRequestException(`${key} must be an object`);
         for (const tier of PLAN_TIERS) {
           if (pp[tier] !== undefined && (typeof pp[tier] !== "number" || pp[tier] < 0)) {
-            throw new BadRequestException(`planPrices.${tier} must be a non-negative number (minor units)`);
+            throw new BadRequestException(`${key}.${tier} must be a non-negative number (minor units)`);
           }
         }
       }
@@ -590,7 +591,7 @@ export class AdminService {
     await this.logAdmin(actor, "payment_recorded", "SaasPayment", row.id, { organizationId: dto.organizationId, amountMinor: amount.toString(), method: dto.method, reference: dto.reference ?? null }, ip);
     // Milestone 41: a manual payment is also a first payment for referrals.
     if (priorPayments === 0) {
-      try { await maybeRewardReferral(this.prisma as any, this.audit, dto.organizationId); }
+      try { await maybeRewardReferral(this.prisma as any, this.audit, dto.organizationId, { amountMinor: amount }); }
       catch { /* rewards never block payment records */ }
     }
     return { ...row, amountMinor: row.amountMinor.toString(), refundedMinor: BigInt(row.refundedMinor ?? 0).toString() };
@@ -660,10 +661,19 @@ export class AdminService {
       organizationId: row.organizationId, refundMinor: amount.toString(),
       refundedTotalMinor: (already + amount).toString(), accessRevoked, reason: why,
     }, ip);
+    // Referral Advanced R3: a FULL refund of the payment
+    // that caused a referral reward reverses the reward.
+    let referralClawback: { clawedBack: boolean; debitedMinor?: string; shortfallMinor?: string } = { clawedBack: false };
+    if (already + amount >= gross) {
+      try {
+        const { maybeClawbackReferral } = await import("../common/referral");
+        referralClawback = await maybeClawbackReferral(this.prisma as any, this.audit, { id, organizationId: row.organizationId });
+      } catch { /* clawback never blocks a refund */ }
+    }
     return {
       ...updated, amountMinor: gross.toString(),
       refundedMinor: (already + amount).toString(),
-      netMinor: (gross - already - amount).toString(), accessRevoked,
+      netMinor: (gross - already - amount).toString(), accessRevoked, referralClawback,
     };
   }
 
@@ -677,7 +687,8 @@ export class AdminService {
   /** Printable invoice (HTML) built ONLY from the payment row. */
   async paymentInvoiceHtml(id: string): Promise<string> {
     const { payment, org } = await this.paymentWithOrg(id);
-    return buildInvoiceHtml({ payment, orgName: org?.name ?? payment.organizationId });
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: payment.organizationId } })?.catch?.(() => null) ?? null;
+    return buildInvoiceHtml({ payment, orgName: org?.name ?? payment.organizationId, buyer: { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null } });
   }
 
   async sendInvoiceEmail(actor: any, id: string, ip?: string) {
@@ -685,7 +696,9 @@ export class AdminService {
     const memberships = await (this.prisma as any).membership.findMany({
       where: { organizationId: payment.organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
     }).catch(() => []);
-    const recipients = (memberships as any[]).map((m) => m.user?.email).filter(Boolean) as string[];
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: payment.organizationId } })?.catch?.(() => null) ?? null;
+    const extra: string[] = Array.isArray(profile?.billingEmails) ? profile.billingEmails : [];
+    const recipients = [...new Set([...(memberships as any[]).map((m) => m.user?.email).filter(Boolean), ...extra])] as string[];
     if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found for this organization");
     const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
     const gross = BigInt(payment.amountMinor ?? 0);
@@ -2161,6 +2174,76 @@ export class AdminService {
 
   // ---- Referrals board + config ----
 
+  // --- Referral Advanced R4: campaign codes ---
+
+  private campaignJson(c: any) {
+    return {
+      id: c.id, code: c.code, label: c.label, mode: c.mode ?? null,
+      rewardMinor: c.rewardMinor != null ? c.rewardMinor.toString() : null,
+      percentOfFirstPayment: c.percentOfFirstPayment ?? null,
+      refereeBonusMinor: c.refereeBonusMinor != null ? c.refereeBonusMinor.toString() : null,
+      minFirstPaymentMinor: c.minFirstPaymentMinor != null ? c.minFirstPaymentMinor.toString() : null,
+      maxUses: c.maxUses ?? null, usedCount: c.usedCount, expiresAt: c.expiresAt ?? null,
+      active: c.active, createdAt: c.createdAt,
+      live: c.active && (!c.expiresAt || new Date(c.expiresAt) > new Date()) && (c.maxUses == null || c.usedCount < c.maxUses),
+    };
+  }
+
+  async listReferralCampaigns() {
+    const rows = await (this.prisma as any).referralCampaign?.findMany({ orderBy: { createdAt: "desc" }, take: 100 }).catch(() => []) ?? [];
+    return (rows as any[]).map((c) => this.campaignJson(c));
+  }
+
+  async createReferralCampaign(actor: any, dto: any, ip?: string) {
+    const code = String(dto.code ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9-]{2,23}$/.test(code)) throw new BadRequestException("code must be 3-24 chars of A-Z, 0-9, -");
+    if (code.startsWith("QOS-")) throw new BadRequestException("codes starting with QOS- are reserved for user referral codes");
+    if (!String(dto.label ?? "").trim()) throw new BadRequestException("label is required");
+    const clash = await (this.prisma as any).referralCampaign.findUnique({ where: { code } }).catch(() => null);
+    if (clash) throw new BadRequestException("a campaign with this code already exists");
+    const money = (v: unknown, label: string) => {
+      if (v === undefined || v === null || v === "") return null;
+      const n = BigInt(Math.floor(Number(v)));
+      if (n < 0n || n > 100000000n) throw new BadRequestException(`${label} out of range`);
+      return n;
+    };
+    if (dto.mode !== undefined && dto.mode !== null && !["flat", "percent", "per_plan"].includes(dto.mode)) {
+      throw new BadRequestException("mode must be flat | percent | per_plan");
+    }
+    const row = await (this.prisma as any).referralCampaign.create({
+      data: {
+        code, label: String(dto.label).trim(), mode: dto.mode ?? null,
+        rewardMinor: money(dto.rewardMinor, "rewardMinor"),
+        percentOfFirstPayment: dto.percentOfFirstPayment != null ? Math.min(100, Math.max(0, Math.floor(Number(dto.percentOfFirstPayment)))) : null,
+        refereeBonusMinor: money(dto.refereeBonusMinor, "refereeBonusMinor"),
+        minFirstPaymentMinor: money(dto.minFirstPaymentMinor, "minFirstPaymentMinor"),
+        maxUses: dto.maxUses != null ? Math.max(1, Math.floor(Number(dto.maxUses))) : null,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+        createdById: actor.id,
+      },
+    });
+    await this.logAdmin(actor, "referral_campaign_created", "ReferralCampaign", row.id, { code, label: row.label }, ip);
+    return this.campaignJson(row);
+  }
+
+  async updateReferralCampaign(actor: any, id: string, dto: any, ip?: string) {
+    const row = await (this.prisma as any).referralCampaign.findUnique({ where: { id } }).catch(() => null);
+    if (!row) throw new NotFoundException("Campaign not found");
+    const data: any = {};
+    if (dto.label !== undefined) data.label = String(dto.label).trim();
+    if (dto.active !== undefined) data.active = dto.active === true;
+    if (dto.mode !== undefined) data.mode = dto.mode;
+    if (dto.maxUses !== undefined) data.maxUses = dto.maxUses === null ? null : Math.max(1, Math.floor(Number(dto.maxUses)));
+    if (dto.expiresAt !== undefined) data.expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+    if (dto.percentOfFirstPayment !== undefined) data.percentOfFirstPayment = dto.percentOfFirstPayment === null ? null : Math.min(100, Math.max(0, Math.floor(Number(dto.percentOfFirstPayment))));
+    for (const f of ["rewardMinor", "refereeBonusMinor", "minFirstPaymentMinor"] as const) {
+      if (dto[f] !== undefined) data[f] = dto[f] === null ? null : BigInt(Math.floor(Number(dto[f])));
+    }
+    const updated = await (this.prisma as any).referralCampaign.update({ where: { id }, data });
+    await this.logAdmin(actor, "referral_campaign_updated", "ReferralCampaign", id, data, ip);
+    return this.campaignJson(updated);
+  }
+
   async referralsBoard() {
     const cfg = await referralConfig(this.prisma as any);
     const rows = await (this.prisma as any).referral?.findMany({ orderBy: { createdAt: "desc" }, take: 200 }).catch(() => []) ?? [];
@@ -2177,29 +2260,101 @@ export class AdminService {
         referredEmail: byId.get(r.referredUserId)?.email ?? null,
       };
     });
-    const rewardedAll = (rows as any[]).filter((r) => r.status === "rewarded");
+    // Referral Advanced R3: per-referrer aggregates + an
+    // honest abuse watchlist (rules printed in the Admin UI).
+    const all = await (this.prisma as any).referral?.findMany({ orderBy: { createdAt: "desc" }, take: 1000 }).catch(() => []) ?? [];
+    const byReferrer = new Map<string, any>();
+    const dayAgo = Date.now() - 86400000;
+    for (const r of all as any[]) {
+      const e = byReferrer.get(r.referrerUserId) ?? {
+        referrerUserId: r.referrerUserId, referrerEmail: byId.get(r.referrerUserId)?.email ?? null,
+        signups: 0, rewarded: 0, earnedMinor: 0, signupsLast24h: 0,
+      };
+      e.signups++;
+      if (r.status === "rewarded") { e.rewarded++; e.earnedMinor += Number(r.rewardMinor ?? 0); }
+      if (new Date(r.createdAt).getTime() > dayAgo) e.signupsLast24h++;
+      byReferrer.set(r.referrerUserId, e);
+    }
+    const referrers = [...byReferrer.values()]
+      .map((e) => ({ ...e, conversionPercent: e.signups ? Math.round((e.rewarded / e.signups) * 1000) / 10 : null }))
+      .sort((a, b) => b.signups - a.signups)
+      .slice(0, 20);
+    const flagged = referrers
+      .filter((e) => (e.signups >= 10 && e.rewarded === 0) || e.signupsLast24h >= 5)
+      .map((e) => ({
+        ...e,
+        flags: [
+          ...(e.signups >= 10 && e.rewarded === 0 ? ["no_conversion"] : []),
+          ...(e.signupsLast24h >= 5 ? ["signup_spike"] : []),
+        ],
+      }));
     return {
       config: cfg,
       totals: {
-        signups: rows.length,
-        rewarded: rewardedAll.length,
-        paidOutMinor: rewardedAll.reduce((a, r) => a + Number(r.rewardMinor ?? 0), 0),
+        signups: (all as any[]).length,
+        rewarded: (all as any[]).filter((r: any) => r.status === "rewarded").length,
+        clawedBack: (all as any[]).filter((r: any) => r.status === "clawed_back").length,
+        paidOutMinor: (all as any[]).filter((r: any) => r.status === "rewarded").reduce((a: number, r: any) => a + Number(r.rewardMinor ?? 0), 0),
       },
+      referrers,
+      flagged,
       recent,
     };
   }
 
-  async updateReferralConfig(actor: any, dto: { enabled: boolean; rewardMinor: number }, ip?: string) {
+  async updateReferralConfig(actor: any, dto: {
+    enabled: boolean; rewardMinor: number; mode?: string; percentOfFirstPayment?: number;
+    perPlanMinor?: Record<string, number>; refereeBonusMinor?: number; minFirstPaymentMinor?: number;
+    creditExpiryDays?: number; milestones?: { count: number; bonusMinor: number }[];
+  }, ip?: string) {
     const rewardMinor = Math.floor(Number(dto.rewardMinor));
     if (!Number.isFinite(rewardMinor) || rewardMinor < 0 || rewardMinor > 100000000) {
       throw new BadRequestException("rewardMinor must be between 0 and 100000000 (minor units)");
     }
+    const money = (v: unknown, label: string) => {
+      if (v === undefined) return undefined;
+      const n = Math.floor(Number(v));
+      if (!Number.isFinite(n) || n < 0 || n > 100000000) throw new BadRequestException(`${label} must be between 0 and 100000000 (minor units)`);
+      return n;
+    };
+    // Merge over the stored config so a flat-only update
+    // never wipes the v2 fields (and vice versa).
+    const current = await referralConfig(this.prisma as any);
+    const mode = dto.mode ?? current.mode;
+    if (!["flat", "percent", "per_plan"].includes(mode)) throw new BadRequestException("mode must be flat | percent | per_plan");
+    const percent = dto.percentOfFirstPayment === undefined ? current.percentOfFirstPayment : Math.floor(Number(dto.percentOfFirstPayment));
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException("percentOfFirstPayment must be 0..100");
+    const perPlan: Record<string, number> = { ...current.perPlanMinor };
+    if (dto.perPlanMinor) {
+      for (const [k, v] of Object.entries(dto.perPlanMinor)) {
+        const n = money(v, `perPlanMinor.${k}`);
+        if (n !== undefined) perPlan[String(k).toUpperCase()] = n;
+      }
+    }
+    const milestones = dto.milestones === undefined ? current.milestones : dto.milestones.map((m) => {
+      const count = Math.floor(Number(m?.count)); const bonusMinor = Math.floor(Number(m?.bonusMinor));
+      if (!Number.isFinite(count) || count <= 0 || !Number.isFinite(bonusMinor) || bonusMinor <= 0) {
+        throw new BadRequestException("each milestone needs a positive count and bonusMinor");
+      }
+      return { count, bonusMinor };
+    });
+    const value = {
+      enabled: dto.enabled === true,
+      rewardMinor,
+      mode,
+      percentOfFirstPayment: percent,
+      perPlanMinor: perPlan,
+      refereeBonusMinor: money(dto.refereeBonusMinor, "refereeBonusMinor") ?? current.refereeBonusMinor,
+      minFirstPaymentMinor: money(dto.minFirstPaymentMinor, "minFirstPaymentMinor") ?? current.minFirstPaymentMinor,
+      creditExpiryDays: Math.min(3650, money(dto.creditExpiryDays, "creditExpiryDays") ?? current.creditExpiryDays),
+      milestones,
+    };
     await (this.prisma as any).systemSetting.upsert({
       where: { key: "referralConfig" },
-      create: { key: "referralConfig", value: { enabled: dto.enabled === true, rewardMinor } as any, updatedById: actor.id },
-      update: { value: { enabled: dto.enabled === true, rewardMinor } as any, updatedById: actor.id },
+      create: { key: "referralConfig", value: value as any, updatedById: actor.id },
+      update: { value: value as any, updatedById: actor.id },
     });
-    await this.logAdmin(actor, "referral_config_updated", "SystemSetting", "referralConfig", { enabled: dto.enabled === true, rewardMinor }, ip);
+    await this.logAdmin(actor, "referral_config_updated", "SystemSetting", "referralConfig", value, ip);
     return referralConfig(this.prisma as any);
   }
 
@@ -2230,6 +2385,7 @@ export class AdminService {
 
   async publicPricing() {
     const prices = await planPrices(this.prisma as any);
+    const yearly = await planYearlyPrices(this.prisma as any);
     const trialDays = await platformSetting(this.prisma as any, "trialDays").catch(() => null);
     return {
       currency: "BDT",
@@ -2237,6 +2393,7 @@ export class AdminService {
       plans: PLAN_TIERS.map((tier) => ({
         tier,
         priceMinor: (prices as any)[tier] ?? 0,
+        yearlyPriceMinor: (yearly as any)[tier] ?? 0,
         limits: (DEFAULT_PLAN_LIMITS as any)[tier] ?? {},
       })),
     };

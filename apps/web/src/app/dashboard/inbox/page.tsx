@@ -4,6 +4,15 @@ import { API_URL, apiFetch, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { subscribeInboxStream } from "@/lib/inbox-stream";
 import { EmptyState } from "@repo/ui";
+import { EmojiPickerPanel, VoiceRecorder } from "@/components/inbox-extras";
+import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
+import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { mergeTimeline } from "@/lib/timeline";
+
+/** Inbox Next-Gen P1: browser-upload cap. Mirrors the API's decoded
+ * cap (MEDIA_UPLOAD_MAX_BYTES = 2MB in InboxService). */
+const MEDIA_UPLOAD_MAX_BYTES = 2_000_000;
+const clampPane = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(v)));
 
 interface WaWindow { open: boolean; expiresAt: string | null }
 interface Conversation {
@@ -11,6 +20,9 @@ interface Conversation {
   status: string; unreadCount: number; lastMessagePreview?: string | null; lastMessageAt?: string | null;
   assignedUserId?: string | null; tags?: string[]; whatsappWindow?: WaWindow | null;
   customerId?: string | null; leadId?: string | null;
+  mood?: "positive" | "neutral" | "negative" | null;
+  visitorLastSeenAt?: string | null;
+  createdAt?: string;
   priority?: string; sentimentFlag?: string | null; firstResponseAt?: string | null;
   spamFlag?: boolean; spamReason?: string | null;
   autoReplyPaused?: boolean;
@@ -23,7 +35,9 @@ interface Message {
   id: string; direction: string; content?: string | null; type: string; status: string;
   error?: string | null; createdAt: string; sentByAiDraft: boolean;
   mediaId?: string | null; mediaUrl?: string | null;
+  mediaStorageKey?: string | null; mediaContentType?: string | null;
   intent?: string | null; intentConfidence?: number | null; autoReply?: boolean;
+  sentiment?: "positive" | "negative" | null;
   transcription?: string | null; transcriptionProvider?: string | null;
 }
 interface PaymentVerification { id: string; messageId: string; verdict: string; provider?: string | null; trxId?: string | null; amountMinor?: string | null; expectedAmountMinor?: string | null; flags?: string[] | null }
@@ -35,9 +49,11 @@ interface Member { id: string; role: string; user: { id: string; name?: string |
 interface ContextData {
   customer: { id: string; name?: string | null; phone?: string | null; email?: string | null; createdAt: string } | null;
   lead: { id: string; stage: string; source: string; valueMinor?: string | null; tags?: string[] } | null;
-  orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; currency: string; totalMinor: string; createdAt: string; codConfirmationStatus?: string | null; shipment?: { trackingCode?: string | null; status: string; provider: string } | null }[];
+  orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; currency: string; totalMinor: string; createdAt: string; codConfirmationStatus?: string | null; shipment?: { id: string; trackingCode?: string | null; status: string; provider: string; consignmentId?: string | null; codAmountMinor?: string | null; lastCheckedAt?: string | null } | null }[];
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string } | null;
 }
+
+const MOOD_TITLE = "কীওয়ার্ড-ভিত্তিক আনুমানিক সংকেত — সাম্প্রতিক গ্রাহক-বার্তার শব্দ দেখে হিসাব করা, মনের অবস্থা নয়";
 
 const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -103,6 +119,54 @@ function MediaView({ convId, message }: { convId: string; message: Message }) {
   return <a href={url} target="_blank" rel="noreferrer" className="underline">📎 ফাইল খুলুন ({message.type})</a>;
 }
 
+/** Inbox Next-Gen P2: live courier tracking widget. The status
+ * string is the courier's own words (stored verbatim); the
+ * stepper follows the documented mapping in lib/courier-status —
+ * an unmapped status renders the courier's words alone, with no
+ * stepper guess. Sync calls the existing manual sync endpoint and
+ * surfaces provider errors verbatim (handled by the caller). */
+function ShipmentWidget({ shipment, currency, syncing, onSync }: {
+  shipment: { id: string; trackingCode?: string | null; status: string; provider: string; codAmountMinor?: string | null; lastCheckedAt?: string | null };
+  currency: string;
+  syncing: boolean;
+  onSync: () => void;
+}) {
+  const view = courierStatusView(shipment.status);
+  return (
+    <div className="mt-1.5 rounded-lg bg-white p-2 ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="font-semibold">🚚 {shipment.provider}{shipment.trackingCode ? ` · ${shipment.trackingCode}` : ""}</span>
+        <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title="কুরিয়ারের কাছ থেকে এখনই সর্বশেষ স্ট্যাটাস আনুন">
+          {syncing ? "আপডেট হচ্ছে…" : "🔄 এখনই আপডেট করুন"}
+        </button>
+      </div>
+      {view.kind === "progress" ? (
+        <div className="mt-2">
+          <div className="flex items-center gap-1">
+            {COURIER_STEP_LABELS.map((label, i) => (
+              <div key={label} className="flex flex-1 flex-col items-center gap-1">
+                <div className={`h-1.5 w-full rounded-full ${i <= view.step ? "bg-emerald-500" : "bg-slate-200"}`} />
+                <span className={`text-center text-[9px] leading-tight ${i === view.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
+              </div>
+            ))}
+          </div>
+          {view.partial ? <div className="mt-1 text-[11px] font-medium text-amber-600">আংশিক ডেলিভার্ড — কিছু পণ্য পৌঁছেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div> : null}
+        </div>
+      ) : view.kind === "returned" ? (
+        <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">↩️ পার্সেল রিটার্ন এসেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+      ) : view.kind === "cancelled" ? (
+        <div className="mt-1.5 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">✖️ শিপমেন্ট বাতিল হয়েছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+      ) : (
+        <div className="mt-1.5 text-[11px] text-slate-500">কুরিয়ারের স্ট্যাটাস: <b>{shipment.status}</b></div>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+        <span>সর্বশেষ যাচাই: {shipment.lastCheckedAt ? new Date(shipment.lastCheckedAt).toLocaleString("bn-BD") : "এখনো যাচাই হয়নি"}</span>
+        {shipment.codAmountMinor && Number(shipment.codAmountMinor) > 0 ? <span>COD: <b className="text-slate-600">{money(shipment.codAmountMinor, currency)}</b></span> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<Conversation | null>(null);
@@ -110,7 +174,22 @@ export default function InboxPage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [context, setContext] = useState<ContextData | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [noteText, setNoteText] = useState("");
+  // P3: composer mode — "reply" is customer-visible, "note" is an
+  // internal whisper. The composer text (`reply`) is shared across
+  // modes; note mode has NO path to any customer send endpoint.
+  const [composerMode, setComposerMode] = useState<"reply" | "note">("reply");
+  // P3: ghost text (AI autocomplete suggestion for the reply only).
+  const [ghost, setGhost] = useState("");
+  const ghostForRef = useRef("");
+  const ghostSeqRef = useRef(0);
+  const ghostAbortRef = useRef<AbortController | null>(null);
+  const ghostLastFetchRef = useRef("");
+  // P3: tone rewriter — undo stash + menu visibility.
+  const [showToneMenu, setShowToneMenu] = useState(false);
+  const [prevReply, setPrevReply] = useState<string | null>(null);
+  // P3: webchat visitor presence (live stream cues keyed by conv id).
+  const [visitorLive, setVisitorLive] = useState<Record<string, { typing: boolean; at: number }>>({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [templates, setTemplates] = useState<WaTemplate[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -122,6 +201,15 @@ export default function InboxPage() {
   const [tplId, setTplId] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [filters, setFilters] = useState({ q: "", channel: "", status: "", assignee: "", tag: "", unreadOnly: false, sort: "recent", spamOnly: false });
+  // Inbox Next-Gen P2: smart folders (server-side counts — the
+  // list page itself is capped, so its length would lie) + bulk
+  // selection state.
+  const [smartFolder, setSmartFolder] = useState<"" | "sla" | "vip">("");
+  const [folderCounts, setFolderCounts] = useState<{ all: number; mine: number; unassigned: number; slaBreach: number; vip: number; vipThresholdMinor: string | null; slaFirstResponseMinutes: number } | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAssign, setBulkAssign] = useState("");
+  const [bulkTag, setBulkTag] = useState("");
   const [connectForm, setConnectForm] = useState({ channel: "whatsapp", accessToken: "", appSecret: "", verifyToken: "", phoneNumberId: "", pageId: "" });
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [qrForm, setQrForm] = useState({ title: "", content: "" });
@@ -146,7 +234,60 @@ export default function InboxPage() {
     const t = setInterval(beat, 20000);
     return () => { cancelled = true; clearInterval(t); };
   }, [active?.id, iAmTyping]);
+  // P3: age-out ticker for visitor presence cues — runs only while
+  // a conversation is open so stale "typing/online" cues fade.
+  useEffect(() => {
+    if (!active) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 5000);
+    return () => clearInterval(t);
+  }, [active?.id]);
+
+  // P3: note mode must never claim customer-visible typing.
+  useEffect(() => { if (composerMode === "note") setIAmTyping(false); }, [composerMode]);
+
+  // P3 ghost: clear immediately on ANY reply / conversation / mode
+  // change (declared before the fetch effect so clearing runs first).
+  useEffect(() => {
+    setGhost("");
+    ghostForRef.current = "";
+  }, [reply, active?.id, composerMode]);
+
+  // P3 ghost: debounced fetch. All failures are silent "no ghost".
+  useEffect(() => {
+    if (composerMode !== "reply" || !active) return;
+    if (reply.trim().length < 3 || reply.startsWith("/")) return;
+    if (ghostLastFetchRef.current === reply) return;
+    const partial = reply;
+    const convId = active.id;
+    const timer = setTimeout(() => {
+      ghostLastFetchRef.current = partial;
+      const seq = ++ghostSeqRef.current;
+      ghostAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      ghostAbortRef.current = ctrl;
+      const orgId = getOrganizationId(); if (!orgId) return;
+      apiFetch<{ completion: string }>(`/organizations/${orgId}/inbox/conversations/${convId}/ghost`, {
+        method: "POST",
+        body: JSON.stringify({ partial }),
+        signal: ctrl.signal,
+      }).then((r) => {
+        if (seq !== ghostSeqRef.current || ctrl.signal.aborted) return;
+        if (!r.completion) { setGhost(""); return; }
+        ghostForRef.current = partial;
+        setGhost(r.completion);
+      }).catch(() => {
+        if (seq !== ghostSeqRef.current || ctrl.signal.aborted) return;
+        setGhost("");
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [reply, composerMode, active?.id]);
+
   const [report, setReport] = useState<any>(null);
+  // Milestone 73: my performance + my signature (self-service).
+  const [myPerf, setMyPerf] = useState<any>(null);
+  const [mySig, setMySig] = useState<{ signature: string; enabled: boolean }>({ signature: "", enabled: false });
   // U4: telegram / email connect forms
   const [tgToken, setTgToken] = useState("");
   const [tgResult, setTgResult] = useState("");
@@ -159,7 +300,18 @@ export default function InboxPage() {
   }, []);
 
   // U5: control center — board view, command profile, close outcome
-  const [viewMode, setViewMode] = useState<"list" | "board" | "media">("list");
+  const [viewMode, setViewMode] = useState<"list" | "board" | "media" | "manage">("list");
+  // Inbox Next-Gen P1: fixed workspace + resizable panes + composer extras.
+  const [listW, setListW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.listW")) || 300, 230, 520); } catch { return 300; } });
+  const [ctxW, setCtxW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.ctxW")) || 320, 260, 520); } catch { return 320; } });
+  const [ctxOpen, setCtxOpen] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const replyRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
+  const openConvRef = useRef<string | null>(null);
+  const lastMsgIdRef = useRef<string | null>(null);
   const [mediaItems, setMediaItems] = useState<any[]>([]);
   const [mediaQ, setMediaQ] = useState("");
   const [mediaType, setMediaType] = useState("");
@@ -221,7 +373,7 @@ export default function InboxPage() {
   useEffect(() => { apiFetch<any>("/auth/me").then((j) => setMyId(j?.id ?? j?.user?.id ?? null)).catch(() => undefined); }, []);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadConversations = useCallback(async (f = filters) => {
+  const loadConversations = useCallback(async (f = filters, folderOverride?: string) => {
     const orgId = getOrganizationId(); if (!orgId) return;
     const params = new URLSearchParams();
     if (f.q) params.set("q", f.q);
@@ -232,10 +384,16 @@ export default function InboxPage() {
     if (f.unreadOnly) params.set("unread", "1");
     if (f.spamOnly) params.set("spam", "1");
     if (f.sort !== "recent") params.set("sort", f.sort);
+    // P2: the SLA/VIP smart folder rides as its own parameter and
+    // AND-composes with the filters above (server-side).
+    const effFolder = folderOverride !== undefined ? folderOverride : smartFolder;
+    if (effFolder) params.set("folder", effFolder);
     try { setConversations(await apiFetch<Conversation[]>(`/organizations/${orgId}/inbox/conversations?${params.toString()}`)); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     try { setIntegrations(await apiFetch<any[]>(`/organizations/${orgId}/inbox/integrations`)); } catch { /* none */ }
-  }, [filters]);
+    // P2: folder counts are server-side totals (see counts endpoint).
+    try { setFolderCounts(await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/counts`)); } catch { /* counts are additive */ }
+  }, [filters, smartFolder]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
   useEffect(() => { const mine = agentStates.find((a) => a.userId === myId); if (mine?.status) setMyStatus(mine.status); }, [agentStates, myId]);
@@ -262,6 +420,10 @@ export default function InboxPage() {
         scheduleList();
       } else if (ev.type === "presence" && ev.userId && ev.conversationId === activeRef.current?.id) {
         setLiveOthers((prev) => ({ ...prev, [ev.userId as string]: { typing: Boolean(ev.typing), at: Date.now() } }));
+      } else if (ev.type === "visitor.presence" && ev.conversationId) {
+        const cid = ev.conversationId;
+        setVisitorLive((prev) => ({ ...prev, [cid]: { typing: Boolean(ev.visitorTyping), at: Date.now() } }));
+        setNowTick(Date.now());
       }
     });
     const fallback = setInterval(() => loadConversations(), 60000);
@@ -288,7 +450,7 @@ export default function InboxPage() {
       else if (e.key === "e") { if (active && myId) void patchConversation({ assignedUserId: myId }); }
       else if (e.key === "r") { e.preventDefault(); document.getElementById("inbox-reply")?.focus(); }
       else if (e.key === "?") setShowShortcuts((v) => !v);
-      else if (e.key === "Escape") { setPaletteOpen(false); setShowShortcuts(false); }
+      else if (e.key === "Escape") { setPaletteOpen(false); setShowShortcuts(false); setGhost(""); ghostForRef.current = ""; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -300,6 +462,9 @@ export default function InboxPage() {
     apiFetch<Member[]>(`/organizations/${orgId}/members`).then(setMembers).catch(() => undefined);
     apiFetch<any>(`/organizations/${orgId}/inbox/settings`).then(setSettings).catch(() => undefined);
     apiFetch<any>(`/organizations/${orgId}/inbox/team-report?days=7`).then(setReport).catch(() => undefined);
+    apiFetch<any>(`/organizations/${orgId}/inbox/my-performance?days=7`).then(setMyPerf).catch(() => undefined);
+    apiFetch<any>(`/organizations/${orgId}/inbox/my-signature`).then((s) => setMySig({ signature: s.signature ?? "", enabled: Boolean(s.enabled) })).catch(() => undefined);
+    // Milestone 71: the report can be scoped to one team.
     apiFetch<any>(`/organizations/${orgId}/products?pageSize=100`).then((r) => setProducts(r.items ?? [])).catch(() => undefined);
   }, []);
 
@@ -337,9 +502,84 @@ export default function InboxPage() {
     loadConversations(next);
   }
 
+  /** P2 smart folders: "সব / আমার / অনির্ধারিত" drive the existing
+   * assignee filter; "sla" / "vip" set the server-side folder,
+   * which AND-composes with whatever filters are active. */
+  function applyFolder(folderVal: "" | "sla" | "vip", assigneeVal?: string) {
+    setVisibleCount(40); setFocusedIdx(0);
+    setSmartFolder(folderVal);
+    setSelectedIds(new Set());
+    if (assigneeVal !== undefined) {
+      const next = { ...filters, assignee: assigneeVal };
+      setFilters(next);
+      loadConversations(next, folderVal);
+    } else {
+      loadConversations(filters, folderVal);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  /** P2 bulk actions — ONE POST to the bulk endpoint (never a
+   * client-side PATCH loop). Results are reported honestly:
+   * successes clear, failures stay selected with their reasons. */
+  async function runBulk(action: "close" | "assign" | "tag-add" | "mark-read") {
+    const orgId = getOrganizationId(); if (!orgId || selectedIds.size === 0) return;
+    if (action === "assign" && !bulkAssign) { setError("অ্যাসাইন করার জন্য একজন সদস্য বেছে নিন।"); return; }
+    if (action === "tag-add" && !bulkTag.trim()) { setError("যোগ করার জন্য একটি ট্যাগ লিখুন।"); return; }
+    setBusy("bulk"); setError("");
+    try {
+      const r = await apiFetch<{ results: { id: string; ok: boolean; error?: string }[]; succeeded: number; failed: number }>(
+        `/organizations/${orgId}/inbox/conversations/bulk`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ids: [...selectedIds], action,
+            ...(action === "assign" ? { assignedUserId: bulkAssign === "__none__" ? null : bulkAssign } : {}),
+            ...(action === "tag-add" ? { tag: bulkTag.trim() } : {}),
+          }),
+        },
+      );
+      const failed = r.results.filter((x) => !x.ok);
+      setNotice(`বাল্ক সম্পন্ন: সফল ${r.succeeded}টি${r.failed ? `, ব্যর্থ ${r.failed}টি` : ""}।`);
+      if (failed.length) {
+        setError(`ব্যর্থ ${failed.length}টি: ${failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ")}`);
+        setSelectedIds(new Set(failed.map((x) => x.id)));
+      } else {
+        setSelectedIds(new Set());
+        if (action === "tag-add") setBulkTag("");
+      }
+      loadConversations();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  /** P2 courier widget: manual sync through the existing courier
+   * endpoint; provider errors surface verbatim. */
+  async function syncShipment(shipmentId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`sync:${shipmentId}`); setError("");
+    try {
+      const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments/${shipmentId}/sync`, { method: "POST" });
+      setNotice(`কুরিয়ার স্ট্যাটাস আপডেট হয়েছে: ${r.status ?? ""}`);
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
   async function openConversation(conv: Conversation) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setError("");
+    // P3: ghost / tone state never carries across conversations.
+    setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
+    ghostAbortRef.current?.abort();
+    setPrevReply(null); setShowToneMenu(false); setComposerMode("reply");
     try {
       const res = await apiFetch<{ conversation: Conversation; messages: Message[]; drafts: Draft[]; context: ContextData; botSession?: { id: string; state: string; status: string } | null }>(`/organizations/${orgId}/inbox/conversations/${conv.id}`);
       setActive(res.conversation); setMessages(res.messages); setDrafts(res.drafts); setContext(res.context); setBotSession(res.botSession ?? null);
@@ -378,11 +618,15 @@ export default function InboxPage() {
   }
 
   async function sendReply() {
+    // P3 structural safety: this customer-send path is unreachable
+    // in note mode — the composer send button / Enter dispatch to
+    // addNote() there, and this guard is the belt-and-braces check.
+    if (composerMode === "note") return;
     const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim()) return;
     setBusy("send"); setError("");
     try {
       const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${active.id}/messages`, { method: "POST", body: JSON.stringify({ content: reply }) });
-      setMessages((m) => [...m, msg]); setReply("");
+      setMessages((m) => [...m, msg]); setReply(""); setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
       loadConversations();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -397,6 +641,120 @@ export default function InboxPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
   }
+
+  // ----- Inbox Next-Gen P1: uploads (drag-drop / paste / picker / voice) -----
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => { const s = String(reader.result ?? ""); resolve(s.slice(s.indexOf(",") + 1)); };
+      reader.onerror = () => reject(new Error("ফাইলটি পড়া যায়নি।"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /** Sends files through the API media-upload flow. A file counts
+   * as sent only when the API returns the message row — the
+   * platform's own error (wrong container, missing integration…)
+   * shows verbatim, exactly like the URL image send. When exactly
+   * one file is sent, the composer's current text rides along as
+   * its caption. */
+  async function sendMediaFiles(files: File[]) {
+    // P3 structural safety: no media-to-customer path in note mode.
+    if (composerMode === "note") return;
+    const orgId = getOrganizationId(); if (!orgId || !active || files.length === 0) return;
+    for (const file of files) {
+      if (file.size > MEDIA_UPLOAD_MAX_BYTES) {
+        setError(`"${file.name}" খুব বড় (${(file.size / 1048576).toFixed(1)}MB) — সর্বোচ্চ 2MB পর্যন্ত পাঠানো যাবে।`);
+        continue;
+      }
+      setBusy("media"); setError("");
+      try {
+        const dataBase64 = await fileToBase64(file);
+        const caption = files.length === 1 && reply.trim() ? reply.trim() : undefined;
+        const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/media`, {
+          method: "POST",
+          body: JSON.stringify({ dataBase64, fileName: file.name, contentType: file.type || undefined, caption }),
+        });
+        setMessages((m) => [...m, msg]);
+        if (caption) setReply("");
+        loadConversations();
+      } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+      finally { setBusy(""); }
+    }
+  }
+
+  function focusComposer(selectionStart?: number, selectionEnd?: number) {
+    requestAnimationFrame(() => {
+      const ta = replyRef.current;
+      if (!ta) return;
+      ta.focus();
+      if (selectionStart != null) ta.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
+    });
+  }
+
+  /** Insert text (emoji, canned snippet) at the composer's caret. */
+  function insertIntoReply(insert: string) {
+    const ta = replyRef.current;
+    const start = ta?.selectionStart ?? reply.length;
+    const end = ta?.selectionEnd ?? reply.length;
+    const r = insertAtCursor(reply, start, end, insert);
+    setReply(r.text); setIAmTyping(r.text.length > 0);
+    focusComposer(r.selectionStart, r.selectionEnd);
+  }
+
+  /** WhatsApp-marker formatting helpers (composer shows these only
+   * on whatsapp — the one channel that renders the markers). */
+  function applyFormat(kind: "bold" | "italic" | "list") {
+    const ta = replyRef.current; if (!ta) return;
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? 0;
+    const r = kind === "list" ? toggleBulletLines(reply, start, end) : wrapSelection(reply, start, end, kind === "bold" ? "*" : "_");
+    setReply(r.text); setIAmTyping(r.text.length > 0);
+    focusComposer(r.selectionStart, r.selectionEnd);
+  }
+
+  /** Pane splitter drag (desktop): pointer capture on the handle,
+   * widths persisted on release. Double-click resets (handled in
+   * the handle's onDoubleClick). */
+  function startResize(e: React.PointerEvent, which: "list" | "ctx") {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = which === "list" ? listW : ctxW;
+    const min = which === "list" ? 230 : 260;
+    let lastDelta = 0;
+    const onMove = (ev: PointerEvent) => {
+      lastDelta = ev.clientX - startX;
+      if (which === "list") setListW(clampPane(startW + lastDelta, min, 520));
+      else setCtxW(clampPane(startW - lastDelta, min, 520));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      try {
+        localStorage.setItem(which === "list" ? "inbox.listW" : "inbox.ctxW", String(which === "list" ? clampPane(startW + lastDelta, min, 520) : clampPane(startW - lastDelta, min, 520)));
+      } catch { /* storage is best-effort */ }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  // Keep the thread pinned to the newest message: always on open /
+  // own send, otherwise only when the agent is already near the
+  // bottom (reading history is never yanked away).
+  useEffect(() => {
+    const el = threadScrollRef.current; if (!el) return;
+    const last = messages[messages.length - 1];
+    if (openConvRef.current !== active?.id) {
+      openConvRef.current = active?.id ?? null;
+      lastMsgIdRef.current = null;
+    }
+    if (!last) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 280;
+    if (lastMsgIdRef.current === null || last.direction === "out" || nearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+    lastMsgIdRef.current = last.id;
+  }, [messages, active?.id]);
 
   async function createChatOrder() {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
@@ -449,6 +807,32 @@ export default function InboxPage() {
     setShowPicker(false);
   }
 
+  /** P2 product showcase card: sends the product's REAL image with
+   * the composed card caption via the product endpoint. The notice
+   * states what was ACTUALLY sent (image+caption vs image vs text
+   * fallback) — from the server's own `sentAs`, never assumed. The
+   * current composer text rides along as the agent caption. */
+  async function sendProductCard(prod: { id: string; name: string; priceMinor: string; currency: string; stockQuantity?: number | null }) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setBusy("product-card"); setError("");
+    try {
+      const caption = reply.trim();
+      const r = await apiFetch<{ sentAs: string; message: Message; captionMessage?: Message; captionDelivered?: boolean }>(
+        `/organizations/${orgId}/inbox/conversations/${active.id}/messages/product`,
+        { method: "POST", body: JSON.stringify({ productId: prod.id, ...(caption ? { caption } : {}) }) },
+      );
+      setMessages((prev) => [...prev, r.message, ...(r.captionMessage ? [r.captionMessage] : [])]);
+      if (caption) setReply("");
+      setShowPicker(false);
+      setNotice(
+        r.sentAs === "text" ? "⚠️ প্রোডাক্টের ছবি পাঠানো যায়নি — টেক্সট হিসেবে পাঠানো হয়েছে।" :
+        r.captionDelivered === false ? "ছবি পাঠানো হয়েছে, তবে ক্যাপশন টেক্সটটি পাঠানো যায়নি।" :
+        "🃏 প্রোডাক্ট কার্ড পাঠানো হয়েছে।",
+      );
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
   async function sendTemplate() {
     const orgId = getOrganizationId(); if (!orgId || !active || !tplId) return;
     setBusy("template"); setError("");
@@ -488,12 +872,38 @@ export default function InboxPage() {
     setDrafts((d) => d.filter((x) => x.id !== draftId));
   }
 
+  /** P3: internal note from the composer (note mode). Sources its
+   * text from the shared composer state and ONLY ever calls the
+   * notes endpoint — no message/media/draft-send path exists here. */
   async function addNote() {
-    const orgId = getOrganizationId(); if (!orgId || !active || !noteText.trim()) return;
+    const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim()) return;
+    setBusy("note"); setError("");
     try {
-      const note = await apiFetch<Note>(`/organizations/${orgId}/inbox/conversations/${active.id}/notes`, { method: "POST", body: JSON.stringify({ content: noteText }) });
-      setNotes((n) => [...n, note]); setNoteText("");
+      const note = await apiFetch<Note>(`/organizations/${orgId}/inbox/conversations/${active.id}/notes`, { method: "POST", body: JSON.stringify({ content: reply }) });
+      setNotes((n) => [...n, note]); setReply(""); setIAmTyping(false);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  /** P3: tone rewriter (reply mode only). On success the rewritten
+   * text replaces the composer text and the previous text is kept
+   * for a one-click undo until the next manual edit. API errors
+   * surface verbatim via setError. */
+  async function applyTone(tone: "polite" | "professional" | "sales") {
+    const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim() || busy !== "") return;
+    const before = reply;
+    setBusy("tone"); setError("");
+    try {
+      const r = await apiFetch<{ text: string }>(`/organizations/${orgId}/inbox/conversations/${active.id}/tone-rewrite`, {
+        method: "POST",
+        body: JSON.stringify({ text: before, tone }),
+      });
+      setPrevReply(before);
+      setReply(r.text);
+      setGhost(""); ghostForRef.current = "";
+      setShowToneMenu(false);
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
   }
 
   async function addQr(e: React.FormEvent) {
@@ -540,15 +950,32 @@ export default function InboxPage() {
   const quickMatches = showQuick
     ? quickReplies.filter((q) => !reply.startsWith("/") || q.title.toLowerCase().includes(reply.slice(1).toLowerCase()))
     : [];
+  // P3: visitor online = last-seen within 60s OR a live presence
+  // event within 60s (nowTick ages the live cue out).
+  const isVisitorOnline = (c: Conversation): boolean => {
+    if (c.visitorLastSeenAt && nowTick - new Date(c.visitorLastSeenAt).getTime() < 60000) return true;
+    const live = visitorLive[c.id];
+    return Boolean(live && nowTick - live.at < 60000);
+  };
+  const ghostVisible = composerMode === "reply" && ghost.length > 0 && ghostForRef.current === reply;
+  // P3: merged message + note timeline for the thread render.
+  const timeline = mergeTimeline(messages, notes);
+  const moodChip = (mood?: string | null) => {
+    if (mood === "positive") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">😃 ইতিবাচক</span>;
+    if (mood === "neutral") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">😐 স্বাভাবিক</span>;
+    if (mood === "negative") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">😡 অসন্তুষ্টির সংকেত</span>;
+    return null;
+  };
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className={viewMode === "list" ? "flex h-[calc(100dvh-164px)] flex-col gap-3 sm:h-[calc(100dvh-180px)] lg:h-[calc(100dvh-116px)]" : "space-y-6"}>
+      <div className="shrink-0">
         <h1 className="page-title">Inbox</h1>
-        <div className="mt-2 flex gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "list" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("list")}>💬 কথোপকথন</button>
           <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "board" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("board")}>🗂️ পাইপলাইন বোর্ড</button>
           <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "media" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("media")}>🖼️ মিডিয়া</button>
+          <button className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === "manage" ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => setViewMode("manage")}>⚙️ সেটিংস ও টিম</button>
           <button className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold" onClick={async () => {
             const orgId = getOrganizationId(); if (!orgId) return;
             try {
@@ -560,8 +987,8 @@ export default function InboxPage() {
         </div>
         <p className="text-sm text-slate-500">WhatsApp ও Messenger এক জায়গায়। AI শুধু Draft সাজেস্ট করে, পাঠানোর সিদ্ধান্ত সবসময় মানুষের। বার্তা "পাঠানো হয়েছে" দেখানো হয় শুধু প্ল্যাটফর্মের Message ID পেলে। Internal Note কখনোই গ্রাহকের কাছে যায় না।</p>
       </div>
-      {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+      {error ? <p className="shrink-0 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      {notice ? <p className="shrink-0 rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       {viewMode === "board" ? (
         <div className="card p-4">
@@ -643,11 +1070,57 @@ export default function InboxPage() {
         </div>
       ) : null}
 
-      <div className={`${viewMode !== "list" ? "hidden" : ""} grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_320px]`}>
+      <div
+        className={`${viewMode !== "list" ? "hidden" : ""} relative grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[var(--ilw,300px)_minmax(0,1fr)] xl:grid-cols-[var(--ilw,300px)_minmax(0,1fr)_var(--icw,320px)]`}
+        style={{ "--ilw": `${listW}px`, "--icw": `${ctxW}px` } as React.CSSProperties}
+      >
+        {/* Pane splitters (desktop only): drag to resize, arrow
+            keys nudge, double-click resets. Widths persist locally. */}
+        <div
+          role="separator" aria-label="কথোপকথন তালিকার প্রস্থ" aria-orientation="vertical" tabIndex={0}
+          className="absolute inset-y-0 z-20 hidden w-3 cursor-col-resize touch-none rounded hover:bg-brand-100 focus:bg-brand-100 focus:outline-none lg:block"
+          style={{ left: "calc(var(--ilw,300px) - 2px)" }}
+          onPointerDown={(e) => startResize(e, "list")}
+          onDoubleClick={() => { setListW(300); try { localStorage.setItem("inbox.listW", "300"); } catch { /* best-effort */ } }}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            e.preventDefault();
+            const next = clampPane(listW + (e.key === "ArrowRight" ? 12 : -12), 230, 520);
+            setListW(next); try { localStorage.setItem("inbox.listW", String(next)); } catch { /* best-effort */ }
+          }}
+        />
+        <div
+          role="separator" aria-label="গ্রাহক প্যানেলের প্রস্থ" aria-orientation="vertical" tabIndex={0}
+          className="absolute inset-y-0 z-20 hidden w-3 cursor-col-resize touch-none rounded hover:bg-brand-100 focus:bg-brand-100 focus:outline-none xl:block"
+          style={{ right: "calc(var(--icw,320px) - 2px)" }}
+          onPointerDown={(e) => startResize(e, "ctx")}
+          onDoubleClick={() => { setCtxW(320); try { localStorage.setItem("inbox.ctxW", "320"); } catch { /* best-effort */ } }}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            e.preventDefault();
+            const next = clampPane(ctxW + (e.key === "ArrowLeft" ? 12 : -12), 260, 520);
+            setCtxW(next); try { localStorage.setItem("inbox.ctxW", String(next)); } catch { /* best-effort */ }
+          }}
+        />
         {/* ---- Conversation list + filters ---- */}
-        <div className={`${mobileChat ? "hidden lg:block" : "block"} space-y-2`}>
-          <input id="inbox-search" className="input" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
-          <div className="flex flex-wrap gap-1.5">
+        <div className={`${mobileChat ? "hidden lg:flex" : "flex"} min-h-0 flex-col gap-2`}>
+          <input id="inbox-search" className="input shrink-0" placeholder="নাম, ফোন বা বার্তা খুঁজুন... ( / )" value={filters.q} onChange={(e) => onSearch(e.target.value)} />
+          {/* P2 smart folders — counts are server-side totals (the list page is capped). */}
+          <div className="flex shrink-0 flex-wrap gap-1.5">
+            {([
+              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
+              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি (থ্রেশহোল্ড: ইনবক্স সেটিংস)`, onClick: () => applyFolder("sla") },
+              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
+            ]).map((chip) => (
+              <button key={chip.key} title={chip.title} onClick={chip.onClick}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 transition ${chip.active ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-400"}`}>
+                {chip.label}{chip.count !== undefined && chip.count !== null ? ` (${chip.count})` : ""}
+              </button>
+            ))}
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-1.5">
             <select className="input !w-auto flex-1" value={filters.channel} onChange={(e) => onFilter({ channel: e.target.value })}>
               <option value="">সব চ্যানেল</option><option value="whatsapp">WhatsApp</option><option value="messenger">Messenger</option><option value="instagram">Instagram</option><option value="webchat">ওয়েবসাইট চ্যাট</option>
             </select>
@@ -657,24 +1130,61 @@ export default function InboxPage() {
             <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.unreadOnly ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ unreadOnly: !filters.unreadOnly })}>অপঠিত</button>
             <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.sort === "unread" ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ sort: filters.sort === "unread" ? "recent" : "unread" })}>অপঠিত আগে</button>
             <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${filters.spamOnly ? "bg-slate-900 text-white" : "bg-white"}`} onClick={() => onFilter({ spamOnly: !filters.spamOnly })}>🚫 Spam সন্দেহ</button>
+            <button className={`btn-sm rounded-lg border px-2 py-1.5 text-xs font-semibold ${selectMode ? "bg-slate-900 text-white" : "bg-white"}`} title="একসাথে একাধিক কথোপকথন বেছে অ্যাকশন নিন (সর্বোচ্চ ২৫টি)" onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}>☑️ বাল্ক</button>
           </div>
-          <input className="input" placeholder="Tag দিয়ে ফিল্টার (যেমন vip)" value={filters.tag} onChange={(e) => onFilter({ tag: e.target.value })} />
-          <div className="space-y-2 pt-1">
+          <input className="input shrink-0" placeholder="Tag দিয়ে ফিল্টার (যেমন vip)" value={filters.tag} onChange={(e) => onFilter({ tag: e.target.value })} />
+          {selectedIds.size > 0 ? (
+            <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-indigo-800">{selectedIds.size}টি নির্বাচিত</span>
+                <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setSelectedIds(new Set())}>সিলেকশন মুছুন</button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkAssign} onChange={(e) => setBulkAssign(e.target.value)} aria-label="অ্যাসাইন করুন">
+                  <option value="">— অ্যাসাইন —</option>
+                  <option value="__none__">অ্যাসাইন তুলে নিন</option>
+                  {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
+                </select>
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("assign")}>অ্যাসাইন</button>
+                <input className="w-24 rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" placeholder="ট্যাগ…" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} list="bulk-tag-list" />
+                <datalist id="bulk-tag-list">{[...new Set(conversations.flatMap((c) => c.tags ?? []))].map((t) => <option key={t} value={t} />)}</datalist>
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("tag-add")}>ট্যাগ যোগ</button>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("mark-read")}>পঠিত</button>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-red-600 ring-1 ring-red-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("close")}>বন্ধ করুন</button>
+              </div>
+            </div>
+          ) : selectMode ? (
+            <div className="shrink-0 text-[11px] text-slate-400">বাল্ক মোড চালু — কার্ডে ক্লিক করে কথোপকথন বেছে নিন।</div>
+          ) : null}
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pt-1 pr-0.5">
             {conversations.length === 0 ? (
-              <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
+              smartFolder === "vip" && !folderCounts?.vipThresholdMinor ? (
+                <EmptyState title="VIP ফোল্ডার এখনো সেট হয়নি" description="এই ফোল্ডারটি ইনবক্স সেটিংসের ‘এসকেলেশন থ্রেশহোল্ড’ ব্যবহার করে — থ্রেশহোল্ড সেট করা থাকলে, যেসব কথোপকথনের সর্বশেষ লিংকড অর্ডার সেই পরিমাণ বা তার বেশি, সেগুলো এখানে আসবে। সেটিংস খুলে থ্রেশহোল্ড বসান।" />
+              ) : smartFolder === "vip" ? (
+                <EmptyState title="কোনো VIP কথোপকথন নেই" description="থ্রেশহোল্ডের সমান বা বড় সর্বশেষ অর্ডারওয়ালা কোনো কথোপকথন এখন নেই।" />
+              ) : smartFolder === "sla" ? (
+                <EmptyState title="🎉 কোনো SLA breach নেই" description="প্রথম জবাবের অপেক্ষায় থ্রেশহোল্ডের বেশি সময় ধরে কোনো কথোপকথন আটকে নেই।" />
+              ) : (
+                <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
+              )
             ) : conversations.slice(0, visibleCount).map((c, ci) => (
-              <button key={c.id} id={`conv-${c.id}`} onClick={() => { setFocusedIdx(ci); openConversation(c); }} className={`block w-full rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow ${active?.id === c.id ? "border-brand-500 ring-1 ring-brand-500/40" : ""} ${focusedIdx === ci ? "ring-2 ring-indigo-300" : ""}`}>
+              <button key={c.id} id={`conv-${c.id}`} onClick={() => { if (selectMode) { toggleSelect(c.id); return; } setFocusedIdx(ci); openConversation(c); }} className={`relative block w-full rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow ${selectMode ? "pl-9" : ""} ${selectedIds.has(c.id) ? "border-indigo-500 ring-1 ring-indigo-400" : active?.id === c.id ? "border-brand-500 ring-1 ring-brand-500/40" : ""} ${focusedIdx === ci ? "ring-2 ring-indigo-300" : ""}`}>
+                {selectMode ? (
+                  <span className={`absolute left-2.5 top-3 flex h-4.5 w-4.5 items-center justify-center rounded border text-[11px] ${selectedIds.has(c.id) ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-transparent"}`} style={{ width: 18, height: 18 }}>✓</span>
+                ) : null}
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{c.contactName ?? c.contactPhone ?? "(নাম নেই)"}</span>
+                  <span className="truncate font-medium">{c.channel === "webchat" && isVisitorOnline(c) ? <span title="ওয়েবসাইট ভিজিটর এখন অনলাইন (শেষ কার্যকলাপের ভিত্তিতে)" className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" /> : null}{c.contactName ?? c.contactPhone ?? "(নাম নেই)"}</span>
                   {c.unreadCount > 0 ? <span className="rounded-full bg-brand-600 px-2 py-0.5 text-xs font-bold text-white">{c.unreadCount}</span> : null}
                 </div>
                 <div className="truncate text-xs text-slate-500">{c.lastMessagePreview ?? ""}</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
                   <ChannelChip channel={c.channel} /><span>· {c.status}</span>
+                  {/* P2: display-only SLA breach marker — same rule as the server folder (unanswered + older than the threshold). */}
+                  {!c.firstResponseAt && c.status !== "closed" && c.createdAt && Date.now() - new Date(c.createdAt).getTime() > (settings?.slaFirstResponseMinutes ?? 60) * 60000 ? <span className="font-semibold text-red-600">· ⏰ SLA breach</span> : null}
                   {c.channel === "whatsapp" && c.whatsappWindow ? (c.whatsappWindow.open ? <span className="text-emerald-600">· Window খোলা</span> : <span className="text-amber-600">· Window বন্ধ</span>) : null}
                   {c.spamFlag ? <span className="font-semibold text-amber-600">· 🚫 Spam সন্দেহ</span> : null}
                   {c.priority === "high" ? <span className="font-semibold text-red-600">· 🔥 অগ্রাধিকার</span> : null}
-                  {c.sentimentFlag === "negative" ? <span className="text-red-500">· 😡</span> : null}
+                  {c.mood === "negative" ? <span title={MOOD_TITLE} className="text-red-500">· 😡</span> : c.mood === "positive" ? <span title={MOOD_TITLE}>· 😃</span> : c.mood === "neutral" ? <span title={MOOD_TITLE} className="text-slate-400">· 😐</span> : null}
                   {c.assignedUserId ? <span>· {memberName(c.assignedUserId)}</span> : null}
                   {(c.tags ?? []).map((t) => <span key={t} className="badge-slate">{t}</span>)}
                 </div>
@@ -685,22 +1195,44 @@ export default function InboxPage() {
         </div>
 
         {/* ---- Thread ---- */}
-        <div className={`${mobileChat ? "block" : "hidden lg:block"} min-w-0`}>
+        <div className={`${mobileChat ? "flex" : "hidden lg:flex"} min-h-0 min-w-0 flex-col`}>
           {active ? (
-            <div className="space-y-3 card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+            <div
+              className="card relative flex min-h-0 flex-1 flex-col gap-3 p-4"
+              onDragOver={(e) => { e.preventDefault(); if (!dragOver) setDragOver(true); }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false); }}
+              onDrop={(e) => {
+                e.preventDefault(); setDragOver(false);
+                if (composerMode === "note") return;
+                const files = Array.from(e.dataTransfer.files ?? []);
+                if (files.length) void sendMediaFiles(files);
+              }}
+            >
+              {dragOver ? (
+                <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-[inherit] bg-brand-500/10 ring-2 ring-inset ring-brand-500">
+                  <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">📎 ছেড়ে দিন — ফাইলটি পাঠানো হবে</span>
+                </div>
+              ) : null}
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <button className="rounded-lg border px-2 py-1 text-xs lg:hidden" onClick={() => setMobileChat(false)}>← তালিকা</button>
-                  <div className="font-semibold">{active.contactName ?? active.contactPhone} <ChannelChip channel={active.channel} lg /></div>
+                  <div className="flex flex-wrap items-center gap-2 font-semibold"><span>{active.contactName ?? active.contactPhone}</span> <ChannelChip channel={active.channel} lg />{moodChip(active.mood)}{active.channel === "webchat" ? (() => {
+                    const live = visitorLive[active.id];
+                    const typingFresh = Boolean(live?.typing && nowTick - live.at < 8000);
+                    if (typingFresh) return <span className="text-xs font-semibold text-emerald-600">✍️ গ্রাহক টাইপ করছেন…</span>;
+                    if (isVisitorOnline(active)) return <span className="text-xs font-semibold text-emerald-600">🟢 অনলাইন</span>;
+                    return null;
+                  })() : null}</div>
                 </div>
                 <div className="flex gap-1.5 text-xs">
+                  <button className="rounded-lg bg-slate-100 px-2 py-1 font-medium xl:hidden" onClick={() => setCtxOpen(true)}>👤 তথ্য</button>
                   {(["open", "pending", "closed"] as const).map((s) => (
                     <button key={s} className={`rounded-lg px-2 py-1 font-medium ${active.status === s ? "bg-slate-900 text-white" : "bg-slate-100"}`} onClick={() => patchConversation({ status: s })}>{s}</button>
                   ))}
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-1.5 lg:hidden">
+              <div className="flex shrink-0 flex-wrap gap-1.5 lg:hidden">
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
                 {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}>{active.status === "closed" ? "↩️ আবার খুলুন" : "✓ বন্ধ করুন"}</button>
@@ -708,7 +1240,7 @@ export default function InboxPage() {
               </div>
 
               {/* U5 quick actions + pipeline/outcome controls */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
                 <select className="rounded-lg bg-slate-100 px-2 py-1.5 font-medium" value={active.pipelineStage ?? "new"}
                   onChange={(e) => patchConversation({ pipelineStage: e.target.value })} title="Pipeline Stage">
                   <option value="new">🆕 New</option><option value="talking">💬 Talking</option>
@@ -776,6 +1308,10 @@ export default function InboxPage() {
                 ) : active.outcome ? <span className="ml-auto font-medium text-slate-500">ফলাফল: {active.outcome}</span> : null}
               </div>
 
+              {/* Inbox Next-Gen P1: the thread's ONE scroll region —
+                  banners + messages + drafts scroll together; the
+                  header rows above and the composer below stay put. */}
+              <div ref={threadScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
               {active.autoReplyPaused ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100">
                   <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।</span>
@@ -816,17 +1352,34 @@ export default function InboxPage() {
                   </p>
                 );
               })()}
-              <div className="max-h-[28rem] space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
-                {messages.map((m, i) => {
-                  const prevDay = i > 0 ? new Date(messages[i - 1].createdAt).toDateString() : null;
-                  const thisDay = new Date(m.createdAt).toDateString();
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                {timeline.map((item, i) => {
+                  const prevDay = i > 0 ? new Date(timeline[i - 1].at).toDateString() : null;
+                  const thisDay = new Date(item.at).toDateString();
+                  const daySep = prevDay !== thisDay ? <div className="py-1 text-center text-[11px] font-semibold text-slate-400">{dayLabel(item.at)}</div> : null;
+                  if (item.kind === "note") {
+                    const n = item.note;
+                    return (
+                      <React.Fragment key={`note-${n.id}`}>
+                        {daySep}
+                        <div className="flex justify-center">
+                          <div className="w-full max-w-[85%] rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm shadow-sm">
+                            <div className="text-[11px] font-bold text-amber-700">🔒 প্রাইভেট নোট · শুধু টিম দেখবে</div>
+                            <div className="mt-0.5 whitespace-pre-wrap text-slate-700">{n.content}</div>
+                            <div className="mt-0.5 text-[10px] text-amber-600/80">{memberName(n.authorUserId)} · {new Date(n.createdAt).toLocaleTimeString()}</div>
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    );
+                  }
+                  const m = item.message;
                   return (
                     <React.Fragment key={m.id}>
-                      {prevDay !== thisDay ? <div className="py-1 text-center text-[11px] font-semibold text-slate-400">{dayLabel(m.createdAt)}</div> : null}
+                      {daySep}
                       <div className={m.direction === "in" ? "flex justify-start" : "flex justify-end"}>
                     <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.direction === "in" ? "border bg-white" : m.status === "failed" ? "bg-red-100" : "bg-gradient-to-br from-brand-500 to-violet-500 text-white shadow"}`}>
-                      {(m.mediaId || m.mediaUrl) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
-                      {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl) ? null : <div>[{m.type}]</div>}
+                      {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
+                      {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl || m.mediaStorageKey) ? null : <div>[{m.type}]</div>}
                       <div className={`mt-0.5 text-[10px] ${m.direction === "in" ? "text-slate-400" : "opacity-75"}`}>
                         {new Date(m.createdAt).toLocaleTimeString()}{statusIcon(m)}{m.sentByAiDraft ? " · AI Draft থেকে" : ""}{m.autoReply ? " · 🤖 অটো-রিপ্লাই" : ""}
                         {m.direction === "in" && m.intent && m.intent !== "other" ? <span className="ml-1 rounded bg-indigo-50 px-1 py-px font-semibold text-indigo-600" title={`আস্থা ${m.intentConfidence ?? 0}%`}>{m.intent} · {m.intentConfidence}%</span> : null}
@@ -835,7 +1388,7 @@ export default function InboxPage() {
                       </div>
                       {translations[m.id] ? <div className="mt-1 rounded bg-white/70 px-1.5 py-1 text-[11px] italic text-slate-600">🌐 {translations[m.id]}</div> : null}
                       {m.transcription ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-600">🎙️ {m.transcription} <span className="text-slate-400">({m.transcriptionProvider})</span></div> : null}
-                      {m.direction === "in" && (m.mediaId || m.mediaUrl) && m.type === "audio" && !m.transcription ? (
+                      {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "audio" && !m.transcription ? (
                         <button className="mt-1 text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={async () => {
                           const orgId = getOrganizationId(); if (!orgId || !active) return;
                           setBusy("transcribe");
@@ -844,7 +1397,7 @@ export default function InboxPage() {
                           finally { setBusy(""); }
                         }}>🎙️ ভয়েস লেখায় রূপান্তর করুন</button>
                       ) : null}
-                      {m.direction === "in" && (m.mediaId || m.mediaUrl) && m.type === "image" ? (() => {
+                      {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (() => {
                         const v = verifications.find((x) => x.messageId === m.id);
                         return v ? (
                           <div className={`mt-1 rounded px-1.5 py-1 text-[11px] font-medium ${v.verdict === "matched" ? "bg-green-100 text-green-800" : v.verdict === "amount_mismatch" || v.verdict === "duplicate_trxid" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
@@ -865,7 +1418,7 @@ export default function InboxPage() {
                     </React.Fragment>
                   );
                 })}
-                {messages.length === 0 ? <p className="text-sm text-slate-400">কোনো বার্তা নেই</p> : null}
+                {timeline.length === 0 ? <p className="text-sm text-slate-400">কোনো বার্তা নেই</p> : null}
               </div>
 
               {drafts.map((d) => (
@@ -881,54 +1434,140 @@ export default function InboxPage() {
                 </div>
               ))}
 
-              <div className="relative">
-                {showQuick && quickMatches.length ? (
+              </div>
+
+              <div className={`relative shrink-0 ${composerMode === "note" ? "rounded-2xl bg-amber-50 p-2 ring-2 ring-amber-300" : ""}`}>
+                {/* P3: composer mode toggle — reply (customer) vs note (internal whisper). */}
+                <div className="mb-1.5 flex gap-1.5">
+                  <button type="button" className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${composerMode === "reply" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`} onClick={() => setComposerMode("reply")}>💬 উত্তর</button>
+                  <button type="button" className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${composerMode === "note" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`} onClick={() => { setComposerMode("note"); setIAmTyping(false); setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); setGhost(""); ghostForRef.current = ""; }}>🔒 নোট</button>
+                </div>
+                {composerMode === "reply" && showQuick && quickMatches.length ? (
                   <div className="absolute bottom-full left-0 right-0 z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border bg-white shadow-lg">
                     {quickMatches.map((q) => (
-                      <button key={q.id} className="block w-full px-3 py-2 text-left text-sm hover:bg-brand-50" onClick={() => { setReply(renderQuick(q.content, active)); setShowQuick(false); }}>
+                      <button key={q.id} className="block w-full px-3 py-2 text-left text-sm hover:bg-brand-50" onClick={() => { setReply(renderQuick(q.content, active)); setShowQuick(false); focusComposer(); }}>
                         <span className="font-semibold">{q.title}</span>
                         <span className="block truncate text-xs text-slate-500">{q.content}</span>
                       </button>
                     ))}
                   </div>
                 ) : null}
-                <div className="flex gap-2">
-                  <input id="inbox-reply" className="input flex-1" placeholder="উত্তর লিখুন... ( / চাপলে Quick Reply )" value={reply}
-                    onChange={(e) => { setReply(e.target.value); setShowQuick(e.target.value.startsWith("/")); setIAmTyping(e.target.value.length > 0); }}
-                    onBlur={() => setIAmTyping(false)}
-                    onFocus={() => { if (reply.startsWith("/")) setShowQuick(true); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") sendReply(); if (e.key === "Escape") setShowQuick(false); }} />
-                  <button className="btn-secondary btn-sm" onClick={() => setShowQuick((s) => !s)}>⚡</button>
-                  <button className="btn-secondary btn-sm" title="পণ্য বেছে স্নিপেট বসান" onClick={() => setShowPicker((s) => !s)}>🛍️</button>
-                  <button className="btn-secondary btn-sm" onClick={() => setShowImage((s) => !s)}>🖼️</button>
-                  <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
-                  <button className="btn-primary disabled:opacity-50" disabled={busy !== ""} onClick={sendReply}>{busy === "send" ? "পাঠাচ্ছি..." : "পাঠান"}</button>
+                {composerMode === "reply" && showEmoji ? (
+                  <div className="absolute bottom-full left-0 z-10 mb-1">
+                    <EmojiPickerPanel onPick={(em) => { insertIntoReply(em); setShowEmoji(false); }} />
+                  </div>
+                ) : null}
+                {composerMode === "note" && members.length > 1 ? (
+                  <div className="mb-1.5 flex flex-wrap items-center gap-1">
+                    {members.filter((mb) => mb.user.id !== myId).slice(0, 8).map((mb) => (
+                      <button key={mb.user.id} type="button" className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600 ring-1 ring-amber-200 hover:bg-amber-100" onClick={() => { setReply((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}@${mb.user.name ?? mb.user.email} `); focusComposer(); }}>@{mb.user.name ?? mb.user.email}</button>
+                    ))}
+                    <span className="text-[11px] text-amber-600">Mention করলে তাঁর কাছে নোটিফিকেশন যাবে</span>
+                  </div>
+                ) : null}
+                <div className="flex items-end gap-2">
+                  <div className="relative flex-1">
+                    {ghostVisible ? (
+                      <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words border border-transparent px-3 py-2 text-sm leading-5">
+                        <span className="invisible">{reply}</span><span className="text-slate-400">{ghost}</span>
+                      </div>
+                    ) : null}
+                    <textarea id="inbox-reply" ref={replyRef} rows={2} className={`input relative z-10 max-h-36 w-full flex-1 resize-y ${ghostVisible ? "bg-transparent" : ""} ${composerMode === "note" ? "border-amber-300 bg-amber-50 focus:border-amber-400 focus:ring-amber-400/20" : ""}`} placeholder={composerMode === "note" ? "টিমের জন্য প্রাইভেট নোট লিখুন — গ্রাহক কখনোই দেখবে না…" : "উত্তর লিখুন... ( / চাপলে Quick Reply · Enter = পাঠান, Shift+Enter = নতুন লাইন )"} value={reply}
+                      onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
+                      onBlur={() => setIAmTyping(false)}
+                      onFocus={() => { if (composerMode === "reply" && reply.startsWith("/")) setShowQuick(true); }}
+                      onPaste={(e) => {
+                        if (composerMode !== "reply") return;
+                        const files = Array.from(e.clipboardData?.files ?? []);
+                        if (files.length) { e.preventDefault(); void sendMediaFiles(files); }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Tab" && ghostVisible) { e.preventDefault(); const accepted = reply + ghost; setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = ""; setReply(accepted); focusComposer(accepted.length, accepted.length); return; }
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (composerMode === "note") { void addNote(); } else { void sendReply(); } }
+                        if (e.key === "Escape") { setGhost(""); ghostForRef.current = ""; setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); }
+                      }} />
+                  </div>
+                  <button className={`${composerMode === "note" ? "btn-warning" : "btn-primary"} disabled:opacity-50`} disabled={busy !== ""} onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}>{composerMode === "note" ? (busy === "note" ? "যোগ হচ্ছে..." : "নোট যোগ করুন") : busy === "send" ? "পাঠাচ্ছি..." : "পাঠান"}</button>
                 </div>
+                {ghostVisible ? <div className="mt-1 text-[11px] text-slate-400">✨ AI সাজেশন — Tab চাপলে বসবে · Esc চাপলে যাবে</div> : null}
+                {composerMode === "reply" ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <button className="btn-secondary btn-sm" title="Quick Reply ( / চাপলেও আসে )" onClick={() => setShowQuick((s) => !s)}>⚡</button>
+                  <button className="btn-secondary btn-sm" title="ইমোজি" onClick={() => setShowEmoji((s) => !s)}>😀</button>
+                  {active.channel === "whatsapp" ? (
+                    <>
+                      <button className="btn-secondary btn-sm font-bold" title="বোল্ড — *লেখা* (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("bold")}>B</button>
+                      <button className="btn-secondary btn-sm italic" title="ইটালিক — _লেখা_ (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("italic")}>I</button>
+                      <button className="btn-secondary btn-sm" title="বুলেট তালিকা" onClick={() => applyFormat("list")}>• লিস্ট</button>
+                    </>
+                  ) : null}
+                  <button className="btn-secondary btn-sm" title="পণ্য বেছে স্নিপেট বসান" onClick={() => setShowPicker((s) => !s)}>🛍️</button>
+                  <button className="btn-secondary btn-sm" title="URL দিয়ে ছবি পাঠান" onClick={() => setShowImage((s) => !s)}>🖼️</button>
+                  <button className="btn-secondary btn-sm" title="ফাইল/ছবি আপলোড করে পাঠান (সর্বোচ্চ 2MB) — ড্র্যাগ-ড্রপ ও পেস্টও চলে" disabled={busy !== ""} onClick={() => fileInputRef.current?.click()}>📎 ফাইল</button>
+                  <VoiceRecorder disabled={busy !== ""} onSend={(f) => void sendMediaFiles([f])} onError={(msg) => setError(msg)} />
+                  <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
+                  <span className="relative inline-flex">
+                    <button className="btn-secondary btn-sm disabled:opacity-50" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>✨ টোন বদলান</button>
+                    {showToneMenu ? (
+                      <span className="absolute bottom-full left-0 z-20 mb-1 flex w-40 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg">
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("polite")}>মার্জিত</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("professional")}>পেশাদার</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("sales")}>সেলস-বান্ধব</button>
+                      </span>
+                    ) : null}
+                  </span>
+                  {prevReply !== null ? (
+                    <button className="btn-secondary btn-sm" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>↩ আগের লেখায় ফিরুন</button>
+                  ) : null}
+                  {busy === "media" ? <span className="text-xs font-medium text-slate-500">ফাইল পাঠানো হচ্ছে…</span> : null}
+                  {busy === "tone" ? <span className="text-xs font-medium text-slate-500">টোন বদলানো হচ্ছে…</span> : null}
+                  <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,audio/*,video/mp4,video/webm,application/pdf"
+                    onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) void sendMediaFiles(files); }} />
+                </div>
+                ) : null}
               </div>
-              {showPicker ? (
-                <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+              {showPicker && composerMode === "reply" ? (
+                <div className="max-h-44 shrink-0 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
                   {products.length === 0 ? <p className="px-1 py-2 text-xs text-slate-400">কোনো পণ্য নেই</p> : products.map((prod) => (
-                    <button key={prod.id} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs hover:bg-indigo-50" onClick={() => insertProductSnippet(prod)}>
-                      <span className="font-medium">{prod.name}</span>
-                      <span className="text-slate-500">{money(prod.priceMinor, prod.currency)}{prod.stockQuantity != null ? ` · স্টক ${prod.stockQuantity}` : ""}</span>
-                    </button>
+                    <div key={prod.id} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-indigo-50">
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{prod.name}</span>
+                        <span className="text-slate-500">{money(prod.priceMinor, prod.currency)}{prod.stockQuantity != null ? ` · স্টক ${prod.stockQuantity}` : ""}</span>
+                      </span>
+                      <span className="flex shrink-0 gap-1">
+                        <button className="rounded-md bg-slate-100 px-2 py-1 font-semibold hover:bg-slate-200" title="পণ্যের তথ্য কম্পোজারে টেক্সট হিসেবে বসান" onClick={() => insertProductSnippet(prod)}>টেক্সট বসান</button>
+                        <button className="rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white disabled:opacity-50 hover:bg-indigo-500" disabled={busy === "product-card"} title="ছবিসহ প্রোডাক্ট কার্ড সরাসরি পাঠান (কম্পোজারের লেখা ক্যাপশন হিসেবে যাবে)" onClick={() => sendProductCard(prod)}>🃏 কার্ড পাঠান</button>
+                      </span>
+                    </div>
                   ))}
                 </div>
               ) : null}
-              {showImage ? (
-                <div className="flex flex-wrap gap-2 rounded-xl bg-slate-50 p-3">
+              {showImage && composerMode === "reply" ? (
+                <div className="flex shrink-0 flex-wrap gap-2 rounded-xl bg-slate-50 p-3">
                   <input className="input flex-1" placeholder="ছবির পাবলিক https URL" value={imageForm.url} onChange={(e) => setImageForm({ ...imageForm, url: e.target.value })} />
                   <input className="input flex-1" placeholder="ক্যাপশন (ঐচ্ছিক)" value={imageForm.caption} onChange={(e) => setImageForm({ ...imageForm, caption: e.target.value })} />
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? "পাঠাচ্ছি..." : "ছবি পাঠান"}</button>
                 </div>
               ) : null}
             </div>
-          ) : <p className="card p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
+          ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
         </div>
 
-        {/* ---- Customer context + controls + notes ---- */}
+        {/* ---- Customer context + controls + notes ----
+            Inbox Next-Gen P1: third grid column on xl+ (own scroll);
+            below xl it becomes a right-side drawer opened from the
+            thread header (the panel used to drop under the thread
+            and force a page scroll). */}
         {active ? (
-          <div className="space-y-4 lg:col-span-2 2xl:col-span-1">
+          <div
+            className={`${ctxOpen ? "fixed inset-0 z-50 flex justify-end bg-slate-900/40" : "hidden"} xl:static xl:z-auto xl:block xl:min-h-0 xl:overflow-y-auto xl:bg-transparent xl:pr-0.5`}
+            onClick={(e) => { if (e.target === e.currentTarget) setCtxOpen(false); }}
+          >
+            <div className="h-full w-[340px] max-w-[94vw] space-y-4 overflow-y-auto bg-[#f6f7fb] p-3 shadow-2xl xl:h-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:bg-transparent xl:p-0 xl:shadow-none">
+              <div className="flex items-center justify-between xl:hidden">
+                <span className="text-sm font-bold">গ্রাহক ও নিয়ন্ত্রণ</span>
+                <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>✕ বন্ধ করুন</button>
+              </div>
             <div className="card space-y-3 p-4">
               <div className="section-title">গ্রাহক</div>
               {context?.customer ? (
@@ -961,7 +1600,7 @@ export default function InboxPage() {
                           <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
                           <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
                         </div>
-                        {o.shipment ? <div className="mt-1"><span className="badge-indigo" title={o.shipment.trackingCode ?? ""}>🚚 {o.shipment.provider}: {o.shipment.status}{o.shipment.trackingCode ? ` · ${o.shipment.trackingCode}` : ""}</span></div> : null}
+                        {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
                         {o.isCod ? (
                           <div className="mt-1 flex items-center gap-2">
                             {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
@@ -1097,33 +1736,12 @@ export default function InboxPage() {
               </div>
             </div>
 
-            <div className="card space-y-2 p-4">
-              <div className="section-title">Internal Notes <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">শুধু টিম দেখবে</span></div>
-              <div className="max-h-44 space-y-2 overflow-y-auto">
-                {notes.map((n) => (
-                  <div key={n.id} className="rounded-lg bg-amber-50 px-2.5 py-2 text-xs">
-                    <div className="whitespace-pre-wrap text-slate-700">{n.content}</div>
-                    <div className="mt-0.5 text-[10px] text-slate-400">{memberName(n.authorUserId)} · {new Date(n.createdAt).toLocaleString()}</div>
-                  </div>
-                ))}
-                {notes.length === 0 ? <p className="text-xs text-slate-400">কোনো নোট নেই।</p> : null}
-              </div>
-              <textarea className="input" rows={2} placeholder="টিমের জন্য নোট লিখুন (গ্রাহক দেখবে না)..." value={noteText} onChange={(e) => setNoteText(e.target.value)} />
-              {members.length > 1 ? (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {members.filter((mb) => mb.user.id !== myId).slice(0, 8).map((mb) => (
-                    <button key={mb.user.id} type="button" className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-brand-50" onClick={() => setNoteText((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}@${mb.user.name ?? mb.user.email} `)}>@{mb.user.name ?? mb.user.email}</button>
-                  ))}
-                  <span className="text-[11px] text-slate-400">Mention করলে তাঁর কাছে নোটিফিকেশন যাবে</span>
-                </div>
-              ) : null}
-              <button className="btn-secondary btn-sm" onClick={addNote}>নোট যোগ করুন</button>
             </div>
           </div>
         ) : null}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className={`${viewMode === "list" ? "hidden" : ""} grid gap-4 xl:grid-cols-2`}>
         <div className="card space-y-3 p-5">
           <div className="section-title">🤖 Auto-Reply ও Inbox সেটিংস</div>
           <p className="text-xs text-slate-500">অটো-রিপ্লাই শুধুমাত্র যাচাই করা ডেটা (আসল দাম/স্টক, নিজের Policy, আসল Order Status) দিয়ে উত্তর দেয়। ডেটা না মিললে কিছুই পাঠায় না। Complaint ও অজানা প্রশ্নে কখনো অটো-রিপ্লাই হয় না।</p>
@@ -1209,7 +1827,55 @@ export default function InboxPage() {
         </div>
 
         <div className="card space-y-3 p-5">
+          <div className="section-title">🙋 আমার পারফরম্যান্স ও স্বাক্ষর</div>
+          {myPerf?.me ? (
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              <span className="rounded bg-indigo-100 px-2 py-1 font-semibold text-indigo-700">সূচক {myPerf.me.indicator}/১০০{myPerf.rank ? ` · Rank #${myPerf.rank}/${myPerf.totalAgents}` : ""}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">দায়িত্ব {myPerf.me.current.assigned}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">বন্ধ {myPerf.me.current.closed}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">জবাব {myPerf.me.current.replies}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">গড় প্রথম উত্তর {myPerf.me.current.avgFirstResponseMinutes != null ? `${myPerf.me.current.avgFirstResponseMinutes} মিনিট` : "—"}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">CSAT {myPerf.me.current.csatAvg != null ? `⭐ ${myPerf.me.current.csatAvg}` : "—"}</span>
+              {myPerf.today ? <span className="rounded bg-amber-100 px-2 py-1 text-amber-800">এখন আমার খোলা: {myPerf.today.openNow}টি</span> : null}
+              {myPerf.today ? <span className="rounded bg-slate-100 px-2 py-1">আজ: {myPerf.today.state === "active" ? "🟢 সক্রিয়" : myPerf.today.state === "idle" ? "🟡 অলস" : myPerf.today.state === "away" ? "⚪ দূরে" : "⚫ অফলাইন"} · জবাব {myPerf.today.repliesToday} · বন্ধ {myPerf.today.closedToday}</span> : null}
+            </div>
+          ) : <p className="text-xs text-slate-400">আপনার Role টি এজেন্ট হিসেবে গণনা হয় না, তাই নিজের স্কোরকার্ড নেই — পুরো হিসাব Team Performance পেজে।</p>}
+          <div className="border-t pt-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={mySig.enabled} onChange={(e) => setMySig({ ...mySig, enabled: e.target.checked })} />
+              <span>আমার পাঠানো বার্তায় স্বাক্ষর যোগ করুন</span>
+            </label>
+            <textarea className="input mt-2" rows={2} maxLength={300} placeholder={"যেমন:\n— রাফি, সাপোর্ট টিম, Qosprey"} value={mySig.signature} onChange={(e) => setMySig({ ...mySig, signature: e.target.value })} />
+            <div className="mt-2 flex items-center gap-2">
+              <button className="btn-secondary btn-sm" onClick={async () => {
+                const orgId = getOrganizationId(); if (!orgId) return;
+                try {
+                  const saved = await apiFetch<any>(`/organizations/${orgId}/inbox/my-signature`, { method: "PUT", body: JSON.stringify(mySig) });
+                  setMySig({ signature: saved.signature ?? "", enabled: Boolean(saved.enabled) });
+                  setNotice("আপনার স্বাক্ষর সংরক্ষণ হয়েছে — এখন থেকে আপনার নিজের পাঠানো বার্তায় এটি যোগ হবে।");
+                } catch (e) { setError(e instanceof Error ? e.message : "স্বাক্ষর সংরক্ষণ ব্যর্থ"); }
+              }}>স্বাক্ষর সংরক্ষণ</button>
+              <span className="text-[11px] text-slate-400">শুধু নিজের হাতে পাঠানো বার্তায় যোগ হয় — স্বয়ংক্রিয়/সিস্টেম বার্তায় নয়।</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="card space-y-3 p-5">
           <div className="section-title">📊 টিম রিপোর্ট (শেষ ৭ দিন)</div>
+          <div className="mb-2 flex items-center gap-2 text-xs">
+            <span className="text-slate-500">পরিসর:</span>
+            <select className="input w-52" defaultValue="" onChange={async (e) => {
+              const orgId = getOrganizationId(); if (!orgId) return;
+              const tid = e.target.value;
+              try {
+                setReport(await apiFetch<any>(`/organizations/${orgId}/inbox/team-report?days=7${tid ? `&teamId=${tid}` : ""}`));
+              } catch (err) { setError(err instanceof Error ? err.message : "রিপোর্ট লোড ব্যর্থ"); }
+            }}>
+              <option value="">সব টিম (পুরো Organization)</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name} টিম</option>)}
+            </select>
+            {report?.scopedTeamName ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 font-medium text-indigo-700">শুধু "{report.scopedTeamName}" টিমের হিসাব</span> : null}
+          </div>
           {report ? (
             <div className="space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1230,6 +1896,27 @@ export default function InboxPage() {
                       <span>দায়িত্ব {a.assigned} · খোলা {a.openNow ?? 0} · বন্ধ {a.closed} · গড় উত্তর {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes} মিনিট` : "—"} · সমাধান {a.avgResolutionMinutes != null ? `${a.avgResolutionMinutes} মিনিট` : "—"}{a.csatAvg != null ? ` · ⭐ ${a.csatAvg}` : ""}</span>
                     </div>
                   ))}
+                </div>
+              ) : null}
+              {(report.perTeam ?? []).length ? (
+                <div className="space-y-1 border-t pt-2">
+                  <div className="text-xs font-semibold text-slate-500">টিম অনুযায়ী (একজন একাধিক টিমে থাকলে দুই জায়গাতেই গোনা হয়)</div>
+                  {report.perTeam.map((t: any) => (
+                    <div key={t.teamId} className="flex items-center justify-between rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs">
+                      <span className="font-medium">{t.name}{t.leadUserId ? ` · লিড: ${memberName(t.leadUserId)}` : ""}</span>
+                      <span>সদস্য {t.memberCount} · দায়িত্ব {t.assigned} · খোলা {t.openNow} · বন্ধ {t.closed} · গড় উত্তর {t.avgFirstResponseMinutes != null ? `${t.avgFirstResponseMinutes} মিনিট` : "—"}{t.csatAvg != null ? ` · ⭐ ${t.csatAvg}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {(report.dailyTrend ?? []).length ? (
+                <div className="border-t pt-2">
+                  <div className="mb-1 text-xs font-semibold text-slate-500">প্রতিদিনের ধারা (ঢাকার তারিখ)</div>
+                  <div className="flex flex-wrap gap-1">
+                    {report.dailyTrend.map((d: any) => (
+                      <span key={d.date} className="rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600">{d.date.slice(5)}: নতুন {d.created} · বন্ধ {d.closed}</span>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -1255,7 +1942,7 @@ export default function InboxPage() {
             <div className="space-y-1">
               {agentStates.map((a) => (
                 <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
-                  <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span></span>
+                  <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span>{a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-slate-600">অফ-শিফট</span> : null}</span>
                   <span>খোলা {a.openCount}/{a.capacity}{a.teams?.length ? ` · ${a.teams.join(", ")}` : ""}</span>
                 </div>
               ))}
@@ -1304,6 +1991,24 @@ export default function InboxPage() {
                     );
                   })}
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-slate-500">টিম লিড:</span>
+                  {["OWNER", "ADMIN"].includes(agentStates.find((a) => a.userId === myId)?.role ?? "") ? (
+                    <select className="input w-52" value={t.leadUserId ?? ""} onChange={async (e) => {
+                      const orgId = getOrganizationId(); if (!orgId) return;
+                      try {
+                        await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}`, { method: "PATCH", body: JSON.stringify({ leadUserId: e.target.value || null }) });
+                        loadTeams(); setNotice("টিম লিড হালনাগাদ হয়েছে।");
+                      } catch (err) { setError(err instanceof Error ? err.message : "লিড সেট করা যায়নি"); }
+                    }}>
+                      <option value="">কেউ না</option>
+                      {members.map((mb) => <option key={mb.user.id} value={mb.user.id}>{mb.user.name ?? mb.user.email}</option>)}
+                    </select>
+                  ) : (
+                    <span className="font-medium">{t.leadName ?? "কেউ না"}</span>
+                  )}
+                  <span className="text-slate-400">লিড নিজের টিমের সদস্য সাজাতে ও শুধু নিজের টিমের রিপোর্ট/স্কোরকার্ড দেখতে পারেন</span>
+                </div>
                 <div className="mt-2 flex gap-2">
                   <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
@@ -1326,7 +2031,7 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <div className="card space-y-4 p-5">
+      <div className={`${viewMode === "list" ? "hidden" : ""} card space-y-4 p-5`}>
         <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-2 rounded-xl border p-3">
@@ -1390,7 +2095,7 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className={`${viewMode === "list" ? "hidden" : ""} grid gap-4 xl:grid-cols-2`}>
         <div className="card space-y-3 p-5">
           <div className="section-title">⚡ Quick Replies</div>
           <p className="text-xs text-slate-500">বারবার লিখতে হয় এমন উত্তরের লাইব্রেরি। {"{{firstName}}"}, {"{{contactName}}"}, {"{{phone}}"} ব্যবহার করা যায়, পাঠানোর আগে আসল তথ্য বসে যাবে। Reply বক্সে / চাপলেই তালিকা আসবে।</p>
@@ -1436,7 +2141,7 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <form onSubmit={connect} className="card space-y-3 p-5">
+      <form onSubmit={connect} className={`${viewMode === "list" ? "hidden" : ""} card space-y-3 p-5`}>
         <div className="section-title">WhatsApp / Messenger কানেক্ট করুন</div>
         <p className="text-sm text-slate-500">
           Meta App থেকে Page/System-User Access Token, App Secret ও নিজের পছন্দের Verify Token লাগবে। Token যাচাই ব্যর্থ হলে কিছুই সেভ হয় না।

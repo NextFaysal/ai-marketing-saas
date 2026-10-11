@@ -148,11 +148,10 @@ Format as JSON:
   ]
 }`;
 
-      const res = await provider.generateText({
-        systemPrompt: "You are a customer feedback and competitive sentiment analyst.",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-      });
+      const res = await provider.complete(
+        [{ role: "system", content: "You are a customer feedback and competitive sentiment analyst." }, { role: "user", content: prompt }],
+        { jsonMode: true },
+      );
 
       const parsed = JSON.parse(res.text.match(/\{[\s\S]*\}/)?.[0] || "{}");
       if (parsed?.topComplaints?.length) {

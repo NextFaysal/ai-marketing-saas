@@ -1,15 +1,13 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
 import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto, GenerateSeoGapDto, DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto } from "./competitors.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
-
-
-
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+@PermissionArea("analytics")
 @Controller("organizations/:organizationId/competitors")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class CompetitorsController {
   constructor(private readonly competitors: CompetitorsService) {}
 

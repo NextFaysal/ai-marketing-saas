@@ -22,10 +22,16 @@ describe("M66 visitor stream delivery", () => {
     });
     const ev: any = await next;
     expect(ev.data.type).toBe("message.created");
-    expect(ev.data.message).toEqual({
+    // The projection carries the visitor-safe fields (Inbox
+    // Next-Gen P2 added a parsed `product` card field) — the
+    // M66 guarantee is that INTERNAL fields never leak.
+    expect(ev.data.message).toMatchObject({
       id: "m1", direction: "out", content: "আসসালামু আলাইকুম", type: "text",
       createdAt: "2026-10-11T00:00:00.000Z",
     });
+    expect(ev.data.message.senderUserId).toBeUndefined();
+    expect(ev.data.message.internalNote).toBeUndefined();
+    expect(ev.data.message.mediaStorageKey).toBeUndefined();
   });
 
   it("another conversation's messages never reach this visitor", async () => {

@@ -20,6 +20,10 @@
   var color = "#6d28d9";
   var open = false;
   var pollTimer = null;
+  var presenceTimer = null; // P3: visitor presence heartbeat (25s)
+  var typingFlag = false; // P3: we have told the agent side we are typing
+  var typingDebounce = null;
+  var typingHideTimer = null;
   var es = null; // Milestone 66: realtime stream (polling is the fallback)
   var seen = {};
 
@@ -34,6 +38,7 @@
   panel.innerHTML =
     '<div id="wc-head" style="padding:12px 14px;color:#fff;font-weight:700;font-size:14px;background:' + color + '">Live Chat</div>' +
     '<div id="wc-msgs" style="flex:1;overflow-y:auto;padding:10px;background:#f8fafc;display:flex;flex-direction:column;gap:6px"></div>' +
+    '<div id="wc-typing" style="display:none;padding:4px 12px;font-size:11px;color:#64748b;background:#f8fafc;text-align:left">টাইপ করছেন…</div>' +
     '<div style="display:flex;gap:6px;padding:8px;border-top:1px solid #e2e8f0">' +
     '<input id="wc-input" type="text" placeholder="আপনার বার্তা লিখুন..." style="flex:1;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px;font-size:13px;outline:none"/>' +
     '<button id="wc-send" style="border:none;border-radius:10px;padding:8px 14px;color:#fff;font-weight:600;cursor:pointer;background:' + color + '">পাঠান</button></div>';
@@ -41,6 +46,43 @@
 
   var msgsEl = panel.querySelector("#wc-msgs");
   var input = panel.querySelector("#wc-input");
+  var typingEl = panel.querySelector("#wc-typing");
+
+  /* P3: presence heartbeat + typing cues. Fire-and-forget: a
+   * failed presence POST must never disturb the chat itself. */
+  function postPresence(typing) {
+    if (!token) return;
+    var body = { token: token };
+    if (typeof typing === "boolean") body.typing = typing;
+    fetch(apiBase + "/public/chat/" + key + "/presence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(function () { /* presence is best-effort */ });
+  }
+  function startPresence() {
+    stopPresence();
+    if (!open || !token) return;
+    postPresence();
+    presenceTimer = setInterval(postPresence, 25000);
+  }
+  function stopPresence() {
+    if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+  }
+  function setTypingOff() {
+    if (typingDebounce) { clearTimeout(typingDebounce); typingDebounce = null; }
+    if (typingFlag) { typingFlag = false; postPresence(false); }
+  }
+  function showAgentTyping(show) {
+    if (!typingEl) return;
+    if (typingHideTimer) { clearTimeout(typingHideTimer); typingHideTimer = null; }
+    if (show) {
+      typingEl.style.display = "block";
+      typingHideTimer = setTimeout(function () { typingEl.style.display = "none"; }, 4000);
+    } else {
+      typingEl.style.display = "none";
+    }
+  }
 
   function bubble(m) {
     if (seen[m.id]) return;
@@ -48,7 +90,66 @@
     var row = document.createElement("div");
     var mine = m.direction === "in"; // visitor's own messages arrive as "in"
     row.style.cssText = "max-width:82%;padding:7px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;align-self:" + (mine ? "flex-end" : "flex-start") + ";background:" + (mine ? color : "#fff") + ";color:" + (mine ? "#fff" : "#0f172a") + (mine ? "" : ";border:1px solid #e2e8f0");
-    row.textContent = m.content || "";
+    // Inbox Next-Gen P1: agent-sent media (image / voice / video /
+    // file). The URL is derived from the session credentials the
+    // same way the poll/stream calls are — the server only serves
+    // bytes for THIS session's own conversation. Elements are built
+    // with createElement + property assignment (never innerHTML),
+    // so message text stays inert.
+    var mediaPath = m.mediaUrl || null;
+    if (!mediaPath && token && (m.type === "image" || m.type === "audio" || m.type === "video" || m.type === "document")) {
+      mediaPath = "/public/chat/" + key + "/messages/" + m.id + "/media?token=" + encodeURIComponent(token);
+    }
+    if (mediaPath) {
+      var src = apiBase + mediaPath;
+      var mediaEl = null;
+      if (m.type === "image") {
+        mediaEl = document.createElement("img");
+        mediaEl.src = src;
+        mediaEl.alt = m.content || "ছবি";
+        mediaEl.style.cssText = "max-width:100%;border-radius:8px;display:block;margin-bottom:4px";
+      } else if (m.type === "audio") {
+        mediaEl = document.createElement("audio");
+        mediaEl.controls = true;
+        mediaEl.src = src;
+        mediaEl.style.cssText = "max-width:100%;display:block;margin-bottom:4px";
+      } else if (m.type === "video") {
+        mediaEl = document.createElement("video");
+        mediaEl.controls = true;
+        mediaEl.src = src;
+        mediaEl.style.cssText = "max-width:100%;border-radius:8px;display:block;margin-bottom:4px";
+      } else {
+        mediaEl = document.createElement("a");
+        mediaEl.href = src;
+        mediaEl.target = "_blank";
+        mediaEl.rel = "noopener";
+        mediaEl.textContent = "📎 " + (m.content || "ফাইল ডাউনলোড করুন");
+        mediaEl.style.cssText = "display:block;margin-bottom:4px;color:inherit;text-decoration:underline";
+      }
+      if (mediaEl) row.appendChild(mediaEl);
+    }
+    if (m.content && !(mediaPath && m.type === "document")) {
+      var caption = document.createElement("span");
+      caption.textContent = m.content;
+      row.appendChild(caption);
+    }
+    // Inbox Next-Gen P2: product showcase cards. The server marks
+    // composed product-card image messages with `product` (name +
+    // formatted price parsed from the card caption — the visitor
+    // projection carries nothing else). Rendered as a card with a
+    // one-tap order button that sends the order intent as a normal
+    // visitor message, which the chat order flow picks up.
+    if (m.product && mediaPath && m.type === "image") {
+      row.style.cssText += ";background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.08)";
+      var orderBtn = document.createElement("button");
+      orderBtn.type = "button";
+      orderBtn.textContent = "🛒 অর্ডার করুন";
+      orderBtn.style.cssText = "display:block;width:100%;margin-top:7px;padding:7px 10px;border:0;border-radius:8px;background:" + color + ";color:#fff;font-size:13px;font-weight:700;cursor:pointer";
+      orderBtn.addEventListener("click", function () {
+        sendText("আমি \"" + m.product.name + "\" অর্ডার করতে চাই");
+      });
+      row.appendChild(orderBtn);
+    }
     msgsEl.appendChild(row);
     msgsEl.scrollTop = msgsEl.scrollHeight;
   }
@@ -87,6 +188,7 @@
         try {
           var d = JSON.parse(ev.data);
           if (d && d.type === "message.created" && d.message) bubble(d.message);
+          if (d && d.type === "typing") showAgentTyping(Boolean(d.typing));
         } catch (e) { /* a bad frame never breaks the widget */ }
       };
       es.onerror = function () {
@@ -99,7 +201,7 @@
   }
 
   function start() {
-    if (token) { fetchMessages(); connectStream(); return; }
+    if (token) { fetchMessages(); connectStream(); startPresence(); return; }
     fetch(apiBase + "/public/chat/" + key + "/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -119,14 +221,21 @@
         if (s.greeting) systemLine(s.greeting);
         fetchMessages();
         connectStream();
+        startPresence();
       })
       .catch(function () { systemLine("দুঃখিত, চ্যাট এখন উপলব্ধ নয়।"); });
   }
 
   function send() {
     var text = input.value.trim();
-    if (!text || !token) return;
+    if (!text) return;
     input.value = "";
+    setTypingOff();
+    sendText(text);
+  }
+
+  function sendText(text) {
+    if (!text || !token) return;
     fetch(apiBase + "/public/chat/" + key + "/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -146,8 +255,20 @@
     } else {
       stopPolling();
       closeStream();
+      stopPresence();
+      setTypingOff();
+      showAgentTyping(false);
     }
   });
   panel.querySelector("#wc-send").addEventListener("click", send);
   input.addEventListener("keydown", function (e) { if (e.key === "Enter") send(); });
+  input.addEventListener("input", function () {
+    if (!token) return;
+    if (input.value && !typingFlag) { typingFlag = true; postPresence(true); }
+    if (typingDebounce) clearTimeout(typingDebounce);
+    typingDebounce = setTimeout(function () {
+      typingDebounce = null;
+      if (typingFlag) { typingFlag = false; postPresence(false); }
+    }, 2500);
+  });
 })();

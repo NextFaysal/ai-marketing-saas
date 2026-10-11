@@ -25,6 +25,20 @@ export class TelegramClient {
     return json.result as T;
   }
 
+  /** Multipart variant of call() for file uploads (Bot API upload
+   * methods take the file bytes directly, no public URL needed). */
+  private async callMultipart<T>(method: string, fields: Record<string, string>, fileField: string, bytes: Buffer, fileName: string, contentType: string): Promise<T> {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    form.append(fileField, new Blob([new Uint8Array(bytes)], { type: contentType }), fileName);
+    const res = await fetch(`https://api.telegram.org/bot${this.botToken}/${method}`, { method: "POST", body: form });
+    const json = (await res.json().catch(() => null)) as any;
+    if (!res.ok || !json?.ok) {
+      throw new BadRequestException(`Telegram: ${json?.description ?? `HTTP ${res.status}`}`);
+    }
+    return json.result as T;
+  }
+
   getMe() {
     return this.call<{ id: number; username?: string; first_name?: string }>("getMe");
   }
@@ -33,6 +47,21 @@ export class TelegramClient {
   }
   sendMessage(chatId: string, text: string) {
     return this.call<{ message_id: number }>("sendMessage", { chat_id: chatId, text });
+  }
+  sendPhotoUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
+    return this.callMultipart<{ message_id: number }>("sendPhoto", { chat_id: chatId, ...(caption ? { caption } : {}) }, "photo", bytes, fileName, contentType);
+  }
+  sendVoiceUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
+    return this.callMultipart<{ message_id: number }>("sendVoice", { chat_id: chatId, ...(caption ? { caption } : {}) }, "voice", bytes, fileName, contentType);
+  }
+  sendAudioUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
+    return this.callMultipart<{ message_id: number }>("sendAudio", { chat_id: chatId, ...(caption ? { caption } : {}) }, "audio", bytes, fileName, contentType);
+  }
+  sendVideoUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
+    return this.callMultipart<{ message_id: number }>("sendVideo", { chat_id: chatId, ...(caption ? { caption } : {}) }, "video", bytes, fileName, contentType);
+  }
+  sendDocumentUpload(chatId: string, bytes: Buffer, contentType: string, fileName: string, caption?: string) {
+    return this.callMultipart<{ message_id: number }>("sendDocument", { chat_id: chatId, ...(caption ? { caption } : {}) }, "document", bytes, fileName, contentType);
   }
 }
 
@@ -45,6 +74,21 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   async sendText(credentials: Record<string, any>, externalContactId: string, text: string): Promise<{ externalId: string }> {
     const sent = await new TelegramClient(String(credentials.botToken)).sendMessage(externalContactId, text);
+    return { externalId: String(sent.message_id) };
+  }
+  /** Inbox Next-Gen P1: uploaded media (drag-drop / voice notes).
+   * OGG voice notes go through sendVoice (Telegram requires the
+   * OGG/Opus container there); other audio uses sendAudio. Any
+   * container Telegram rejects surfaces its own error verbatim. */
+  async sendMedia(credentials: Record<string, any>, externalContactId: string, media: { bytes: Buffer; contentType: string; kind: "image" | "audio" | "video" | "document"; fileName: string; caption?: string }): Promise<{ externalId: string }> {
+    const client = new TelegramClient(String(credentials.botToken));
+    const caption = media.caption?.trim() ? media.caption.trim().slice(0, 1024) : undefined;
+    const sent =
+      media.kind === "image" ? await client.sendPhotoUpload(externalContactId, media.bytes, media.contentType, media.fileName, caption)
+      : media.kind === "audio" && media.contentType.includes("ogg") ? await client.sendVoiceUpload(externalContactId, media.bytes, media.contentType, media.fileName, caption)
+      : media.kind === "audio" ? await client.sendAudioUpload(externalContactId, media.bytes, media.contentType, media.fileName, caption)
+      : media.kind === "video" ? await client.sendVideoUpload(externalContactId, media.bytes, media.contentType, media.fileName, caption)
+      : await client.sendDocumentUpload(externalContactId, media.bytes, media.contentType, media.fileName, caption);
     return { externalId: String(sent.message_id) };
   }
 }

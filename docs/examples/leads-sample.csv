@@ -1,0 +1,4 @@
+name,phone,email,source,stage,tags,value,next_follow_up_at,notes
+Sara Ahmed,01711000000,sara@example.com,whatsapp,qualified,vip|wholesale,2500.50,2026-10-20,Met at trade fair
+Karim Uddin,01711000001,,messenger,new,new-lead,1200,,
+Rina Begum,01711000002,rina@example.com,website,contacted,,800,2026-10-25,

@@ -1,16 +1,17 @@
-import { Body, Controller, Get, Header, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { Request, Response } from "express";
 import { PaymentsService } from "./payments.service";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
-import { CurrentUser, Public, Roles, type AuthUser } from "../common/decorators";
+import { CurrentUser, Public, Roles, type AuthUser, PermissionArea } from "../common/decorators";
 
 class CheckoutDto {
   @IsString() @MaxLength(20) plan!: string;
   @IsString() @MinLength(11) @MaxLength(15) phone!: string;
   @IsOptional() @IsString() @MaxLength(24) couponCode?: string;
   @IsOptional() @IsIn(["sslcommerz", "bkash"]) gateway?: string;
+  @IsOptional() @IsIn(["monthly", "yearly"]) cycle?: string;
 }
 
 class CouponPreviewDto {
@@ -18,6 +19,15 @@ class CouponPreviewDto {
   @IsString() @MaxLength(20) plan!: string;
 }
 
+class ScheduleChangeDto {
+  @IsString() @MaxLength(20) plan!: string;
+}
+
+class AutoRenewStartDto {
+  @IsString() @MinLength(11) @MaxLength(15) phone!: string;
+}
+
+@PermissionArea("billing")
 @Controller("organizations")
 @UseGuards(TenantGuard, RolesGuard)
 export class PaymentsController {
@@ -26,13 +36,43 @@ export class PaymentsController {
   @Post(":organizationId/billing/checkout")
   @Roles("OWNER", "ADMIN")
   checkout(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: CheckoutDto) {
-    return this.payments.createCheckout(id, { userId: user.userId, email: user.email }, dto.plan, dto.phone, { couponCode: dto.couponCode, gateway: dto.gateway });
+    return this.payments.createCheckout(id, { userId: user.userId, email: user.email }, dto.plan, dto.phone, { couponCode: dto.couponCode, gateway: dto.gateway, cycle: dto.cycle });
   }
 
   @Post(":organizationId/billing/coupon-preview")
   @Roles("OWNER", "ADMIN")
   couponPreview(@Param("organizationId") id: string, @Body() dto: CouponPreviewDto) {
     return this.payments.previewCoupon(id, dto.code, dto.plan);
+  }
+
+  @Get(":organizationId/billing/credit-ledger")
+  creditLedger(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    void user;
+    return this.payments.creditLedger(id);
+  }
+
+  @Post(":organizationId/billing/schedule-change")
+  @Roles("OWNER", "ADMIN")
+  scheduleChange(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: ScheduleChangeDto) {
+    return this.payments.schedulePlanChange(id, user.userId, dto.plan);
+  }
+
+  @Delete(":organizationId/billing/schedule-change")
+  @Roles("OWNER", "ADMIN")
+  cancelScheduleChange(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    return this.payments.cancelScheduledPlanChange(id, user.userId);
+  }
+
+  @Post(":organizationId/billing/auto-renew/start")
+  @Roles("OWNER", "ADMIN")
+  autoRenewStart(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: AutoRenewStartDto) {
+    return this.payments.startAutoRenew(id, { userId: user.userId }, dto.phone);
+  }
+
+  @Post(":organizationId/billing/auto-renew/cancel")
+  @Roles("OWNER", "ADMIN")
+  autoRenewCancel(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    return this.payments.cancelAutoRenew(id, user.userId);
   }
 
   @Get(":organizationId/billing/payments/:paymentId/invoice")
@@ -80,6 +120,12 @@ export class BkashPublicController {
   @Public() @Get("callback")
   async callback(@Req() req: Request, @Res() res: Response) {
     const url = await this.payments.handleBkashCallback((req.query ?? {}) as Record<string, any>);
+    return res.redirect(302, url);
+  }
+
+  @Public() @Get("agreement/callback")
+  async agreementCallback(@Req() req: Request, @Res() res: Response) {
+    const url = await this.payments.handleBkashAgreementCallback((req.query ?? {}) as Record<string, any>);
     return res.redirect(302, url);
   }
 }

@@ -7,6 +7,7 @@ interface Settings {
   maintenanceMode: boolean; signupOpen: boolean; supportContact: string;
   killSwitches: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   planPrices: Record<string, number>;
+  planYearlyPrices: Record<string, number>;
 }
 interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
 const AUDIENCES: { value: string; label: string }[] = [
@@ -192,6 +193,18 @@ export default function SettingsPage() {
             ))}
             <button className="abtn-secondary" onClick={() => save({ planPrices: s.planPrices }, "Plan এর দাম আপডেট হয়েছে।")}>দাম সেভ করুন</button>
             <p className="mt-1 text-xs text-slate-500">এগুলো Operator-নির্ধারিত দাম — Billing পেজে MRR হিসাব এখান থেকেই হয়।</p>
+          </div>
+          <div className="border-t border-slate-800 pt-3">
+            <div className="mb-2 font-semibold">Plan এর দাম (বার্ষিক চক্র, টাকায়)</div>
+            {Object.entries(s.planYearlyPrices ?? {}).map(([tier, minor]) => (
+              <div key={tier} className="mb-2 flex items-center gap-2 text-sm">
+                <span className="w-20">{tier}</span>
+                <input className="ainput" type="number" min={0} value={Math.round(minor / 100)} onChange={(e) => setS({ ...s, planYearlyPrices: { ...s.planYearlyPrices, [tier]: Number(e.target.value) * 100 } })} />
+                <span className="text-slate-500">টাকা/বছর (= {formatMinorStr(minor)})</span>
+              </div>
+            ))}
+            <button className="abtn-secondary" onClick={() => save({ planYearlyPrices: s.planYearlyPrices }, "বার্ষিক দাম আপডেট হয়েছে।")}>বার্ষিক দাম সেভ করুন</button>
+            <p className="mt-1 text-xs text-slate-500">ডিফল্ট = মাসিক × ১০ (২ মাস ফ্রি)। Billing পেজের বার্ষিক Toggle এ সাশ্রয় আসল দুই দাম থেকে হিসাব হয়।</p>
           </div>
         </div>
         <div className="space-y-4">

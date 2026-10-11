@@ -2,14 +2,15 @@ import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { IntegrationsService } from "./integrations.service";
 import { CreateStoreDto, ConnectWooDto, ConnectShopifyDto } from "./integrations.dto";
 import { ShopifyService } from "./shopify/shopify.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE_ROLES = ["OWNER", "ADMIN"];
 
+@PermissionArea("integrations")
 @Controller("organizations/:organizationId")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class IntegrationsController {
   constructor(private readonly integrations: IntegrationsService, private readonly shopify: ShopifyService) {}
 

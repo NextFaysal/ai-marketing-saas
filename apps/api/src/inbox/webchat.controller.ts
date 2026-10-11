@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, MessageEvent, Param, Patch, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, MessageEvent, Param, Patch, Post, Query, Sse, StreamableFile, UseGuards } from "@nestjs/common";
 import { Observable } from "rxjs";
 import { WebchatService } from "./webchat.service";
 import { CurrentUser, AuthUser, Public, Roles } from "../common/decorators";
@@ -52,6 +52,14 @@ export class PublicChatController {
     return this.webchat.postMessage(key, dto);
   }
 
+  /** Inbox Next-Gen P3: visitor presence/typing heartbeat — the
+   * widget reports it, agents see it on their inbox stream. */
+  @Post(":key/presence")
+  @Header("Access-Control-Allow-Origin", "*")
+  presence(@Param("key") key: string, @Body() dto: { token: string; typing?: boolean }) {
+    return this.webchat.visitorPresence(key, dto);
+  }
+
   @Get(":key/messages")
   @Header("Access-Control-Allow-Origin", "*")
   list(@Param("key") key: string, @Query("token") token: string) {
@@ -64,5 +72,14 @@ export class PublicChatController {
   @Header("Access-Control-Allow-Origin", "*")
   async stream(@Param("key") key: string, @Query("token") token: string): Promise<Observable<MessageEvent>> {
     return this.webchat.streamFor(key, token);
+  }
+
+  /** Inbox Next-Gen P1: stored media bytes for the session owner's
+   * own conversation only (token-derived, like the stream). */
+  @Get(":key/messages/:messageId/media")
+  @Header("Access-Control-Allow-Origin", "*")
+  async media(@Param("key") key: string, @Param("messageId") messageId: string, @Query("token") token: string) {
+    const { bytes, contentType } = await this.webchat.getVisitorMedia(key, token, messageId);
+    return new StreamableFile(bytes, { type: contentType, disposition: "inline" });
   }
 }

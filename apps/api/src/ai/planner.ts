@@ -7,7 +7,7 @@ export const TOOL_CATALOG = [
   { name: "list_products", description: "Products with price, cost and margin. Args: search, limit." },
   { name: "get_orders_attention", description: "Orders needing follow-up: old pending/on-hold and failed orders. No args." },
   { name: "get_anomalies", description: "Detected anomalies in recent daily metrics. Args: days." },
-  { name: "get_business_knowledge", description: "The business profile, policies and FAQ knowledge. No args." },
+  { name: "get_business_knowledge", description: "The business profile, Command Center facts (delivery charges/times, payment numbers, contact, hours), policies and FAQ knowledge. Args: query (the user's question, used to rank the most relevant FAQ documents)." },
   { name: "get_customer_segments", description: "RFM customer segments with customer counts and revenue share. No args." },
   { name: "get_inventory_health", description: "Stock health: out-of-stock, low-stock and high-stock products from real stock quantities. No args." },
   { name: "get_courier_performance", description: "Per-courier delivery and return rates from real shipments. No args." },
@@ -62,6 +62,11 @@ export function sanitizePlan(raw: unknown): PlannedToolCall[] {
       case "get_anomalies": {
         const days = Number(argsIn.days ?? 14);
         args.days = Number.isFinite(days) ? Math.min(60, Math.max(3, Math.floor(days))) : 14;
+        break;
+      }
+      case "get_business_knowledge": {
+        // Milestone 77: only a bounded query string survives.
+        if (typeof argsIn.query === "string") args.query = argsIn.query.slice(0, 200);
         break;
       }
       default:
@@ -123,8 +128,9 @@ export function keywordPlan(message: string): PlannedToolCall[] {
   if (has(message, ["attribution", "অ্যাট্রিবিউশন", "কোন চ্যানেল", "channel", "চ্যানেল"])) {
     calls.push({ tool: "get_attribution_report", args: { model: "LAST_TOUCH" } });
   }
-  if (has(message, ["পলিসি", "policy", "শিপিং", "shipping", "রিফান্ড", "refund", "ব্যবসার তথ্য", "business info", "faq"])) {
-    calls.push({ tool: "get_business_knowledge", args: {} });
+  if (has(message, ["পলিসি", "policy", "শিপিং", "shipping", "রিফান্ড", "refund", "ব্যবসার তথ্য", "business info", "faq", "ডেলিভারি", "delivery", "বিকাশ", "bkash", "ওয়ারেন্টি", "warranty", "রিটার্ন", "ঠিকানা", "address", "খোলা", "বন্ধ", "সময়", "hours"])) {
+    // Milestone 77: the raw question ranks the FAQ matches.
+    calls.push({ tool: "get_business_knowledge", args: { query: message.slice(0, 200) } });
   }
   if (has(message, ["প্রতিযোগী", "কম্পিটিটর", "competitor", "rival", "তাদের দাম", "প্রতিযোগীর বিজ্ঞাপন", "winning ad", "স্টক শেষ", "কাউন্টার", "spy", "ad library"])) {
     calls.push({ tool: "get_competitor_intelligence", args: {} });

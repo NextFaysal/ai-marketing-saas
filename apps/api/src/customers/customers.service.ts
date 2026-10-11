@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { RiskService } from "../orders/risk.service";
+import { minorToMajor, toCsv } from "../imports/csv";
+import { CustomFieldsService, renderCustomFieldValue } from "../crm/custom-fields.service";
 
 const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(" ") || c.name || null;
 
@@ -13,9 +15,20 @@ const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(
  */
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly risk?: RiskService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    @Optional() private readonly risk?: RiskService,
+    @Optional() private readonly customFields?: CustomFieldsService,
+  ) {}
 
   async list(organizationId: string, q?: string) {
+    return this.rowsWithStats(organizationId, q, 100);
+  }
+
+  /** The list computation, shared verbatim by list() (first 100)
+   * and the C3 CSV export (the full fetched window of 500). */
+  private async rowsWithStats(organizationId: string, q: string | undefined, limit: number) {
     const rows = await (this.prisma as any).customer.findMany({
       where: { organizationId, mergedIntoId: null }, orderBy: { createdAt: "desc" }, take: 500,
     });
@@ -23,18 +36,88 @@ export class CustomersService {
     const filtered = needle
       ? rows.filter((c: any) => [customerName(c), c.phone, c.email].filter(Boolean).some((v: string) => v.toLowerCase().includes(needle)))
       : rows;
-    const withStats = await Promise.all(filtered.slice(0, 100).map(async (c: any) => {
+    const withStats = await Promise.all(filtered.slice(0, limit).map(async (c: any) => {
       const orders = await (this.prisma as any).order.findMany({
         where: { organizationId, customerId: c.id, status: { not: "cancelled" } }, take: 200,
       });
       return {
         id: c.id, name: customerName(c), firstName: c.firstName, lastName: c.lastName,
         phone: c.phone, email: c.email, source: c.source, createdAt: c.createdAt,
+        // CRM C4: carried through so the export can append def columns.
+        customFields: c.customFields ?? null,
         orderCount: orders.length,
         totalSpentMinor: String(orders.reduce((s: bigint, o: any) => s + BigInt(o.totalMinor), 0n)),
       };
     }));
     return withStats;
+  }
+
+  /**
+   * CRM C3: CSV export — strictly the caller's org, same rows and
+   * lifetime figures as the list (orders excluding cancelled).
+   * `total_spent` is in taka (major units). CRM C4 appends the
+   * org's custom-field columns after the core columns.
+   */
+  async exportCsv(organizationId: string): Promise<string> {
+    const rows = await this.rowsWithStats(organizationId, undefined, 500);
+    const headers = ["id", "name", "first_name", "last_name", "phone", "email", "source", "order_count", "total_spent", "created_at"];
+    const body = rows.map((c: any) => [
+      c.id, c.name ?? "", c.firstName ?? "", c.lastName ?? "", c.phone ?? "", c.email ?? "",
+      c.source, c.orderCount, minorToMajor(BigInt(c.totalSpentMinor)),
+      c.createdAt ? new Date(c.createdAt).toISOString() : "",
+    ]);
+    // CRM C4: the org's non-archived customer custom fields are
+    // appended as extra columns, headered by LABEL, in def order.
+    if (this.customFields) {
+      const defs = await this.customFields.activeDefs(organizationId, "customer");
+      if (defs.length) {
+        headers.push(...defs.map((d: any) => d.label));
+        body.forEach((row, i) => {
+          const cf = (rows[i] as any).customFields ?? {};
+          for (const d of defs as any[]) row.push(renderCustomFieldValue(cf[d.key]));
+        });
+      }
+    }
+    return toCsv(headers, body);
+  }
+
+  /**
+   * CRM C4: the customer PATCH that did not exist before — contact
+   * basics + custom fields, nothing else. Before C4 customers were
+   * write-only-by-sync (orders/inbox/convert created them; the UI
+   * could only merge). Custom-field values go through the same
+   * validation gate as leads; required is NOT enforced here
+   * (partial updates; customers are born from sync, not forms).
+   * Audited as "customer.updated" with the changed field names.
+   */
+  async update(organizationId: string, actorId: string, customerId: string, dto: {
+    firstName?: string | null; lastName?: string | null;
+    email?: string | null; phone?: string | null;
+    customFields?: Record<string, unknown> | null;
+  }) {
+    const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
+    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    const data: Record<string, unknown> = {};
+    if (dto.firstName !== undefined) data.firstName = dto.firstName?.trim() || null;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName?.trim() || null;
+    if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
+    if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
+    if (dto.customFields !== undefined) {
+      if (dto.customFields === null) data.customFields = null;
+      else if (this.customFields) {
+        const sanitized = await this.customFields.validateAndSanitize(organizationId, "customer", dto.customFields, { forCreate: false });
+        data.customFields = this.customFields.mergeValues(customer.customFields ?? null, sanitized);
+      } else if (Object.keys(dto.customFields).length) {
+        throw new BadRequestException("Custom fields are not available in this deployment");
+      }
+    }
+    if (!Object.keys(data).length) return this.detail(organizationId, customerId);
+    await (this.prisma as any).customer.update({ where: { id: customerId }, data });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "customer.updated", entityType: "Customer", entityId: customerId,
+      metadata: { fields: Object.keys(data) },
+    });
+    return this.detail(organizationId, customerId);
   }
 
   async detail(organizationId: string, customerId: string) {
@@ -104,6 +187,11 @@ export class CustomersService {
     if (!target.email && source.email) fill.email = source.email;
     if (!target.firstName && source.firstName) fill.firstName = source.firstName;
     if (!target.lastName && source.lastName) fill.lastName = source.lastName;
+    // CRM C4: custom fields gap-fill per key, same discipline.
+    if (this.customFields) {
+      const filled = this.customFields.fillGaps(target.customFields ?? null, source.customFields ?? null);
+      if (Object.keys(filled).length || target.customFields) fill.customFields = filled;
+    }
     if (Object.keys(fill).length) await (this.prisma as any).customer.update({ where: { id: target.id }, data: fill });
     await (this.prisma as any).customer.update({ where: { id: source.id }, data: { mergedIntoId: target.id } });
     await this.audit.log({

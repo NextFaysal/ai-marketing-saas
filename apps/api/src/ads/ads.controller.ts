@@ -1,14 +1,15 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { AdsService } from "./ads.service";
 import { CreateAdAccountDto, ManualMetricDto, ImportAdCsvDto, MetaConnectDto, MetaSyncDto, GoogleConnectDto, TikTokConnectDto, RangeSyncDto } from "./ads.dto";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class AdsController {
   constructor(private readonly ads: AdsService) {}
 

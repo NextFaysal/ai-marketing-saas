@@ -4,7 +4,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.DISABLE_SCHEDULER = "true";
 
 import { InboxService } from "./inbox.service";
-import { classifyIntent, parseCodReply } from "./intent";
+import { classifyIntent, moodFromMessages, parseCodReply } from "./intent";
 import { encryptJson } from "../integrations/crypto";
 import { DevTemplateProvider } from "../ai/llm/dev.provider";
 import { WorkflowsService } from "../workflows/workflows.service";
@@ -106,6 +106,37 @@ describe("M13 intent classifier", () => {
     const c = classifyIntent("এত বাজে সার্ভিস! দাম কত সেটাও বলতে পারছেন না, প্রতারণা!");
     expect(c.sentiment).toBe("negative");
     expect(c.intent).toBe("complaint");
+  });
+  it("Inbox Next-Gen P3: flags positive sentiment (BN + EN + emoji)", () => {
+    expect(classifyIntent("অনেক ধন্যবাদ! পণ্যটা দারুণ, খুব খুশি হলাম 😊").sentiment).toBe("positive");
+    expect(classifyIntent("Thank you so much, excellent service!").sentiment).toBe("positive");
+    expect(classifyIntent("পণ্যটা পেয়ে সন্তুষ্ট, ভালো লেগেছে").sentiment).toBe("positive");
+    expect(classifyIntent("👍").sentiment).toBe("positive");
+    // Positive sentiment never hijacks the intent the way negative does.
+    expect(classifyIntent("ধন্যবাদ, দাম কত?").intent).toBe("price");
+    expect(classifyIntent("ধন্যবাদ, দাম কত?").sentiment).toBe("positive");
+    // Neutral texts stay null — positive detection is strictly additive.
+    expect(classifyIntent("দাম কত?").sentiment).toBeNull();
+    expect(classifyIntent("আসসালামু আলাইকুম").sentiment).toBeNull();
+  });
+  it("Inbox Next-Gen P3: negative always wins over positive", () => {
+    const c = classifyIntent("ধন্যবাদ, কিন্তু সার্ভিসটা খুব খারাপ, হতাশ হলাম");
+    expect(c.sentiment).toBe("negative");
+    expect(c.intent).toBe("complaint");
+    expect(classifyIntent("Thanks but this is fraud 😡").sentiment).toBe("negative");
+  });
+  it("Inbox Next-Gen P3: a complaint that also says thanks is still a complaint", () => {
+    const c = classifyIntent("ধন্যবাদ জানাচ্ছি, তবে পণ্যটা ভাঙা এসেছে আর সার্ভিস খুব বাজে, রিফান্ড চাই");
+    expect(c.sentiment).toBe("negative");
+    expect(c.intent).toBe("complaint");
+  });
+  it("Inbox Next-Gen P3: moodFromMessages sums per-message sentiment", () => {
+    expect(moodFromMessages([])).toBeNull();
+    expect(moodFromMessages(["ধন্যবাদ!", "চমৎকার সার্ভিস"])).toBe("positive");
+    expect(moodFromMessages(["খুব খারাপ সার্ভিস", "হতাশ"])).toBe("negative");
+    expect(moodFromMessages(["ধন্যবাদ!", "খুব খারাপ"])).toBe("neutral"); // +1 and -1 cancel
+    expect(moodFromMessages(["দাম কত?", "স্টক আছে?"])).toBe("neutral"); // texts exist, no signal
+    expect(moodFromMessages(["ধন্যবাদ!", "দারুণ!", "একটু বাজে"])).toBe("positive"); // 2 vs 1
   });
   it("parseCodReply only accepts short clear answers", () => {
     expect(parseCodReply("হ্যাঁ")).toBe("confirmed");

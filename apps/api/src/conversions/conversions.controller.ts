@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ConversionsService } from "./conversions.service";
-import { CurrentUser, AuthUser, Roles } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 import { IsBoolean, IsOptional, IsString } from "class-validator";
@@ -14,8 +14,9 @@ class UpdateSettingsDto {
   @IsOptional() @IsBoolean() sendLeadEvents?: boolean;
 }
 
+@PermissionArea("ads")
 @Controller("organizations/:organizationId/conversions")
-@UseGuards(TenantGuard)
+@UseGuards(TenantGuard, RolesGuard)
 export class ConversionsController {
   constructor(private readonly conversions: ConversionsService) {}
 
