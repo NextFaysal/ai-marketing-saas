@@ -13,6 +13,7 @@ export interface HumanReplyContext {
   };
   tonePreference?: string;
   freeDeliveryNote?: string;
+  isNightOwl?: boolean;
 }
 
 export interface GeneratedReplyOutput {
@@ -40,6 +41,19 @@ export class CommentHumanizer {
     const namePart = ctx.authorName ? ctx.authorName.split(" ")[0] : "";
     const greeting = this.greetings[Math.floor(Math.random() * this.greetings.length)];
     const salutation = namePart ? `${namePart} ${this.salutations[Math.floor(Math.random() * this.salutations.length)]}` : "প্রিয় গ্রাহক";
+
+    // 0. Night-Owl (12:00 AM - 8:00 AM) Assurance
+    if (ctx.isNightOwl) {
+      const prodName = ctx.matchedProduct?.name || ctx.postTitle || "আমাদের এই প্রোডাক্টটি";
+      const price = ctx.matchedProduct?.priceFormatted || "অফার মূল্যে";
+      const orderUrl = ctx.matchedProduct?.orderUrl || "";
+      return {
+        publicCommentReply: `${greeting} ${salutation}! আমাদের অফিস এখন বন্ধ থাকলেও আপনার কমেন্টটি আমরা নোট করে রেখেছি ✨ ${prodName} পাচ্ছেন ${price} অফারে। আপনি নিশ্চিন্তে অর্ডার দিয়ে রাখতে পারেন, সকাল ৯টায় আমাদের টিম সবার আগে আপনার অর্ডারটি প্রসেস করবে ❤️`,
+        privateDmText: `আসসালামু আলাইকুম ${salutation}! নিশুতি রাতের স্পেশাল শুভেচ্ছা 🌙\n\nআপনি "${prodName}" নিয়ে আগ্রহী হওয়ায় আন্তরিক ধন্যবাদ। অফার প্রাইজ: ${price}।\n\nসকালে আমাদের টিম জয়েন করা মাত্রই যাতে আপনার পার্সেল সবার আগে পাঠানো হয়, সেজন্য নিচের লিংকে গিয়ে এখনই অর্ডার কনফার্ম করে রাখুন:\n👉 ${orderUrl || "আমাদের শপ লিংকে ক্লিক করুন"}\n\nশুভ রাত্রি!`,
+        shouldSendDm: true,
+        humanConfidence: 0.98,
+      };
+    }
 
     // 1. Complaint Resolution
     if (ctx.classification.intent === "COMPLAINT") {

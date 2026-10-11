@@ -34,6 +34,12 @@ interface SocialReplySettings {
   tonePreference: string;
   bannedKeywords: string[];
   salesOrderUrl?: string;
+  nightOwlEnabled?: boolean;
+  nightOwlMessage?: string;
+  urgentAlertTelegramEnabled?: boolean;
+  telegramChatId?: string;
+  telegramBotToken?: string;
+  cannedSnippets?: Record<string, string>;
 }
 
 interface CommentListResponse {
@@ -707,6 +713,40 @@ export default function SocialCommentsPage() {
                   <span className="text-[11px] text-indigo-600 font-medium">✨ AI সাজেশন লোড হচ্ছে...</span>
                 ) : null}
               </div>
+
+              {/* Quick Canned Snippets Toolbar */}
+              <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                <span className="text-[10px] text-slate-400 font-medium mr-1">⚡ Quick Snippets:</span>
+                <button
+                  type="button"
+                  onClick={() => setReplyInput("জি ভাইয়া/আপু, আপনার ইনবক্সে বিস্তারিত মূল্য ও ডিসকাউন্ট লিংক পাঠানো হয়েছে! অনুগ্রহ করে মেসেজ চেক করুন।")}
+                  className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
+                >
+                  📨 চেক ইনবক্স
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReplyInput("আমাদের সারা বাংলাদেশে ক্যাশ অন ডেলিভারি সুবিধা আছে। ঢাকা সিটিতে ২৪-৪৮ ঘণ্টা, ঢাকার বাইরে ২-৩ দিনে পৌঁছে যাবে ইনশাআল্লাহ।")}
+                  className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
+                >
+                  🚚 ডেলিভারি নিয়ম
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReplyInput("প্রোডাক্ট হাতে পেয়ে চেক করে পেমেন্ট করার ১০০% গ্যারান্টি সুবিধা পাবেন। কোনো সমস্যা হলে ৭ দিনের ইজি রিপ্লেসমেন্ট পলিসি রয়েছে।")}
+                  className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
+                >
+                  🛡️ রিটার্ন/ওয়ারেন্টি
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReplyInput("জি অবশ্যই! আজকের স্পেশাল কম্বো অফারে অতিরিক্ত ডিসকাউন্ট পাবেন। অর্ডার করতে এখনই ইনবক্সে আপনার নম্বর ও ঠিকানা দিন।")}
+                  className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
+                >
+                  🎁 ডিসকাউন্ট অফার
+                </button>
+              </div>
+
               <textarea
                 value={replyInput}
                 onChange={(e) => setReplyInput(e.target.value)}
@@ -858,6 +898,75 @@ export default function SocialCommentsPage() {
                   onChange={(e) => setSettings({ ...settings, salesOrderUrl: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 />
+              </div>
+
+              {/* Night-Owl Assurance Feature */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-amber-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.nightOwlEnabled ?? true}
+                    onChange={(e) => setSettings({ ...settings, nightOwlEnabled: e.target.checked })}
+                    className="rounded border-amber-300 text-amber-600"
+                  />
+                  🦉 নাইট-আউল আশ্বাসন (রাত ১২টা থেকে সকাল ৮টার কমেন্টে বিশেষ বার্তা)
+                </label>
+                <p className="text-[11px] text-amber-700">
+                  অফিস বন্ধের সময়েও কাস্টমারকে আশ্বস্ত করবে যে তাদের অর্ডার ও কুয়েরি সকাল ৯টায় ফার্স্ট প্রায়োরিটিতে প্রসেস করা হবে।
+                </p>
+                {settings.nightOwlEnabled ? (
+                  <input
+                    type="text"
+                    value={settings.nightOwlMessage || ""}
+                    onChange={(e) => setSettings({ ...settings, nightOwlMessage: e.target.value })}
+                    placeholder="শুভরাত্রি! আমাদের অফিস এখন বন্ধ থাকলেও সকাল ৯টায় ফার্স্ট প্রায়োরিটিতে আপনার অর্ডার প্রসেস করা হবে।"
+                    className="w-full rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs"
+                  />
+                ) : null}
+              </div>
+
+              {/* Telegram Urgent Alert Notification Feature */}
+              <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-sky-950 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.urgentAlertTelegramEnabled ?? false}
+                    onChange={(e) => setSettings({ ...settings, urgentAlertTelegramEnabled: e.target.checked })}
+                    className="rounded border-sky-300 text-sky-600"
+                  />
+                  🔔 টেলিগ্রাম আর্জেন্ট অ্যালার্ট (অভিযোগ ও কম্পিটিটর হাইজ্যাক হলে সাথে সাথে নোটিফিকেশন)
+                </label>
+                <p className="text-[11px] text-sky-800">
+                  কোনো কাস্টমার ব্যাড রিভিউ দিলে বা প্রতিদ্বন্দ্বী ব্র্যান্ড হাইজ্যাক করার চেষ্টা করলে সরাসরি টেলিগ্রাম গ্রুপ বা বটে পুশ অ্যালার্ট যাবে।
+                </p>
+                {settings.urgentAlertTelegramEnabled ? (
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-sky-900 mb-0.5">
+                        Telegram Bot Token:
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+                        value={settings.telegramBotToken || ""}
+                        onChange={(e) => setSettings({ ...settings, telegramBotToken: e.target.value })}
+                        className="w-full rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-sky-900 mb-0.5">
+                        Telegram Chat ID / Group ID:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="@channel_or_chat_id"
+                        value={settings.telegramChatId || ""}
+                        onChange={(e) => setSettings({ ...settings, telegramChatId: e.target.value })}
+                        className="w-full rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 

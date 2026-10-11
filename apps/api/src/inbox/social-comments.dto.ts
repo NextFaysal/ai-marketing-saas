@@ -30,6 +30,11 @@ export class UpdateReplySettingsDto {
   @IsOptional() @IsArray() bannedKeywords?: string[];
   @IsOptional() @IsString() salesOrderUrl?: string;
   @IsOptional() freeDeliveryThresholdMinor?: string;
+  @IsOptional() @IsBoolean() nightOwlEnabled?: boolean;
+  @IsOptional() @IsString() nightOwlMessage?: string;
+  @IsOptional() @IsBoolean() urgentAlertTelegramEnabled?: boolean;
+  @IsOptional() @IsString() telegramChatId?: string;
+  @IsOptional() @IsString() telegramBotToken?: string;
 }
 
 export class IngestExternalCommentDto {

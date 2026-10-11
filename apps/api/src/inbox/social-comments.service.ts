@@ -34,6 +34,13 @@ export class SocialCommentsService {
           replyDelaySeconds: 25,
           tonePreference: "FRIENDLY_SALES",
           bannedKeywords: [],
+          nightOwlEnabled: true,
+          urgentAlertTelegramEnabled: false,
+          cannedSnippets: [
+            { code: "delivery", label: "ডেলিভারি তথ্য", text: "ঢাকা সিটির মধ্যে ৬০ টাকা (২৪-৪৮ ঘণ্টা) এবং ঢাকার বাইরে ১২০ টাকা (২-৩ দিন)। হোম ডেলিভারি ক্যাশ অন ডেলিভারিতে পাবেন!" },
+            { code: "size", label: "সাইজ চার্ট", text: "আমাদের সাইজ চার্ট: M (বডি ৩৮), L (বডি ৪০), XL (বডি ৪২), XXL (বডি ৪৪)। আপনার সঠিক সাইজটি ইনবক্সে কনফার্ম করুন।" },
+            { code: "warranty", label: "ওয়ারেন্টি পলিসি", text: "প্রোডাক্ট রিসিভের পর ৭ দিনের মধ্যে যেকোনো সমস্যায় ১০০% ফ্রি রিটার্ন ও রিপ্লেসমেন্ট সুবিধা পাবেন।" }
+          ],
         },
       });
     }
@@ -54,6 +61,11 @@ export class SocialCommentsService {
         bannedKeywords: dto.bannedKeywords ?? existing.bannedKeywords,
         salesOrderUrl: dto.salesOrderUrl !== undefined ? dto.salesOrderUrl : existing.salesOrderUrl,
         freeDeliveryThresholdMinor: dto.freeDeliveryThresholdMinor ? BigInt(dto.freeDeliveryThresholdMinor) : existing.freeDeliveryThresholdMinor,
+        nightOwlEnabled: dto.nightOwlEnabled ?? existing.nightOwlEnabled,
+        nightOwlMessage: dto.nightOwlMessage !== undefined ? dto.nightOwlMessage : existing.nightOwlMessage,
+        urgentAlertTelegramEnabled: dto.urgentAlertTelegramEnabled ?? existing.urgentAlertTelegramEnabled,
+        telegramChatId: dto.telegramChatId !== undefined ? dto.telegramChatId : existing.telegramChatId,
+        telegramBotToken: dto.telegramBotToken !== undefined ? dto.telegramBotToken : existing.telegramBotToken,
       },
     });
 
@@ -155,6 +167,10 @@ export class SocialCommentsService {
       }
     }
 
+    // Determine if it's Night-Owl time (12:00 AM - 8:00 AM in Bangladesh / Local)
+    const currentHour = new Date().getHours();
+    const isNightOwl = settings.nightOwlEnabled && (currentHour >= 0 && currentHour < 8);
+
     const aiPlan = CommentHumanizer.generateHumanReply({
       authorName: dto.authorName,
       commentText: dto.commentText,
@@ -162,6 +178,7 @@ export class SocialCommentsService {
       postTitle: dto.postTitle,
       matchedProduct,
       tonePreference: settings.tonePreference,
+      isNightOwl,
     });
 
     const comment = await (this.prisma as any).socialComment.upsert({
@@ -198,12 +215,26 @@ export class SocialCommentsService {
         metadata: {
           aiPlanned: aiPlan,
           matchedProduct,
+          isNightOwl,
         },
       },
     });
 
-    // Auto-create Lead in CRM if intent is PRICE_QUERY (High-intent buyer prospect)
-    if (classification.intent === "PRICE_QUERY" || classification.intent === "PRODUCT_INFO") {
+    // Urgent Alert Bot Dispatcher: If complaint or high priority, send Telegram notification
+    if (settings.urgentAlertTelegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+      if (classification.isHighPriorityComplaint || classification.intent === "COMPETITOR_MENTION") {
+        this.dispatchUrgentTelegramAlert(settings.telegramBotToken, settings.telegramChatId, {
+          platform: dto.platform,
+          authorName: dto.authorName,
+          commentText: dto.commentText,
+          intent: classification.intent,
+          postTitle: dto.postTitle,
+        }).catch(() => undefined);
+      }
+    }
+
+    // Auto-create Lead in CRM if intent is PRICE_QUERY or BARGAIN (High-intent buyer prospect)
+    if (classification.intent === "PRICE_QUERY" || classification.intent === "PRODUCT_INFO" || classification.intent === "BARGAIN") {
       try {
         const leadSource = `${dto.platform.toUpperCase()} Comment`;
         await (this.prisma as any).lead.create({
@@ -213,8 +244,8 @@ export class SocialCommentsService {
             source: leadSource,
             stage: "NEW",
             status: "OPEN",
-            score: 75,
-            notes: `Auto-captured from ${dto.platform} comment on post: "${dto.postTitle || dto.externalPostId}". Question: "${dto.commentText}"`,
+            score: classification.intent === "BARGAIN" ? 85 : 75,
+            notes: `Auto-captured from ${dto.platform} comment on post: "${dto.postTitle || dto.externalPostId}". Intent: ${classification.intent}. Question: "${dto.commentText}"`,
           },
         }).catch(() => undefined);
       } catch {
@@ -223,6 +254,30 @@ export class SocialCommentsService {
     }
 
     return comment;
+  }
+
+  private async dispatchUrgentTelegramAlert(token: string, chatId: string, payload: any) {
+    try {
+      const text = `🚨 *URGENT SOCIAL COMMENT ALERT!*\n\n` +
+        `• *চ্যানেল:* ${payload.platform.toUpperCase()}\n` +
+        `• *কাস্টমার:* ${payload.authorName}\n` +
+        `• *ধরন:* ${payload.intent === "COMPLAINT" ? "⚠️ কাস্টমার কমপ্লেইন্ট / অভিযোগ" : "🛑 প্রতিদ্বন্দী ব্র্যান্ডের তুলনা"}\n` +
+        `• *মন্তব্য:* "${payload.commentText}"\n` +
+        (payload.postTitle ? `• *পোস্ট:* ${payload.postTitle}\n\n` : `\n`) +
+        `_AI অটোমেশন ইতিমধ্যে হ্যান্ডেল করেছে। দ্রুত কাস্টমারের সাথে ফোনে যোগাযোগ করার অনুরোধ করা হচ্ছে!_`;
+
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "Markdown",
+        }),
+      });
+    } catch {
+      // ignore telegram alert errors
+    }
   }
 
   async generateAiSuggestion(organizationId: string, commentId: string, dto?: GenerateAiReplyDto) {

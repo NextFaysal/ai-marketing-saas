@@ -2329,6 +2329,12 @@ model SocialReplySetting {
   bannedKeywords     String[] @default([])
   salesOrderUrl      String?
   freeDeliveryThresholdMinor BigInt?
+  nightOwlEnabled    Boolean  @default(true)
+  nightOwlMessage    String?
+  urgentAlertTelegramEnabled Boolean @default(false)
+  telegramChatId     String?
+  telegramBotToken   String?
+  cannedSnippets     Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
