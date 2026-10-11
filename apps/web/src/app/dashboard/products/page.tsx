@@ -443,15 +443,29 @@ export default function ProductsPage() {
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         {p.slug ? (
-                          <a
-                            href={`/checkout/${p.slug}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
-                            title="১-ক্লিক পাবলিক চেকআউট পেজ দেখুন"
-                          >
-                            🔗 চেকআউট লিংক
-                          </a>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const fullUrl = `${window.location.origin}/checkout/${p.slug}`;
+                                navigator.clipboard.writeText(fullUrl);
+                                setNotice(`📋 "${p.name}" এর চেকআউট লিংক কপি করা হয়েছে: ${fullUrl}`);
+                              }}
+                              className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1"
+                              title="ফেসবুক/ইনবক্সে পাঠানোর জন্য লিংক কপি করুন"
+                            >
+                              📋 লিংক কপি
+                            </button>
+                            <a
+                              href={`/checkout/${p.slug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                              title="১-ক্লিক পাবলিক চেকআউট পেজ দেখুন"
+                            >
+                              🔗 চেকআউট পেজ
+                            </a>
+                          </>
                         ) : null}
                         <button
                           onClick={() => openEditModal(p)}
