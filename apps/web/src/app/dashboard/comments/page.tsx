@@ -301,6 +301,47 @@ export default function SocialCommentsPage() {
         </div>
       </div>
 
+      {/* 📊 Sentiment & Intent Analytics Banner */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-800 mb-2">📈 কাস্টমার সেন্টিমেন্ট অনুপাত (Sentiment Distribution)</div>
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex-1">
+              <div className="h-3 w-full rounded-full bg-slate-100 flex overflow-hidden">
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'POSITIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-emerald-500 h-full" title="পজিটিভ" />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEUTRAL').length / Math.max(1, comments.length)) * 100}%` }} className="bg-slate-400 h-full" title="সাধারণ" />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEGATIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-rose-500 h-full" title="অভিযোগ" />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'SPAM').length / Math.max(1, comments.length)) * 100}%` }} className="bg-purple-500 h-full" title="স্প্যাম" />
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-3 text-[11px] text-slate-600">
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> পজিটিভ ({comments.filter(c => c.sentiment === 'POSITIVE').length})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-400" /> সাধারণ ({comments.filter(c => c.sentiment === 'NEUTRAL').length})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> অভিযোগ ({comments.filter(c => c.sentiment === 'NEGATIVE').length})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-purple-500" /> স্প্যাম ({comments.filter(c => c.sentiment === 'SPAM').length})</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-800 mb-2">🎯 কাস্টমার প্রশ্নের ধরন (Buyer Intent)</div>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="rounded-lg bg-amber-50 p-2 border border-amber-200">
+              <div className="font-bold text-amber-900 text-sm">{comments.filter(c => c.intent === 'PRICE_QUERY').length}</div>
+              <div className="text-[10px] text-amber-700 font-semibold mt-0.5">💰 দাম জিজ্ঞাসা</div>
+            </div>
+            <div className="rounded-lg bg-blue-50 p-2 border border-blue-200">
+              <div className="font-bold text-blue-900 text-sm">{comments.filter(c => c.intent === 'DELIVERY_QUERY').length}</div>
+              <div className="text-[10px] text-blue-700 font-semibold mt-0.5">🚚 ডেলিভারি প্রশ্ন</div>
+            </div>
+            <div className="rounded-lg bg-rose-50 p-2 border border-rose-200">
+              <div className="font-bold text-rose-900 text-sm">{comments.filter(c => c.intent === 'COMPLAINT').length}</div>
+              <div className="text-[10px] text-rose-700 font-semibold mt-0.5">🚨 সাপোর্ট / কমপ্লেইন্ট</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">

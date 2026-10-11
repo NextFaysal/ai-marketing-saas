@@ -54,6 +54,7 @@ export class InboxService {
     // creates directly (leadgen, first-message). Optional — a
     // missing engine leaves those leads unassigned, as before.
     @Optional() private readonly leadAssignment?: LeadAssignmentService,
+    @Optional() private readonly socialComments?: any,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -258,6 +259,21 @@ export class InboxService {
     for (const lg of parsed.leadgens) {
       const created = await this.ingestLeadgen(organizationId, secrets.accessToken, lg).catch(() => false);
       if (created) leadgenReceived++;
+    }
+
+    // Omnichannel Comments Ingestion & Auto-Reply Pilot
+    for (const cmt of parsed.comments ?? []) {
+      if (this.socialComments?.ingestComment) {
+        await this.socialComments.ingestComment(organizationId, {
+          platform: cmt.platform,
+          externalPostId: cmt.postId,
+          externalCommentId: cmt.commentId,
+          postTitle: cmt.postTitle,
+          authorName: cmt.authorName,
+          authorSocialId: cmt.authorId,
+          commentText: cmt.message,
+        }).catch(() => undefined);
+      }
     }
 
     for (const status of parsed.statuses) {

@@ -187,6 +187,26 @@ export class SocialCommentsService {
       },
     });
 
+    // Auto-create Lead in CRM if intent is PRICE_QUERY (High-intent buyer prospect)
+    if (classification.intent === "PRICE_QUERY" || classification.intent === "PRODUCT_INFO") {
+      try {
+        const leadSource = `${dto.platform.toUpperCase()} Comment`;
+        await (this.prisma as any).lead.create({
+          data: {
+            organizationId,
+            fullName: dto.authorName || "Social Lead",
+            source: leadSource,
+            stage: "NEW",
+            status: "OPEN",
+            score: 75,
+            notes: `Auto-captured from ${dto.platform} comment on post: "${dto.postTitle || dto.externalPostId}". Question: "${dto.commentText}"`,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // ignore CRM lead creation errors
+      }
+    }
+
     return comment;
   }
 

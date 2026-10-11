@@ -21,21 +21,63 @@ export interface LeadgenEvent {
   adId?: string;
   campaignId?: string;
 }
+export interface FeedCommentEvent {
+  platform: "facebook" | "instagram";
+  postId: string;
+  commentId: string;
+  authorId: string;
+  authorName: string;
+  message: string;
+  postTitle?: string;
+  timestamp: Date;
+}
 export interface StatusEvent {
   channel: "whatsapp" | "messenger" | "instagram";
   externalId: string;
   status: string; // sent | delivered | read | failed
 }
-export interface ParsedWebhook { messages: IncomingMessageEvent[]; statuses: StatusEvent[]; leadgens: LeadgenEvent[] }
+export interface ParsedWebhook { 
+  messages: IncomingMessageEvent[]; 
+  statuses: StatusEvent[]; 
+  leadgens: LeadgenEvent[];
+  comments: FeedCommentEvent[];
+}
 
 const ts = (seconds: string | number | undefined): Date =>
   new Date((Number(seconds ?? 0) || Math.floor(Date.now() / 1000)) * 1000);
 
 export function parseMetaWebhook(payload: any): ParsedWebhook {
-  const out: ParsedWebhook = { messages: [], statuses: [], leadgens: [] };
+  const out: ParsedWebhook = { messages: [], statuses: [], leadgens: [], comments: [] };
   if (!payload || !Array.isArray(payload.entry)) return out;
 
   for (const entry of payload.entry) {
+    // Page feed/comments: entry.changes[] with item === "comment"
+    for (const change of entry.changes ?? []) {
+      const val = change?.value ?? {};
+      if (change.field === "feed" && (val.item === "comment" || val.verb === "add") && val.comment_id) {
+        out.comments.push({
+          platform: payload.object === "instagram" ? "instagram" : "facebook",
+          postId: String(val.post_id || entry.id || ""),
+          commentId: String(val.comment_id),
+          authorId: String(val.from?.id || ""),
+          authorName: String(val.from?.name || "Anonymous User"),
+          message: String(val.message || ""),
+          timestamp: ts(val.created_time),
+        });
+      }
+      if (change.field === "comments" && val.id) {
+        // Instagram media comments
+        out.comments.push({
+          platform: "instagram",
+          postId: String(val.media?.id || entry.id || ""),
+          commentId: String(val.id),
+          authorId: String(val.from?.id || ""),
+          authorName: String(val.from?.username || "Instagram User"),
+          message: String(val.text || ""),
+          timestamp: ts(val.timestamp),
+        });
+      }
+    }
     // WhatsApp: entry.changes[].value
     for (const change of entry.changes ?? []) {
       const value = change?.value ?? {};
