@@ -24,3 +24,15 @@ export class AddObservationDto {
   @IsString() sourceUrl!: string;
 }
 export class GenerateInsightsDto { @IsOptional() @IsString() competitorId?: string; }
+export class GenerateCounterAdDto {
+  @IsString() competitorAdId!: string;
+  @IsOptional() @IsString() ownProductId?: string;
+  @IsOptional() @IsString() tone?: string;
+}
+export class SyncMultiPlatformDto {
+  @IsOptional() platforms?: ("facebook" | "google" | "tiktok" | "bing")[];
+  @IsOptional() countries?: string[];
+  @IsOptional() activeOnly?: boolean;
+}
+
+

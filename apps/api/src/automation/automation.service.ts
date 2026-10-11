@@ -20,10 +20,11 @@ import { platformSetting } from "../common/platform-settings";
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders",
   "meta_insights", "google_insights", "tiktok_insights",
-  "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
+  "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "meta_status_sync", "audience_refresh", "dayparting",
   "subscription_sweep", "dunning_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
 ] as const;
+
 
 export const RULE_METRICS = [
   "platform_cpa", "platform_roas", "spend_no_conversions",
@@ -266,7 +267,9 @@ export class AutomationService implements OnModuleInit {
       case "daily_briefing": return this.proactive ? this.proactive.runDailyBriefing(orgId, actor) : { skipped: "proactive service unavailable" };
       case "competitor_ads": return this.competitors.syncAds(orgId, actor, job.targetId, {});
       case "competitor_scan": return this.competitors.scanWebsite(orgId, actor, job.targetId);
+      case "competitor_multi_sync": return this.competitors.syncMultiPlatform(orgId, actor, job.targetId);
       case "weekly_ads_report": return this.sendWeeklyAdsReport(orgId);
+
       case "dunning_reminders": return this.sendDunningReminder(orgId);
       case "inbox_assignment_sweep": {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");

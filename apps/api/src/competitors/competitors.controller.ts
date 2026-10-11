@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CompetitorsService } from "./competitors.service";
-import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto } from "./competitors.dto";
+import { CreateCompetitorDto, UpdateCompetitorDto, SyncAdsDto, AddObservationDto, GenerateInsightsDto, GenerateCounterAdDto, SyncMultiPlatformDto } from "./competitors.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -9,6 +9,12 @@ import { RolesGuard } from "../common/roles.guard";
 @UseGuards(TenantGuard)
 export class CompetitorsController {
   constructor(private readonly competitors: CompetitorsService) {}
+
+  @Post("counter-ad") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER")
+  generateCounterAd(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateCounterAdDto) {
+    return this.competitors.generateCounterAd(orgId, user.userId, dto);
+  }
+
 
   @Post() @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   create(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateCompetitorDto) {
@@ -23,6 +29,14 @@ export class CompetitorsController {
 
   @Get("insights")
   insights(@Param("organizationId") orgId: string) { return this.competitors.listInsights(orgId); }
+
+  @Get("alerts")
+  alerts(@Param("organizationId") orgId: string) { return this.competitors.getAlertsFeed(orgId); }
+
+  @Get("dossier")
+  dossier(@Param("organizationId") orgId: string) { return this.competitors.exportDossier(orgId); }
+
+
 
   @Post("insights/generate") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ANALYST")
   generateInsights(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateInsightsDto) {
@@ -41,6 +55,18 @@ export class CompetitorsController {
   syncAds(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("competitorId") id: string, @Body() dto: SyncAdsDto) {
     return this.competitors.syncAds(orgId, user.userId, id, dto);
   }
+
+  @Post(":competitorId/sync-multi-platform") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  syncMultiPlatform(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("competitorId") id: string, @Body() dto: SyncMultiPlatformDto) {
+    return this.competitors.syncMultiPlatform(orgId, user.userId, id, dto);
+  }
+
+  @Post(":competitorId/schedule-sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  scheduleSync(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("competitorId") id: string) {
+    return this.competitors.scheduleAutoSync(orgId, user.userId, id);
+  }
+
+
 
   @Get(":competitorId/ads")
   ads(@Param("organizationId") orgId: string, @Param("competitorId") id: string) { return this.competitors.listAds(orgId, id); }

@@ -5,8 +5,10 @@ import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { AdLibraryClient } from "./ad-library.client";
 import { WebsiteScanner } from "./website-scanner";
+import { MultiPlatformScanner } from "./multi-platform-scanner";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+
 
 interface EvidenceRef { ref: string; label: string; url?: string }
 
@@ -61,6 +63,61 @@ export class CompetitorsService {
     await (this.prisma as any).competitor.delete({ where: { id: competitorId } });
     return { deleted: true };
   }
+
+  // ----- Automated 24/7 Background Sync Scheduler -----
+  async scheduleAutoSync(organizationId: string, actorId: string, competitorId: string) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const existingJob = await (this.prisma as any).scheduledJob.findFirst({
+      where: {
+        organizationId,
+        type: "competitor_multi_sync",
+        targetId: competitorId,
+      },
+    });
+
+    if (existingJob) {
+      // Toggle enable/disable
+      const updated = await (this.prisma as any).scheduledJob.update({
+        where: { id: existingJob.id },
+        data: { enabled: !existingJob.enabled },
+      });
+      return {
+        enabled: updated.enabled,
+        message: updated.enabled
+          ? `24/7 অটো-সিঙ্ক চালু করা হয়েছে (প্রতি দিন রাতে অটো আপডেট হবে)`
+          : `অটো-সিঙ্ক বন্ধ করা হয়েছে`,
+      };
+    }
+
+    // Create new daily cron job (intervalMinutes: 1440 = 24 hours)
+    const newJob = await (this.prisma as any).scheduledJob.create({
+      data: {
+        organizationId,
+        name: `Daily Multi-Platform Sync (${competitor.name})`,
+        type: "competitor_multi_sync",
+        targetId: competitorId,
+        intervalMinutes: 1440,
+        enabled: true,
+        nextRunAt: new Date(Date.now() + 1440 * 60000),
+        createdById: actorId,
+      },
+    });
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "competitor.autosync_scheduled",
+      entityType: "ScheduledJob",
+      entityId: newJob.id,
+      metadata: { competitorName: competitor.name },
+    });
+
+    return {
+      enabled: true,
+      message: `24/7 অটো-সিঙ্ক চালু করা হয়েছে (প্রতি দিন রাতে অটো আপডেট হবে)`,
+    };
+  }
+
 
   // ----- Ad Library sync -----
   private async resolveAdLibraryToken(organizationId: string): Promise<string> {
@@ -118,32 +175,384 @@ export class CompetitorsService {
     return { fetched: ads.length, created, updated };
   }
 
+  // ----- Multi-Platform Sync (Facebook, Google, TikTok, Bing) -----
+  async syncMultiPlatform(
+    organizationId: string,
+    actorId: string,
+    competitorId: string,
+    opts: { platforms?: ("facebook" | "google" | "tiktok" | "bing")[]; countries?: string[]; activeOnly?: boolean } = {}
+  ) {
+    const competitor = await this.getOrThrow(organizationId, competitorId);
+    const targetPlatforms = opts.platforms?.length
+      ? opts.platforms
+      : (["facebook", "google", "tiktok", "bing"] as const);
+
+    let totalFetched = 0;
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    const platformBreakdown: Record<string, number> = {};
+
+    // 1. Meta / Facebook (if selected)
+    if (targetPlatforms.includes("facebook")) {
+      try {
+        const metaRes = await this.syncAds(organizationId, actorId, competitorId, {
+          countries: opts.countries,
+          activeOnly: opts.activeOnly,
+        });
+        totalFetched += metaRes.fetched;
+        totalCreated += metaRes.created;
+        totalUpdated += metaRes.updated;
+        platformBreakdown.facebook = metaRes.fetched;
+      } catch (e) {
+        platformBreakdown.facebook = 0;
+      }
+    }
+
+    // Domain extraction for search engines
+    let domain: string | undefined;
+    if (competitor.websiteUrl) {
+      try {
+        domain = new URL(competitor.websiteUrl).hostname.replace(/^www\./, "");
+      } catch {
+        // ignore
+      }
+    }
+
+    const scanner = new MultiPlatformScanner();
+    const otherAds: any[] = [];
+
+    // 2. Google Ads & Transparency
+    if (targetPlatforms.includes("google")) {
+      const gAds = await scanner.scanGoogleAds(competitor.name, domain);
+      otherAds.push(...gAds);
+      platformBreakdown.google = gAds.length;
+    }
+
+    // 3. TikTok Ads & Creative Center
+    if (targetPlatforms.includes("tiktok")) {
+      const ttAds = await scanner.scanTikTokAds(competitor.name);
+      otherAds.push(...ttAds);
+      platformBreakdown.tiktok = ttAds.length;
+    }
+
+    // 4. Bing Search & Sponsored Ads
+    if (targetPlatforms.includes("bing")) {
+      const bingAds = await scanner.scanBingAds(competitor.name, domain);
+      otherAds.push(...bingAds);
+      platformBreakdown.bing = bingAds.length;
+    }
+
+    // Store non-Meta ads safely into CompetitorAd
+    for (const ad of otherAds) {
+      totalFetched++;
+      const existing = await (this.prisma as any).competitorAd.findFirst({
+        where: { competitorId, externalAdId: ad.externalAdId },
+      });
+      const data = {
+        pageId: null,
+        pageName: ad.pageName ?? null,
+        startedAt: ad.startedAt ?? null,
+        stoppedAt: ad.stoppedAt ?? null,
+        isActive: ad.isActive,
+        platforms: ad.platforms,
+        creativeText: ad.creativeText ?? null,
+        linkUrl: ad.linkUrl ?? null,
+        snapshotUrl: ad.snapshotUrl ?? null,
+        raw: ad.raw as any,
+        lastSeenAt: new Date(),
+      };
+      if (existing) {
+        await (this.prisma as any).competitorAd.update({ where: { id: existing.id }, data });
+        totalUpdated++;
+      } else {
+        await (this.prisma as any).competitorAd.create({
+          data: { competitorId, externalAdId: ad.externalAdId, ...data },
+        });
+        totalCreated++;
+      }
+    }
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "competitor.multi_platform_synced",
+      entityType: "Competitor",
+      entityId: competitorId,
+      metadata: { totalFetched, totalCreated, totalUpdated, platformBreakdown },
+    });
+
+    return {
+      fetched: totalFetched,
+      created: totalCreated,
+      updated: totalUpdated,
+      breakdown: platformBreakdown,
+    };
+  }
+
+
   async listAds(organizationId: string, competitorId: string) {
     await this.getOrThrow(organizationId, competitorId);
     const ads = await (this.prisma as any).competitorAd.findMany({
       where: { competitorId }, orderBy: { startedAt: "desc" }, take: 100,
     });
-    return ads.map((a: any) => ({ ...a, raw: undefined }));
+    const now = Date.now();
+    return ads.map((a: any) => {
+      const started = a.startedAt ? new Date(a.startedAt).getTime() : null;
+      const stopped = a.stoppedAt ? new Date(a.stoppedAt).getTime() : null;
+      const daysRunning = started ? Math.max(1, Math.round(((stopped || now) - started) / (1000 * 60 * 60 * 24))) : 0;
+      // Winning ad definition: Active and running for at least 14 days (proven high ROI)
+      const isWinning = a.isActive && daysRunning >= 14;
+      const isFresh = a.isActive && daysRunning <= 3;
+      return {
+        ...a,
+        raw: undefined,
+        daysRunning,
+        isWinning,
+        isFresh,
+      };
+    });
   }
 
-  // ----- Website scan + manual price observations -----
+  // ----- AI Counter-Ad & Strategy Generator -----
+  async generateCounterAd(
+    organizationId: string,
+    actorId: string,
+    dto: { competitorAdId: string; ownProductId?: string; tone?: string }
+  ) {
+    const ad = await (this.prisma as any).competitorAd.findFirst({
+      where: { id: dto.competitorAdId },
+      include: { competitor: true },
+    });
+    if (!ad) throw new NotFoundException("Competitor ad not found");
+    if (ad.competitor.organizationId !== organizationId) {
+      throw new NotFoundException("Ad does not belong to this organization");
+    }
+
+    let ownProduct: any = null;
+    if (dto.ownProductId) {
+      ownProduct = await (this.prisma as any).product.findFirst({
+        where: { id: dto.ownProductId, organizationId },
+      });
+    } else {
+      // Pick the first active product as default context if available
+      ownProduct = await (this.prisma as any).product.findFirst({
+        where: { organizationId, status: "ACTIVE" },
+      });
+    }
+
+    const provider = this.llm.getProvider();
+    const competitorCreative = ad.creativeText || "No text available";
+    const competitorName = ad.competitor.name;
+    const daysRunning = ad.startedAt
+      ? Math.max(1, Math.round((Date.now() - new Date(ad.startedAt).getTime()) / (1000 * 60 * 60 * 24)))
+      : 1;
+
+    let strategyResult: {
+      hookBreakdown: { hookType: string; competitorAngle: string; weaknesses: string[] };
+      counterCampaign: {
+        headline: string;
+        primaryText: string;
+        callToAction: string;
+        suggestedOffer: string;
+        whyThisBeatsCompetitor: string;
+      };
+    };
+
+    if (provider.isRealLlm) {
+      const prompt = `You are a world-class direct-response ecommerce copywriter and growth marketer.
+Analyze this competitor's ad and generate an unstoppable counter-ad campaign for our brand that beats theirs.
+
+Competitor Name: ${competitorName}
+Days Running (Lifespan): ${daysRunning} days (Status: ${ad.isActive ? "ACTIVE" : "STOPPED"})
+Competitor Ad Creative Text:
+"""
+${competitorCreative}
+"""
+
+Our Product Context:
+${ownProduct ? `Product: ${ownProduct.name}, Price: ${formatMinor(BigInt(ownProduct.priceMinor), ownProduct.currency)}, Currency: ${ownProduct.currency}` : "Our general ecommerce store"}
+Tone: ${dto.tone || "High-converting, authentic, persuasive with urgent value"}
+
+Return strictly valid JSON with this format:
+{
+  "hookBreakdown": {
+    "hookType": "e.g. FOMO / Pain-point / Social Proof / Direct Offer",
+    "competitorAngle": "Short breakdown of what angle they are pushing",
+    "weaknesses": ["Weakness 1 of competitor's angle", "Weakness 2"]
+  },
+  "counterCampaign": {
+    "headline": "A punchy, superior headline (e.g. in Bangla/English based on context)",
+    "primaryText": "Complete high-converting primary text for Facebook/Instagram ads addressing the weaknesses",
+    "callToAction": "Shop Now / Order Now",
+    "suggestedOffer": "e.g. Free Delivery or Bundle Offer to outvalue them",
+    "whyThisBeatsCompetitor": "Explanation of psychological edge over the competitor's ad"
+  }
+}`;
+
+      const res = await provider.complete([
+        { role: "system", content: "You output JSON only." },
+        { role: "user", content: prompt }
+      ], { jsonMode: true, maxTokens: 1500 });
+
+      try {
+        strategyResult = JSON.parse(res.text);
+      } catch {
+        strategyResult = this.fallbackCounterAd(competitorName, competitorCreative, ownProduct);
+      }
+
+      await (this.prisma as any).aIUsageRecord.create({
+        data: {
+          organizationId,
+          userId: actorId,
+          feature: "competitor_counter_ad",
+          provider: provider.name,
+          inputTokens: res.inputTokens,
+          outputTokens: res.outputTokens,
+          estimated: res.tokensEstimated,
+        },
+      });
+    } else {
+      strategyResult = this.fallbackCounterAd(competitorName, competitorCreative, ownProduct);
+    }
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "competitor.counter_ad_generated",
+      entityType: "CompetitorAd",
+      entityId: ad.id,
+      metadata: { competitorName, ownProductId: ownProduct?.id },
+    });
+
+    return strategyResult;
+  }
+
+  private fallbackCounterAd(competitorName: string, competitorCreative: string, ownProduct: any) {
+    const prodName = ownProduct?.name || "আমাদের প্রিমিয়াম প্রোডাক্ট";
+    return {
+      hookBreakdown: {
+        hookType: "Direct Offer & Problem Resolution",
+        competitorAngle: `${competitorName} মূলত সাধারণ ডিসকাউন্ট ও সাধারণ সুবিধার ওপর জোর দিচ্ছে।`,
+        weaknesses: [
+          "ক্লিয়ার কোয়ালিটি গ্যারান্টি বা ট্রাস্ট ফ্যাক্টরের অভাব",
+          "কাস্টমারের নির্দিষ্ট সমস্যার সরাসরি সমাধান স্পষ্ট করা হয়নি"
+        ]
+      },
+      counterCampaign: {
+        headline: `🔥 সেরা কোয়ালিটিতে ${prodName} - ক্যাশ অন ডেলিভারি ও দ্রুত শিপিং!`,
+        primaryText: `অন্যান্য ব্র্যান্ডের নিম্নমানের পণ্য নিয়ে ভাবছেন? \n\n${competitorName}-এর চেয়ে ১০০% জেনুইন ও দীর্ঘস্থায়ী ${prodName} নিয়ে এলো আমাদের ব্র্যান্ড। দেখে শুনে মূল্য পরিশোধের সুবিধা সহ সারা বাংলাদেশে ফ্রি হোম ডেলিভারি!\n\nসীমিত সময়ের জন্য অফারটি লুফে নিন।`,
+        callToAction: "অর্ডার করুন এখনই",
+        suggestedOffer: "ফ্রি ডেলিভারি + ৭ দিনের রিটার্ন গ্যারান্টি",
+        whyThisBeatsCompetitor: "প্রতিযোগীর চেয়ে বেশি ট্রাস্ট ফ্যাক্টর, ঝুঁকিহীন ক্যাশ অন ডেলিভারি এবং দ্রুত সিদ্ধান্তের জন্য জরুরি অফার সাজানো হয়েছে।"
+      }
+    };
+  }
+
+
+  // ----- Website scan + live price drop & stockout alerts -----
   async scanWebsite(organizationId: string, actorId: string, competitorId: string) {
     const competitor = await this.getOrThrow(organizationId, competitorId);
     if (!competitor.websiteUrl) throw new BadRequestException("This competitor has no website URL");
     const scan = await new WebsiteScanner().scan(competitor.websiteUrl);
     let stored = 0;
+    const generatedAlerts: string[] = [];
+
     for (const product of scan.products) {
-      await (this.prisma as any).competitorPriceObservation.create({
+      // Check previous observation to detect Price Drop
+      const lastObs = await (this.prisma as any).competitorPriceObservation.findFirst({
+        where: { competitorId, productName: product.name },
+        orderBy: { observedAt: "desc" },
+      });
+
+      const currentPriceMinor = BigInt(product.priceMinor);
+      const newObs = await (this.prisma as any).competitorPriceObservation.create({
         data: {
-          competitorId, productName: product.name, priceMinor: BigInt(product.priceMinor),
-          currency: product.currency, sourceUrl: product.url, sourceType: "website_scan",
+          competitorId,
+          productName: product.name,
+          priceMinor: currentPriceMinor,
+          currency: product.currency,
+          sourceUrl: product.url,
+          sourceType: "website_scan",
         },
       });
       stored++;
+
+      // 1. Live Price Drop Alert
+      if (lastObs && BigInt(lastObs.priceMinor) > currentPriceMinor) {
+        const dropPercent = Number(
+          ((BigInt(lastObs.priceMinor) - currentPriceMinor) * 100n) / BigInt(lastObs.priceMinor)
+        );
+        if (dropPercent >= 5) {
+          const alertTitle = `🚨 Price Drop: ${competitor.name} dropped "${product.name}" price by ${dropPercent}%!`;
+          const alertDetail = `Old Price: ${formatMinor(BigInt(lastObs.priceMinor), lastObs.currency)} ➔ New Price: ${formatMinor(currentPriceMinor, product.currency)}. Competitor is getting aggressive on this item.`;
+          await (this.prisma as any).competitorInsight.create({
+            data: {
+              organizationId,
+              competitorId,
+              kind: "pricing",
+              title: alertTitle,
+              detail: alertDetail,
+              evidence: [
+                { ref: `price:${newObs.id}`, label: `${competitor.name}: ${product.name} at ${formatMinor(currentPriceMinor, product.currency)}`, url: product.url },
+              ],
+              provider: "alert-engine",
+            },
+          });
+          generatedAlerts.push(alertTitle);
+        }
+      }
+
+      // 2. Out-of-Stock Opportunity Alert
+      if (!product.inStock) {
+        const alertTitle = `🔥 Stock-Out Opportunity: ${competitor.name} is OUT OF STOCK on "${product.name}"!`;
+        const alertDetail = `Competitor has run out of stock for this high-demand product. Highly recommended: Increase your ad spend or run a counter-offer on your matching inventory to capture their buyers!`;
+        await (this.prisma as any).competitorInsight.create({
+          data: {
+            organizationId,
+            competitorId,
+            kind: "activity",
+            title: alertTitle,
+            detail: alertDetail,
+            evidence: [
+              { ref: `price:${newObs.id}`, label: `${competitor.name}: ${product.name} (Stock-Out)`, url: product.url },
+            ],
+            provider: "alert-engine",
+          },
+        });
+        generatedAlerts.push(alertTitle);
+      }
     }
-    await this.audit.log({ organizationId, userId: actorId, action: "competitor.website_scanned", entityType: "Competitor", entityId: competitorId, metadata: { scannedUrls: scan.scannedUrls, stored } });
-    return { scannedUrls: scan.scannedUrls, found: scan.products.length, stored, skippedByRobots: scan.skippedByRobots, errors: scan.errors };
+
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "competitor.website_scanned",
+      entityType: "Competitor",
+      entityId: competitorId,
+      metadata: { scannedUrls: scan.scannedUrls, stored, alertsGenerated: generatedAlerts.length },
+    });
+
+    return {
+      scannedUrls: scan.scannedUrls,
+      found: scan.products.length,
+      stored,
+      skippedByRobots: scan.skippedByRobots,
+      errors: scan.errors,
+      alerts: generatedAlerts,
+    };
   }
+
+  async getAlertsFeed(organizationId: string) {
+    return (this.prisma as any).competitorInsight.findMany({
+      where: {
+        organizationId,
+        provider: "alert-engine",
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+  }
+
 
   async addObservation(organizationId: string, competitorId: string, dto: { productName: string; price: string; currency?: string; sourceUrl: string }) {
     await this.getOrThrow(organizationId, competitorId);
@@ -290,7 +699,58 @@ export class CompetitorsService {
       orderBy: { createdAt: "desc" }, take: 50,
     });
   }
+
+  // ----- White-label Agency Client Audit Dossier Export -----
+  async exportDossier(organizationId: string, competitorId?: string) {
+    const org = await (this.prisma as any).organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, slug: true, brandSettings: true, currency: true },
+    });
+    const competitors = competitorId
+      ? [await this.getOrThrow(organizationId, competitorId)]
+      : await (this.prisma as any).competitor.findMany({ where: { organizationId } });
+
+    const comparison = await this.priceComparison(organizationId);
+    const alerts = await this.getAlertsFeed(organizationId);
+    const insights = await this.listInsights(organizationId, competitorId);
+
+    const competitorDossiers = [];
+    for (const c of competitors) {
+      const ads = await this.listAds(organizationId, c.id);
+      const observations = await this.listObservations(organizationId, c.id);
+      const winningAds = ads.filter((a) => a.isWinning);
+      competitorDossiers.push({
+        competitor: c,
+        totalAds: ads.length,
+        activeAds: ads.filter((a) => a.isActive).length,
+        winningAdsCount: winningAds.length,
+        winningAds: winningAds.slice(0, 5),
+        recentAds: ads.slice(0, 8),
+        priceObservationsCount: observations.length,
+        recentObservations: observations.slice(0, 10),
+      });
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      agencyBranding: {
+        organizationName: org?.name || "Our Brand",
+        currency: org?.currency || "BDT",
+        brandSettings: org?.brandSettings || null,
+      },
+      summary: {
+        totalCompetitorsTracked: competitors.length,
+        totalAlertsActive: alerts.length,
+        priceGapsDetected: comparison.rows.filter((r) => r.competitorPrices.length > 0).length,
+      },
+      competitors: competitorDossiers,
+      priceComparisonMatrix: comparison.rows,
+      liveOpportunityAlerts: alerts,
+      strategicInsights: insights,
+    };
+  }
 }
+
 
 export function nameMatchScore(a: string, b: string): number {
   const words = (s: string) => s.toLowerCase().split(/[^a-z0-9\u0980-\u09FF]+/).filter((w) => w.length >= 3);

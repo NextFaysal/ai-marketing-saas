@@ -34,9 +34,18 @@ export function isPathAllowed(pathname: string, disallows: string[]): boolean {
   return !disallows.some((rule) => rule !== "/" ? pathname.startsWith(rule) : true);
 }
 
-export interface ExtractedProduct { name: string; priceMinor: string; currency: string; url: string }
+export interface ExtractedProduct {
+  name: string;
+  priceMinor: string;
+  currency: string;
+  url: string;
+  inStock: boolean;
+  seoDescription?: string;
+}
 
 export function extractProductData(html: string, url: string): ExtractedProduct | null {
+  const isOutOfStockText = /out\s*of\s*stock|sold\s*out|স্টক\s*শেষ|unavailable/i.test(html);
+
   // 1) JSON-LD Product with offers
   const ldBlocks = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const block of ldBlocks) {
@@ -50,7 +59,19 @@ export function extractProductData(html: string, url: string): ExtractedProduct 
         const price = offers?.price ?? offers?.lowPrice;
         if (price === undefined || node.name === undefined) continue;
         const currency = String(offers?.priceCurrency ?? "BDT").toUpperCase();
-        return { name: String(node.name).slice(0, 200), priceMinor: parsePrice(price), currency, url };
+        
+        const availability = String(offers?.availability ?? "").toLowerCase();
+        const inStock = availability ? !availability.includes("outofstock") : !isOutOfStockText;
+        const seoDescription = node.description ? String(node.description).slice(0, 300) : undefined;
+
+        return {
+          name: String(node.name).slice(0, 200),
+          priceMinor: parsePrice(price),
+          currency,
+          url,
+          inStock,
+          seoDescription,
+        };
       }
     } catch { /* malformed JSON-LD: try the next source */ }
   }
@@ -61,8 +82,19 @@ export function extractProductData(html: string, url: string): ExtractedProduct 
     const currency = html.match(/property=["'](?:product:price:currency|og:price:currency)["']\s+content=["']([A-Za-z]{3})["']/i)?.[1] ?? "BDT";
     const title = html.match(/property=["']og:title["']\s+content=["']([^"']+)["']/i)?.[1]
       ?? html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? "Product";
-    return { name: title.trim().slice(0, 200), priceMinor: parsePrice(amount), currency: currency.toUpperCase(), url };
+    const seoDescription = html.match(/name=["']description["']\s+content=["']([^"']+)["']/i)?.[1]
+      ?? html.match(/property=["']og:description["']\s+content=["']([^"']+)["']/i)?.[1];
+
+    return {
+      name: title.trim().slice(0, 200),
+      priceMinor: parsePrice(amount),
+      currency: currency.toUpperCase(),
+      url,
+      inStock: !isOutOfStockText,
+      seoDescription: seoDescription?.slice(0, 300),
+    };
   }
+
   return null;
 }
 

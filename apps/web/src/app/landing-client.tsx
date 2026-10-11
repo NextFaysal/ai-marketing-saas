@@ -28,6 +28,7 @@ interface SysStatus { signupOpen: boolean; maintenanceMode: boolean; announcemen
 const TIER_BN: Record<string, string> = { FREE: "ফ্রি", STARTER: "স্টার্টার", GROWTH: "গ্রোথ", AGENCY: "এজেন্সি" };
 
 const FEATURES: { icon: string; title: string; body: string }[] = [
+  { icon: "🕵️", title: "Omnichannel Competitor Spy", body: "Meta (Facebook), Google, TikTok ও Bing — প্রতিদ্বন্দীর সক্রিয় ও Winning বিজ্ঞাপন, তাদের স্টক ও দামের ওঠানামা লাইভ ট্র্যাক করুন। AI কাউন্টার-কপিসহ এক ক্লিকে Campaign Draft।" },
   { icon: "💬", title: "Unified Inbox", body: "Facebook Page, Messenger, WhatsApp, Instagram, Telegram, Email আর নিজের ওয়েবসাইটের Live Chat — সব চ্যানেলের মেসেজ এক ইনবক্সে। টিম অ্যাসাইনমেন্ট, SLA আর অটো-রিপ্লাইসহ।" },
   { icon: "🤖", title: "AI Assistant ও Autopilot", body: "আপনার আসল প্রোডাক্ট, দাম, স্টক আর পলিসি থেকে উত্তর খুঁজে দেয় AI। Strict Grounding মোডে যাচাই করা তথ্য ছাড়া AI কিছু বানিয়ে বলতে পারে না।" },
   { icon: "📣", title: "বিজ্ঞাপন অটোমেশন", body: "Meta, Google ও TikTok — ক্যাম্পেইন তৈরি, বাজেট নিয়ম, দিনের সময় অনুযায়ী চালু/বন্ধ (Dayparting), আর পলিসি প্রি-ফ্লাইট চেক এক জায়গা থেকে।" },
@@ -38,6 +39,7 @@ const FEATURES: { icon: string; title: string; body: string }[] = [
   { icon: "📊", title: "Analytics, Cohort ও Profit", body: "Revenue, Ad Spend ও Profit একসাথে; Cohort রিটেনশন, গ্রাহকপ্রতি LTV, Churn ঝুঁকি (লেবেলযুক্ত আনুমানিক হিসাব) আর Attribution রিপোর্ট।" },
   { icon: "👥", title: "Leads, CRM ও Customer 360", body: "পাইপলাইন বোর্ড (Drag-and-drop), গ্রাহকের পুরো ইতিহাস এক পেজে, RFM সেগমেন্ট আর Broadcast ক্যাম্পেইন।" },
 ];
+
 
 const FAQS: { q: string; a: string }[] = [
   { q: "শুরু করতে কী কী লাগবে?", a: "শুধু একটি ইমেইল দিয়ে রেজিস্টার করলেই Organization তৈরি হয়ে যাবে। এরপর যেসব চ্যানেল ব্যবহার করতে চান (Facebook Page, WooCommerce স্টোর, কুরিয়ার অ্যাকাউন্ট) সেগুলো আপনার নিজের অ্যাকাউন্ট দিয়ে সংযোগ করতে হবে।" },
@@ -81,6 +83,59 @@ function InboxFrame() {
     </div>
   );
 }
+
+/** Simplified CSS presentation of Omnichannel Competitor Spy screen. */
+function CompetitorSpyFrame() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl text-left">
+      <div className="flex items-center justify-between border-b bg-slate-900 px-4 py-2.5 text-white">
+        <div className="flex items-center gap-2">
+          <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+          <span className="text-xs font-bold">Omnichannel Competitor Spy & Intelligence</span>
+        </div>
+        <div className="flex gap-1.5 text-[10px] font-semibold">
+          <span className="rounded bg-indigo-500/30 px-2 py-0.5">Meta Ads</span>
+          <span className="rounded bg-blue-500/30 px-2 py-0.5">Google Ads</span>
+          <span className="rounded bg-pink-500/30 px-2 py-0.5">TikTok</span>
+        </div>
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2">
+        {/* Card 1: Winning ad */}
+        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
+              🔥 WINNING AD (২৮ দিন ধরে চলছে)
+            </span>
+            <span className="text-[10px] text-slate-500">Facebook • Instagram</span>
+          </div>
+          <p className="text-xs text-slate-800 line-clamp-2">
+            "প্রিমিয়াম পাঞ্জাবি কালেকশন — সীমিত সময়ের জন্য বিশেষ ছাড়! ক্যাশ অন ডেলিভারি সুবিধা।"
+          </p>
+          <div className="rounded bg-white p-2 border border-amber-200/80 text-[11px] text-slate-700">
+            <span className="font-bold text-indigo-700">⚡ AI Counter Strategy:</span> প্রতিযোগীর অফারে ফ্রি ডেলিভারি নেই। আমাদের ক্যাম্পেইনে ফ্রি হোম ডেলিভারি ও দ্রুত শিপিং অফার দিন।
+          </div>
+        </div>
+
+        {/* Card 2: Stock-out Opportunity */}
+        <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
+              🚨 STOCK-OUT OPPORTUNITY
+            </span>
+            <span className="text-[10px] text-slate-500">লাইভ স্টক স্ক্যান</span>
+          </div>
+          <p className="text-xs font-semibold text-slate-900">
+            প্রতিযোগী "Rival Shop" এর ওয়্যারলেস হেডফোন বর্তমানে <span className="text-rose-600 font-bold">আউট-অব-স্টক!</span>
+          </p>
+          <div className="rounded bg-white p-2 border border-rose-200/80 text-[11px] text-slate-700">
+            💡 এআই পরামর্শ: আপনার ইনভেন্টরির হেডফোনে বিজ্ঞাপন বাজেট বাড়িয়ে প্রতিদ্বন্দীর ক্রেতাদের নিজের স্টোরে আনুন।
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function RoiCalculator() {
   const [orders, setOrders] = useState(1000);
@@ -208,7 +263,27 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Competitor Spy Showcase Section */}
+      <section className="bg-slate-50 border-b py-16">
+        <div className="mx-auto max-w-6xl px-6 text-center">
+          <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-700">
+            🔥 হাই-ইমপ্যাক্ট ইন্টেলিজেন্স
+          </span>
+          <h2 className="mt-3 text-3xl font-black text-slate-900 sm:text-4xl">
+            প্রতিযোগীদের সেরা বিজ্ঞাপন ও অফার স্পাই করুন — এক ক্লিকে পাল্টা ক্যাম্পেইন
+          </h2>
+          <p className="mx-auto mt-3 max-w-2xl text-base text-slate-600">
+            Meta, Google, TikTok ও Bing থেকে প্রতিদ্বন্দীর সবচেয়ে সফল (Winning) বিজ্ঞাপনগুলো ট্র্যাক করুন। তাদের দুর্বলতা বিশ্লেষণ করে এআই তৈরি করে দেবে আপনার জন্য বিজয়ী অ্যাড কপি।
+          </p>
+          <div className="mx-auto mt-8 max-w-4xl">
+            <CompetitorSpyFrame />
+            <p className="mt-2 text-[11px] text-slate-400">চিত্রটি প্রোডাক্টের আসল Competitor Spy ইন্টারফেসের ধাঁচে তৈরি একটি সরল উপস্থাপনা।</p>
+          </div>
+        </div>
+      </section>
+
       {/* Features */}
+
       <section id="features" className="mx-auto max-w-6xl px-6 py-16">
         <h2 className="text-center text-3xl font-bold text-slate-900">যা যা পাচ্ছেন</h2>
         <p className="mx-auto mt-2 max-w-xl text-center text-slate-500">নিচের প্রতিটি ফিচার আজকের প্রোডাক্টেই চালু আছে — ভবিষ্যতের প্রতিশ্রুতি নয়।</p>

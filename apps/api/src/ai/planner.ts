@@ -13,9 +13,11 @@ export const TOOL_CATALOG = [
   { name: "get_courier_performance", description: "Per-courier delivery and return rates from real shipments. No args." },
   { name: "get_product_profit", description: "Per-product revenue, COGS, gross profit and contribution after revenue-share-allocated ad spend. Args: from, to, limit." },
   { name: "compare_periods", description: "Overview metrics for a period side by side with the previous period of the same length, with percentage deltas. Args: from, to." },
+  { name: "get_competitor_intelligence", description: "Competitor ads, winning ad creatives, price differences, and live stock-out opportunity alerts. Args: competitorId (optional)." },
 ] as const;
 
 export const ALLOWED_TOOLS = TOOL_CATALOG.map((t) => t.name) as readonly string[];
+
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -124,8 +126,12 @@ export function keywordPlan(message: string): PlannedToolCall[] {
   if (has(message, ["পলিসি", "policy", "শিপিং", "shipping", "রিফান্ড", "refund", "ব্যবসার তথ্য", "business info", "faq"])) {
     calls.push({ tool: "get_business_knowledge", args: {} });
   }
+  if (has(message, ["প্রতিযোগী", "কম্পিটিটর", "competitor", "rival", "তাদের দাম", "প্রতিযোগীর বিজ্ঞাপন", "winning ad", "স্টক শেষ", "কাউন্টার", "spy", "ad library"])) {
+    calls.push({ tool: "get_competitor_intelligence", args: {} });
+  }
   return sanitizePlan(calls);
 }
+
 
 /** Detect Bengali script so answers follow the user's language. */
 export function detectLanguage(text: string): "bn" | "en" {

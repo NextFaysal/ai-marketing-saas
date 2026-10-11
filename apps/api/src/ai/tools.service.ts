@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AnalyticsService, parseRange, REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
 import { chooseCostForDate } from "../analytics/metrics";
@@ -7,6 +7,7 @@ import { computeRfm, RFM_SEGMENTS } from "../messaging/rfm";
 import { PlannedToolCall } from "./planner";
 import { detectAnomalies, DailyPoint } from "./anomaly";
 import { formatMinor } from "@repo/contracts";
+import { CompetitorsService } from "../competitors/competitors.service";
 
 /**
  * Read-only AI tools. Every tool is organization-scoped by construction
@@ -22,7 +23,9 @@ export class ToolsService {
     private readonly prisma: PrismaService,
     private readonly analytics: AnalyticsService,
     private readonly attribution: AttributionService,
+    @Optional() private readonly competitors?: CompetitorsService,
   ) {}
+
 
   async execute(organizationId: string, call: PlannedToolCall): Promise<unknown> {
     switch (call.tool) {
@@ -38,7 +41,9 @@ export class ToolsService {
       case "get_courier_performance": return this.courierPerformance(organizationId);
       case "get_product_profit": return this.productProfit(organizationId, call.args);
       case "compare_periods": return this.comparePeriods(organizationId, call.args);
+      case "get_competitor_intelligence": return this.competitorIntelligence(organizationId, call.args);
       default: throw new Error(`Unknown tool: ${call.tool}`);
+
     }
   }
 
@@ -372,4 +377,51 @@ export class ToolsService {
       documents: docs.map((d: any) => ({ kind: d.kind, title: d.title, content: cap(d.content) })),
     };
   }
+
+  private async competitorIntelligence(organizationId: string, args: Record<string, unknown>) {
+    if (this.competitors) {
+      const dossier = await this.competitors.exportDossier(organizationId, args.competitorId as string | undefined);
+      return {
+        summary: dossier.summary,
+        trackedCompetitors: dossier.competitors.map((c) => ({
+          name: c.competitor.name,
+          activeAdsCount: c.activeAds,
+          winningAdsCount: c.winningAdsCount,
+          winningAdsSample: c.winningAds.slice(0, 3).map((a) => ({
+            daysRunning: a.daysRunning,
+            platforms: a.platforms,
+            snippet: a.creativeText?.slice(0, 200),
+          })),
+        })),
+        liveOpportunityAlerts: dossier.liveOpportunityAlerts.slice(0, 5).map((alt) => ({
+          title: alt.title,
+          detail: alt.detail,
+        })),
+        priceDifferences: dossier.priceComparisonMatrix
+          .filter((p) => p.competitorPrices.length > 0)
+          .slice(0, 5)
+          .map((p) => ({
+            product: p.productName,
+            ourPrice: formatMinor(BigInt(p.ownPriceMinor), p.currency),
+            competitorPrice: `${p.competitorPrices[0].competitorName} at ${formatMinor(BigInt(p.competitorPrices[0].priceMinor), p.competitorPrices[0].currency)}`,
+            diffPercent: p.competitorPrices[0].diffPercent,
+          })),
+      };
+    }
+
+    // Direct fallback from prisma
+    const [comps, alerts] = await Promise.all([
+      (this.prisma as any).competitor.findMany({ where: { organizationId }, take: 10 }),
+      (this.prisma as any).competitorInsight.findMany({
+        where: { organizationId, provider: "alert-engine" },
+        take: 5,
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+    return {
+      trackedCompetitors: comps.map((c: any) => ({ name: c.name, website: c.websiteUrl })),
+      liveOpportunityAlerts: alerts.map((a: any) => ({ title: a.title, detail: a.detail })),
+    };
+  }
 }
+

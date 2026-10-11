@@ -132,4 +132,72 @@ describe("CompetitorsService", () => {
     const competitor = await svc.create("org-1", "u", { name: "Empty Rival" });
     await expect(svc.generateInsights("org-1", "u", competitor.id)).rejects.toThrow("never generated without evidence");
   });
+
+  it("listAds identifies winning ads running for 14+ days", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Rival Winning" });
+    
+    // Old active ad running for 25 days
+    const twentyFiveDaysAgo = new Date(Date.now() - 25 * 86400000);
+    await (prisma as any).competitorAd.create({
+      data: {
+        competitorId: competitor.id,
+        externalAdId: "ad-winning",
+        startedAt: twentyFiveDaysAgo,
+        isActive: true,
+        platforms: ["facebook"],
+        creativeText: "Winning Ad Text",
+      },
+    });
+
+    // Fresh ad running for 2 days
+    const twoDaysAgo = new Date(Date.now() - 2 * 86400000);
+    await (prisma as any).competitorAd.create({
+      data: {
+        competitorId: competitor.id,
+        externalAdId: "ad-fresh",
+        startedAt: twoDaysAgo,
+        isActive: true,
+        platforms: ["facebook"],
+        creativeText: "Fresh Ad Text",
+      },
+    });
+
+    const ads = await svc.listAds("org-1", competitor.id);
+    const winning = ads.find((a: any) => a.externalAdId === "ad-winning");
+    const fresh = ads.find((a: any) => a.externalAdId === "ad-fresh");
+
+    expect(winning?.isWinning).toBe(true);
+    expect(winning?.daysRunning).toBeGreaterThanOrEqual(24);
+    expect(fresh?.isWinning).toBe(false);
+    expect(fresh?.isFresh).toBe(true);
+  });
+
+  it("generateCounterAd outputs strategic hook breakdown and counter-campaign", async () => {
+    const prisma = fakePrisma();
+    const svc = new CompetitorsService(prisma as any, auditStub, devLlm);
+    const competitor = await svc.create("org-1", "u", { name: "Rival Fashion" });
+
+    const ad = await (prisma as any).competitorAd.create({
+      data: {
+        competitorId: competitor.id,
+        externalAdId: "ad-comp-1",
+        startedAt: new Date(Date.now() - 10 * 86400000),
+        isActive: true,
+        platforms: ["facebook"],
+        creativeText: "Buy our panjabi for cheap discounts!",
+      },
+    });
+
+    const counter = await svc.generateCounterAd("org-1", "u", {
+      competitorAdId: ad.id,
+    });
+
+    expect(counter.hookBreakdown).toBeDefined();
+    expect(counter.counterCampaign.headline).toBeDefined();
+    expect(counter.counterCampaign.primaryText).toBeDefined();
+    expect(counter.counterCampaign.callToAction).toBeDefined();
+  });
 });
+
