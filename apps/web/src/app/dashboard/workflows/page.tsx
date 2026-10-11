@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
-import { StepFields } from "@/components/step-fields";
+import { StepFields, DYNAMIC_VARIABLES } from "@/components/step-fields";
 import WorkflowCanvas from "@/components/workflow-canvas";
 import {
   buildPayloadStep,
@@ -69,8 +69,8 @@ const TRIGGERS = [
 const CONDITION_FIELDS = [
   { value: "", label: "ফিল্ড বেছে নিন" },
   { value: "total", label: "Order Total (টাকায়)" },
-  { value: "stage", label: "Lead Stage" },
-  { value: "source", label: "Source" },
+  { value: "stage", label: "Lead Stage (new/contacted/qualified/won/lost)" },
+  { value: "source", label: "Source (ওয়েবসাইট/ফেসবুক/ইত্যাদি)" },
   { value: "status", label: "Order Status" },
   { value: "fromStatus", label: "আগের Status (Order Status Changed)" },
   { value: "toStatus", label: "নতুন Status (Order Status Changed)" },
@@ -82,8 +82,9 @@ const CONDITION_FIELDS = [
   { value: "itemsCount", label: "কার্টের আইটেম সংখ্যা" },
   { value: "scheduleTime", label: "Schedule সময় (HH:MM)" },
   { value: "scheduleDays", label: "Schedule দিন (0=রবি..6=শনি)" },
-  { value: "intent", label: "গ্রাহকের Intent" },
+  { value: "intent", label: "গ্রাহকের Intent (complaint/order/info)" },
   { value: "contactName", label: "গ্রাহকের নাম" },
+  { value: "contactPhone", label: "গ্রাহকের ফোন নম্বর" },
 ];
 
 const CONDITION_OPERATORS = [
@@ -96,6 +97,165 @@ const CONDITION_OPERATORS = [
   { value: "contains", label: "রয়েছে (contains)" },
 ];
 
+// Smart suggested conditions based on selected trigger
+const TRIGGER_SUGGESTIONS: Record<string, { label: string; field: string; op: string; value: string }[]> = {
+  order_created: [
+    { label: "অর্ডার ৳১,০০০+", field: "total", op: "gte", value: "1000" },
+    { label: "ভিআইপি অর্ডার ৳৫,০০০+", field: "total", op: "gte", value: "5000" },
+    { label: "ওয়েবসাইট অর্ডার", field: "source", op: "eq", value: "website" },
+  ],
+  cart_abandoned: [
+    { label: "কার্ট ভ্যালু ৳৫০০+", field: "cartValue", op: "gte", value: "500" },
+    { label: "পণ্য সংখ্যা ২ বা বেশি", field: "itemsCount", op: "gte", value: "2" },
+  ],
+  inbox_message_received: [
+    { label: "অভিযোগ (complaint)", field: "intent", op: "eq", value: "complaint" },
+    { label: "ক্রয় অনুসন্ধান (order)", field: "intent", op: "eq", value: "order" },
+  ],
+  lead_created: [
+    { label: "Facebook লিড", field: "source", op: "eq", value: "facebook" },
+    { label: "Website লিড", field: "source", op: "eq", value: "website" },
+  ],
+  lead_stage_changed: [
+    { label: "Qualified স্টেজ", field: "stage", op: "eq", value: "qualified" },
+    { label: "Won (সফল) স্টেজ", field: "stage", op: "eq", value: "won" },
+    { label: "Lost (ব্যর্থ) স্টেজ", field: "stage", op: "eq", value: "lost" },
+  ],
+  order_status_changed: [
+    { label: "নতুন স্টেজ Processing", field: "toStatus", op: "eq", value: "processing" },
+    { label: "নতুন স্টেজ Cancelled", field: "toStatus", op: "eq", value: "cancelled" },
+  ],
+  order_refunded: [
+    { label: "রিফান্ড ৳৫০০ বা বেশি", field: "refundAmount", op: "gte", value: "500" },
+  ],
+  shipment_returned: [
+    { label: "রিটার্ন কনফার্মড", field: "shipmentStatus", op: "eq", value: "returned" },
+  ],
+};
+
+// Rich business blueprints for any merchant
+const BUSINESS_BLUEPRINTS = [
+  {
+    key: "cart_recovery_power",
+    category: "ecommerce",
+    catLabel: "🛍️ ই-কমার্স",
+    name: "কার্ট রিকভারি ও স্মার্ট এসএমএস",
+    descriptionBn: "গ্রাহক পণ্য কার্টে রেখে চলে গেলে ৩০ মিনিট পর অটোমেটিক ফলো-আপ এসএমএস পাঠানো ও টিমকে অবগত করা।",
+    trigger: "cart_abandoned",
+    conditions: [{ field: "cartValue", op: "gte", value: "500" }],
+    steps: [
+      { type: "wait", minutes: 30 },
+      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, আপনার কার্টে থাকা পণ্যগুলো ({{itemsSummary}}) এখনো আপনার জন্য সংরক্ষিত আছে। কিনতে ক্লিক করুন: {{cartUrl}}" },
+      { type: "notify_team", role: "MARKETING_MANAGER", title: "Abandoned Cart", text: "গ্রাহক {{contactName}} এর কার্ট (৳{{cartValue}}) রিকভারি মেসেজ পাঠানো হয়েছে।" },
+    ],
+  },
+  {
+    key: "vip_order_concierge",
+    category: "ecommerce",
+    catLabel: "🛍️ ই-কমার্স",
+    name: "ভিআইপি অর্ডার ডিটেকশন ও ওনার অ্যালার্ট",
+    descriptionBn: "কোনো গ্রাহক ৳৩,০০০ বা তার বেশি অর্ডার করলেই সাথে সাথে ওনারকে জানানো এবং কাস্টমারকে VIP ট্যাগ দেওয়া।",
+    trigger: "order_created",
+    conditions: [{ field: "total", op: "gte", value: "3000" }],
+    steps: [
+      { type: "add_tag", target: "lead", tag: "vip-customer" },
+      { type: "notify_team", role: "OWNER", title: "🌟 ভিআইপি অর্ডার অ্যালার্ট", text: "অভিনন্দন! অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে ৳{{total}} টাকার! গ্রাহক: {{contactName}}।" },
+      { type: "notify_channel", title: "🌟 নতুন ভিআইপি অর্ডার", text: "অর্ডার #{{orderNumber}} (৳{{total}}) সম্পন্ন করেছেন {{contactName}}।" },
+    ],
+  },
+  {
+    key: "cod_instant_confirm",
+    category: "ecommerce",
+    catLabel: "🛍️ ই-কমার্স",
+    name: "COD অর্ডার কনফার্মেশন ও ফলো-আপ",
+    descriptionBn: "ক্যাশ অন ডেলিভারি (COD) অর্ডার কনফার্ম হওয়ামাত্রই গ্রাহককে ধন্যবাদ মেসেজ ও টিমকে প্যাকিং শুরু করতে বলা।",
+    trigger: "order_cod_confirmed",
+    conditions: [],
+    steps: [
+      { type: "send_inbox_message", text: "ধন্যবাদ {{contactName}}! আপনার COD অর্ডার #{{orderNumber}} (৳{{total}}) কনফার্ম হয়েছে। পার্সেল ডেলিভারিতে পাঠালে ট্র্যাকিং কোড পাবেন।" },
+      { type: "notify_team", role: "ADMIN", title: "COD কনফার্মড", text: "অর্ডার #{{orderNumber}} এর প্যাকেজিং সম্পন্ন করে কুরিয়ারে দিন।" },
+    ],
+  },
+  {
+    key: "delivered_review_voucher",
+    category: "ecommerce",
+    catLabel: "🛍️ ই-কমার্স",
+    name: "ডেলিভারি সম্পন্ন হলে ৫-স্টার রিভিউ রিকোয়েস্ট",
+    descriptionBn: "অর্ডার সফলভাবে ডেলিভারি হওয়ার ২৪ ঘণ্টা পর গ্রাহককে সন্তুষ্টি যাচাই ও রিভিউ দেওয়ার অনুরোধ পাঠানো।",
+    trigger: "order_delivered",
+    conditions: [],
+    steps: [
+      { type: "wait", minutes: 1440 },
+      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, অর্ডার #{{orderNumber}} এর পণ্যগুলো আপনার কেমন লাগলো? আপনার মূল্যবান মতামত ও ৫-স্টার রিভিউ আমাদের অনুপ্রেরণা দেবে!" },
+      { type: "create_follow_up", days: 3, text: "গ্রাহক {{contactName}} এর রিভিউ ও রিপিট অর্ডারের খোঁজ নিন" },
+    ],
+  },
+  {
+    key: "new_lead_auto_assign",
+    category: "leads",
+    catLabel: "👥 লিড ও সিআরএম",
+    name: "নতুন লিড স্বাগতম ও তাৎক্ষণিক অ্যাসাইন",
+    descriptionBn: "ওয়েবসাইট বা ফেসবুক থেকে নতুন লিড আসা মাত্রই সেলস এজেন্টের কাছে অ্যাসাইন ও কাস্টমারকে স্বাগতম জানানো।",
+    trigger: "lead_created",
+    conditions: [],
+    steps: [
+      { type: "send_inbox_message", text: "আসসালামু আলাইকুম {{contactName}}, আমাদের সাথে যোগাযোগের জন্য ধন্যবাদ! আমাদের প্রতিনিধি দ্রুতই আপনার সাথে কথা বলছেন।" },
+      { type: "create_follow_up", days: 1, text: "নতুন লিড {{contactName}} এর সাথে বিস্তারিত আলোচনা করুন" },
+    ],
+  },
+  {
+    key: "lead_qualified_quote",
+    category: "leads",
+    catLabel: "👥 লিড ও সিআরএম",
+    name: "লিড Qualified হলে কোটেশন রিমাইন্ডার",
+    descriptionBn: "লিড স্টেজ 'Qualified' এ পরিবর্তন হলে সেলস টিমকে কোটেশন পাঠানোর টাস্ক ও ২ দিন পর ফলো-আপ শিডিউল।",
+    trigger: "lead_stage_changed",
+    conditions: [{ field: "stage", op: "eq", value: "qualified" }],
+    steps: [
+      { type: "notify_team", role: "MARKETING_MANAGER", title: "লিড Qualified", text: "{{contactName}} উপযুক্ত লিড হিসেবে চিহ্নিত হয়েছে — দ্রুত প্রস্তাবনা পাঠান।" },
+      { type: "create_follow_up", days: 2, text: "{{contactName}} এর কোটেশনের ফলো-আপ নিন" },
+    ],
+  },
+  {
+    key: "complaint_escalation_manager",
+    category: "support",
+    catLabel: "💬 সাপোর্ট ও ইনবক্স",
+    name: "গ্রাহকের অভিযোগ শনাক্ত ও ম্যানেজার এসকেলেশন",
+    descriptionBn: "ইনবক্সে কোনো অভিযোগ শনাক্ত হলে অবিলম্বে কাস্টমার কেয়ার ম্যানেজারের কাছে ফ্ল্যাগ ও ইন্টারনাল নোট তৈরি।",
+    trigger: "inbox_message_received",
+    conditions: [{ field: "intent", op: "eq", value: "complaint" }],
+    steps: [
+      { type: "add_tag", target: "conversation", tag: "urgent-complaint" },
+      { type: "add_conversation_note", text: "🚨 গ্রাহকের অভিযোগ এসেছে — দ্রুত অগ্রাধিকার দিয়ে সমাধান করুন" },
+      { type: "notify_team", role: "ADMIN", title: "জরুরি অভিযোগ", text: "গ্রাহক {{contactName}} একটি অভিযোগ করেছেন, দ্রুত ইনবক্স দেখুন।" },
+    ],
+  },
+  {
+    key: "ai_inbox_reply_assistant",
+    category: "support",
+    catLabel: "💬 সাপোর্ট ও ইনবক্স",
+    name: "AI স্মার্ট উত্তর ও সামারি জেনারেটর",
+    descriptionBn: "গ্রাহকের বার্তার প্রেক্ষিতে কৃত্রিম বুদ্ধিমত্তা (AI) দ্বারা তাৎক্ষণিক সারসংক্ষেপ ও খসড়া প্রস্তুত রাখা।",
+    trigger: "inbox_message_received",
+    conditions: [],
+    steps: [
+      { type: "ai_generate", prompt: "গ্রাহকের বার্তার মূল বক্তব্য সংক্ষেপে লিখুন এবং একজন আদর্শ সাপোর্ট এজেন্টের জন্য উত্তরের পয়েন্টগুলো দিন।", action: "add_conversation_note", outputField: "aiSummary" },
+    ],
+  },
+  {
+    key: "slack_discord_ops_alert",
+    category: "alerts",
+    catLabel: "📢 চ্যানেল অ্যালার্ট",
+    name: "স্ল্যাক / ডিসকর্ড চ্যানেলে রিয়েলটাইম অর্ডার অ্যালার্ট",
+    descriptionBn: "প্রতিটি নতুন অর্ডারে সরাসরি আপনার স্ল্যাক বা ডিসকর্ড চ্যানেলে স্বয়ংক্রিয় নোটিফিকেশন প্রেরণ।",
+    trigger: "order_created",
+    conditions: [{ field: "total", op: "gte", value: "1000" }],
+    steps: [
+      { type: "notify_channel", title: "🛒 নতুন অর্ডার সম্পন্ন!", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে (৳{{total}})। গ্রাহক: {{contactName}} ({{contactPhone}})" },
+    ],
+  },
+];
+
 function getStepMeta(type: string): { label: string; icon: string; badgeCls: string } {
   switch (type) {
     case "send_email":
@@ -105,7 +265,7 @@ function getStepMeta(type: string): { label: string; icon: string; badgeCls: str
     case "add_lead_activity":
       return { label: "Lead Note", icon: "📝", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "add_conversation_note":
-      return { label: "Internal Note", icon: "💬", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
+      return { label: "Internal Note", icon: "🔒", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
     case "send_inbox_message":
       return { label: "Inbox বার্তা", icon: "💬", badgeCls: "bg-teal-50 text-teal-700 border-teal-200" };
     case "wait":
@@ -173,6 +333,7 @@ export default function WorkflowsPage() {
   const [filterTrigger, setFilterTrigger] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [blueprintCategory, setBlueprintCategory] = useState<string>("all");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -218,7 +379,6 @@ export default function WorkflowsPage() {
     load();
   }, [load]);
 
-  // Derived stats metrics
   const totalRuns30d = useMemo(() => stats.reduce((acc, s) => acc + (s.runs30d || 0), 0), [stats]);
   const activeWorkflowsCount = useMemo(() => workflows.filter((w) => w.enabled).length, [workflows]);
   const avgSuccessRate = useMemo(() => {
@@ -227,7 +387,6 @@ export default function WorkflowsPage() {
     return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
   }, [stats]);
 
-  // Filtered workflows list
   const filteredWorkflows = useMemo(() => {
     return workflows.filter((w) => {
       if (searchQuery.trim() && !w.name.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -241,6 +400,11 @@ export default function WorkflowsPage() {
       return true;
     });
   }, [workflows, searchQuery, filterTrigger, filterStatus]);
+
+  const filteredBlueprints = useMemo(() => {
+    if (blueprintCategory === "all") return BUSINESS_BLUEPRINTS;
+    return BUSINESS_BLUEPRINTS.filter((b) => b.category === blueprintCategory);
+  }, [blueprintCategory]);
 
   function testContext() {
     const ctx: Record<string, string> = {};
@@ -281,7 +445,7 @@ export default function WorkflowsPage() {
         method: "POST",
         body: JSON.stringify({ context: testContext() }),
       });
-      setNotice(`Manual Run শেষ: ${run.status}`);
+      setNotice(`Manual Run সম্পন্ন: ${run.status}`);
       setTestPanel(null);
       setTrace(null);
       await load();
@@ -383,6 +547,62 @@ export default function WorkflowsPage() {
     setForm({ name: "", trigger: "order_created", cooldown: "", cap: "" });
     setFormConditions([]);
     setSteps([{ type: "send_email", templateId: "", text: "" }]);
+  }
+
+  function addStepByType(type: string) {
+    let newStep: StepDraft;
+    switch (type) {
+      case "send_sms":
+        newStep = { type: "send_sms", templateId: "", text: "" };
+        break;
+      case "send_email":
+        newStep = { type: "send_email", templateId: "", text: "" };
+        break;
+      case "send_inbox_message":
+        newStep = { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}..." };
+        break;
+      case "wait":
+        newStep = { type: "wait", minutes: 60 };
+        break;
+      case "condition":
+        newStep = { type: "condition", field: "total", op: "gte", value: "1000" };
+        break;
+      case "branch":
+        newStep = { type: "branch", field: "total", op: "gte", value: "1000", then: [], else: [] };
+        break;
+      case "ai_generate":
+        newStep = {
+          type: "ai_generate",
+          prompt: "গ্রাহকের জন্য একটি ব্যক্তিগত বার্তা লিখুন...",
+          action: "add_conversation_note",
+          outputField: "aiResult",
+        };
+        break;
+      case "notify_channel":
+        newStep = { type: "notify_channel", url: "", title: "🚨 সতর্কতা", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে।" };
+        break;
+      case "notify_team":
+        newStep = { type: "notify_team", role: "OWNER", title: "টিম অ্যালার্ট", text: "{{contactName}} এর অর্ডার দেখুন।" };
+        break;
+      case "assign_conversation":
+        newStep = { type: "assign_conversation", userId: "" };
+        break;
+      case "change_lead_stage":
+        newStep = { type: "change_lead_stage", stage: "qualified" };
+        break;
+      case "add_tag":
+        newStep = { type: "add_tag", target: "lead", tag: "vip" };
+        break;
+      case "create_follow_up":
+        newStep = { type: "create_follow_up", days: 3, text: "{{contactName}} এর ফলো-আপ" };
+        break;
+      case "http_webhook":
+        newStep = { type: "http_webhook", url: "", secret: "" };
+        break;
+      default:
+        newStep = { type: "send_sms", templateId: "", text: "" };
+    }
+    setSteps([...steps, newStep]);
   }
 
   function downloadJson(name: string, content: string) {
@@ -508,61 +728,25 @@ export default function WorkflowsPage() {
     }
   }
 
-  function loadPreset(which: "recovery" | "complaint" | "escalation") {
-    const presetsMap = {
-      recovery: {
-        form: { name: "উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)", trigger: "inbox_message_received" },
-        conditions: [] as ConditionDraft[],
-        steps: [
-          { type: "wait", templateId: "", text: "", minutes: 60 },
-          { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
-          { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আপনার বার্তা আমরা পেয়েছি। কোনো সাহায্য লাগলে জানাবেন।" },
-        ] as StepDraft[],
-      },
-      complaint: {
-        form: { name: "অভিযোগ সতর্কতা ও ফ্ল্যাগ", trigger: "inbox_message_received" },
-        conditions: [{ field: "intent", op: "eq", value: "complaint" }] as ConditionDraft[],
-        steps: [{ type: "add_conversation_note", templateId: "", text: "গ্রাহকের অভিযোগ এসেছে — দ্রুত অগ্রাধিকার দিয়ে পর্যালোচনা করুন" }] as StepDraft[],
-      },
-      escalation: {
-        form: { name: "উত্তরহীন বার্তা এসকেলেশন", trigger: "inbox_unanswered" },
-        conditions: [{ field: "unansweredMinutes", op: "gte", value: "120" }] as ConditionDraft[],
-        steps: [
-          { type: "add_conversation_note", templateId: "", text: "২ ঘণ্টা ধরে উত্তর দেওয়া হয়নি" },
-          { type: "wait", templateId: "", text: "", minutes: 1440 },
-          { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
-          { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}, আমরা আপনার বার্তাটি দেখেছি। এখনই সাহায্য করছি।" },
-        ] as StepDraft[],
-      },
-    } as const;
-
-    const preset = presetsMap[which];
-    if (editorView === "canvas") {
-      const def: WorkflowDefinition = {
-        name: preset.form.name,
-        trigger: preset.form.trigger,
-        steps: preset.steps.map(buildPayloadStep),
-      };
-      if (preset.conditions.length) {
-        def.conditions = preset.conditions.map((c) => ({
-          field: c.field,
-          op: c.op,
-          value: parseConditionValue(c.value),
-        }));
-      }
-      setCanvasDef(def);
-      setCanvasScope(`preset-${which}-${Date.now()}`);
-      setCanvasNote("");
-      setCanvasWorkflowId(undefined);
-      setCanvasEpoch((n) => n + 1);
-      setActiveTab("builder");
-      return;
-    }
-    setForm({ ...preset.form, cooldown: "", cap: "" });
-    setFormConditions([...preset.conditions]);
-    setSteps(preset.steps.map((x) => ({ ...x })));
+  function loadBlueprint(bp: (typeof BUSINESS_BLUEPRINTS)[0]) {
+    setEditingId(null);
+    setForm({
+      name: bp.name,
+      trigger: bp.trigger,
+      cooldown: "",
+      cap: "",
+    });
+    setFormConditions(
+      bp.conditions.map((c) => ({
+        field: c.field,
+        op: c.op,
+        value: c.value,
+      }))
+    );
+    setSteps(bp.steps.map((s) => stepToDraft(s as unknown as RawStep)));
+    setEditorView("form");
     setActiveTab("builder");
-    setNotice(`"${preset.form.name}" টেমপ্লেট বিল্ডারে লোড করা হয়েছে।`);
+    setNotice(`"${bp.name}" ব্লুপ্রিন্ট সফলভাবে বিল্ডারে লোড হয়েছে! পর্যালোচনা করে সংরক্ষণ করুন।`);
   }
 
   function openInCanvas(w: Workflow) {
@@ -594,7 +778,7 @@ export default function WorkflowsPage() {
             <div>
               <h1 className="page-title text-2xl font-bold tracking-tight text-slate-900">Workflows & Automations</h1>
               <p className="page-sub text-xs text-slate-500 sm:text-sm">
-                ইভেন্ট-ভিত্তিক শক্তিশালী অটোমেশন: অর্ডার, কার্ট পরিত্যাগ, লিড বা ইনবক্স বার্তার প্রেক্ষিতে স্বয়ংক্রিয় পদক্ষেপ নিন।
+                ই-কমার্স, লিড ও কাস্টমার সাপোর্টের জন্য সুপার-ডাইনামিক অটোমেশন ও স্মার্ট রুলস ইঞ্জিন।
               </p>
             </div>
           </div>
@@ -753,8 +937,8 @@ export default function WorkflowsPage() {
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
           }`}
         >
-          <span>📚 রেডিমেড প্রিসেট</span>
-          <span className="badge badge-green">{presets.length + 3}</span>
+          <span>📚 বিজনেস ব্লুপ্রিন্ট ও টেমপ্লেট</span>
+          <span className="badge badge-green">{BUSINESS_BLUEPRINTS.length + presets.length}</span>
         </button>
 
         <button
@@ -782,7 +966,7 @@ export default function WorkflowsPage() {
               <div className="relative flex-1">
                 <input
                   type="text"
-                  placeholder="নাম দিয়ে খুঁজুন (যেমন: বড় Order, ফলো-আপ)..."
+                  placeholder="নাম দিয়ে খুঁজুন (যেমন: বড় Order, ফলো-আপ, রিকভারি)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="input pl-9"
@@ -851,7 +1035,7 @@ export default function WorkflowsPage() {
                 title={workflows.length === 0 ? "কোনো Workflow নেই" : "কোনো ফলাফল পাওয়া যায়নি"}
                 description={
                   workflows.length === 0
-                    ? "উপরে 'নতুন Workflow' বাটনে ক্লিক করে অথবা 'রেডিমেড প্রিসেট' থেকে আপনার প্রথম অটোমেশন তৈরি করুন।"
+                    ? "উপরে 'নতুন Workflow' বাটনে ক্লিক করে অথবা 'বিজনেস ব্লুপ্রিন্ট' থেকে ১-ক্লিকে প্রথম অটোমেশন তৈরি করুন।"
                     : "অনুসন্ধানের শর্ত অনুযায়ী কোনো Workflow মেলেনি। ফিল্টার রিসেট করুন।"
                 }
               />
@@ -1102,30 +1286,19 @@ export default function WorkflowsPage() {
               </div>
             </div>
 
-            {/* Quick Template Selector Strip */}
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-              <span className="font-semibold text-slate-600">⚡ দ্রুত টেমপ্লেট লোড করুন:</span>
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-700 hover:bg-brand-50 hover:text-brand-700 hover:border-brand-200"
-                onClick={() => loadPreset("recovery")}
-              >
-                উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-700 hover:bg-brand-50 hover:text-brand-700 hover:border-brand-200"
-                onClick={() => loadPreset("complaint")}
-              >
-                অভিযোগ সতর্কতা ও নোট
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-700 hover:bg-brand-50 hover:text-brand-700 hover:border-brand-200"
-                onClick={() => loadPreset("escalation")}
-              >
-                Unanswered Escalation
-              </button>
+            {/* Smart Dynamic Variables Quick Guide */}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="font-semibold text-slate-600">⚡ ব্যবহারযোগ্য স্মার্ট ভ্যারিয়েবল:</span>
+              {DYNAMIC_VARIABLES.slice(0, 7).map((v) => (
+                <span
+                  key={v.tag}
+                  className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700 border border-slate-200"
+                  title={v.label}
+                >
+                  {v.tag}
+                </span>
+              ))}
+              <span className="text-[11px] text-slate-400">ইত্যাদি (মেসেজ বক্সে ক্লিক করে সরাসরি বসানো যায়)</span>
             </div>
           </div>
 
@@ -1174,7 +1347,7 @@ export default function WorkflowsPage() {
                 </div>
               </div>
 
-              {/* Card 2: Trigger Conditions */}
+              {/* Card 2: Trigger Conditions with Dynamic Suggestions */}
               <div className="card p-5 space-y-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
@@ -1182,7 +1355,7 @@ export default function WorkflowsPage() {
                       ২
                     </span>
                     <div>
-                      <h3 className="font-bold text-slate-900">ট্রিগার শর্তসমূহ (Multi-Conditions)</h3>
+                      <h3 className="font-bold text-slate-900">ট্রিগার শর্তসমূহ (Multi-Conditions Filter)</h3>
                       <p className="text-xs text-slate-500">
                         নির্ধারিত শর্তগুলো সত্য হলেই কেবল এই ফ্লো চলবে (AND শর্ত যুক্তি)।
                       </p>
@@ -1194,9 +1367,35 @@ export default function WorkflowsPage() {
                     className="btn-secondary btn-sm self-start sm:self-auto"
                     onClick={() => setFormConditions([...formConditions, { field: "total", op: "gte", value: "1000" }])}
                   >
-                    + নতুন শর্ত যোগ করুন
+                    + কাস্টম শর্ত যোগ করুন
                   </button>
                 </div>
+
+                {/* Contextual Quick Condition Suggestions based on selected trigger */}
+                {TRIGGER_SUGGESTIONS[form.trigger] && TRIGGER_SUGGESTIONS[form.trigger].length > 0 && (
+                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-3">
+                    <div className="text-xs font-semibold text-amber-900 mb-1.5">
+                      💡 নির্বাচিত ট্রিগারের জন্য দ্রুত প্রস্তাবিত শর্ত (১-ক্লিকে যোগ করুন):
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {TRIGGER_SUGGESTIONS[form.trigger].map((sug, sIdx) => (
+                        <button
+                          key={sIdx}
+                          type="button"
+                          className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-100 transition"
+                          onClick={() =>
+                            setFormConditions([
+                              ...formConditions,
+                              { field: sug.field, op: sug.op, value: sug.value },
+                            ])
+                          }
+                        >
+                          + {sug.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {formConditions.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-center text-xs text-slate-500">
@@ -1252,7 +1451,7 @@ export default function WorkflowsPage() {
                           <input
                             className={inputCls}
                             value={cond.value}
-                            placeholder="1000 বা qualified"
+                            placeholder="1000 বা qualified বা complaint"
                             onChange={(e) => {
                               const next = [...formConditions];
                               next[idx].value = e.target.value;
@@ -1275,7 +1474,7 @@ export default function WorkflowsPage() {
                 )}
               </div>
 
-              {/* Card 3: Automation Steps */}
+              {/* Card 3: Automation Steps Pipeline with Action Palette */}
               <div className="card p-5 space-y-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
@@ -1285,18 +1484,10 @@ export default function WorkflowsPage() {
                     <div>
                       <h3 className="font-bold text-slate-900">অটোমেশন পদক্ষেপসমূহ (Steps Pipeline)</h3>
                       <p className="text-xs text-slate-500">
-                        ক্রমান্বয়ে এক্সিকিউট হওয়া ধাপগুলো সাজান (Email, SMS, Tag, Webhook, AI, ইত্যাদি)।
+                        ক্রমান্বয়ে এক্সিকিউট হওয়া ধাপগুলো সাজান। প্রতিটি ধাপে ডাইনামিক ভ্যারিয়েবল ব্যবহার করতে পারেন।
                       </p>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm self-start sm:self-auto"
-                    onClick={() => setSteps([...steps, { type: "send_sms", templateId: "", text: "" }])}
-                  >
-                    + পরবর্তী ধাপ যোগ করুন
-                  </button>
                 </div>
 
                 <div className="space-y-4">
@@ -1364,7 +1555,7 @@ export default function WorkflowsPage() {
                           </div>
                         </div>
 
-                        {/* Step field parameters */}
+                        {/* Step field parameters with Variable Inserter */}
                         <StepFields
                           draft={s}
                           onChange={(next) => setSteps(steps.map((x, j) => (j === i ? next : x)))}
@@ -1378,14 +1569,97 @@ export default function WorkflowsPage() {
                   })}
                 </div>
 
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-3 text-center text-sm font-semibold text-slate-600 hover:border-brand-400 hover:bg-brand-50/30 hover:text-brand-700 transition"
-                    onClick={() => setSteps([...steps, { type: "send_sms", templateId: "", text: "" }])}
-                  >
-                    + পরবর্তী পদক্ষেপ যোগ করুন
-                  </button>
+                {/* Categorized Quick Action Palette */}
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4">
+                  <div className="text-xs font-bold text-slate-700 mb-2">
+                    + পরবর্তী পদক্ষেপ যোগ করুন (যেটি প্রয়োজন ক্লিক করুন):
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("send_sms")}
+                    >
+                      📱 SMS
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("send_email")}
+                    >
+                      ✉️ Email
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("send_inbox_message")}
+                    >
+                      💬 Inbox বার্তা
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("wait")}
+                    >
+                      ⏱️ অপেক্ষা (Wait)
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("branch")}
+                    >
+                      🔀 শাখা (Branch)
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("ai_generate")}
+                    >
+                      🤖 AI অ্যাকশন
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("notify_channel")}
+                    >
+                      📢 চ্যানেল অ্যালার্ট
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("notify_team")}
+                    >
+                      👥 টিমকে জানান
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("assign_conversation")}
+                    >
+                      👤 Assign
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("create_follow_up")}
+                    >
+                      📅 Follow-up
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("add_tag")}
+                    >
+                      🏷️ Tag
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => addStepByType("http_webhook")}
+                    >
+                      🌐 Webhook
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1491,112 +1765,128 @@ export default function WorkflowsPage() {
       )}
 
       {/* ============================================================== */}
-      {/* TAB 3: PRESET GALLERY                                          */}
+      {/* TAB 3: BUSINESS BLUEPRINTS & PRESETS GALLERY                   */}
       {/* ============================================================== */}
       {activeTab === "presets" && (
         <div className="space-y-6">
           <div className="card p-5">
-            <h2 className="text-lg font-bold text-slate-900">📚 Workflow Preset Gallery</h2>
-            <p className="text-sm text-slate-500">
-              রেডিমেড টেমপ্লেট — ১-ক্লিকে ইনস্টল করুন অথবা বিল্ডারে লোড করে আপনার বিজনেসের জন্য কাস্টমাইজ করুন।
-            </p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">📚 রেডিমেড বিজনেস ব্লুপ্রিন্ট ও টেমপ্লেট</h2>
+                <p className="text-sm text-slate-500">
+                  যেকোনো ব্যবসা প্রতিষ্ঠানের জন্য তৈরি সম্পূর্ণ কার্যক্ষম অটোমেশন — ১-ক্লিকে বিল্ডারে লোড বা সরাসরি ইনস্টল করুন।
+                </p>
+              </div>
+
+              {/* Blueprint Category Pills */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setBlueprintCategory("all")}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    blueprintCategory === "all" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  সব ({BUSINESS_BLUEPRINTS.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBlueprintCategory("ecommerce")}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    blueprintCategory === "ecommerce" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  🛍️ ই-কমার্স
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBlueprintCategory("leads")}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    blueprintCategory === "leads" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  👥 লিড ও সিআরএম
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBlueprintCategory("support")}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    blueprintCategory === "support" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  💬 সাপোর্ট ও AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBlueprintCategory("alerts")}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    blueprintCategory === "alerts" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  📢 চ্যানেল অ্যালার্ট
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Built-in Instant Templates */}
-            <div className="card card-hover p-5 border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="badge badge-brand">ইনবক্স ও ফলো-আপ</span>
-                  <span className="text-lg">💬</span>
-                </div>
-                <h3 className="font-bold text-slate-900">উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)</h3>
-                <p className="text-xs text-slate-500">
-                  গ্রাহক ইনবক্সে মেসেজ দেওয়ার পর ১ ঘণ্টা এজেন্টের রিপ্লাই না এলে স্বয়ংক্রিয় ফলো-আপ মেসেজ পাঠানো।
-                </p>
-                <div className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600 font-mono">
-                  [Wait 60m] ➔ [Condition] ➔ [Inbox Message]
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary btn-sm flex-1"
-                  onClick={() => loadPreset("recovery")}
+            {/* Business Blueprints */}
+            {filteredBlueprints.map((bp) => {
+              const tr = TRIGGERS.find((t) => t.value === bp.trigger);
+              return (
+                <div
+                  key={bp.key}
+                  className="card card-hover p-5 border border-slate-200 flex flex-col justify-between"
                 >
-                  বিল্ডারে লোড করুন
-                </button>
-              </div>
-            </div>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="badge badge-brand">{bp.catLabel}</span>
+                      <span className="badge badge-slate">{tr?.icon} {tr?.label}</span>
+                    </div>
 
-            <div className="card card-hover p-5 border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="badge badge-amber">সতর্কতা ও কমপ্লেইন</span>
-                  <span className="text-lg">🚨</span>
-                </div>
-                <h3 className="font-bold text-slate-900">অভিযোগ এলে ইন্টারনাল নোট</h3>
-                <p className="text-xs text-slate-500">
-                  ইনবক্সের ইনটেন্ট 'complaint' ডিটেক্ট হলে তাৎক্ষণিক কনভার্সেশনে হাই-প্রাইয়োরিটি ইন্টারনাল নোট যোগ।
-                </p>
-                <div className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600 font-mono">
-                  [Condition: intent == complaint] ➔ [Add Note]
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary btn-sm flex-1"
-                  onClick={() => loadPreset("complaint")}
-                >
-                  বিল্ডারে লোড করুন
-                </button>
-              </div>
-            </div>
+                    <h3 className="text-base font-bold text-slate-900">{bp.name}</h3>
+                    <p className="text-xs text-slate-500 leading-relaxed">{bp.descriptionBn}</p>
 
-            <div className="card card-hover p-5 border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="badge badge-sky">এসকেলেশন</span>
-                  <span className="text-lg">⏳</span>
+                    <div className="rounded-xl bg-slate-50 p-2.5 text-xs text-slate-700 border border-slate-100 font-mono space-y-1">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ধাপসমূহের ফ্লো:</div>
+                      <div className="line-clamp-2">
+                        {bp.steps.map((st) => getStepMeta(st.type).label).join(" ➔ ")}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t flex gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm flex-1"
+                      onClick={() => loadBlueprint(bp)}
+                    >
+                      🛠️ বিল্ডারে লোড করুন
+                    </button>
+                  </div>
                 </div>
-                <h3 className="font-bold text-slate-900">Unanswered Escalation</h3>
-                <p className="text-xs text-slate-500">
-                  ২ ঘণ্টা ধরে কোনো ইনবক্স বার্তার উত্তর না মিললে অভ্যন্তরীণ নোট ও ২৪ ঘণ্টা পর রিকভারি ফলো-আপ।
-                </p>
-                <div className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600 font-mono">
-                  [Note] ➔ [Wait 24h] ➔ [Follow-up Message]
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary btn-sm flex-1"
-                  onClick={() => loadPreset("escalation")}
-                >
-                  বিল্ডারে লোড করুন
-                </button>
-              </div>
-            </div>
+              );
+            })}
 
             {/* Server-Provided Presets */}
             {presets.map((p) => (
               <div key={p.key} className="card card-hover p-5 border border-slate-200 flex flex-col justify-between">
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
                     <span className="badge badge-green">সার্ভার প্রিসেট</span>
                     <span className="text-lg">⚡</span>
                   </div>
-                  <h3 className="font-bold text-slate-900">{p.name}</h3>
-                  <p className="text-xs text-slate-500">{p.descriptionBn}</p>
+                  <h3 className="text-base font-bold text-slate-900">{p.name}</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">{p.descriptionBn}</p>
                 </div>
+
                 <div className="mt-4 pt-3 border-t flex gap-2">
                   <button
                     type="button"
-                    className="btn-primary btn-sm flex-1"
+                    className="btn-secondary btn-sm flex-1"
                     onClick={() => installPreset(p.key, p.name)}
                   >
-                    ১-ক্লিকে ইনস্টল করুন
+                    ১-ক্লিকে ইনস্টল
                   </button>
                 </div>
               </div>
