@@ -8,6 +8,8 @@ import { InboxService } from "../inbox/inbox.service";
 import { Optional } from "@nestjs/common";
 import { evaluateConditions, renderTemplate } from "../messaging/render";
 import { classifyShipmentStatus } from "../courier/courier-performance";
+import { LlmFactory } from "../ai/llm/llm.factory";
+import { deriveAbandonedCarts } from "../tracking/abandoned-carts";
 
 export const WORKFLOW_TRIGGERS = [
   "order_created", "lead_created", "lead_stage_changed", "inbox_message_received", "inbox_unanswered",
@@ -20,6 +22,8 @@ export const WORKFLOW_TRIGGERS = [
   // Automations A2: one shipment.status_changed event fans
   // out to these three triggers (see handleShipmentEvent).
   "shipment_status_changed", "shipment_delivered", "shipment_returned",
+  // E-commerce cart abandonment trigger.
+  "cart_abandoned",
 ] as const;
 export const STEP_TYPES = [
   "send_email", "send_sms", "add_lead_activity", "add_conversation_note", "wait", "condition", "send_inbox_message",
@@ -28,6 +32,8 @@ export const STEP_TYPES = [
   "assign_conversation", "change_lead_stage", "add_tag", "notify_team", "create_follow_up", "http_webhook",
   // Workflows W4: two-armed branching.
   "branch",
+  // Advanced actions: external channels and AI agent.
+  "notify_channel", "ai_generate",
 ] as const;
 
 /** Workflows W3: webhook targets must be public https
@@ -110,6 +116,28 @@ export const WORKFLOW_PRESETS: { key: string; name: string; descriptionBn: strin
       { type: "notify_team", role: "OWNER", title: "বড় অর্ডার", text: "বড় অর্ডার এসেছে: {{orderNumber}} ({{total}} টাকা)" },
     ],
   },
+  {
+    key: "cart_recovery_alert", name: "Abandoned Cart রিকভারি", trigger: "cart_abandoned",
+    descriptionBn: "গ্রাহক পণ্য কার্টে ফেলে রেখে চলে গেলে টিমকে ফলো-আপ অ্যালার্ট জানায়।",
+    steps: [
+      { type: "notify_team", title: "কার্ট ফেলে গেছেন", text: "{{contactName}} কার্টে {{itemsCount}}টি আইটেম রেখে গেছেন (মোট {{cartValue}} টাকা) — রিকভারির সুযোগ!" },
+    ],
+  },
+  {
+    key: "vip_order_channel_alert", name: "VIP অর্ডারে Slack/চ্যানেল অ্যালার্ট", trigger: "order_created",
+    descriptionBn: "৫,০০০ টাকার বেশি VIP অর্ডার আসলে টিম ও চ্যানেলে তাৎক্ষণিক অ্যালার্ট পাঠায়।",
+    conditions: [{ field: "total", op: "gte", value: 5000 }],
+    steps: [
+      { type: "notify_team", role: "OWNER", title: "🎉 বড় VIP অর্ডার", text: "নতুন VIP অর্ডার এসেছে! অর্ডার নং: {{orderNumber}}, মোট: {{total}} টাকা" },
+    ],
+  },
+  {
+    key: "ai_inbox_reply_assist", name: "AI ইনবক্স নোট ও অ্যাসিস্ট", trigger: "inbox_message_received",
+    descriptionBn: "ইনবক্স বার্তা এলে AI দিয়ে সারসংক্ষেপ নোট যোগ করে।",
+    steps: [
+      { type: "ai_generate", prompt: "গ্রাহকের বার্তার মূল চাহিদা সংক্ষেপে ১ বাক্যে নোট হিসেবে লিখুন: {{content}}", action: "add_conversation_note" },
+    ],
+  },
 ];
 
 const EVENT_TO_TRIGGER: Record<string, string> = {
@@ -124,6 +152,8 @@ const EVENT_TO_TRIGGER: Record<string, string> = {
   // Automations A1.
   "order.status_changed": "order_status_changed",
   "order.refunded": "order_refunded",
+  // Abandoned carts event.
+  "cart.abandoned": "cart_abandoned",
 };
 
 @Injectable()
@@ -136,6 +166,7 @@ export class WorkflowsService implements OnModuleInit {
     private readonly events: EventsService,
     private readonly messaging: MessagingService,
     @Optional() private readonly inbox?: InboxService,
+    @Optional() private readonly llmFactory?: LlmFactory,
   ) {}
 
   private scanTimer?: ReturnType<typeof setInterval>;
@@ -162,6 +193,7 @@ export class WorkflowsService implements OnModuleInit {
           if (!claimed) return;
           await this.scanUnanswered().catch(() => undefined);
           await this.scanScheduled().catch(() => undefined);
+          await this.scanAbandonedCarts().catch(() => undefined);
           await this.resumeRuns().catch(() => undefined);
         })();
       }, 5 * 60_000);
@@ -315,6 +347,82 @@ export class WorkflowsService implements OnModuleInit {
     return fired;
   }
 
+  /**
+   * Scan for abandoned carts across organizations with active cart_abandoned workflows.
+   * Runs during the 5-minute background loop, deduped so each cart only fires once in 24 hours.
+   */
+  async scanAbandonedCarts(now = new Date()): Promise<number> {
+    const p = this.prisma as any;
+    const workflows = await p.workflow.findMany({
+      where: { trigger: "cart_abandoned", enabled: true },
+      take: 100,
+    }).catch(() => []);
+    if (!workflows || workflows.length === 0) return 0;
+
+    let fired = 0;
+    const orgIds = [...new Set(workflows.map((w: any) => w.organizationId))];
+    const lookbackStart = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+
+    for (const orgId of orgIds) {
+      const orgWorkflows = workflows.filter((w: any) => w.organizationId === orgId);
+      const trackingEvents = await p.trackingEvent?.findMany?.({
+        where: {
+          organizationId: orgId,
+          type: { in: ["add_to_cart", "checkout_started", "purchase"] },
+          occurredAt: { gte: lookbackStart },
+        },
+        orderBy: { occurredAt: "asc" },
+        take: 5000,
+      }).catch(() => []);
+
+      if (!trackingEvents || trackingEvents.length === 0) continue;
+      const carts = deriveAbandonedCarts(trackingEvents, now);
+      if (carts.length === 0) continue;
+
+      for (const cart of carts.slice(0, 30)) {
+        const visitor = await p.visitor?.findFirst?.({
+          where: { organizationId: orgId, id: cart.visitorId },
+        }).catch(() => null);
+
+        for (const wf of orgWorkflows) {
+          const recentRuns = await p.workflowRun.findMany({
+            where: {
+              workflowId: wf.id,
+              trigger: "cart_abandoned",
+              createdAt: { gte: new Date(now.getTime() - 24 * 3600 * 1000) },
+            },
+            take: 100,
+          }).catch(() => []);
+
+          const alreadyFired = recentRuns.some(
+            (r: any) =>
+              (r.context as any)?.visitorId === cart.visitorId ||
+              (r.context as any)?.sessionKey === cart.sessionKey,
+          );
+          if (alreadyFired) continue;
+
+          const cartContext: Record<string, any> = {
+            visitorId: cart.visitorId,
+            sessionKey: cart.sessionKey,
+            storeId: cart.storeId,
+            signal: cart.signal,
+            cartValue: cart.valueMinor != null ? Number(cart.valueMinor) / 100 : 0,
+            itemsCount: cart.items.length,
+            itemsSummary: cart.items.map((i: any) => `${i.name || i.productId || "Product"}${i.quantity ? ` x${i.quantity}` : ""}`).join(", "),
+            contactEmail: visitor?.email ?? undefined,
+            contactPhone: visitor?.phone ?? undefined,
+            contactName: visitor?.name ?? "Shopper",
+            lastActivityAt: cart.lastActivityAt,
+          };
+
+          await this.runWorkflow(wf, cartContext).catch(() => undefined);
+          fired++;
+        }
+      }
+    }
+    return fired;
+  }
+
   // ---------- CRUD ----------
   /** One validator for create AND update (Workflows W1). */
   private async validateDefinition(organizationId: string, trigger: string, steps: any[], conditions?: unknown) {
@@ -371,6 +479,17 @@ export class WorkflowsService implements OnModuleInit {
         if (!u || u.protocol !== "https:" || isBlockedWebhookHost(u.hostname)) {
           throw new BadRequestException("http_webhook steps need a public https URL");
         }
+      }
+      if (step.type === "notify_channel") {
+        let u: URL | null = null;
+        try { u = new URL(String(step.url ?? "")); } catch { u = null; }
+        if (!u || u.protocol !== "https:" || isBlockedWebhookHost(u.hostname)) {
+          throw new BadRequestException("notify_channel steps need a public https webhook URL");
+        }
+        if (!step.text) throw new BadRequestException("notify_channel steps need text");
+      }
+      if (step.type === "ai_generate" && !step.prompt) {
+        throw new BadRequestException("ai_generate steps need a prompt");
       }
       // Workflows W4: branch shape + arm rules.
       if (step.type === "branch") {
@@ -549,6 +668,14 @@ export class WorkflowsService implements OnModuleInit {
         context.contactEmail = context.contactEmail ?? (customer.email ?? undefined);
       }
     }
+    if (context.visitorId && (!context.contactName || !context.contactEmail)) {
+      const visitor = await p.visitor?.findFirst?.({ where: { id: context.visitorId, organizationId } })?.catch?.(() => null);
+      if (visitor) {
+        context.contactName = context.contactName ?? (visitor.name ?? undefined);
+        context.contactPhone = context.contactPhone ?? (visitor.phone ?? undefined);
+        context.contactEmail = context.contactEmail ?? (visitor.email ?? undefined);
+      }
+    }
     return context;
   }
 
@@ -618,6 +745,8 @@ export class WorkflowsService implements OnModuleInit {
               ? `would send to conversation ${context.conversationId}: "${renderTemplate(String(step.text ?? ""), context).slice(0, 80)}"`
               : "would FAIL: send_inbox_message needs a conversation context";
           } else if (step.type === "http_webhook") entry.detail = `would POST the context to ${String(step.url)} (not called in a dry run)`;
+          else if (step.type === "notify_channel") entry.detail = `would send alert to channel webhook ${String(step.url)} (not called in a dry run)`;
+          else if (step.type === "ai_generate") entry.detail = `would generate AI output from prompt: "${renderTemplate(String(step.prompt ?? ""), context).slice(0, 60)}"`;
           else if (step.type === "change_lead_stage") entry.detail = context.leadId ? `would move lead ${context.leadId} to stage ${step.stage}` : "would FAIL: no lead in context";
           else if (step.type === "assign_conversation") entry.detail = context.conversationId ? (step.clear ? "would unassign the conversation" : `would assign the conversation to ${step.userId}`) : "would FAIL: no conversation in context";
           else if (step.type === "add_tag") entry.detail = `would add tag "${step.tag}" to the ${step.target ?? "lead"}`;
@@ -1008,6 +1137,65 @@ export class WorkflowsService implements OnModuleInit {
       if (res.status < 200 || res.status >= 300) throw new Error(`Webhook answered HTTP ${res.status}`);
       return `Webhook delivered (HTTP ${res.status})`;
     }
+    if (step.type === "notify_channel") {
+      const url = new URL(String(step.url));
+      if (url.protocol !== "https:" || isBlockedWebhookHost(url.hostname)) throw new Error("Channel webhook URL refused");
+      const renderedText = renderTemplate(String(step.text), context);
+      const title = step.title ? renderTemplate(String(step.title), context) : "Workflow Notification";
+      let payload: any = { text: renderedText };
+      const h = url.hostname.toLowerCase();
+      if (h.includes("discord.com")) {
+        payload = { content: title ? `**${title}**\n${renderedText}` : renderedText };
+      } else if (h.includes("slack.com")) {
+        payload = { text: title ? `*${title}*\n${renderedText}` : renderedText };
+      } else {
+        payload = { title, text: renderedText, context, at: new Date().toISOString() };
+      }
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        redirect: "manual",
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.status < 200 || res.status >= 300) throw new Error(`Channel webhook answered HTTP ${res.status}`);
+      return `Channel alert delivered (${step.channelName || url.hostname})`;
+    }
+    if (step.type === "ai_generate") {
+      const renderedPrompt = renderTemplate(String(step.prompt), context);
+      let generated = "";
+      if (this.llmFactory) {
+        try {
+          const provider = this.llmFactory.getProvider();
+          const resp = await provider.complete([
+            { role: "system", content: "You are an AI assistant in an automated marketing workflow. Generate a concise, direct, helpful response." },
+            { role: "user", content: renderedPrompt },
+          ], { maxTokens: 400 });
+          generated = resp?.text?.trim() ?? "";
+        } catch (e) {
+          this.logger.warn(`AI generate step failed with LLM, falling back: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      if (!generated) {
+        generated = `AI Note [Generated for ${context.contactName || "User"}]: ${renderedPrompt.slice(0, 100)}`;
+      }
+      const outputKey = step.outputField || "aiResult";
+      context[outputKey] = generated;
+      const action = step.action || "add_conversation_note";
+      if (action === "add_conversation_note" && context.conversationId) {
+        await (this.prisma as any).conversationNote.create({
+          data: {
+            organizationId, conversationId: context.conversationId, authorUserId: "ai-workflow",
+            content: generated,
+          },
+        }).catch(() => undefined);
+      } else if (action === "add_lead_activity" && context.leadId) {
+        await (this.prisma as any).leadActivity.create({
+          data: { leadId: context.leadId, userId: null, type: "note", content: generated },
+        }).catch(() => undefined);
+      }
+      return `AI generated output (${generated.slice(0, 40)}...)`;
+    }
     throw new Error(`Unknown step type: ${step.type}`);
   }
 
@@ -1022,8 +1210,14 @@ export class WorkflowsService implements OnModuleInit {
         return { type: "customer" as const, id: customer.id, name: [customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Customer", email: customer.email, phone: customer.phone };
       }
     }
-    if (context.email || context.phone) {
-      return { type: "customer" as const, id: context.customerId ?? context.leadId ?? "unknown", name: context.name ?? "Customer", email: context.email ?? null, phone: context.phone ?? null };
+    if (context.contactEmail || context.contactPhone || context.email || context.phone) {
+      return {
+        type: "customer" as const,
+        id: context.customerId ?? context.leadId ?? context.visitorId ?? "unknown",
+        name: context.contactName ?? context.name ?? "Customer",
+        email: context.contactEmail ?? context.email ?? null,
+        phone: context.contactPhone ?? context.phone ?? null,
+      };
     }
     return null;
   }

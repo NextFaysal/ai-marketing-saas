@@ -65,6 +65,8 @@ export function StepFields({
           <option value="notify_team">টিমকে জানান</option>
           <option value="create_follow_up">Follow-up তৈরি করুন</option>
           <option value="http_webhook">Webhook পাঠান (HTTPS)</option>
+          <option value="notify_channel">📢 চ্যানেল অ্যালার্ট (Slack / Discord)</option>
+          <option value="ai_generate">🤖 AI দিয়ে তৈরি করুন (AI Action)</option>
         </select>
       </label>
       {s.type === "wait" ? (
@@ -160,6 +162,34 @@ export function StepFields({
         <div className="flex flex-1 flex-wrap items-end gap-2">
           <label className="block flex-1 text-sm">Webhook URL (HTTPS)<input className={inputCls} value={s.url ?? ""} placeholder="https://example.com/hook" onChange={(e) => set({ url: e.target.value })} /></label>
           <label className="block text-sm">Secret (ঐচ্ছিক, HMAC)<input className={inputCls} value={s.secret ?? ""} onChange={(e) => set({ secret: e.target.value })} /></label>
+        </div>
+      ) : s.type === "notify_channel" ? (
+        <div className="flex flex-1 flex-wrap items-end gap-2">
+          <label className="block flex-1 text-sm">চ্যানেল Webhook URL (Slack / Discord)
+            <input className={inputCls} value={s.url ?? ""} placeholder="https://hooks.slack.com/services/... বা discord.com/api/webhooks/..." onChange={(e) => set({ url: e.target.value })} />
+          </label>
+          <label className="block text-sm">শিরোনাম (ঐচ্ছিক)
+            <input className={inputCls} value={s.title ?? ""} placeholder="🚨 নতুন অর্ডার অ্যালার্ট" onChange={(e) => set({ title: e.target.value })} />
+          </label>
+          <label className="block flex-1 text-sm">বার্তা
+            <input className={inputCls} value={s.text ?? ""} placeholder="অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে (৳{{total}})" onChange={(e) => set({ text: e.target.value })} />
+          </label>
+        </div>
+      ) : s.type === "ai_generate" ? (
+        <div className="flex flex-1 flex-wrap items-end gap-2">
+          <label className="block flex-1 text-sm">AI নির্দেশিকা (Prompt)
+            <input className={inputCls} value={s.prompt ?? ""} placeholder="গ্রাহক {{contactName}} এর জন্য একটি সুন্দর ধন্যবাদ বার্তা লিখুন..." onChange={(e) => set({ prompt: e.target.value })} />
+          </label>
+          <label className="block text-sm">ফলাফল কোথায় রাখবেন
+            <select className={inputCls} value={s.action ?? "add_conversation_note"} onChange={(e) => set({ action: e.target.value })}>
+              <option value="add_conversation_note">কথোপকথনে Internal Note হিসেবে</option>
+              <option value="add_lead_activity">Lead টাইমলাইনে Note হিসেবে</option>
+              <option value="save_to_context">ভ্যারিয়েবলে সংরক্ষণ</option>
+            </select>
+          </label>
+          <label className="block text-sm">ভ্যারিয়েবলের নাম (ঐচ্ছিক)
+            <input className={inputCls} value={s.outputField ?? "aiResult"} placeholder="aiResult" onChange={(e) => set({ outputField: e.target.value })} />
+          </label>
         </div>
       ) : (
         <label className="block text-sm">Template

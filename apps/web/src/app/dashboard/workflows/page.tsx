@@ -28,13 +28,23 @@ const TRIGGERS = [
   { value: "conversation_closed", label: "কথোপকথন বন্ধ হলে" },
   { value: "lead_stage_changed", label: "Lead এর Stage বদলালে" },
   { value: "schedule", label: "প্রতিদিন নির্দিষ্ট সময়ে (Schedule)" },
+  { value: "cart_abandoned", label: "কার্ট ফেলে রেখে গেলে (Cart Abandoned)" },
 ];
+
+interface ConditionDraft {
+  field: string;
+  op: string;
+  value: string;
+}
 
 export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [form, setForm] = useState({ name: "", trigger: "order_created", condField: "", condOp: "gte", condValue: "", cooldown: "", cap: "" });
+  const [form, setForm] = useState({ name: "", trigger: "order_created", cooldown: "", cap: "" });
+  const [formConditions, setFormConditions] = useState<ConditionDraft[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
   // Workflows W6: server preset gallery.
   const [presets, setPresets] = useState<{ key: string; name: string; descriptionBn: string }[]>([]);
   const [steps, setSteps] = useState<StepDraft[]>([{ type: "send_email", templateId: "", text: "" }]);
@@ -123,7 +133,11 @@ export default function WorkflowsPage() {
     setBusy("create"); setError("");
     try {
       const payloadSteps = steps.map(buildPayloadStep);
-      const conditions = form.condField ? [{ field: form.condField, op: form.condOp, value: parseConditionValue(form.condValue) }] : undefined;
+      const conditions = formConditions.filter((c) => c.field.trim()).map((c) => ({
+        field: c.field,
+        op: c.op,
+        value: parseConditionValue(c.value),
+      }));
       // Workflows W6 governance (empty cap on edit = clear).
       const governance = {
         cooldownMinutes: form.cooldown ? Number(form.cooldown) : 0,
@@ -132,35 +146,101 @@ export default function WorkflowsPage() {
       if (editingId) {
         // Workflows W1: full-definition PATCH (validated
         // server-side exactly like create).
-        await apiFetch(`/organizations/${orgId}/workflows/${editingId}`, { method: "PATCH", body: JSON.stringify({ name: form.name, trigger: form.trigger, conditions: conditions ?? [], steps: payloadSteps, ...governance }) });
+        await apiFetch(`/organizations/${orgId}/workflows/${editingId}`, { method: "PATCH", body: JSON.stringify({ name: form.name, trigger: form.trigger, conditions: conditions, steps: payloadSteps, ...governance }) });
         setNotice("Workflow আপডেট হয়েছে। চলমান Run গুলো আগের ধাপেই চলবে (Snapshot)।");
       } else {
-        await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify({ name: form.name, trigger: form.trigger, conditions, steps: payloadSteps, ...governance }) });
+        await apiFetch(`/organizations/${orgId}/workflows`, { method: "POST", body: JSON.stringify({ name: form.name, trigger: form.trigger, conditions: conditions.length ? conditions : undefined, steps: payloadSteps, ...governance }) });
         setNotice("Workflow তৈরি হয়েছে ও সক্রিয় আছে।");
       }
       setEditingId(null);
-      setForm({ name: "", trigger: "order_created", condField: "", condOp: "gte", condValue: "", cooldown: "", cap: "" });
+      setForm({ name: "", trigger: "order_created", cooldown: "", cap: "" });
+      setFormConditions([]);
       setSteps([{ type: "send_email", templateId: "", text: "" }]);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
   }
 
-  function loadForEdit(w: Workflow) {
-    const conds = w.conditions ?? [];
-    if (conds.length > 1) {
-      setError("এই Workflow এ একাধিক শর্ত আছে — ফর্মে শুধু একটি শর্ত সম্পাদনা যায়। ক্যানভাসে সম্পাদনা করুন।");
-      return;
+  function downloadJson(name: string, content: string) {
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name.replace(/\s+/g, "_")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setNotice(`"${name}" JSON ডাউনলোড হয়েছে!`);
+  }
+
+  function exportWorkflow(w: Workflow) {
+    const data = {
+      name: w.name,
+      trigger: w.trigger,
+      conditions: w.conditions ?? [],
+      steps: w.steps,
+      cooldownMinutes: w.cooldownMinutes ?? 0,
+      dailyRunCap: w.dailyRunCap ?? null,
+    };
+    const jsonStr = JSON.stringify(data, null, 2);
+    if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(jsonStr).then(() => {
+        setNotice(`"${w.name}" এর JSON ক্লিপবোর্ডে কপি করা হয়েছে!`);
+      }).catch(() => {
+        downloadJson(w.name, jsonStr);
+      });
+    } else {
+      downloadJson(w.name, jsonStr);
     }
+  }
+
+  function handleImportJson() {
+    setError("");
+    try {
+      const parsed = JSON.parse(importText);
+      if (!parsed.name || !parsed.trigger || !Array.isArray(parsed.steps)) {
+        throw new Error("JSON এ 'name', 'trigger' এবং 'steps' থাকা আবশ্যক");
+      }
+      setEditingId(null);
+      setForm({
+        name: `${parsed.name} (ইমপোর্টেড)`,
+        trigger: parsed.trigger,
+        cooldown: parsed.cooldownMinutes ? String(parsed.cooldownMinutes) : "",
+        cap: parsed.dailyRunCap != null ? String(parsed.dailyRunCap) : "",
+      });
+      setFormConditions(
+        Array.isArray(parsed.conditions)
+          ? parsed.conditions.map((c: any) => ({
+              field: c.field ?? "",
+              op: c.op ?? "gte",
+              value: c.value === undefined || c.value === null ? "" : String(c.value),
+            }))
+          : []
+      );
+      setSteps(parsed.steps.map((s: any) => stepToDraft(s)));
+      setImportOpen(false);
+      setImportText("");
+      setNotice("Workflow JSON সফলভাবে লোড হয়েছে! নিচের ফর্মে যাচাই করে সংরক্ষণ করুন।");
+      setEditorView("form");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "অবৈধ JSON");
+    }
+  }
+
+  function loadForEdit(w: Workflow) {
     setError("");
     setEditingId(w.id);
     setForm({
       name: w.name, trigger: w.trigger,
-      condField: conds[0]?.field ?? "", condOp: conds[0]?.op ?? "gte",
-      condValue: conds[0] ? String(conds[0].value ?? "") : "",
       cooldown: w.cooldownMinutes ? String(w.cooldownMinutes) : "",
       cap: w.dailyRunCap != null ? String(w.dailyRunCap) : "",
     });
+    setFormConditions(
+      (w.conditions ?? []).map((c) => ({
+        field: c.field,
+        op: c.op,
+        value: c.value === undefined || c.value === null ? "" : String(c.value),
+      }))
+    );
     // The lib's converter is the single source of truth
     // (W3 fields + W4 branch arms included, recursively).
     setSteps((w.steps ?? []).map((s) => stepToDraft(s as unknown as RawStep)));
@@ -190,7 +270,8 @@ export default function WorkflowsPage() {
   function loadPreset(which: "recovery" | "complaint" | "escalation") {
     const presets = {
       recovery: {
-        form: { name: "Recovery Follow-up", trigger: "inbox_message_received", condField: "", condOp: "gte", condValue: "" },
+        form: { name: "Recovery Follow-up", trigger: "inbox_message_received" },
+        conditions: [] as ConditionDraft[],
         steps: [
           { type: "wait", templateId: "", text: "", minutes: 60 },
           { type: "condition", templateId: "", text: "", field: "agentReplied", op: "eq", value: "false" },
@@ -198,11 +279,13 @@ export default function WorkflowsPage() {
         ] as StepDraft[],
       },
       complaint: {
-        form: { name: "অভিযোগ সতর্কতা", trigger: "inbox_message_received", condField: "intent", condOp: "eq", condValue: "complaint" },
+        form: { name: "অভিযোগ সতর্কতা", trigger: "inbox_message_received" },
+        conditions: [{ field: "intent", op: "eq", value: "complaint" }] as ConditionDraft[],
         steps: [{ type: "add_conversation_note", templateId: "", text: "অভিযোগ এসেছে — অগ্রাধিকার দিয়ে দেখুন" }] as StepDraft[],
       },
       escalation: {
-        form: { name: "Unanswered Escalation", trigger: "inbox_unanswered", condField: "unansweredMinutes", condOp: "gte", condValue: "120" },
+        form: { name: "Unanswered Escalation", trigger: "inbox_unanswered" },
+        conditions: [{ field: "unansweredMinutes", op: "gte", value: "120" }] as ConditionDraft[],
         steps: [
           { type: "add_conversation_note", templateId: "", text: "২ ঘণ্টা ধরে উত্তর হয়নি" },
           { type: "wait", templateId: "", text: "", minutes: 1440 },
@@ -218,7 +301,7 @@ export default function WorkflowsPage() {
         trigger: preset.form.trigger,
         steps: preset.steps.map(buildPayloadStep),
       };
-      if (preset.form.condField) def.conditions = [{ field: preset.form.condField, op: preset.form.condOp, value: parseConditionValue(preset.form.condValue) }];
+      if (preset.conditions.length) def.conditions = preset.conditions.map(c => ({ field: c.field, op: c.op, value: parseConditionValue(c.value) }));
       setCanvasDef(def);
       setCanvasScope(`preset-${which}-${Date.now()}`);
       setCanvasNote("");
@@ -227,6 +310,7 @@ export default function WorkflowsPage() {
       return;
     }
     setForm({ ...preset.form, cooldown: "", cap: "" });
+    setFormConditions([...preset.conditions]);
     setSteps(preset.steps.map((x) => ({ ...x })));
   }
 
@@ -271,6 +355,7 @@ export default function WorkflowsPage() {
               ) : null; })()}
             </div>
             <div className="flex gap-2">
+              <button className="rounded-lg border px-3 py-1.5" onClick={() => exportWorkflow(w)}>📋 এক্সপোর্ট</button>
               <button className="rounded-lg border px-3 py-1.5" onClick={() => { setTestPanel({ workflowId: w.id, name: w.name }); setTrace(null); }}>🧪 টেস্ট / চালান</button>
               <button className="rounded-lg border px-3 py-1.5" onClick={() => loadForEdit(w)}>ফর্মে সম্পাদনা</button>
               <button className="rounded-lg border px-3 py-1.5" onClick={() => openInCanvas(w)}>ক্যানভাসে খুলুন</button>
@@ -280,13 +365,34 @@ export default function WorkflowsPage() {
           </div>
         ))}
 
-        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-          <span className="text-sm font-semibold">নতুন Workflow:</span>
-          <div className="flex overflow-hidden rounded-lg border">
-            <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "form" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("form")}>ফর্ম</button>
-            <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "canvas" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("canvas")}>ক্যানভাস (Visual)</button>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">নতুন Workflow:</span>
+            <div className="flex overflow-hidden rounded-lg border">
+              <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "form" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("form")}>ফর্ম</button>
+              <button type="button" className={`px-3 py-1.5 text-sm ${editorView === "canvas" ? "bg-indigo-600 text-white" : "bg-white"}`} onClick={() => setEditorView("canvas")}>ক্যানভাস (Visual)</button>
+            </div>
           </div>
+          <button type="button" className="btn-secondary btn-sm" onClick={() => setImportOpen(!importOpen)}>📥 JSON ইমপোর্ট করুন</button>
         </div>
+
+        {importOpen ? (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 space-y-3">
+            <div className="font-semibold text-sm text-indigo-900">📥 Workflow JSON ইমপোর্ট</div>
+            <p className="text-xs text-indigo-700">অন্য কোথাও থেকে এক্সপোর্ট করা Workflow এর JSON এখানে পেস্ট করুন:</p>
+            <textarea
+              className="input w-full font-mono text-xs h-28 bg-white"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder='{ "name": "...", "trigger": "order_created", "steps": [...] }'
+            />
+            <div className="flex gap-2">
+              <button type="button" className="btn-primary btn-sm" onClick={handleImportJson}>ইমপোর্ট ও লোড করুন</button>
+              <button type="button" className="btn-secondary btn-sm" onClick={() => { setImportOpen(false); setImportText(""); }}>বাতিল</button>
+            </div>
+          </div>
+        ) : null}
+
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50 p-3">
             <span className="text-xs font-semibold text-indigo-700">তৈরি Flow:</span>
             <button type="button" className="btn-secondary btn-sm" onClick={() => loadPreset("recovery")}>উত্তর না পেলে ফলো-আপ (১ ঘণ্টা)</button>
@@ -308,32 +414,103 @@ export default function WorkflowsPage() {
             </div>
           ) : null}
         <form onSubmit={createWorkflow} className={`space-y-3 ${editorView === "canvas" ? "hidden" : ""}`}>
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-3 lg:grid-cols-2">
             <label className="block text-sm">Workflow এর নাম<input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="বড় Order এ ধন্যবাদ" /></label>
             <label className="block text-sm">Trigger
               <select className={inputCls} value={form.trigger} onChange={(e) => setForm({ ...form, trigger: e.target.value })}>
                 {TRIGGERS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </label>
-            <label className="block text-sm">শর্তের Field (ঐচ্ছিক)
-              <select className={inputCls} value={form.condField} onChange={(e) => setForm({ ...form, condField: e.target.value })}>
-                <option value="">কোনো শর্ত নেই</option>
-                <option value="total">Order Total</option><option value="stage">Lead Stage</option><option value="source">Source</option><option value="status">Order Status</option>
-                <option value="fromStatus">আগের Status (শুধু Order Status Changed এ)</option><option value="toStatus">নতুন Status (শুধু Order Status Changed এ)</option>
-                <option value="refundAmount">Refund পরিমাণ, টাকায় (শুধু Order Refunded এ)</option><option value="cumulativeRefunded">মোট Refund, টাকায় (শুধু Order Refunded এ)</option>
-                <option value="shipmentStatus">পার্সেলের নতুন Status (শুধু Shipment Trigger গুলোতে)</option><option value="previousStatus">পার্সেলের আগের Status (শুধু Shipment Trigger গুলোতে)</option>
-                <option value="scheduleTime">Schedule সময় (HH:MM — শুধু Schedule Trigger এ)</option><option value="scheduleDays">Schedule দিন (0=রবি..6=শনি, কমা দিয়ে)</option>
-              </select>
-            </label>
-            {form.condField ? <>
-              <label className="block text-sm">Operator
-                <select className={inputCls} value={form.condOp} onChange={(e) => setForm({ ...form, condOp: e.target.value })}>
-                  <option value="gte">কমপক্ষে (gte)</option><option value="gt">বেশি (gt)</option><option value="eq">সমান (eq)</option><option value="lt">কম (lt)</option><option value="lte">সর্বোচ্চ (lte)</option>
-                </select>
-              </label>
-              <label className="block text-sm">শর্তের মান<input className={inputCls} value={form.condValue} onChange={(e) => setForm({ ...form, condValue: e.target.value })} placeholder="1000 অথবা qualified" /></label>
-            </> : null}
           </div>
+
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">শর্তসমূহ (সবগুলো শর্ত মিললে ফ্লো কার্যকর হবে)</span>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setFormConditions([...formConditions, { field: "total", op: "gte", value: "1000" }])}
+              >
+                + শর্ত যোগ করুন
+              </button>
+            </div>
+            {formConditions.length === 0 ? (
+              <p className="text-xs text-slate-500">কোনো শর্ত যোগ করা হয়নি — ট্রিগার হলেই সরাসরি ফ্লো চলবে।</p>
+            ) : (
+              formConditions.map((cond, idx) => (
+                <div key={idx} className="flex flex-wrap items-end gap-2 rounded-lg bg-white p-2.5 shadow-sm border border-slate-100">
+                  <label className="block text-sm min-w-[200px] flex-1">Field
+                    <select
+                      className={inputCls}
+                      value={cond.field}
+                      onChange={(e) => {
+                        const next = [...formConditions];
+                        next[idx].field = e.target.value;
+                        setFormConditions(next);
+                      }}
+                    >
+                      <option value="">কোনো শর্ত নেই</option>
+                      <option value="total">Order Total (টাকায়)</option>
+                      <option value="stage">Lead Stage</option>
+                      <option value="source">Source</option>
+                      <option value="status">Order Status</option>
+                      <option value="fromStatus">আগের Status (Order Status Changed)</option>
+                      <option value="toStatus">নতুন Status (Order Status Changed)</option>
+                      <option value="refundAmount">Refund পরিমাণ, টাকায় (Order Refunded)</option>
+                      <option value="cumulativeRefunded">মোট Refund, টাকায় (Order Refunded)</option>
+                      <option value="shipmentStatus">পার্সেলের নতুন Status</option>
+                      <option value="previousStatus">পার্সেলের আগের Status</option>
+                      <option value="cartValue">কার্টের মোট মূল্য (টাকা)</option>
+                      <option value="itemsCount">কার্টের আইটেম সংখ্যা</option>
+                      <option value="scheduleTime">Schedule সময় (HH:MM)</option>
+                      <option value="scheduleDays">Schedule দিন (0=রবি..6=শনি)</option>
+                      <option value="intent">Intent</option>
+                      <option value="contactName">গ্রাহকের নাম</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm w-36">Operator
+                    <select
+                      className={inputCls}
+                      value={cond.op}
+                      onChange={(e) => {
+                        const next = [...formConditions];
+                        next[idx].op = e.target.value;
+                        setFormConditions(next);
+                      }}
+                    >
+                      <option value="gte">কমপক্ষে (gte)</option>
+                      <option value="gt">বেশি (gt)</option>
+                      <option value="eq">সমান (eq)</option>
+                      <option value="neq">সমান নয় (neq)</option>
+                      <option value="lt">কম (lt)</option>
+                      <option value="lte">সর্বোচ্চ (lte)</option>
+                      <option value="contains">রয়েছে (contains)</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm flex-1 min-w-[160px]">মান (Value)
+                    <input
+                      className={inputCls}
+                      value={cond.value}
+                      placeholder="1000 অথবা qualified"
+                      onChange={(e) => {
+                        const next = [...formConditions];
+                        next[idx].value = e.target.value;
+                        setFormConditions(next);
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-red-200 px-3 py-2 text-xs text-red-600 hover:bg-red-50"
+                    onClick={() => setFormConditions(formConditions.filter((_, i) => i !== idx))}
+                  >
+                    মুছুন
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm">Cooldown (মিনিট, ঐচ্ছিক)
               <input className={inputCls} type="number" min={0} max={10080} value={form.cooldown} onChange={(e) => setForm({ ...form, cooldown: e.target.value })} placeholder="0 = নেই" />
@@ -357,7 +534,7 @@ export default function WorkflowsPage() {
           {editingId ? (
             <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
               ✏️ একটি বিদ্যমান Workflow সম্পাদনা করছেন — সংরক্ষণে এখানেই আপডেট হবে।
-              <button type="button" className="ml-2 underline" onClick={() => { setEditingId(null); setForm({ name: "", trigger: "order_created", condField: "", condOp: "gte", condValue: "", cooldown: "", cap: "" }); setSteps([{ type: "send_email", templateId: "", text: "" }]); }}>বাতিল</button>
+              <button type="button" className="ml-2 underline" onClick={() => { setEditingId(null); setForm({ name: "", trigger: "order_created", cooldown: "", cap: "" }); setFormConditions([]); setSteps([{ type: "send_email", templateId: "", text: "" }]); }}>বাতিল</button>
             </p>
           ) : null}
           <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{editingId ? "আপডেট সংরক্ষণ করুন" : "Workflow তৈরি করুন"}</button>

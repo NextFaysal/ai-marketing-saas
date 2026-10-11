@@ -60,6 +60,18 @@ describe("definition -> graph -> definition identity", () => {
     expect(roundTrip(def)).toEqual(def);
   });
 
+  it("round-trips notify_channel and ai_generate extension steps", () => {
+    const def: WorkflowDefinition = {
+      name: "Extensions",
+      trigger: "cart_abandoned",
+      steps: [
+        { type: "ai_generate", prompt: "Write gentle note", action: "add_conversation_note", outputField: "aiResult" },
+        { type: "notify_channel", url: "https://hooks.slack.com/services/xxx", text: "Alert {{contactName}}", title: "Cart Alert", channelName: "Slack" },
+      ],
+    };
+    expect(roundTrip(def)).toEqual(def);
+  });
+
   it("round-trips an unknown step type untouched (locked node)", () => {
     const def: WorkflowDefinition = {
       name: "ভবিষ্যতের ধাপ",

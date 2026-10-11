@@ -63,6 +63,9 @@ export const KNOWN_STEP_TYPES = [
   "http_webhook",
   // Workflows W4.
   "branch",
+  // Advanced actions: channels and AI.
+  "notify_channel",
+  "ai_generate",
 ] as const;
 
 export const STEP_TYPE_META: Record<string, { label: string; color: string }> = {
@@ -80,6 +83,8 @@ export const STEP_TYPE_META: Record<string, { label: string; color: string }> = 
   create_follow_up: { label: "Follow-up তৈরি করুন", color: "#15803d" },
   http_webhook: { label: "Webhook পাঠান", color: "#334155" },
   branch: { label: "শাখা (যদি / নয়তো)", color: "#9333ea" },
+  notify_channel: { label: "চ্যানেল অ্যালার্ট (Slack/Discord)", color: "#0284c7" },
+  ai_generate: { label: "AI টেক্সট / নোট জেনারেশন", color: "#6366f1" },
   unknown: { label: "অজানা ধাপ (Locked)", color: "#64748b" },
 };
 
@@ -104,6 +109,10 @@ export function defaultStep(type: string): RawStep {
     case "add_lead_activity":
     case "add_conversation_note":
       return { type, text: "" };
+    case "notify_channel":
+      return { type, url: "", text: "", title: "" };
+    case "ai_generate":
+      return { type, prompt: "", action: "add_conversation_note", outputField: "aiResult" };
     default:
       return { type };
   }
@@ -349,6 +358,11 @@ export interface StepDraftLike {
   days?: number;
   url?: string;
   secret?: string;
+  // Advanced actions (channel webhook & AI).
+  channelName?: string;
+  prompt?: string;
+  outputField?: string;
+  action?: string;
   // Workflows W4: branch arms (drafts; built recursively).
   then?: StepDraftLike[];
   else?: StepDraftLike[];
@@ -370,6 +384,8 @@ export function buildPayloadStep(s: StepDraftLike): RawStep {
   if (s.type === "notify_team") return { type: s.type, text: s.text || "", title: s.title || undefined, role: s.role || undefined, userId: s.userId || undefined };
   if (s.type === "create_follow_up") return { type: s.type, days: Number(s.days) || 3, text: s.text || undefined };
   if (s.type === "http_webhook") return { type: s.type, url: s.url || "", secret: s.secret || undefined };
+  if (s.type === "notify_channel") return { type: s.type, url: s.url || "", text: s.text || "", title: s.title || undefined, channelName: s.channelName || undefined };
+  if (s.type === "ai_generate") return { type: s.type, prompt: s.prompt || "", action: s.action || "add_conversation_note", outputField: s.outputField || "aiResult" };
   if (s.type === "branch") return {
     type: s.type, field: s.field || "", op: s.op || "eq", value: parseConditionValue(s.value),
     then: (s.then ?? []).map(buildPayloadStep), else: (s.else ?? []).map(buildPayloadStep),
@@ -400,12 +416,20 @@ export function stepToDraft(step: RawStep): StepDraftLike {
     days: typeof step.days === "number" ? step.days : 3,
     url: typeof step.url === "string" ? step.url : "",
     secret: typeof step.secret === "string" ? step.secret : "",
+    channelName: typeof step.channelName === "string" ? step.channelName : "",
+    prompt: typeof step.prompt === "string" ? step.prompt : "",
+    outputField: typeof step.outputField === "string" ? step.outputField : "aiResult",
+    action: typeof step.action === "string" ? step.action : "add_conversation_note",
     then: Array.isArray(step.then) ? (step.then as RawStep[]).map((x) => stepToDraft(x)) : [],
     else: Array.isArray(step.else) ? (step.else as RawStep[]).map((x) => stepToDraft(x)) : [],
   };
 }
 
-const PANEL_KEYS: (keyof StepDraftLike)[] = ["templateId", "text", "minutes", "field", "op", "value", "whatsappTemplateId", "userId", "clear", "stage", "tag", "target", "role", "title", "days", "url", "secret", "then", "else"];
+const PANEL_KEYS: (keyof StepDraftLike)[] = [
+  "templateId", "text", "minutes", "field", "op", "value", "whatsappTemplateId",
+  "userId", "clear", "stage", "tag", "target", "role", "title", "days", "url", "secret",
+  "channelName", "prompt", "outputField", "action", "then", "else"
+];
 
 /**
  * Merge a panel draft back into the raw step. The payload builder
@@ -450,6 +474,10 @@ export function stepSummary(step: RawStep): string {
       const e = Array.isArray(step.else) ? step.else.length : 0;
       return `${String(step.field ?? "?")} ${String(step.op ?? "eq")} ${JSON.stringify(step.value ?? "")} · ✓ ${t} ধাপ / ✗ ${e} ধাপ`;
     }
+    case "notify_channel":
+      return typeof step.text === "string" && step.text ? `চ্যানেল অ্যালার্ট: ${step.text.slice(0, 30)}` : "চ্যানেল অ্যালার্ট";
+    case "ai_generate":
+      return typeof step.prompt === "string" && step.prompt ? `AI: ${step.prompt.slice(0, 30)}` : "AI অ্যাসিস্ট্যান্ট ধাপ";
     default:
       return "ক্যানভাসে বদলানো যাবে না — যেমন আছে তেমনই থাকবে";
   }
