@@ -1,60 +1,61 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
-import { AuthGuard } from "../common/auth.guard";
+import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
-import { Roles } from "../common/decorators";
-import { CurrentOrg, CurrentUser } from "../common/decorators";
+import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { PracticeModeService } from "./practice-mode.service";
 import { CompletePracticeSessionDto, PracticeMessageDto, StartPracticeSessionDto } from "./practice-mode.dto";
 
-@Controller("inbox/practice")
-@UseGuards(AuthGuard, RolesGuard)
+@PermissionArea("inbox")
+@Controller("organizations/:organizationId/inbox/practice")
+@UseGuards(TenantGuard, RolesGuard)
 export class PracticeModeController {
   constructor(private readonly practiceMode: PracticeModeService) {}
 
   @Get("scenarios")
-  @Roles("owner", "admin", "agent")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   async listScenarios() {
     return this.practiceMode.listScenarios();
   }
 
   @Post("sessions")
-  @Roles("owner", "admin", "agent")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   async startSession(
-    @CurrentOrg() orgId: string,
-    @CurrentUser() user: { id: string },
+    @Param("organizationId") orgId: string,
+    @CurrentUser() user: AuthUser,
     @Body() dto: StartPracticeSessionDto,
   ) {
-    return this.practiceMode.startSession(orgId, user.id, dto);
+    return this.practiceMode.startSession(orgId, user.userId, dto);
   }
 
   @Post("sessions/:sessionId/message")
-  @Roles("owner", "admin", "agent")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   async sendMessage(
-    @CurrentOrg() orgId: string,
-    @CurrentUser() user: { id: string },
+    @Param("organizationId") orgId: string,
+    @CurrentUser() user: AuthUser,
     @Param("sessionId") sessionId: string,
     @Body() dto: PracticeMessageDto,
   ) {
-    return this.practiceMode.sendMessage(orgId, user.id, sessionId, dto);
+    return this.practiceMode.sendMessage(orgId, user.userId, sessionId, dto);
   }
 
   @Post("sessions/:sessionId/complete")
-  @Roles("owner", "admin", "agent")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   async completeSession(
-    @CurrentOrg() orgId: string,
-    @CurrentUser() user: { id: string },
+    @Param("organizationId") orgId: string,
+    @CurrentUser() user: AuthUser,
     @Param("sessionId") sessionId: string,
     @Body() dto: CompletePracticeSessionDto,
   ) {
-    return this.practiceMode.completeSession(orgId, user.id, sessionId, dto);
+    return this.practiceMode.completeSession(orgId, user.userId, sessionId, dto);
   }
 
   @Get("sessions")
-  @Roles("owner", "admin", "agent")
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   async getSessions(
-    @CurrentOrg() orgId: string,
-    @CurrentUser() user: { id: string },
+    @Param("organizationId") orgId: string,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.practiceMode.getSessions(orgId, user.id);
+    return this.practiceMode.getSessions(orgId, user.userId);
   }
 }
+
