@@ -350,6 +350,7 @@ export default function InboxPage() {
   const [listW, setListW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.listW")) || 300, 230, 520); } catch { return 300; } });
   const [ctxW, setCtxW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.ctxW")) || 320, 260, 520); } catch { return 320; } });
   const [ctxOpen, setCtxOpen] = useState(false);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
@@ -3246,6 +3247,107 @@ export default function InboxPage() {
           </div>
         </div>
       ) : null}
+
+      {/* 📱 Mobile Quick Actions Bottom Sheet (Matching Demo 1 & 2 Image #8) */}
+      {quickActionsOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in" onClick={() => setQuickActionsOpen(false)}>
+          <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl animate-in slide-in-from-bottom duration-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <span className="text-base font-bold text-slate-900">দ্রুত অ্যাকশন</span>
+              <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={() => setQuickActionsOpen(false)}>✕</button>
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-4">
+              <button
+                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-blue-50/50 hover:border-blue-300"
+                onClick={() => { setQuickActionsOpen(false); setOrderOpen(true); }}
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 text-lg">📄</span>
+                <div>
+                  <div className="font-bold text-slate-900">ইনভয়েস পাঠান</div>
+                  <div className="text-[10px] text-slate-400">চ্যাট থেকে অর্ডার তৈরি</div>
+                </div>
+              </button>
+              <button
+                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-blue-50/50 hover:border-blue-300"
+                onClick={() => { setQuickActionsOpen(false); setNotice("টাস্ক উইন্ডো খোলা হচ্ছে..."); }}
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 text-lg">📋</span>
+                <div>
+                  <div className="font-bold text-slate-900">টাস্ক তৈরি করুন</div>
+                  <div className="text-[10px] text-slate-400">রিমাইন্ডার ও ফলোআপ</div>
+                </div>
+              </button>
+              <button
+                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-amber-50/50 hover:border-amber-300"
+                onClick={() => { setQuickActionsOpen(false); setComposerMode("note"); focusComposer(); }}
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 text-lg">📝</span>
+                <div>
+                  <div className="font-bold text-slate-900">নোট যোগ করুন</div>
+                  <div className="text-[10px] text-slate-400">টিম প্রাইভেট হুইস্পার</div>
+                </div>
+              </button>
+              <button
+                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-emerald-50/50 hover:border-emerald-300"
+                onClick={() => { setQuickActionsOpen(false); if (active) patchConversation({ status: active.status === "closed" ? "open" : "closed" }); }}
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 text-lg">✓</span>
+                <div>
+                  <div className="font-bold text-slate-900">মার্ক অ্যাজ রিজলভড</div>
+                  <div className="text-[10px] text-slate-400">চ্যাট সমাধান করুন</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 📱 Mobile Bottom Navigation Bar (Matching Demo 1 & 2 Images) */}
+      <nav aria-label="মোবাইল ইনবক্স মেনু" className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 py-2 backdrop-blur-lg sm:hidden shadow-lg">
+        <button
+          onClick={() => { setViewMode("list"); setMobileChat(false); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
+            viewMode === "list" && !mobileChat ? "text-blue-600 font-bold" : "text-slate-500"
+          }`}
+        >
+          <span className="text-lg">💬</span>
+          <span>কথোপকথন</span>
+        </button>
+        <button
+          onClick={() => { setViewMode("board"); setMobileChat(false); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
+            viewMode === "board" ? "text-blue-600 font-bold" : "text-slate-500"
+          }`}
+        >
+          <span className="text-lg">🗂️</span>
+          <span>পাইপলাইন</span>
+        </button>
+        <button
+          onClick={() => setQuickActionsOpen(true)}
+          className="flex flex-col items-center gap-0.5 text-[10px] font-semibold text-slate-700"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-sm shadow-md">⚡</span>
+          <span>অ্যাকশন</span>
+        </button>
+        <button
+          onClick={() => { setViewMode("media"); setMobileChat(false); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
+            viewMode === "media" ? "text-blue-600 font-bold" : "text-slate-500"
+          }`}
+        >
+          <span className="text-lg">🖼️</span>
+          <span>মিডিয়া</span>
+        </button>
+        <button
+          onClick={() => { setViewMode("manage"); setMobileChat(false); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
+            viewMode === "manage" ? "text-blue-600 font-bold" : "text-slate-500"
+          }`}
+        >
+          <span className="text-lg">⚙️</span>
+          <span>সেটিংস ও টিম</span>
+        </button>
+      </nav>
     </div>
   );
 }
