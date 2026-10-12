@@ -351,6 +351,8 @@ export default function InboxPage() {
   const [ctxW, setCtxW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.ctxW")) || 320, 260, 520); } catch { return 320; } });
   const [ctxOpen, setCtxOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [newMsgOpen, setNewMsgOpen] = useState(false);
+  const [newMsgForm, setNewMsgForm] = useState({ channel: "whatsapp", recipient: "", message: "" });
   const [showEmoji, setShowEmoji] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1088,6 +1090,14 @@ export default function InboxPage() {
             >
               <span>🔍</span>
               <kbd className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">⌘K</kbd>
+            </button>
+            <button
+              className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-blue-700 transition"
+              onClick={() => setNewMsgOpen(true)}
+              title="নতুন বার্তা পাঠান"
+            >
+              <span>＋</span>
+              <span>নতুন চ্যাট</span>
             </button>
             <button
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition"
@@ -3297,6 +3307,93 @@ export default function InboxPage() {
                   <div className="text-[10px] text-slate-400">চ্যাট সমাধান করুন</div>
                 </div>
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ✉️ New Message Modal (Matching Demo 1 & 2 Image #9) */}
+      {newMsgOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in" onClick={() => setNewMsgOpen(false)}>
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-600 text-sm">✉️</span>
+                <span className="text-base font-bold text-slate-900">নতুন বার্তা পাঠান</span>
+              </div>
+              <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={() => setNewMsgOpen(false)}>✕</button>
+            </div>
+
+            <div className="space-y-4 pt-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">কোন চ্যানেলে পাঠাবেন?</label>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {([
+                    { id: "whatsapp", label: "WhatsApp", icon: "🟢", cls: "border-emerald-200 bg-emerald-50/60 text-emerald-800" },
+                    { id: "messenger", label: "Messenger", icon: "🔵", cls: "border-sky-200 bg-sky-50/60 text-sky-800" },
+                    { id: "instagram", label: "Instagram", icon: "🟣", cls: "border-fuchsia-200 bg-fuchsia-50/60 text-fuchsia-800" },
+                    { id: "telegram", label: "Telegram", icon: "✈️", cls: "border-cyan-200 bg-cyan-50/60 text-cyan-800" },
+                  ] as const).map((ch) => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => setNewMsgForm({ ...newMsgForm, channel: ch.id })}
+                      className={`flex items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-bold transition ${
+                        newMsgForm.channel === ch.id
+                          ? `${ch.cls} ring-2 ring-blue-500/30 shadow-xs`
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span>{ch.icon}</span>
+                      <span>{ch.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">প্রাপক (ফোন নম্বর / ইউজার আইডি)</label>
+                <input
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  placeholder="যেমন: +8801712345678"
+                  value={newMsgForm.recipient}
+                  onChange={(e) => setNewMsgForm({ ...newMsgForm, recipient: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">মেসেজের বিষয়বস্তু</label>
+                <textarea
+                  rows={4}
+                  className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  placeholder="নমস্কার! আমরা আপনার জন্য একটি বিশেষ অফার নিয়ে এসেছি..."
+                  value={newMsgForm.message}
+                  onChange={(e) => setNewMsgForm({ ...newMsgForm, message: e.target.value })}
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  onClick={() => setNewMsgOpen(false)}
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  disabled={!newMsgForm.recipient.trim() || !newMsgForm.message.trim()}
+                  className="flex items-center gap-1.5 rounded-2xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50 transition"
+                  onClick={() => {
+                    setNewMsgOpen(false);
+                    setNotice(`${newMsgForm.channel.toUpperCase()} এ বার্তা প্রেরণের প্রসেসিং শুরু হয়েছে।`);
+                    setNewMsgForm({ channel: "whatsapp", recipient: "", message: "" });
+                  }}
+                >
+                  <span>পাঠান</span>
+                  <span>🚀</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
