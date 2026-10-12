@@ -1435,7 +1435,6 @@ export default function InboxPage() {
                 <option value="unassigned">অনির্ধারিত</option>
               </select>
             </div>
-          </div>
             <button
               className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
                 selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
