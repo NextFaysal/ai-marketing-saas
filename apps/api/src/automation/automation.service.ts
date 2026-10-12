@@ -32,7 +32,7 @@ export const JOB_TYPES = [
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
   "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due",
   "inbox_autoreply_sweep", "comment_autoreply_sweep", "handover_timer_sweep",
-  "courier_auto_sync",
+  "courier_auto_sync", "inbox_chase_sweep",
 ] as const;
 
 
@@ -91,6 +91,8 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ১ মিনিটে: টাইমড অ্যাসাইনমেন্টের সময় শেষ হয়ে গেলে যাচাই হবে — দায়িত্বপ্রাপ্ত এজেন্ট এর মধ্যে উত্তর দিয়ে থাকলে অ্যাসাইনমেন্ট স্বাভাবিক হয়ে থাকবে, উত্তর না দিয়ে থাকলে কথোপকথনটি AI-এর কাছে ফেরত যাবে (Autopilot আবার চালু হবে)।" },
   { key: "courier_auto_sync", name: "Courier Auto-Sync (টেমপ্লেট)", type: "courier_auto_sync", targetKind: "org", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: শেষ হয়নি এমন সব শিপমেন্টের স্ট্যাটাস কুরিয়ারের কাছ থেকে একে একে যাচাই হবে (সর্বশেষ ২০০টি); স্ট্যাটাস বদলালে গ্রাহক ট্র্যাকিং কার্ড পাবেন — চ্যাটে, না থাকলে SMS, না হলে ইমেইলে। একটি শিপমেন্ট ব্যর্থ হলে বাকিগুলো থামবে না; ফলাফলে ব্যর্থগুলো গণনা থাকবে।" },
+  { key: "inbox_chase_sweep", name: "Incomplete Order Chase (টেমপ্লেট)", type: "inbox_chase_sweep", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: চ্যাটে অসম্পূর্ণ অর্ডার রেখে যাওয়া গ্রাহকদের ভদ্র ফলো-আপ পাঠাবে এবং আটকে থাকা বট সেশনগুলো সময়মতো পরিচালনা করবে।" },
 ];
 
 export const RULE_METRICS = [
@@ -602,6 +604,10 @@ export class AutomationService implements OnModuleInit {
       case "courier_auto_sync": {
         if (!this.courier) throw new BadRequestException("Courier service is not available in this deployment");
         return this.courier.syncAll(orgId);
+      }
+      case "inbox_chase_sweep": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.runChaseSweep(orgId);
       }
       case "auto_renew": {
         if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");

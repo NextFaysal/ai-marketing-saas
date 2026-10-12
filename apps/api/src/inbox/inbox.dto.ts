@@ -93,6 +93,11 @@ export class UpdateInboxSettingsDto {
   @IsOptional() @IsObject() aiReplyDelayByChannel?: Record<string, number>;
   // CX12d: channel-wise AI schedule (deep-validated in the service).
   @IsOptional() @IsObject() aiScheduleByChannel?: Record<string, unknown>;
+  // CX7: To Chase settings
+  @IsOptional() @IsBoolean() chaseEnabled?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(1440) chaseIntervalMinutes?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(10) maxChaseAttempts?: number;
+  @IsOptional() @IsString() @MaxLength(1000) chaseMessage?: string;
 }
 export class CodConfirmationDto { @IsString() orderId!: string; }
 

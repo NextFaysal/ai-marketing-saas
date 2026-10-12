@@ -355,6 +355,10 @@ model KnowledgeDocument {
   title          String
   content        String
   kind           String       @default("faq") // faq | note | claim | template
+  // CX9: file upload ingestion tracking
+  sourceFile     String?
+  chunkIndex     Int?
+  totalChunks    Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -502,6 +506,8 @@ model Customer {
   // CRM C4: values for the org's CustomFieldDefs (entity
   // "customer"), keyed by def.key. Validated server-side.
   customFields   Json?
+  // CX10: opt-out unsubscribe flag
+  unsubscribed   Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1148,6 +1154,8 @@ model Lead {
   // CRM C4: values for the org's CustomFieldDefs (entity "lead"),
   // keyed by def.key. Validated server-side; never per-field columns.
   customFields   Json?
+  // CX10: opt-out unsubscribe flag
+  unsubscribed   Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1525,6 +1533,9 @@ model Broadcast {
   // A/B test: two broadcasts share an abGroupId, one per variant.
   abVariant      String? // A | B
   abGroupId      String?
+  // CX10: broadcast exclusions and opt-out
+  excludePastDays Int?
+  excludeOptOut   Boolean  @default(true)
   status          String   @default("draft") // draft | sending | sent | partial | failed
   totalRecipients Int      @default(0)
   sentCount       Int      @default(0)
@@ -1693,6 +1704,11 @@ model InboxSetting {
   // windows: [{ days: [0..6], start: "HH:mm", end: "HH:mm" }] } }
   // in the organization's timezone. Null = no schedule anywhere.
   aiScheduleByChannel   Json?
+  // CX7: To Chase — gentle auto-follow-up for incomplete chat order bot sessions
+  chaseEnabled           Boolean  @default(false)
+  chaseIntervalMinutes   Int      @default(30)
+  maxChaseAttempts       Int      @default(2)
+  chaseMessage           String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
@@ -1706,6 +1722,9 @@ model BotSession {
   state          String
   data           Json? // collected answers (productId, quantity, name, phone, address)
   status         String   @default("active") // active | completed | handed_off | expired
+  // CX7: To Chase tracking
+  chaseCount     Int      @default(0)
+  lastChasedAt   DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

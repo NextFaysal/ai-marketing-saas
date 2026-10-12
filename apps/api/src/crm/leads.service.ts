@@ -13,6 +13,16 @@ import { LeadAssignmentService } from "./lead-assignment.service";
 export const LEAD_STAGES = ["new", "contacted", "qualified", "proposal", "won", "lost"] as const;
 export const LEAD_SOURCES = ["manual", "whatsapp", "messenger", "woocommerce", "website"] as const;
 
+// CX10: Default stage follow-up intervals in days
+export const DEFAULT_STAGE_FOLLOWUP_DAYS: Record<string, number> = {
+  new: 1,
+  contacted: 3,
+  qualified: 2,
+  proposal: 5,
+  won: 30,
+  lost: 60,
+};
+
 /** CRM C6: every source string a Lead row can honestly carry —
  * the manual-create vocabulary above, plus what the ingestion
  * paths write: the channel name (InboxService auto-lead),
@@ -113,7 +123,11 @@ export class LeadsService {
         ownerUserId: explicitOwner ? dto.ownerUserId : actorId,
         tags: dto.tags ? normalizeTags(dto.tags) : [],
         customFields,
-        nextFollowUpAt: dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null,
+        nextFollowUpAt: dto.nextFollowUpAt
+          ? new Date(dto.nextFollowUpAt)
+          : DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage ?? "new"] != null
+            ? new Date(Date.now() + DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage ?? "new"] * 86400000)
+            : null,
       },
     });
     await this.log(lead.id, actorId, "created", `Lead created (source: ${lead.source})`);
@@ -543,10 +557,14 @@ export class LeadsService {
     if (dto.ownerUserId !== undefined) data.ownerUserId = dto.ownerUserId;
     if (dto.value !== undefined) data.valueMinor = dto.value === null ? null : parseMoneyToMinor(dto.value);
     if (dto.tags !== undefined) data.tags = normalizeTags(dto.tags);
-    if (dto.nextFollowUpAt !== undefined) data.nextFollowUpAt = dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null;
     const fromStage = lead.stage;
     const stageChanged = dto.stage && dto.stage !== fromStage;
     if (dto.stage) { data.stage = dto.stage; data.lastContactedAt = new Date(); }
+    if (dto.nextFollowUpAt !== undefined) {
+      data.nextFollowUpAt = dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null;
+    } else if (stageChanged && dto.stage && DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage] != null) {
+      data.nextFollowUpAt = new Date(Date.now() + DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage] * 86400000);
+    }
     const updated = await (this.prisma as any).lead.update({ where: { id: leadId }, data });
     if (stageChanged) {
       await this.log(leadId, actorId, "stage_change", `Stage: ${fromStage} -> ${dto.stage}`);

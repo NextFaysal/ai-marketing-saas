@@ -60,31 +60,130 @@ export class MessagingService {
   }
 
   // ---------- Audience ----------
-  async resolveAudience(organizationId: string, channel: string, audienceType: string, audienceStage?: string, audienceSegment?: string): Promise<Recipient[]> {
+  async resolveAudience(
+    organizationId: string,
+    channel: string,
+    audienceType: string,
+    audienceStage?: string,
+    audienceSegment?: string,
+    opts?: { excludePastDays?: number; excludeOptOut?: boolean },
+  ): Promise<Recipient[]> {
     const channelField = channel === "email" ? "email" : "phone";
+    const excludeOptOut = opts?.excludeOptOut !== false;
+
+    let recipients: Recipient[] = [];
     if (audienceType === "customers") {
-      const rows = await (this.prisma as any).customer.findMany({ where: { organizationId } });
-      return rows
+      let rows = await (this.prisma as any).customer.findMany({
+        where: {
+          organizationId,
+        },
+      });
+      if (excludeOptOut) {
+        rows = rows.filter((c: any) => !c.unsubscribed);
+      }
+      recipients = rows
         .filter((c: any) => (channelField === "email" ? c.email : c.phone))
         .map((c: any) => ({ type: "customer" as const, id: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(" ") || "Customer", email: c.email, phone: c.phone }));
-    }
-    if (audienceType === "leads_stage") {
+    } else if (audienceType === "leads_stage") {
       if (!audienceStage) throw new BadRequestException("audienceStage is required for leads_stage audience");
-      const rows = await (this.prisma as any).lead.findMany({ where: { organizationId, stage: audienceStage } });
-      return rows
+      let rows = await (this.prisma as any).lead.findMany({
+        where: {
+          organizationId,
+          stage: audienceStage,
+        },
+      });
+      if (excludeOptOut) {
+        rows = rows.filter((l: any) => !l.unsubscribed);
+      }
+      recipients = rows
         .filter((l: any) => (channelField === "email" ? l.email : l.phone))
         .map((l: any) => ({ type: "lead" as const, id: l.id, name: l.name, email: l.email, phone: l.phone }));
-    }
-    if (audienceType === "segment") {
+    } else if (audienceType === "segment") {
       if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
       const { computeRfm } = await import("./rfm");
       const rows = await computeRfm(this.prisma as any, organizationId);
-      return rows
-        .filter((r) => r.segment === audienceSegment)
+      let optOutCustomerIds = new Set<string>();
+      if (excludeOptOut) {
+        const optedOut = await (this.prisma as any).customer.findMany({
+          where: { organizationId, unsubscribed: true },
+          select: { id: true },
+        }).catch(() => []);
+        optOutCustomerIds = new Set((optedOut as any[]).map((c) => c.id));
+      }
+      recipients = rows
+        .filter((r) => r.segment === audienceSegment && !optOutCustomerIds.has(r.customerId))
         .filter((r) => (channelField === "email" ? r.email : r.phone))
         .map((r) => ({ type: "customer" as const, id: r.customerId, name: r.name, email: r.email, phone: r.phone }));
+    } else {
+      throw new BadRequestException("audienceType must be customers, leads_stage or segment");
     }
-    throw new BadRequestException("audienceType must be customers, leads_stage or segment");
+
+    // CX10: Exclude recent broadcast deliveries within last X days
+    if (opts?.excludePastDays && opts.excludePastDays > 0) {
+      const cutoff = new Date(Date.now() - opts.excludePastDays * 24 * 60 * 60 * 1000);
+      const recentDeliveries = await (this.prisma as any).messageDelivery.findMany({
+        where: { organizationId, createdAt: { gte: cutoff } },
+        select: { address: true, recipientId: true },
+        take: 50000,
+      }).catch(() => []);
+      const excludedAddresses = new Set((recentDeliveries as any[]).map((d) => d.address).filter(Boolean));
+      const excludedIds = new Set((recentDeliveries as any[]).map((d) => d.recipientId).filter(Boolean));
+
+      recipients = recipients.filter((r) => {
+        const addr = channelField === "email" ? r.email : r.phone;
+        if (excludedIds.has(r.id)) return false;
+        if (addr && excludedAddresses.has(addr)) return false;
+        return true;
+      });
+    }
+
+    return recipients;
+  }
+
+  /**
+   * CX10: Audience preview before send — computes total eligible,
+   * excluded count (opt-out & recent broadcasts), and returns a sample.
+   */
+  async previewAudience(organizationId: string, input: {
+    channel: string;
+    audienceType: string;
+    audienceStage?: string;
+    audienceSegment?: string;
+    excludePastDays?: number;
+    excludeOptOut?: boolean;
+  }) {
+    const raw = await this.resolveAudience(organizationId, input.channel, input.audienceType, input.audienceStage, input.audienceSegment, { excludeOptOut: false });
+    const totalRaw = raw.length;
+
+    const filtered = await this.resolveAudience(organizationId, input.channel, input.audienceType, input.audienceStage, input.audienceSegment, {
+      excludePastDays: input.excludePastDays,
+      excludeOptOut: input.excludeOptOut ?? true,
+    });
+    const totalEligible = filtered.length;
+
+    const sample = filtered.slice(0, 10).map((r) => {
+      const rawContact = input.channel === "email" ? (r.email ?? "") : (r.phone ?? "");
+      let masked = rawContact;
+      if (input.channel === "email" && rawContact.includes("@")) {
+        const [user, domain] = rawContact.split("@");
+        masked = `${user.slice(0, 2)}***@${domain}`;
+      } else if (rawContact.length >= 6) {
+        masked = rawContact.slice(0, 3) + "****" + rawContact.slice(-3);
+      }
+      return {
+        id: r.id,
+        type: r.type,
+        name: r.name,
+        maskedContact: masked,
+      };
+    });
+
+    return {
+      totalRaw,
+      totalEligible,
+      excludedCount: Math.max(0, totalRaw - totalEligible),
+      sample,
+    };
   }
 
   async rfmReport(organizationId: string) {
@@ -143,6 +242,7 @@ export class MessagingService {
     name: string; channel: string; templateId?: string; subject?: string; body?: string; audienceType: string; audienceStage?: string; audienceSegment?: string;
     whatsappTemplateId?: string; templateParams?: string[];
     abTest?: boolean; abSubject?: string; abBody?: string; abWhatsappTemplateId?: string;
+    excludePastDays?: number; excludeOptOut?: boolean;
   }) {
     if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
     let subject = dto.subject ?? null;
@@ -159,6 +259,7 @@ export class MessagingService {
         organizationId, channel: "whatsapp", templateId: null,
         templateParams: dto.templateParams ?? [], subject: null,
         audienceType: dto.audienceType, audienceStage: dto.audienceStage ?? null, audienceSegment: dto.audienceSegment ?? null,
+        excludePastDays: dto.excludePastDays ?? null, excludeOptOut: dto.excludeOptOut ?? true,
         status: "draft", createdById: actorId,
       };
       if (dto.abTest) {
@@ -185,6 +286,7 @@ export class MessagingService {
     const baseData = {
       organizationId, channel: dto.channel,
       audienceType: dto.audienceType, audienceStage: dto.audienceStage ?? null, audienceSegment: dto.audienceSegment ?? null,
+      excludePastDays: dto.excludePastDays ?? null, excludeOptOut: dto.excludeOptOut ?? true,
       status: "draft", createdById: actorId,
     };
     if (dto.abTest) {
@@ -214,7 +316,10 @@ export class MessagingService {
     if (broadcast.status === "sent" || broadcast.status === "sending") {
       throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
     }
-    let recipients = await this.resolveAudience(organizationId, broadcast.channel, broadcast.audienceType, broadcast.audienceStage ?? undefined, broadcast.audienceSegment ?? undefined);
+    let recipients = await this.resolveAudience(organizationId, broadcast.channel, broadcast.audienceType, broadcast.audienceStage ?? undefined, broadcast.audienceSegment ?? undefined, {
+      excludePastDays: broadcast.excludePastDays ?? undefined,
+      excludeOptOut: broadcast.excludeOptOut ?? true,
+    });
     if (broadcast.abGroupId && broadcast.abVariant) {
       // Deterministic split: each recipient belongs to exactly one
       // variant across the whole A/B group.

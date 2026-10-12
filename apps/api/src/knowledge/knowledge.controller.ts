@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { KnowledgeService } from "./knowledge.service";
-import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto } from "./knowledge.dto";
+import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -37,6 +37,12 @@ export class KnowledgeController {
   @Post("knowledge-documents") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateKnowledgeDocDto) {
     return this.knowledge.createDoc(orgId, user.userId, dto);
+  }
+
+  // CX9: Knowledge Document file upload endpoint
+  @Post("knowledge-documents/upload") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  uploadDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: IngestKnowledgeFileDto) {
+    return this.knowledge.ingestFile(orgId, user.userId, dto);
   }
 
   @Delete("knowledge-documents/:docId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")

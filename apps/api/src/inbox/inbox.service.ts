@@ -459,6 +459,11 @@ export class InboxService {
       // CX12d: a corrupt stored schedule must read as {} (no
       // restriction), never crash the autopilot/settings reads.
       aiScheduleByChannel: (() => { try { return parseAiSchedule(row?.aiScheduleByChannel ?? null); } catch { return {}; } })(),
+      // CX7: To Chase settings
+      chaseEnabled: row?.chaseEnabled ?? false,
+      chaseIntervalMinutes: row?.chaseIntervalMinutes ?? 30,
+      maxChaseAttempts: row?.maxChaseAttempts ?? 2,
+      chaseMessage: row?.chaseMessage ?? null,
     };
   }
 
@@ -489,6 +494,7 @@ export class InboxService {
     retentionDays?: number | null;
     aiReplyDelaySeconds?: number; aiReplyDelayByChannel?: Record<string, number>;
     aiScheduleByChannel?: Record<string, unknown>;
+    chaseEnabled?: boolean; chaseIntervalMinutes?: number; maxChaseAttempts?: number; chaseMessage?: string | null;
   }) {
     const modes = ["off", "draft", "auto"];
     if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw new BadRequestException("autoReplyMode must be off | draft | auto");
@@ -542,6 +548,11 @@ export class InboxService {
       ...(dto.aiReplyDelayByChannel !== undefined ? { aiReplyDelayByChannel: dto.aiReplyDelayByChannel } : {}),
       // CX12d: validated + normalized by parseAiSchedule below.
       ...(dto.aiScheduleByChannel !== undefined ? { aiScheduleByChannel: aiScheduleNormalized } : {}),
+      // CX7: To Chase settings
+      ...(dto.chaseEnabled !== undefined ? { chaseEnabled: Boolean(dto.chaseEnabled) } : {}),
+      ...(dto.chaseIntervalMinutes !== undefined ? { chaseIntervalMinutes: Math.min(1440, Math.max(1, Math.round(dto.chaseIntervalMinutes))) } : {}),
+      ...(dto.maxChaseAttempts !== undefined ? { maxChaseAttempts: Math.min(10, Math.max(1, Math.round(dto.maxChaseAttempts))) } : {}),
+      ...(dto.chaseMessage !== undefined ? { chaseMessage: dto.chaseMessage ? String(dto.chaseMessage).trim() : null } : {}),
     };
     const existing = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     const saved = existing
@@ -1240,7 +1251,21 @@ export class InboxService {
   }
 
   private async processInboundIntelligence(organizationId: string, conversation: any, message: any, event: any) {
-    const text: string = event.content ?? "";
+    let text: string = event.content ?? "";
+    // CX12c: Inbound voice-note auto-transcription for order-bot & autopilot
+    if (!text && (message.type === "audio" || event.type === "audio" || message.mediaContentType?.startsWith?.("audio/"))) {
+      if (message.transcription) {
+        text = message.transcription;
+      } else {
+        try {
+          const tr = await this.transcribeMessage(organizationId, conversation.id, message.id);
+          if (tr?.transcription) {
+            text = tr.transcription;
+            this.rtMessage(organizationId, conversation.id, { ...message, transcription: text, transcriptionProvider: tr.provider });
+          }
+        } catch { /* honest fallback if audio transcription fails or provider not configured */ }
+      }
+    }
     let classification: Classification = { intent: "other", confidence: 0, sentiment: null };
     if (text) {
       classification = classifyIntent(text);
@@ -1336,11 +1361,15 @@ export class InboxService {
     if (!(await orgFlagEnabled(this.prisma as any, organizationId, "order_bot"))) return false;
     const prisma = this.prisma as any;
     let session = await prisma.botSession?.findFirst?.({ where: { conversationId: conversation.id, status: "active" } }).catch(() => null);
-    if (session && Date.now() - new Date(session.updatedAt).getTime() > 30 * 60000) {
-      await prisma.botSession.update({ where: { id: session.id }, data: { status: "expired" } }).catch(() => undefined);
-      session = null;
-    }
     const settings = await this.getSettings(organizationId);
+    if (session) {
+      const totalChaseTimeMs = ((settings.chaseIntervalMinutes ?? 30) * (settings.maxChaseAttempts ?? 2) + 60) * 60000;
+      const expireThreshold = settings.chaseEnabled ? Math.max(30 * 60000, totalChaseTimeMs) : 30 * 60000;
+      if (Date.now() - new Date(session.updatedAt).getTime() > expireThreshold) {
+        await prisma.botSession.update({ where: { id: session.id }, data: { status: "expired" } }).catch(() => undefined);
+        session = null;
+      }
+    }
     // Milestone 76: the bot's delivery charge falls back to
     // the Command Center profile (inside-Dhaka charge) when
     // no bot-specific charge is set.
@@ -1350,8 +1379,14 @@ export class InboxService {
     }
     const trimmed = text.trim();
     const handoffWords = ["এজেন্ট", "মানুষ", "agent", "human", "stop", "থামুন", "বন্ধ করুন"];
+    const cancelWords = ["বাতিল", "দরকার নেই", "cancel", "বাতিল করুন", "অর্ডার বাতিল", "চাই না", "নেব না", "নেবো না"];
 
     if (session) {
+      if (cancelWords.some((w) => trimmed.toLowerCase() === w || trimmed.includes("বাতিল"))) {
+        await prisma.botSession.update({ where: { id: session.id }, data: { status: "expired" } }).catch(() => undefined);
+        await this.botSend(organizationId, conversation, session, "ঠিক আছে, আপনার অর্ডারটি বাতিল করা হয়েছে। ভবিষ্যতে কোনো প্রয়োজন হলে আমাদের জানাবেন। ধন্যবাদ!");
+        return true;
+      }
       if (handoffWords.some((w) => trimmed.toLowerCase() === w || trimmed.includes("এজেন্ট চাই"))) {
         await this.botFail(organizationId, conversation, session, "গ্রাহক এজেন্ট চেয়েছেন");
         await this.botSend(organizationId, conversation, session, "ঠিক আছে, আমাদের একজন এজেন্ট শীঘ্রই উত্তর দেবেন। ধন্যবাদ!");
@@ -1998,6 +2033,103 @@ export class InboxService {
       } catch { /* one bad row never stops the sweep */ }
     }
     return { returned, lapsed, woken };
+  }
+
+  /**
+   * CX7: To Chase — gentle auto-follow-up for incomplete chat order bot sessions.
+   * Runs via the "inbox_chase_sweep" job or on demand.
+   * Scans active BotSessions where customer stopped responding.
+   * If chase interval has elapsed and attempts < maxChaseAttempts,
+   * sends a polite follow-up reminder.
+   * Ceases if customer requested human, agent intervened, order completed,
+   * or max attempts reached (marking session expired).
+   */
+  async runChaseSweep(organizationId: string, now: Date = new Date()): Promise<{ swept: number; chased: number; expired: number; reason?: string }> {
+    const settings = await this.getSettings(organizationId);
+    if (!settings.botEnabled || !settings.chaseEnabled) {
+      return { swept: 0, chased: 0, expired: 0, reason: "chase_disabled" };
+    }
+    const p = this.prisma as any;
+    const intervalMinutes = settings.chaseIntervalMinutes ?? 30;
+    const maxChases = settings.maxChaseAttempts ?? 2;
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const nowMs = now.getTime();
+
+    const activeSessions = await p.botSession.findMany({
+      where: { organizationId, status: "active" },
+    }).catch(() => []);
+
+    let swept = 0;
+    let chased = 0;
+    let expired = 0;
+
+    for (const session of activeSessions as any[]) {
+      swept++;
+      const currentChases = session.chaseCount ?? 0;
+      if (currentChases >= maxChases) {
+        await p.botSession.update({
+          where: { id: session.id },
+          data: { status: "expired" },
+        }).catch(() => undefined);
+        expired++;
+        continue;
+      }
+
+      const lastActivity = session.lastChasedAt ?? session.updatedAt ?? session.createdAt;
+      const lastActivityMs = new Date(lastActivity).getTime();
+      if (nowMs - lastActivityMs < intervalMs) {
+        continue; // Not due yet
+      }
+
+      const conversation = await p.channelConversation.findUnique({
+        where: { id: session.conversationId },
+      }).catch(() => null);
+      if (!conversation || conversation.assignedUserId || conversation.status === "closed") {
+        continue; // Handed off to human agent or closed
+      }
+
+      // Check if a human agent messaged recently after lastActivity
+      const lastAgentMsg = await p.channelMessage.findFirst({
+        where: {
+          conversationId: conversation.id,
+          direction: "out",
+          autoReply: false,
+          createdAt: { gte: lastActivity },
+        },
+      }).catch(() => null);
+      if (lastAgentMsg) {
+        continue; // Agent interacted, stop automated chase
+      }
+
+      const chaseText = settings.chaseMessage?.trim() ||
+        "আসসালামু আলাইকুম! আপনার অর্ডারটি কি নিশ্চিত করতে চান? পণ্যটি এখনও আপনার জন্য রাখা আছে। কোনো তথ্য পরিবর্তন বা সাহায্য লাগলে বলুন (অথবা বাতিল করতে 'বাতিল' লিখুন)।";
+
+      const sent = await this.botSend(organizationId, conversation, session, chaseText);
+      if (sent) {
+        await p.botSession.update({
+          where: { id: session.id },
+          data: {
+            chaseCount: currentChases + 1,
+            lastChasedAt: now,
+          },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId,
+          userId: "system",
+          action: "inbox.bot_session.chased",
+          entityType: "BotSession",
+          entityId: session.id,
+          metadata: {
+            conversationId: conversation.id,
+            chaseAttempt: currentChases + 1,
+            maxChaseAttempts: maxChases,
+          },
+        });
+        chased++;
+      }
+    }
+
+    return { swept, chased, expired };
   }
 
   // ----- CX5: snooze + one-row action bar actions -----

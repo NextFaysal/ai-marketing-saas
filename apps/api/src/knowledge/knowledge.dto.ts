@@ -11,5 +11,12 @@ export class UpdatePolicyDto {
 export class CreateKnowledgeDocDto {
   @IsString() @MinLength(2) @MaxLength(200) title!: string;
   @IsString() @MinLength(2) @MaxLength(10000) content!: string;
-  @IsOptional() @IsEnum(["faq", "note", "claim", "template"]) kind?: string;
+  @IsOptional() @IsEnum(["faq", "note", "claim", "template", "file_doc"]) kind?: string;
+}
+
+export class IngestKnowledgeFileDto {
+  @IsString() @MinLength(1) @MaxLength(255) filename!: string;
+  @IsString() dataBase64!: string;
+  @IsOptional() @IsString() mimeType?: string;
+  @IsOptional() @IsEnum(["faq", "note", "claim", "template", "file_doc"]) kind?: string;
 }

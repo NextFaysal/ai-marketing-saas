@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { MessagingService } from "./messaging.service";
-import { CreateTemplateDto, UpdateTemplateDto, CreateBroadcastDto } from "./messaging.dto";
+import { CreateTemplateDto, UpdateTemplateDto, CreateBroadcastDto, PreviewAudienceDto } from "./messaging.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -36,6 +36,10 @@ export class MessagingController {
   @Post("broadcasts") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createBroadcast(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateBroadcastDto) {
     return this.messaging.createBroadcast(orgId, user.userId, dto);
+  }
+  @Post("broadcasts/preview")
+  previewAudience(@Param("organizationId") orgId: string, @Body() dto: PreviewAudienceDto) {
+    return this.messaging.previewAudience(orgId, dto);
   }
   @Get("broadcasts")
   listBroadcasts(@Param("organizationId") orgId: string) { return this.messaging.listBroadcasts(orgId); }

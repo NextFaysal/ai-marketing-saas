@@ -26,6 +26,18 @@ export class CreateBroadcastDto {
   @IsOptional() @IsString() abSubject?: string;
   @IsOptional() @IsString() abBody?: string;
   @IsOptional() @IsString() abWhatsappTemplateId?: string;
+  // CX10: exclusions & opt-out
+  @IsOptional() @IsInt() excludePastDays?: number;
+  @IsOptional() @IsBoolean() excludeOptOut?: boolean;
+}
+
+export class PreviewAudienceDto {
+  @IsString() channel!: string;
+  @IsString() audienceType!: string;
+  @IsOptional() @IsString() audienceStage?: string;
+  @IsOptional() @IsString() audienceSegment?: string;
+  @IsOptional() @IsInt() excludePastDays?: number;
+  @IsOptional() @IsBoolean() excludeOptOut?: boolean;
 }
 export class CreateWorkflowDto {
   @IsString() name!: string;
