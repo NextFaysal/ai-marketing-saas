@@ -562,6 +562,7 @@ model Order {
   store          Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items          OrderItem[]
+  packingScans   PackingScanLog[]
 
   @@unique([organizationId, source, externalId])
   @@index([organizationId, status])
@@ -2782,5 +2783,75 @@ model AiUnansweredQuestion {
 
   @@index([organizationId, status, createdAt])
   @@index([organizationId, normalizedQuestion])
+}
+
+// ==========================================
+// CX8: Packing Scanner — Vision label & item
+// verification before dispatch to prevent packing mistakes.
+// ==========================================
+
+model PackingScanLog {
+  id              String            @id @default(uuid())
+  organizationId  String
+  orderId         String
+  scannedById     String
+  status          String            @default("in_progress") // in_progress | verified | mismatch | overridden
+  matchedItems    Int               @default(0)
+  totalItems      Int               @default(0)
+  notes           String?
+  scannedAt       DateTime          @default(now())
+  completedAt     DateTime?
+  order           Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items           PackingScanItem[]
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, scannedAt])
+}
+
+model PackingScanItem {
+  id              String          @id @default(uuid())
+  packingScanId   String
+  orderItemId     String?
+  sku             String?
+  expectedQty     Int
+  scannedQty      Int             @default(0)
+  status          String          @default("pending") // pending | matched | mismatch
+  packingScan     PackingScanLog  @relation(fields: [packingScanId], references: [id], onDelete: Cascade)
+
+  @@index([packingScanId])
+}
+
+// ==========================================
+// CX12a: Setup Guide & Practice Mode (Interactive Simulation)
+// Allows merchants to test bot replies without touching real customers.
+// ==========================================
+
+model PracticeScenario {
+  id              String            @id @default(uuid())
+  title           String
+  description     String
+  channel         String            @default("whatsapp") // whatsapp | messenger | webchat
+  sampleMessages  Json              // array of { role: "customer"|"agent"|"system", text: string }
+  difficulty      String            @default("beginner") // beginner | intermediate | advanced
+  createdAt       DateTime          @default(now())
+  sessions        PracticeSession[]
+}
+
+model PracticeSession {
+  id              String            @id @default(uuid())
+  organizationId  String
+  userId          String
+  scenarioId      String?
+  channel         String            @default("whatsapp")
+  status          String            @default("active") // active | completed | abandoned
+  score           Int?
+  feedback        String?
+  transcript      Json              // array of simulated messages & bot responses
+  startedAt       DateTime          @default(now())
+  completedAt     DateTime?
+  scenario        PracticeScenario? @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, userId])
+  @@index([organizationId, status])
 }
 
