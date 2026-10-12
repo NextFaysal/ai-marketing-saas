@@ -1313,100 +1313,118 @@ export default function InboxPage() {
         />
         {/* ---- Conversation list + filters ---- */}
         <div className={`${mobileChat ? "hidden lg:flex" : "flex"} min-h-0 flex-col gap-2.5`}>
-          {/* Glass Search Input */}
+          {/* Modern Search Input */}
           <div className="relative shrink-0">
-            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
               🔍
             </span>
             <input
               id="inbox-search"
-              className="w-full rounded-2xl border border-slate-200/90 bg-white py-2 pl-9 pr-10 text-xs text-slate-900 shadow-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-              placeholder="নাম, ফোন বা বার্তা খুঁজুন..."
+              className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-10 pr-10 text-xs text-slate-900 shadow-2xs placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              placeholder="নাম, ফোন নম্বর, মেসেজ বা কীওয়ার্ড খুঁজুন..."
               value={filters.q}
               onChange={(e) => onSearch(e.target.value)}
             />
-            <kbd className="pointer-events-none absolute inset-y-0 right-0 my-auto mr-2.5 flex h-5 items-center rounded border border-slate-200 bg-slate-50 px-1.5 text-[10px] font-bold text-slate-400 shadow-xs">
-              /
+            <kbd className="pointer-events-none absolute inset-y-0 right-0 my-auto mr-3 flex h-5 items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 text-[10px] font-bold text-slate-400">
+              ⌘K
             </kbd>
           </div>
 
-          {/* Smart Folders with Badge Counts */}
-          <div className="flex shrink-0 gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {/* Channel Round Pills Bar (Matches Demo 3 & 4) */}
+          <div className="flex shrink-0 gap-1.5 overflow-x-auto pb-1 scrollbar-none items-center">
+            <button
+              onClick={() => onFilter({ channel: "" })}
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                !filters.channel
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              <span>All</span>
+              <span className={`rounded-full px-1.5 text-[10px] ${!filters.channel ? "bg-white/20 text-white" : "bg-slate-200 text-slate-700"}`}>
+                {conversations.length}
+              </span>
+            </button>
+
             {([
-              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
-              { key: "mine", label: "👤 আমার", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
-              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
-              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি`, onClick: () => applyFolder("sla") },
-              { key: "vip", label: "⭐ VIP অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: "বড় মূল্যের অর্ডারযুক্ত কন্ট্যাক্ট", onClick: () => applyFolder("vip") },
-            ]).map((chip) => (
+              { id: "whatsapp", label: "WhatsApp", icon: "🟢", count: conversations.filter(c => c.channel === "whatsapp").length, activeCls: "bg-emerald-600 text-white" },
+              { id: "messenger", label: "Messenger", icon: "🔵", count: conversations.filter(c => c.channel === "messenger").length, activeCls: "bg-sky-600 text-white" },
+              { id: "instagram", label: "Instagram", icon: "🟣", count: conversations.filter(c => c.channel === "instagram").length, activeCls: "bg-fuchsia-600 text-white" },
+              { id: "telegram", label: "Telegram", icon: "✈️", count: conversations.filter(c => c.channel === "telegram").length, activeCls: "bg-cyan-600 text-white" },
+              { id: "webchat", label: "Website", icon: "🌐", count: conversations.filter(c => c.channel === "webchat").length, activeCls: "bg-indigo-600 text-white" },
+            ]).map((ch) => (
               <button
-                key={chip.key}
-                title={chip.title}
-                onClick={chip.onClick}
-                className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                  chip.active
-                    ? "bg-slate-900 text-white shadow-xs"
-                    : "border border-slate-200/80 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                key={ch.id}
+                onClick={() => onFilter({ channel: filters.channel === ch.id ? "" : ch.id })}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  filters.channel === ch.id
+                    ? ch.activeCls
+                    : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/80"
                 }`}
               >
-                <span>{chip.label}</span>
-                {chip.count !== undefined && chip.count !== null ? (
-                  <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    chip.active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+                <span>{ch.icon}</span>
+                <span>{ch.label}</span>
+                {ch.count > 0 ? (
+                  <span className={`rounded-full px-1.5 text-[10px] font-bold ${
+                    filters.channel === ch.id ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"
                   }`}>
-                    {chip.count}
+                    {ch.count}
                   </span>
                 ) : null}
               </button>
             ))}
           </div>
 
-          {/* Compact Filter Controls */}
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
-            <select
-              className="rounded-xl border border-slate-200/90 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-xs focus:border-brand-500 focus:outline-none"
-              value={filters.channel}
-              onChange={(e) => onFilter({ channel: e.target.value })}
-            >
-              <option value="">সব চ্যানেল</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="messenger">Messenger</option>
-              <option value="instagram">Instagram</option>
-              <option value="webchat">ওয়েবসাইট চ্যাট</option>
-            </select>
-            <select
-              className="rounded-xl border border-slate-200/90 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-xs focus:border-brand-500 focus:outline-none"
-              value={filters.assignee}
-              onChange={(e) => onFilter({ assignee: e.target.value })}
-            >
-              <option value="">সবাই</option>
-              <option value="me">আমারগুলো</option>
-              <option value="unassigned">অনির্ধারিত</option>
-            </select>
-            <button
-              className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
-                filters.unreadOnly ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              onClick={() => onFilter({ unreadOnly: !filters.unreadOnly })}
-            >
-              অপঠিত
-            </button>
-            <button
-              className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
-                filters.sort === "unread" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              onClick={() => onFilter({ sort: filters.sort === "unread" ? "recent" : "unread" })}
-            >
-              অপঠিত আগে
-            </button>
-            <button
-              className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
-                filters.spamOnly ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              onClick={() => onFilter({ spamOnly: !filters.spamOnly })}
-            >
-              🚫 Spam
-            </button>
+          {/* Status Sub-filter Bar (সব, অপঠিত, সমাধানকৃত, স্প্যাম) */}
+          <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-xl bg-slate-100/70 p-1 text-xs">
+            <div className="flex items-center gap-1">
+              <button
+                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                  !filters.unreadOnly && !filters.spamOnly && !filters.status ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => onFilter({ unreadOnly: false, spamOnly: false, status: "" })}
+              >
+                সব
+              </button>
+              <button
+                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                  filters.unreadOnly ? "bg-white text-blue-600 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => onFilter({ unreadOnly: !filters.unreadOnly, spamOnly: false })}
+              >
+                অপঠিত {conversations.filter(c => c.unreadCount > 0).length ? `(${conversations.filter(c => c.unreadCount > 0).length})` : ""}
+              </button>
+              <button
+                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                  filters.status === "closed" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => onFilter({ status: filters.status === "closed" ? "" : "closed", unreadOnly: false })}
+              >
+                সমাধানকৃত
+              </button>
+              <button
+                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                  filters.spamOnly ? "bg-white text-rose-600 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
+              >
+                স্প্যাম
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <select
+                className="rounded-lg border-0 bg-transparent py-0.5 text-xs font-semibold text-slate-500 focus:ring-0 cursor-pointer"
+                value={filters.assignee}
+                onChange={(e) => onFilter({ assignee: e.target.value })}
+                title="অ্যাসাইনি ফিল্টার"
+              >
+                <option value="">সকল সদস্য</option>
+                <option value="me">আমারগুলো</option>
+                <option value="unassigned">অনির্ধারিত</option>
+              </select>
+            </div>
+          </div>
             <button
               className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
                 selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
@@ -1596,7 +1614,7 @@ export default function InboxPage() {
                   <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">📎 ছেড়ে দিন — ফাইলটি পাঠানো হবে</span>
                 </div>
               ) : null}
-              {/* Modern Thread Header */}
+              {/* Modern Thread Header (AiPraktor / Qosprey Design v2) */}
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-3">
                   <button className="rounded-xl border border-slate-200 bg-white p-2 text-xs font-semibold text-slate-700 shadow-xs lg:hidden hover:bg-slate-50" onClick={() => setMobileChat(false)}>
@@ -1605,7 +1623,7 @@ export default function InboxPage() {
                   <ContactAvatar
                     name={active.contactName ?? active.contactPhone}
                     channel={active.channel}
-                    size="md"
+                    size="lg"
                     isOnline={active.channel === "webchat" && isVisitorOnline(active)}
                   />
                   <div>
@@ -1613,29 +1631,61 @@ export default function InboxPage() {
                       <span className="font-bold text-slate-900 text-sm sm:text-base">
                         {active.contactName ?? active.contactPhone ?? "গ্রাহক"}
                       </span>
-                      <ChannelChip channel={active.channel} lg />
-                      {moodChip(active.mood)}
-                      {active.channel === "webchat" ? (() => {
-                        const live = visitorLive[active.id];
-                        const typingFresh = Boolean(live?.typing && nowTick - live.at < 8000);
-                        if (typingFresh) return <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 animate-pulse">✍️ টাইপ করছেন…</span>;
-                        if (isVisitorOnline(active)) return <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">🟢 অনলাইন</span>;
-                        return null;
-                      })() : null}
+                      {/* Online Pulse Indicator */}
+                      <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Online
+                      </span>
                     </div>
-                    {active.contactPhone && (
-                      <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                        <span>📞 {active.contactPhone}</span>
-                        {active.assignedUserId && <span>· 👤 {memberName(active.assignedUserId)}</span>}
-                      </div>
-                    )}
+
+                    {/* Customer Tags Row (Matching Demo 3 & 4) */}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200">
+                        👑 VIP Customer
+                      </span>
+                      <ChannelChip channel={active.channel} />
+                      {active.mood && moodChip(active.mood)}
+                      {active.pipelineStage ? (
+                        <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200">
+                          {active.pipelineStage}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
 
+                {/* Right Header Actions (Call, Video, Search, Context Drawer, Status) */}
                 <div className="flex items-center gap-2">
+                  <div className="hidden sm:flex items-center gap-1 rounded-xl bg-slate-100/70 p-1">
+                    {active.contactPhone ? (
+                      <a
+                        href={`tel:${active.contactPhone}`}
+                        className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
+                        title="সরাসরি কল করুন"
+                      >
+                        📞
+                      </a>
+                    ) : null}
+                    <button
+                      className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
+                      title="ভিডিও কল"
+                      onClick={() => setNotice("ভিডিও মিটিং লিংক তৈরি হচ্ছে...")}
+                    >
+                      📹
+                    </button>
+                    <button
+                      className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
+                      title="কথোপকথনে অনুসন্ধান"
+                      onClick={() => { const el = document.getElementById("inbox-search"); el?.focus(); }}
+                    >
+                      🔍
+                    </button>
+                  </div>
+
                   <button className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs xl:hidden hover:bg-slate-50" onClick={() => setCtxOpen(true)}>
-                    <span>👤</span> <span>CRM তথ্য</span>
+                    <span>👤</span> <span>প্রোফাইল</span>
                   </button>
+
                   {/* Status Switcher pill */}
                   <div className="flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold">
                     {(["open", "pending", "closed"] as const).map((s) => (
@@ -1866,16 +1916,30 @@ export default function InboxPage() {
                   return (
                     <React.Fragment key={m.id}>
                       {daySep}
-                      <div className={`flex ${isIncoming ? "justify-start" : "justify-end"} my-0.5`}>
+                      <div className={`flex ${isIncoming ? "justify-start" : "justify-end"} my-1 items-end gap-2`}>
+                        {isIncoming && (
+                          <div className="shrink-0 mb-1">
+                            <ContactAvatar name={active.contactName ?? active.contactPhone} channel={active.channel} size="sm" />
+                          </div>
+                        )}
                         <div
-                          className={`max-w-[85%] sm:max-w-[78%] px-4 py-2.5 shadow-xs transition-all ${
+                          className={`relative max-w-[85%] sm:max-w-[75%] px-4 py-2.5 shadow-xs transition-all ${
                             isIncoming
                               ? "inbox-bubble-in border border-slate-200/90 bg-white text-slate-800"
                               : m.status === "failed"
                               ? "inbox-bubble-out bg-red-50 border border-red-200 text-red-800"
-                              : "inbox-bubble-out text-white shadow-indigo-500/10"
+                              : m.sentByAiDraft || m.autoReply
+                              ? "inbox-bubble-ai text-white"
+                              : "inbox-bubble-out text-white"
                           }`}
                         >
+                          {/* AI Badge on top corner if sent by AI */}
+                          {!isIncoming && (m.sentByAiDraft || m.autoReply) && (
+                            <span className="absolute -top-2.5 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[9px] font-black text-white shadow-xs ring-2 ring-white">
+                              AI
+                            </span>
+                          )}
+
                           {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? (
                             <div className="mb-2 overflow-hidden rounded-xl">
                               <MediaView convId={active.id} message={m} />
@@ -2153,12 +2217,13 @@ export default function InboxPage() {
                           📎
                         </button>
                         <VoiceRecorder disabled={busy !== ""} onSend={(f) => void sendMediaFiles([f])} onError={(msg) => setError(msg)} />
-                        <button type="button" className="rounded-lg bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-100 transition disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>
-                          {busy === "draft" ? "..." : "✨ AI Draft"}
+                        <button type="button" className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 px-3 py-1.5 text-xs font-bold text-blue-700 hover:from-blue-100 hover:to-indigo-100 transition shadow-2xs flex items-center gap-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>
+                          <span>✨</span>
+                          <span>{busy === "draft" ? "লিখছি..." : "AI রিপ্লাই"}</span>
                         </button>
                         <span className="relative inline-flex">
-                          <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200 transition disabled:opacity-50" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>
-                            ✨ টোন
+                          <button type="button" className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-2xs disabled:opacity-50" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>
+                            🎨 টোন
                           </button>
                           {showToneMenu ? (
                             <span className="absolute bottom-full left-0 z-30 mb-2 flex w-40 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
@@ -2169,8 +2234,8 @@ export default function InboxPage() {
                           ) : null}
                         </span>
                         {prevReply !== null ? (
-                          <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200 transition" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>
-                            ↩ আগের লেখায়
+                          <button type="button" className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 transition" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>
+                            ↩ আগের
                           </button>
                         ) : null}
                       </>
@@ -2185,16 +2250,19 @@ export default function InboxPage() {
                     ) : null}
                     <button
                       type="button"
-                      className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white shadow-xs transition-all active:scale-95 disabled:opacity-50 ${
+                      className={`flex items-center justify-center rounded-2xl px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 ${
                         composerMode === "note"
                           ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/25"
-                          : "bg-gradient-to-r from-brand-600 to-indigo-600 hover:brightness-110 shadow-indigo-500/25"
+                          : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30"
                       }`}
                       disabled={busy !== "" || !reply.trim()}
                       onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}
+                      title="Enter চাপলে পাঠানো হবে"
                     >
-                      <span>{composerMode === "note" ? "🔒 নোট সংরক্ষণ" : "পাঠান"}</span>
-                      <kbd className="hidden sm:inline rounded bg-black/20 px-1 py-0.5 text-[9px] font-normal">↵</kbd>
+                      <span className="flex items-center gap-1.5">
+                        <span>{composerMode === "note" ? "🔒 নোট সংরক্ষণ" : "পাঠান"}</span>
+                        <span>🚀</span>
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -2355,6 +2423,76 @@ export default function InboxPage() {
               </div>
             ) : null}
 
+            {/* Quick Action Tiles (Matching Demo 3 & 4) */}
+            <div className="card p-4 space-y-3">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+                  onClick={() => setOrderOpen((v) => !v)}
+                >
+                  <span className="text-base">📄</span>
+                  <span>ইনভয়েস পাঠান</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+                  onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
+                >
+                  <span className="text-base">📋</span>
+                  <span>টাস্ক তৈরি</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-amber-400 hover:bg-amber-50/50 hover:text-amber-800 transition"
+                  onClick={() => { setComposerMode("note"); focusComposer(); }}
+                >
+                  <span className="text-base">📝</span>
+                  <span>নোট যোগ করুন</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-emerald-400 hover:bg-emerald-50/50 hover:text-emerald-800 transition"
+                  onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
+                >
+                  <span className="text-base">✓</span>
+                  <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* AI Conversation Summary Card (Matching Demo 3 & 4) */}
+            <div className="card p-4 space-y-2 border-indigo-100 bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
+                  <span>AI কনভারসেশন সামারি</span>
+                </div>
+                <button
+                  className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={summarize}
+                >
+                  {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
+                </button>
+              </div>
+
+              {active.summaryText ? (
+                <div className="rounded-xl bg-white/90 p-3 text-xs leading-relaxed text-slate-700 shadow-2xs ring-1 ring-slate-100 whitespace-pre-line">
+                  {active.summaryText}
+                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
+                    <span>{active.summaryProvider ?? "AI Engine"}</span>
+                    <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
+                  গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
+                </div>
+              )}
+            </div>
+
             <div className="card space-y-3 p-4">
               <div className="section-title">দায়িত্ব ও Tag</div>
               {active.spamFlag ? (
@@ -2378,17 +2516,6 @@ export default function InboxPage() {
               {active.csatRating ? (
                 <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
               ) : null}
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">সারসংক্ষেপ</span>
-                  <button className="text-xs font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={summarize}>{busy === "summary" ? "তৈরি হচ্ছে..." : "তৈরি করুন"}</button>
-                </div>
-                {active.summaryText ? (
-                  <div className="whitespace-pre-line rounded-xl bg-slate-50 p-2.5 text-xs text-slate-600">{active.summaryText}
-                    <div className="mt-1 text-[10px] text-slate-400">{active.summaryProvider} · {active.summaryAt ? new Date(active.summaryAt).toLocaleString() : ""}</div>
-                  </div>
-                ) : <p className="text-xs text-slate-400">এখনো সারসংক্ষেপ তৈরি হয়নি।</p>}
-              </div>
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
