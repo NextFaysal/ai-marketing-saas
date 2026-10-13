@@ -2,12 +2,24 @@ import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Max, Min } from "class
 
 export class ListCommentsQueryDto {
   @IsOptional() @IsString() platform?: "facebook" | "instagram" | "tiktok" | "youtube";
-  @IsOptional() @IsString() status?: "PENDING" | "AUTO_REPLIED" | "MANUALLY_REPLIED" | "HIDDEN" | "ESCALATED";
+  @IsOptional() @IsString() status?: "PENDING" | "AUTO_REPLIED" | "MANUALLY_REPLIED" | "HIDDEN" | "ESCALATED" | "DELETED";
   @IsOptional() @IsString() sentiment?: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | "SPAM";
   @IsOptional() @IsString() intent?: string;
   @IsOptional() @IsString() search?: string;
+  // IN8b: queue assignment filters.
+  @IsOptional() @IsString() assignedUserId?: string;
+  @IsOptional() @IsString() unassigned?: string;
   @IsOptional() page?: number;
   @IsOptional() limit?: number;
+}
+
+export class PrivateReplyCommentDto {
+  @IsString() message!: string;
+}
+
+export class AssignCommentDto {
+  // null (or omitted) = unassign.
+  @IsOptional() @IsString() assignedUserId?: string | null;
 }
 
 export class ReplyCommentDto {

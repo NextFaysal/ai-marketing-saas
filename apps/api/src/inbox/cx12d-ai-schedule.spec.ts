@@ -355,6 +355,15 @@ function commentsSetup(replyDelaySeconds = 0) {
   };
   const audit = { calls: [] as any[], log: jest.fn(async (e: any) => { audit.calls.push(e); }) };
   const service = new SocialCommentsService(db as any, audit as any);
+  // IN8 seam: comment replies/hides are Graph-first now — stub
+  // the Graph client as confirming so the schedule-gate semantics
+  // stay the subject under test (Graph layer: in8-comments.spec).
+  (service as any).graphClientFor = async () => ({
+    replyToComment: async () => ({ commentId: "graph-reply-1" }),
+    privateReplyToComment: async () => ({ messageId: "graph-dm-1" }),
+    setCommentHidden: async () => ({ success: true }),
+    deleteComment: async () => ({ success: true }),
+  });
   return { service, db, audit, replySettings, comments, inboxSettings };
 }
 const cDto = (over: Row = {}): any => ({

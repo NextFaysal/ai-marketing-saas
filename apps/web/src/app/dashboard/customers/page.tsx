@@ -23,6 +23,7 @@ interface Detail {
   shipments: { id: string; trackingCode?: string | null; status: string; provider: string }[];
   lead: { id: string; stage: string; source: string } | null;
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string };
+  storeIdentities?: { storeId: string; storeName?: string | null; platform?: string | null; externalId: string; emailSnapshot?: string | null; phoneSnapshot?: string | null }[];
   risk?: { band: string; score: number | null; history: { total: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number }; reasons: string[]; suggestion: string | null } | null;
   courierRecord?: { decided: number; delivered: number; returned: number; cancelledOrFailed: number; refunded: number; successRatePct: number | null; perCourier: { provider: string; decided: number; delivered: number; successRatePct: number | null }[]; lastDeliveryAt: string | null; totalShipments: number; riskBand: string; riskScore: number | null } | null;
 }
@@ -38,8 +39,11 @@ const money = (minor?: string | null, currency = "BDT") =>
 
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
+  const [stores, setStores] = useState<{ id: string; name: string; platform?: string; syncMode?: string }[]>([]);
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
+  // CX12b: the open customer's reviews for the 360 view.
+  const [custReviews, setCustReviews] = useState<{ id: string; orderId: string; rating: number | null; comment: string | null; status: string; receivedAt: string | null; orderNumber: string | null }[]>([]);
   const [mergeTarget, setMergeTarget] = useState("");
   const [custDefs, setCustDefs] = useState<CustomFieldDef[]>([]);
   const [editForm, setEditForm] = useState({ firstName: "", lastName: "", email: "", phone: "" });
@@ -60,6 +64,23 @@ export default function CustomersPage() {
   }, [q]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchCustomFieldDefs("customer").then(setCustDefs).catch(() => undefined); }, []);
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<{ id: string; name: string; platform?: string; syncMode?: string }[]>(`/organizations/${orgId}/stores`).then(setStores).catch(() => undefined);
+  }, []);
+
+  // EC6: explicit, opt-in push of this customer to one store —
+  // never automatic. The server refuses mirror-mode stores with a
+  // reason, which is surfaced verbatim.
+  async function pushToStore(storeId: string) {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    setBusy(`push-${storeId}`); setError(""); setNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}/push-to-store/${storeId}`, { method: "POST" });
+      setNotice("Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Push ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
 
   // CRM C3: CSV export — blob download with the auth header (same
   // pattern as the orders PDF / scorecard CSV downloads).
@@ -81,6 +102,8 @@ export default function CustomersPage() {
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
       setDetail(d); setMergeTarget("");
+      // CX12b: this customer's reviews (360 surface).
+      apiFetch<{ id: string; orderId: string; rating: number | null; comment: string | null; status: string; receivedAt: string | null; orderNumber: string | null }[]>(`/organizations/${orgId}/reviews?customerId=${id}`).then(setCustReviews).catch(() => setCustReviews([]));
       setEditForm({
         firstName: d.customer.firstName ?? "", lastName: d.customer.lastName ?? "",
         email: d.customer.email ?? "", phone: d.customer.phone ?? "",
@@ -201,6 +224,36 @@ export default function CustomersPage() {
                   <span className="text-xs text-slate-400">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
                 </div>
               </div>
+              <div className="card space-y-3">
+                <h3 className="font-semibold">🏪 স্টোর পরিচিতি (Store Identities)</h3>
+                <p className="text-xs text-slate-500">একই মানুষ একাধিক স্টোরে আলাদা customer id-তে থাকতে পারেন — পরিচিতিগুলো এখানে একসাথে দেখা যায়। Push কখনো স্বয়ংক্রিয় নয়; বোতাম চাপলেই Outbox-এ যায় (mirror মোডের স্টোরে push হয় না)।</p>
+                {(detail.storeIdentities ?? []).length === 0 ? (
+                  <p className="text-sm text-slate-400">কোনো স্টোর পরিচিতি নেই — স্টোর থেকে Customer Sync হলে বা নিচে Push করলে তৈরি হবে।</p>
+                ) : (detail.storeIdentities ?? []).map((si) => (
+                  <div key={si.storeId} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
+                    <span><span className="font-medium">{si.storeName ?? "স্টোর"}</span> <span className="badge-slate ml-1">{si.platform ?? ""}</span>
+                      <span className="ml-2 text-slate-500">ID: {si.externalId}</span>
+                      {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-400">{si.emailSnapshot}</span> : null}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2 border-t pt-3">
+                  {stores.map((s) => {
+                    const mode = s.syncMode ?? "mirror";
+                    const has = (detail.storeIdentities ?? []).some((si) => si.storeId === s.id);
+                    return (
+                      <button key={s.id} className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                        disabled={busy !== "" || mode === "mirror"}
+                        title={mode === "mirror" ? "Mirror মোডে push হয় না — Sync Center থেকে মোড বদলান" : undefined}
+                        onClick={() => pushToStore(s.id)}>
+                        {busy === `push-${s.id}` ? "যাচ্ছে…" : has ? `🔄 ${s.name}-এ আপডেট Push` : `➕ ${s.name}-এ Push`}
+                        {mode === "mirror" ? " (mirror — হবে না)" : ""}
+                      </button>
+                    );
+                  })}
+                  {stores.length === 0 ? <span className="text-xs text-slate-400">কোনো স্টোর সংযুক্ত নেই</span> : null}
+                </div>
+              </div>
               {detail.risk ? (
                 <div className="card space-y-1">
                   <h3 className="font-semibold">↩️ রিটার্ন ঝুঁকি <span className={`ml-2 rounded px-2 py-0.5 text-xs font-semibold ${RISK_LABEL[detail.risk.band]?.cls ?? ""}`}>{RISK_LABEL[detail.risk.band]?.text ?? detail.risk.band}{detail.risk.score != null ? ` · স্কোর ${detail.risk.score}/১০০` : ""}</span></h3>
@@ -243,6 +296,19 @@ export default function CustomersPage() {
                       ) : null}
                     </>
                   )}
+                </div>
+              ) : null}
+              {custReviews.filter((r) => r.rating != null).length > 0 ? (
+                <div className="card space-y-1">
+                  <h3 className="font-semibold">⭐ গ্রাহকের রিভিউ</h3>
+                  {custReviews.filter((r) => r.rating != null).map((r) => (
+                    <div key={r.id} className="border-b py-1.5 text-sm last:border-0">
+                      <span className="text-amber-500">{"★★★★★".slice(0, r.rating ?? 0)}{"☆☆☆☆☆".slice(0, 5 - (r.rating ?? 0))}</span>
+                      <span className="ml-2 font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</span>
+                      {r.comment ? <span className="ml-2 text-slate-700">“{r.comment}”</span> : null}
+                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-400">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
+                    </div>
+                  ))}
                 </div>
               ) : null}
               <div className="card">

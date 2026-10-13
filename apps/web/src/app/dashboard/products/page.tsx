@@ -4,6 +4,27 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
+import {
+  EcBundleDialog, EcCategoryManagerDialog, EcChannelsDialog, EcGalleryDialog,
+  type EcCategory, type EcTag,
+} from "@/components/ec-product-dialogs";
+
+interface ProductDetailExtra {
+  categoryId?: string | null;
+  weightGrams?: number | null;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  barcode?: string | null;
+  seoTitle?: string | null;
+  seoDescription?: string | null;
+  tags?: EcTag[];
+}
+
+type BulkAction = "price_percent" | "price_fixed" | "stock_set" | "category_set";
+interface BulkPreviewItem { productId: string; name: string; field: string; before: string; after: string }
+interface BulkPreview { affected: number; missing: number; items: BulkPreviewItem[] }
+interface BulkApplyResult { updated: number; failed: number; results: { productId: string; ok: boolean; error?: string }[] }
 
 interface ProductItem {
   id: string;
@@ -86,8 +107,38 @@ export default function ProductsPage() {
     bumpTitle: "",
     bumpPrice: "",
     bumpImageUrl: "",
+    categoryId: "",
+    weightGrams: "",
+    lengthCm: "",
+    widthCm: "",
+    heightCm: "",
+    barcode: "",
+    seoTitle: "",
+    seoDescription: "",
+    tagIds: [] as string[],
   });
   const [saving, setSaving] = useState(false);
+  // EC3: categories / tags for the form + manager dialog.
+  const [ecCategories, setEcCategories] = useState<EcCategory[]>([]);
+  const [ecTags, setEcTags] = useState<EcTag[]>([]);
+  const [newTagName, setNewTagName] = useState("");
+  const [tagBusy, setTagBusy] = useState(false);
+  const [categoryMgrOpen, setCategoryMgrOpen] = useState(false);
+  // EC3/EC4 dialogs.
+  const [channelsFor, setChannelsFor] = useState<ProductItem | null>(null);
+  const [galleryFor, setGalleryFor] = useState<ProductItem | null>(null);
+  const [bundleFor, setBundleFor] = useState<ProductItem | null>(null);
+  // EC3: bulk selection + edit.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<BulkAction>("price_percent");
+  const [bulkPercent, setBulkPercent] = useState("");
+  const [bulkPrice, setBulkPrice] = useState("");
+  const [bulkQuantity, setBulkQuantity] = useState("");
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [bulkPreview, setBulkPreview] = useState<BulkPreview | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkApplyResult | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState("");
   // Sales & Data S1: stock adjustment dialog (adjustment form + movement history).
   const [stockFor, setStockFor] = useState<ProductItem | null>(null);
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -138,6 +189,89 @@ export default function ProductsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadEcMeta = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const [cats, tags] = await Promise.all([
+      apiFetch<EcCategory[]>(`/organizations/${orgId}/products/categories`).catch(() => [] as EcCategory[]),
+      apiFetch<EcTag[]>(`/organizations/${orgId}/products/tags`).catch(() => [] as EcTag[]),
+    ]);
+    setEcCategories(cats);
+    setEcTags(tags);
+  }, []);
+
+  useEffect(() => { loadEcMeta(); }, [loadEcMeta]);
+
+  async function onDuplicate(p: ProductItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    if (!window.confirm(`"${p.name}" এর একটি কপি তৈরি করবেন?`)) return;
+    setError(""); setNotice("");
+    try {
+      const copy = await apiFetch<ProductItem>(`/organizations/${orgId}/products/${p.id}/duplicate`, { method: "POST" });
+      setNotice(`📄 "${p.name}" এর কপি তৈরি হয়েছে: "${copy.name}"`);
+      await load(search);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "কপি তৈরি ব্যর্থ হয়েছে");
+    }
+  }
+
+  async function onQuickAddTag() {
+    const orgId = getOrganizationId();
+    if (!orgId || !newTagName.trim()) return;
+    setTagBusy(true);
+    try {
+      const tag = await apiFetch<EcTag>(`/organizations/${orgId}/products/tags`, {
+        method: "POST", body: JSON.stringify({ name: newTagName.trim() }),
+      });
+      setNewTagName("");
+      await loadEcMeta();
+      setForm((f) => ({ ...f, tagIds: f.tagIds.includes(tag.id) ? f.tagIds : [...f.tagIds, tag.id] }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ট্যাগ তৈরি ব্যর্থ হয়েছে");
+    } finally { setTagBusy(false); }
+  }
+
+  function bulkBody() {
+    return {
+      productIds: Array.from(selectedIds),
+      action: bulkAction,
+      percent: bulkAction === "price_percent" && bulkPercent.trim() ? Number(bulkPercent) : undefined,
+      price: bulkAction === "price_fixed" && bulkPrice.trim() ? bulkPrice.trim() : undefined,
+      quantity: bulkAction === "stock_set" && bulkQuantity.trim() ? Number(bulkQuantity) : undefined,
+      categoryId: bulkAction === "category_set" ? (bulkCategoryId || undefined) : undefined,
+    };
+  }
+
+  async function onBulkPreview() {
+    const orgId = getOrganizationId();
+    if (!orgId || selectedIds.size === 0) return;
+    setBulkBusy(true); setBulkMsg(""); setBulkResult(null);
+    try {
+      const preview = await apiFetch<BulkPreview>(`/organizations/${orgId}/products/bulk-edit/preview`, {
+        method: "POST", body: JSON.stringify(bulkBody()),
+      });
+      setBulkPreview(preview);
+    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "প্রিভিউ ব্যর্থ হয়েছে"); }
+    finally { setBulkBusy(false); }
+  }
+
+  async function onBulkApply() {
+    const orgId = getOrganizationId();
+    if (!orgId || !bulkPreview) return; // প্রিভিউ ছাড়া প্রয়োগ নয়
+    setBulkBusy(true); setBulkMsg("");
+    try {
+      const result = await apiFetch<BulkApplyResult>(`/organizations/${orgId}/products/bulk-edit/apply`, {
+        method: "POST", body: JSON.stringify(bulkBody()),
+      });
+      setBulkResult(result);
+      setBulkPreview(null);
+      setSelectedIds(new Set());
+      await load(search);
+    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "প্রয়োগ ব্যর্থ হয়েছে"); }
+    finally { setBulkBusy(false); }
+  }
 
   const loadReport = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -306,16 +440,36 @@ export default function ProductsPage() {
       bumpTitle: "",
       bumpPrice: "",
       bumpImageUrl: "",
+      categoryId: "",
+      weightGrams: "",
+      lengthCm: "",
+      widthCm: "",
+      heightCm: "",
+      barcode: "",
+      seoTitle: "",
+      seoDescription: "",
+      tagIds: [],
     });
     setIsModalOpen(true);
   }
 
-  function openEditModal(p: ProductItem) {
+  async function openEditModal(p: ProductItem) {
     setEditingProduct(p);
     const unitPrice = (Number(p.priceMinor) / 100).toString();
     const compPrice = p.compareAtMinor ? (Number(p.compareAtMinor) / 100).toString() : "";
     const unitCost = p.currentCostMinor ? (Number(p.currentCostMinor) / 100).toString() : "";
     const bPrice = p.bumpPriceMinor ? (Number(p.bumpPriceMinor) / 100).toString() : "";
+    // EC3: detail carries the extended fields (weight/dimensions/SEO/tags).
+    let extra: ProductDetailExtra = {};
+    const orgId = getOrganizationId();
+    if (orgId) {
+      try {
+        extra = await apiFetch<ProductDetailExtra>(`/organizations/${orgId}/products/${p.id}`);
+      } catch { /* fall back to the list row */ }
+    }
+    // If the detail's categoryId has no matching loaded category, fall back
+    // to the legacy free-text category already on the row.
+    const categoryId = extra.categoryId && ecCategories.some((c) => c.id === extra.categoryId) ? extra.categoryId : "";
     setForm({
       name: p.name,
       sku: p.sku || "",
@@ -331,6 +485,15 @@ export default function ProductsPage() {
       bumpTitle: p.bumpTitle || "",
       bumpPrice: bPrice,
       bumpImageUrl: p.bumpImageUrl || "",
+      categoryId,
+      weightGrams: extra.weightGrams != null ? String(extra.weightGrams) : "",
+      lengthCm: extra.lengthCm != null ? String(extra.lengthCm) : "",
+      widthCm: extra.widthCm != null ? String(extra.widthCm) : "",
+      heightCm: extra.heightCm != null ? String(extra.heightCm) : "",
+      barcode: extra.barcode || "",
+      seoTitle: extra.seoTitle || "",
+      seoDescription: extra.seoDescription || "",
+      tagIds: (extra.tags ?? []).map((t) => t.id),
     });
     setIsModalOpen(true);
   }
@@ -343,6 +506,23 @@ export default function ProductsPage() {
     setError("");
     setNotice("");
 
+    // EC3 extended fields shared by create + update. When the category
+    // select is used it wins (and also writes the legacy text for the
+    // existing list filter); with no categories loaded the text input rules.
+    const selectedEcCategory = ecCategories.find((c) => c.id === form.categoryId);
+    const ecFields = {
+      categoryId: form.categoryId || undefined,
+      category: selectedEcCategory ? selectedEcCategory.name : (form.category.trim() || undefined),
+      weightGrams: form.weightGrams.trim() ? Number(form.weightGrams) : undefined,
+      lengthCm: form.lengthCm.trim() ? Number(form.lengthCm) : undefined,
+      widthCm: form.widthCm.trim() ? Number(form.widthCm) : undefined,
+      heightCm: form.heightCm.trim() ? Number(form.heightCm) : undefined,
+      barcode: form.barcode.trim() || undefined,
+      seoTitle: form.seoTitle.trim() || undefined,
+      seoDescription: form.seoDescription.trim() || undefined,
+      tagIds: form.tagIds,
+    };
+
     try {
       if (editingProduct) {
         // Update product
@@ -351,7 +531,6 @@ export default function ProductsPage() {
           body: JSON.stringify({
             name: form.name.trim(),
             description: form.description.trim() || undefined,
-            category: form.category.trim() || undefined,
             status: form.status,
             price: form.price,
             stockQuantity: form.stockQuantity ? Number(form.stockQuantity) : undefined,
@@ -360,6 +539,7 @@ export default function ProductsPage() {
             bumpTitle: form.bumpTitle.trim() || undefined,
             bumpPrice: form.bumpPrice.trim() || undefined,
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
+            ...ecFields,
           }),
         });
 
@@ -379,7 +559,6 @@ export default function ProductsPage() {
             sku: form.sku.trim() || undefined,
             price: form.price,
             compareAtPrice: form.compareAtPrice.trim() || undefined,
-            category: form.category.trim() || undefined,
             stockQuantity: form.stockQuantity ? Number(form.stockQuantity) : undefined,
             lowStockThreshold: form.lowStockThreshold ? Number(form.lowStockThreshold) : undefined,
             description: form.description.trim() || undefined,
@@ -388,6 +567,7 @@ export default function ProductsPage() {
             bumpTitle: form.bumpTitle.trim() || undefined,
             bumpPrice: form.bumpPrice.trim() || undefined,
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
+            ...ecFields,
           }),
         });
 
@@ -510,6 +690,12 @@ export default function ProductsPage() {
             📥 CSV Import
           </a>
           <button
+            onClick={() => setCategoryMgrOpen(true)}
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+          >
+            🗂️ ক্যাটাগরি
+          </button>
+          <button
             onClick={openCreateModal}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm transition-all"
           >
@@ -565,6 +751,53 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* EC3: bulk edit bar — প্রিভিউ ছাড়া প্রয়োগ করা যায় না */}
+      {selectedIds.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 shadow-sm">
+          <span className="text-xs font-bold text-indigo-900">{selectedIds.size}টি পণ্য নির্বাচিত</span>
+          <select className="rounded-lg border px-2 py-1.5 text-xs" value={bulkAction} onChange={(e) => { setBulkAction(e.target.value as BulkAction); setBulkPreview(null); }}>
+            <option value="price_percent">দাম — শতাংশ বদল</option>
+            <option value="price_fixed">দাম — নির্দিষ্ট দাম</option>
+            <option value="stock_set">স্টক বসান</option>
+            <option value="category_set">ক্যাটাগরি বসান</option>
+          </select>
+          {bulkAction === "price_percent" ? (
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" step="0.01" placeholder="শতাংশ (±)" value={bulkPercent} onChange={(e) => { setBulkPercent(e.target.value); setBulkPreview(null); }} />
+          ) : null}
+          {bulkAction === "price_fixed" ? (
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" placeholder="দাম (BDT)" value={bulkPrice} onChange={(e) => { setBulkPrice(e.target.value); setBulkPreview(null); }} />
+          ) : null}
+          {bulkAction === "stock_set" ? (
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" min="0" placeholder="নতুন স্টক" value={bulkQuantity} onChange={(e) => { setBulkQuantity(e.target.value); setBulkPreview(null); }} />
+          ) : null}
+          {bulkAction === "category_set" ? (
+            <select className="rounded-lg border px-2 py-1.5 text-xs" value={bulkCategoryId} onChange={(e) => { setBulkCategoryId(e.target.value); setBulkPreview(null); }}>
+              <option value="">ক্যাটাগরি নেই</option>
+              {ecCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          ) : null}
+          <button className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={bulkBusy} onClick={onBulkPreview}>
+            {bulkBusy ? "হচ্ছে…" : "প্রিভিউ দেখুন"}
+          </button>
+          <button className="rounded-lg border px-3 py-1.5 text-xs text-slate-600" onClick={() => { setSelectedIds(new Set()); setBulkPreview(null); setBulkResult(null); }}>
+            নির্বাচন সরান
+          </button>
+          {bulkMsg ? <span className="text-xs text-rose-700">{bulkMsg}</span> : null}
+        </div>
+      ) : null}
+      {bulkResult ? (
+        <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
+          <span className="font-bold">বাল্ক এডিট ফলাফল:</span> আপডেট হয়েছে {bulkResult.updated}টি · ব্যর্থ {bulkResult.failed}টি
+          {bulkResult.results.filter((r) => !r.ok).length > 0 ? (
+            <ul className="mt-1 list-disc pl-5 text-rose-700">
+              {bulkResult.results.filter((r) => !r.ok).map((r) => (
+                <li key={r.productId}>{items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.error ?? "অজানা এরর"}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Product List */}
       {loading ? (
         <div className="rounded-xl border bg-white p-12 text-center text-sm text-slate-500">
@@ -580,6 +813,22 @@ export default function ProductsPage() {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 font-semibold border-b">
               <tr>
+                <th className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="এই পেজের সব পণ্য নির্বাচন করুন"
+                    checked={filteredItems.length > 0 && filteredItems.every((p) => selectedIds.has(p.id))}
+                    onChange={(e) => {
+                      setBulkPreview(null);
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) filteredItems.forEach((p) => next.add(p.id));
+                        else filteredItems.forEach((p) => next.delete(p.id));
+                        return next;
+                      });
+                    }}
+                  />
+                </th>
                 <th className="px-4 py-3">প্রোডাক্ট</th>
                 <th className="px-4 py-3">SKU</th>
                 <th className="px-4 py-3">বিক্রয়মূল্য</th>
@@ -597,6 +846,21 @@ export default function ProductsPage() {
 
                 return (
                   <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`${p.name} নির্বাচন করুন`}
+                        checked={selectedIds.has(p.id)}
+                        onChange={(e) => {
+                          setBulkPreview(null);
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                            return next;
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         {p.imageUrl ? (
@@ -672,7 +936,7 @@ export default function ProductsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         {p.slug ? (
                           <>
                             <button
@@ -709,6 +973,30 @@ export default function ProductsPage() {
                           className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
                         >
                           🧩 ভ্যারিয়েন্ট
+                        </button>
+                        <button
+                          onClick={() => setChannelsFor(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-violet-700 hover:bg-violet-50"
+                        >
+                          🔀 চ্যানেল
+                        </button>
+                        <button
+                          onClick={() => setGalleryFor(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+                        >
+                          🖼️ গ্যালারি
+                        </button>
+                        <button
+                          onClick={() => setBundleFor(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
+                        >
+                          🎁 বান্ডল
+                        </button>
+                        <button
+                          onClick={() => onDuplicate(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+                        >
+                          📄 কপি
                         </button>
                         <button
                           onClick={() => openEditModal(p)}
@@ -849,13 +1137,112 @@ export default function ProductsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">ক্যাটাগরি</label>
+                  {ecCategories.length > 0 ? (
+                    <select
+                      value={form.categoryId}
+                      onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+                      className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                    >
+                      <option value="">ক্যাটাগরি নেই</option>
+                      {ecCategories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="Fashion / Electronics"
+                      value={form.category}
+                      onChange={(e) => setForm({ ...form, category: e.target.value })}
+                      className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* EC3: tags */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">ট্যাগ</label>
+                {ecTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {ecTags.map((t) => (
+                      <label key={t.id} className="flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={form.tagIds.includes(t.id)}
+                          onChange={(e) => setForm({
+                            ...form,
+                            tagIds: e.target.checked ? [...form.tagIds, t.id] : form.tagIds.filter((id) => id !== t.id),
+                          })}
+                        />
+                        {t.name}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">এখনো কোনো ট্যাগ নেই — নিচে নতুন ট্যাগ তৈরি করুন।</p>
+                )}
+                <div className="mt-2 flex gap-2">
                   <input
                     type="text"
-                    placeholder="Fashion / Electronics"
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    placeholder="নতুন ট্যাগ"
+                    value={newTagName}
+                    onChange={(e) => setNewTagName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickAddTag(); } }}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
                   />
+                  <button type="button" disabled={tagBusy || !newTagName.trim()} onClick={onQuickAddTag}
+                    className="whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+                    + ট্যাগ যোগ
+                  </button>
+                </div>
+              </div>
+
+              {/* EC3: shipping dimensions / barcode / SEO */}
+              <div className="grid grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ওজন (গ্রাম)</label>
+                  <input type="number" min="0" placeholder="500" value={form.weightGrams}
+                    onChange={(e) => setForm({ ...form, weightGrams: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">দৈর্ঘ্য (সেমি)</label>
+                  <input type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
+                    onChange={(e) => setForm({ ...form, lengthCm: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">প্রস্থ (সেমি)</label>
+                  <input type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
+                    onChange={(e) => setForm({ ...form, widthCm: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">উচ্চতা (সেমি)</label>
+                  <input type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
+                    onChange={(e) => setForm({ ...form, heightCm: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">বারকোড</label>
+                <input type="text" placeholder="Barcode / EAN" value={form.barcode}
+                  onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs font-mono" />
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO টাইটেল</label>
+                  <input type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
+                    onChange={(e) => setForm({ ...form, seoTitle: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO বিবরণ</label>
+                  <textarea rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
+                    onChange={(e) => setForm({ ...form, seoDescription: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
               </div>
 
@@ -1166,6 +1553,58 @@ export default function ProductsPage() {
             <p className="text-xs text-slate-400">ট্র্যাক করা ভ্যারিয়েন্টের স্টক বদলালে পরিবর্তনটি স্টক ইতিহাসে (ledger-এ) রেকর্ড হবে। ভ্যারিয়েন্ট মুছলে আগের স্টক ইতিহাস থেকে যায়।</p>
           </div>
         </div>
+      ) : null}
+
+      {/* EC3: bulk preview — প্রয়োগ এই প্যানেল থেকেই, প্রিভিউ ছাড়া নয় */}
+      {bulkPreview ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setBulkPreview(null)}>
+          <div className="card w-full max-w-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">বাল্ক এডিট প্রিভিউ</h2>
+              <button className="text-slate-500" onClick={() => setBulkPreview(null)}>✕</button>
+            </div>
+            <p className="text-sm text-slate-600">
+              প্রভাবিত হবে: <b>{bulkPreview.affected}</b>টি পণ্য
+              {bulkPreview.missing > 0 ? <> · পাওয়া যায়নি: <b>{bulkPreview.missing}</b>টি</> : null}
+            </p>
+            {bulkPreview.items.length === 0 ? (
+              <p className="text-sm text-slate-500">কোনো পরিবর্তন নেই।</p>
+            ) : (
+              <div className="max-h-80 overflow-y-auto rounded-lg border">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr><th className="px-3 py-2">পণ্য</th><th className="px-3 py-2">ফিল্ড</th><th className="px-3 py-2">আগে</th><th className="px-3 py-2">পরে</th></tr>
+                  </thead>
+                  <tbody>
+                    {bulkPreview.items.slice(0, 50).map((it, i) => (
+                      <tr key={`${it.productId}-${it.field}-${i}`} className="border-t">
+                        <td className="px-3 py-2 font-medium">{it.name}</td>
+                        <td className="px-3 py-2">{it.field}</td>
+                        <td className="px-3 py-2 text-slate-500">{String(it.before)}</td>
+                        <td className="px-3 py-2 font-semibold">{String(it.after)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {bulkPreview.items.length > 50 ? <p className="text-xs text-slate-400">প্রথম ৫০টি পরিবর্তন দেখানো হচ্ছে।</p> : null}
+            <div className="flex justify-end gap-2">
+              <button className="rounded-lg border px-4 py-2 text-xs font-semibold" onClick={() => setBulkPreview(null)}>বাতিল</button>
+              <button className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                disabled={bulkBusy || bulkPreview.affected === 0} onClick={onBulkApply}>
+                {bulkBusy ? "প্রয়োগ হচ্ছে…" : "প্রয়োগ করুন"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {channelsFor ? <EcChannelsDialog product={channelsFor} onClose={() => setChannelsFor(null)} /> : null}
+      {galleryFor ? <EcGalleryDialog product={galleryFor} onClose={() => setGalleryFor(null)} /> : null}
+      {bundleFor ? <EcBundleDialog product={bundleFor} onClose={() => setBundleFor(null)} /> : null}
+      {categoryMgrOpen ? (
+        <EcCategoryManagerDialog onClose={() => setCategoryMgrOpen(false)} onChanged={loadEcMeta} />
       ) : null}
     </div>
   );

@@ -1,0 +1,11 @@
+-- CX12c: voice-note ordering — auto-transcription attempt state on
+-- ChannelMessage. Additive only: one nullable TEXT column, no
+-- backfill, no index changes.
+--   NULL          = never attempted / not an audio message
+--   'pending'     = an auto-transcription attempt is in flight
+--   'done'        = transcription stored on the row
+--   'failed'      = provider/media failure (terminal for the auto
+--                   path; the agent's manual transcribe is the retry)
+--   'unavailable' = no speech provider configured (also terminal
+--                   for the auto path)
+ALTER TABLE "ChannelMessage" ADD COLUMN "transcriptionStatus" TEXT;

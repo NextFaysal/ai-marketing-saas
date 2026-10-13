@@ -9,6 +9,14 @@ export class ConnectMessagingDto {
   @IsString() verifyToken!: string;
   @IsOptional() @IsString() phoneNumberId?: string;
   @IsOptional() @IsString() pageId?: string;
+  // MS6: WhatsApp Business Account id (whatsapp connects only;
+  // ignored for other channels). Needed for template sync/submit.
+  @IsOptional() @IsString() wabaId?: string;
+}
+/** MS6: set or clear (null/empty) the WABA id on the org's
+ * connected WhatsApp integration. */
+export class UpdateWhatsAppWabaDto {
+  @IsOptional() @IsString() wabaId?: string | null;
 }
 export class SendMessageDto {
   @IsString() @MaxLength(4096) content!: string;
@@ -16,6 +24,19 @@ export class SendMessageDto {
   // a plain hand-typed send).
   @IsOptional() @IsBoolean() aiAssisted?: boolean;
   @IsOptional() @IsString() @MaxLength(120) quickReplyId?: string;
+  // IN6b: quote target — must be a message in the same conversation
+  // (the service validates; another thread's id is a 400).
+  @IsOptional() @IsString() @MaxLength(120) replyToMessageId?: string;
+}
+/** IN6d: pin toggle for one message (DB-only feature). */
+export class PinMessageDto {
+  @IsBoolean() pinned!: boolean;
+}
+/** IN6c: agent reaction — an emoji, or null to remove ours. Only
+ * Messenger/Instagram have a real platform send; the service
+ * refuses other channels honestly. */
+export class ReactMessageDto {
+  @IsOptional() @IsString() @MaxLength(16) emoji?: string | null;
 }
 export class UpdateConversationDto {
   @IsOptional() @IsString() status?: string;
@@ -43,7 +64,30 @@ export class RefundRequestDto {
 }
 export class SendDraftDto { @IsOptional() @IsString() @MaxLength(4096) content?: string; }
 
-export class AddNoteDto { @IsString() @MaxLength(4000) content!: string; }
+export class AddNoteDto {
+  @IsString() @MaxLength(4000) content!: string;
+  // IN10b: opt-in — mask phone/card/transaction-id shaped tokens
+  // before the note is stored (the original is never persisted).
+  @IsOptional() @IsBoolean() maskSensitive?: boolean;
+}
+/** IN2: merge two customer records from a conversation (agent-
+ * confirmed only; the service ties one side to this thread). */
+export class MergeCustomerDto {
+  @IsString() sourceCustomerId!: string;
+  @IsString() targetCustomerId!: string;
+}
+export class UnmergeCustomerDto {
+  @IsString() sourceCustomerId!: string;
+}
+export class LinkCustomerDto {
+  @IsString() customerId!: string;
+}
+/** IN10a: block/unblock this conversation's customer (our
+ * system-level block only — never a platform block). */
+export class BlockConversationDto {
+  @IsBoolean() blocked!: boolean;
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
 export class QuickReplyDto {
   @IsString() @MaxLength(120) title!: string;
   @IsString() @MaxLength(4000) content!: string;
@@ -53,6 +97,22 @@ export class WhatsAppTemplateDto {
   @IsOptional() @IsString() @MaxLength(10) language?: string;
   @IsOptional() @IsString() @MaxLength(40) category?: string;
   @IsOptional() @IsString() @MaxLength(2000) bodyText?: string;
+}
+/** MS6: create + submit a WhatsApp template to Meta for approval.
+ * Deep validation (name rule, category, examples, buttons) runs in
+ * the service with Bengali errors BEFORE any Meta call; the DTO
+ * only shapes the payload. */
+export class SubmitWhatsAppTemplateDto {
+  @IsString() @MaxLength(512) name!: string;
+  @IsOptional() @IsString() @MaxLength(10) language?: string;
+  @IsString() @MaxLength(40) category!: string;
+  @IsString() @MaxLength(4000) bodyText!: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) exampleValues?: string[];
+  @IsOptional() @IsIn(["none", "text", "image"]) headerType?: "none" | "text" | "image";
+  @IsOptional() @IsString() @MaxLength(2000) headerText?: string;
+  @IsOptional() @IsString() @MaxLength(200) headerExample?: string;
+  @IsOptional() @IsString() @MaxLength(500) headerHandle?: string;
+  @IsOptional() @IsArray() buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[];
 }
 export class SendTemplateDto {
   @IsString() templateId!: string;
@@ -93,11 +153,28 @@ export class UpdateInboxSettingsDto {
   @IsOptional() @IsObject() aiReplyDelayByChannel?: Record<string, number>;
   // CX12d: channel-wise AI schedule (deep-validated in the service).
   @IsOptional() @IsObject() aiScheduleByChannel?: Record<string, unknown>;
-  // CX7: To Chase settings
+  // CX12b: post-delivery review requests (opt-in + delay hours).
+  @IsOptional() @IsBoolean() reviewRequestEnabled?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(168) reviewRequestDelayHours?: number;
+  // CX7: "To Chase" stalled-session nudges (opt-in + bounds,
+  // deep-validated again in the service like the review delay).
   @IsOptional() @IsBoolean() chaseEnabled?: boolean;
-  @IsOptional() @IsInt() @Min(1) @Max(1440) chaseIntervalMinutes?: number;
+  @IsOptional() @IsInt() @Min(15) @Max(1440) chaseFirstDelayMinutes?: number;
+  @IsOptional() @IsInt() @Min(60) @Max(2880) chaseIntervalMinutes?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(5) chaseMaxAttempts?: number;
+  @IsOptional() @IsBoolean() chaseQuietHoursRespect?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(23) chaseQuietStartHour?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(23) chaseQuietEndHour?: number;
+  // Owner CX7 variant fields (his series): max attempts + custom message.
   @IsOptional() @IsInt() @Min(1) @Max(10) maxChaseAttempts?: number;
   @IsOptional() @IsString() @MaxLength(1000) chaseMessage?: string;
+  // IN4: layered SLA + escalation chain (deep-validated again in
+  // the service: channel vocabulary + per-value ranges).
+  @IsOptional() @IsObject() slaByChannel?: Record<string, number>;
+  @IsOptional() @IsInt() @Min(1) @Max(10080) slaVipMinutes?: number | null;
+  @IsOptional() @IsInt() @Min(1) @Max(1440) slaEscalateAfterMinutes?: number;
+  @IsOptional() @IsBoolean() slaLeadAlertEnabled?: boolean;
+  @IsOptional() @IsBoolean() slaAutoReassignEnabled?: boolean;
 }
 export class CodConfirmationDto { @IsString() orderId!: string; }
 
@@ -193,4 +270,45 @@ export class GhostDto {
 export class ToneRewriteDto {
   @IsString() @MaxLength(2000) text!: string;
   @IsIn(["polite", "professional", "sales"]) tone!: string;
+}
+
+/** IN1: saved inbox view — a named filter preset. The `filters`
+ * object is deep-validated in the service (whitelist of the list
+ * filter keys, per-key type/range checks); the DTO only shapes it. */
+export class CreateSavedViewDto {
+  @IsString() @MinLength(1) @MaxLength(80) name!: string;
+  @IsObject() filters!: Record<string, unknown>;
+  @IsOptional() @IsBoolean() shared?: boolean;
+}
+export class UpdateSavedViewDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
+  @IsOptional() @IsObject() filters?: Record<string, unknown>;
+  @IsOptional() @IsBoolean() shared?: boolean;
+}
+
+/** IN3: an inbox macro — a named step sequence. `steps` is
+ * deep-validated in the service (sanitizeMacroSteps, strict: an
+ * invalid step is a 400, never silently dropped); the DTO only
+ * shapes the payload. */
+export class CreateMacroDto {
+  @IsString() @MinLength(1) @MaxLength(80) name!: string;
+  @IsArray() steps!: unknown[];
+  @IsOptional() @IsBoolean() shared?: boolean;
+}
+export class UpdateMacroDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
+  @IsOptional() @IsArray() steps?: unknown[];
+  @IsOptional() @IsBoolean() shared?: boolean;
+}
+export class RunMacroDto {
+  @IsString() conversationId!: string;
+}
+
+/** IN3c: bulk reply — the same quick reply OR WhatsApp template
+ * to up to 25 conversations (caps + the one-of rule are enforced
+ * in the service as well). */
+export class BulkReplyDto {
+  @IsArray() @IsString({ each: true }) ids!: string[];
+  @IsOptional() @IsString() @MaxLength(120) quickReplyId?: string;
+  @IsOptional() @IsString() @MaxLength(120) templateId?: string;
 }

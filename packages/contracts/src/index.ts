@@ -118,6 +118,35 @@ export const createKnowledgeDocSchema = z.object({
 });
 export type CreateKnowledgeDocInput = z.infer<typeof createKnowledgeDocSchema>;
 
+// ---------- Bangladesh districts (EC8: native storefront shipping zones) ----------
+// The canonical 64 districts of Bangladesh, in Bengali, grouped by
+// division. Shared by the API (zone matching: "ঢাকা" === inside Dhaka)
+// and the web shop/checkout district pickers. Do not add upazilas or
+// cities here — district_list shipping zones match these names exactly.
+export const BD_DISTRICTS = [
+  // ঢাকা বিভাগ + ময়মনসিংহ বিভাগ
+  "ঢাকা", "ফরিদপুর", "গাজীপুর", "গোপালগঞ্জ", "জামালপুর", "কিশোরগঞ্জ",
+  "মাদারীপুর", "মানিকগঞ্জ", "মুন্সিগঞ্জ", "ময়মনসিংহ", "নারায়ণগঞ্জ",
+  "নরসিংদী", "নেত্রকোণা", "রাজবাড়ী", "শরীয়তপুর", "শেরপুর", "টাঙ্গাইল",
+  // রাজশাহী বিভাগ
+  "বগুড়া", "জয়পুরহাট", "নওগাঁ", "নাটোর", "চাঁপাইনবাবগঞ্জ", "পাবনা",
+  "রাজশাহী", "সিরাজগঞ্জ",
+  // রংপুর বিভাগ
+  "দিনাজপুর", "গাইবান্ধা", "কুড়িগ্রাম", "লালমনিরহাট", "নীলফামারী",
+  "পঞ্চগড়", "রংপুর", "ঠাকুরগাঁও",
+  // বরিশাল বিভাগ
+  "বরগুনা", "বরিশাল", "ভোলা", "ঝালকাঠি", "পটুয়াখালী", "পিরোজপুর",
+  // চট্টগ্রাম বিভাগ
+  "বান্দরবান", "ব্রাহ্মণবাড়িয়া", "চাঁদপুর", "চট্টগ্রাম", "কুমিল্লা",
+  "কক্সবাজার", "ফেনী", "খাগড়াছড়ি", "লক্ষ্মীপুর", "নোয়াখালী", "রাঙ্গামাটি",
+  // খুলনা বিভাগ
+  "খুলনা", "যশোর", "ঝিনাইদহ", "মাগুরা", "বাগেরহাট", "সাতক্ষীরা",
+  "চুয়াডাঙ্গা", "কুষ্টিয়া", "মেহেরপুর", "নড়াইল",
+  // সিলেট বিভাগ
+  "সিলেট", "হবিগঞ্জ", "মৌলভীবাজার", "সুনামগঞ্জ",
+] as const;
+export type BdDistrict = (typeof BD_DISTRICTS)[number];
+
 // ---------- CSV import ----------
 // Milestone 2 transport: the browser reads the file and sends its text.
 // Large files move to S3 + worker processing in a later milestone.

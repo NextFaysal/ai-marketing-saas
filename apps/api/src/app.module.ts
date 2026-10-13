@@ -39,11 +39,15 @@ import { CatalogsModule } from "./catalogs/catalogs.module";
 import { PublishingModule } from "./publishing/publishing.module";
 import { ReportSharesModule } from "./reports/report-shares.module";
 import { SocialModule } from "./social/social.module";
+import { Cx8Module } from "./cx8/cx8.module";
+import { CommerceModule } from "./commerce/commerce.module";
+import { FulfillmentModule } from "./fulfillment/fulfillment.module";
+import { StorefrontModule } from "./storefront/storefront.module";
 import { JwtAuthGuard } from "./common/jwt-auth.guard";
 import { ThrottlerGuard } from "./common/throttler.guard";
 
 @Module({
-  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule],
+  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule, Cx8Module, CommerceModule, FulfillmentModule, StorefrontModule],
   // Milestone 61: the throttler runs BEFORE the JWT guard so
   // brute force is rejected before any password verification.
   providers: [

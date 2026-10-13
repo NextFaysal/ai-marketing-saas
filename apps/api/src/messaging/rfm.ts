@@ -45,7 +45,16 @@ function quintile(sortedAsc: number[], value: number): number {
  * time is the max of the two maxima. No customer cap, no
  * order cap, no N+1, no raw order rows in memory.
  */
-export async function computeRfm(prisma: any, organizationId: string): Promise<RfmRow[]> {
+export interface OrderAggregate { frequency: number; monetary: bigint; last: number }
+
+/**
+ * The DB-side per-customer order aggregates behind computeRfm,
+ * exported for MS3: the audience builder's orders_count /
+ * total_spent_minor / last_order_days_ago conditions read THESE
+ * numbers (never raw order rows). Same partition discipline as
+ * documented on computeRfm below.
+ */
+export async function computeOrderAggregates(prisma: any, organizationId: string): Promise<Map<string, OrderAggregate>> {
   const baseWhere = { organizationId, status: { not: "cancelled" }, customerId: { not: null } };
   const [withPlaced, withoutPlaced] = await Promise.all([
     prisma.order.groupBy({
@@ -57,8 +66,7 @@ export async function computeRfm(prisma: any, organizationId: string): Promise<R
       _count: { _all: true }, _sum: { totalMinor: true }, _max: { createdAt: true },
     }),
   ]);
-  interface Agg { frequency: number; monetary: bigint; last: number }
-  const byCustomer = new Map<string, Agg>();
+  const byCustomer = new Map<string, OrderAggregate>();
   const add = (customerId: string, count: number, sum: unknown, last: unknown) => {
     const cur = byCustomer.get(customerId) ?? { frequency: 0, monetary: 0n, last: 0 };
     cur.frequency += Number(count ?? 0);
@@ -69,6 +77,49 @@ export async function computeRfm(prisma: any, organizationId: string): Promise<R
   };
   for (const g of withPlaced ?? []) add(g.customerId, g._count?._all ?? 0, g._sum?.totalMinor, g._max?.placedAt);
   for (const g of withoutPlaced ?? []) add(g.customerId, g._count?._all ?? 0, g._sum?.totalMinor, g._max?.createdAt);
+  return byCustomer;
+}
+
+/**
+ * MS5 — the latest non-cancelled order per customer, for the
+ * composer personalization vars (lastOrderNumber/lastOrderTotal).
+ * Chunked at 100 ids with one findFirst per customer inside a
+ * chunk (Promise.all) — the per-customer "latest" semantics are
+ * exactly the orderBy below (placedAt desc, then createdAt desc,
+ * mirroring the aggregate partitions' placedAt ?? createdAt
+ * reading). A customer with no non-cancelled order is simply
+ * ABSENT from the map — callers render empty vars, never an
+ * invented order.
+ */
+export async function computeLastOrders(
+  prisma: any,
+  organizationId: string,
+  customerIds: string[],
+): Promise<Map<string, { externalNumber: string | null; totalMinor: string }>> {
+  const out = new Map<string, { externalNumber: string | null; totalMinor: string }>();
+  const ids = [...new Set(customerIds.filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const rows = await Promise.all(chunk.map(async (customerId) => {
+      const order = await prisma.order.findFirst({
+        where: { organizationId, customerId, status: { not: "cancelled" } },
+        orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+      });
+      return { customerId, order };
+    }));
+    for (const { customerId, order } of rows) {
+      if (!order) continue;
+      out.set(customerId, {
+        externalNumber: order.externalNumber ?? null,
+        totalMinor: String(order.totalMinor ?? 0),
+      });
+    }
+  }
+  return out;
+}
+
+export async function computeRfm(prisma: any, organizationId: string): Promise<RfmRow[]> {
+  const byCustomer = await computeOrderAggregates(prisma, organizationId);
   if (!byCustomer.size) return [];
 
   // Display fields by id, chunked; merged customers drop

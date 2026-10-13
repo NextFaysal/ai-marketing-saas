@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/lib/nav";
 import { InstallButton } from "@/components/pwa";
+import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -11,7 +12,7 @@ const GROUPS: { title: string; hrefs: string[] }[] = [
   { title: "বিক্রি ও ডেটা", hrefs: ["/dashboard/products", "/dashboard/integrations", "/dashboard/orders", "/dashboard/attribution", "/dashboard/knowledge"] },
   { title: "বিজ্ঞাপন", hrefs: ["/dashboard/ad-accounts", "/dashboard/campaigns", "/dashboard/social-posts", "/dashboard/campaign-builder", "/dashboard/analytics", "/dashboard/profit", "/dashboard/competitors"] },
   { title: "গ্রাহক ও অটোমেশন", hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/customers", "/dashboard/messaging", "/dashboard/workflows", "/dashboard/automations"] },
-  { title: "সেটিংস", hrefs: ["/dashboard/billing", "/dashboard/support", "/dashboard/team", "/dashboard/settings"] },
+  { title: "সেটিংস", hrefs: ["/dashboard/setup", "/dashboard/billing", "/dashboard/support", "/dashboard/team", "/dashboard/settings"] },
 ];
 
 function userEmailFromToken(): string {
@@ -167,6 +168,40 @@ function ViewAsBanner() {
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
         <span>👁 <b>Admin View-As সেশন চলছে</b> — {info.adminEmail} এই ওয়ার্কস্পেসটি {info.mode === "write" ? "Write" : "Read-only"} মোডে দেখছেন। {info.mode !== "write" ? "কোনো পরিবর্তন করা যাবে না।" : "পরিবর্তনগুলো Audit Log এ রেকর্ড হয়।"}</span>
         <button onClick={end} className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">সেশন শেষ করুন</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * CX12a: Practice Mode banner. While the org's practiceMode flag
+ * is on, EVERY dashboard page carries this strip — the team must
+ * never be able to mistake a practice surface for a live one.
+ * State comes from GET /organizations/:id/practice (any member
+ * may read it); failures render nothing (best-effort UI).
+ */
+function PracticeBanner() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await apiFetch<{ practiceMode: boolean }>(`/organizations/${orgId}/practice`);
+        if (alive) setOn(Boolean(r.practiceMode));
+      } catch { /* banner is best-effort UI */ }
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  if (!on) return null;
+  return (
+    <div className="px-4 pt-4 sm:px-6 lg:px-8">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
+        <span>🧪 <b>Practice Mode চালু আছে</b> — কোনো কিছুই আসল customer-এর কাছে যাবে না। প্র্যাক্টিস বার্তা ও অর্ডার শুধু অনুশীলনের জন্য।</span>
+        <a href="/dashboard/setup" className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">Setup Guide-এ যান</a>
       </div>
     </div>
   );
@@ -427,6 +462,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         <ViewAsBanner />
+        <PracticeBanner />
         <PlatformBanner />
         <SubscriptionBanner />
         <main className="mx-auto w-full max-w-[1440px] animate-rise px-4 py-5 sm:px-6 sm:py-7 lg:px-8">{children}</main>
@@ -434,6 +470,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="h-16 lg:hidden" />
       </div>
       <MobileBottomNav pathname={pathname} onMore={() => setDrawer(true)} />
+      {/* Global Assistant: AI help from every dashboard page
+          (floating button + Ctrl/⌘+J). Renders nothing on the
+          AI page itself, where the full workspace already lives. */}
+      <GlobalAssistant />
     </div>
   );
 }

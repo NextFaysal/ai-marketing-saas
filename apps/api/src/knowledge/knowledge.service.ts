@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
+import { baseTitleFromFilename, chunkKnowledgeText, extractKnowledgeText } from "./extract";
 
 @Injectable()
 export class KnowledgeService {
@@ -39,6 +40,43 @@ export class KnowledgeService {
     const doc = await (this.prisma as any).knowledgeDocument.create({ data: { organizationId, kind: dto.kind ?? "faq", title: dto.title, content: dto.content } });
     await this.audit.log({ organizationId, userId: actorId, action: "knowledge.create", entityType: "KnowledgeDocument", entityId: doc.id });
     return doc;
+  }
+  /**
+   * CX9: ingest an uploaded file (.pdf/.docx/.txt/.md) as knowledge.
+   * Extraction + chunking fully validate BEFORE any document row is
+   * created, so a rejected file saves nothing (all-or-nothing). One
+   * KnowledgeDocument per chunk (kind "note" — file content is
+   * reference material, not a single Q/A pair), one audit entry for
+   * the whole upload.
+   */
+  async uploadDocFile(
+    organizationId: string,
+    actorId: string,
+    file: { originalname?: string; buffer?: Buffer } | undefined,
+  ) {
+    if (!file || !file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException("কোনো ফাইল পাওয়া যায়নি");
+    }
+    const filename = file.originalname ?? "file";
+    const text = await extractKnowledgeText(filename, file.buffer);
+    const chunks = chunkKnowledgeText(text);
+    if (!chunks.length) throw new BadRequestException("ফাইল থেকে কোনো লেখা পাওয়া যায়নি");
+    const baseTitle = baseTitleFromFilename(filename);
+    const total = chunks.length;
+    const created: any[] = [];
+    for (let i = 0; i < total; i++) {
+      const title = total > 1 ? `${baseTitle} (অংশ ${i + 1})` : baseTitle;
+      const doc = await (this.prisma as any).knowledgeDocument.create({
+        data: { organizationId, kind: "note", title, content: chunks[i], source: `file:${filename}` },
+      });
+      created.push(doc);
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "knowledge.upload",
+      entityType: "KnowledgeDocument", entityId: created[0].id,
+      metadata: { filename, chunks: total, chars: text.length },
+    });
+    return { documentsCreated: total, charsExtracted: text.length, title: baseTitle };
   }
   async deleteDoc(organizationId: string, actorId: string, docId: string) {
     const existing = await (this.prisma as any).knowledgeDocument.findFirst({ where: { id: docId, organizationId } });

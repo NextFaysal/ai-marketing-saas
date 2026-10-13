@@ -118,11 +118,22 @@ export function createAiStreamParser(onEvent: (event: AiStreamEvent) => void) {
  * Exactly one of onDone / onError fires for a completed call; an
  * abort fires neither.
  */
+export interface AiSendExtras {
+  /** G6: the @-mentioned record — type + id only; the server loads
+   *  the facts org-scoped and never stores them on the message. */
+  entity?: { type: "order" | "customer" | "product" | "campaign"; id: string };
+  /** AP2: processed attachment (server-extracted text / vision
+   *  description) — stored on the user message server-side. */
+  attachment?: { name: string; kind: "file" | "image"; text: string };
+}
+
 export function streamAiMessage(
   orgId: string,
   conversationId: string,
   content: string,
   callbacks: AiStreamCallbacks,
+  pageContext?: string,
+  extras?: AiSendExtras,
 ): AbortController {
   const controller = new AbortController();
 
@@ -136,7 +147,7 @@ export function streamAiMessage(
           Accept: "text/event-stream",
           ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, ...(pageContext ? { pageContext } : {}), ...(extras?.entity ? { entity: extras.entity } : {}), ...(extras?.attachment ? { attachment: extras.attachment } : {}) }),
         signal: controller.signal,
       });
     } catch (err) {

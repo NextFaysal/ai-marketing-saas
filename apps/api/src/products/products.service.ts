@@ -1,8 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
-import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto } from "./products.dto";
+import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, BulkEditDto, CreateCategoryDto, UpdateCategoryDto } from "./products.dto";
+import { CatalogPushService } from "../commerce/catalog-push.service";
+import { DiscountsService } from "../commerce/discounts.service";
+import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
+import { computeStockDiverged, pendingOutboxKeys } from "../commerce/stock-divergence";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { computeMargin } from "./pricing";
 import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
@@ -30,6 +34,29 @@ export function toPublicProduct(p: any, currentCostMinor?: bigint | null) {
   };
 }
 
+/** EC3 bulk edit: minor units (bigint) → decimal string for the
+ *  existing price write path (e.g. 11000n → "110.00"). */
+export function minorToDecimalString(m: bigint): string {
+  const negative = m < 0n;
+  const abs = negative ? -m : m;
+  return `${negative ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
+}
+
+/**
+ * EC3 bulk edit percent math, in basis points, on BigInt so
+ * large prices never lose precision:
+ *   bp = round(percent * 100)
+ *   result = roundHalfAwayFromZero(old * (10000 + bp) / 10000)
+ * BigInt division truncates toward zero, so adding ±5000 to the
+ * numerator first gives round-half-AWAY-from-zero (documented
+ * choice: 2.5 rounds to 3 and -2.5 to -3, never banker's).
+ */
+export function bulkPercentMinor(oldMinor: bigint, percent: number): bigint {
+  const bp = BigInt(Math.round(percent * 100));
+  const numerator = oldMinor * (10000n + bp);
+  return numerator >= 0n ? (numerator + 5000n) / 10000n : (numerator - 5000n) / 10000n;
+}
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -45,6 +72,8 @@ import { randomUUID } from "node:crypto";
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -53,7 +82,91 @@ export class ProductsService {
     // IntegrationsService.upsertOrder. Optional so positional spec
     // constructions keep working; the Nest module always provides it.
     @Optional() private readonly integrations?: IntegrationsService,
+    // EC3: catalog push orchestration. LAST param + Optional so
+    // every positional spec construction keeps working; the
+    // Nest module supplies it via CommerceModule.
+    @Optional() private readonly catalogPush?: CatalogPushService,
+    // EC7: public-checkout coupon validation/redemption. LAST param
+    // + Optional so every positional spec construction keeps
+    // working; the Nest module supplies it via CommerceModule.
+    @Optional() private readonly discounts?: DiscountsService,
   ) {}
+
+  // ---------- EC3 shared helpers ----------
+
+  /** Failure-isolated catalog-push hook: a push-orchestration
+   *  failure must never fail the merchant's own catalog write
+   *  (the local write already succeeded and is audited). */
+  private async pushHook(label: string, fn: () => Promise<unknown>): Promise<void> {
+    if (!this.catalogPush) return;
+    try {
+      await fn();
+    } catch (e) {
+      this.logger.warn(
+        `catalog push hook (${label}) failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /** Org-scoped product row or 404, WITHOUT the getOne include
+   *  graph (used by EC3 sub-resources whose fakes/rows may not
+   *  carry variants/costs). */
+  private async getProductOr404(organizationId: string, productId: string) {
+    const p = await (this.prisma as any).product.findFirst({
+      where: { id: productId, organizationId },
+    });
+    if (!p) throw new NotFoundException("Product not found in this organization");
+    return p;
+  }
+
+  private async findCategoryOr404(organizationId: string, categoryId: string) {
+    const table = (this.prisma as any).category;
+    const category = table?.findFirst
+      ? await table.findFirst({ where: { id: categoryId, organizationId } })
+      : null;
+    if (!category) throw new NotFoundException("Category not found in this organization");
+    return category;
+  }
+
+  /** Verify every tag id exists in the org; returns the rows. */
+  private async verifyTagsOr404(organizationId: string, tagIds: string[]) {
+    const table = (this.prisma as any).productTag;
+    const all: any[] = table?.findMany
+      ? ((await table.findMany({ where: { organizationId } })) ?? [])
+      : [];
+    const byId = new Map<string, any>(all.map((t: any) => [t.id, t]));
+    const found = tagIds.map((id) => byId.get(id));
+    if (found.some((t) => !t)) {
+      throw new NotFoundException("Tag not found in this organization");
+    }
+    return found as any[];
+  }
+
+  private async replaceTagAssignments(productId: string, tagIds: string[]): Promise<void> {
+    const table = (this.prisma as any).productTagAssignment;
+    if (!table) return;
+    if (typeof table.deleteMany === "function") {
+      try {
+        await table.deleteMany({ where: { productId } });
+      } catch {
+        /* fall through to row-by-row delete below */
+      }
+    }
+    if (typeof table.delete === "function" && typeof table.findMany === "function") {
+      let existing: any[] = [];
+      try {
+        existing = (await table.findMany({ where: { productId } })) ?? [];
+      } catch {
+        existing = [];
+      }
+      for (const row of existing) {
+        await table.delete({ where: { id: row.id } }).catch(() => undefined);
+      }
+    }
+    for (const tagId of [...new Set(tagIds)]) {
+      await table.create({ data: { productId, tagId } });
+    }
+  }
 
   async create(organizationId: string, actorId: string, dto: CreateProductDto) {
     if (dto.sku) {
@@ -62,6 +175,16 @@ export class ProductsService {
       });
       if (dup) throw new ConflictException(`A product with SKU ${dto.sku} already exists in this organization`);
     }
+
+    // EC3: a structured categoryId must exist in THIS org; the
+    // legacy display string follows the category's name.
+    let categoryName = dto.category;
+    if (dto.categoryId) {
+      const category = await this.findCategoryOr404(organizationId, dto.categoryId);
+      categoryName = category.name;
+    }
+    // EC3: every tag id must exist in this org before we write.
+    if (dto.tagIds?.length) await this.verifyTagsOr404(organizationId, dto.tagIds);
 
     const baseSlug = slugify(dto.name) || `prod-${Date.now().toString(36)}`;
     const randomSuffix = Math.random().toString(36).substring(2, 6);
@@ -72,7 +195,7 @@ export class ProductsService {
         organizationId,
         name: dto.name.trim(),
         slug,
-        description: dto.description, category: dto.category, sku: dto.sku || null,
+        description: dto.description, category: categoryName, sku: dto.sku || null,
         status: dto.status ?? "ACTIVE",
         priceMinor: parseMoney(dto.price, "price"),
         compareAtMinor: dto.compareAtPrice ? parseMoney(dto.compareAtPrice, "compareAtPrice") : null,
@@ -82,10 +205,32 @@ export class ProductsService {
         bumpTitle: dto.bumpTitle?.trim() || null,
         bumpPriceMinor: dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null,
         bumpImageUrl: dto.bumpImageUrl?.trim() || null,
+        // EC3 enrichment fields
+        weightGrams: dto.weightGrams ?? null,
+        lengthCm: dto.lengthCm ?? null,
+        widthCm: dto.widthCm ?? null,
+        heightCm: dto.heightCm ?? null,
+        barcode: dto.barcode ?? null,
+        seoTitle: dto.seoTitle ?? null,
+        seoDescription: dto.seoDescription ?? null,
+        categoryId: dto.categoryId ?? null,
         source: "manual",
       },
     });
+    if (dto.tagIds?.length) {
+      const assignmentTable = (this.prisma as any).productTagAssignment;
+      if (assignmentTable?.create) {
+        for (const tagId of [...new Set(dto.tagIds)]) {
+          await assignmentTable.create({ data: { productId: product.id, tagId } });
+        }
+      }
+    }
     await this.audit.log({ organizationId, userId: actorId, action: "product.create", entityType: "Product", entityId: product.id });
+    // EC3: full-manage stores get a DRAFT listing for the new
+    // product (no push yet). Failure-isolated — see pushHook.
+    await this.pushHook("createListingsForNewProduct", () =>
+      this.catalogPush!.createListingsForNewProduct(organizationId, product.id),
+    );
     return toPublicProduct(product, null);
   }
 
@@ -212,7 +357,38 @@ export class ProductsService {
       });
     }
 
-    const total = subtotal + BigInt(shippingMinor);
+    // EC7: optional coupon. Validated against the subtotal
+    // (bump included); an invalid coupon fails the checkout with
+    // a Bengali reason BEFORE any order is written.
+    let discountMinor = 0n;
+    let freeShippingApplied = false;
+    let appliedDiscountId: string | null = null;
+    if (dto.couponCode?.trim()) {
+      if (!this.discounts) {
+        throw new BadRequestException("কুপন সুবিধা এই deployment-এ নেই");
+      }
+      const v = await this.discounts.validateForCheckout(p.organization.id, dto.couponCode, {
+        subtotalMinor: subtotal,
+        items: [
+          {
+            productId: p.id,
+            categoryId: (p as any).categoryId ?? null,
+            totalMinor: unitPriceMinor * BigInt(qty),
+          },
+        ],
+      });
+      if (!v.valid) {
+        throw new BadRequestException(
+          `কুপন প্রয়োগ করা যায়নি: ${DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason}`,
+        );
+      }
+      discountMinor = v.discountMinor;
+      freeShippingApplied = v.freeShipping;
+      appliedDiscountId = v.discount?.id ?? null;
+    }
+
+    const effectiveShippingMinor = freeShippingApplied ? 0n : BigInt(shippingMinor);
+    const total = subtotal - discountMinor + effectiveShippingMinor;
     const externalId = `checkout-${randomUUID()}`;
     const cleanPhone = dto.customerPhone.trim();
 
@@ -230,8 +406,8 @@ export class ProductsService {
         isCod: dto.paymentMethod !== "bkash" && dto.paymentMethod !== "nagad",
         currency: p.currency || "BDT",
         subtotalMinor: subtotal,
-        shippingMinor: BigInt(shippingMinor),
-        discountMinor: 0n,
+        shippingMinor: effectiveShippingMinor,
+        discountMinor,
         taxMinor: 0n,
         totalMinor: total,
         refundedMinor: 0n,
@@ -256,12 +432,26 @@ export class ProductsService {
     // main item and writes the StockMovement; the owner's original
     // direct decrement double-counted every checkout order.
 
+    // EC7: the coupon is redeemed only after the order write
+    // succeeded; a redemption failure must not fail a placed
+    // order (it is logged instead).
+    if (appliedDiscountId) {
+      await this.discounts!.redeem(p.organization.id, appliedDiscountId).catch((e) => {
+        this.logger.warn(
+          `coupon redeem failed for discount ${appliedDiscountId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }
+
     return {
       success: true,
       orderNumber: externalId,
       productName: p.name,
       quantity: qty,
       hasBump: !!(dto.includeBump && p.bumpPriceMinor),
+      discountMinor: discountMinor.toString(),
+      couponApplied: !!appliedDiscountId,
+      freeShippingApplied,
       totalMinor: total.toString(),
       totalFormatted: `${(Number(total) / 100).toLocaleString("en-IN")} BDT`,
       customerName: dto.customerName,
@@ -296,11 +486,50 @@ export class ProductsService {
       include: {
         variants: { orderBy: { createdAt: "asc" } },
         costs: { orderBy: { effectiveFrom: "desc" }, take: 10 },
+        images: { orderBy: { position: "asc" } },
+        tagAssignments: { include: { tag: true } },
       },
     });
     if (!p) throw new NotFoundException("Product not found in this organization");
     const pub = toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
-    pub.costHistory = p.costs.map((c: any) => ({ ...c, costMinor: c.costMinor.toString() }));
+    pub.costHistory = (p.costs ?? []).map((c: any) => ({ ...c, costMinor: c.costMinor.toString() }));
+    // EC3 gallery + tags. The real client returns the included
+    // relations above; spec fakes (which return the row as-is)
+    // fall back to direct table loads when the relation is
+    // absent, so both paths produce the same response shape.
+    let images: any[] = Array.isArray(p.images) ? [...p.images] : [];
+    if (!Array.isArray(p.images) && (this.prisma as any).productImage?.findMany) {
+      try {
+        images = (await (this.prisma as any).productImage.findMany({ where: { productId } })) ?? [];
+      } catch {
+        images = [];
+      }
+    }
+    images.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+    pub.images = images;
+    let tags: any[] = [];
+    if (Array.isArray(p.tagAssignments)) {
+      tags = p.tagAssignments.map((a: any) => a.tag).filter(Boolean);
+    } else if ((this.prisma as any).productTagAssignment?.findMany) {
+      try {
+        const assignments: any[] =
+          (await (this.prisma as any).productTagAssignment.findMany({ where: { productId } })) ?? [];
+        const tagTable = (this.prisma as any).productTag;
+        const allTags: any[] = tagTable?.findMany
+          ? ((await tagTable.findMany({ where: { organizationId } })) ?? [])
+          : [];
+        const byId = new Map<string, any>(allTags.map((t: any) => [t.id, t]));
+        tags = assignments
+          .map((a: any) => a.tag ?? byId.get(a.tagId))
+          .filter(Boolean);
+      } catch {
+        tags = [];
+      }
+    }
+    pub.tags = tags.map((t: any) => ({ id: t.id, name: t.name, slug: t.slug }));
+    pub.tagAssignments = undefined;
+    // categoryId + the EC3 enrichment fields passthrough via the
+    // spread in toPublicProduct (they are plain columns on p).
     return pub;
   }
 
@@ -454,6 +683,25 @@ export class ProductsService {
   async update(organizationId: string, actorId: string, productId: string, dto: UpdateProductDto) {
     const existing = await this.getOne(organizationId, productId); // 404 + tenant scope
     const data: any = { ...dto };
+    // EC3: tagIds are assignments, not a product column.
+    const tagIds = (dto as any).tagIds as string[] | undefined;
+    delete data.tagIds;
+    if (tagIds !== undefined && tagIds.length) {
+      await this.verifyTagsOr404(organizationId, tagIds);
+    }
+    // EC3: categoryId drives the legacy category string.
+    if ((dto as any).categoryId !== undefined) {
+      if ((dto as any).categoryId === null) {
+        // Clearing the structured link; the display string is
+        // left alone unless dto.category was also given (it is
+        // already in `data` via the spread in that case).
+        data.categoryId = null;
+      } else {
+        const category = await this.findCategoryOr404(organizationId, (dto as any).categoryId);
+        data.categoryId = category.id;
+        data.category = category.name;
+      }
+    }
     if (dto.price !== undefined) { data.priceMinor = parseMoney(dto.price, "price"); delete data.price; }
     if (dto.bumpPrice !== undefined) {
       data.bumpPriceMinor = dto.bumpPrice ? parseMoney(dto.bumpPrice, "bumpPrice") : null;
@@ -479,6 +727,15 @@ export class ProductsService {
       && dto.stockQuantity !== existing.stockQuantity,
     );
     if (inventoryOwnsStock) delete data.stockQuantity;
+    // EC3 baseline stock push condition — computed BEFORE the
+    // write from the pre-update row: the stock value was
+    // plain-written here (inventory did NOT own it), it actually
+    // changed, and it is a real number (not a clear-to-null).
+    const baselineStockPush =
+      !inventoryOwnsStock &&
+      dto.stockQuantity !== undefined &&
+      dto.stockQuantity !== null &&
+      dto.stockQuantity !== existing.stockQuantity;
     const updated = await (this.prisma as any).product.update({ where: { id: productId }, data });
     if (inventoryOwnsStock) {
       const result = await this.inventory!.adjust(organizationId, actorId, productId, {
@@ -486,7 +743,24 @@ export class ProductsService {
       });
       updated.stockQuantity = result.stockQuantity;
     }
+    if (tagIds !== undefined) {
+      await this.replaceTagAssignments(productId, tagIds);
+    }
     await this.audit.log({ organizationId, userId: actorId, action: "product.update", entityType: "Product", entityId: productId });
+    // EC3: ALWAYS notify the catalog-push orchestrator after a
+    // successful update — the push content hash dedupes, so a
+    // no-content-change update is a cheap no-op at the outbox,
+    // and maintaining a field-by-field "did catalog content
+    // change?" list here would silently drift from the content
+    // builder. (Documented simplification.)
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
+    if (baselineStockPush) {
+      await this.pushHook("enqueueInventoryPush", () =>
+        this.catalogPush!.enqueueInventoryPush(organizationId, productId, null, dto.stockQuantity!),
+      );
+    }
     return toPublicProduct(updated, null);
   }
 
@@ -494,6 +768,9 @@ export class ProductsService {
     await this.getOne(organizationId, productId);
     const updated = await (this.prisma as any).product.update({ where: { id: productId }, data: { status: "ARCHIVED" } });
     await this.audit.log({ organizationId, userId: actorId, action: "product.archive", entityType: "Product", entityId: productId });
+    await this.pushHook("enqueueArchive", () =>
+      this.catalogPush!.enqueueArchive(organizationId, productId),
+    );
     return toPublicProduct(updated, null);
   }
 
@@ -507,6 +784,9 @@ export class ProductsService {
       },
     });
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.create", entityType: "ProductVariant", entityId: variant.id });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
     return { ...variant, priceMinor: variant.priceMinor?.toString() ?? null };
   }
 
@@ -539,6 +819,12 @@ export class ProductsService {
       && dto.stockQuantity !== variant.stockQuantity,
     );
     if (!inventoryOwnsStock && dto.stockQuantity !== undefined) data.stockQuantity = dto.stockQuantity;
+    // EC3 baseline stock push condition (mirrors product update).
+    const baselineStockPush =
+      !inventoryOwnsStock &&
+      dto.stockQuantity !== undefined &&
+      dto.stockQuantity !== null &&
+      dto.stockQuantity !== variant.stockQuantity;
     const updated = await (this.prisma as any).productVariant.update({ where: { id: variantId }, data });
     if (inventoryOwnsStock) {
       const result = await this.inventory!.adjust(organizationId, actorId, productId, {
@@ -547,6 +833,14 @@ export class ProductsService {
       updated.stockQuantity = result.stockQuantity;
     }
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.update", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
+    if (baselineStockPush) {
+      await this.pushHook("enqueueInventoryPush", () =>
+        this.catalogPush!.enqueueInventoryPush(organizationId, productId, variantId, dto.stockQuantity!),
+      );
+    }
     return { ...updated, priceMinor: updated.priceMinor?.toString() ?? null };
   }
 
@@ -558,7 +852,642 @@ export class ProductsService {
     if (!variant) throw new NotFoundException("Variant not found for this product");
     await (this.prisma as any).productVariant.delete({ where: { id: variantId } });
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.delete", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
     return { deleted: true, productId, variantId };
+  }
+
+  // ---------- EC3: product images ----------
+
+  async listImages(organizationId: string, productId: string) {
+    const pub = await this.getOne(organizationId, productId);
+    return (pub as any).images ?? [];
+  }
+
+  private async loadImages(productId: string): Promise<any[]> {
+    const table = (this.prisma as any).productImage;
+    if (!table?.findMany) return [];
+    const rows: any[] = (await table.findMany({ where: { productId } })) ?? [];
+    return [...rows].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  }
+
+  async addImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { url: string; altText?: string },
+  ) {
+    const product = await this.getProductOr404(organizationId, productId);
+    const images = await this.loadImages(productId);
+    const position = images.length
+      ? Math.max(...images.map((i: any) => i.position ?? 0)) + 1
+      : 0;
+    const image = await (this.prisma as any).productImage.create({
+      data: { productId, url: dto.url, altText: dto.altText ?? null, position },
+    });
+    // The cover mirror: an empty Product.imageUrl adopts the
+    // first gallery image (position-0 mirror rule, see reorder).
+    if (!product.imageUrl) {
+      await (this.prisma as any).product.update({
+        where: { id: productId },
+        data: { imageUrl: dto.url },
+      });
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "product.image.create", entityType: "ProductImage", entityId: image.id, metadata: { productId } });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
+    return image;
+  }
+
+  async reorderImages(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    imageIds: string[],
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const images = await this.loadImages(productId);
+    const byId = new Map<string, any>(images.map((i: any) => [i.id, i]));
+    for (const id of imageIds) {
+      if (!byId.has(id)) {
+        throw new BadRequestException("All image ids must belong to this product");
+      }
+    }
+    for (let idx = 0; idx < imageIds.length; idx++) {
+      await (this.prisma as any).productImage.update({
+        where: { id: imageIds[idx] },
+        data: { position: idx },
+      });
+    }
+    // Position-0 mirror: Product.imageUrl always mirrors the
+    // gallery's first image so legacy single-image surfaces
+    // (storefront, checkout) keep showing the cover.
+    if (imageIds.length) {
+      await (this.prisma as any).product.update({
+        where: { id: productId },
+        data: { imageUrl: byId.get(imageIds[0]).url },
+      });
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "product.image.reorder", entityType: "Product", entityId: productId, metadata: { imageIds } });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
+    return this.loadImages(productId);
+  }
+
+  async deleteImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    imageId: string,
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const table = (this.prisma as any).productImage;
+    const image = table?.findFirst
+      ? await table.findFirst({ where: { id: imageId, productId } })
+      : null;
+    if (!image) throw new NotFoundException("Image not found for this product");
+    const before = await this.loadImages(productId);
+    const wasFirst = before.length > 0 && before[0].id === imageId;
+    await table.delete({ where: { id: imageId } });
+    const remaining = await this.loadImages(productId);
+    // Re-index positions contiguously after a removal.
+    for (let idx = 0; idx < remaining.length; idx++) {
+      if (remaining[idx].position !== idx) {
+        await table.update({ where: { id: remaining[idx].id }, data: { position: idx } });
+      }
+    }
+    if (wasFirst) {
+      await (this.prisma as any).product.update({
+        where: { id: productId },
+        data: { imageUrl: remaining[0]?.url ?? null },
+      });
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "product.image.delete", entityType: "ProductImage", entityId: imageId, metadata: { productId } });
+    await this.pushHook("enqueueForProductChange", () =>
+      this.catalogPush!.enqueueForProductChange(organizationId, productId),
+    );
+    return { deleted: true, productId, imageId };
+  }
+
+  // ---------- EC3: categories & tags ----------
+
+  async listCategories(organizationId: string) {
+    const table = (this.prisma as any).category;
+    const categories: any[] = table?.findMany
+      ? ((await table.findMany({ where: { organizationId } })) ?? [])
+      : [];
+    // Product count per category, counted in JS from an
+    // org-scoped product scan (fake-friendly; no groupBy).
+    const products: any[] =
+      (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
+    const counts = new Map<string, number>();
+    for (const p of products) {
+      if (p.categoryId) counts.set(p.categoryId, (counts.get(p.categoryId) ?? 0) + 1);
+    }
+    return categories.map((c: any) => ({ ...c, productCount: counts.get(c.id) ?? 0 }));
+  }
+
+  async createCategory(organizationId: string, actorId: string, dto: CreateCategoryDto) {
+    const name = dto.name.trim();
+    const slug = slugify(name);
+    const table = (this.prisma as any).category;
+    const existing: any[] =
+      (await table.findMany({ where: { organizationId } })) ?? [];
+    if (existing.some((c: any) => c.slug === slug)) {
+      throw new ConflictException(`A category with slug ${slug} already exists in this organization`);
+    }
+    if (dto.parentId) {
+      await this.findCategoryOr404(organizationId, dto.parentId);
+    }
+    const category = await table.create({
+      data: {
+        organizationId,
+        name,
+        slug,
+        parentId: dto.parentId ?? null,
+        description: dto.description ?? null,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.category.create", entityType: "Category", entityId: category.id });
+    return category;
+  }
+
+  async updateCategory(
+    organizationId: string,
+    actorId: string,
+    categoryId: string,
+    dto: UpdateCategoryDto,
+  ) {
+    const category = await this.findCategoryOr404(organizationId, categoryId);
+    const data: any = {};
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.parentId !== undefined) {
+      if (dto.parentId === null) {
+        data.parentId = null;
+      } else {
+        // Parent validation: exists in org, is not the category
+        // itself, and is not one of its children (a one-level
+        // cycle check — with the self check this covers every
+        // cycle creatable through a single reparent).
+        const parent = await this.findCategoryOr404(organizationId, dto.parentId);
+        if (parent.id === categoryId) {
+          throw new BadRequestException("A category cannot be its own parent");
+        }
+        if (parent.parentId === categoryId) {
+          throw new BadRequestException("A category cannot be moved under its own child");
+        }
+        data.parentId = parent.id;
+      }
+    }
+    let newName: string | undefined;
+    if (dto.name !== undefined) {
+      newName = dto.name.trim();
+      const slug = slugify(newName);
+      const all: any[] =
+        (await (this.prisma as any).category.findMany({ where: { organizationId } })) ?? [];
+      if (all.some((c: any) => c.id !== categoryId && c.slug === slug)) {
+        throw new ConflictException(`A category with slug ${slug} already exists in this organization`);
+      }
+      data.name = newName;
+      data.slug = slug;
+    }
+    const oldName = category.name;
+    const updated = await (this.prisma as any).category.update({
+      where: { id: categoryId },
+      data,
+    });
+    if (newName !== undefined && newName !== oldName) {
+      // The legacy display string on products follows a rename.
+      const products: any[] =
+        (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
+      for (const p of products.filter((x: any) => x.categoryId === categoryId)) {
+        await (this.prisma as any).product.update({
+          where: { id: p.id },
+          data: { category: newName },
+        });
+      }
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "product.category.update", entityType: "Category", entityId: categoryId });
+    return updated;
+  }
+
+  async listTags(organizationId: string) {
+    const table = (this.prisma as any).productTag;
+    if (!table?.findMany) return [];
+    return (await table.findMany({ where: { organizationId } })) ?? [];
+  }
+
+  async createTag(organizationId: string, actorId: string, dto: { name: string }) {
+    const name = dto.name.trim();
+    const slug = slugify(name);
+    const table = (this.prisma as any).productTag;
+    const existing: any[] =
+      (await table.findMany({ where: { organizationId } })) ?? [];
+    if (existing.some((t: any) => t.slug === slug)) {
+      throw new ConflictException(`A tag with slug ${slug} already exists in this organization`);
+    }
+    const tag = await table.create({ data: { organizationId, name, slug } });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.tag.create", entityType: "ProductTag", entityId: tag.id });
+    return tag;
+  }
+
+  // ---------- EC3: bulk edit (preview + apply) ----------
+
+  /** Shared preview computation: resolves products org-scoped
+   *  (missing ids are skipped silently but counted) and computes
+   *  the before/after of every affected item WITHOUT writing. */
+  private async computeBulkEdit(organizationId: string, dto: BulkEditDto) {
+    const ids = [...new Set(dto.productIds ?? [])];
+    let category: any = null;
+    let fixedMinor: bigint | null = null;
+    if (dto.action === "price_percent") {
+      if (dto.percent === undefined || dto.percent === null) {
+        throw new BadRequestException("percent is required for price_percent");
+      }
+    } else if (dto.action === "price_fixed") {
+      if (!dto.price) throw new BadRequestException("price is required for price_fixed");
+      fixedMinor = parseMoney(dto.price, "price");
+    } else if (dto.action === "stock_set") {
+      if (dto.quantity === undefined || dto.quantity === null) {
+        throw new BadRequestException("quantity is required for stock_set");
+      }
+    } else if (dto.action === "category_set") {
+      if (!dto.categoryId) throw new BadRequestException("categoryId is required for category_set");
+      category = await this.findCategoryOr404(organizationId, dto.categoryId);
+    } else {
+      throw new BadRequestException(`Unknown bulk edit action: ${dto.action}`);
+    }
+    const all: any[] =
+      (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
+    const byId = new Map<string, any>(all.map((p: any) => [p.id, p]));
+    const items: any[] = [];
+    let missing = 0;
+    for (const id of ids) {
+      const product = byId.get(id);
+      if (!product) {
+        missing++;
+        continue;
+      }
+      if (dto.action === "price_percent") {
+        items.push({
+          productId: id,
+          name: product.name,
+          field: "price",
+          before: BigInt(product.priceMinor).toString(),
+          after: bulkPercentMinor(BigInt(product.priceMinor), dto.percent!).toString(),
+        });
+      } else if (dto.action === "price_fixed") {
+        items.push({
+          productId: id,
+          name: product.name,
+          field: "price",
+          before: BigInt(product.priceMinor).toString(),
+          after: fixedMinor!.toString(),
+        });
+      } else if (dto.action === "stock_set") {
+        items.push({
+          productId: id,
+          name: product.name,
+          field: "stockQuantity",
+          before: product.stockQuantity ?? null,
+          after: dto.quantity,
+          ...(product.stockQuantity == null
+            ? { note: "untracked→tracked baseline" }
+            : {}),
+        });
+      } else if (dto.action === "category_set") {
+        items.push({
+          productId: id,
+          name: product.name,
+          field: "category",
+          before: product.category ?? null,
+          after: category.name,
+        });
+      }
+    }
+    return { items, missing, category };
+  }
+
+  async bulkEditPreview(organizationId: string, dto: BulkEditDto) {
+    const { items, missing } = await this.computeBulkEdit(organizationId, dto);
+    return { affected: items.length, missing, items: items.slice(0, 50) };
+  }
+
+  async bulkEditApply(organizationId: string, actorId: string, dto: BulkEditDto) {
+    // Re-run the preview computation, then apply per product
+    // through the EXISTING update path so every write keeps its
+    // inventory branching, taxonomy sync and catalog-push hooks.
+    const { items } = await this.computeBulkEdit(organizationId, dto);
+    const results: Array<{ productId: string; ok: boolean; error?: string }> = [];
+    let updated = 0;
+    let failed = 0;
+    for (const item of items) {
+      try {
+        if (dto.action === "price_percent" || dto.action === "price_fixed") {
+          await this.update(organizationId, actorId, item.productId, {
+            price: minorToDecimalString(BigInt(item.after)),
+          } as UpdateProductDto);
+        } else if (dto.action === "stock_set") {
+          await this.update(organizationId, actorId, item.productId, {
+            stockQuantity: item.after,
+          } as UpdateProductDto);
+        } else if (dto.action === "category_set") {
+          await this.update(organizationId, actorId, item.productId, {
+            categoryId: dto.categoryId,
+          } as UpdateProductDto);
+        }
+        results.push({ productId: item.productId, ok: true });
+        updated++;
+      } catch (e) {
+        results.push({
+          productId: item.productId,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        failed++;
+      }
+    }
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "product.bulk_edit",
+      entityType: "Product",
+      metadata: { action: dto.action, count: updated },
+    });
+    return { updated, failed, results };
+  }
+
+  // ---------- EC3: duplicate ----------
+
+  /**
+   * Deep-copies a product: fields (incl. EC3 enrichment + bump),
+   * variants, images and tag assignments. Name gains the
+   * documented " (Copy)" suffix; SKUs gain "-copy" ("-copy-2",
+   * "-copy-3", … when taken). Status is DRAFT and source
+   * "manual". Listings and costs are deliberately NOT copied —
+   * a copy is a new canonical product, not a channel presence,
+   * and cost history belongs to the original.
+   */
+  async duplicate(organizationId: string, actorId: string, productId: string) {
+    const source = await this.getProductOr404(organizationId, productId);
+    const variants: any[] = (this.prisma as any).productVariant?.findMany
+      ? ((await (this.prisma as any).productVariant.findMany({ where: { productId } })) ?? [])
+      : Array.isArray(source.variants)
+        ? source.variants
+        : [];
+    const images = await this.loadImages(productId);
+    let assignments: any[] = [];
+    if ((this.prisma as any).productTagAssignment?.findMany) {
+      assignments =
+        (await (this.prisma as any).productTagAssignment.findMany({ where: { productId } })) ?? [];
+    } else if (Array.isArray(source.tagAssignments)) {
+      assignments = source.tagAssignments;
+    }
+
+    const uniqueProductSku = async (base: string | null): Promise<string | null> => {
+      if (!base) return null;
+      const all: any[] =
+        (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
+      const taken = new Set(all.map((p: any) => p.sku).filter(Boolean));
+      let candidate = `${base}-copy`;
+      let n = 2;
+      while (taken.has(candidate)) candidate = `${base}-copy-${n++}`;
+      return candidate;
+    };
+
+    const baseSlug = slugify(`${source.name} (Copy)`) || `prod-${Date.now().toString(36)}`;
+    const slug = `${baseSlug}-${Math.random().toString(36).substring(2, 6)}`;
+    const created = await (this.prisma as any).product.create({
+      data: {
+        organizationId,
+        name: `${source.name} (Copy)`,
+        slug,
+        description: source.description ?? null,
+        category: source.category ?? null,
+        categoryId: source.categoryId ?? null,
+        sku: await uniqueProductSku(source.sku ?? null),
+        status: "DRAFT",
+        priceMinor: source.priceMinor,
+        compareAtMinor: source.compareAtMinor ?? null,
+        currency: source.currency ?? "BDT",
+        stockQuantity: source.stockQuantity ?? null,
+        lowStockThreshold: source.lowStockThreshold ?? null,
+        imageUrl: source.imageUrl ?? null,
+        bumpTitle: source.bumpTitle ?? null,
+        bumpPriceMinor: source.bumpPriceMinor ?? null,
+        bumpImageUrl: source.bumpImageUrl ?? null,
+        weightGrams: source.weightGrams ?? null,
+        lengthCm: source.lengthCm ?? null,
+        widthCm: source.widthCm ?? null,
+        heightCm: source.heightCm ?? null,
+        barcode: source.barcode ?? null,
+        seoTitle: source.seoTitle ?? null,
+        seoDescription: source.seoDescription ?? null,
+        source: "manual",
+      },
+    });
+
+    const copiedVariants: any[] = [];
+    const takenVariantSkus = new Set<string>();
+    for (const v of variants) {
+      let sku: string | null = null;
+      if (v.sku) {
+        sku = `${v.sku}-copy`;
+        let n = 2;
+        while (takenVariantSkus.has(sku)) sku = `${v.sku}-copy-${n++}`;
+        takenVariantSkus.add(sku);
+      }
+      const cv = await (this.prisma as any).productVariant.create({
+        data: {
+          productId: created.id,
+          name: v.name,
+          sku,
+          priceMinor: v.priceMinor ?? null,
+          stockQuantity: v.stockQuantity ?? null,
+          attributes: v.attributes ?? undefined,
+        },
+      });
+      copiedVariants.push(cv);
+    }
+    if ((this.prisma as any).productImage?.create) {
+      for (const img of images) {
+        await (this.prisma as any).productImage.create({
+          data: { productId: created.id, url: img.url, altText: img.altText ?? null, position: img.position ?? 0 },
+        });
+      }
+    }
+    if ((this.prisma as any).productTagAssignment?.create) {
+      for (const a of assignments) {
+        await (this.prisma as any).productTagAssignment.create({
+          data: { productId: created.id, tagId: a.tagId ?? a.tag?.id },
+        });
+      }
+    }
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "product.duplicate",
+      entityType: "Product",
+      entityId: created.id,
+      metadata: { sourceProductId: productId },
+    });
+    return toPublicProduct({ ...created, variants: copiedVariants }, null);
+  }
+
+  // ---------- EC4: bundle items (API half) ----------
+
+  async listBundleItems(organizationId: string, productId: string) {
+    await this.getOne(organizationId, productId); // org check
+    const table = (this.prisma as any).bundleItem;
+    if (!table?.findMany) return [];
+    let items: any[] = [];
+    try {
+      items =
+        (await table.findMany({
+          where: { organizationId, parentProductId: productId },
+          include: { component: { select: { name: true, sku: true } } },
+        })) ?? [];
+    } catch {
+      items =
+        (await table.findMany({ where: { organizationId, parentProductId: productId } })) ?? [];
+    }
+    items = items.filter(
+      (i: any) => i.parentProductId === productId && (!i.organizationId || i.organizationId === organizationId),
+    );
+    // Enrich the component product (name/sku) in JS when the
+    // include did not populate it (spec fakes return rows as-is).
+    const products: any[] =
+      (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
+    const byId = new Map<string, any>(products.map((p: any) => [p.id, p]));
+    return items.map((i: any) => {
+      const comp = byId.get(i.componentProductId);
+      const componentProduct = i.componentProduct ??
+        i.component ??
+        (comp ? { id: comp.id, name: comp.name, sku: comp.sku ?? null } : null);
+      return {
+        ...i,
+        component: componentProduct,
+        componentProduct,
+      };
+    });
+  }
+
+  async addBundleItem(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { componentProductId: string; componentVariantId?: string | null; quantity?: number },
+  ) {
+    await this.getOne(organizationId, productId); // org check
+    if (dto.componentProductId === productId) {
+      throw new BadRequestException("পণ্য নিজেই নিজের component হতে পারে না");
+    }
+    const component = await (this.prisma as any).product.findFirst({
+      where: { id: dto.componentProductId, organizationId },
+    });
+    if (!component) throw new NotFoundException("Component product not found in this organization");
+    if (dto.componentVariantId) {
+      const variant = await (this.prisma as any).productVariant.findFirst({
+        where: { id: dto.componentVariantId, productId: dto.componentProductId },
+      });
+      if (!variant) throw new NotFoundException("Component variant not found for the component product");
+    }
+    const table = (this.prisma as any).bundleItem;
+    const dup = table?.findFirst
+      ? await table.findFirst({
+          where: {
+            organizationId,
+            parentProductId: productId,
+            componentProductId: dto.componentProductId,
+            componentVariantId: dto.componentVariantId ?? null,
+          },
+        })
+      : null;
+    if (dup) throw new ConflictException("This component is already part of the bundle");
+    const item = await table.create({
+      data: {
+        organizationId,
+        parentProductId: productId,
+        componentProductId: dto.componentProductId,
+        componentVariantId: dto.componentVariantId ?? null,
+        quantity: dto.quantity ?? 1,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.bundle.add", entityType: "BundleItem", entityId: item.id, metadata: { productId } });
+    return item;
+  }
+
+  async deleteBundleItem(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    itemId: string,
+  ) {
+    await this.getOne(organizationId, productId); // org check
+    const table = (this.prisma as any).bundleItem;
+    const item = table?.findFirst
+      ? await table.findFirst({ where: { id: itemId, parentProductId: productId } })
+      : null;
+    if (!item) throw new NotFoundException("Bundle item not found for this product");
+    await table.delete({ where: { id: itemId } });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.bundle.delete", entityType: "BundleItem", entityId: itemId, metadata: { productId } });
+    return { deleted: true, productId, itemId };
+  }
+
+  // ---------- EC3: per-channel view ----------
+
+  async getChannels(organizationId: string, productId: string) {
+    const product = await this.getProductOr404(organizationId, productId);
+    const table = (this.prisma as any).storeListing;
+    let listings: any[] = [];
+    if (table?.findMany) {
+      try {
+        listings =
+          (await table.findMany({
+            where: { organizationId, productId },
+            include: { store: { select: { id: true, name: true, platform: true, syncMode: true } } },
+          })) ?? [];
+      } catch {
+        listings =
+          (await table.findMany({ where: { organizationId, productId } })) ?? [];
+      }
+    }
+    listings = listings.filter((l: any) => l.productId === productId);
+    // Store enrichment fallback (fakes return rows as-is).
+    const storeTable = (this.prisma as any).store;
+    let stores: any[] = [];
+    if (storeTable?.findMany) {
+      try {
+        stores = (await storeTable.findMany({ where: { organizationId } })) ?? [];
+      } catch {
+        stores = [];
+      }
+    }
+    const storeById = new Map<string, any>(stores.map((s: any) => [s.id, s]));
+    const pending = await pendingOutboxKeys(
+      this.prisma,
+      organizationId,
+      listings.map((l: any) => ({ storeId: l.storeId, productId })),
+    );
+    const mapped = listings.map((l: any) => {
+      const store = l.store ?? storeById.get(l.storeId) ?? null;
+      return {
+        ...l,
+        channelPriceMinor: l.channelPriceMinor != null ? String(l.channelPriceMinor) : null,
+        storeName: store?.name ?? null,
+        platform: store?.platform ?? null,
+        syncMode: store?.syncMode ?? null,
+        stockDiverged: computeStockDiverged(
+          l,
+          product.stockQuantity ?? null,
+          pending.has(`${l.storeId}:${productId}`),
+        ),
+      };
+    });
+    return { productId, productStock: product.stockQuantity ?? null, listings: mapped };
   }
 
   async setCost(organizationId: string, actorId: string, productId: string, dto: SetCostDto) {

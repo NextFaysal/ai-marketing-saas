@@ -1,0 +1,19 @@
+import { ArgumentsHost, BadRequestException, Catch, ExceptionFilter } from "@nestjs/common";
+import { MulterError } from "multer";
+
+/**
+ * CX9: multer raises its own error type from inside FileInterceptor,
+ * before the route handler runs — without this filter an oversized
+ * upload would surface as a bare 500. Convert the size limit into the
+ * honest Bengali 400 the rest of the upload path uses; anything else
+ * is rethrown untouched.
+ */
+@Catch(MulterError)
+export class MulterErrorFilter implements ExceptionFilter {
+  catch(exception: MulterError, host: ArgumentsHost) {
+    if (exception.code === "LIMIT_FILE_SIZE") {
+      throw new BadRequestException("ফাইল অনেক বড় — সর্বোচ্চ ১০MB আপলোড করা যাবে");
+    }
+    throw exception;
+  }
+}

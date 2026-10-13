@@ -40,3 +40,13 @@ export class ImportLeadsCsvDto {
 export class UpdateAssignmentSettingDto {
   @IsString() @MaxLength(40) strategy!: string;
 }
+
+/** CX10: per-stage follow-up default intervals in HOURS, keyed by
+ * Lead stage — { "new": 24, "contacted": 72, ... }. Stage keys and
+ * the 1..8760 hour range are validated in the service so the 400
+ * can name the vocabulary (Bengali). null / {} clears all defaults.
+ * The value type is deliberately loose here: a non-integer must
+ * reach the service validator, not die as a generic DTO error. */
+export class UpdateFollowUpDefaultsDto {
+  @IsOptional() @IsObject() followUpDefaultsByStage?: Record<string, unknown> | null;
+}

@@ -17,13 +17,17 @@ interface SocialCommentItem {
   commentText: string;
   sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | "SPAM";
   intent: "PRICE_QUERY" | "DELIVERY_QUERY" | "COMPLAINT" | "GENERAL" | "PRODUCT_INFO" | "BARGAIN" | "COMPETITOR_MENTION";
-  status: "PENDING" | "AUTO_REPLIED" | "MANUALLY_REPLIED" | "HIDDEN" | "ESCALATED";
+  status: "PENDING" | "AUTO_REPLIED" | "MANUALLY_REPLIED" | "HIDDEN" | "ESCALATED" | "DELETED";
   replyText?: string;
   repliedAt?: string;
   isPrivateDmSent: boolean;
   privateDmText?: string;
   confidenceScore: number;
   createdAt: string;
+  // IN8: queue assignment + the inbox conversation a confirmed
+  // private reply was linked to (null until Meta confirms a DM).
+  assignedUserId?: string | null;
+  dmConversationId?: string | null;
 }
 
 interface SocialReplySettings {
@@ -51,12 +55,15 @@ interface CommentListResponse {
   stats: {
     pendingCount: number;
     spamCount: number;
+    // IN8d: auto-hide report, counted from real rows.
+    hiddenCount?: number;
+    hiddenSpamCount?: number;
   };
 }
 
 export default function SocialCommentsPage() {
   const [comments, setComments] = useState<SocialCommentItem[]>([]);
-  const [stats, setStats] = useState({ pendingCount: 0, spamCount: 0 });
+  const [stats, setStats] = useState<{ pendingCount: number; spamCount: number; hiddenCount?: number; hiddenSpamCount?: number }>({ pendingCount: 0, spamCount: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -258,7 +265,7 @@ export default function SocialCommentsPage() {
     setSubmittingReply(true);
     setError("");
     try {
-      await apiFetch(`/organizations/${orgId}/social-comments/${activeComment.id}/reply`, {
+      const res = await apiFetch<{ isPrivateDmSent?: boolean; privateDmError?: string }>(`/organizations/${orgId}/social-comments/${activeComment.id}/reply`, {
         method: "POST",
         body: JSON.stringify({
           replyText: replyInput,
@@ -266,7 +273,16 @@ export default function SocialCommentsPage() {
           privateDmText: privateDmInput,
         }),
       });
-      setNotice(`✅ ${activeComment.authorName} এর কমেন্টে সফলভাবে উত্তর ও ইনবক্স মেসেজ পাঠানো হয়েছে!`);
+      // IN8: the reply above is Graph-confirmed (the API throws
+      // otherwise). The DM is reported separately — never claim
+      // it was sent when Meta did not confirm it.
+      if (res?.privateDmError) {
+        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর পোস্ট হয়েছে (Meta নিশ্চিত করেছে), তবে DM পাঠানো যায়নি: ${res.privateDmError}`);
+      } else if (sendDmCheckbox && res?.isPrivateDmSent) {
+        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর ও ইনবক্স DM — দুটোই Meta নিশ্চিত করেছে।`);
+      } else {
+        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর পোস্ট হয়েছে (Meta নিশ্চিত করেছে)।`);
+      }
       setActiveComment(null);
       await loadData();
     } catch (e) {
@@ -299,6 +315,43 @@ export default function SocialCommentsPage() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "১-ক্লিক রিপ্লাই ব্যর্থ হয়েছে");
+    }
+  }
+
+  // IN8c: one-click private reply (Meta allows one per comment,
+  // within its window). Uses the DM text already planned/stored
+  // for this comment; the API throws Meta's verbatim error when
+  // the window has passed, and only then is nothing created.
+  async function handlePrivateReply(cmt: SocialCommentItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    if (!cmt.privateDmText) {
+      setError("এই কমেন্টের জন্য কোনো DM লেখা তৈরি নেই — আগে রিপ্লাই মডালে গিয়ে DM লেখাটি তৈরি/সম্পাদনা করুন।");
+      return;
+    }
+    try {
+      await apiFetch(`/organizations/${orgId}/social-comments/${cmt.id}/private-reply`, {
+        method: "POST",
+        body: JSON.stringify({ message: cmt.privateDmText }),
+      });
+      setNotice(`📩 ${cmt.authorName}-কে private DM পাঠানো হয়েছে (Meta নিশ্চিত করেছে) এবং কথোপকথনটি ইনবক্সে যুক্ত হয়েছে।`);
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "DM পাঠাতে ব্যর্থ হয়েছে");
+    }
+  }
+
+  // IN8: platform delete — the API marks DELETED only after
+  // Meta confirms with {success:true}.
+  async function handleDeleteComment(cmt: SocialCommentItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      await apiFetch(`/organizations/${orgId}/social-comments/${cmt.id}`, { method: "DELETE" });
+      setNotice(`🗑️ ${cmt.authorName}-এর কমেন্ট প্ল্যাটফর্ম থেকে ডিলিট হয়েছে (Meta নিশ্চিত করেছে)।`);
+      await loadData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ডিলিট ব্যর্থ হয়েছে");
     }
   }
 
@@ -458,8 +511,9 @@ export default function SocialCommentsPage() {
           </div>
         </div>
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium text-slate-500">স্প্যাম / হিডেন (Hidden)</div>
-          <div className="mt-1 text-2xl font-bold text-purple-600">{stats.spamCount}</div>
+          <div className="text-xs font-medium text-slate-500">হিডেন কমেন্ট (Hidden)</div>
+          <div className="mt-1 text-2xl font-bold text-purple-600">{stats.hiddenCount ?? 0}</div>
+          <div className="text-[11px] text-slate-500">এর মধ্যে অটো-হাইড স্প্যাম: {stats.hiddenSpamCount ?? 0} · মোট স্প্যাম শনাক্ত: {stats.spamCount}</div>
         </div>
       </div>
 
@@ -533,6 +587,7 @@ export default function SocialCommentsPage() {
             <option value="AUTO_REPLIED">AI Replied</option>
             <option value="MANUALLY_REPLIED">ম্যানুয়ালি রিপ্লাইড</option>
             <option value="HIDDEN">হিডেন / স্প্যাম</option>
+            <option value="DELETED">ডিলিট হয়েছে</option>
           </select>
         </div>
 
@@ -704,6 +759,35 @@ export default function SocialCommentsPage() {
                       আন-হাইড করুন
                     </button>
                   )}
+
+                  {/* IN8c: comment -> DM (one Graph private reply) */}
+                  {cmt.isPrivateDmSent ? (
+                    <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                      📩 DM হয়েছে{cmt.dmConversationId ? " · ইনবক্সে যুক্ত" : ""}
+                    </span>
+                  ) : cmt.privateDmText && cmt.status !== "DELETED" ? (
+                    <button
+                      onClick={() => handlePrivateReply(cmt)}
+                      className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                    >
+                      📩 DM করুন
+                    </button>
+                  ) : null}
+
+                  {cmt.status !== "DELETED" ? (
+                    <button
+                      onClick={() => handleDeleteComment(cmt)}
+                      className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                    >
+                      🗑️ ডিলিট
+                    </button>
+                  ) : (
+                    <span className="rounded-full bg-rose-100 text-rose-800 px-2 py-0.5 text-[10px] font-bold">ডিলিট হয়েছে</span>
+                  )}
+
+                  {cmt.assignedUserId ? (
+                    <span className="text-[10px] text-slate-500">দায়িত্বে: {cmt.assignedUserId.slice(0, 8)}…</span>
+                  ) : null}
                 </div>
               </div>
             </div>

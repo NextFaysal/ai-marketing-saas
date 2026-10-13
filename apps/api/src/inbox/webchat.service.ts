@@ -6,6 +6,7 @@ import { InboxService } from "./inbox.service";
 import { RealtimeService } from "./realtime.service";
 import { LeadAssignmentService } from "../crm/lead-assignment.service";
 import { parseProductCard } from "./product-card";
+import { nextDeliveryPatch } from "./message-lifecycle";
 import { MediaStore } from "./media-store";
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -172,10 +173,39 @@ export class WebchatService {
   }
 
   async listMessages(key: string, token: string) {
-    const { session } = await this.sessionByToken(key, token);
+    const { site, session } = await this.sessionByToken(key, token);
     const rows = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId: session.conversationId }, orderBy: { createdAt: "asc" }, take: 100,
     });
+    // IN6a (webchat): this fetch IS the visitor's real read path —
+    // the widget only calls it to render the thread to the visitor.
+    // Agent messages handed to the visitor here are therefore
+    // honestly "read" (our own channel: fetch = delivery + view).
+    // Monotonic via the same lifecycle patch; failures never break
+    // the visitor's thread load.
+    for (const m of rows as any[]) {
+      if (m.direction !== "out") continue;
+      const patch = nextDeliveryPatch(m, "read", new Date());
+      if (!patch) continue;
+      // Best-effort only: a missing column (migration not yet run)
+      // or any write failure must never break the visitor's thread
+      // load, and the in-memory row is only marked read when the
+      // write actually succeeded — never claim a read we did not
+      // persist. (A .catch() alone is not enough: a prisma fake or
+      // partial client without `update` throws synchronously.)
+      try {
+        await (this.prisma as any).channelMessage.update({
+          where: { id: m.id },
+          data: {
+            status: patch.status, deliveryStatus: patch.deliveryStatus,
+            ...(patch.deliveredAt && !m.deliveredAt ? { deliveredAt: patch.deliveredAt } : {}),
+            ...(patch.readAt && !m.readAt ? { readAt: patch.readAt } : {}),
+          },
+        });
+        Object.assign(m, { deliveryStatus: "read", readAt: patch.readAt ?? m.readAt });
+        try { this.inbox.emitInboxEvent(site.organizationId, { type: "conversation.updated", conversationId: session.conversationId }); } catch { /* best-effort */ }
+      } catch { /* read marking is best-effort; listing continues */ }
+    }
     return rows.map((m: any) => ({
       id: m.id, direction: m.direction, content: m.content, type: m.type, createdAt: m.createdAt,
       // Inbox Next-Gen P1: agent-uploaded media (stored by us) gets a

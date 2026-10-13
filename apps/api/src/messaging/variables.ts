@@ -1,0 +1,35 @@
+/**
+ * MS5 — the personalization variables a broadcast snapshot entry
+ * can carry, per audience entity. This is the ONE source the API
+ * builds `vars` from (prepareBroadcast in messaging.service.ts)
+ * and the composer UI mirrors (the web keeps its own copy of this
+ * constant — the GET messaging/variables endpoint serves this
+ * exact object so the two can be compared). A variable is listed
+ * for an entity ONLY when prepareBroadcast can fill it from a
+ * real row of that entity — nothing here is invented: a customer
+ * with no orders gets ordersCount 0 and EMPTY lastOrder* values.
+ */
+export const TEMPLATE_VARIABLES: Record<"customer" | "lead" | "csv", { key: string; labelBn: string }[]> = {
+  customer: [
+    { key: "name", labelBn: "নাম" },
+    { key: "firstName", labelBn: "নামের প্রথম অংশ" },
+    { key: "lastName", labelBn: "নামের শেষ অংশ" },
+    { key: "email", labelBn: "ইমেইল" },
+    { key: "phone", labelBn: "ফোন নম্বর" },
+    { key: "lastOrderNumber", labelBn: "শেষ অর্ডারের নম্বর" },
+    { key: "lastOrderTotal", labelBn: "শেষ অর্ডারের মোট (টাকা)" },
+    { key: "ordersCount", labelBn: "মোট অর্ডারের সংখ্যা" },
+  ],
+  lead: [
+    { key: "name", labelBn: "নাম" },
+    { key: "email", labelBn: "ইমেইল" },
+    { key: "phone", labelBn: "ফোন নম্বর" },
+    { key: "stage", labelBn: "লিডের ধাপ" },
+    { key: "source", labelBn: "উৎস" },
+    { key: "value", labelBn: "মান (টাকা)" },
+  ],
+  csv: [
+    { key: "name", labelBn: "নাম (সিএসভি-তে থাকে না — খালি থাকে)" },
+    { key: "address", labelBn: "ঠিকানা (ইমেইল/ফোন)" },
+  ],
+};

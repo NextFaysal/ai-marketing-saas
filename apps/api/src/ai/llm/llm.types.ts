@@ -14,6 +14,14 @@ export interface LlmStreamChunk {
   result?: LlmResult;
 }
 
+/** CX8: one image for a vision completion — raw base64 (no data-URI
+ *  prefix) plus its IANA mime type. Each vision-capable provider
+ *  translates this into its own wire shape. */
+export interface LlmVisionImage {
+  base64: string;
+  mimeType: string; // image/jpeg | image/png | image/webp
+}
+
 export interface LlmProvider {
   readonly name: string; // openai | anthropic | gemini | dev-template
   readonly isRealLlm: boolean;
@@ -22,6 +30,11 @@ export interface LlmProvider {
    *  caller through a single complete() + one delta — never by
    *  simulated typing. */
   completeStream?(messages: LlmMessage[], opts?: { jsonMode?: boolean; maxTokens?: number }): AsyncIterable<LlmStreamChunk>;
+  /** CX8: optional vision completion (image + text prompt → text).
+   *  Providers that cannot read images simply do not implement it;
+   *  callers must treat its absence as "vision unavailable", never
+   *  as a reason to fall back to a text-only guess. */
+  completeVision?(image: LlmVisionImage, prompt: string, opts?: { jsonMode?: boolean; maxTokens?: number }): Promise<LlmResult>;
 }
 
 export class LlmConfigError extends Error {}

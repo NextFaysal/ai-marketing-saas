@@ -18,16 +18,26 @@ import { contactFactLines, deliveryFactLines, hoursFactLines, matchKnowledge, pa
 import { MediaStore, mediaKeyFor } from "./media-store";
 import { detectMediaKind, defaultMediaFileName, type MediaKind } from "./media-sniff";
 import { composeProductCardText } from "./product-card";
+import { shouldTranscodeAudio, transcodeAudioToOggOpus } from "./audio-transcode";
 import { classifyIntent, moodFromMessages, parseCodReply, type Classification } from "./intent";
-import { extractPaymentScreenshot, transcribeAudio } from "./media-intelligence";
+import { extractPaymentScreenshot, transcribeAudio, MediaIntelligenceError } from "./media-intelligence";
 import { formatMinor } from "@repo/contracts";
 import { RiskService } from "../orders/risk.service";
+import { phoneKey } from "../orders/risk-score";
+import { CustomersService } from "../customers/customers.service";
+import { maskSensitiveText } from "./pii-mask";
+import { buildInboxAnalytics } from "./in10-analytics";
 import { newTrackingToken, trackingLinkFor } from "../courier/tracking-token";
+import { ReviewsService } from "../orders/reviews.service";
 import { LeadAssignmentService } from "../crm/lead-assignment.service";
 import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
+import { MessagingService } from "../messaging/messaging.service";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
+import { applyReaction, nextDeliveryPatch, reactionEmoji } from "./message-lifecycle";
+import { clampConversationPageLimit, conversationCursorWhere, decodeConversationCursor, encodeConversationCursor, oldestCursorRow } from "./conversation-cursor";
+import { HANDOVER_SUMMARY_LABEL, detectReplyLanguage, detectedLanguageInstruction, parseNextActionProposal, type NextActionProposal } from "./in7-ai";
 
 /** Inbox Next-Gen P1: decoded-size cap for browser-uploaded media.
  * 2MB of bytes is ~2.7MB of base64, inside the 3MB JSON body limit. */
@@ -43,6 +53,278 @@ export function verifyMetaSignature(rawBody: string, appSecret: string, header: 
 
 export function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, "").slice(-10); // compare on last 10 digits (local part)
+}
+
+/**
+ * IN1a: a search-result snippet — the matched text with a window of
+ * surrounding context and the match's offset INSIDE the snippet, so
+ * the UI can highlight exactly the matched part. Pure + exported for
+ * tests. The match search is case-insensitive; offsets are JS string
+ * indices into `snippet`.
+ */
+export function buildSearchSnippet(text: string, query: string, radius = 60): { snippet: string; matchStart: number; matchLength: number } | null {
+  const source = String(text ?? "");
+  const q = String(query ?? "").trim();
+  if (!source || !q) return null;
+  const idx = source.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return null;
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(source.length, idx + q.length + radius);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < source.length ? "…" : "";
+  return {
+    snippet: `${prefix}${source.slice(start, end)}${suffix}`,
+    matchStart: prefix.length + (idx - start),
+    matchLength: q.length,
+  };
+}
+
+/** IN1c: the ONLY keys a saved view may carry — exactly the keys the
+ * conversation list understands (plus the IN1b advanced filters).
+ * Anything else in a client payload is dropped, never stored. */
+export const SAVED_VIEW_FILTER_KEYS = [
+  "q", "channel", "status", "assignee", "tag", "unreadOnly", "spamOnly", "sort", "folder",
+  "dateFrom", "dateTo", "amountMin", "amountMax", "intent", "sentiment",
+] as const;
+
+const SAVED_VIEW_INTENTS = ["price", "stock", "delivery", "order_status", "payment", "complaint", "greeting", "order_intent", "other"];
+const SAVED_VIEW_SENTIMENTS = ["positive", "neutral", "negative"];
+const SAVED_VIEW_FOLDERS = ["sla", "vip", "handover", "snoozed"];
+
+/**
+ * IN1c: deep-validate a saved-view filter object. Strings are
+ * trimmed + length-capped, numbers must be finite and in range,
+ * dates must parse, intent/sentiment/folder must be in their
+ * vocabularies, booleans must be booleans. Invalid VALUES are
+ * dropped (the view still saves with its valid keys) — a stale or
+ * hand-crafted payload can never smuggle an arbitrary Prisma
+ * clause into the list endpoint, because applying a view goes
+ * through the same listConversations parameter handling as the
+ * live filters.
+ */
+export function sanitizeSavedViewFilters(input: unknown): Record<string, unknown> {
+  const src: Record<string, unknown> = (input && typeof input === "object" && !Array.isArray(input)) ? (input as Record<string, unknown>) : {};
+  const out: Record<string, unknown> = {};
+  const str = (key: string, max: number) => {
+    const v = src[key];
+    if (typeof v === "string" && v.trim()) out[key] = v.trim().slice(0, max);
+  };
+  str("q", 200); str("channel", 40); str("status", 20); str("assignee", 80); str("tag", 60);
+  if (typeof src.unreadOnly === "boolean") out.unreadOnly = src.unreadOnly;
+  if (typeof src.spamOnly === "boolean") out.spamOnly = src.spamOnly;
+  if (src.sort === "unread" || src.sort === "recent") out.sort = src.sort;
+  if (typeof src.folder === "string" && SAVED_VIEW_FOLDERS.includes(src.folder)) out.folder = src.folder;
+  for (const key of ["dateFrom", "dateTo"] as const) {
+    const v = src[key];
+    if (typeof v === "string" && v.trim() && !Number.isNaN(new Date(v).getTime())) out[key] = new Date(v).toISOString();
+  }
+  for (const key of ["amountMin", "amountMax"] as const) {
+    const v = src[key];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[key] = Math.round(v);
+    else if (typeof v === "string" && v.trim() && Number.isFinite(Number(v)) && Number(v) >= 0) out[key] = Math.round(Number(v));
+  }
+  if (typeof src.intent === "string" && SAVED_VIEW_INTENTS.includes(src.intent)) out.intent = src.intent;
+  if (typeof src.sentiment === "string" && SAVED_VIEW_SENTIMENTS.includes(src.sentiment)) out.sentiment = src.sentiment;
+  return out;
+}
+
+/** IN3: the macro step vocabulary. A step is one REAL inbox
+ * action, executed at run time through the same service method a
+ * manual click uses (sendReply / updateConversation /
+ * snoozeConversation) — a macro is a recording of clicks, never a
+ * parallel implementation. */
+export const MACRO_STEP_TYPES = ["reply", "assign", "tag", "pipeline", "close", "snooze"] as const;
+export type MacroStep =
+  | { type: "reply"; quickReplyId: string }
+  | { type: "assign"; assignedUserId: string | null }
+  | { type: "tag"; tag: string }
+  | { type: "pipeline"; stage: string }
+  | { type: "close"; outcome?: string | null }
+  | { type: "snooze"; minutes: number };
+
+const MACRO_PIPELINE_STAGES = ["new", "talking", "ordered", "delivered", "repeat"];
+const MACRO_OUTCOMES = ["sale", "no_sale_price", "no_sale_stock", "no_sale_undecided", "support_resolved", "spam", "other"];
+
+/**
+ * IN3: STRICT validation of a macro definition. Unlike saved-view
+ * filters (where a stale key is harmless and dropped), a macro
+ * step that silently vanished would make the macro do LESS than
+ * its definition shows while reporting success — so ANY invalid
+ * step is a client error (400, Bengali) and nothing is stored.
+ * Returns the normalized steps (trimmed, vocabulary-checked,
+ * unknown keys removed per step).
+ */
+export function sanitizeMacroSteps(input: unknown): MacroStep[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new BadRequestException("ম্যাক্রোতে অন্তত একটি ধাপ থাকতে হবে।");
+  }
+  if (input.length > 10) {
+    throw new BadRequestException("ম্যাক্রোতে সর্বোচ্চ ১০টি ধাপ থাকতে পারবে।");
+  }
+  const out: MacroStep[] = [];
+  for (const raw of input as any[]) {
+    const step = (raw && typeof raw === "object") ? raw : {};
+    const type = step.type;
+    if (!(MACRO_STEP_TYPES as readonly string[]).includes(type)) {
+      throw new BadRequestException(`অজানা ম্যাক্রো ধাপ: ${String(type ?? "")} — ধাপ হতে পারে reply | assign | tag | pipeline | close | snooze।`);
+    }
+    if (type === "reply") {
+      const quickReplyId = typeof step.quickReplyId === "string" ? step.quickReplyId.trim().slice(0, 120) : "";
+      if (!quickReplyId) throw new BadRequestException("Reply ধাপের জন্য একটি Quick Reply বেছে নিন।");
+      out.push({ type: "reply", quickReplyId });
+    } else if (type === "assign") {
+      const v = step.assignedUserId;
+      if (v !== null && v !== "me" && (typeof v !== "string" || !v.trim())) {
+        throw new BadRequestException("Assign ধাপে কাকে অ্যাসাইন করা হবে তা দিন (সদস্যের id, \"me\" অথবা null = অ্যাসাইন তুলে নিন)।");
+      }
+      out.push({ type: "assign", assignedUserId: v === null ? null : v === "me" ? "me" : (v as string).trim().slice(0, 120) });
+    } else if (type === "tag") {
+      const tag = typeof step.tag === "string" ? step.tag.trim().slice(0, 60) : "";
+      if (!tag) throw new BadRequestException("Tag ধাপে ট্যাগের লেখা দিন।");
+      out.push({ type: "tag", tag });
+    } else if (type === "pipeline") {
+      if (!MACRO_PIPELINE_STAGES.includes(step.stage)) {
+        throw new BadRequestException(`Pipeline ধাপের stage সঠিক নয় — হতে পারে ${MACRO_PIPELINE_STAGES.join(" | ")}।`);
+      }
+      out.push({ type: "pipeline", stage: step.stage });
+    } else if (type === "close") {
+      if (step.outcome !== undefined && step.outcome !== null && !MACRO_OUTCOMES.includes(step.outcome)) {
+        throw new BadRequestException("Close ধাপের outcome সঠিক নয়।");
+      }
+      out.push({ type: "close", ...(step.outcome !== undefined ? { outcome: step.outcome } : {}) });
+    } else {
+      const minutes = step.minutes;
+      if (!Number.isInteger(minutes) || minutes < 5 || minutes > 10080) {
+        throw new BadRequestException("Snooze ধাপ ৫ থেকে ১০০৮০ মিনিটের মধ্যে হতে হবে।");
+      }
+      out.push({ type: "snooze", minutes });
+    }
+  }
+  return out;
+}
+
+/** IN3d: the quick-reply variable vocabulary. The first three are
+ * the composer's original set; IN3 adds the order-bound ones.
+ * Values come ONLY from real rows (see macroVariableContext):
+ * a variable with no real data renders as an EMPTY string —
+ * never an invented order id, link or charge. Unknown
+ * placeholders are left untouched, exactly like the composer. */
+export const QUICK_REPLY_VARIABLE_KEYS = ["firstName", "contactName", "phone", "orderId", "trackingLink", "deliveryCharge"] as const;
+
+export function renderQuickReplyVariables(content: string, vars: Record<string, string>): string {
+  return String(content ?? "").replace(/\{\{(firstName|contactName|phone|orderId|trackingLink|deliveryCharge)\}\}/g,
+    (_m, key: string) => vars[key] ?? "");
+}
+
+/** IN4: the warning point of the SLA chain — at this fraction of
+ * the effective first-response limit the assignee is warned
+ * (before any breach happens). */
+export const SLA_WARN_FRACTION = 0.75;
+
+const SLA_CHANNELS = ["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"];
+
+/**
+ * IN4a: parse the stored per-channel SLA map defensively (read
+ * path): only known channels with an integer 1..10080 survive; a
+ * corrupt stored value degrades to {} (the org default applies
+ * everywhere) instead of crashing a list or a sweep. The WRITE
+ * path (updateSettings) validates strictly and refuses garbage.
+ */
+export function parseSlaByChannel(input: unknown): Record<string, number> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const out: Record<string, number> = {};
+  for (const [channel, v] of Object.entries(input as Record<string, unknown>)) {
+    if (!SLA_CHANNELS.includes(channel)) continue;
+    if (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 10080) out[channel] = v as number;
+  }
+  return out;
+}
+
+/**
+ * IN4a: the effective first-response limit (minutes) for one
+ * conversation. Layer order: VIP override (only when the org set
+ * slaVipMinutes AND this conversation is VIP) → per-channel
+ * override → the org default slaFirstResponseMinutes (60 when a
+ * settings row is absent — the pre-IN4 behaviour everywhere).
+ */
+export function effectiveSlaMinutes(settings: any, channel: string | null | undefined, isVip: boolean): number {
+  const fallback = Number.isInteger(settings?.slaFirstResponseMinutes) && settings.slaFirstResponseMinutes >= 1
+    ? settings.slaFirstResponseMinutes : 60;
+  if (isVip && Number.isInteger(settings?.slaVipMinutes) && settings.slaVipMinutes >= 1) {
+    return settings.slaVipMinutes;
+  }
+  const byChannel = parseSlaByChannel(settings?.slaByChannel);
+  if (channel && byChannel[channel] !== undefined) return byChannel[channel];
+  return fallback;
+}
+
+/**
+ * IN4: one conversation's SLA position at `now` — pure, exported
+ * for tests. Returns null when the conversation is not in SLA
+ * scope at all (already first-responded, closed, or practice):
+ * such a row has no warning/breach state to show or act on.
+ * state "warning" starts at SLA_WARN_FRACTION of the limit,
+ * "breached" at the limit itself.
+ */
+export function slaStateFor(settings: any, conv: any, isVip: boolean, now: Date): {
+  state: "warning" | "breached"; effectiveMinutes: number; dueAt: Date; minutesLeft: number;
+} | null {
+  if (!conv || conv.firstResponseAt || conv.status === "closed" || conv.isPractice) return null;
+  if (conv.status !== "open" && conv.status !== "pending") return null;
+  const created = new Date(conv.createdAt ?? 0).getTime();
+  if (!Number.isFinite(created) || created <= 0) return null;
+  const effectiveMinutes = effectiveSlaMinutes(settings, conv.channel, isVip);
+  const dueAt = new Date(created + effectiveMinutes * 60000);
+  const elapsed = now.getTime() - created;
+  if (elapsed >= effectiveMinutes * 60000) {
+    return { state: "breached", effectiveMinutes, dueAt, minutesLeft: Math.floor((dueAt.getTime() - now.getTime()) / 60000) };
+  }
+  if (elapsed >= effectiveMinutes * SLA_WARN_FRACTION * 60000) {
+    return { state: "warning", effectiveMinutes, dueAt, minutesLeft: Math.ceil((dueAt.getTime() - now.getTime()) / 60000) };
+  }
+  return null;
+}
+
+/**
+ * IN4a: the SLA-breach where-clause under the LAYERED policy,
+ * shared by the list filter, the folder counts and (in shape) the
+ * sweep, so they can never disagree about what "breached" means.
+ * With NO layering configured it returns EXACTLY the pre-IN4
+ * clause. Otherwise it is an OR of per-layer clauses (VIP ids use
+ * the VIP limit; overridden channels use theirs and are excluded
+ * from the default clause; VIP ids are excluded from the channel
+ * and default clauses because the VIP layer outranks them).
+ */
+export function buildSlaBreachWhere(settings: any, vipIds: string[] | null, now: Date): Record<string, unknown> {
+  const base: Record<string, unknown> = { firstResponseAt: null, status: { in: ["open", "pending"] } };
+  const byChannel = parseSlaByChannel(settings?.slaByChannel);
+  const vipMinutes = Number.isInteger(settings?.slaVipMinutes) && settings.slaVipMinutes >= 1 ? settings.slaVipMinutes : null;
+  const overriddenChannels = Object.keys(byChannel);
+  if (!overriddenChannels.length && vipMinutes === null) {
+    const fallback = Number.isInteger(settings?.slaFirstResponseMinutes) && settings.slaFirstResponseMinutes >= 1
+      ? settings.slaFirstResponseMinutes : 60;
+    return { ...base, createdAt: { lt: new Date(now.getTime() - fallback * 60000) } };
+  }
+  const vip = vipMinutes !== null ? (vipIds ?? []) : null;
+  const clauses: Record<string, unknown>[] = [];
+  if (vip !== null && vip.length) {
+    clauses.push({ id: { in: vip }, createdAt: { lt: new Date(now.getTime() - vipMinutes * 60000) } });
+  }
+  for (const channel of overriddenChannels) {
+    clauses.push({
+      channel,
+      ...(vip !== null ? { id: { notIn: vip } } : {}),
+      createdAt: { lt: new Date(now.getTime() - byChannel[channel] * 60000) },
+    });
+  }
+  const fallback = Number.isInteger(settings?.slaFirstResponseMinutes) && settings.slaFirstResponseMinutes >= 1
+    ? settings.slaFirstResponseMinutes : 60;
+  clauses.push({
+    ...(overriddenChannels.length ? { channel: { notIn: overriddenChannels } } : {}),
+    ...(vip !== null ? { id: { notIn: vip } } : {}),
+    createdAt: { lt: new Date(now.getTime() - fallback * 60000) },
+  });
+  return { ...base, OR: clauses };
 }
 
 @Injectable()
@@ -66,6 +348,23 @@ export class InboxService {
     // type is Object and the provider never resolved, which would
     // have left webhook comment ingest silently inert.
     @Optional() private readonly socialComments?: SocialCommentsService,
+    // CX12b: review-reply capture (delivered-order review asks).
+    // ReviewsService is exported by OrdersModule, which this
+    // module already imports for RiskService — no new cycle.
+    @Optional() private readonly reviews?: ReviewsService,
+    // IN2: customer merge/unmerge lives in CustomersService (the
+    // one canonical implementation, shared with the Customers
+    // page). Optional — unit specs that never merge construct
+    // the inbox without it, and the merge endpoints then refuse
+    // honestly instead of duplicating the logic here.
+    // NOTE (integration): customers sits at positional slot 11 —
+    // the IN2 specs construct the service positionally; Nest DI
+    // resolves by type, so the order is runtime-neutral.
+    @Optional() private readonly customers?: CustomersService,
+    // MS2: WhatsApp STOP/START keyword → messaging preference.
+    // MessagingModule imports no module at all, so InboxModule
+    // importing it for this service adds no cycle.
+    @Optional() private readonly messagingPrefs?: MessagingService,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -135,7 +434,7 @@ export class InboxService {
   // ----- Connection management -----
   async connectMessaging(organizationId: string, actorId: string, dto: {
     channel: string; accessToken: string; appSecret?: string; verifyToken: string;
-    phoneNumberId?: string; pageId?: string;
+    phoneNumberId?: string; pageId?: string; wabaId?: string;
   }) {
     if (!["whatsapp", "messenger", "instagram"].includes(dto.channel)) throw new BadRequestException("channel must be whatsapp, messenger or instagram");
     // The app secret may be omitted when the platform Meta app is
@@ -154,6 +453,9 @@ export class InboxService {
     const secrets: MessagingSecrets = {
       accessToken: dto.accessToken, appSecret: dto.appSecret ?? "", verifyToken: dto.verifyToken,
       phoneNumberId: dto.phoneNumberId, pageId: dto.pageId,
+      // MS6: the WABA id is stored only for WhatsApp connects; it
+      // is ignored for messenger/instagram.
+      ...(dto.channel === "whatsapp" && dto.wabaId ? { wabaId: dto.wabaId } : {}),
     };
     // Verify BEFORE saving anything - an unverified connection is never stored as connected.
     // Meta's rejection is surfaced as a 400 with Meta's own message —
@@ -177,9 +479,45 @@ export class InboxService {
   async listMessagingIntegrations(organizationId: string) {
     const items = await (this.prisma as any).integration.findMany({
       where: { organizationId, provider: { in: ["whatsapp", "messenger", "instagram"] } }, orderBy: { createdAt: "desc" },
+      include: { credential: true },
     });
-    // Secrets are never returned.
-    return items.map((i: any) => ({ id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, createdAt: i.createdAt, lastError: i.lastError }));
+    // Secrets are never returned. MS6: the WABA id IS returned for
+    // whatsapp rows — it is an account id, not a secret (the
+    // externalAccountId is already exposed the same way). Any
+    // decrypt failure degrades to null, never breaks the list.
+    return items.map((i: any) => {
+      let wabaId: string | null = null;
+      if (i.provider === "whatsapp" && i.credential?.encryptedData) {
+        try { wabaId = decryptJson<MessagingSecrets>(i.credential.encryptedData).wabaId ?? null; } catch { wabaId = null; }
+      }
+      return { id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, createdAt: i.createdAt, lastError: i.lastError, wabaId };
+    });
+  }
+
+  /**
+   * MS6 — set or clear the WABA id on the org's CONNECTED WhatsApp
+   * integration (the credential alongside phoneNumberId). The
+   * token is never logged or returned; the audit metadata carries
+   * only whether a value is now set.
+   */
+  async updateWhatsAppWabaId(organizationId: string, actorId: string, wabaId: string | null) {
+    const integration = await (this.prisma as any).integration.findFirst({
+      where: { organizationId, provider: "whatsapp", status: "CONNECTED" },
+      orderBy: { createdAt: "desc" }, include: { credential: true },
+    });
+    if (!integration) throw new NotFoundException("No connected WhatsApp integration for this organization");
+    if (!integration.credential) throw new BadRequestException("Messaging integration is not configured");
+    const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
+    const value = typeof wabaId === "string" ? wabaId.trim() : "";
+    if (value) secrets.wabaId = value; else delete secrets.wabaId;
+    await (this.prisma as any).integrationCredential.update({
+      where: { integrationId: integration.id }, data: { encryptedData: encryptJson(secrets) },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "integration.whatsapp.waba_updated",
+      entityType: "Integration", entityId: integration.id, metadata: { set: Boolean(value) },
+    });
+    return { integrationId: integration.id, wabaId: value || null };
   }
 
   private async secretsFor(integrationId: string): Promise<MessagingSecrets> {
@@ -210,7 +548,7 @@ export class InboxService {
     return null;
   }
 
-  async handleWebhook(integrationId: string, rawBody: string, signature: string | undefined): Promise<{ received: number; duplicates: number; statusesApplied: number; leadgenReceived: number }> {
+  async handleWebhook(integrationId: string, rawBody: string, signature: string | undefined): Promise<{ received: number; duplicates: number; statusesApplied: number; leadgenReceived: number; reactionsApplied: number }> {
     const integration = await (this.prisma as any).integration.findUnique({ where: { id: integrationId }, include: { credential: true } });
     if (!integration?.credential) throw new NotFoundException("Integration not found");
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
@@ -233,12 +571,23 @@ export class InboxService {
         where: { conversationId: conversation.id, externalId: event.externalId },
       });
       if (existing) { duplicates++; continue; }
+      // IN6b: the customer's own quote (WhatsApp context / Messenger
+      // reply_to) resolves to OUR row in THIS conversation only —
+      // an id from another thread simply does not resolve here.
+      let replyToMessageId: string | null = null;
+      if (event.replyToExternalId) {
+        const quoted = await (this.prisma as any).channelMessage.findFirst({
+          where: { conversationId: conversation.id, externalId: event.replyToExternalId },
+        }).catch(() => null);
+        replyToMessageId = quoted?.id ?? null;
+      }
       const stored = await (this.prisma as any).channelMessage.create({
         data: {
           conversationId: conversation.id, direction: "in", externalId: event.externalId,
           type: event.type, content: event.content ?? null, status: "received",
           mediaId: event.mediaId ?? null, mediaUrl: event.mediaUrl ?? null,
           referral: event.referral ?? undefined,
+          replyToMessageId,
           platformTimestamp: event.timestamp,
         },
       });
@@ -291,16 +640,85 @@ export class InboxService {
       const message = await (this.prisma as any).channelMessage.findFirst({
         where: { externalId: status.externalId, direction: "out", conversation: { organizationId } },
       });
-      if (!message) continue;
-      if (status.status === "failed") {
-        await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed" } });
-        statusesApplied++;
-      } else if ((STATUS_RANK[status.status] ?? -1) > (STATUS_RANK[message.status] ?? -1)) {
-        await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: status.status } });
-        statusesApplied++;
+      if (!message) {
+        // MS7: not an inbox message — the status may belong to a
+        // BROADCAST WhatsApp delivery (same Meta message id in
+        // MessageDelivery.providerMessageId). The inbox path stays
+        // FIRST; this fallback is best-effort only. Broadcast
+        // matches deliberately do NOT count into statusesApplied.
+        if (status.channel === "whatsapp" && this.messagingPrefs?.applyWhatsAppDeliveryStatus) {
+          await this.messagingPrefs.applyWhatsAppDeliveryStatus(organizationId, status.externalId, status.status, status.error).catch(() => undefined);
+        }
+        continue;
+      }
+      // IN6a: the confirmed status lands in deliveryStatus +
+      // deliveredAt/readAt as well as the legacy status column,
+      // via the monotonic patch — a late "delivered" can never
+      // overwrite a "read", and "failed" never resurrects.
+      const applied = await this.applyDeliveryStatus(message, status.status, status.at ?? new Date());
+      if (applied) statusesApplied++;
+    }
+
+    // IN6a: Messenger/Instagram read watermarks — every outbound
+    // message in THAT conversation sent at/before the watermark
+    // was read (Meta's own semantics for the watermark).
+    for (const wm of parsed.readWatermarks ?? []) {
+      const conv = await (this.prisma as any).channelConversation.findFirst({
+        where: { organizationId, integrationId: integration.id, channel: wm.channel, externalContactId: wm.externalContactId },
+      }).catch(() => null);
+      if (!conv) continue;
+      const rows = await (this.prisma as any).channelMessage.findMany({
+        where: { conversationId: conv.id, direction: "out", createdAt: { lte: wm.watermark } },
+      }).catch(() => []);
+      for (const row of rows ?? []) {
+        if (await this.applyDeliveryStatus(row, "read", wm.watermark)) statusesApplied++;
       }
     }
-    return { received, duplicates, statusesApplied, leadgenReceived };
+
+    // IN6c: customer reactions (WhatsApp reaction messages +
+    // Messenger/IG message_reactions). Stored on the reacted row;
+    // a reaction to a message we do not hold is dropped, never
+    // invented. reactionsApplied is folded into the return count
+    // via `received` semantics — kept separate here for clarity.
+    let reactionsApplied = 0;
+    for (const reaction of parsed.reactions ?? []) {
+      if (!reaction.externalId) continue;
+      const message = await (this.prisma as any).channelMessage.findFirst({
+        where: { externalId: reaction.externalId, conversation: { organizationId } },
+      }).catch(() => null);
+      if (!message) continue;
+      const emoji = reactionEmoji(reaction.emoji, reaction.named);
+      if (reaction.action === "react" && !emoji) continue;
+      const next = applyReaction((message as any).reactions, {
+        emoji, actor: "customer", action: reaction.action, at: reaction.timestamp,
+      });
+      const updated = await (this.prisma as any).channelMessage.update({
+        where: { id: message.id }, data: { reactions: next },
+      });
+      this.rtMessage(organizationId, message.conversationId, updated);
+      reactionsApplied++;
+    }
+    return { received, duplicates, statusesApplied, leadgenReceived, reactionsApplied };
+  }
+
+  /**
+   * IN6a: applies ONE platform-confirmed delivery status to a
+   * message row through the monotonic patch (message-lifecycle).
+   * Returns true when a write happened. The updated row is fanned
+   * out on the realtime stream so open threads update live.
+   */
+  async applyDeliveryStatus(message: any, incoming: string, at: Date): Promise<boolean> {
+    const patch = nextDeliveryPatch(message, incoming, at);
+    if (!patch) return false;
+    const data: Record<string, unknown> = { status: patch.status, deliveryStatus: patch.deliveryStatus };
+    // First confirmation stamps are kept: a later event must not
+    // move deliveredAt/readAt forward-or-back to its own time.
+    if (patch.deliveredAt && !message.deliveredAt) data.deliveredAt = patch.deliveredAt;
+    if (patch.readAt && !message.readAt) data.readAt = patch.readAt;
+    const updated = await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data });
+    const conv = await (this.prisma as any).channelConversation.findFirst({ where: { id: message.conversationId } }).catch(() => null);
+    if (conv?.organizationId) this.rtMessage(conv.organizationId, message.conversationId, updated);
+    return true;
   }
 
   /**
@@ -459,11 +877,29 @@ export class InboxService {
       // CX12d: a corrupt stored schedule must read as {} (no
       // restriction), never crash the autopilot/settings reads.
       aiScheduleByChannel: (() => { try { return parseAiSchedule(row?.aiScheduleByChannel ?? null); } catch { return {}; } })(),
-      // CX7: To Chase settings
+      // CX12b: review requests are opt-in (default OFF) with a
+      // bounded post-delivery delay.
+      reviewRequestEnabled: row?.reviewRequestEnabled ?? false,
+      reviewRequestDelayHours: row?.reviewRequestDelayHours ?? 24,
+      // CX7: "To Chase" nudges are opt-in (default OFF) with
+      // bounded delay/interval/attempts + a quiet-hours window.
       chaseEnabled: row?.chaseEnabled ?? false,
-      chaseIntervalMinutes: row?.chaseIntervalMinutes ?? 30,
+      chaseFirstDelayMinutes: row?.chaseFirstDelayMinutes ?? 60,
+      chaseIntervalMinutes: row?.chaseIntervalMinutes ?? 240,
+      chaseMaxAttempts: row?.chaseMaxAttempts ?? 3,
+      chaseQuietHoursRespect: row?.chaseQuietHoursRespect ?? true,
+      chaseQuietStartHour: row?.chaseQuietStartHour ?? 22,
+      chaseQuietEndHour: row?.chaseQuietEndHour ?? 8,
+      // Owner CX7 variant fields (his series).
       maxChaseAttempts: row?.maxChaseAttempts ?? 2,
       chaseMessage: row?.chaseMessage ?? null,
+      // IN4: layered SLA. The stored map is parsed defensively —
+      // a corrupt value reads as {} (org default everywhere).
+      slaByChannel: parseSlaByChannel(row?.slaByChannel ?? null),
+      slaVipMinutes: row?.slaVipMinutes ?? null,
+      slaEscalateAfterMinutes: row?.slaEscalateAfterMinutes ?? 30,
+      slaLeadAlertEnabled: row?.slaLeadAlertEnabled ?? true,
+      slaAutoReassignEnabled: row?.slaAutoReassignEnabled ?? false,
     };
   }
 
@@ -494,7 +930,13 @@ export class InboxService {
     retentionDays?: number | null;
     aiReplyDelaySeconds?: number; aiReplyDelayByChannel?: Record<string, number>;
     aiScheduleByChannel?: Record<string, unknown>;
-    chaseEnabled?: boolean; chaseIntervalMinutes?: number; maxChaseAttempts?: number; chaseMessage?: string | null;
+    reviewRequestEnabled?: boolean; reviewRequestDelayHours?: number;
+    chaseEnabled?: boolean; chaseFirstDelayMinutes?: number; chaseIntervalMinutes?: number;
+    chaseMaxAttempts?: number; chaseQuietHoursRespect?: boolean;
+    chaseQuietStartHour?: number; chaseQuietEndHour?: number;
+    maxChaseAttempts?: number; chaseMessage?: string;
+    slaByChannel?: Record<string, number>; slaVipMinutes?: number | null;
+    slaEscalateAfterMinutes?: number; slaLeadAlertEnabled?: boolean; slaAutoReassignEnabled?: boolean;
   }) {
     const modes = ["off", "draft", "auto"];
     if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw new BadRequestException("autoReplyMode must be off | draft | auto");
@@ -526,11 +968,35 @@ export class InboxService {
     // CX12d: the AI schedule is validated by the pure parser —
     // an invalid map is a client error (400), never persisted;
     // a valid one is stored in its normalized form.
+    // CX12b: the review delay is a bounded whole-hour count
+    // (0..168 = up to a week after delivery); anything else is a
+    // client error at the settings boundary, never clamped silently.
+    if (dto.reviewRequestDelayHours !== undefined && (!Number.isInteger(dto.reviewRequestDelayHours) || dto.reviewRequestDelayHours < 0 || dto.reviewRequestDelayHours > 168)) throw new BadRequestException("reviewRequestDelayHours must be an integer 0..168");
     let aiScheduleNormalized: Record<string, unknown> | undefined;
     if (dto.aiScheduleByChannel !== undefined) {
       try { aiScheduleNormalized = parseAiSchedule(dto.aiScheduleByChannel); }
       catch { throw new BadRequestException("aiScheduleByChannel সঠিক নয় — প্রতিটি channel-এ enabled (true/false) ও সর্বোচ্চ ৮টি window (days 0–6, start/end HH:mm) থাকতে হবে"); }
     }
+    // CX7: "To Chase" bounds — bounded whole counts, validated
+    // at the settings boundary like the review delay (a client
+    // error, never silently clamped or persisted).
+    if (dto.chaseFirstDelayMinutes !== undefined && (!Number.isInteger(dto.chaseFirstDelayMinutes) || dto.chaseFirstDelayMinutes < 15 || dto.chaseFirstDelayMinutes > 1440)) throw new BadRequestException("chaseFirstDelayMinutes must be an integer 15..1440");
+    if (dto.chaseIntervalMinutes !== undefined && (!Number.isInteger(dto.chaseIntervalMinutes) || dto.chaseIntervalMinutes < 60 || dto.chaseIntervalMinutes > 2880)) throw new BadRequestException("chaseIntervalMinutes must be an integer 60..2880");
+    if (dto.chaseMaxAttempts !== undefined && (!Number.isInteger(dto.chaseMaxAttempts) || dto.chaseMaxAttempts < 1 || dto.chaseMaxAttempts > 5)) throw new BadRequestException("chaseMaxAttempts must be an integer 1..5");
+    if (dto.chaseQuietStartHour !== undefined && (!Number.isInteger(dto.chaseQuietStartHour) || dto.chaseQuietStartHour < 0 || dto.chaseQuietStartHour > 23)) throw new BadRequestException("chaseQuietStartHour must be an integer 0..23");
+    if (dto.chaseQuietEndHour !== undefined && (!Number.isInteger(dto.chaseQuietEndHour) || dto.chaseQuietEndHour < 0 || dto.chaseQuietEndHour > 23)) throw new BadRequestException("chaseQuietEndHour must be an integer 0..23");
+    // IN4: SLA layering + chain bounds — validated strictly at the
+    // write boundary like the reply-delay map (a client error,
+    // never silently clamped or persisted).
+    if (dto.slaByChannel !== undefined) {
+      if (!dto.slaByChannel || typeof dto.slaByChannel !== "object" || Array.isArray(dto.slaByChannel)) throw new BadRequestException("slaByChannel must be an object mapping channel to minutes");
+      for (const [channel, v] of Object.entries(dto.slaByChannel)) {
+        if (!SLA_CHANNELS.includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
+        if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > 10080) throw new BadRequestException(`Invalid sla minutes for channel ${channel}: must be an integer 1..10080`);
+      }
+    }
+    if (dto.slaVipMinutes !== undefined && dto.slaVipMinutes !== null && (!Number.isInteger(dto.slaVipMinutes) || dto.slaVipMinutes < 1 || dto.slaVipMinutes > 10080)) throw new BadRequestException("slaVipMinutes must be null or an integer 1..10080");
+    if (dto.slaEscalateAfterMinutes !== undefined && (!Number.isInteger(dto.slaEscalateAfterMinutes) || dto.slaEscalateAfterMinutes < 1 || dto.slaEscalateAfterMinutes > 1440)) throw new BadRequestException("slaEscalateAfterMinutes must be an integer 1..1440");
     const data = {
       ...(dto.autoReplyMode ? { autoReplyMode: dto.autoReplyMode } : {}),
       ...(dto.confidenceThreshold !== undefined ? { confidenceThreshold: Math.round(dto.confidenceThreshold) } : {}),
@@ -548,11 +1014,25 @@ export class InboxService {
       ...(dto.aiReplyDelayByChannel !== undefined ? { aiReplyDelayByChannel: dto.aiReplyDelayByChannel } : {}),
       // CX12d: validated + normalized by parseAiSchedule below.
       ...(dto.aiScheduleByChannel !== undefined ? { aiScheduleByChannel: aiScheduleNormalized } : {}),
+      ...(dto.reviewRequestEnabled !== undefined ? { reviewRequestEnabled: Boolean(dto.reviewRequestEnabled) } : {}),
+      ...(dto.reviewRequestDelayHours !== undefined ? { reviewRequestDelayHours: dto.reviewRequestDelayHours } : {}),
+      ...(dto.chaseEnabled !== undefined ? { chaseEnabled: Boolean(dto.chaseEnabled) } : {}),
+      ...(dto.chaseFirstDelayMinutes !== undefined ? { chaseFirstDelayMinutes: dto.chaseFirstDelayMinutes } : {}),
+      ...(dto.chaseIntervalMinutes !== undefined ? { chaseIntervalMinutes: dto.chaseIntervalMinutes } : {}),
+      ...(dto.chaseMaxAttempts !== undefined ? { chaseMaxAttempts: dto.chaseMaxAttempts } : {}),
+      ...(dto.chaseQuietHoursRespect !== undefined ? { chaseQuietHoursRespect: Boolean(dto.chaseQuietHoursRespect) } : {}),
+      ...(dto.chaseQuietStartHour !== undefined ? { chaseQuietStartHour: dto.chaseQuietStartHour } : {}),
+      ...(dto.chaseQuietEndHour !== undefined ? { chaseQuietEndHour: dto.chaseQuietEndHour } : {}),
       // CX7: To Chase settings
       ...(dto.chaseEnabled !== undefined ? { chaseEnabled: Boolean(dto.chaseEnabled) } : {}),
       ...(dto.chaseIntervalMinutes !== undefined ? { chaseIntervalMinutes: Math.min(1440, Math.max(1, Math.round(dto.chaseIntervalMinutes))) } : {}),
       ...(dto.maxChaseAttempts !== undefined ? { maxChaseAttempts: Math.min(10, Math.max(1, Math.round(dto.maxChaseAttempts))) } : {}),
       ...(dto.chaseMessage !== undefined ? { chaseMessage: dto.chaseMessage ? String(dto.chaseMessage).trim() : null } : {}),
+      ...(dto.slaByChannel !== undefined ? { slaByChannel: dto.slaByChannel } : {}),
+      ...(dto.slaVipMinutes !== undefined ? { slaVipMinutes: dto.slaVipMinutes === null ? null : Math.round(dto.slaVipMinutes) } : {}),
+      ...(dto.slaEscalateAfterMinutes !== undefined ? { slaEscalateAfterMinutes: dto.slaEscalateAfterMinutes } : {}),
+      ...(dto.slaLeadAlertEnabled !== undefined ? { slaLeadAlertEnabled: Boolean(dto.slaLeadAlertEnabled) } : {}),
+      ...(dto.slaAutoReassignEnabled !== undefined ? { slaAutoReassignEnabled: Boolean(dto.slaAutoReassignEnabled) } : {}),
     };
     const existing = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     const saved = existing
@@ -1251,20 +1731,33 @@ export class InboxService {
   }
 
   private async processInboundIntelligence(organizationId: string, conversation: any, message: any, event: any) {
+    // IN10a: a blocked conversation's message is already stored
+    // (and the thread sits in the spam queue) — but NOTHING
+    // automated runs for it: no transcription spend, no classi-
+    // fication churn, no smart assignment, no order bot, no
+    // autopilot. A human can still read and reply manually.
+    if ((conversation as any).blockedAt) return;
     let text: string = event.content ?? "";
-    // CX12c: Inbound voice-note auto-transcription for order-bot & autopilot
-    if (!text && (message.type === "audio" || event.type === "audio" || message.mediaContentType?.startsWith?.("audio/"))) {
-      if (message.transcription) {
-        text = message.transcription;
-      } else {
-        try {
-          const tr = await this.transcribeMessage(organizationId, conversation.id, message.id);
-          if (tr?.transcription) {
-            text = tr.transcription;
-            this.rtMessage(organizationId, conversation.id, { ...message, transcription: text, transcriptionProvider: tr.provider });
-          }
-        } catch { /* honest fallback if audio transcription fails or provider not configured */ }
-      }
+    // CX12c: voice-note ordering — an inbound voice note carries no
+    // caption text, so without this hook classification, COD/CSAT/
+    // review capture, the order bot and the autopilot would ALL be
+    // skipped for it. The auto path transcribes it ONCE and the
+    // transcript becomes this dispatch's text: every consumer below
+    // sees it exactly like typed text, in the same single pass. It
+    // never throws — a failure only stamps transcriptionStatus and
+    // the dispatch continues with empty text, exactly as before.
+    if (!text) {
+      const voiceText = await this.autoTranscribeInbound(organizationId, conversation, message).catch(() => null);
+      if (voiceText) text = voiceText;
+    }
+    // MS2: a WhatsApp STOP/START keyword records the sender's
+    // messaging preference (opt-out/opt-in). Fully best-effort —
+    // it never changes the message flow, never sends a reply, and
+    // a failure here must not affect ingest. WhatsApp only: its
+    // externalContactId is the phone every send path addresses
+    // (Messenger PSIDs match no send path — see MessagingService).
+    if (text && conversation.channel === "whatsapp" && this.messagingPrefs) {
+      await this.messagingPrefs.handleInboundKeyword(organizationId, "whatsapp", conversation.externalContactId ?? "", text).catch(() => undefined);
     }
     let classification: Classification = { intent: "other", confidence: 0, sentiment: null };
     if (text) {
@@ -1295,6 +1788,10 @@ export class InboxService {
     // COD confirmation replies resolve BEFORE any auto-reply.
     const codHandled = text ? await this.handleCodReply(organizationId, conversation, text).catch(() => false) : false;
     const csatHandled = !codHandled && text ? await this.handleCsatReply(organizationId, conversation, text).catch(() => false) : false;
+    // CX12b: a pending review ask captures a standalone ১-৫/1-5
+    // reply (and one follow-up comment) — same consume semantics
+    // as CSAT: a captured reply does not flow to the bot/autopilot.
+    const reviewHandled = !codHandled && !csatHandled && text && this.reviews ? await this.reviews.tryCaptureReply(organizationId, conversation, text).catch(() => false) : false;
     const spam = text ? await this.detectSpam(organizationId, conversation, text).catch(() => false) : false;
 
     try {
@@ -1320,11 +1817,73 @@ export class InboxService {
       const botSettings = await this.getSettings(organizationId).catch(() => null);
       botScheduleBlocked = botSettings ? await this.aiScheduleBlockedFor(organizationId, botSettings, conversation.channel).catch(() => false) : false;
     }
-    const botHandled = !codHandled && !csatHandled && !spam && text && !botScheduleBlocked
+    const botHandled = !codHandled && !csatHandled && !reviewHandled && !spam && text && !botScheduleBlocked
       ? await this.handleOrderBot(organizationId, conversation, text, classification).catch(() => false)
       : false;
-    if (!codHandled && !csatHandled && !spam && !botHandled && text) {
+    if (!codHandled && !csatHandled && !reviewHandled && !spam && !botHandled && text) {
       await this.maybeAutoReply(organizationId, conversation, classification, text).catch(() => undefined);
+    }
+  }
+
+  /**
+   * CX12c auto path: transcribe an inbound voice note during the
+   * intelligence dispatch and return the transcript as the dispatch
+   * text. NEVER throws — every failure is swallowed after stamping
+   * transcriptionStatus, so ingest and the rest of the intelligence
+   * pass complete exactly as they do today for audio.
+   *
+   * Status semantics (ChannelMessage.transcriptionStatus):
+   *   null          — never attempted / not an audio message;
+   *   "pending"     — an attempt is in flight (stamped BEFORE the
+   *                   provider call, so a crash mid-call is not
+   *                   mistaken for "never attempted");
+   *   "done"        — transcription stored on the row;
+   *   "failed"      — the provider or media fetch failed;
+   *   "unavailable" — no speech provider is configured for this
+   *                   deployment (MediaIntelligenceError).
+   * "failed"/"unavailable" are terminal for the auto path: a
+   * re-dispatch never retries them (no retry storms) — the agent's
+   * manual transcribe action remains the retry path. A stored
+   * transcription is reused with NO provider call.
+   */
+  private async autoTranscribeInbound(organizationId: string, conversation: any, message: any): Promise<string | null> {
+    try {
+      if (!message || message.type !== "audio" || message.direction !== "in") return null;
+      // Tenant isolation: only transcribe when the message belongs
+      // to a conversation of THIS organization. The dispatch already
+      // resolved both rows under this org; the check is repeated
+      // here so no caller can transcribe another tenant's voice note.
+      if (!conversation || conversation.organizationId !== organizationId || message.conversationId !== conversation.id) return null;
+      if (message.transcription) {
+        // Stored transcript (on-demand path or an earlier dispatch):
+        // reuse it, converge the status to "done", no provider call.
+        if (message.transcriptionStatus !== "done") {
+          await (this.prisma as any).channelMessage.update({
+            where: { id: message.id }, data: { transcriptionStatus: "done" },
+          }).catch(() => undefined);
+        }
+        return message.transcription as string;
+      }
+      if (message.transcriptionStatus === "failed" || message.transcriptionStatus === "unavailable") return null;
+      await (this.prisma as any).channelMessage.update({
+        where: { id: message.id }, data: { transcriptionStatus: "pending" },
+      }).catch(() => undefined);
+      try {
+        // Integration (owner CX12c variant + ours): the auto path
+        // goes through the SAME public transcribeMessage entry the
+        // on-demand button uses — one transcription core
+        // (ensureTranscription), two callers, identical results.
+        const r = await this.transcribeMessage(organizationId, conversation.id, message.id);
+        return r?.transcription ?? null;
+      } catch (e) {
+        const status = e instanceof MediaIntelligenceError ? "unavailable" : "failed";
+        await (this.prisma as any).channelMessage.update({
+          where: { id: message.id }, data: { transcriptionStatus: status },
+        }).catch(() => undefined);
+        return null;
+      }
+    } catch {
+      return null;
     }
   }
 
@@ -1546,10 +2105,13 @@ export class InboxService {
       }
       // Create the customer with the collected details, then the order
       // through the standard chat-order pipeline.
+      // CX12a: a practice conversation never creates a real Customer
+      // row from the details the bot collected — its order is
+      // created customer-less (see createChatOrder's practice path).
       let customer = conversation.customerId
         ? await prisma.customer.findFirst({ where: { id: conversation.customerId, organizationId } })
         : null;
-      if (!customer) {
+      if (!customer && !(conversation as any).isPractice) {
         customer = await prisma.customer.create({
           data: { organizationId, firstName: data.name, lastName: null, phone: data.phone, email: null, source: "chat_bot" },
         });
@@ -1608,6 +2170,24 @@ export class InboxService {
     await (this.prisma as any).conversationNote.create({
       data: { organizationId, conversationId: conversation.id, authorUserId: "system", content: `CSAT রেটিং: ${rating}/5` },
     }).catch(() => undefined);
+    // IN10d: a low rating (<=3) reaches the team lead immediately
+    // — the same lead resolution as the IN4 SLA chain (escalation
+    // team -> conversation team -> OWNER/ADMIN fallback). This
+    // runs once per conversation because the rating itself can
+    // only be captured once (the csatRating guard above). A
+    // notification failure never breaks the CSAT capture.
+    if (rating <= 3) {
+      try {
+        const settings = await this.getSettings(organizationId).catch(() => null);
+        const leads = await this.slaLeadUserIds(organizationId, conversation, settings).catch(() => [] as string[]);
+        for (const uid of leads) {
+          await this.notify(organizationId, uid, "urgent",
+            `কম CSAT রেটিং: ${rating}/5`,
+            `${conversation.contactName ?? conversation.externalContactId ?? "গ্রাহক"} কম রেটিং দিয়েছেন — কথোপকথনটি দেখে ফলো-আপ করুন।`,
+            conversation.id);
+        }
+      } catch { /* a missed alert never loses the rating */ }
+    }
     return true;
   }
 
@@ -1862,8 +2442,8 @@ export class InboxService {
     });
     try {
       const messageId = await this.deliverText(conversation, composed.content);
-      await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "sent", externalId: messageId } });
-      this.rtMessage(organizationId, conversation.id, { ...message, status: "sent", externalId: messageId });
+      await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: InboxService.statusForDelivery(messageId), externalId: messageId } });
+      this.rtMessage(organizationId, conversation.id, { ...message, status: InboxService.statusForDelivery(messageId), externalId: messageId });
       await (this.prisma as any).channelConversation.update({
         where: { id: conversation.id },
         data: {
@@ -1926,6 +2506,11 @@ export class InboxService {
     };
     for (const row of rows as any[]) {
       try {
+        // CX12a: the sweep never touches practice conversations —
+        // practice replies fire only through the explicit simulate
+        // path (immediate dispatch), never from a background job.
+        // The batch is left exactly as it was (not even claimed).
+        if ((row as any).isPractice) { skipped++; continue; }
         const claim = await p.channelConversation.updateMany({
           where: { id: row.id, organizationId, autoReplyDueAt: row.autoReplyDueAt },
           data: { autoReplyDueAt: null },
@@ -1935,6 +2520,10 @@ export class InboxService {
         if (!fresh) { skipped++; continue; }
         const batchSince = fresh.autoReplyBatchSince ?? fresh.createdAt;
         if (fresh.autoReplyPaused) { await clearBatch(fresh.id); skipped++; continue; }
+        // IN10a: a conversation blocked after its reply was
+        // deferred never gets the AI reply — the batch clears
+        // exactly like the human-reply case.
+        if ((fresh as any).blockedAt) { await clearBatch(fresh.id); skipped++; continue; }
         const humanReply = await p.channelMessage.findFirst({
           where: { conversationId: fresh.id, direction: "out", sentByUserId: { not: null }, createdAt: { gte: batchSince } },
         }).catch(() => null);
@@ -2132,7 +2721,233 @@ export class InboxService {
     return { swept, chased, expired };
   }
 
+  // ----- IN4: active SLA chain (inbox_sla_sweep job) -----
+
+  /**
+   * IN4c: who leads should hear about a breach for this
+   * conversation — the escalation team's lead first, then the
+   * conversation's own team lead, then (the notifyUrgent fallback)
+   * the org's OWNER/ADMIN members. Empty only when the org has no
+   * lead and no owner/admin membership at all.
+   */
+  private async slaLeadUserIds(organizationId: string, conversation: any, settings: any): Promise<string[]> {
+    const p = this.prisma as any;
+    const teamIds = [settings?.escalationTeamId, conversation?.teamId].filter(Boolean) as string[];
+    for (const teamId of [...new Set(teamIds)]) {
+      const team = await p.inboxTeam?.findFirst?.({ where: { id: teamId, organizationId } }).catch(() => null);
+      if (team?.leadUserId) return [team.leadUserId];
+    }
+    const admins = await p.membership?.findMany({
+      where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, take: 10,
+    }).catch(() => []) ?? [];
+    return (admins as any[]).map((m) => m.userId).filter(Boolean);
+  }
+
+  /**
+   * IN4c: the auto-reassign candidate — the LEAST-BUSY eligible
+   * agent, with exactly the eligibility discipline of the smart
+   * assignment engine (team pool by channel/escalation, support
+   * roles only, away skipped, suspended skipped, working-hours
+   * respected, capacity respected) minus its policy gate and its
+   * round-robin mode: the SLA chain is itself the opt-in, and a
+   * breach needs the freest person, not the next in rotation.
+   * The current assignee is excluded — "reassigning" a breached
+   * conversation back to the same person would be a fake action.
+   * Returns null when nobody is eligible (the sweep then leaves
+   * the marker unset and retries on a later pass).
+   */
+  private async pickSlaReassignCandidate(organizationId: string, conversation: any, settings: any, now: Date) {
+    const p = this.prisma as any;
+    const memberships = await p.membership.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" }, take: 100 });
+    const supportRoles = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
+    const roleOf = new Map((memberships as any[]).map((m) => [m.userId, m.role]));
+    const pool = await this.assignmentPool(organizationId, conversation, settings);
+    let candidates: { userId: string; teamId: string | null; capacity: number }[] =
+      pool ?? (memberships as any[]).filter((m) => supportRoles.includes(m.role)).map((m) => ({ userId: m.userId, teamId: null, capacity: 20 }));
+    candidates = candidates.filter((c) => supportRoles.includes(roleOf.get(c.userId) ?? ""));
+    candidates = candidates.filter((c) => c.userId !== conversation.assignedUserId);
+    if (!candidates.length) return null;
+    const states = await p.agentState?.findMany({ where: { organizationId, userId: { in: candidates.map((c) => c.userId) } } }).catch(() => []) ?? [];
+    const away = new Set((states as any[]).filter((r) => r.status === "away").map((r) => r.userId));
+    candidates = candidates.filter((c) => !away.has(c.userId));
+    if (!candidates.length) return null;
+    const statusOf = new Map((memberships as any[]).map((m) => [m.userId, m.status]));
+    candidates = candidates.filter((c) => statusOf.get(c.userId) !== "SUSPENDED");
+    const schedules = await p.agentSchedule?.findMany({
+      where: { organizationId, userId: { in: candidates.map((c) => c.userId) } },
+    }).catch(() => []) ?? [];
+    if ((schedules as any[]).length) {
+      const schedOf = new Map((schedules as any[]).map((s) => [s.userId, s]));
+      candidates = candidates.filter((c) => {
+        const s = schedOf.get(c.userId);
+        return !s || isWithinSchedule(s as any, now);
+      });
+      if (!candidates.length) return null;
+    }
+    const open = await p.channelConversation.findMany({
+      where: { organizationId, status: "open", assignedUserId: { in: candidates.map((c) => c.userId) } }, take: 2000,
+    });
+    const counts = new Map<string, number>(candidates.map((c) => [c.userId, 0]));
+    for (const c of open as any[]) counts.set(c.assignedUserId, (counts.get(c.assignedUserId) ?? 0) + 1);
+    candidates = candidates.filter((c) => (counts.get(c.userId) ?? 0) < c.capacity);
+    if (!candidates.length) return null;
+    return [...candidates].sort((a, b) => (counts.get(a.userId) ?? 0) - (counts.get(b.userId) ?? 0))[0];
+  }
+
+  /**
+   * IN4: the active SLA chain (scheduler job "inbox_sla_sweep").
+   * For every conversation still awaiting its FIRST response
+   * (open/pending, practice excluded):
+   *  1. at 75% of its effective (layered) limit — warn the
+   *     assignee via AgentNotification, once (slaWarnedAt);
+   *  2. at breach + slaEscalateAfterMinutes — alert the team
+   *     lead (slaLeadAlertEnabled, default on), once
+   *     (slaLeadAlertedAt);
+   *  3. at the same point — optionally auto-reassign to the
+   *     least-busy eligible agent (slaAutoReassignEnabled,
+   *     default OFF), once (slaAutoReassignedAt); with no
+   *     eligible agent the marker stays unset so a later pass
+   *     can still act.
+   * Every fired step is audited. An unassigned conversation gets
+   * no warning (there is nobody responsible to warn — the marker
+   * stays unset so the warning can still reach whoever is
+   * assigned later). `now` is injectable for tests (fake clock).
+   */
+  async runSlaSweeps(organizationId: string, now: Date = new Date()): Promise<{ scanned: number; warned: number; leadAlerted: number; reassigned: number }> {
+    const p = this.prisma as any;
+    const settings = await this.getSettings(organizationId);
+    const vipIds = settings.slaVipMinutes != null
+      ? await this.vipConversationIds(organizationId, settings.escalationThresholdMinor).catch(() => null)
+      : null;
+    const vipSet = new Set(vipIds ?? []);
+    let warned = 0;
+    let leadAlerted = 0;
+    let reassigned = 0;
+    const rows = await p.channelConversation.findMany({
+      where: {
+        organizationId, firstResponseAt: null, isPractice: false,
+        status: { in: ["open", "pending"] },
+      },
+      orderBy: { createdAt: "asc" }, take: 200,
+    }).catch(() => []);
+    for (const conv of rows as any[]) {
+      try {
+        const state = slaStateFor(settings, conv, vipSet.has(conv.id), now);
+        if (!state) continue;
+        const label = conv.contactName ?? conv.externalContactId ?? "গ্রাহক";
+        // 1 — pre-breach warning (75%+), assignee only, once.
+        if (!conv.slaWarnedAt && conv.assignedUserId) {
+          await this.notify(organizationId, conv.assignedUserId, "sla_warning",
+            `⏰ SLA সতর্কতা: ${label}`,
+            `প্রথম উত্তরের সময় প্রায় শেষ — আর প্রায় ${Math.max(0, state.minutesLeft)} মিনিট বাকি (${state.effectiveMinutes} মিনিটের সীমা, channel: ${conv.channel})।`,
+            conv.id).catch(() => undefined);
+          await p.channelConversation.update({ where: { id: conv.id }, data: { slaWarnedAt: now } });
+          await this.audit.log({
+            organizationId, userId: "system", action: "inbox.sla.warning",
+            entityType: "ChannelConversation", entityId: conv.id,
+            metadata: { effectiveMinutes: state.effectiveMinutes, channel: conv.channel, assignee: conv.assignedUserId },
+          }).catch(() => undefined);
+          warned++;
+        }
+        if (state.state !== "breached") continue;
+        const escalateAt = state.dueAt.getTime() + (settings.slaEscalateAfterMinutes ?? 30) * 60000;
+        if (now.getTime() < escalateAt) continue;
+        // 2 — team-lead alert, once.
+        if (settings.slaLeadAlertEnabled && !conv.slaLeadAlertedAt) {
+          const leads = await this.slaLeadUserIds(organizationId, conv, settings);
+          if (leads.length) {
+            for (const leadId of leads) {
+              await this.notify(organizationId, leadId, "urgent",
+                `🚨 SLA breach: ${label}`,
+                `প্রথম উত্তর ছাড়াই ${state.effectiveMinutes} মিনিটের SLA পেরিয়ে গেছে (channel: ${conv.channel})। কথোপকথনটি দেখুন।`,
+                conv.id).catch(() => undefined);
+            }
+            await p.channelConversation.update({ where: { id: conv.id }, data: { slaLeadAlertedAt: now } });
+            await this.audit.log({
+              organizationId, userId: "system", action: "inbox.sla.lead_alerted",
+              entityType: "ChannelConversation", entityId: conv.id,
+              metadata: { effectiveMinutes: state.effectiveMinutes, channel: conv.channel, leadUserIds: leads },
+            }).catch(() => undefined);
+            leadAlerted++;
+          }
+        }
+        // 3 — auto-reassign (opt-in), once; no candidate = retry later.
+        if (settings.slaAutoReassignEnabled && !conv.slaAutoReassignedAt) {
+          const candidate = await this.pickSlaReassignCandidate(organizationId, conv, settings, now);
+          if (candidate && candidate.userId !== conv.assignedUserId) {
+            const previousAssignee = conv.assignedUserId ?? null;
+            await p.channelConversation.update({
+              where: { id: conv.id },
+              data: {
+                assignedUserId: candidate.userId, assignedAt: now, assignedUntil: null, assignmentKind: "normal",
+                ...(candidate.teamId ? { teamId: candidate.teamId } : {}),
+                slaAutoReassignedAt: now,
+              },
+            });
+            await this.notify(organizationId, candidate.userId, "assigned",
+              `SLA breach-এর কারণে কথোপকথন আপনাকে দেওয়া হয়েছে: ${label}`,
+              (conv.lastMessagePreview ?? "").slice(0, 120) || null, conv.id).catch(() => undefined);
+            await this.audit.log({
+              organizationId, userId: "system", action: "inbox.sla.auto_reassigned",
+              entityType: "ChannelConversation", entityId: conv.id,
+              metadata: { from: previousAssignee, to: candidate.userId, effectiveMinutes: state.effectiveMinutes, channel: conv.channel },
+            }).catch(() => undefined);
+            this.rtConversation(organizationId, conv.id, { assignedUserId: candidate.userId });
+            reassigned++;
+          }
+        }
+      } catch { /* one bad row never stops the sweep */ }
+    }
+    return { scanned: (rows as any[]).length, warned, leadAlerted, reassigned };
+  }
+
   // ----- CX5: snooze + one-row action bar actions -----
+
+  /**
+   * IN10a: block / unblock a customer at OUR system level. This
+   * is never a platform block (Meta is never asked anything):
+   * while blocked, inbound messages are still stored and the
+   * thread sits in the spam queue (spamFlag is set so the queue
+   * the team already uses shows it), but processInboundIntelligence
+   * returns immediately — no transcription, no order bot, no
+   * autopilot, no AI spend — and a pending deferred AI reply is
+   * dropped by the CX3 sweep. Manual agent replies still work.
+   * Unblocking clears the block fields and, when the spam flag
+   * was set BY the block, clears that too (a conversation an
+   * agent independently marked as spam stays spam).
+   */
+  async setConversationBlocked(organizationId: string, actorId: string, conversationId: string, dto: { blocked: boolean; reason?: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const p = this.prisma as any;
+    if (dto.blocked) {
+      const reason = dto.reason?.trim().slice(0, 300) || null;
+      const updated = await p.channelConversation.update({
+        where: { id: conversationId },
+        data: {
+          blockedAt: new Date(), blockedByUserId: actorId, blockReason: reason,
+          spamFlag: true, spamReason: conv.spamReason ?? `ব্লক করা হয়েছে${reason ? `: ${reason}` : ""}`,
+        },
+      });
+      await this.audit.log({
+        organizationId, userId: actorId, action: "inbox.conversation.blocked",
+        entityType: "ChannelConversation", entityId: conversationId, metadata: { reason },
+      }).catch(() => undefined);
+      this.rtConversation(organizationId, conversationId, { blockedAt: updated.blockedAt, spamFlag: true });
+      return updated;
+    }
+    const data: any = { blockedAt: null, blockedByUserId: null, blockReason: null };
+    if (String(conv.spamReason ?? "").startsWith("ব্লক করা হয়েছে")) {
+      data.spamFlag = false;
+      data.spamReason = null;
+    }
+    const updated = await p.channelConversation.update({ where: { id: conversationId }, data });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.unblocked",
+      entityType: "ChannelConversation", entityId: conversationId, metadata: {},
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, { blockedAt: null });
+    return updated;
+  }
 
   /**
    * CX5: snooze a conversation — it leaves every list view and
@@ -2190,10 +3005,81 @@ export class InboxService {
   }
 
   /**
+   * IN7a: at a handover moment (take-over / reassign) the AI
+   * writes a one-paragraph summary of the thread as an INTERNAL
+   * note (ConversationNote via createNoteInternal, system label
+   * so it is never mistaken for a human note). The summary may
+   * only restate the thread: every number in it must already
+   * appear in the thread or the owner's published instructions
+   * (the ghost/autopilot number-guard). A guard rejection — or
+   * any other failure (no real LLM, empty thread, provider
+   * error, kill switch / daily cap) — discards the summary and
+   * leaves an honest note saying no summary was created; the
+   * handover itself NEVER fails because of this. Fully
+   * failure-isolated; the outcome is returned separately so the
+   * caller/UI can report it.
+   */
+  private async writeHandoverSummaryNote(
+    organizationId: string, actorId: string, conversationId: string, trigger: "take_over" | "reassign",
+  ): Promise<{ attempted: boolean; created: boolean; reason?: string }> {
+    const failNote = async (reason: string) => {
+      await this.createNoteInternal(organizationId, actorId, conversationId,
+        `${HANDOVER_SUMMARY_LABEL}\nসারসংক্ষেপ তৈরি হয়নি — ${reason}`).catch(() => undefined);
+      return { attempted: true, created: false, reason };
+    };
+    try {
+      await this.checkAiAllowed(organizationId, "handover_summary");
+    } catch (e) {
+      // Kill switch / cap: policy, reported honestly — the
+      // handover proceeds without a summary and without a note
+      // (a policy block is not thread content).
+      return { attempted: false, created: false, reason: e instanceof Error ? e.message : "AI limit" };
+    }
+    try {
+      const messages = await (this.prisma as any).channelMessage.findMany({
+        where: { conversationId }, orderBy: { createdAt: "desc" }, take: 30,
+      });
+      if (!messages?.length) return failNote("এই কথোপকথনে এখনো কোনো বার্তা নেই।");
+      const history = [...messages].reverse();
+      let provider: any;
+      try { provider = this.llm.getProvider(); } catch { provider = null; }
+      if (!provider?.isRealLlm) return failNote("আসল AI provider যুক্ত নেই।");
+      const profile = (await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
+      const threadText = history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n");
+      const result = await provider.complete([
+        { role: "system", content: "You write a ONE-paragraph handover summary (Bengali, 2-4 sentences) for the support agent taking over this conversation. Use ONLY facts from the messages below: what the customer wants, key details already stated, and what is still pending. Never invent numbers, prices, dates or promises — restate only numbers that appear in the messages. Return ONLY the paragraph." },
+        { role: "user", content: threadText.slice(0, 6000) },
+      ], { maxTokens: 300 });
+      await (this.prisma as any).aIUsageRecord.create({
+        data: { organizationId, userId: actorId, feature: "handover_summary", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+      }).catch(() => undefined);
+      const summary = String(result.text ?? "").trim().slice(0, 900);
+      if (!summary) return failNote("AI খালি উত্তর দিয়েছে।");
+      const allowed = new Set(InboxService.extractNumbers(`${threadText}\n${profile?.aiInstructions ?? ""}`));
+      const invented = InboxService.extractNumbers(summary).filter((n) => !allowed.has(n));
+      if (invented.length) {
+        await this.audit.log({
+          organizationId, userId: actorId, action: "inbox.handover_summary.guard_rejected", entityType: "ChannelConversation",
+          entityId: conversationId, metadata: { trigger, inventedNumbers: invented },
+        }).catch(() => undefined);
+        return failNote("সংখ্যা যাচাই হয়নি (AI এমন সংখ্যা ব্যবহার করেছে যা কথোপকথনে নেই)।");
+      }
+      await this.createNoteInternal(organizationId, actorId, conversationId,
+        `${HANDOVER_SUMMARY_LABEL}\n${summary}`);
+      return { attempted: true, created: true };
+    } catch {
+      return failNote("সারসংক্ষেপ তৈরির সময় ত্রুটি হয়েছে।");
+    }
+  }
+
+  /**
    * CX5: manual take-over — ONE update: the actor takes the
    * conversation (any previous timer is dropped), the autopilot
    * pauses, and the handover fields record it as a manual
    * takeover so the handover queue explains itself.
+   * IN7a: a handover summary note follows (see
+   * writeHandoverSummaryNote) — its outcome rides along as
+   * `handoverSummary`, separate from the takeover result itself.
    */
   async takeOverConversation(organizationId: string, actorId: string, conversationId: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
@@ -2213,7 +3099,8 @@ export class InboxService {
       assignedUserId: actorId, assignedAt: handoverAt, assignedUntil: null, assignmentKind: "normal",
       autoReplyPaused: true, handoverReason: "manual_takeover", handoverAt,
     });
-    return updated;
+    const handoverSummary = await this.writeHandoverSummaryNote(organizationId, actorId, conversationId, "take_over");
+    return { ...updated, handoverSummary };
   }
 
   /**
@@ -2395,6 +3282,12 @@ export class InboxService {
           // Center — conduct only; the facts rule stands.
           ...((pack as any).ownerInstructions ? ["", `Owner's standing instructions for tone and conduct (never override the verified facts): ${String((pack as any).ownerInstructions).slice(0, 1000)}`] : []),
           ...((pack as any).replyLanguage === "bn" ? ["Always reply in Bengali."] : (pack as any).replyLanguage === "en" ? ["Always reply in English."] : []),
+          // IN7d: no owner override -> match the customer's own
+          // language, detected deterministically from THIS
+          // message's script ratio. An override above always
+          // wins: this line is only reached when replyLanguage
+          // is neither "bn" nor "en".
+          ...(!(pack as any).replyLanguage ? [detectedLanguageInstruction(detectReplyLanguage(text))].filter(Boolean) as string[] : []),
           "",
           "VERIFIED FACTS:",
           pack.factsText,
@@ -2724,11 +3617,21 @@ export class InboxService {
   }
 
   /** Export one thread (JSON structure or CSV of its messages). */
-  async exportConversation(organizationId: string, conversationId: string, format: "json" | "csv" = "json") {
+  async exportConversation(organizationId: string, conversationId: string, format: "json" | "csv" = "json", actorId?: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     const messages = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "asc" }, take: 5000,
     });
+    // IN10b: an export takes customer data OUT of the inbox —
+    // when the caller is an identified agent, the export itself
+    // is audited (who, which conversation, which format).
+    if (actorId) {
+      await this.audit.log({
+        organizationId, userId: actorId, action: "inbox.conversation.exported",
+        entityType: "ChannelConversation", entityId: conversationId,
+        metadata: { format, messageCount: messages.length },
+      }).catch(() => undefined);
+    }
     if (format === "csv") {
       const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
       const lines = ["created_at,direction,type,status,content,external_id"];
@@ -2757,7 +3660,7 @@ export class InboxService {
   /** Org-wide period export (JSON), capped and self-describing
    * about truncation so a partial export is never mistaken for
    * a complete one. */
-  async exportInbox(organizationId: string, opts: { from?: string; to?: string } = {}) {
+  async exportInbox(organizationId: string, opts: { from?: string; to?: string } = {}, actorId?: string) {
     const from = opts.from ? new Date(opts.from) : new Date(Date.now() - 30 * 86400000);
     const to = opts.to ? new Date(opts.to) : new Date();
     const convs = await (this.prisma as any).channelConversation.findMany({
@@ -2775,6 +3678,15 @@ export class InboxService {
         status: conv.status, pipelineStage: conv.pipelineStage ?? "new", outcome: conv.outcome ?? null, createdAt: conv.createdAt,
         messages: messages.map((m: any) => ({ direction: m.direction, type: m.type, content: m.content, status: m.status, createdAt: m.createdAt })),
       });
+    }
+    // IN10b: the org-wide export is audited like the single-
+    // conversation one (identified callers only).
+    if (actorId) {
+      await this.audit.log({
+        organizationId, userId: actorId, action: "inbox.exported",
+        entityType: "Organization", entityId: organizationId,
+        metadata: { from: from.toISOString(), to: to.toISOString(), conversationCount: out.length, truncated },
+      }).catch(() => undefined);
     }
     return {
       exportedAt: new Date().toISOString(), from, to, truncated,
@@ -2814,6 +3726,86 @@ export class InboxService {
   }
 
   // ----- SLA / team report -----
+  /**
+   * IN10c: Inbox Analytics v2 — compute-on-read over the real
+   * rows (see in10-analytics.ts for the fixed definitions every
+   * figure follows). Scan discipline mirrors the team report:
+   * conversations take 2000 newest, messages of conversations
+   * active in range take 10000, chat-linked orders take 5000.
+   * Practice conversations are excluded. Nothing here is an
+   * estimate; a figure with no underlying rows is null/0, never
+   * invented.
+   */
+  async getInboxAnalytics(organizationId: string, days = 7) {
+    const p = this.prisma as any;
+    const rangeDays = Math.min(90, Math.max(1, Math.floor(days) || 7));
+    const tz = await this.orgTimezone(organizationId).catch(() => "Asia/Dhaka");
+    const now = new Date();
+    const since = new Date(now.getTime() - rangeDays * 86400000);
+    const convs = await p.channelConversation.findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" }, take: 2000,
+    }).catch(() => []);
+    const live = (convs as any[]).filter((c) => !c.isPractice);
+    const activeIds = live
+      .filter((c) => new Date(c.lastMessageAt ?? c.createdAt).getTime() >= since.getTime())
+      .map((c) => c.id)
+      .slice(0, 1000);
+    const messages = activeIds.length
+      ? await p.channelMessage.findMany({ where: { conversationId: { in: activeIds } }, take: 10000 }).catch(() => [])
+      : [];
+    const orders = await p.order.findMany({
+      where: { organizationId, conversationId: { not: null } }, orderBy: { createdAt: "desc" }, take: 5000,
+    }).catch(() => []);
+    // The builder's contract uses "in"/"out"; the DB stores
+    // "inbound"/"outbound" — normalize here or every count
+    // would silently be zero.
+    const normalizedMessages = (messages as any[]).map((m) => ({
+      ...m,
+      direction: m.direction === "inbound" ? "in" : "out",
+    }));
+    return buildInboxAnalytics({
+      conversations: live, messages: normalizedMessages, orders, days: rangeDays, now, timezone: tz,
+    });
+  }
+
+  /**
+   * IN10b: this conversation's audit trail — every audit row
+   * recorded against the conversation itself, against its
+   * customer, or against one of its messages (pin/reaction/
+   * lifecycle writes use the message as the entity), newest
+   * first, capped at 50. Org-scoped throughout; the rows are the
+   * platform's own AuditLog substrate, nothing is synthesized.
+   */
+  async listConversationAudit(organizationId: string, conversationId: string) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const p = this.prisma as any;
+    if (!p.auditLog?.findMany) return [];
+    const byEntity = async (entityId: string) => p.auditLog.findMany({
+      where: { organizationId, entityId }, orderBy: { createdAt: "desc" }, take: 50,
+    }).catch(() => []) as Promise<any[]>;
+    const groups: any[][] = [await byEntity(conversationId)];
+    if (conv.customerId) groups.push(await byEntity(conv.customerId));
+    const messages = await p.channelMessage.findMany({
+      where: { conversationId }, select: { id: true }, take: 200,
+    }).catch(() => []);
+    const msgIds = (messages as any[]).map((m) => m.id).filter(Boolean);
+    if (msgIds.length) {
+      groups.push(await p.auditLog.findMany({
+        where: { organizationId, entityId: { in: msgIds } }, orderBy: { createdAt: "desc" }, take: 50,
+      }).catch(() => []));
+    }
+    const seen = new Set<string>();
+    return groups.flat()
+      .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 50)
+      .map((r) => ({
+        id: r.id, action: r.action, userId: r.userId ?? null,
+        entityType: r.entityType, entityId: r.entityId ?? null,
+        metadata: r.metadata ?? null, createdAt: r.createdAt,
+      }));
+  }
+
   async getTeamReport(organizationId: string, days = 7, actorId?: string, teamId?: string) {
     const settings = await this.getSettings(organizationId);
     const since = new Date(Date.now() - days * 24 * 3600 * 1000);
@@ -2853,6 +3845,12 @@ export class InboxService {
       where: { organizationId, status: "open" }, take: 1000,
     });
     if (scopeIds) openNow = openNow.filter(inScope);
+    // CX12a: practice conversations never count as team workload,
+    // CSAT or response-time evidence in the team report.
+    convs = convs.filter((c: any) => !c.isPractice);
+    closed = closed.filter((c: any) => !c.isPractice);
+    rated = rated.filter((c: any) => !c.isPractice);
+    openNow = openNow.filter((c: any) => !c.isPractice);
     const breachCutoff = Date.now() - settings.slaFirstResponseMinutes * 60000;
     const currentBreaches = openNow.filter((c: any) => !c.firstResponseAt && new Date(c.createdAt).getTime() < breachCutoff).length;
 
@@ -3181,23 +4179,41 @@ export class InboxService {
   }
 
   // ----- Voice-note transcription -----
-  async transcribeMessage(organizationId: string, conversationId: string, messageId: string) {
-    await this.getConversationOrThrow(organizationId, conversationId);
-    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
-    if (message.transcription) return { transcription: message.transcription, provider: message.transcriptionProvider, intent: message.intent ?? null };
-    const { bytes, contentType } = await this.getMessageMedia(organizationId, conversationId, messageId);
+  /**
+   * CX12c shared core for the agent-triggered endpoint and the
+   * inbound auto-pipeline: returns the stored transcript when one
+   * is present (NO provider call), otherwise fetches the media
+   * bytes and calls the real speech provider, stores the
+   * transcript + provider + status "done", and classifies the
+   * intent from the transcript (only when the row has none yet —
+   * the same rule the on-demand path always used). Throws whatever
+   * getMessageMedia / transcribeAudio throw: the endpoint surfaces
+   * the honest error to the agent who clicked, the auto path
+   * converts it into a status stamp and swallows it.
+   */
+  private async ensureTranscription(organizationId: string, conversation: any, message: any): Promise<{ text: string | null; status: string; provider: string | null; intent: string | null }> {
+    if (message.transcription) return { text: message.transcription, status: "done", provider: message.transcriptionProvider ?? null, intent: message.intent ?? null };
+    const { bytes, contentType } = await this.getMessageMedia(organizationId, conversation.id, message.id);
     // Throws an honest configuration error when no speech provider exists.
     const { text, modelProvider } = await transcribeAudio(bytes, contentType);
     const cls = classifyIntent(text);
     const updated = await (this.prisma as any).channelMessage.update({
-      where: { id: messageId },
+      where: { id: message.id },
       data: {
-        transcription: text, transcriptionProvider: modelProvider,
+        transcription: text, transcriptionProvider: modelProvider, transcriptionStatus: "done",
         ...(message.intent ? {} : { intent: cls.intent, intentConfidence: cls.confidence }),
       },
     });
-    return { transcription: updated.transcription, provider: updated.transcriptionProvider, intent: updated.intent ?? cls.intent };
+    return { text: updated.transcription, status: "done", provider: updated.transcriptionProvider ?? null, intent: updated.intent ?? cls.intent };
+  }
+
+  async transcribeMessage(organizationId: string, conversationId: string, messageId: string) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
+    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (message.transcription) return { transcription: message.transcription, provider: message.transcriptionProvider, intent: message.intent ?? null };
+    const { text, provider, intent } = await this.ensureTranscription(organizationId, conv, message);
+    return { transcription: text, provider, intent };
   }
 
   /**
@@ -3213,7 +4229,10 @@ export class InboxService {
     // serves it in-process). Gating webchat on a Meta integration
     // made the order bot / automated messages unusable on the
     // website channel — found live in U3 verification.
-    if (!["webchat", "telegram", "email"].includes(conv.channel)) {
+    // CX12a: practice conversations skip this gate too — no
+    // integration is ever resolved for them (deliverText's
+    // isPractice guard is the second, independent barrier).
+    if (!(conv as any).isPractice && !["webchat", "telegram", "email"].includes(conv.channel)) {
       const integration = await this.integrationForConversation(conv);
       const secrets = await this.secretsFor(integration.id);
       void new MetaMessagingClient(secrets); // config gate for Meta channels
@@ -3227,7 +4246,7 @@ export class InboxService {
     try {
       const messageId = await this.deliverText(conv, content);
       const sent = await (this.prisma as any).channelMessage.update({
-        where: { id: message.id }, data: { status: "sent", externalId: messageId },
+        where: { id: message.id }, data: { status: InboxService.statusForDelivery(messageId), externalId: messageId },
       });
       await (this.prisma as any).channelConversation.update({
         where: { id: conversationId },
@@ -3262,6 +4281,12 @@ export class InboxService {
     shippingMinor?: number; isCod?: boolean; address?: string;
   }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    // CX12a: a practice conversation's order is practice-flagged
+    // and fully contained — no real Customer row is created, no
+    // stock is taken, nothing is pushed to WooCommerce, and no
+    // order.created workflow event fires (a workflow could message
+    // real customers off the back of one).
+    const isPractice = Boolean((conv as any).isPractice);
     if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException("At least one item is required");
     const shippingMinor = BigInt(Math.max(0, Math.round(dto.shippingMinor ?? 0)));
     const products = await (this.prisma as any).product.findMany({
@@ -3288,7 +4313,7 @@ export class InboxService {
     // the contact so the order has a real owner.
     let customer: any = null;
     if (conv.customerId) customer = await (this.prisma as any).customer.findFirst({ where: { id: conv.customerId, organizationId } });
-    if (!customer) {
+    if (!customer && !isPractice) {
       customer = await (this.prisma as any).customer.create({
         data: {
           organizationId, firstName: conv.contactName ?? "Chat Customer", lastName: null,
@@ -3301,13 +4326,13 @@ export class InboxService {
     const suffix = randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase();
     const order = await (this.prisma as any).order.create({
       data: {
-        organizationId, customerId: customer.id, source: "chat",
+        organizationId, customerId: customer?.id ?? null, source: "chat",
         externalId: `chat-${randomUUID()}`, externalNumber: `CHAT-${suffix}`,
         status: "pending", paymentMethod: dto.isCod === false ? null : "cod", isCod: dto.isCod !== false,
         currency: lines[0].product.currency ?? "BDT",
         subtotalMinor: subtotal, shippingMinor, discountMinor: 0n, taxMinor: 0n,
         totalMinor: subtotal + shippingMinor, refundedMinor: 0n,
-        placedAt: new Date(), storeSyncStatus: "local_only", conversationId,
+        placedAt: new Date(), storeSyncStatus: "local_only", conversationId, isPractice,
         address: dto.address?.slice(0, 500) ?? null,
       },
     });
@@ -3329,7 +4354,8 @@ export class InboxService {
     // lines carry the internal variant id resolved above, so the
     // movement can be variant-level. Failure-isolated — inventory
     // never blocks a chat order.
-    if (this.inventory) {
+    // CX12a: practice orders take NO stock (guard above the S1 call).
+    if (this.inventory && !isPractice) {
       try {
         await this.inventory.applyOrderPlaced(organizationId, order.id, {
           items: lines.map((l) => ({ productId: l.product.id, variantId: l.variant?.id ?? null, quantity: l.quantity })),
@@ -3341,7 +4367,8 @@ export class InboxService {
     // Optional push to the connected WooCommerce store. The local order
     // is real either way; the sync outcome is recorded, never assumed.
     let syncStatus = "local_only"; let syncError: string | null = null;
-    const woo = await (this.prisma as any).integration.findFirst({
+    // CX12a: practice orders are NEVER pushed to the real store.
+    const woo = isPractice ? null : await (this.prisma as any).integration.findFirst({
       where: { organizationId, provider: "woocommerce", status: "CONNECTED" }, include: { store: true, credential: true },
     }).catch(() => null);
     if (woo?.store && woo?.credential) {
@@ -3386,7 +4413,8 @@ export class InboxService {
       organizationId, userId: actorId, action: "inbox.order.created", entityType: "Order", entityId: order.id,
       metadata: { conversationId, totalMinor: String(order.totalMinor), storeSyncStatus: syncStatus },
     });
-    try {
+    // CX12a: practice orders fire NO order.created event (see above).
+    if (!isPractice) try {
       this.events?.emit("order.created", {
         organizationId,
         context: {
@@ -3400,7 +4428,7 @@ export class InboxService {
     // makes it a "repeat" thread.
     try {
       const prior = await (this.prisma as any).order.count({
-        where: { organizationId, customerId: customer.id, id: { not: order.id } },
+        where: { organizationId, customerId: customer?.id ?? undefined, id: { not: order.id } },
       }).catch(() => 0);
       const convRow = await this.getConversationOrThrow(organizationId, conversationId).catch(() => null);
       if (convRow) await this.advanceStage(organizationId, convRow, prior > 0 ? "repeat" : "ordered");
@@ -3411,7 +4439,8 @@ export class InboxService {
     // side only — never shown to the customer, never blocks the
     // order). Recorded in the audit trail with the order.
     let risk: any = null;
-    if (this.risk) {
+    // CX12a: no risk scoring for practice orders (no real customer).
+    if (this.risk && !isPractice) {
       try {
         risk = await this.risk.forOrder(organizationId, fresh);
         if (risk && risk.band !== "low") {
@@ -3493,6 +4522,76 @@ export class InboxService {
     return { summaryText: updated.summaryText, summaryProvider: updated.summaryProvider, summaryAt: updated.summaryAt };
   }
 
+  /**
+   * IN7b + IN7c: the AI's suggested NEXT STEP for this thread,
+   * plus tag / pipeline-stage proposals — ALL of it
+   * suggestion-only. This method NEVER sends a message, NEVER
+   * updates the conversation, and persists nothing: the agent
+   * sees { action, label, reason, tags, pipelineStage } and
+   * either clicks through to the EXISTING action (shareTracking /
+   * COD / chat-order panel / composer / close) or accepts the
+   * tag/stage proposal, which the UI applies through the normal
+   * updateConversation path. Rejecting changes nothing because
+   * nothing was written.
+   *
+   * Grounding: the model only sees the thread, the linked
+   * order's REAL status/COD state (when a customer is linked) and
+   * the current tags/stage; its JSON is parsed strictly against
+   * the closed action allowlist (in7-ai.ts) — an off-list action
+   * or malformed output yields { proposal: null }, never an
+   * invented capability. No real LLM -> { proposal: null } with
+   * an honest reason (dev templates never fabricate a plan).
+   */
+  async suggestNextAction(organizationId: string, actorId: string, conversationId: string): Promise<{
+    proposal: NextActionProposal | null; provider: string | null; reason?: string;
+  }> {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.checkAiAllowed(organizationId, "next_action");
+    const provider = this.llm.getProvider();
+    if (!provider?.isRealLlm) return { proposal: null, provider: provider?.name ?? null, reason: "আসল AI provider যুক্ত নেই — প্রস্তাব তৈরি হয়নি।" };
+    const messages = await (this.prisma as any).channelMessage.findMany({
+      where: { conversationId }, orderBy: { createdAt: "desc" }, take: 20,
+    });
+    if (!messages?.length) return { proposal: null, provider: provider.name, reason: "এই কথোপকথনে এখনো কোনো বার্তা নেই।" };
+    const history = [...messages].reverse();
+    // Real order context only — the same linked-order read the
+    // fact pack uses; no order means the model is told so.
+    let orderLine = "কোনো অর্ডার যুক্ত নেই।";
+    if (conv.customerId) {
+      const order = await (this.prisma as any).order?.findFirst?.({
+        where: { organizationId, customerId: conv.customerId }, orderBy: { createdAt: "desc" },
+      })?.catch?.(() => null);
+      if (order) {
+        orderLine = `সর্বশেষ অর্ডার: নম্বর ${order.externalNumber ?? order.id}, অবস্থা ${order.status}, COD: ${order.isCod ? `হ্যাঁ (কনফার্মেশন: ${order.codConfirmationStatus ?? "হয়নি"})` : "না"}।`;
+      }
+    }
+    const result = await provider.complete([
+      {
+        role: "system",
+        content: [
+          "You suggest the SINGLE best next step for a support agent in this conversation, plus optional tag/stage proposals.",
+          "Reply with ONLY a JSON object, no prose: {\"action\": string, \"reason\": string, \"tags\": string[], \"pipelineStage\": string|null}",
+          "action MUST be one of: share_tracking (a shipped order's tracking should be sent), cod_confirm (a COD order awaits confirmation), create_order (the customer wants to order but no order exists yet), wait_customer (the last word is ours; wait for the customer), reply_manually (a human should answer the customer's last message), resolve (the matter is settled; close the conversation).",
+          "reason: one short Bengali sentence grounded ONLY in the thread and order facts given. Never invent order numbers, prices or promises.",
+          "tags: 0-3 short tags that fit this thread. pipelineStage: one of new|talking|ordered|delivered|repeat, or null if the current stage already fits.",
+          `বর্তমান অবস্থা: status=${conv.status}, stage=${conv.pipelineStage ?? "new"}, tags=${JSON.stringify(conv.tags ?? [])}`,
+          orderLine,
+        ].join("\n"),
+      },
+      { role: "user", content: history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n").slice(0, 6000) },
+    ], { maxTokens: 300 });
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: actorId, feature: "next_action", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+    const proposal = parseNextActionProposal(String(result.text ?? ""));
+    if (!proposal) return { proposal: null, provider: provider.name, reason: "AI-এর প্রস্তাবটি যাচাই করা যায়নি — দেখানো হয়নি।" };
+    // A stage proposal identical to the current stage is noise.
+    if (proposal.pipelineStage && proposal.pipelineStage === (conv.pipelineStage ?? "new")) proposal.pipelineStage = null;
+    // Tags the thread already has are not proposals.
+    proposal.tags = proposal.tags.filter((t) => !(conv.tags ?? []).includes(t));
+    return { proposal, provider: provider.name };
+  }
+
   whatsappWindow(conv: any, now = new Date()): { open: boolean; expiresAt: string | null } | null {
     if (conv.channel !== "whatsapp") return null;
     if (!conv.lastCustomerMessageAt) return { open: false, expiresAt: null };
@@ -3502,7 +4601,18 @@ export class InboxService {
 
   async listConversations(organizationId: string, filters: {
     status?: string; channel?: string; q?: string; unreadOnly?: boolean;
+    spamOnly?: boolean;
     assignee?: string; tag?: string; sort?: string; folder?: string;
+    // IN1b: advanced filters (all additive, all AND-composed).
+    dateFrom?: string; dateTo?: string;
+    amountMin?: number; amountMax?: number;
+    intent?: string; sentiment?: string;
+    // IN9a: cursor pagination (additive, opt-in). `cursor`
+    // undefined = the legacy behaviour (plain array, first 100).
+    // `cursor: null` = first page in cursor mode; a string =
+    // continue strictly after that boundary. Cursor mode returns
+    // { items, nextCursor } instead of a bare array.
+    cursor?: string | null; limit?: number;
   } = {}, actorId?: string) {
     const where: any = {
       organizationId,
@@ -3511,6 +4621,18 @@ export class InboxService {
       ...(filters.unreadOnly ? { unreadCount: { gt: 0 } } : {}),
       ...(filters.tag ? { tags: { has: filters.tag } } : {}),
     };
+    // IN1b: date range over the conversation's last activity
+    // (lastMessageAt — when the thread last moved, the range an
+    // agent triaging by date actually means). Invalid dates are
+    // ignored rather than erroring the whole list.
+    const dateFrom = filters.dateFrom && !Number.isNaN(new Date(filters.dateFrom).getTime()) ? new Date(filters.dateFrom) : null;
+    const dateTo = filters.dateTo && !Number.isNaN(new Date(filters.dateTo).getTime()) ? new Date(filters.dateTo) : null;
+    if (dateFrom || dateTo) {
+      where.lastMessageAt = {
+        ...(dateFrom ? { gte: dateFrom } : {}),
+        ...(dateTo ? { lte: dateTo } : {}),
+      };
+    }
     if (filters.assignee === "me" && actorId) where.assignedUserId = actorId;
     else if (filters.assignee === "unassigned") where.assignedUserId = null;
     else if (filters.assignee) where.assignedUserId = filters.assignee;
@@ -3529,6 +4651,14 @@ export class InboxService {
       where.AND = [...(where.AND ?? []), { snoozedUntil: { gt: now }, status: { in: ["open", "pending"] } }];
     } else {
       where.AND = [...(where.AND ?? []), notSnoozed];
+    }
+    // IN10a: the spam queue — spam-flagged OR agent-blocked
+    // conversations. (The web has sent `spam=1` since IN1 but the
+    // list never honoured it; blocked rows carry spamFlag too, the
+    // blockedAt arm keeps the queue correct even if a flag was
+    // later cleared by hand.)
+    if (filters.spamOnly) {
+      where.AND = [...(where.AND ?? []), { OR: [{ spamFlag: true }, { blockedAt: { not: null } }] }];
     }
     if (filters.folder === "mine" && actorId) where.assignedUserId = actorId;
     else if (filters.folder === "unassigned") where.assignedUserId = null;
@@ -3549,9 +4679,77 @@ export class InboxService {
         { lastMessagePreview: { contains: q, mode: "insensitive" } },
       ];
     }
-    const rows = await (this.prisma as any).channelConversation.findMany({
-      where, orderBy: { lastMessageAt: "desc" }, take: 100,
+    // IN1b: order-amount range — the conversation's LATEST linked
+    // order total (same latest-order scan shape as the VIP folder;
+    // amountMin/amountMax are in MINOR units, matching the rest of
+    // the API). A conversation with no linked order never matches
+    // an amount filter (honest: unknown amount is not 0).
+    const hasAmountMin = typeof filters.amountMin === "number" && Number.isFinite(filters.amountMin) && filters.amountMin >= 0;
+    const hasAmountMax = typeof filters.amountMax === "number" && Number.isFinite(filters.amountMax) && filters.amountMax >= 0;
+    if (hasAmountMin || hasAmountMax) {
+      const orders = await (this.prisma as any).order.findMany({
+        where: { organizationId, conversationId: { not: null } },
+        orderBy: { createdAt: "desc" }, take: 3000,
+        select: { conversationId: true, totalMinor: true },
+      }).catch(() => []);
+      const latest = new Map<string, bigint>();
+      for (const o of orders) {
+        if (o.conversationId && !latest.has(o.conversationId)) latest.set(o.conversationId, BigInt(o.totalMinor));
+      }
+      const min = hasAmountMin ? BigInt(Math.round(filters.amountMin as number)) : null;
+      const max = hasAmountMax ? BigInt(Math.round(filters.amountMax as number)) : null;
+      const idsInRange = [...latest.entries()]
+        .filter(([, total]) => (min === null || total >= min) && (max === null || total <= max))
+        .map(([id]) => id);
+      where.AND = [...(where.AND ?? []), { id: { in: idsInRange } }];
+    }
+    // IN1b: intent — conversations with at least one INBOUND
+    // message classified with this intent (the stored per-message
+    // classification from ingest; org-scoped through the
+    // conversation relation). Unknown intent values are ignored.
+    if (filters.intent && SAVED_VIEW_INTENTS.includes(filters.intent)) {
+      const hits = await this.safeFindMany("channelMessage", {
+        where: { direction: "in", intent: filters.intent, conversation: { organizationId } },
+        select: { conversationId: true }, take: 3000,
+      });
+      const idsWithIntent = [...new Set(hits.map((m: any) => m.conversationId).filter(Boolean))];
+      where.AND = [...(where.AND ?? []), { id: { in: idsWithIntent } }];
+    }
+    // IN1b: sentiment is a READ-TIME mood (per-message sentiment was
+    // never persisted), so the candidate fetch widens and the mood
+    // filter applies after the mood batch below — see the block
+    // right before the row mapping.
+    const sentimentFilter = filters.sentiment && SAVED_VIEW_SENTIMENTS.includes(filters.sentiment) ? filters.sentiment : null;
+    // IN9a: cursor mode is OPT-IN (cursor !== undefined) so every
+    // existing caller keeps the exact legacy shape. The cursor
+    // clause AND-composes with all filters above, and the fetch
+    // orders by the canonical (lastMessageAt, id) pair so ties on
+    // lastMessageAt break deterministically. A malformed cursor
+    // decodes to null and simply starts at the first page.
+    const paginated = filters.cursor !== undefined;
+    const pageLimit = paginated ? clampConversationPageLimit(filters.limit) : 100;
+    if (paginated && filters.cursor) {
+      const boundary = decodeConversationCursor(filters.cursor);
+      if (boundary) where.AND = [...(where.AND ?? []), conversationCursorWhere(boundary)];
+    }
+    let rows = await (this.prisma as any).channelConversation.findMany({
+      where,
+      orderBy: paginated ? [{ lastMessageAt: "desc" }, { id: "desc" }] : { lastMessageAt: "desc" },
+      take: sentimentFilter ? 500 : (paginated ? pageLimit + 1 : 100),
     });
+    // IN9a: page bookkeeping. The +1 row (fetched in DB order,
+    // before any in-memory display sort) proves another page
+    // exists; it is dropped HERE, in canonical order, so display
+    // sorts below only ever reorder the page itself. The boundary
+    // for nextCursor is the page's oldest row IN CANONICAL ORDER
+    // (see oldestCursorRow), never the display-last row.
+    const fetchedCount = rows.length;
+    const scanWindow = rows;
+    let pageHasMore = false;
+    if (paginated && !sentimentFilter) {
+      pageHasMore = fetchedCount > pageLimit;
+      if (pageHasMore) rows = rows.slice(0, pageLimit);
+    }
     if (filters.sort === "unread") {
       rows.sort((a: any, b: any) => (b.unreadCount - a.unreadCount) || (new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime()));
     }
@@ -3566,6 +4764,62 @@ export class InboxService {
       // CX5: earliest wake first — the folder is a "coming back"
       // queue, so the next conversation to reappear leads.
       rows.sort((a: any, b: any) => new Date(a.snoozedUntil ?? 0).getTime() - new Date(b.snoozedUntil ?? 0).getTime());
+    }
+    if (filters.sort === "sla_risk") {
+      // IN4d: SLA-risk order — the conversation whose effective
+      // first-response deadline is SOONEST (or most overdue)
+      // leads; rows outside SLA scope (already first-responded)
+      // sink to the end in their existing relative order. The
+      // deadlines use the same layered policy as the breach
+      // folder, so the order and the folder can never disagree.
+      const sortSettings = await this.getSettings(organizationId).catch(() => null);
+      const sortVipIds = sortSettings?.slaVipMinutes != null
+        ? await this.vipConversationIds(organizationId, sortSettings.escalationThresholdMinor).catch(() => null)
+        : null;
+      const sortVipSet = new Set(sortVipIds ?? []);
+      const dueOf = (r: any) => {
+        const s = slaStateFor(sortSettings, r, sortVipSet.has(r.id), now);
+        if (s) return s.dueAt.getTime();
+        // Not currently warning/breached but still awaiting a first
+        // response: its deadline is still the ordering key.
+        if (!r.firstResponseAt && (r.status === "open" || r.status === "pending") && !r.isPractice) {
+          const created = new Date(r.createdAt ?? 0).getTime();
+          if (Number.isFinite(created) && created > 0) {
+            return created + effectiveSlaMinutes(sortSettings, r.channel, sortVipSet.has(r.id)) * 60000;
+          }
+        }
+        return Number.POSITIVE_INFINITY;
+      };
+      rows.sort((a: any, b: any) => dueOf(a) - dueOf(b));
+    }
+    if (sentimentFilter) {
+      // IN1b: keep only rows whose read-time mood (last 5 inbound
+      // texts, same classifier as the list badges) matches. A row
+      // with no inbound text has mood null and never matches a
+      // sentiment filter. The page is then re-capped at 100.
+      const candIds = rows.map((r: any) => r.id);
+      const candInbound = candIds.length ? await this.safeFindMany("channelMessage", {
+        where: { conversationId: { in: candIds }, direction: "in" }, orderBy: { createdAt: "desc" }, take: 2500,
+      }) : [];
+      const byConv = new Map<string, any[]>();
+      for (const m of candInbound) {
+        if (!m.content || !String(m.content).trim()) continue;
+        const list = byConv.get(m.conversationId) ?? [];
+        if (list.length < 5) { list.push(m); byConv.set(m.conversationId, list); }
+      }
+      const moodMatched = rows.filter((r: any) => this.moodOf(byConv.get(r.id) ?? []) === sentimentFilter);
+      if (paginated) {
+        // IN9a: more matches may sit inside this candidate window
+        // (sliced off) or beyond it (window was full at 500) —
+        // either way another page exists; its scan restarts
+        // strictly after this page's canonical boundary, so
+        // filtered-out rows are simply re-scanned, never repeated
+        // as results and never able to hide a later match.
+        pageHasMore = moodMatched.length > pageLimit || fetchedCount >= 500;
+        rows = moodMatched.slice(0, pageLimit);
+      } else {
+        rows = moodMatched.slice(0, 100);
+      }
     }
     // Inbox Next-Gen P3: read-time mood + webchat visitor presence.
     // Per-message sentiment was never persisted (only intent), and
@@ -3600,13 +4854,38 @@ export class InboxService {
         activeByChannel.set(r.channel, isAiActive(listSettings?.aiScheduleByChannel ?? {}, r.channel, new Date(), listTz));
       }
     }
-    return rows.map((r: any) => ({
-      ...r,
-      whatsappWindow: this.whatsappWindow(r),
-      mood: this.moodOf(inboundByConv.get(r.id) ?? []),
-      visitorLastSeenAt: r.channel === "webchat" ? (lastSeenByConv.get(r.id) ?? null) : null,
-      aiScheduleActive: activeByChannel.get(r.channel) ?? true,
-    }));
+    // IN4b: per-row SLA position (warning at 75% / breached) from
+    // the same layered policy as the breach folder. VIP ids are
+    // resolved ONCE for the page and only when a VIP limit is set.
+    const listVipIds = listSettings?.slaVipMinutes != null
+      ? await this.vipConversationIds(organizationId, listSettings.escalationThresholdMinor).catch(() => null)
+      : null;
+    const listVipSet = new Set(listVipIds ?? []);
+    const listNow = new Date();
+    const items = rows.map((r: any) => {
+      const sla = slaStateFor(listSettings, r, listVipSet.has(r.id), listNow);
+      return {
+        ...r,
+        whatsappWindow: this.whatsappWindow(r),
+        mood: this.moodOf(inboundByConv.get(r.id) ?? []),
+        visitorLastSeenAt: r.channel === "webchat" ? (lastSeenByConv.get(r.id) ?? null) : null,
+        aiScheduleActive: activeByChannel.get(r.channel) ?? true,
+        slaState: sla?.state ?? null,
+        slaDueAt: sla ? sla.dueAt.toISOString() : null,
+        slaEffectiveMinutes: sla?.effectiveMinutes ?? null,
+      };
+    });
+    if (!paginated) return items;
+    // IN9a: nextCursor is null exactly when no further page can
+    // exist. The boundary prefers the page's own canonical-oldest
+    // row; the scan-window fallback covers a sentiment page that
+    // filtered to empty while candidates remain beyond it.
+    let nextCursor: string | null = null;
+    if (pageHasMore) {
+      const boundary = oldestCursorRow(rows) ?? oldestCursorRow(scanWindow);
+      if (boundary) nextCursor = encodeConversationCursor(boundary);
+    }
+    return { items, nextCursor };
   }
 
   // ----- Inbox Next-Gen P2: smart folders -----
@@ -3622,6 +4901,9 @@ export class InboxService {
    * now − InboxSetting.slaFirstResponseMinutes. This is the team
    * report's currentBreaches rule (which counts status "open")
    * widened to "pending" threads that never got a first response.
+   * IN4a: the threshold itself is now LAYERED (VIP → per-channel →
+   * org default) via buildSlaBreachWhere; the scope (firstResponseAt
+   * NULL, open/pending) is unchanged.
    *
    * VIP: the conversation's LATEST linked order (Order.conversationId,
    * newest first — the pipeline board's linkage) totals at least
@@ -3632,8 +4914,14 @@ export class InboxService {
   private async folderExtraWhere(organizationId: string, folder: "sla" | "vip") {
     const settings = await this.getSettings(organizationId);
     if (folder === "sla") {
-      const cutoff = new Date(Date.now() - settings.slaFirstResponseMinutes * 60000);
-      return { firstResponseAt: null, createdAt: { lt: cutoff }, status: { in: ["open", "pending"] } };
+      // IN4a: the breach definition is LAYERED now (VIP limit →
+      // per-channel limit → org default) and built by the shared
+      // pure helper — with nothing layered configured it is
+      // byte-identical to the pre-IN4 clause.
+      const vipIds = settings.slaVipMinutes != null
+        ? await this.vipConversationIds(organizationId, settings.escalationThresholdMinor)
+        : null;
+      return buildSlaBreachWhere(settings, vipIds, new Date());
     }
     const ids = await this.vipConversationIds(organizationId, settings.escalationThresholdMinor);
     return { id: { in: ids ?? [] } };
@@ -3663,6 +4951,22 @@ export class InboxService {
   async conversationFolderCounts(organizationId: string, actorId: string) {
     const settings = await this.getSettings(organizationId);
     const count = (where: any) => (this.prisma as any).channelConversation.count({ where }).catch(() => 0);
+    // Demo/Practice exclusion (Demo Chat Pack): folder counts and
+    // the unread badge describe REAL customer work — practice rows
+    // (CX12a threads + the demo pack) must not inflate them, the
+    // same exclusion the team report / IN10 analytics already apply.
+    // Deliberately NOT `isPractice: false` in the where: older spec
+    // fakes (and any partial row shape) leave isPractice undefined,
+    // which a strict equality filter would silently drop from the
+    // REAL counts. Subtracting the practice-only count is exact
+    // under real Prisma semantics (top-level keys AND together, so
+    // an existing AND clause survives the spread untouched) and a
+    // no-op wherever practice rows are absent.
+    const countReal = async (where: any): Promise<number> => {
+      const total = await count(where);
+      const practice = await count({ ...where, isPractice: true });
+      return total - practice;
+    };
     const vipIds = await this.vipConversationIds(organizationId, settings.escalationThresholdMinor);
     const slaWhere = await this.folderExtraWhere(organizationId, "sla");
     // CX5: the counts obey the SAME snooze-visibility rule as the
@@ -3670,31 +4974,414 @@ export class InboxService {
     // count and surface only in the snoozed count.
     const now = new Date();
     const notSnoozed = { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] };
-    const [all, mine, unassigned, slaBreach, unreadAgg] = await Promise.all([
-      count({ organizationId, ...notSnoozed }),
-      count({ organizationId, assignedUserId: actorId, ...notSnoozed }),
-      count({ organizationId, assignedUserId: null, ...notSnoozed }),
-      count({ organizationId, ...slaWhere, ...notSnoozed }),
+    const [all, mine, unassigned, slaBreach, unreadAgg, unreadPracticeAgg] = await Promise.all([
+      countReal({ organizationId, ...notSnoozed }),
+      countReal({ organizationId, assignedUserId: actorId, ...notSnoozed }),
+      countReal({ organizationId, assignedUserId: null, ...notSnoozed }),
+      // IN4: slaWhere can itself carry an OR (the layered breach
+      // clauses) and notSnoozed is an OR too — a flat spread would
+      // silently drop one of them, so they compose under AND.
+      countReal({ organizationId, AND: [slaWhere, notSnoozed] }),
       // UX1 Q2: the REAL org-wide unread total (sum of the stored
       // per-conversation unreadCount) for the browser tab badge —
       // never a sum over the capped loaded list, which would lie.
       (this.prisma as any).channelConversation.aggregate({
         where: { organizationId }, _sum: { unreadCount: true },
       }).catch(() => null),
+      // The practice share of that same aggregate, subtracted below.
+      (this.prisma as any).channelConversation.aggregate({
+        where: { organizationId, isPractice: true }, _sum: { unreadCount: true },
+      }).catch(() => null),
     ]);
     // CX4: handover queue count — same clause as the folder filter.
-    const handover = await count({ organizationId, autoReplyPaused: true, status: { in: ["open", "pending"] }, ...notSnoozed });
+    const handover = await countReal({ organizationId, autoReplyPaused: true, status: { in: ["open", "pending"] }, ...notSnoozed });
     // CX5: snoozed count + the VIP count re-derived through the
     // same exclusion (vipIds alone cannot see snooze state).
-    const snoozed = await count({ organizationId, snoozedUntil: { gt: now }, status: { in: ["open", "pending"] } });
-    const vip = vipIds ? await count({ organizationId, id: { in: vipIds }, ...notSnoozed }) : 0;
+    const snoozed = await countReal({ organizationId, snoozedUntil: { gt: now }, status: { in: ["open", "pending"] } });
+    const vip = vipIds ? await countReal({ organizationId, id: { in: vipIds }, ...notSnoozed }) : 0;
     return {
       all, mine, unassigned, slaBreach, handover, snoozed,
-      unreadTotal: unreadAgg?._sum?.unreadCount ?? 0,
+      unreadTotal: (unreadAgg?._sum?.unreadCount ?? 0) - (unreadPracticeAgg?._sum?.unreadCount ?? 0),
       vip,
       vipThresholdMinor: settings.escalationThresholdMinor != null ? String(settings.escalationThresholdMinor) : null,
       slaFirstResponseMinutes: settings.slaFirstResponseMinutes,
+      // IN4a: the layered policy, so the UI can explain which
+      // limit applies where instead of quoting only the default.
+      slaByChannel: settings.slaByChannel,
+      slaVipMinutes: settings.slaVipMinutes,
     };
+  }
+
+  // ----- IN1: message search + saved views -----
+
+  /**
+   * IN1a: full-text search INSIDE messages (content + voice
+   * transcription), org-scoped through the conversation relation.
+   * Practice conversations are excluded. Results carry a snippet
+   * with the match offset for UI highlighting and enough
+   * conversation context to open the thread at that message.
+   * Honest scope: a plain case-insensitive `contains` scan (the
+   * plan's starting point); on very large orgs this is a table
+   * scan — the limit keeps the response bounded and acceptance
+   * notes the trigram/full-text index as the follow-up if it
+   * ever gets slow. Another org's messages can never appear:
+   * the organizationId lives in the SAME where clause.
+   */
+  async searchMessages(organizationId: string, rawQuery: string, opts: { limit?: number } = {}) {
+    const q = String(rawQuery ?? "").trim();
+    if (q.length < 2) throw new BadRequestException("খুঁজতে অন্তত ২টি অক্ষর লিখুন।");
+    const limit = Math.min(50, Math.max(1, Math.round(opts.limit ?? 30) || 30));
+    const found = await this.safeFindMany("channelMessage", {
+      where: {
+        conversation: { organizationId, isPractice: false },
+        OR: [
+          { content: { contains: q, mode: "insensitive" } },
+          { transcription: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      include: { conversation: { select: { id: true, channel: true, contactName: true, contactPhone: true, status: true } } },
+    });
+    const results: any[] = [];
+    for (const m of found) {
+      const fromContent = m.content ? buildSearchSnippet(m.content, q) : null;
+      const built = fromContent ?? (m.transcription ? buildSearchSnippet(m.transcription, q) : null);
+      if (!built) continue; // the row matched a field we could not snippet — never invent one
+      results.push({
+        messageId: m.id,
+        conversationId: m.conversationId,
+        direction: m.direction,
+        type: m.type,
+        matchedField: fromContent ? "content" : "transcription",
+        snippet: built.snippet,
+        matchStart: built.matchStart,
+        matchLength: built.matchLength,
+        createdAt: m.createdAt,
+        channel: m.conversation?.channel ?? null,
+        contactName: m.conversation?.contactName ?? null,
+        contactPhone: m.conversation?.contactPhone ?? null,
+        conversationStatus: m.conversation?.status ?? null,
+      });
+    }
+    return { query: q, results };
+  }
+
+  /** IN1c: views visible to this agent — their own + shared ones. */
+  async listSavedViews(organizationId: string, userId: string) {
+    const rows = await this.safeFindMany("inboxSavedView", {
+      where: { organizationId, OR: [{ userId }, { shared: true }] },
+      orderBy: { updatedAt: "desc" }, take: 100,
+    });
+    return rows.map((r: any) => ({
+      id: r.id, name: r.name, filters: sanitizeSavedViewFilters(r.filters),
+      shared: Boolean(r.shared), mine: r.userId === userId,
+      createdAt: r.createdAt, updatedAt: r.updatedAt,
+    }));
+  }
+
+  async createSavedView(organizationId: string, userId: string, dto: { name?: string; filters?: unknown; shared?: boolean }) {
+    const name = String(dto?.name ?? "").trim().slice(0, 80);
+    if (!name) throw new BadRequestException("ভিউয়ের একটি নাম দিন।");
+    const mine = await (this.prisma as any).inboxSavedView.count({ where: { organizationId, userId } }).catch(() => 0);
+    if (mine >= 50) throw new BadRequestException("আপনার সেভ করা ভিউয়ের সীমা (৫০টি) পূর্ণ হয়ে গেছে — পুরোনো কোনোটি মুছে আবার চেষ্টা করুন।");
+    const row = await (this.prisma as any).inboxSavedView.create({
+      data: { organizationId, userId, name, filters: sanitizeSavedViewFilters(dto?.filters), shared: Boolean(dto?.shared) },
+    });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.saved_view.create",
+      entityType: "InboxSavedView", entityId: row.id, metadata: { shared: row.shared },
+    }).catch(() => undefined);
+    return { id: row.id, name: row.name, filters: sanitizeSavedViewFilters(row.filters), shared: Boolean(row.shared), mine: true, createdAt: row.createdAt, updatedAt: row.updatedAt };
+  }
+
+  /** Only the creator may edit a view — shared means readable by
+   * the team, not writable by them. */
+  async updateSavedView(organizationId: string, userId: string, viewId: string, dto: { name?: string; filters?: unknown; shared?: boolean }) {
+    const row = await (this.prisma as any).inboxSavedView.findFirst({ where: { id: viewId, organizationId } });
+    if (!row) throw new NotFoundException("Saved view not found in this organization");
+    if (row.userId !== userId) throw new ForbiddenException("শুধু ভিউয়ের মালিকই এটি বদলাতে পারবেন।");
+    const data: any = {};
+    if (dto?.name !== undefined) {
+      const name = String(dto.name ?? "").trim().slice(0, 80);
+      if (!name) throw new BadRequestException("ভিউয়ের একটি নাম দিন।");
+      data.name = name;
+    }
+    if (dto?.filters !== undefined) data.filters = sanitizeSavedViewFilters(dto.filters);
+    if (dto?.shared !== undefined) data.shared = Boolean(dto.shared);
+    const updated = await (this.prisma as any).inboxSavedView.update({ where: { id: viewId }, data });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.saved_view.update",
+      entityType: "InboxSavedView", entityId: viewId, metadata: {},
+    }).catch(() => undefined);
+    return { id: updated.id, name: updated.name, filters: sanitizeSavedViewFilters(updated.filters), shared: Boolean(updated.shared), mine: true, createdAt: updated.createdAt, updatedAt: updated.updatedAt };
+  }
+
+  async deleteSavedView(organizationId: string, userId: string, viewId: string) {
+    const row = await (this.prisma as any).inboxSavedView.findFirst({ where: { id: viewId, organizationId } });
+    if (!row) throw new NotFoundException("Saved view not found in this organization");
+    if (row.userId !== userId) throw new ForbiddenException("শুধু ভিউয়ের মালিকই এটি মুছতে পারবেন।");
+    await (this.prisma as any).inboxSavedView.delete({ where: { id: viewId } });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.saved_view.delete",
+      entityType: "InboxSavedView", entityId: viewId, metadata: {},
+    }).catch(() => undefined);
+    return { deleted: true, id: viewId };
+  }
+
+  // ----- IN3: macros + bulk reply -----
+
+  private serializeMacro(row: any, userId: string) {
+    let steps: MacroStep[] = [];
+    try { steps = sanitizeMacroSteps(row.steps); } catch { steps = []; }
+    return {
+      id: row.id, name: row.name, steps, shared: Boolean(row.shared),
+      mine: row.userId === userId, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  /** IN3a: macros visible to this agent — their own + shared ones. */
+  async listMacros(organizationId: string, userId: string) {
+    const rows = await this.safeFindMany("inboxMacro", {
+      where: { organizationId, OR: [{ userId }, { shared: true }] },
+      orderBy: { updatedAt: "desc" }, take: 100,
+    });
+    return rows.map((r: any) => this.serializeMacro(r, userId));
+  }
+
+  async createMacro(organizationId: string, userId: string, dto: { name?: string; steps?: unknown; shared?: boolean }) {
+    const name = String(dto?.name ?? "").trim().slice(0, 80);
+    if (!name) throw new BadRequestException("ম্যাক্রোর একটি নাম দিন।");
+    const steps = sanitizeMacroSteps(dto?.steps);
+    const mine = await (this.prisma as any).inboxMacro.count({ where: { organizationId, userId } }).catch(() => 0);
+    if (mine >= 50) throw new BadRequestException("আপনার ম্যাক্রোর সীমা (৫০টি) পূর্ণ হয়ে গেছে — পুরোনো কোনোটি মুছে আবার চেষ্টা করুন।");
+    const row = await (this.prisma as any).inboxMacro.create({
+      data: { organizationId, userId, name, steps, shared: Boolean(dto?.shared) },
+    });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.macro.create",
+      entityType: "InboxMacro", entityId: row.id, metadata: { shared: row.shared, steps: steps.length },
+    }).catch(() => undefined);
+    return this.serializeMacro(row, userId);
+  }
+
+  /** Only the creator may edit a macro — shared means runnable by
+   * the team, not writable by them (saved-view policy). */
+  async updateMacro(organizationId: string, userId: string, macroId: string, dto: { name?: string; steps?: unknown; shared?: boolean }) {
+    const row = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
+    if (!row) throw new NotFoundException("Macro not found in this organization");
+    if (row.userId !== userId) throw new ForbiddenException("শুধু ম্যাক্রোর মালিকই এটি বদলাতে পারবেন।");
+    const data: any = {};
+    if (dto?.name !== undefined) {
+      const name = String(dto.name ?? "").trim().slice(0, 80);
+      if (!name) throw new BadRequestException("ম্যাক্রোর একটি নাম দিন।");
+      data.name = name;
+    }
+    if (dto?.steps !== undefined) data.steps = sanitizeMacroSteps(dto.steps);
+    if (dto?.shared !== undefined) data.shared = Boolean(dto.shared);
+    const updated = await (this.prisma as any).inboxMacro.update({ where: { id: macroId }, data });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.macro.update",
+      entityType: "InboxMacro", entityId: macroId, metadata: {},
+    }).catch(() => undefined);
+    return this.serializeMacro(updated, userId);
+  }
+
+  async deleteMacro(organizationId: string, userId: string, macroId: string) {
+    const row = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
+    if (!row) throw new NotFoundException("Macro not found in this organization");
+    if (row.userId !== userId) throw new ForbiddenException("শুধু ম্যাক্রোর মালিকই এটি মুছতে পারবেন।");
+    await (this.prisma as any).inboxMacro.delete({ where: { id: macroId } });
+    await this.audit.log({
+      organizationId, userId, action: "inbox.macro.delete",
+      entityType: "InboxMacro", entityId: macroId, metadata: {},
+    }).catch(() => undefined);
+    return { deleted: true, id: macroId };
+  }
+
+  /**
+   * IN3d: the REAL values behind the quick-reply variables for one
+   * conversation — contact fields from the conversation row, the
+   * order-bound values from its LATEST linked order (the same
+   * linkage the VIP folder / amount filter use), the tracking link
+   * from that order's newest shipment, and the delivery charge
+   * from the org's bot setting. Anything without a real row stays
+   * an empty string. The tracking token is minted lazily exactly
+   * like shareTracking does — this context is only built when a
+   * reply is actually about to be sent.
+   */
+  private async macroVariableContext(organizationId: string, conv: any): Promise<Record<string, string>> {
+    const p = this.prisma as any;
+    const vars: Record<string, string> = {
+      firstName: (conv.contactName ?? "").trim().split(/\s+/)[0] ?? "",
+      contactName: conv.contactName ?? "",
+      phone: conv.contactPhone ?? "",
+      orderId: "",
+      trackingLink: "",
+      deliveryCharge: "",
+    };
+    const orders = await p.order?.findMany({
+      where: { organizationId, conversationId: conv.id },
+      orderBy: { createdAt: "desc" }, take: 1,
+    }).catch(() => []) ?? [];
+    const order = orders[0];
+    if (order) {
+      vars.orderId = order.externalNumber ?? order.id;
+      const shipment = await p.courierShipment?.findFirst({
+        where: { organizationId, orderId: order.id }, orderBy: { createdAt: "desc" },
+      }).catch(() => null);
+      if (shipment?.trackingToken) {
+        vars.trackingLink = trackingLinkFor(shipment.trackingToken);
+      } else if (shipment?.trackingCode) {
+        const token = newTrackingToken();
+        const upd = await p.courierShipment.update({ where: { id: shipment.id }, data: { trackingToken: token } }).catch(() => null);
+        if (upd) vars.trackingLink = trackingLinkFor(token);
+      }
+    }
+    const settings = await this.getSettings(organizationId).catch(() => null);
+    if (settings?.botDeliveryChargeMinor != null) {
+      try { vars.deliveryCharge = formatMinor(BigInt(settings.botDeliveryChargeMinor), order?.currency ?? "BDT"); } catch { /* stays empty */ }
+    }
+    return vars;
+  }
+
+  /** One macro step, executed through the SAME service method the
+   * equivalent manual action uses — semantics can never drift. */
+  private async runMacroStep(organizationId: string, actorId: string, conv: any, step: MacroStep): Promise<void> {
+    if (step.type === "reply") {
+      const qr = await (this.prisma as any).quickReply.findFirst({ where: { id: step.quickReplyId, organizationId } });
+      if (!qr) throw new BadRequestException("ম্যাক্রোর Quick Replyটি পাওয়া যায়নি — হয়তো মুছে ফেলা হয়েছে।");
+      const vars = await this.macroVariableContext(organizationId, conv);
+      const content = renderQuickReplyVariables(qr.content, vars);
+      if (!content.trim()) throw new BadRequestException("Quick Reply-এর লেখা খালি।");
+      await this.sendReply(organizationId, actorId, conv.id, content, { signature: true, quickReplyId: qr.id });
+    } else if (step.type === "assign") {
+      const target = step.assignedUserId === "me" ? actorId : step.assignedUserId;
+      await this.updateConversation(organizationId, actorId, conv.id, { assignedUserId: target });
+    } else if (step.type === "tag") {
+      const fresh = await this.getConversationOrThrow(organizationId, conv.id);
+      await this.updateConversation(organizationId, actorId, conv.id, { tags: [...(fresh.tags ?? []), step.tag] });
+    } else if (step.type === "pipeline") {
+      await this.updateConversation(organizationId, actorId, conv.id, { pipelineStage: step.stage });
+    } else if (step.type === "close") {
+      await this.updateConversation(organizationId, actorId, conv.id, {
+        status: "closed",
+        ...(step.outcome !== undefined ? { outcome: step.outcome } : {}),
+      });
+    } else {
+      await this.snoozeConversation(organizationId, actorId, conv.id, { minutes: step.minutes });
+    }
+  }
+
+  /**
+   * IN3b: run a macro on ONE conversation. Steps run in order;
+   * the FIRST failure stops the run — later steps are reported as
+   * "skipped", never as done, and the run as a whole reports
+   * success:false with the failed step's index, type and the real
+   * error (a platform refusal inside a reply step surfaces
+   * verbatim through sendReply). A run is audited either way.
+   * Visibility: own macros + shared macros are runnable; an
+   * invisible macro is a plain 404 (nothing leaks).
+   */
+  async runMacro(organizationId: string, actorId: string, macroId: string, conversationId: string) {
+    const macro = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
+    if (!macro || (macro.userId !== actorId && !macro.shared)) {
+      throw new NotFoundException("Macro not found in this organization");
+    }
+    const steps = sanitizeMacroSteps(macro.steps);
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    const results: { index: number; type: string; ok: boolean; skipped?: boolean; error?: string }[] = [];
+    let failedAt = -1;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      if (failedAt >= 0) {
+        results.push({ index: i, type: step.type, ok: false, skipped: true });
+        continue;
+      }
+      try {
+        await this.runMacroStep(organizationId, actorId, conv, step);
+        results.push({ index: i, type: step.type, ok: true });
+      } catch (e) {
+        failedAt = i;
+        results.push({ index: i, type: step.type, ok: false, error: e instanceof Error ? e.message : "ধাপটি ব্যর্থ হয়েছে" });
+      }
+    }
+    const success = failedAt < 0;
+    const completed = results.filter((r) => r.ok).length;
+    await this.audit.log({
+      organizationId, userId: actorId,
+      action: success ? "inbox.macro.run" : "inbox.macro.run_failed",
+      entityType: "ChannelConversation", entityId: conversationId,
+      metadata: {
+        macroId, steps: steps.length, completed,
+        ...(success ? {} : { failedStepIndex: failedAt, failedStepType: steps[failedAt]?.type }),
+      },
+    }).catch(() => undefined);
+    return {
+      macroId, macroName: macro.name, conversationId,
+      success, completed, total: steps.length, steps: results,
+    };
+  }
+
+  /**
+   * IN3c: send the SAME quick reply (or WhatsApp template) to many
+   * conversations — the bulk endpoint's sending sibling. Per-item
+   * results like bulkUpdateConversations: one bad id never fails
+   * the batch, a foreign id is a plain "not found". HONESTY: for a
+   * quick reply on WhatsApp the 24h customer-service window is
+   * checked BEFORE any send attempt — a closed window is that
+   * item's failure with the reason, and nothing is sent to it (the
+   * agent is pointed at a template instead; templates are Meta's
+   * sanctioned outside-window path and go through sendTemplate).
+   * Quick-reply text is rendered per conversation with IN3d's real
+   * variables. One summary audit entry for the batch.
+   */
+  async bulkReplyConversations(organizationId: string, actorId: string, dto: {
+    ids: string[]; quickReplyId?: string; templateId?: string;
+  }) {
+    const ids = [...new Set((dto.ids ?? []).map((s) => String(s).trim()).filter(Boolean))];
+    if (!ids.length) throw new BadRequestException("কমপক্ষে একটি কথোপকথন বেছে নিন।");
+    if (ids.length > 25) throw new BadRequestException("একবারে সর্বোচ্চ ২৫টি কথোপকথনে বাল্ক রিপ্লাই করা যাবে।");
+    const quickReplyId = dto.quickReplyId ? String(dto.quickReplyId).trim() : "";
+    const templateId = dto.templateId ? String(dto.templateId).trim() : "";
+    if (Boolean(quickReplyId) === Boolean(templateId)) {
+      throw new BadRequestException("বাল্ক রিপ্লাইয়ের জন্য Quick Reply অথবা Template — ঠিক একটি বেছে নিন।");
+    }
+    let quickReply: any = null;
+    if (quickReplyId) {
+      quickReply = await (this.prisma as any).quickReply.findFirst({ where: { id: quickReplyId, organizationId } });
+      if (!quickReply) throw new NotFoundException("Quick reply not found in this organization");
+    } else {
+      const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: templateId, organizationId } });
+      if (!tpl) throw new NotFoundException("Template not found in this organization");
+    }
+    const results: { id: string; ok: boolean; error?: string }[] = [];
+    for (const id of ids) {
+      try {
+        const conv = await this.getConversationOrThrow(organizationId, id);
+        if (templateId) {
+          await this.sendTemplate(organizationId, actorId, id, templateId, []);
+        } else {
+          if (conv.channel === "whatsapp" && this.whatsappWindow(conv)?.open === false) {
+            throw new BadRequestException("WhatsApp ২৪ ঘণ্টার উইন্ডো বন্ধ — এই কথোপকথনে এখন Quick Reply পাঠানো যাবে না; Template ব্যবহার করুন।");
+          }
+          const vars = await this.macroVariableContext(organizationId, conv);
+          const content = renderQuickReplyVariables(quickReply.content, vars);
+          if (!content.trim()) throw new BadRequestException("Quick Reply-এর লেখা খালি।");
+          await this.sendReply(organizationId, actorId, id, content, { signature: true, quickReplyId: quickReply.id });
+        }
+        results.push({ id, ok: true });
+      } catch (e) {
+        results.push({ id, ok: false, error: e instanceof Error ? e.message : "পাঠানো যায়নি" });
+      }
+    }
+    const succeeded = results.filter((r) => r.ok).length;
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversations.bulk_reply",
+      entityType: "ChannelConversation",
+      metadata: { via: templateId ? "template" : "quick_reply", requested: ids.length, succeeded, failed: ids.length - succeeded },
+    }).catch(() => undefined);
+    return { results, succeeded, failed: ids.length - succeeded };
   }
 
   // ----- Inbox Next-Gen P2: bulk actions -----
@@ -3825,8 +5512,14 @@ export class InboxService {
     return conv;
   }
 
-  async getConversation(organizationId: string, conversationId: string) {
+  async getConversation(organizationId: string, conversationId: string, actorId?: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    // IN10b: a human opening a thread is audit-worthy, but the
+    // thread is re-fetched after every action — the view audit is
+    // deduped to at most one row per agent per conversation per
+    // 30 minutes (see auditConversationView). System/internal
+    // callers pass no actor and are never audited as "views".
+    if (actorId) void this.auditConversationView(organizationId, actorId, conversationId);
     const messages = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "desc" }, take: 100,
     });
@@ -3842,6 +5535,13 @@ export class InboxService {
     if (conv.customerId && this.risk) {
       try { courierRecord = await this.risk.courierRecordForCustomer(organizationId, conv.customerId); } catch { courierRecord = null; }
     }
+    // IN2: identity — possible-duplicate warnings, the customer's
+    // other-channel conversations (the unified view) and any
+    // reversible merges into this customer. Failure-isolated
+    // exactly like the courier record: an identity error never
+    // breaks the thread view.
+    let identity: any = null;
+    try { identity = await this.identityForConversation(organizationId, conv); } catch { identity = null; }
     // Inbox Next-Gen P3: mood from the newest inbound texts (the
     // fetched page is newest-first) + a per-message computed
     // sentiment for inbound rows — read-time only, same classifier
@@ -3858,11 +5558,305 @@ export class InboxService {
     const detailSettings = await this.getSettings(organizationId).catch(() => null);
     const detailTz = await this.orgTimezone(organizationId);
     const aiScheduleActive = isAiActive(detailSettings?.aiScheduleByChannel ?? {}, conv.channel, new Date(), detailTz);
+    // IN6b/d: quoted snippets resolve from rows in THIS page (a
+    // quote pointing outside the fetched page resolves via one
+    // scoped lookup; a dangling id renders as "unavailable", never
+    // as another thread's text), and the pinned list rides along.
+    const byId = new Map(withSentiment.map((m: any) => [m.id, m]));
+    const enriched: any[] = [];
+    for (const m of withSentiment) {
+      let quote: any = null;
+      if ((m as any).replyToMessageId) {
+        const target = byId.get((m as any).replyToMessageId) ?? await (this.prisma as any).channelMessage.findFirst({
+          where: { id: (m as any).replyToMessageId, conversationId },
+        }).catch(() => null);
+        quote = target
+          ? { id: target.id, direction: target.direction, snippet: String(target.content ?? `[${target.type}]`).slice(0, 140) }
+          : { id: (m as any).replyToMessageId, unavailable: true };
+      }
+      enriched.push({ ...m, quote });
+    }
+    const pinnedMessages = enriched
+      .filter((m: any) => m.pinnedAt)
+      .map((m: any) => ({ id: m.id, snippet: String(m.content ?? `[${m.type}]`).slice(0, 140), pinnedAt: m.pinnedAt, pinnedBy: m.pinnedBy ?? null }));
     return {
       conversation: { ...conv, whatsappWindow: this.whatsappWindow(conv), mood, aiScheduleActive },
       botSession: await this.getBotSession(conversationId),
-      messages: withSentiment.reverse(), drafts, context: { ...context, courierRecord },
+      messages: enriched.reverse(), pinnedMessages, drafts, context: { ...context, courierRecord, identity },
     };
+  }
+
+  /**
+   * IN10b: the deduped view audit. Writes `inbox.conversation.
+   * viewed` only when the same agent has no view row for this
+   * conversation in the last 30 minutes. Fully best-effort: when
+   * the audit table cannot be checked, NOTHING is written (an
+   * unchecked write path would flood the audit on every refetch).
+   */
+  private async auditConversationView(organizationId: string, actorId: string, conversationId: string) {
+    try {
+      const p = this.prisma as any;
+      if (!p.auditLog?.findFirst) return;
+      const since = new Date(Date.now() - 30 * 60000);
+      const prior = await p.auditLog.findFirst({
+        where: {
+          organizationId, action: "inbox.conversation.viewed", entityId: conversationId,
+          userId: actorId, createdAt: { gte: since },
+        },
+      }).catch(() => undefined);
+      if (prior === undefined || prior) return;
+      await this.audit.log({
+        organizationId, userId: actorId, action: "inbox.conversation.viewed",
+        entityType: "ChannelConversation", entityId: conversationId,
+      }).catch(() => undefined);
+    } catch { /* a view audit never breaks the thread */ }
+  }
+
+  /**
+   * IN2: identity for the context panel, computed from REAL
+   * identifiers only:
+   *  - duplicates: other customers/conversations whose phone
+   *    (last-10-digit key — the risk.service rule) or email
+   *    matches this conversation's contact phone, its linked
+   *    customer's phone/email, or its lead's phone/email. A
+   *    Messenger PSID alone matches NOTHING (Meta does not give
+   *    us a phone until the customer shares one) — in that case
+   *    the list is honestly empty, never guessed.
+   *  - linkedConversations: this customer's conversations on
+   *    OTHER channels/threads (the IN2c unified view; orders,
+   *    lifetime and the CX1 courier record beside them already
+   *    aggregate by customer, and after a merge they aggregate
+   *    across both records because the rows themselves moved).
+   *  - merges: reversible IN2 merges INTO this customer, with
+   *    the undo affordance data.
+   * Scans mirror the existing discipline (customers take 500,
+   * conversations take 500 newest-first) and are org-scoped.
+   */
+  private async identityForConversation(organizationId: string, conv: any) {
+    const p = this.prisma as any;
+    const customerNameOf = (c: any) => [c?.firstName, c?.lastName].filter(Boolean).join(" ") || c?.name || null;
+    const out: any = { customerId: conv.customerId ?? null, duplicates: [], linkedConversations: [], merges: [] };
+    if (conv.customerId) {
+      const linked = await p.channelConversation.findMany({
+        where: { organizationId, customerId: conv.customerId }, orderBy: { lastMessageAt: "desc" }, take: 20,
+      }).catch(() => []);
+      out.linkedConversations = (linked as any[])
+        .filter((c) => c.id !== conv.id)
+        .map((c) => ({
+          id: c.id, channel: c.channel, status: c.status, contactName: c.contactName ?? null,
+          lastMessageAt: c.lastMessageAt ?? null, lastMessagePreview: c.lastMessagePreview ?? null,
+        }));
+      if (this.customers?.listMergeRecords) {
+        out.merges = await this.customers.listMergeRecords(organizationId, conv.customerId).catch(() => []);
+      }
+    }
+    let customer: any = null;
+    if (conv.customerId) {
+      customer = await p.customer.findFirst({ where: { id: conv.customerId, organizationId } }).catch(() => null);
+    }
+    let lead: any = null;
+    if (conv.leadId) {
+      lead = await p.lead.findFirst({ where: { id: conv.leadId, organizationId } }).catch(() => null);
+    }
+    const phoneKeys = new Set<string>();
+    for (const ph of [conv.contactPhone, customer?.phone, lead?.phone]) {
+      const k = phoneKey(ph);
+      if (k) phoneKeys.add(k);
+    }
+    const emails = new Set<string>();
+    for (const em of [customer?.email, lead?.email]) {
+      const e = String(em ?? "").trim().toLowerCase();
+      if (e) emails.add(e);
+    }
+    if (!phoneKeys.size && !emails.size) return out;
+
+    const customers = await p.customer.findMany({
+      where: { organizationId, mergedIntoId: null }, take: 500,
+    }).catch(() => []);
+    const candidates = new Map<string, { customer: any; reasons: string[] }>();
+    for (const c of customers as any[]) {
+      if (conv.customerId && c.id === conv.customerId) continue;
+      const reasons: string[] = [];
+      const k = phoneKey(c.phone);
+      if (k && phoneKeys.has(k)) reasons.push("phone");
+      const e = String(c.email ?? "").trim().toLowerCase();
+      if (e && emails.has(e)) reasons.push("email");
+      if (reasons.length) candidates.set(c.id, { customer: c, reasons });
+    }
+    const convs = await p.channelConversation.findMany({
+      where: { organizationId }, orderBy: { lastMessageAt: "desc" }, take: 500,
+    }).catch(() => []);
+    const seenConv = new Set<string>();
+    const pushDup = (d: any) => {
+      if (seenConv.has(d.conversationId) || out.duplicates.length >= 10) return;
+      seenConv.add(d.conversationId);
+      out.duplicates.push(d);
+    };
+    for (const c of convs as any[]) {
+      if (c.id === conv.id) continue;
+      if (c.customerId && candidates.has(c.customerId)) {
+        const cand = candidates.get(c.customerId)!;
+        pushDup({
+          conversationId: c.id, channel: c.channel, contactName: c.contactName ?? null,
+          contactPhone: c.contactPhone ?? null, customerId: c.customerId,
+          customerName: customerNameOf(cand.customer), matchReasons: cand.reasons,
+          lastMessageAt: c.lastMessageAt ?? null,
+        });
+      } else if (c.customerId !== conv.customerId) {
+        const k = phoneKey(c.contactPhone);
+        if (k && phoneKeys.has(k)) {
+          pushDup({
+            conversationId: c.id, channel: c.channel, contactName: c.contactName ?? null,
+            contactPhone: c.contactPhone ?? null, customerId: c.customerId ?? null,
+            customerName: null, matchReasons: ["phone"], lastMessageAt: c.lastMessageAt ?? null,
+          });
+        }
+      }
+    }
+    // A matching customer with no conversation in the scan window
+    // (e.g. a store-only customer) is still a duplicate candidate.
+    for (const [cid, cand] of candidates) {
+      if (out.duplicates.length >= 10) break;
+      if (out.duplicates.some((d: any) => d.customerId === cid)) continue;
+      out.duplicates.push({
+        conversationId: null, channel: null, contactName: null,
+        contactPhone: cand.customer.phone ?? null, customerId: cid,
+        customerName: customerNameOf(cand.customer), matchReasons: cand.reasons,
+        lastMessageAt: null,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * IN2b (inbox surface): merge two customer records from a
+   * conversation. The merge itself is CustomersService.merge —
+   * the ONE canonical implementation (moves orders + conversa-
+   * tions, gap-fills, writes the reversible IN2 record + audit).
+   * This wrapper only ties the action to THIS thread (at least
+   * one side must be this conversation's customer) so the inbox
+   * route cannot be used to merge arbitrary records.
+   */
+  async mergeCustomerFromConversation(organizationId: string, actorId: string, conversationId: string, dto: { sourceCustomerId: string; targetCustomerId: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    if (!this.customers) throw new BadRequestException("Customer merge is not available in this deployment");
+    if (!dto?.sourceCustomerId || !dto?.targetCustomerId) throw new BadRequestException("sourceCustomerId and targetCustomerId are required");
+    if (conv.customerId !== dto.sourceCustomerId && conv.customerId !== dto.targetCustomerId) {
+      throw new BadRequestException("মার্জের অন্তত এক পক্ষ এই কথোপকথনের গ্রাহক হতে হবে।");
+    }
+    const out = await this.customers.merge(organizationId, actorId, { sourceId: dto.sourceCustomerId, targetId: dto.targetCustomerId });
+    this.rtConversation(organizationId, conversationId, { customerId: dto.targetCustomerId });
+    return out;
+  }
+
+  /** IN2b (inbox surface): undo a merge from the survivor's
+   * conversation — the inverse tie-check of the merge wrapper. */
+  async unmergeCustomerFromConversation(organizationId: string, actorId: string, conversationId: string, dto: { sourceCustomerId: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    if (!this.customers) throw new BadRequestException("Customer merge is not available in this deployment");
+    if (!dto?.sourceCustomerId) throw new BadRequestException("sourceCustomerId is required");
+    const source = await (this.prisma as any).customer.findFirst({
+      where: { id: dto.sourceCustomerId, organizationId },
+    }).catch(() => null);
+    if (!source) throw new NotFoundException("Customer not found in this organization");
+    if (conv.customerId !== dto.sourceCustomerId && conv.customerId !== source.mergedIntoId) {
+      throw new BadRequestException("এই আনমার্জটি এই কথোপকথনের গ্রাহকের সাথে সম্পর্কিত নয়।");
+    }
+    const out = await this.customers.unmerge(organizationId, actorId, { sourceId: dto.sourceCustomerId });
+    this.rtConversation(organizationId, conversationId, { customerId: conv.customerId });
+    return out;
+  }
+
+  /**
+   * IN2: link a conversation that has NO customer yet to an
+   * existing customer record (the common duplicate shape: a
+   * Messenger thread whose customer ordered on WhatsApp). Never
+   * overwrites an existing link — changing a linked customer
+   * goes through merge/unmerge, which keep an exact record.
+   */
+  async linkConversationCustomer(organizationId: string, actorId: string, conversationId: string, dto: { customerId: string }) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    if (!dto?.customerId) throw new BadRequestException("customerId is required");
+    if (conv.customerId) {
+      throw new BadRequestException("এই কথোপকথন ইতিমধ্যে একজন Customer-এর সাথে যুক্ত — বদলাতে হলে মার্জ/আনমার্জ ব্যবহার করুন।");
+    }
+    const customer = await (this.prisma as any).customer.findFirst({
+      where: { id: dto.customerId, organizationId },
+    }).catch(() => null);
+    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (customer.mergedIntoId) {
+      throw new BadRequestException("ওই Customer রেকর্ডটি অন্য রেকর্ডে মার্জ হয়ে গেছে — survivor রেকর্ডটির সাথে যুক্ত করুন।");
+    }
+    const updated = await (this.prisma as any).channelConversation.update({
+      where: { id: conversationId }, data: { customerId: dto.customerId },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "inbox.conversation.customer_linked",
+      entityType: "ChannelConversation", entityId: conversationId, metadata: { customerId: dto.customerId },
+    }).catch(() => undefined);
+    this.rtConversation(organizationId, conversationId, { customerId: dto.customerId });
+    return updated;
+  }
+
+  /**
+   * IN6d: pin / unpin a message. A pure DB feature (works on every
+   * channel, including ones with no platform pin concept) — the
+   * message must belong to a conversation in THIS org, and both
+   * transitions are audited.
+   */
+  async setMessagePinned(organizationId: string, actorId: string, conversationId: string, messageId: string, pinned: boolean) {
+    await this.getConversationOrThrow(organizationId, conversationId);
+    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
+    if (!message) throw new NotFoundException("Message not found in this conversation");
+    const updated = await (this.prisma as any).channelMessage.update({
+      where: { id: messageId },
+      data: pinned ? { pinnedAt: new Date(), pinnedBy: actorId } : { pinnedAt: null, pinnedBy: null },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId,
+      action: pinned ? "inbox.message.pinned" : "inbox.message.unpinned",
+      entityType: "ChannelMessage", entityId: messageId, metadata: { conversationId },
+    }).catch(() => undefined);
+    this.rtMessage(organizationId, conversationId, updated);
+    return updated;
+  }
+
+  /**
+   * IN6c: an agent's reaction. Only Messenger/Instagram have a real
+   * platform reaction send (Meta sender_action react/unreact);
+   * every other channel is refused honestly instead of storing a
+   * reaction the customer never received. The stored "page" entry
+   * is written ONLY after Meta confirms. `emoji: null` removes it.
+   */
+  async reactToMessage(organizationId: string, actorId: string, conversationId: string, messageId: string, emoji: string | null) {
+    const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    if (!["messenger", "instagram"].includes(conv.channel)) {
+      throw new BadRequestException("এই চ্যানেলে প্ল্যাটফর্ম reaction পাঠানোর সত্যিকারের উপায় নেই — reaction শুধু Messenger/Instagram-এ পাঠানো যায়।");
+    }
+    const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
+    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message.externalId) throw new BadRequestException("এই মেসেজের প্ল্যাটফর্ম আইডি নেই — reaction পাঠানো যাবে না।");
+    if (emoji !== null && (typeof emoji !== "string" || !emoji.trim() || emoji.length > 16)) {
+      throw new BadRequestException("Reaction emoji সঠিক নয়।");
+    }
+    const integration = await this.integrationForConversation(conv);
+    const secrets = await this.secretsFor(integration.id);
+    const client = new MetaMessagingClient(secrets);
+    // Throws Meta's verbatim error on any failure — nothing is
+    // stored unless Meta confirms (recipient_id in the response).
+    await client.sendMessengerReaction(conv.externalContactId, message.externalId, emoji);
+    const next = applyReaction((message as any).reactions, {
+      emoji, actor: "page", action: emoji ? "react" : "unreact", at: new Date(),
+    });
+    const updated = await (this.prisma as any).channelMessage.update({
+      where: { id: messageId }, data: { reactions: next },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: emoji ? "inbox.message.reacted" : "inbox.message.unreacted",
+      entityType: "ChannelMessage", entityId: messageId, metadata: { conversationId, emoji },
+    }).catch(() => undefined);
+    this.rtMessage(organizationId, conversationId, updated);
+    return updated;
   }
 
   // ----- Agent notifications + presence (Phase F) -----
@@ -3992,9 +5986,15 @@ export class InboxService {
     });
   }
 
-  async addNote(organizationId: string, actorId: string, conversationId: string, content: string) {
-    const note = await this.createNoteInternal(organizationId, actorId, conversationId, content);
-    await this.notifyMentions(organizationId, actorId, conversationId, content).catch(() => undefined);
+  async addNote(organizationId: string, actorId: string, conversationId: string, content: string, opts?: { maskSensitive?: boolean }) {
+    // IN10b: opt-in masking — when the agent ticks it, phone /
+    // card / transaction-id shaped tokens are masked BEFORE the
+    // note is stored (the original is never persisted). Mentions
+    // are notified from the stored text, so a mention inside a
+    // masked note still resolves (names are never masked).
+    const stored = opts?.maskSensitive ? maskSensitiveText(content) : content;
+    const note = await this.createNoteInternal(organizationId, actorId, conversationId, stored);
+    await this.notifyMentions(organizationId, actorId, conversationId, stored).catch(() => undefined);
     return note;
   }
 
@@ -4070,6 +6070,227 @@ export class InboxService {
     if (!row) throw new NotFoundException("Template not found in this organization");
     await (this.prisma as any).whatsAppTemplate.delete({ where: { id: templateId } });
     return { deleted: true };
+  }
+
+  // ----- MS6: WhatsApp Template Hub (Meta sync + submit) -----
+  /**
+   * Resolve the org's CONNECTED WhatsApp integration + secrets into
+   * a template-management client. Refuses honestly when there is no
+   * integration, and with Bengali guidance when the WABA id has
+   * not been set — it is never guessed or derived silently.
+   */
+  private async whatsAppTemplateClient(organizationId: string): Promise<{ client: MetaMessagingClient; wabaId: string }> {
+    const integration = await (this.prisma as any).integration.findFirst({
+      where: { organizationId, provider: "whatsapp", status: "CONNECTED" },
+      orderBy: { createdAt: "desc" }, include: { credential: true },
+    });
+    if (!integration?.credential) throw new BadRequestException("No connected WhatsApp integration for this organization");
+    const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
+    if (!secrets.wabaId) {
+      throw new BadRequestException("WABA ID সেট করা নেই — WhatsApp Manager / Meta Business Settings থেকে WhatsApp Business Account ID সংগ্রহ করে Inbox-এর WhatsApp সেটিংসে বসান।");
+    }
+    return { client: new MetaMessagingClient(secrets), wabaId: secrets.wabaId };
+  }
+
+  /**
+   * MS6 — sync the local registry from Meta's message_templates
+   * list. All pages are collected FIRST (walk capped at 10 pages);
+   * a Meta error surfaces verbatim and NOTHING is written. Rows
+   * are upserted by (org, name, language). Local rows Meta did not
+   * return are marked NOT_ON_META only when the walk completed
+   * untruncated — a truncated walk cannot prove absence.
+   */
+  async syncWhatsAppTemplates(organizationId: string, actorId: string) {
+    const { client, wabaId } = await this.whatsAppTemplateClient(organizationId);
+    const metaRows: any[] = [];
+    let after: string | undefined;
+    let truncated = false;
+    try {
+      for (let page = 0; page < 10; page++) {
+        const res: any = await client.listMessageTemplates(wabaId, after);
+        const data: any[] = Array.isArray(res?.data) ? res.data : [];
+        metaRows.push(...data);
+        const next: string | undefined = res?.paging?.cursors?.after;
+        const hasMore = Boolean(next) && (Boolean(res?.paging?.next) || data.length > 0);
+        if (!hasMore) break;
+        if (page === 9) { truncated = true; break; }
+        after = next;
+      }
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : "WhatsApp template sync failed");
+    }
+    const now = new Date();
+    let created = 0, updated = 0;
+    const syncedKeys = new Set<string>();
+    for (const t of metaRows) {
+      const name = String(t?.name ?? "");
+      const language = String(t?.language ?? "bn");
+      if (!name) continue;
+      syncedKeys.add(`${name}${language}`);
+      const components: any[] = Array.isArray(t?.components) ? t.components : [];
+      const bodyComp = components.find((c: any) => String(c?.type ?? "").toLowerCase() === "body");
+      const bodyText: string | null = bodyComp?.text ? String(bodyComp.text) : null;
+      const qs = t?.quality_score;
+      const qualityRating: string | null = qs?.score ?? (typeof qs === "string" ? qs : null);
+      const existing = await (this.prisma as any).whatsAppTemplate.findFirst({
+        where: { organizationId, name, language },
+      });
+      if (existing) {
+        await (this.prisma as any).whatsAppTemplate.update({
+          where: { id: existing.id },
+          data: {
+            metaTemplateId: t?.id != null ? String(t.id) : (existing.metaTemplateId ?? null),
+            status: t?.status ?? null, qualityRating,
+            category: t?.category ?? existing.category ?? null,
+            components, bodyText: bodyText ?? existing.bodyText ?? null, lastSyncedAt: now,
+          },
+        });
+        updated++;
+      } else {
+        await (this.prisma as any).whatsAppTemplate.create({
+          data: {
+            organizationId, name, language,
+            category: t?.category ?? null, bodyText,
+            metaTemplateId: t?.id != null ? String(t.id) : null,
+            status: t?.status ?? null, qualityRating, components, lastSyncedAt: now,
+          },
+        });
+        created++;
+      }
+    }
+    let notOnMeta = 0;
+    if (!truncated) {
+      const locals = await (this.prisma as any).whatsAppTemplate.findMany({ where: { organizationId } });
+      for (const row of locals as any[]) {
+        if (!syncedKeys.has(`${row.name}${row.language}`)) {
+          await (this.prisma as any).whatsAppTemplate.update({
+            where: { id: row.id }, data: { status: "NOT_ON_META", lastSyncedAt: now },
+          });
+          notOnMeta++;
+        }
+      }
+    }
+    const result = { synced: metaRows.length, created, updated, notOnMeta, truncated };
+    await this.audit.log({
+      organizationId, userId: actorId, action: "whatsapp_templates.sync",
+      entityType: "WhatsAppTemplate", metadata: { ...result },
+    });
+    return result;
+  }
+
+  /**
+   * MS6 — create a template in Meta (submit for approval) and store
+   * the local row ONLY on Meta success, with the status Meta
+   * returned ("PENDING" when the create response carries none).
+   * Local validation runs BEFORE any Meta call; a Meta rejection is
+   * a verbatim 400 and nothing is stored. Components are built in
+   * Meta's UPPERCASE create format (template components docs:
+   * https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/components).
+   */
+  async submitWhatsAppTemplate(organizationId: string, actorId: string, dto: {
+    name: string; language?: string; category: string; bodyText: string;
+    exampleValues?: string[];
+    headerType?: "none" | "text" | "image"; headerText?: string; headerExample?: string; headerHandle?: string;
+    buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[];
+  }) {
+    const name = String(dto.name ?? "");
+    // Meta rule: lowercase alphanumerics + underscores, ≤512 chars.
+    if (!/^[a-z0-9_]{1,512}$/.test(name)) {
+      throw new BadRequestException("টেমপ্লেটের নাম শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও আন্ডারস্কোর (_) দিয়ে হতে হবে (সর্বোচ্চ ৫১২ অক্ষর) — যেমন eid_offer_2026।");
+    }
+    if (!["MARKETING", "UTILITY", "AUTHENTICATION"].includes(dto.category)) {
+      throw new BadRequestException("টেমপ্লেটের ক্যাটাগরি MARKETING, UTILITY বা AUTHENTICATION-এর একটি হতে হবে।");
+    }
+    const bodyText = String(dto.bodyText ?? "").trim();
+    if (!bodyText) throw new BadRequestException("টেমপ্লেটের মূল লেখা (bodyText) আবশ্যক।");
+    // Distinct positional params {{1}}..{{n}} in the body: Meta
+    // needs one example value per positional param.
+    const paramIdx = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
+    const maxParam = paramIdx.length ? Math.max(...paramIdx) : 0;
+    const exampleValues = Array.isArray(dto.exampleValues) ? dto.exampleValues.map((v) => String(v)) : [];
+    if (maxParam > 0 && exampleValues.length !== maxParam) {
+      throw new BadRequestException(`মূল লেখায় {{${maxParam}}} পর্যন্ত প্যারামিটার আছে — Meta-র জন্য প্রতিটি প্যারামিটারের একটি করে উদাহরণ মান (exampleValues) দিতে হবে, মোট ${maxParam}টি।`);
+    }
+    const headerType = dto.headerType ?? "none";
+    if (headerType === "text") {
+      if (!dto.headerText?.trim()) throw new BadRequestException("টেক্সট হেডারের জন্য headerText আবশ্যক।");
+      if (/\{\{1\}\}/.test(dto.headerText) && !dto.headerExample?.trim()) {
+        throw new BadRequestException("হেডারে {{1}} প্যারামিটার থাকলে তার উদাহরণ মান (headerExample) দিতে হবে।");
+      }
+    }
+    if (headerType === "image" && !dto.headerHandle?.trim()) {
+      throw new BadRequestException("ছবির হেডারের জন্য Meta-র Resumable Upload API থেকে পাওয়া উদাহরণ আপলোড হ্যান্ডল (headerHandle) আবশ্যক — এই মুহূর্তে হ্যান্ডল ছাড়া তৈরি করা যাবে না।");
+    }
+    const buttons = Array.isArray(dto.buttons) ? dto.buttons : [];
+    if (buttons.length > 10) throw new BadRequestException("একটি টেমপ্লেটে সর্বোচ্চ ১০টি বাটন থাকতে পারে।");
+    for (const b of buttons) {
+      if (!b?.text || String(b.text).length > 25) throw new BadRequestException("বাটনের লেখা আবশ্যক এবং সর্বোচ্চ ২৫ অক্ষরের হতে হবে।");
+      if (b.type === "url" && !/^https?:\/\//i.test(String(b.url ?? ""))) {
+        throw new BadRequestException("URL বাটনের জন্য http(s) দিয়ে শুরু হওয়া একটি বৈধ url আবশ্যক।");
+      }
+      if (b.type !== "url" && b.type !== "quick_reply") throw new BadRequestException("বাটনের ধরন url বা quick_reply হতে হবে।");
+    }
+    // Build components (UPPERCASE create format).
+    const components: any[] = [];
+    if (headerType === "text") {
+      const hasParam = /\{\{1\}\}/.test(dto.headerText!);
+      components.push({
+        type: "HEADER", format: "TEXT", text: dto.headerText,
+        ...(hasParam ? { example: { header_text: [dto.headerExample] } } : {}),
+      });
+    } else if (headerType === "image") {
+      components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [dto.headerHandle] } });
+    }
+    components.push({
+      type: "BODY", text: bodyText,
+      ...(maxParam > 0 ? { example: { body_text: [exampleValues] } } : {}),
+    });
+    if (buttons.length) {
+      components.push({
+        type: "BUTTONS",
+        buttons: buttons.map((b) => b.type === "url"
+          ? { type: "URL", text: b.text, url: b.url }
+          : { type: "QUICK_REPLY", text: b.text }),
+      });
+    }
+    const language = dto.language ?? "bn";
+    const { client, wabaId } = await this.whatsAppTemplateClient(organizationId);
+    let res: { id?: string; status?: string; category?: string };
+    try {
+      res = await client.createMessageTemplate(wabaId, { name, language, category: dto.category, components });
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : "WhatsApp template create failed");
+    }
+    const status = res?.status ?? "PENDING";
+    const now = new Date();
+    const existing = await (this.prisma as any).whatsAppTemplate.findFirst({
+      where: { organizationId, name, language },
+    });
+    let row: any;
+    if (existing) {
+      row = await (this.prisma as any).whatsAppTemplate.update({
+        where: { id: existing.id },
+        data: {
+          category: dto.category, bodyText,
+          metaTemplateId: res?.id ? String(res.id) : (existing.metaTemplateId ?? null),
+          status, components, lastSyncedAt: now,
+        },
+      });
+    } else {
+      row = await (this.prisma as any).whatsAppTemplate.create({
+        data: {
+          organizationId, name, language, category: dto.category, bodyText,
+          metaTemplateId: res?.id ? String(res.id) : null,
+          status, components, lastSyncedAt: now,
+        },
+      });
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "whatsapp_templates.submit",
+      entityType: "WhatsAppTemplate", entityId: row?.id ?? null,
+      metadata: { name, language, status },
+    });
+    return row;
   }
 
   async markRead(organizationId: string, conversationId: string) {
@@ -4174,6 +6395,15 @@ export class InboxService {
         `নতুন কথোপকথন অ্যাসাইন হয়েছে: ${updated.contactName ?? updated.externalContactId ?? "গ্রাহক"}`,
         (updated.lastMessagePreview ?? "").slice(0, 120) || null, conversationId).catch(() => undefined);
     }
+    // IN7a: an assignee CHANGE to a different person is a
+    // handover moment — the AI summary note follows, exactly as
+    // on take-over. Failure-isolated: the assignment stands
+    // whatever the summary does, and its outcome is reported
+    // separately on the returned row.
+    if (dto.assignedUserId && dto.assignedUserId !== beforeAssignee) {
+      const handoverSummary = await this.writeHandoverSummaryNote(organizationId, actorId, conversationId, "reassign");
+      return { ...updated, handoverSummary };
+    }
     return updated;
   }
 
@@ -4183,7 +6413,25 @@ export class InboxService {
    * is our own channel: the row itself is the delivery (the visitor's
    * widget polls it), so the id is generated locally.
    */
-  private async deliverText(conv: any, content: string): Promise<string> {
+  /** CX12a: the stored status for a delivered outbound row —
+   * "sent" only with a real platform message id; a practice
+   * delivery (the synthetic practice-* id minted by deliverText)
+   * is stored as "practice", never dressed up as a platform send. */
+  private static statusForDelivery(messageId: string): string {
+    return messageId.startsWith("practice-") ? "practice" : "sent";
+  }
+
+  private async deliverText(conv: any, content: string, quoteExternalId?: string | null): Promise<string> {
+    // CX12a PRACTICE GUARD — this is the send choke point:
+    // sendReply, sendAutomatedMessage and the autopilot all
+    // deliver through here. A practice conversation NEVER reaches
+    // a channel sender: no integration is resolved, no Meta /
+    // WhatsApp / Telegram / email client is even constructed.
+    // The caller stores the reply locally (status "practice" via
+    // statusForDelivery) with this synthetic id as its marker.
+    if ((conv as any)?.isPractice) {
+      return `practice-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
     if (conv.channel === "webchat") {
       return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
@@ -4198,9 +6446,14 @@ export class InboxService {
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
     const client = new MetaMessagingClient(secrets);
+    // IN6b: the quote reaches the customer ONLY where the platform
+    // has a real quote parameter — WhatsApp `context.message_id`
+    // and Messenger/Instagram `reply_to.mid`. Telegram/Email/
+    // Webchat sends ignore it: the quote stays internal (our
+    // thread shows it; the platform message is a plain send).
     const { messageId } = conv.channel === "whatsapp"
-      ? await client.sendWhatsAppText(conv.externalContactId, content)
-      : await client.sendMessengerText(conv.externalContactId, content);
+      ? await client.sendWhatsAppText(conv.externalContactId, content, quoteExternalId ?? undefined)
+      : await client.sendMessengerText(conv.externalContactId, content, quoteExternalId ?? undefined);
     return messageId;
   }
 
@@ -4344,8 +6597,18 @@ export class InboxService {
     };
   }
 
-  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean; aiAssisted?: boolean; quickReplyId?: string; draftEdited?: boolean } = {}) {
+  async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean; aiAssisted?: boolean; quickReplyId?: string; draftEdited?: boolean; replyToMessageId?: string } = {}) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    // IN6b: a quote target must be a message in THIS conversation —
+    // quoting across threads (or a made-up id) is refused before
+    // any row is created, never silently dropped or mis-attached.
+    let quoted: any = null;
+    if (opts.replyToMessageId) {
+      quoted = await (this.prisma as any).channelMessage.findFirst({
+        where: { id: opts.replyToMessageId, conversationId },
+      }).catch(() => null);
+      if (!quoted) throw new BadRequestException("Quote করা মেসেজটি এই কথোপকথনে পাওয়া যায়নি — অন্য থ্রেডের মেসেজ quote করা যাবে না।");
+    }
     // Milestone 73: a human sender's enabled signature rides
     // along (composer + approved drafts opt in; system
     // templates do not).
@@ -4360,12 +6623,13 @@ export class InboxService {
         // attests the picker path. Neither is proof of authorship.
         sentWithAiAssist: Boolean(opts.aiAssisted),
         quickReplyId: opts.quickReplyId ?? null,
+        replyToMessageId: quoted?.id ?? null,
       },
     });
     try {
-      const messageId = await this.deliverText(conv, content);
+      const messageId = await this.deliverText(conv, content, quoted?.externalId ?? null);
       const sent = await (this.prisma as any).channelMessage.update({
-        where: { id: message.id }, data: { status: "sent", externalId: messageId },
+        where: { id: message.id }, data: { status: InboxService.statusForDelivery(messageId), externalId: messageId },
       });
       await (this.prisma as any).channelConversation.update({
         where: { id: conversationId },
@@ -4640,7 +6904,24 @@ export class InboxService {
     const detected = detectMediaKind(bytes, dto.contentType);
     if (!detected) throw new BadRequestException("এই ফাইল ফরম্যাটটি পাঠানো যায় না — ছবি (PNG/JPG/WebP/GIF), অডিও/ভয়েস, MP4/WebM ভিডিও অথবা PDF দিন।");
     const kind = detected.kind;
-    const fileName = (dto.fileName ?? "").trim().slice(0, 200) || defaultMediaFileName(kind, detected.contentType);
+    // IN5a: browser WebM voice notes headed for WhatsApp/Telegram
+    // are transcoded to OGG/Opus first (WhatsApp rejects WebM,
+    // Telegram sendVoice wants OGG). A failed/unavailable
+    // transcode falls back to the ORIGINAL bytes — the pre-IN5a
+    // behaviour, platform error verbatim — never a silent fake.
+    // The stored copy is the transcoded one, so what the agent
+    // replays in the thread is what actually went out.
+    let sendBytes = bytes;
+    let sendContentType = detected.contentType;
+    let fileName = (dto.fileName ?? "").trim().slice(0, 200) || defaultMediaFileName(kind, detected.contentType);
+    if (kind === "audio" && shouldTranscodeAudio(detected.contentType, conv.channel)) {
+      const transcoded = await transcodeAudioToOggOpus(bytes, { declaredContentType: detected.contentType }).catch(() => null);
+      if (transcoded) {
+        sendBytes = transcoded.bytes;
+        sendContentType = transcoded.contentType;
+        fileName = transcoded.fileName;
+      }
+    }
     const caption = dto.caption?.trim() ? dto.caption.trim().slice(0, 1024) : undefined;
     const message = await (this.prisma as any).channelMessage.create({
       data: {
@@ -4654,15 +6935,15 @@ export class InboxService {
     // regardless of the platform outcome; a FAILED row shows its
     // error, never a fake success.
     try {
-      const key = mediaKeyFor(organizationId, message.id, detected.contentType);
-      await this.mediaStore().put(key, bytes, detected.contentType);
+      const key = mediaKeyFor(organizationId, message.id, sendContentType);
+      await this.mediaStore().put(key, sendBytes, sendContentType);
       await (this.prisma as any).channelMessage.update({
         where: { id: message.id },
-        data: { mediaStorageKey: key, mediaContentType: detected.contentType, mediaSizeBytes: bytes.length },
+        data: { mediaStorageKey: key, mediaContentType: sendContentType, mediaSizeBytes: sendBytes.length },
       });
     } catch { /* storage best-effort; delivery continues */ }
     try {
-      const externalId = await this.deliverMedia(conv, { bytes, contentType: detected.contentType, kind, fileName, caption });
+      const externalId = await this.deliverMedia(conv, { bytes: sendBytes, contentType: sendContentType, kind, fileName, caption });
       const sent = await (this.prisma as any).channelMessage.update({
         where: { id: message.id }, data: { status: "sent", externalId },
       });

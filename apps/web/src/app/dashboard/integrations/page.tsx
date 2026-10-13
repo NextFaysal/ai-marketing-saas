@@ -1,12 +1,41 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch, publicApiBase } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 
-interface Store { id: string; name: string; url: string; currency: string }
-interface Integration { id: string; provider: string; status: string; lastSyncAt?: string | null; lastError?: string | null; store?: Store | null }
+interface Store { id: string; name: string; url: string; currency: string; platform?: string; syncMode?: string; trackingKey?: string | null }
+interface Integration { id: string; provider: string; status: string; lastSyncAt?: string | null; lastError?: string | null; store?: Store | null; webhookStatus?: unknown; authType?: string | null; tokenExpiresAt?: string | null }
 interface SyncJob { id: string; kind: string; status: string; fetched: number; created: number; updated: number; error?: string | null }
+interface HealthCheck { key: string; label: string; status: string; evidence: string }
+interface HealthResult { integrationId: string; provider: string; checkedAt: string; overall: "pass" | "warn" | "fail" | "unknown"; checks: HealthCheck[] }
+
+function syncModeLabel(mode?: string): string {
+  switch (mode) {
+    case "co-manage": return "Co-manage";
+    case "full-manage": return "Full-manage";
+    default: return "Mirror";
+  }
+}
+
+function webhookStatusText(ws: unknown): string | null {
+  if (typeof ws === "string") return ws;
+  if (ws && typeof ws === "object") {
+    const s = (ws as { status?: unknown }).status;
+    if (typeof s === "string") return s;
+  }
+  return null;
+}
+
+function healthBadge(status: string): string {
+  switch (status) {
+    case "pass": return "bg-green-100 text-green-700";
+    case "warn": return "bg-amber-100 text-amber-700";
+    case "fail": return "bg-red-100 text-red-700";
+    default: return "bg-slate-200 text-slate-600";
+  }
+}
 
 export default function IntegrationsPage() {
   const [stores, setStores] = useState<Store[]>([]);
@@ -17,6 +46,9 @@ export default function IntegrationsPage() {
   const [wcSites, setWcSites] = useState<{ id: string; name: string; domain?: string | null; widgetKey: string; enabled: boolean }[]>([]);
   const [wcForm, setWcForm] = useState({ name: "", domain: "", greeting: "আসসালামু আলাইকুম! কীভাবে সাহায্য করতে পারি?", color: "#6d28d9" });
   const [shopifyForm, setShopifyForm] = useState({ storeId: "", accessToken: "", apiSecret: "" });
+  const [shopifyAuthMode, setShopifyAuthMode] = useState<"legacy" | "client-credentials">("legacy");
+  const [shopifyCcForm, setShopifyCcForm] = useState({ clientId: "", clientSecret: "" });
+  const [health, setHealth] = useState<Record<string, HealthResult>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -63,19 +95,59 @@ export default function IntegrationsPage() {
     finally { setBusy(""); }
   }
 
+  async function connectWcAuthOneClick() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!connectForm.storeId) { setError("আগে উপরের স্টোরটি নির্বাচন করুন।"); return; }
+    setError(""); setBusy("wc-auth");
+    try {
+      const res = await apiFetch<{ authorizeUrl: string }>(`/organizations/${orgId}/integrations/woocommerce/wc-auth/authorize-url`, {
+        method: "POST",
+        body: JSON.stringify({ storeId: connectForm.storeId }),
+      });
+      window.open(res.authorizeUrl, "_blank");
+      setNotice("WooCommerce-এর অনুমোদন পেজ নতুন ট্যাবে খোলা হয়েছে। অনুমোদন শেষ হলে এখানে ফিরে পেজটি রিফ্রেশ করুন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "১-ক্লিক কানেক্ট শুরু করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
   async function connectShopify(e: React.FormEvent) {
     e.preventDefault();
     const orgId = getOrganizationId(); if (!orgId) return;
     setError(""); setBusy("shopify");
     try {
-      await apiFetch(`/organizations/${orgId}/integrations/shopify/connect`, { method: "POST", body: JSON.stringify(shopifyForm) });
+      const body = shopifyAuthMode === "client-credentials"
+        ? { storeId: shopifyForm.storeId, clientId: shopifyCcForm.clientId, clientSecret: shopifyCcForm.clientSecret }
+        : { storeId: shopifyForm.storeId, accessToken: shopifyForm.accessToken, apiSecret: shopifyForm.apiSecret };
+      const res = await apiFetch<{ webhookRegistration?: string }>(`/organizations/${orgId}/integrations/shopify/connect`, { method: "POST", body: JSON.stringify(body) });
       setShopifyForm((f) => ({ ...f, accessToken: "", apiSecret: "" }));
-      setNotice("Shopify কানেক্ট হয়েছে। এবার Products ও Orders Sync করুন।"); await load();
+      setShopifyCcForm({ clientId: "", clientSecret: "" });
+      setNotice(`Shopify কানেক্ট হয়েছে। এবার Products ও Orders Sync করুন।${res?.webhookRegistration ? ` Webhook নিবন্ধন: ${res.webhookRegistration}` : ""}`); await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Shopify connection failed"); }
     finally { setBusy(""); }
   }
 
-  async function sync(integrationId: string, kind: "products" | "orders") {
+  async function checkHealth(integrationId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setError(""); setBusy(`health-${integrationId}`);
+    try {
+      const h = await apiFetch<HealthResult>(`/organizations/${orgId}/integrations/${integrationId}/health`);
+      setHealth((prev) => ({ ...prev, [integrationId]: h }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Health যাচাই ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function repairWebhooks(integrationId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setError(""); setBusy(`repair-${integrationId}`);
+    try {
+      const res = await apiFetch<{ integrationId: string; webhookRegistration: string; webhookStatus: unknown }>(`/organizations/${orgId}/integrations/${integrationId}/repair-webhooks`, { method: "POST" });
+      setNotice(`Webhook মেরামত: ${res.webhookRegistration}`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Webhook মেরামত ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function sync(integrationId: string, kind: "products" | "orders" | "customers") {
     const orgId = getOrganizationId(); if (!orgId) return;
     setError(""); setBusy(`${integrationId}-${kind}`);
     try {
@@ -97,9 +169,15 @@ export default function IntegrationsPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="page-title">Stores & Integrations</h1>
-        <p className="text-sm text-slate-500">WooCommerce অথবা Shopify কানেক্ট করুন। সব Secret সার্ভারে AES-256 এনক্রিপ্ট করে রাখা হয়, ব্রাউজারে বা API উত্তরে কখনো ফেরত যায় না।</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="page-title">Stores & Integrations</h1>
+          <p className="text-sm text-slate-500">WooCommerce অথবা Shopify কানেক্ট করুন। সব Secret সার্ভারে AES-256 এনক্রিপ্ট করে রাখা হয়, ব্রাউজারে বা API উত্তরে কখনো ফেরত যায় না।</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/commerce" className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold">📊 Commerce Hub</Link>
+          <Link href="/dashboard/commerce/sync" className="btn-primary">Sync Center খুলুন →</Link>
+        </div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
@@ -115,10 +193,18 @@ export default function IntegrationsPage() {
                     <span className="font-semibold capitalize">{i.provider}</span>{" "}
                     <span className="text-slate-500">{i.store?.name} · {i.store?.url}</span>{" "}
                     <span className={`rounded px-2 py-0.5 text-xs font-semibold ${i.status === "CONNECTED" ? "bg-green-100 text-green-700" : i.status === "ERROR" ? "bg-red-100 text-red-700" : "bg-slate-200 text-slate-600"}`}>{i.status}</span>
+                    {(() => {
+                      const st = i.store ? stores.find((s) => s.id === i.store?.id) : undefined;
+                      return st?.syncMode ? <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Sync: {syncModeLabel(st.syncMode)}</span> : null;
+                    })()}
+                    {i.provider === "shopify" && i.authType ? <span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">{i.authType === "client_credentials" || i.authType === "client-credentials" ? "Client Credentials" : "Legacy Token"}</span> : null}
                   </div>
                   <div className="flex gap-2">
                     <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sync(i.id, "products")}>Sync Products</button>
                     <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sync(i.id, "orders")}>Sync Orders</button>
+                    <button className="rounded-lg bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sync(i.id, "customers")}>Sync Customers</button>
+                    <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => checkHealth(i.id)}>{busy === `health-${i.id}` ? "যাচাই হচ্ছে…" : "Health যাচাই"}</button>
+                    <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => repairWebhooks(i.id)}>{busy === `repair-${i.id}` ? "মেরামত হচ্ছে…" : "Webhooks মেরামত"}</button>
                     <button className="rounded-lg border px-3 py-1.5" onClick={() => disconnect(i.id)}>Disconnect</button>
                   </div>
                 </div>
@@ -126,7 +212,46 @@ export default function IntegrationsPage() {
                   শেষ Sync: {i.lastSyncAt ? new Date(i.lastSyncAt).toLocaleString() : "এখনো হয়নি"}
                   {i.lastError ? <span className="text-red-600"> · শেষ এরর: {i.lastError}</span> : null}
                 </div>
+                {webhookStatusText(i.webhookStatus) ? <div className="mt-1 text-xs text-slate-500">Webhook নিবন্ধন: {webhookStatusText(i.webhookStatus)}</div> : null}
+                {health[i.id] ? (
+                  <div className="mt-2 rounded-lg border bg-white p-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-semibold">Health যাচাই</span>
+                      <span className={`rounded px-2 py-0.5 text-xs font-semibold ${healthBadge(health[i.id].overall)}`}>{health[i.id].overall}</span>
+                      <span className="text-slate-400">{new Date(health[i.id].checkedAt).toLocaleString()}</span>
+                    </div>
+                    <ul className="mt-2 space-y-1">
+                      {health[i.id].checks.map((c) => (
+                        <li key={c.key} className="flex flex-wrap items-baseline gap-2 text-xs">
+                          <span className="font-medium">{c.label}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${healthBadge(c.status)}`}>{c.status}</span>
+                          <span className="text-slate-500">{c.evidence}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 {i.provider === "woocommerce" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (WP Admin এ বসান): <code>{`${publicApiBase()}/webhooks/woocommerce/${i.id}`}</code> · Topic: Order created/updated, Product created/updated</div> : null}
+                {i.provider === "woocommerce" ? (() => {
+                  const st = i.store ? stores.find((s) => s.id === i.store?.id) : undefined;
+                  const key = st?.trackingKey ?? "(key তৈরি হয়নি — স্টোরটি আবার তৈরি করুন)";
+                  const origin = typeof window !== "undefined" ? window.location.origin : "";
+                  return (
+                    <div className="mt-2 rounded-lg border border-dashed bg-white p-3 text-xs text-slate-600">
+                      <div className="font-semibold text-slate-800">🛒 WooCommerce-তে ট্র্যাকার বসান (Abandoned Cart ধরার জন্য)</div>
+                      <p className="mt-1">WooCommerce-এর core API-তে cart পাওয়ার পথ নেই — তাই ফেলে যাওয়া কার্ট ধরতে স্টোরের সাইটে এই ছোট্ট স্ক্রিপ্টটি বসাতে হয়:</p>
+                      <ol className="mt-2 list-decimal space-y-1 pl-5">
+                        <li>WordPress Admin → Appearance → Theme File Editor (অথবা "Insert Headers and Footers" জাতীয় প্লাগইন) খুলুন।</li>
+                        <li>সাইটের <code>&lt;head&gt;</code> অংশে নিচের স্ক্রিপ্টটি হুবহু বসান:
+                          <pre className="mt-1 overflow-auto rounded-lg bg-slate-900 p-2 text-[11px] text-green-300">{`<script async src="${origin}/tracker.js" data-key="${key}" data-api="${publicApiBase()}"></script>`}</pre>
+                        </li>
+                        <li>সেভ করে স্টোরের হোমপেজ একবার খুলুন (স্ক্রিপ্ট লোড হলেই ভিজিটর ধরা শুরু হবে)।</li>
+                        <li>উপরের "Health যাচাই" বোতামে ক্লিক করুন — "Tracker বসানো" চেকটি pass হলে বসানো নিশ্চিত। না হলে চেকটি যা বলছে সেটাই আসল অবস্থা।</li>
+                        <li>(ঐচ্ছিক) চেকআউটে কাস্টমার ইমেইল দিলে <code>TP.identify({"{"} email {"}"})</code> কল করলে recovery ইমেইল পাঠানো সম্ভব হবে — বিস্তারিত Attribution পেজে।</li>
+                      </ol>
+                    </div>
+                  );
+                })() : null}
                 {i.provider === "shopify" ? <div className="mt-1 text-xs text-slate-400">Webhook URL (Shopify Admin → Settings → Notifications → Webhooks): <code>{`${publicApiBase()}/webhooks/shopify/${i.id}`}</code> · Format: JSON · Event: Order creation, Order update, Product creation, Product update</div> : null}
                 {(jobs[i.id] ?? []).map((j) => (
                   <div key={j.id} className="mt-1 text-xs text-slate-500">{j.kind}: {j.status} · fetched {j.fetched}, created {j.created}, updated {j.updated}{j.error ? ` · ${j.error}` : ""}</div>
@@ -206,6 +331,14 @@ export default function IntegrationsPage() {
           {busy === "connect" ? "কানেকশন যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট করুন"}
         </button>
         <p className="text-xs text-slate-400">কানেক্ট বাটনে আগে আসল WooCommerce API দিয়ে যাচাই করা হয়। যাচাই ব্যর্থ হলে কোনো Secret সেভ হয় না।</p>
+        <div className="space-y-2 border-t pt-3">
+          <div className="text-sm font-semibold">অথবা ১-ক্লিকে কানেক্ট করুন</div>
+          <p className="text-sm text-slate-500">Key কপি-পেস্ট না করে সরাসরি WooCommerce-এ অনুমোদন দিন — উপরে নির্বাচিত স্টোরটির জন্যই এই ১-ক্লিক ফ্লো চলবে।</p>
+          <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== "" || !connectForm.storeId} onClick={connectWcAuthOneClick}>
+            {busy === "wc-auth" ? "অনুমোদন পেজ তৈরি হচ্ছে..." : "WooCommerce-এ অনুমোদন দিন (১-ক্লিক)"}
+          </button>
+          <p className="text-xs text-slate-400">WooCommerce-এ অনুমোদন দিলে Woo নিজেই তৈরি Key/Secret আমাদের সার্ভারে পাঠিয়ে দেবে এবং আপনাকে এখানে ফিরিয়ে আনবে। তারপর পেজটি রিফ্রেশ করলেই উপরের তালিকায় কানেকশনটি দেখা যাবে — তালিকায় না এলে কানেক্ট হয়েছে বলে ধরে নেবেন না।</p>
+        </div>
       </form>
 
       <form onSubmit={connectShopify} className="space-y-3 card p-5">
@@ -215,16 +348,36 @@ export default function IntegrationsPage() {
           Admin API Scope দিন (read_products, read_orders) এবং Install করে Admin API Access Token (shpat_) নিন।
           একই App এর Client Secret টি Webhook যাচাইয়ের জন্য লাগে। দুটোই এনক্রিপ্ট করে রাখা হয়।
         </p>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="radio" name="shopify-auth-mode" checked={shopifyAuthMode === "legacy"} onChange={() => setShopifyAuthMode("legacy")} />
+            Custom App Token (আগের পদ্ধতি)
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" name="shopify-auth-mode" checked={shopifyAuthMode === "client-credentials"} onChange={() => setShopifyAuthMode("client-credentials")} />
+            Dev Dashboard — Client Credentials (নতুন পদ্ধতি)
+          </label>
+        </div>
         <label className="block text-sm">স্টোর (Shopify প্ল্যাটফর্মেরটি বেছে নিন)
           <select className={inputCls} value={shopifyForm.storeId} onChange={(e) => setShopifyForm({ ...shopifyForm, storeId: e.target.value })} required>
             <option value="">নির্বাচন করুন</option>
             {stores.map((st) => <option key={st.id} value={st.id}>{st.name} ({st.url})</option>)}
           </select>
         </label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block text-sm">Admin API Access Token<input className={inputCls} type="password" value={shopifyForm.accessToken} onChange={(e) => setShopifyForm({ ...shopifyForm, accessToken: e.target.value })} required placeholder="shpat_..." /></label>
-          <label className="block text-sm">App Client Secret<input className={inputCls} type="password" value={shopifyForm.apiSecret} onChange={(e) => setShopifyForm({ ...shopifyForm, apiSecret: e.target.value })} required placeholder="shpss_..." /></label>
-        </div>
+        {shopifyAuthMode === "legacy" ? (
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm">Admin API Access Token<input className={inputCls} type="password" value={shopifyForm.accessToken} onChange={(e) => setShopifyForm({ ...shopifyForm, accessToken: e.target.value })} required placeholder="shpat_..." /></label>
+            <label className="block text-sm">App Client Secret<input className={inputCls} type="password" value={shopifyForm.apiSecret} onChange={(e) => setShopifyForm({ ...shopifyForm, apiSecret: e.target.value })} required placeholder="shpss_..." /></label>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">Client ID<input className={inputCls} type="password" value={shopifyCcForm.clientId} onChange={(e) => setShopifyCcForm({ ...shopifyCcForm, clientId: e.target.value })} required /></label>
+              <label className="block text-sm">Client Secret<input className={inputCls} type="password" value={shopifyCcForm.clientSecret} onChange={(e) => setShopifyCcForm({ ...shopifyCcForm, clientSecret: e.target.value })} required placeholder="shpss_..." /></label>
+            </div>
+            <p className="text-xs text-slate-400">Shopify Dev Dashboard থেকে App তৈরি করে Client ID ও Client Secret নিন। এই পদ্ধতিতে টোকেন স্বয়ংক্রিয়ভাবে নবায়ন হবে — ম্যানুয়ালি নতুন টোকেন বসাতে হবে না।</p>
+          </>
+        )}
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
           {busy === "shopify" ? "কানেকশন যাচাই হচ্ছে..." : "যাচাই করে Shopify কানেক্ট করুন"}
         </button>

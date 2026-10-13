@@ -193,6 +193,9 @@ const JOB_TYPES_BY_TARGET: Record<string, { value: string; label: string }[]> = 
     { value: "inbox_autoreply_sweep", label: "Inbox Auto-Reply Sweep (অপেক্ষমাণ AI উত্তর পাঠান — ১ মিনিট অন্তর চালান)" },
     { value: "comment_autoreply_sweep", label: "Comment Auto-Reply Sweep (অপেক্ষমাণ AI কমেন্ট-উত্তর দিন — ১ মিনিট অন্তর চালান)" },
     { value: "handover_timer_sweep", label: "Handover Timer Sweep (টাইমড অ্যাসাইনমেন্টের সময় শেষ হলে AI-এর কাছে ফেরত — ১ মিনিট অন্তর চালান)" },
+    { value: "courier_auto_sync", label: "Courier Auto-Sync (চালু শিপমেন্টের স্ট্যাটাস যাচাই + গ্রাহককে ট্র্যাকিং কার্ড — ৬০ মিনিট অন্তর চালান)" },
+    { value: "review_request_sweep", label: "Review Request Sweep (ডেলিভারির পর গ্রাহকের রিভিউ জিজ্ঞাসা — ৬০ মিনিট অন্তর চালান)" },
+    { value: "order_chase_sweep", label: "Order Chase Sweep (থেমে যাওয়া অর্ডার সেশনে আলতো অনুস্মারক — ৬০ মিনিট অন্তর চালান)" },
   ],
 };
 

@@ -149,9 +149,26 @@ export class CustomersService {
     if (this.risk) {
       try { courierRecord = await this.risk.courierRecordForCustomer(organizationId, customer.id); } catch { courierRecord = null; }
     }
+    // EC6: per-store identities for this customer (guarded — the
+    // table is optional in older deployments / fakes).
+    let storeIdentities: any[] = [];
+    try {
+      const table = (this.prisma as any).customerStoreIdentity;
+      if (table?.findMany) {
+        const rows = await table.findMany({ where: { customerId } });
+        const ids = [...new Set((rows ?? []).map((r: any) => r.storeId).filter(Boolean))];
+        const nameById = new Map<string, string | null>();
+        if (ids.length) {
+          const stores = await (this.prisma as any).store.findMany({ where: { organizationId, id: { in: ids } } });
+          for (const s of stores ?? []) nameById.set(s.id, s.name ?? null);
+        }
+        storeIdentities = (rows ?? []).map((r: any) => ({ ...r, storeName: nameById.get(r.storeId) ?? null }));
+      }
+    } catch { storeIdentities = []; }
     return {
       risk,
       courierRecord,
+      storeIdentities,
       customer: { ...customer, name: customerName(customer) },
       orders: orders.map((o: any) => ({
         ...o,
@@ -190,6 +207,35 @@ export class CustomersService {
     for (const c of conversations) {
       await (this.prisma as any).channelConversation.update({ where: { id: c.id }, data: { customerId: target.id } });
     }
+    // EC6: carry store identities — move source rows to the target
+    // unless the target already has an identity for the same store
+    // (target's wins; the source row is removed). Guarded like
+    // other optional tables: a missing table skips silently.
+    let identitiesMoved = 0;
+    let identityConflicts = 0;
+    try {
+      const table = (this.prisma as any).customerStoreIdentity;
+      if (table?.findMany) {
+        const rows = await table.findMany({ where: { customerId: source.id } });
+        for (const row of rows ?? []) {
+          let targetExisting: any = null;
+          if (typeof table.findFirst === "function") {
+            targetExisting = await table.findFirst({ where: { customerId: target.id, storeId: row.storeId } });
+          } else {
+            const targetRows = await table.findMany({ where: { customerId: target.id, storeId: row.storeId } });
+            targetExisting = (targetRows ?? [])[0] ?? null;
+          }
+          if (targetExisting) {
+            if (typeof table.delete === "function") await table.delete({ where: { id: row.id } });
+            else if (typeof table.deleteMany === "function") await table.deleteMany({ where: { id: row.id } });
+            identityConflicts++;
+          } else {
+            await table.update({ where: { id: row.id }, data: { customerId: target.id } });
+            identitiesMoved++;
+          }
+        }
+      }
+    } catch { /* optional table — skip silently */ }
     // Fill gaps on the survivor from the source (never overwrite).
     const fill: any = {};
     if (!target.phone && source.phone) fill.phone = source.phone;
@@ -201,12 +247,139 @@ export class CustomersService {
       const filled = this.customFields.fillGaps(target.customFields ?? null, source.customFields ?? null);
       if (Object.keys(filled).length || target.customFields) fill.customFields = filled;
     }
+    // IN2: remember, per filled field, the survivor's pre-merge
+    // value and the value filled in — unmerge restores a field
+    // only when it still holds exactly the filled value.
+    const filledFields: Record<string, { before: unknown; filledWith: unknown }> = {};
+    for (const field of Object.keys(fill)) {
+      filledFields[field] = { before: (target as any)[field] ?? null, filledWith: fill[field] ?? null };
+    }
     if (Object.keys(fill).length) await (this.prisma as any).customer.update({ where: { id: target.id }, data: fill });
     await (this.prisma as any).customer.update({ where: { id: source.id }, data: { mergedIntoId: target.id } });
+    // IN2: the reversible merge record (moved row ids + the
+    // gap-fill snapshot). Guarded: on a deployment whose IN2
+    // migration has not run yet the delegate is absent/failing and
+    // the merge keeps its pre-IN2 behaviour — but such a merge is
+    // then honestly NOT unmergeable (no record exists).
+    const mrt = (this.prisma as any).customerMergeRecord;
+    if (mrt?.create) {
+      await mrt.create({
+        data: {
+          organizationId, sourceCustomerId: source.id, targetCustomerId: target.id,
+          movedOrderIds: orders.map((o: any) => o.id),
+          movedConversationIds: conversations.map((c: any) => c.id),
+          filledFields, createdByUserId: actorId,
+        },
+      }).catch(() => undefined);
+    }
     await this.audit.log({
       organizationId, userId: actorId, action: "customer.merged", entityType: "Customer", entityId: target.id,
-      metadata: { sourceId: source.id, ordersMoved: orders.length, conversationsMoved: conversations.length },
+      metadata: { sourceId: source.id, ordersMoved: orders.length, conversationsMoved: conversations.length, identitiesMoved, identityConflicts },
     });
     return this.detail(organizationId, target.id);
+  }
+
+  /**
+   * IN2: non-reverted merge records where this customer was the
+   * SURVIVOR — the inbox context panel's "merged records" list
+   * with its undo affordance. Empty when the IN2 delegate is
+   * unavailable (pre-migration deployment) — never an error.
+   */
+  async listMergeRecords(organizationId: string, targetCustomerId: string) {
+    const mrt = (this.prisma as any).customerMergeRecord;
+    if (!mrt?.findMany) return [];
+    const rows = await mrt.findMany({
+      where: { organizationId, targetCustomerId }, orderBy: { createdAt: "desc" }, take: 20,
+    }).catch(() => []);
+    const active = (rows as any[]).filter((r) => !r.revertedAt);
+    const out: any[] = [];
+    for (const r of active) {
+      const source = await (this.prisma as any).customer.findFirst({
+        where: { id: r.sourceCustomerId, organizationId },
+      }).catch(() => null);
+      out.push({
+        id: r.id, sourceCustomerId: r.sourceCustomerId, targetCustomerId: r.targetCustomerId,
+        sourceName: source ? customerName(source) : null, sourcePhone: source?.phone ?? null,
+        ordersMoved: Array.isArray(r.movedOrderIds) ? r.movedOrderIds.length : 0,
+        conversationsMoved: Array.isArray(r.movedConversationIds) ? r.movedConversationIds.length : 0,
+        createdAt: r.createdAt, createdByUserId: r.createdByUserId,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * IN2: undo an agent-confirmed merge — the exact inverse of
+   * merge(), driven by the CustomerMergeRecord the merge wrote:
+   *  - orders/conversations move back to the source ONLY when
+   *    they still point at the survivor (a row a human has since
+   *    re-pointed elsewhere is never stolen back);
+   *  - a gap-filled survivor field is restored to its pre-merge
+   *    value ONLY when it still holds the filled value (a later
+   *    human edit is never clobbered);
+   *  - the source's mergedIntoId clears and the record is marked
+   *    reverted, so the same merge can never be reverted twice.
+   * Nothing is deleted at any point. Audited both ways.
+   * Merges made before IN2 (or while the IN2 migration had not
+   * run) have no record and are honestly refused here — they
+   * stay merged rather than being half-undone by guessing.
+   */
+  async unmerge(organizationId: string, actorId: string, dto: { sourceId: string }) {
+    const source = await (this.prisma as any).customer.findFirst({ where: { id: dto.sourceId, organizationId } });
+    if (!source) throw new NotFoundException("Customer not found in this organization");
+    if (!source.mergedIntoId) throw new BadRequestException("এই Customer রেকর্ডটি কারো সাথে মার্জ করা নেই — undo করার কিছু নেই।");
+    const mrt = (this.prisma as any).customerMergeRecord;
+    if (!mrt?.findMany) throw new BadRequestException("এই মার্জটি IN2-এর আগের — কোনো merge record নেই, তাই স্বয়ংক্রিয়ভাবে undo করা যাবে না।");
+    const records = await mrt.findMany({
+      where: { organizationId, sourceCustomerId: source.id }, orderBy: { createdAt: "desc" }, take: 20,
+    }).catch(() => []);
+    const record = (records as any[]).find((r) => !r.revertedAt && r.targetCustomerId === source.mergedIntoId);
+    if (!record) throw new BadRequestException("এই মার্জটি IN2-এর আগের — কোনো merge record নেই, তাই স্বয়ংক্রিয়ভাবে undo করা যাবে না।");
+    const target = await (this.prisma as any).customer.findFirst({ where: { id: record.targetCustomerId, organizationId } });
+    if (!target) throw new NotFoundException("Surviving customer not found in this organization");
+
+    let ordersRestored = 0;
+    for (const oid of (Array.isArray(record.movedOrderIds) ? record.movedOrderIds : [])) {
+      const o = await (this.prisma as any).order.findFirst({ where: { id: oid, organizationId } }).catch(() => null);
+      if (o && o.customerId === target.id) {
+        await (this.prisma as any).order.update({ where: { id: o.id }, data: { customerId: source.id } });
+        ordersRestored++;
+      }
+    }
+    let conversationsRestored = 0;
+    for (const cid of (Array.isArray(record.movedConversationIds) ? record.movedConversationIds : [])) {
+      const c = await (this.prisma as any).channelConversation.findFirst({ where: { id: cid, organizationId } }).catch(() => null);
+      if (c && c.customerId === target.id) {
+        await (this.prisma as any).channelConversation.update({ where: { id: c.id }, data: { customerId: source.id } });
+        conversationsRestored++;
+      }
+    }
+    const filled = (record.filledFields && typeof record.filledFields === "object") ? record.filledFields : {};
+    const restore: Record<string, unknown> = {};
+    const fieldsRestored: string[] = [];
+    for (const [field, snap] of Object.entries(filled as Record<string, any>)) {
+      if (!snap || typeof snap !== "object" || !("filledWith" in snap)) continue;
+      const current = (target as any)[field] ?? null;
+      if (JSON.stringify(current) === JSON.stringify(snap.filledWith ?? null)) {
+        restore[field] = snap.before ?? null;
+        fieldsRestored.push(field);
+      }
+    }
+    if (Object.keys(restore).length) {
+      await (this.prisma as any).customer.update({ where: { id: target.id }, data: restore });
+    }
+    await (this.prisma as any).customer.update({ where: { id: source.id }, data: { mergedIntoId: null } });
+    await mrt.update({
+      where: { id: record.id },
+      data: { revertedAt: new Date(), revertedByUserId: actorId },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "customer.unmerged", entityType: "Customer", entityId: source.id,
+      metadata: { targetId: target.id, mergeRecordId: record.id, ordersRestored, conversationsRestored, fieldsRestored },
+    });
+    return {
+      sourceId: source.id, targetId: target.id, mergeRecordId: record.id,
+      ordersRestored, conversationsRestored, fieldsRestored,
+    };
   }
 }

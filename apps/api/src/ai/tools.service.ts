@@ -9,6 +9,7 @@ import { contactFactLines, deliveryFactLines, hoursFactLines, matchKnowledge, pa
 import { detectAnomalies, DailyPoint } from "./anomaly";
 import { formatMinor } from "@repo/contracts";
 import { CompetitorsService } from "../competitors/competitors.service";
+import { forecastRevenue, type DailyRevenuePoint } from "./forecast";
 
 /**
  * Read-only AI tools. Every tool is organization-scoped by construction
@@ -43,9 +44,266 @@ export class ToolsService {
       case "get_product_profit": return this.productProfit(organizationId, call.args);
       case "compare_periods": return this.comparePeriods(organizationId, call.args);
       case "get_competitor_intelligence": return this.competitorIntelligence(organizationId, call.args);
+      case "get_order_detail": return this.orderDetail(organizationId, call.args);
+      case "get_customer_360": return this.customer360(organizationId, call.args);
+      case "get_crm_pipeline": return this.crmPipeline(organizationId);
+      case "get_inbox_performance": return this.inboxPerformance(organizationId);
+      case "get_social_performance": return this.socialPerformance(organizationId);
+      case "get_ad_account_health": return this.adAccountHealth(organizationId);
+      case "get_usage_summary": return this.usageSummary(organizationId);
+      case "get_team_performance": return this.teamPerformance(organizationId);
+      case "get_automation_health": return this.automationHealth(organizationId);
+      case "get_courier_rollup": return this.courierRollup(organizationId);
+      case "get_sales_forecast": return this.salesForecast(organizationId, call.args);
       default: throw new Error(`Unknown tool: ${call.tool}`);
 
     }
+  }
+
+
+  // ----- AP3 tool universe (all read-only, org-scoped) -----
+
+  private async orderDetail(organizationId: string, args: Record<string, unknown>) {
+    const q = String(args.query ?? "").trim();
+    if (!q) return { found: false, reason: "কোনো অর্ডার নম্বর দেওয়া হয়নি" };
+    const p: any = this.prisma as any;
+    const o = await p.order.findFirst({
+      where: { organizationId, OR: [{ externalNumber: q }, { externalId: q }, { id: q }, { externalNumber: { contains: q } }] },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!o) return { found: false, reason: `“${q}” দিয়ে কোনো অর্ডার পাওয়া যায়নি` };
+    const [items, shipments] = await Promise.all([
+      p.orderItem.findMany({ where: { orderId: o.id }, take: 20 }),
+      p.courierShipment.findMany({ where: { organizationId, orderId: o.id }, orderBy: { createdAt: "desc" }, take: 3 }),
+    ]);
+    return {
+      found: true,
+      orderNumber: o.externalNumber ?? o.externalId,
+      status: o.status,
+      source: o.source,
+      payment: o.paymentMethod ?? null,
+      isCod: Boolean(o.isCod),
+      placedAt: new Date(o.createdAt).toISOString().slice(0, 10),
+      subtotal: formatMinor(o.subtotalMinor ?? 0n, o.currency),
+      shipping: formatMinor(o.shippingMinor ?? 0n, o.currency),
+      discount: formatMinor(o.discountMinor ?? 0n, o.currency),
+      total: formatMinor(o.totalMinor ?? 0n, o.currency),
+      items: items.map((i: any) => ({ name: i.name, sku: i.sku ?? null, qty: i.quantity, total: formatMinor(i.totalMinor ?? 0n, o.currency) })),
+      shipments: shipments.map((s: any) => ({ provider: s.provider, status: s.status, trackingCode: s.trackingCode ?? null })),
+    };
+  }
+
+  private async customer360(organizationId: string, args: Record<string, unknown>) {
+    const q = String(args.query ?? "").trim();
+    if (!q) return { found: false, reason: "কোনো ফোন/নাম/ইমেইল দেওয়া হয়নি" };
+    const p: any = this.prisma as any;
+    const contains = { contains: q, mode: "insensitive" as const };
+    const c = await p.customer.findFirst({
+      where: { organizationId, mergedIntoId: null, OR: [{ phone: contains }, { email: contains }, { firstName: contains }, { lastName: contains }] },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!c) return { found: false, reason: `“${q}” দিয়ে কোনো কাস্টমার পাওয়া যায়নি` };
+    const orders = await p.order.findMany({ where: { organizationId, customerId: c.id, isPractice: false }, orderBy: { createdAt: "desc" }, take: 50 });
+    const lifetime = orders.filter((o: any) => !REVENUE_EXCLUDED_STATUSES.includes(o.status)).reduce((s: number, o: any) => s + Number(o.totalMinor ?? 0), 0);
+    const lead = await p.lead.findFirst({ where: { organizationId, customerId: c.id }, orderBy: { createdAt: "desc" } }).catch(() => null);
+    return {
+      found: true,
+      name: [c.firstName, c.lastName].filter(Boolean).join(" ") || "(নাম নেই)",
+      phone: c.phone ?? null,
+      email: c.email ?? null,
+      orders: orders.length,
+      lifetimeValue: formatMinor(BigInt(Math.round(lifetime)), orders[0]?.currency ?? "BDT"),
+      lastOrder: orders[0] ? { number: orders[0].externalNumber ?? orders[0].externalId, status: orders[0].status, at: new Date(orders[0].createdAt).toISOString().slice(0, 10) } : null,
+      leadStage: lead?.stage ?? null,
+      customerSince: new Date(c.createdAt).toISOString().slice(0, 10),
+    };
+  }
+
+  private async crmPipeline(organizationId: string) {
+    const p: any = this.prisma as any;
+    const leads = await p.lead.findMany({ where: { organizationId, mergedIntoId: null }, take: 2000 });
+    const stages: Record<string, { count: number; valueMinor: number }> = {};
+    let overdue = 0;
+    const now = Date.now();
+    for (const l of leads) {
+      const s = (stages[l.stage] ??= { count: 0, valueMinor: 0 });
+      s.count += 1;
+      s.valueMinor += Number(l.valueMinor ?? 0);
+      if (l.nextFollowUpAt && new Date(l.nextFollowUpAt).getTime() < now && !["won", "lost"].includes(l.stage)) overdue += 1;
+    }
+    return {
+      totalLeads: leads.length,
+      overdueFollowUps: overdue,
+      stages: Object.entries(stages).map(([stage, v]) => ({ stage, leads: v.count, value: formatMinor(BigInt(Math.round(v.valueMinor)), "BDT") })),
+    };
+  }
+
+  private async inboxPerformance(organizationId: string) {
+    const p: any = this.prisma as any;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const convs = await p.channelConversation.findMany({ where: { organizationId, createdAt: { gte: since } }, take: 5000 });
+    const byStatus: Record<string, number> = {};
+    const byChannel: Record<string, number> = {};
+    let unassigned = 0;
+    for (const c of convs) {
+      byStatus[c.status] = (byStatus[c.status] ?? 0) + 1;
+      byChannel[c.channel] = (byChannel[c.channel] ?? 0) + 1;
+      if (c.status === "open" && !c.assignedUserId) unassigned += 1;
+    }
+    const themes = await p.aiUnansweredQuestion.findMany({ where: { organizationId, status: "open" }, orderBy: { count: "desc" }, take: 5 });
+    return {
+      windowDays: 30,
+      conversations: convs.length,
+      byStatus,
+      byChannel,
+      unassignedOpen: unassigned,
+      topUnansweredThemes: themes.map((t2: any) => ({ question: t2.normalizedQuestion, askedTimes: t2.count, channel: t2.channel })),
+    };
+  }
+
+  private async socialPerformance(organizationId: string) {
+    const p: any = this.prisma as any;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const posts = await p.socialPost.findMany({ where: { organizationId, createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 2000 });
+    const byStatus: Record<string, number> = {};
+    for (const post of posts) byStatus[post.status] = (byStatus[post.status] ?? 0) + 1;
+    const failed = posts.find((x: any) => x.status === "failed");
+    return {
+      windowDays: 30,
+      posts: posts.length,
+      byStatus,
+      latestFailure: failed ? { at: new Date(failed.createdAt).toISOString().slice(0, 10), error: failed.error ?? "কারণ রেকর্ড নেই" } : null,
+    };
+  }
+
+  private async adAccountHealth(organizationId: string) {
+    const p: any = this.prisma as any;
+    const accounts = await p.adAccount.findMany({ where: { organizationId }, take: 100 });
+    const byBucket: Record<string, number> = {};
+    for (const a of accounts) byBucket[a.platformStatusBucket ?? "unknown"] = (byBucket[a.platformStatusBucket ?? "unknown"] ?? 0) + 1;
+    return {
+      accounts: accounts.length,
+      byPlatformStatus: byBucket,
+      notActive: accounts
+        .filter((a: any) => a.status !== "ACTIVE" || (a.platformStatusBucket && a.platformStatusBucket !== "active"))
+        .map((a: any) => ({ name: a.name, platform: a.platform, status: a.status, platformStatus: a.platformStatusBucket ?? null })),
+    };
+  }
+
+  private async usageSummary(organizationId: string) {
+    const p: any = this.prisma as any;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const rows = await p.aIUsageRecord.findMany({ where: { organizationId, createdAt: { gte: since } }, take: 10000 });
+    const byFeature: Record<string, { calls: number; inputTokens: number; outputTokens: number }> = {};
+    const byProvider: Record<string, number> = {};
+    const todayKey = new Date().toISOString().slice(0, 10);
+    let today = 0;
+    for (const r of rows) {
+      const f = (byFeature[r.feature] ??= { calls: 0, inputTokens: 0, outputTokens: 0 });
+      f.calls += 1;
+      f.inputTokens += r.inputTokens ?? 0;
+      f.outputTokens += r.outputTokens ?? 0;
+      byProvider[r.provider] = (byProvider[r.provider] ?? 0) + 1;
+      if (new Date(r.createdAt).toISOString().slice(0, 10) === todayKey) today += 1;
+    }
+    return { windowDays: 30, totalCalls: rows.length, callsToday: today, byFeature, byProvider };
+  }
+
+  private async teamPerformance(organizationId: string) {
+    const p: any = this.prisma as any;
+    const states = await p.agentState.findMany({ where: { organizationId }, take: 500 });
+    const presence: Record<string, number> = {};
+    for (const s of states) presence[s.status] = (presence[s.status] ?? 0) + 1;
+    const open = await p.channelConversation.findMany({ where: { organizationId, status: "open" }, take: 5000 });
+    const load: Record<string, number> = {};
+    for (const c of open) if (c.assignedUserId) load[c.assignedUserId] = (load[c.assignedUserId] ?? 0) + 1;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const closed = await p.channelConversation.count({ where: { organizationId, status: "closed", updatedAt: { gte: since } } }).catch(() => 0);
+    return {
+      agents: states.length,
+      presence,
+      openConversations: open.length,
+      topLoad: Object.entries(load).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([userId, count]) => ({ userId, openAssigned: count })),
+      closedLast30Days: closed,
+    };
+  }
+
+  private async automationHealth(organizationId: string) {
+    const p: any = this.prisma as any;
+    const since = new Date(Date.now() - 7 * 86_400_000);
+    const runs = await p.automationRun.findMany({ where: { organizationId, createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 2000 });
+    const byStatus: Record<string, number> = {};
+    const byKind: Record<string, number> = {};
+    for (const r of runs) {
+      byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+      byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+    }
+    return {
+      windowDays: 7,
+      runs: runs.length,
+      byStatus,
+      byKind,
+      latestErrors: runs.filter((r: any) => r.status === "error").slice(0, 3).map((r: any) => ({ at: new Date(r.createdAt).toISOString(), kind: r.kind, detail: r.detail ?? null })),
+    };
+  }
+
+  private async courierRollup(organizationId: string) {
+    const p: any = this.prisma as any;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const rows = await p.courierShipment.findMany({ where: { organizationId, createdAt: { gte: since } }, take: 5000 });
+    const TERMINAL = ["delivered", "partial_delivered", "cancelled", "returned"];
+    const byProvider: Record<string, { total: number; delivered: number; returned: number; codCollectedMinor: number; stuck: number }> = {};
+    for (const s of rows) {
+      const v = (byProvider[s.provider] ??= { total: 0, delivered: 0, returned: 0, codCollectedMinor: 0, stuck: 0 });
+      v.total += 1;
+      if (s.status === "delivered" || s.status === "partial_delivered") {
+        v.delivered += 1;
+        v.codCollectedMinor += Number(s.codAmountMinor ?? 0);
+      }
+      if (s.status === "returned") v.returned += 1;
+      if (!TERMINAL.includes(s.status) && Date.now() - new Date(s.createdAt).getTime() > 72 * 3600_000) v.stuck += 1;
+    }
+    return {
+      windowDays: 30,
+      providers: Object.entries(byProvider).map(([provider, v]) => ({
+        provider,
+        shipments: v.total,
+        delivered: v.delivered,
+        returned: v.returned,
+        deliveryRatePct: v.total ? Math.round((v.delivered / v.total) * 1000) / 10 : 0,
+        codCollected: formatMinor(BigInt(Math.round(v.codCollectedMinor)), "BDT"),
+        stuckOver72h: v.stuck,
+      })),
+    };
+  }
+
+  // ----- AP4: deterministic forecasting over real daily revenue -----
+
+  private async salesForecast(organizationId: string, args: Record<string, unknown>) {
+    const p: any = this.prisma as any;
+    const days = Math.min(30, Math.max(7, Number(args.days ?? 14) || 14));
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const orders = await p.order.findMany({ where: { organizationId, isPractice: false, createdAt: { gte: since } }, take: 10000 });
+    const byDay = new Map<string, number>();
+    for (const o of orders) {
+      if (REVENUE_EXCLUDED_STATUSES.includes(o.status)) continue;
+      const key = new Date(o.createdAt).toISOString().slice(0, 10);
+      byDay.set(key, (byDay.get(key) ?? 0) + Number(o.totalMinor ?? 0));
+    }
+    const series: DailyRevenuePoint[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const key = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+      series.push({ date: key, revenueMinor: byDay.get(key) ?? 0 });
+    }
+    const result = forecastRevenue(series, days, typeof args.scenarioGrowthPct === "number" ? args.scenarioGrowthPct : undefined);
+    if (!result.available) return result;
+    return {
+      ...result,
+      dailyBaseline: formatMinor(BigInt(result.dailyBaselineMinor), "BDT"),
+      totalProjected: formatMinor(BigInt(result.totalProjectedMinor), "BDT"),
+      totalRange: `${formatMinor(BigInt(result.totalLowMinor), "BDT")} – ${formatMinor(BigInt(result.totalHighMinor), "BDT")}`,
+      days: result.days.map((d) => ({ date: d.date, projected: formatMinor(BigInt(d.projectedMinor), "BDT") })),
+    };
   }
 
   private async overview(organizationId: string, args: Record<string, unknown>) {

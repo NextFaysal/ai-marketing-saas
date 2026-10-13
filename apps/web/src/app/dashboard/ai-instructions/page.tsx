@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { knowledgeBodyFromDraft } from "@/lib/inbox-in7";
 
 interface DeskState {
   published: string | null;
@@ -21,6 +22,14 @@ interface UnansweredRow {
 interface TestResult {
   answer: string | null; noAnswer: boolean; intent: string; confidence: number;
   evidence: any; model: string | null;
+}
+/** IN7e: a display-only draft proposal for an unanswered
+ * question — nothing is saved until a human routes it through
+ * the knowledge / draft paths. */
+interface DraftProposalResult {
+  proposal: { kind: "knowledge" | "instruction"; title: string; content: string; reason: string } | null;
+  provider: string | null;
+  reason?: string;
 }
 
 const REASON_LABEL: Record<string, { label: string; cls: string }> = {
@@ -65,6 +74,7 @@ export default function AiInstructionsPage() {
   const [question, setQuestion] = useState("");
   const [useDraft, setUseDraft] = useState(true);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [draftProposals, setDraftProposals] = useState<Record<string, DraftProposalResult>>({});
 
   const canPublish = myRole === "OWNER" || myRole === "ADMIN";
 
@@ -155,6 +165,44 @@ export default function AiInstructionsPage() {
     const block = `প্রশ্ন: ${row.questionText}\nউত্তর: `;
     setDraft((prev) => (prev ? `${prev}\n${block}` : block));
     setNotice("✎ প্রশ্নটি Draft-এ যোগ হয়েছে — উত্তর লিখে Draft সেভ করুন, টেস্ট করে তারপর Publish করুন।");
+  }
+
+  /** IN7e: ask the AI for a draft proposal for this unanswered
+   * question. The endpoint only SHOWS a proposal — it writes
+   * nothing to knowledge, draft or published instructions. */
+  async function proposeDraft(row: UnansweredRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    await run(`propose-${row.id}`, async () => {
+      const res = await apiFetch<DraftProposalResult>(`/organizations/${orgId}/ai-instructions/unanswered/${row.id}/draft-proposal`, { method: "POST" });
+      setDraftProposals((prev) => ({ ...prev, [row.id]: res }));
+    });
+  }
+
+  /** IN7e accept (knowledge kind): send the proposal through the
+   * EXISTING knowledge-documents endpoint — a human click, the
+   * same create any owner could type by hand on the Knowledge
+   * page. */
+  async function sendProposalToKnowledge(row: UnansweredRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const p = draftProposals[row.id]?.proposal;
+    if (!p || p.kind !== "knowledge") return;
+    await run(`toknowledge-${row.id}`, async () => {
+      await apiFetch(`/organizations/${orgId}/knowledge-documents`, {
+        method: "POST", body: JSON.stringify(knowledgeBodyFromDraft(p)),
+      });
+      setDraftProposals((prev) => { const next = { ...prev }; delete next[row.id]; return next; });
+    }, "📚 খসড়াটি জ্ঞানভান্ডারে যোগ হয়েছে — Knowledge পেজে যাচাই করে নিন।");
+  }
+
+  /** IN7e accept (instruction kind): put the proposed line into
+   * the Desk DRAFT editor only — not saved, not published; the
+   * owner still saves/tests/publishes through the normal flow. */
+  function sendProposalToDraft(row: UnansweredRow) {
+    const p = draftProposals[row.id]?.proposal;
+    if (!p || p.kind !== "instruction") return;
+    setDraft((prev) => (prev ? `${prev}\n${p.content}` : p.content));
+    setDraftProposals((prev) => { const next = { ...prev }; delete next[row.id]; return next; });
+    setNotice("✎ প্রস্তাবিত লাইনটি Draft সম্পাদকে বসানো হয়েছে — যাচাই করে Draft সেভ করুন, টেস্ট করে তারপর Publish করুন।");
   }
 
   const input = "input mt-1.5 w-full";
@@ -317,7 +365,35 @@ export default function AiInstructionsPage() {
                         <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy === `unanswered-${row.id}`} onClick={() => setUnansweredStatus(row, "open")}>↩ আবার খুলুন</button>
                       ) : null}
                       <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => appendToDraft(row)}>✎ Instruction-এ যোগ করুন</button>
+                      <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy === `propose-${row.id}`} onClick={() => proposeDraft(row)}>
+                        {busy === `propose-${row.id}` ? "ভাবছে…" : "🤖 AI খসড়া প্রস্তাব"}
+                      </button>
                     </div>
+                    {draftProposals[row.id] ? (
+                      draftProposals[row.id].proposal ? (
+                        <div className="mt-2 rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-indigo-100">
+                          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700">
+                            <span>{draftProposals[row.id].proposal!.kind === "knowledge" ? "📚 জ্ঞানভান্ডারের খসড়া" : "✎ Instruction লাইনের খসড়া"}</span>
+                            <span className="badge-slate">{draftProposals[row.id].proposal!.title}</span>
+                          </div>
+                          <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">{draftProposals[row.id].proposal!.content}</p>
+                          {draftProposals[row.id].proposal!.reason ? (
+                            <p className="mt-1 text-xs text-slate-400">কারণ: {draftProposals[row.id].proposal!.reason}</p>
+                          ) : null}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {draftProposals[row.id].proposal!.kind === "knowledge" ? (
+                              <button className="btn-primary px-3 py-1.5 text-xs" disabled={busy === `toknowledge-${row.id}`} onClick={() => sendProposalToKnowledge(row)}>📚 জ্ঞানভান্ডারে যোগ করুন</button>
+                            ) : (
+                              <button className="btn-primary px-3 py-1.5 text-xs" onClick={() => sendProposalToDraft(row)}>✎ Draft-এ বসান (Publish নয়)</button>
+                            )}
+                            <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => setDraftProposals((prev) => { const next = { ...prev }; delete next[row.id]; return next; })}>প্রত্যাখ্যান</button>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-400">এটি শুধু প্রস্তাব — আপনি না পাঠালে কোথাও কিছু সংরক্ষিত হয়নি।</p>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-slate-400">{draftProposals[row.id].reason ?? "খসড়া প্রস্তাব তৈরি হয়নি।"}</p>
+                      )
+                    ) : null}
                   </div>
                 );
               })}

@@ -6,6 +6,7 @@ import { IntegrationsService } from "../integrations/integrations.service";
 import { RiskService } from "./risk.service";
 import { EventsService } from "../common/events.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { OrderPushService } from "../commerce/order-push.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import type { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
@@ -54,6 +55,10 @@ export class OrdersService {
     // partial deployments keep working.
     @Optional() private readonly inventory?: InventoryService,
     @Optional() private readonly events?: EventsService,
+    // EC5: store push orchestration — appended LAST + @Optional
+    // (same discipline as the S2 hooks; every call is wrapped so a
+    // store problem can never break the local order flow).
+    @Optional() private readonly orderPush?: OrderPushService,
   ) {}
 
   /**
@@ -146,7 +151,8 @@ export class OrdersService {
     const hasStatus = dto.status !== undefined;
     const hasRefund = dto.refund !== undefined && dto.refund !== null;
     const hasNote = dto.internalNote !== undefined;
-    if (!hasStatus && !hasRefund && !hasNote) {
+    const hasAddress = dto.address !== undefined;
+    if (!hasStatus && !hasRefund && !hasNote && !hasAddress) {
       throw new BadRequestException("কিছুই পাঠানো হয়নি — status, refund অথবা internalNote-এর যেকোনো একটি পাঠান");
     }
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
@@ -208,6 +214,9 @@ export class OrdersService {
         noteCleared = trimmed === "";
       }
     }
+    if (hasAddress) {
+      data.address = dto.address === null ? null : String(dto.address).trim() || null;
+    }
     if (Object.keys(data).length > 0) {
       await (this.prisma as any).order.update({ where: { id: order.id }, data });
     }
@@ -257,8 +266,50 @@ export class OrdersService {
         entityType: "Order", entityId: orderId, metadata: { cleared: noteCleared },
       }).catch(() => undefined);
     }
+    if (hasAddress) {
+      await this.audit?.log({
+        organizationId, userId: actorId, action: "orders.address_updated",
+        entityType: "Order", entityId: orderId, metadata: {},
+      }).catch(() => undefined);
+    }
+
+    // --- EC5 store pushes (failure-isolated; the local change
+    // above stands whatever the store does). internalNote is
+    // NEVER pushed — there is deliberately no hook for it. ---
+    if (this.orderPush) {
+      if (statusChanges) {
+        try { await this.orderPush.enqueueStatus(organizationId, orderId, finalStatus); } catch { /* isolated */ }
+      }
+      if (hasRefund && refundAmount !== null) {
+        // The refund GATE (Store.refundPushEnabled, default off)
+        // is enforced inside enqueueRefund — not here.
+        try { await this.orderPush.enqueueRefund(organizationId, orderId, { amountMinor: refundAmount.toString(), reason: dto.refund?.reason }); } catch { /* isolated */ }
+      }
+      if (hasAddress && data.address) {
+        try { await this.orderPush.enqueueAddress(organizationId, orderId, String(data.address)); } catch { /* isolated */ }
+      }
+    }
 
     return this.getOne(organizationId, orderId);
+  }
+
+  /** EC5: turn this chat/manual order into a store draft order. */
+  async createStoreDraft(organizationId: string, actorId: string, orderId: string, storeId?: string) {
+    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    const order = await this.orderPush.createStoreDraft(organizationId, actorId, orderId, storeId);
+    return pubOrder({ ...order, items: (await (this.prisma as any).orderItem.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? [] });
+  }
+
+  /** EC5: send a customer-visible note to the store order.
+   * Distinct from internalNote, which never leaves the SaaS. */
+  async pushStoreNote(organizationId: string, actorId: string, orderId: string, note: string) {
+    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    const result = await this.orderPush.enqueueNote(organizationId, orderId, note);
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.store_note_queued",
+      entityType: "Order", entityId: orderId, metadata: {},
+    }).catch(() => undefined);
+    return result;
   }
 
   /** Events must never throw into the request path. */
@@ -266,11 +317,15 @@ export class OrdersService {
     try { this.events?.emit(event, { organizationId, context }); } catch { /* fire-and-forget */ }
   }
 
-  async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number }) {
+  async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number; includePractice?: boolean }) {
     const page = Math.max(1, q.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
     const where: any = {
       organizationId,
+      // CX12a: practice orders are excluded by default; only an
+      // explicit includePractice (the "প্র্যাক্টিস অর্ডার দেখান"
+      // filter) surfaces them.
+      ...(q.includePractice ? {} : { isPractice: false }),
       ...(q.status ? { status: q.status } : {}),
       ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
     };
@@ -332,6 +387,8 @@ export class OrdersService {
     }
     const where: any = {
       organizationId,
+      // CX12a: exports never include practice orders.
+      isPractice: false,
       ...(q.status ? { status: q.status } : {}),
       ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
     };
@@ -393,11 +450,12 @@ export class OrdersService {
   }
 
   async stats(organizationId: string) {
+    // CX12a: dashboard order stats never count practice orders.
     const grouped = await (this.prisma as any).order.groupBy({
-      by: ["status"], where: { organizationId }, _count: true, _sum: { totalMinor: true },
+      by: ["status"], where: { organizationId, isPractice: false }, _count: true, _sum: { totalMinor: true },
     });
     const cod = await (this.prisma as any).order.groupBy({
-      by: ["isCod"], where: { organizationId }, _count: true,
+      by: ["isCod"], where: { organizationId, isPractice: false }, _count: true,
     });
     const byStatus = grouped.map((g: any) => ({
       status: g.status, count: g._count, totalMinor: (g._sum.totalMinor ?? 0n).toString(),

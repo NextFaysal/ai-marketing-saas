@@ -255,8 +255,13 @@ describe("CX Batch 4 (CX7 Chase, CX12c Voice Order, CX9 Knowledge Ingestion, CX1
       const tables: Record<string, any> = {};
       tables.lead = makeTable("lead", tables);
       tables.leadActivity = makeTable("leadActivity", tables);
+      tables.crmSetting = makeTable("crmSetting", tables);
 
       const svc = new LeadsService(tables as any, undefined, auditStub, null as any);
+      // Integration: stamping is settings-driven (CX10) — the org
+      // configures the same intervals the owner's static map held
+      // (new = 1 day, proposal = 5 days, expressed in hours).
+      await svc.updateFollowUpSetting("org-1", { new: 24, proposal: 120 });
 
       const before = Date.now();
       const lead = await svc.create("org-1", "user-1", {
@@ -275,8 +280,10 @@ describe("CX Batch 4 (CX7 Chase, CX12c Voice Order, CX9 Knowledge Ingestion, CX1
       const tables: Record<string, any> = {};
       tables.lead = makeTable("lead", tables);
       tables.leadActivity = makeTable("leadActivity", tables);
+      tables.crmSetting = makeTable("crmSetting", tables);
 
       const svc = new LeadsService(tables as any, undefined, auditStub, null as any);
+      await svc.updateFollowUpSetting("org-1", { new: 24, proposal: 120 });
 
       const lead = await svc.create("org-1", "user-1", {
         name: "Karim",

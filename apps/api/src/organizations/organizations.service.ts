@@ -6,6 +6,7 @@ import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBra
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, effectiveAccess, findUnknownAreas, normalizeOverrides } from "../common/permission-catalog";
 import { isValidTimezone, isValidWindows } from "../inbox/working-hours";
+import { parseAiSchedule } from "../inbox/ai-schedule";
 import { EmailProvider } from "../messaging/email.provider";
 import { Role } from "@repo/db";
 
@@ -451,6 +452,57 @@ export class OrganizationsService {
     ];
     const completed = steps.filter((s) => s.done).length;
     return { steps, completed, total: steps.length, allDone: completed === steps.length };
+  }
+
+  // ---- CX12a: Setup Guide ----
+  // The guided setup experience. Same honesty rule as
+  // getOnboarding above: a step is done ONLY when the underlying
+  // real rows/state exist — nothing is inferred or faked.
+  // Reused checkers (identical state source + semantics as
+  // getOnboarding): profile, store, products, team.
+  // New checkers: channel (a CONNECTED messaging integration),
+  // instructions (a CX2 AiInstructionVersion exists — published,
+  // not merely typed into the live field), courier (a CONNECTED
+  // steadfast/pathao/redx integration), ai_schedule (CX12d:
+  // InboxSetting.aiScheduleByChannel has at least one channel
+  // entry with enabled=true).
+  async getSetupGuide(organizationId: string) {
+    const count = async (table: string, extra: Record<string, unknown> = {}): Promise<number> => {
+      try { return (await (this.prisma as any)[table]?.count?.({ where: { organizationId, ...extra } })) ?? 0; }
+      catch { return 0; }
+    };
+    const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+    const inboxSetting = await (this.prisma as any).inboxSetting?.findUnique?.({ where: { organizationId } }).catch(() => null);
+    let scheduleSet = false;
+    try {
+      const schedule = parseAiSchedule(inboxSetting?.aiScheduleByChannel ?? null);
+      scheduleSet = Object.values(schedule).some((entry: any) => entry?.enabled === true);
+    } catch { scheduleSet = false; }
+    const [channelIntegrations, stores, products, instructionVersions, courierIntegrations, members] = await Promise.all([
+      count("integration", { provider: { in: ["whatsapp", "messenger", "instagram", "telegram", "email"] }, status: "CONNECTED" }),
+      count("store"),
+      count("product"),
+      count("aiInstructionVersion"),
+      count("integration", { provider: { in: ["steadfast", "pathao", "redx"] }, status: "CONNECTED" }),
+      (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } }).catch(() => 0),
+    ]);
+    const steps = [
+      { key: "profile", label: "ব্যবসার প্রোফাইল পূরণ করুন", done: Boolean(profile && (profile.description || profile.websiteUrl || profile.industry)), href: "/dashboard/knowledge" },
+      { key: "channel", label: "মেসেজিং চ্যানেল কানেক্ট করুন (WhatsApp / Messenger)", done: channelIntegrations > 0, href: "/dashboard/integrations" },
+      { key: "store", label: "স্টোর কানেক্ট করুন (WooCommerce / Shopify)", done: stores > 0, href: "/dashboard/integrations" },
+      { key: "products", label: "প্রোডাক্ট যোগ করুন", done: products > 0, href: "/dashboard/products" },
+      { key: "instructions", label: "AI নির্দেশনা প্রকাশ (Publish) করুন", done: instructionVersions > 0, href: "/dashboard/ai-instructions" },
+      { key: "courier", label: "কুরিয়ার কনফিগার করুন (Steadfast / Pathao / RedX)", done: courierIntegrations > 0, href: "/dashboard/integrations" },
+      { key: "team", label: "টিম সদস্য আমন্ত্রণ জানান", done: members > 1, href: "/dashboard/team" },
+      { key: "ai_schedule", label: "AI-এর সময়সূচি সেট করুন", done: scheduleSet, href: "/dashboard/inbox" },
+    ];
+    const completed = steps.filter((s) => s.done).length;
+    const total = steps.length;
+    return {
+      steps, completed, total,
+      percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+      allDone: completed === total,
+    };
   }
 
   /** Recovery for a member who lost their authenticator: the org

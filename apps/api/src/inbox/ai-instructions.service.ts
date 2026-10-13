@@ -1,7 +1,10 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
+import { LlmFactory } from "../ai/llm/llm.factory";
+import { matchKnowledge } from "./business-brain";
+import { parseUnansweredDraft, type UnansweredDraftProposal } from "./in7-ai";
 
 export const UNANSWERED_STATUSES = ["open", "resolved", "ignored"] as const;
 
@@ -30,6 +33,10 @@ export class AiInstructionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inbox: InboxService,
+    // IN7e: optional so existing constructions (and older specs)
+    // keep working — without a factory the draft-proposal
+    // endpoint honestly reports that no proposal can be made.
+    @Optional() private readonly llm?: LlmFactory,
   ) {}
 
   private async getProfile(organizationId: string) {
@@ -151,6 +158,13 @@ export class AiInstructionsService {
    * cap and the usage ledger agree.
    */
   private async checkTestLimit(organizationId: string) {
+    await this.checkFeatureLimit(organizationId, "instructions_test");
+  }
+
+  /** Kill switch + per-feature daily cap, shared by the Desk's
+   * AI features: the cap counts the SAME feature the calls record
+   * under, so ledger and enforcement always agree. */
+  private async checkFeatureLimit(organizationId: string, feature: string) {
     const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (ks.aiDisabledOrgIds.includes(organizationId)) {
@@ -161,7 +175,7 @@ export class AiInstructionsService {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
     const used = await (this.prisma as any).aIUsageRecord.count({
-      where: { organizationId, feature: "instructions_test", createdAt: { gte: startOfDay } },
+      where: { organizationId, feature, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
       throw new HttpException(
@@ -200,6 +214,59 @@ export class AiInstructionsService {
       .findMany({ where, orderBy: { createdAt: "desc" }, take })
       .catch(() => []);
     return Array.isArray(rows) ? rows : [];
+  }
+
+  /**
+   * IN7e: "learn from the unanswered" — for ONE unanswered
+   * question, the AI drafts either a knowledge chunk or an
+   * instruction line that WOULD have answered it, grounded in
+   * the real question + the org's existing knowledge/instructions
+   * context. DISPLAY-ONLY: nothing is written here — no knowledge
+   * row, no draft change, no publish. A human routes the proposal
+   * through the existing paths (knowledge-documents POST, or the
+   * Desk draft above) if they accept it. Enforcement parity:
+   * kill switch + daily cap under feature "unanswered_draft",
+   * checked before any LLM call; every call records usage.
+   */
+  async draftUnansweredProposal(organizationId: string, actorId: string, id: string): Promise<{
+    proposal: UnansweredDraftProposal | null; provider: string | null; reason?: string;
+    question: { id: string; questionText: string };
+  }> {
+    await this.checkFeatureLimit(organizationId, "unanswered_draft");
+    const row = await (this.prisma as any).aiUnansweredQuestion
+      .findFirst({ where: { id, organizationId } })
+      .catch(() => null);
+    if (!row) throw new NotFoundException("Unanswered question not found in this organization");
+    const question = { id: row.id, questionText: row.questionText };
+    let provider: any;
+    try { provider = this.llm?.getProvider(); } catch { provider = null; }
+    if (!provider?.isRealLlm) {
+      return { proposal: null, provider: provider?.name ?? null, reason: "আসল AI provider যুক্ত নেই — খসড়া প্রস্তাব তৈরি হয়নি।", question };
+    }
+    const profile = await this.getProfile(organizationId);
+    const docs = (await (this.prisma as any).knowledgeDocument?.findMany?.({ where: { organizationId }, take: 100 })?.catch?.(() => [])) ?? [];
+    const matched = matchKnowledge(String(row.questionText ?? ""), docs as any[])
+      .map((m: any) => `${m.doc.title}: ${String(m.doc.content).replace(/\s+/g, " ").slice(0, 300)}`);
+    const result = await provider.complete([
+      {
+        role: "system",
+        content: [
+          "A customer asked a question the support autopilot could NOT answer. Draft the missing piece of business knowledge so it can be answered next time.",
+          "Reply with ONLY a JSON object, no prose: {\"kind\": \"knowledge\"|\"instruction\", \"title\": string, \"content\": string, \"reason\": string}",
+          "kind \"knowledge\": a factual chunk for the knowledge base (title + content with the facts an answer needs). kind \"instruction\": ONE instruction line for the AI instructions (behaviour/conduct, no new facts).",
+          "Write content in Bengali unless the question is in English. NEVER invent specific prices, charges, phone numbers or policies that are not in the context below — if a specific fact is missing, phrase the draft so the owner fills it in, e.g. '___ টাকা' placeholders are NOT allowed; instead say what the team must confirm.",
+          `বিদ্যমান নির্দেশনা (published): ${String(profile?.aiInstructions ?? "—").slice(0, 800)}`,
+          `প্রাসঙ্গিক বিদ্যমান জ্ঞান: ${matched.length ? matched.join(" | ") : "নেই"}`,
+        ].join("\n"),
+      },
+      { role: "user", content: `উত্তরহীন প্রশ্ন: ${String(row.questionText ?? "").slice(0, 500)}` },
+    ], { maxTokens: 400 });
+    await (this.prisma as any).aIUsageRecord.create({
+      data: { organizationId, userId: actorId, feature: "unanswered_draft", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
+    }).catch(() => undefined);
+    const proposal = parseUnansweredDraft(String(result.text ?? ""));
+    if (!proposal) return { proposal: null, provider: provider.name, reason: "AI-এর খসড়াটি যাচাই করা যায়নি — দেখানো হয়নি।", question };
+    return { proposal, provider: provider.name, question };
   }
 
   async updateUnansweredStatus(organizationId: string, actorId: string, id: string, status: string) {

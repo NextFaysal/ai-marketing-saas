@@ -89,6 +89,22 @@ model Organization {
   knowledgeDocs  KnowledgeDocument[]
   stores         Store[]
   integrations   Integration[]
+  storeListings  StoreListing[]
+  syncOutbox     SyncOutbox[]
+  syncConflicts  SyncConflict[]
+  categories     Category[]
+  productTags    ProductTag[]
+  taxonomyMaps   StoreTaxonomyMap[]
+  storeLocations StoreLocation[]
+  bundleItems    BundleItem[]
+  fulfillments   Fulfillment[]
+  returnRequests ReturnRequest[]
+  customerStoreIdentities CustomerStoreIdentity[]
+  storeDiscounts          StoreDiscount[]
+  abandonedStoreCheckouts AbandonedStoreCheckout[]
+  storefrontSetting StorefrontSetting?
+  shippingZones     ShippingZone[]
+  storeCarts        StoreCart[]
   customers      Customer[]
   orders         Order[]
   visitors       Visitor[]
@@ -105,6 +121,7 @@ model Organization {
   aiActions      AIAction[]
   aiActionProposals AIActionProposal[]
   aiProactiveSetting AIProactiveSetting?
+  assistantApiKeys   AssistantApiKey[]
   aiUsageRecords AIUsageRecord[]
   channelConversations ChannelConversation[]
   leads          Lead[]
@@ -114,6 +131,7 @@ model Organization {
   campaignPlans  CampaignPlan[]
   messageTemplates MessageTemplate[]
   broadcasts     Broadcast[]
+  messagingSavedAudiences MessagingSavedAudience[]
   workflows      Workflow[]
   scheduledJobs  ScheduledJob[]
   automationRules AutomationRule[]
@@ -125,6 +143,12 @@ model Organization {
   // SP7: when true, social posts by non-OWNER/ADMIN members need
   // OWNER/ADMIN approval before they can be scheduled/published.
   socialRequireApproval Boolean @default(false)
+  // CX12a: Practice Mode — while true, the org can rehearse the
+  // full AI reply + order flow on practice conversations/orders;
+  // nothing practice-flagged ever reaches a real customer (the
+  // send guard lives at InboxService.deliverText + courier
+  // booking). Default false = pre-CX12a behaviour.
+  practiceMode          Boolean @default(false)
 }
 
 model Membership {
@@ -293,11 +317,30 @@ model Product {
   bumpTitle      String?       // e.g. "লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
   bumpPriceMinor BigInt?       // e.g. 19000 (190 BDT)
   bumpImageUrl   String?
+  // EC3: physical dimensions, barcode and SEO enrichment for
+  // catalog write-back. All additive + nullable; the legacy
+  // `category String?` display field above stays untouched —
+  // `categoryId`/`categoryRef` is the structured taxonomy link.
+  weightGrams    Int?
+  lengthCm       Int?
+  widthCm        Int?
+  heightCm       Int?
+  barcode        String?
+  seoTitle       String?
+  seoDescription String?
+  categoryId     String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  categoryRef    Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   variants       ProductVariant[]
   costs          ProductCost[]
+  listings       StoreListing[]
+  images         ProductImage[]
+  tagAssignments ProductTagAssignment[]
+  bundleItems    BundleItem[]  @relation("BundleParent")
+  bundleComponentIn BundleItem[] @relation("BundleComponent")
+  storeCartItems StoreCartItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, status])
@@ -315,6 +358,7 @@ model ProductVariant {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeCartItems StoreCartItem[]
 
   @@unique([productId, sku])
   @@index([productId])
@@ -333,6 +377,69 @@ model ProductCost {
   product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, effectiveFrom])
+}
+
+// EC3: additional product gallery images. The legacy single
+// `Product.imageUrl` stays as the primary/cover image; rows here
+// are the ordered extra gallery.
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String
+  url       String
+  altText   String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, position])
+}
+
+// EC3: structured product taxonomy (tree). Replaces free-text
+// categorisation for write-back; Product.category stays as the
+// legacy display string.
+model Category {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  parentId       String?
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent         Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[]   @relation("CategoryTree")
+  products       Product[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, parentId])
+}
+
+// EC3: org-scoped product tags.
+model ProductTag {
+  id             String                 @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments    ProductTagAssignment[]
+
+  @@unique([organizationId, slug])
+}
+
+// EC3: join row between Product and ProductTag.
+model ProductTagAssignment {
+  id        String     @id @default(uuid())
+  productId String
+  tagId     String
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag       ProductTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, tagId])
+  @@index([tagId])
 }
 
 model BusinessPolicy {
@@ -355,7 +462,8 @@ model KnowledgeDocument {
   title          String
   content        String
   kind           String       @default("faq") // faq | note | claim | template
-  // CX9: file upload ingestion tracking
+  source         String       @default("paste") // paste | file:<original filename> (CX9)
+  // Owner CX9 variant: chunked file-ingestion tracking (his series)
   sourceFile     String?
   chunkIndex     Int?
   totalChunks    Int?
@@ -415,11 +523,36 @@ model Store {
   timezone       String        @default("Asia/Dhaka")
   isActive       Boolean       @default(true)
   trackingKey    String?       @unique // public key used by tracker.js, not a secret
+  // EC1: how much control the SaaS has over this store.
+  // mirror = inbound only (the pre-EC1 behaviour, default for every
+  // existing store) | co-manage = order-side pushes | full-manage =
+  // catalog/price/stock pushes too. Changing it is OWNER/ADMIN-only
+  // and audit-logged (see CommerceService.updateSyncMode).
+  syncMode       String        @default("mirror")
+  // EC1: optional per-field source-of-truth overrides, e.g.
+  // { "price": "saas", "stock": "saas", "description": "store" }.
+  // Null = the sync mode's defaults. Read by EC3 conflict logic.
+  fieldOwnership Json?
+  // EC5: refund push to the store platform is a money-adjacent
+  // capability — DEFAULT OFF (plan §9 owner decision). Only when an
+  // OWNER turns this on does recording a refund locally enqueue a
+  // platform refund. Default false is part of the safety contract.
+  refundPushEnabled Boolean @default(false)
+  // EC5: name of the meta_data key the store's shipment/tracking
+  // plugin reads (e.g. an AST-style plugin). Null = only the generic
+  // tracking_provider/tracking_number meta keys + customer note.
+  courierTrackingMetaKey String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   integrations   Integration[]
   orders         Order[]
+  listings       StoreListing[]
+  locations      StoreLocation[]
+  taxonomyMaps   StoreTaxonomyMap[]
+  customerIdentities CustomerStoreIdentity[]
+  discountSyncs      StoreDiscountSync[]
+  abandonedCheckouts AbandonedStoreCheckout[]
 
   @@index([organizationId])
 }
@@ -435,6 +568,17 @@ model Integration {
   productsCursor DateTime?
   ordersCursor   DateTime?
   lastError      String?
+  // EC2: last webhook registration/subscription attempt, recorded
+  // verbatim per topic ({ provider, topics: {topic: {status, error?}},
+  // updatedAt }). This is a RECORD of an attempt — a topic counts as
+  // registered only when its status says so; never inferred.
+  webhookStatus  Json?
+  // EC2: how this integration authenticated. Null = the pre-EC2
+  // legacy token path (Woo keys / Shopify shpat_ token).
+  // "client_credentials" = Shopify Dev Dashboard grant (token
+  // expires; tokenExpiresAt drives the refresh in ShopifyService).
+  authType       String?
+  tokenExpiresAt DateTime?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -457,6 +601,35 @@ model IntegrationCredential {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+// EC12: one WooCommerce wc-auth (1-click connect) attempt.
+// A dedicated model — NOT a reuse of SocialOAuthState, which is
+// typed for social platforms (platform/purpose/payload) and whose
+// lifecycle differs. Binding to the Woo callback: Woo's
+// /wc-auth/v1/authorize takes `user_id`, which Woo echoes back
+// verbatim in the callback POST as `user_id`; we set user_id =
+// this row's id (uuid), so the callback is tied to the attempt by
+// id + expiry + not-consumed + storeUrl snapshot match. Woo does
+// not round-trip arbitrary state params reliably, so the random
+// `state` column is only appended to the return_url (for the
+// browser's benefit) and is NEVER relied on for verification.
+model WcAuthAttempt {
+  id             String    @id @default(uuid())
+  organizationId String
+  userId         String // staff user who started the flow
+  storeId        String
+  storeUrl       String // snapshot of Store.url at start
+  state          String    @unique // random single-use token (return_url only, see above)
+  status         String    @default("pending") // pending | consumed | failed
+  failureReason  String?
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId])
+  @@index([expiresAt])
 }
 
 model SyncJob {
@@ -493,6 +666,153 @@ model WebhookEvent {
   @@index([integrationId, receivedAt])
 }
 
+// EC1: one canonical Product's presence on one Store. The Product
+// stays the merchant's master catalog row; the listing carries the
+// per-store external id, channel overrides and the sync bookkeeping
+// that makes two-way sync (EC3+) auditable instead of assumed.
+model StoreListing {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  storeId            String
+  productId          String
+  externalId         String // product id in the store platform
+  // Internal variant id -> the store's variant id, e.g.
+  // { "<productVariantId>": "<externalVariantId>" }.
+  externalVariantMap Json?
+  publishState       String    @default("published") // draft | published | archived (platform wording is normalized at the adapter)
+  channelPriceMinor  BigInt? // per-channel price override; null = canonical price
+  channelStock       Int? // last known stock on this channel
+  lastPushedHash     String? // content hash of what the SaaS last pushed (EC3+)
+  lastRemoteHash     String? // content hash of what inbound sync last saw
+  lastRemoteUpdatedAt DateTime?
+  syncStatus         String    @default("synced") // synced | pending | failed | conflict
+  lastSyncError      String?
+  // EC3: per-listing sale window + push bookkeeping.
+  saleStartsAt       DateTime?
+  saleEndsAt         DateTime?
+  saleActive         Boolean   @default(false)
+  lastPushedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store              Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product            Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  conflicts          SyncConflict[]
+
+  @@unique([storeId, productId])
+  @@index([organizationId, syncStatus])
+  @@index([organizationId, storeId])
+  @@index([storeId, externalId])
+}
+
+// EC3: maps a local Category/ProductTag (localId) to the id the
+// store platform assigned it (externalId), per store, so catalog
+// write-back reuses remote taxonomy instead of duplicating it.
+model StoreTaxonomyMap {
+  id             String       @id @default(uuid())
+  organizationId String
+  storeId        String
+  kind           String // category | tag
+  localId        String
+  externalId     String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store          Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, kind, localId])
+  @@index([organizationId, storeId])
+}
+
+// EC4: a physical / platform location of a store (e.g. a Shopify
+// location) that stock can be tracked against.
+model StoreLocation {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  storeId            String
+  name               String
+  externalLocationId String?
+  isDefault          Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store              Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, externalLocationId])
+  @@index([organizationId, storeId])
+}
+
+// EC4: one component line of a bundle product. The parent product
+// is sold as a bundle; stock/fulfilment expand through these rows.
+model BundleItem {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  parentProductId    String
+  componentProductId String
+  componentVariantId String?
+  quantity           Int          @default(1)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent             Product      @relation("BundleParent", fields: [parentProductId], references: [id], onDelete: Cascade)
+  component          Product      @relation("BundleComponent", fields: [componentProductId], references: [id], onDelete: Cascade)
+
+  @@unique([parentProductId, componentProductId, componentVariantId])
+  @@index([organizationId, parentProductId])
+}
+
+// EC1: durable outbound work queue. Every future write to a store
+// goes through a row here (same transaction as the local write), so
+// a slow/dead store can never block or silently lose a change.
+// Processing is done by SyncOutboxService via the CommerceAdapter
+// registry; an operation an adapter does not implement is recorded
+// as failed with the verbatim reason "capability_not_implemented" —
+// never as done.
+model SyncOutbox {
+  id             String    @id @default(uuid())
+  organizationId String
+  storeId        String
+  entityType     String // product | order | customer | discount | webhook | ...
+  entityId       String
+  operation      String // push_product | push_inventory | register_webhooks | ...
+  payload        Json
+  payloadHash    String
+  idempotencyKey String    @unique
+  status         String    @default("pending") // pending | processing | done | failed | dead
+  attempts       Int       @default(0)
+  nextRetryAt    DateTime?
+  lastError      String?
+  responseSummary Json? // verbatim-ish summary of the platform response on success/failure
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, nextRetryAt])
+  @@index([organizationId, storeId, status])
+}
+
+// EC1: a field whose local and remote values diverged while a local
+// change was still unpushed. B1 ships the model + list endpoint
+// only; creating/resolving conflicts lands with EC3's write-back.
+model SyncConflict {
+  id             String    @id @default(uuid())
+  organizationId String
+  storeId        String
+  listingId      String
+  field          String
+  localValue     Json?
+  remoteValue    Json?
+  status         String    @default("open") // open | resolved
+  resolution     String? // local_wins | remote_wins (set by EC3 resolution)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  listing        StoreListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([listingId])
+}
+
 model Customer {
   id             String       @id @default(uuid())
   organizationId String
@@ -512,12 +832,43 @@ model Customer {
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   orders         Order[]
+  storeIdentities CustomerStoreIdentity[]
 
   // Set when this record was merged into another customer.
   mergedIntoId String?
   @@index([organizationId, email])
   @@index([organizationId, phone])
   @@index([organizationId, externalId])
+}
+
+/// IN2: the reversible record of one customer merge. The pre-IN2
+/// merge (CustomersService.merge) moved orders + conversations to
+/// the survivor and marked the source with mergedIntoId, but kept
+/// only counts in the audit metadata — a merge could never be
+/// undone because nobody knew WHICH rows had moved or which
+/// survivor fields were gap-filled from the source. This record
+/// stores exactly that: the moved row ids and, per gap-filled
+/// field, the survivor's pre-merge value + the value filled in.
+/// Unmerge moves back only rows still pointing at the survivor
+/// and restores a filled field only when it still holds the
+/// filled value (a later human edit is never clobbered).
+/// revertedAt/revertedByUserId stamp the unmerge; a reverted
+/// record is final (the same merge is never reverted twice).
+model CustomerMergeRecord {
+  id                     String    @id @default(uuid())
+  organizationId         String
+  sourceCustomerId       String
+  targetCustomerId       String
+  movedOrderIds          Json
+  movedConversationIds   Json
+  filledFields           Json
+  createdByUserId        String
+  createdAt              DateTime  @default(now())
+  revertedAt             DateTime?
+  revertedByUserId       String?
+
+  @@index([organizationId, sourceCustomerId])
+  @@index([organizationId, targetCustomerId])
 }
 
 model Order {
@@ -539,9 +890,19 @@ model Order {
   // For orders created from chat: how the store sync went.
   storeSyncStatus String? // synced | failed | local_only
   storeSyncError  String?
+  // EC5: when this (chat/manual) order was turned into a store draft
+  // order, the platform draft id + the customer-payable invoice URL
+  // (Shopify draftOrderCreate; Woo draft = a pending order, so its id
+  // lands in externalId and storeDraftId stays null there).
+  storeDraftId    String?
+  storeInvoiceUrl String?
   // Conversation this order was created from (chat / bot orders), so
   // courier updates can be sent back into the same thread.
   conversationId  String?
+  // CX12a: practice order — created from a practice conversation.
+  // Excluded from order lists / stats / analytics by default and
+  // refused by courier booking; deleted by practice cleanup.
+  isPractice      Boolean @default(false)
   // Unified Inbox U3: delivery address captured in chat (bot v2 /
   // chat orders); previously it lived only in an internal note.
   address         String?
@@ -563,6 +924,8 @@ model Order {
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items          OrderItem[]
   packingScans   PackingScanLog[]
+  fulfillments   Fulfillment[]
+  returnRequests ReturnRequest[]
 
   @@unique([organizationId, source, externalId])
   @@index([organizationId, status])
@@ -589,6 +952,65 @@ model OrderItem {
 // ---------- Milestone 4: Tracking & attribution ----------
 // First-party, consent-aware tracking. Identifiers are pseudonymous:
 // anonymousId is a random browser id, never a name/email by itself.
+
+// EC9: a fulfilment of (part of) an order. items is a JSON list of
+// { orderItemId, quantity, packed? } — partial fulfilment is the
+// norm, remaining quantities are computed on read from the order's
+// items minus all non-cancelled fulfilments. courierShipmentId links
+// the CourierShipment booked for this parcel when one exists.
+model Fulfillment {
+  id                String       @id @default(uuid())
+  organizationId    String
+  orderId           String
+  status            String       @default("pending") // pending | packed | handed_over | in_transit | delivered | returned | cancelled
+  courierShipmentId String?
+  courierProvider   String?
+  trackingCode      String?
+  items             Json
+  createdById       String?
+  // EC9: set once the create_fulfillment store push for this
+  // fulfilment has been enqueued, so re-saving never double-pushes.
+  storePushEnqueuedAt DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, status, createdAt])
+}
+
+// EC9: a customer return request (RMA). The public page is reached
+// only via the unguessable token minted when staff share the link.
+// resolution "store_credit_note" is a RECORD ONLY — no money
+// instrument exists or is created (tenant money features stay
+// postponed). restockAppliedAt is the exactly-once marker for the
+// S1 inventory restore on completion.
+model ReturnRequest {
+  id                String       @id @default(uuid())
+  organizationId    String
+  orderId           String
+  customerId        String?
+  status            String       @default("requested") // requested | approved | rejected | return_shipped | received | completed
+  reason            String?
+  items             Json? // [{ orderItemId, quantity, condition? }]
+  resolution        String? // refund | exchange | store_credit_note
+  refundAmountMinor BigInt?
+  restockDecision   String       @default("pending") // pending | restock | discard
+  staffNote         String?
+  token             String       @unique
+  returnShipmentId  String? // CourierShipment booked for the return parcel
+  exchangeOrderId   String? // manual order created on exchange completion
+  restockAppliedAt  DateTime?
+  notificationStatus String? // sent_inbox | sent_email | not_sent_no_channel | failed
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, status, createdAt])
+}
 
 model Visitor {
   id             String           @id @default(uuid())
@@ -835,6 +1257,10 @@ model AIConversation {
   organizationId String
   userId         String
   title          String?
+  // AP7: specialist persona for this conversation (general |
+  // ads_analyst | inbox_coach | finance_analyst). Scopes the tool
+  // modules the assistant may use; enforced server-side.
+  persona        String      @default("general")
   // Milestone 45: pinned conversations sort first in the assistant.
   pinnedAt       DateTime?
   createdAt      DateTime    @default(now())
@@ -852,10 +1278,34 @@ model AIMessage {
   content        String
   // Tool calls that produced this assistant message, for transparency.
   toolCalls      Json?
+  // AP2: a file/image the user attached to THIS message. The text is
+  // the server-extracted content (documents) or the vision model's
+  // description (images), capped at 12,000 chars, so the bubble can
+  // show exactly what the assistant was given — citations stay
+  // honest after a reload. Null for ordinary messages.
+  attachmentName String?
+  attachmentKind String? // file | image
+  attachmentText String?
   createdAt      DateTime       @default(now())
   conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+}
+
+// GV3 (Global Assistant v2, G4): a user's saved chat prompts for the
+// "/" picker. Per-user by design (org-shared prompts would need a
+// sharing policy — deferred). Scalar org/user ids like
+// AgentNotification; every query is scoped to both.
+model AiSavedPrompt {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  title          String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, userId, updatedAt])
 }
 
 // Every AI tool execution is logged here (who, which org, what tool,
@@ -963,12 +1413,44 @@ model AIProactiveSetting {
   organizationId       String     @unique
   briefingEnabled      Boolean    @default(true)
   anomalyAlertsEnabled Boolean    @default(true)
+  // CX12b (12e completion): also email the daily briefing to
+  // OWNER/ADMIN members. Default OFF; the in-app notification
+  // remains the primary path and email is only a copy.
+  dailyReportEmailEnabled Boolean @default(false)
+  // AP6: also send the daily briefing to a Telegram chat through
+  // the org's connected Telegram bot integration. Default OFF;
+  // needs telegramBriefChatId (the owner's chat id) + a connected
+  // telegram integration, else the copy is honestly skipped.
+  telegramBriefEnabled Boolean    @default(false)
+  telegramBriefChatId  String?
+  // AP7: autonomy level (0 = approve everything, default;
+  // 2 = auto-execute internal-only proposal types) and the
+  // per-tenant assistant display name (white-label identity).
+  autonomyLevel        Int        @default(0)
+  assistantName        String?
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 // ---------- Milestone 7: unified inbox + leads/CRM ----------
+
+// AP7: org-scoped Assistant API keys. Only the SHA-256 hash is
+// stored; the plaintext key is shown exactly once at creation.
+model AssistantApiKey {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  keyPrefix      String
+  keyHash        String    @unique
+  createdById    String
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
 
 model ChannelConversation {
   id             String   @id @default(uuid())
@@ -1010,6 +1492,21 @@ model ChannelConversation {
   assignedAt     DateTime?
   // CX5: snooze — the conversation is parked until this time.
   snoozedUntil   DateTime?
+  // IN4: SLA escalation chain markers — when each chain step
+  // fired for this conversation's (single) first-response wait.
+  // Null = not fired. The sla_sweep only ever considers rows
+  // with firstResponseAt NULL, so a marker, once set, is never
+  // re-armed — the chain fires at most once per step per
+  // conversation, never a notification storm.
+  slaWarnedAt          DateTime?
+  slaLeadAlertedAt     DateTime?
+  slaAutoReassignedAt  DateTime?
+  // CX12a: practice conversation — synthetic thread created by
+  // Practice Mode. No real channel identity (integrationId stays
+  // null, externalContactId is a practice-* token); every outbound
+  // send on it is stored locally as a practice message and NEVER
+  // handed to a channel sender.
+  isPractice      Boolean @default(false)
   // Unified Inbox U4: email lane — the thread's subject line.
   subject         String?
   // Unified Inbox U5: sales pipeline stage (new | talking |
@@ -1032,6 +1529,15 @@ model ChannelConversation {
   // first contact). Flagged for a human - never auto-deleted.
   spamFlag       Boolean  @default(false)
   spamReason     String?
+  // IN10a: agent-applied customer block. OUR system-level block only
+  // (the platform is never asked to block anyone): while blockedAt is
+  // set, inbound messages are still stored and land in the spam queue,
+  // but the order bot / autopilot / auto-transcription never run for
+  // this conversation (no AI spend), and the row is labelled blocked
+  // in the UI. Manual agent replies still work. Null = not blocked.
+  blockedAt       DateTime?
+  blockedByUserId String?
+  blockReason     String?
   // CSAT: rating question sent when a conversation is closed; the
   // customer's 1-5 reply is recorded here.
   csatSentAt     DateTime?
@@ -1089,6 +1595,16 @@ model ChannelMessage {
   // stays null when no speech provider is configured).
   transcription    String?
   transcriptionProvider String?
+  // CX12c: auto-transcription attempt state for inbound voice
+  // notes. null = never attempted / not an audio message;
+  // "pending" = an attempt is in flight (stamped before the
+  // provider call); "done" = transcription stored above;
+  // "failed" = provider/media failure; "unavailable" = no speech
+  // provider configured for this deployment. "failed" and
+  // "unavailable" are terminal for the auto path — a re-dispatch
+  // never retries them (the agent's manual transcribe action is
+  // the retry path).
+  transcriptionStatus String?
   // True when this outbound message was sent by the grounded auto-reply
   // engine (still only "sent" with a platform message id).
   autoReply        Boolean @default(false)
@@ -1106,6 +1622,26 @@ model ChannelMessage {
   sentWithAiAssist Boolean @default(false)
   quickReplyId   String?
   platformTimestamp DateTime?
+  // IN6a: platform-CONFIRMED delivery lifecycle, separate from the
+  // internal `status` flow. deliveryStatus is set ONLY from a real
+  // webhook status (WhatsApp statuses / Messenger deliveries) or a
+  // real visitor read (webchat listMessages) — never guessed at
+  // send time. Monotonic: sent < delivered < read; failed is
+  // terminal-side. deliveredAt/readAt stamp the confirming event.
+  deliveryStatus String? // sent | delivered | read | failed
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  // IN6b: the message this one quotes — always a row in the SAME
+  // conversation (validated at send/ingest; never cross-thread).
+  replyToMessageId String?
+  // IN6c: reactions as [{emoji, actor: "customer"|"page", at}]
+  // (JSON). Customer entries come only from real Meta reaction
+  // webhooks; "page" entries only after Meta confirms our send.
+  reactions      Json?
+  // IN6d: pin state (DB-only feature, every channel). pinnedBy is
+  // the acting user's id; both clear together on unpin.
+  pinnedAt       DateTime?
+  pinnedBy       String?
   createdAt      DateTime @default(now())
   conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -1132,6 +1668,51 @@ model MessageDraft {
   conversation   ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, conversationId, status])
+}
+
+/// IN1: an agent's saved inbox filter combination (personal or
+/// team-shared). `filters` is a validated JSON object holding ONLY
+/// the whitelisted list-filter keys (see InboxService.
+/// sanitizeSavedViewFilters) — never arbitrary client payloads.
+/// Visibility: the creator always sees their own views; shared
+/// views are visible to the whole org. Only the creator may edit
+/// or delete a view.
+model InboxSavedView {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  name           String
+  filters        Json
+  shared         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, userId])
+  @@index([organizationId, shared])
+}
+
+/// IN3: a named, ordered macro — a sequence of inbox actions
+/// (reply via a quick reply / assign / tag / pipeline stage /
+/// close / snooze) an agent runs on one conversation in one click.
+/// `steps` is a STRICTLY validated JSON array (see InboxService.
+/// sanitizeMacroSteps): unlike saved-view filters, an invalid step
+/// is a client error at write time, never silently dropped —
+/// a macro must do exactly what its definition shows, no less.
+/// Visibility mirrors saved views: the creator always sees their
+/// own macros; shared macros are visible to the whole org. Only
+/// the creator may edit or delete a macro.
+model InboxMacro {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  name           String
+  steps          Json
+  shared         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, userId])
+  @@index([organizationId, shared])
 }
 
 model Lead {
@@ -1215,6 +1796,14 @@ model CrmSetting {
   organizationId     String   @unique
   leadAssignStrategy String   @default("off")
   rrCursorUserId     String?
+  // CX10: per-stage default follow-up intervals in HOURS, keyed by
+  // Lead stage ({ "new": 24, "contacted": 72, ... }). Null (the
+  // pre-CX10 state of every org) = no automatic follow-up stamping
+  // at all — LeadsService behaviour is then exactly as before.
+  // Validated at the settings write path (stages = LEAD_STAGES,
+  // hours integers 1..8760); a stage absent from the map has no
+  // default. See crm/lead-followups.ts (followUpDefaultFor).
+  followUpDefaultsByStage Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
@@ -1509,6 +2098,11 @@ model MessageTemplate {
   channel        String // email | sms
   subject        String? // email only
   body           String // supports {{variable}} placeholders
+  // MS5: optional HTML part (email channel only — the service
+  // rejects htmlBody on sms with an honest 400). Sent to the
+  // provider exactly as authored (no server-side rewriting);
+  // null (every pre-MS5 row) = text-only sends, as before.
+  htmlBody       String?
   createdById    String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1526,18 +2120,76 @@ model Broadcast {
   // WhatsApp broadcasts send a registered Meta template instead.
   whatsappTemplateId String?
   templateParams     Json?
+  // MS6: rich send-time template parameters for WhatsApp
+  // broadcasts — { headerMediaUrl?, headerTextParams?,
+  // buttonParams?: [{ index, subType: "url"|"quick_reply", text?,
+  // payload? }] }. Mapped per recipient by createWhatsAppSender
+  // (with {name}/{key} substitution from the snapshot vars) into
+  // MetaMessagingClient's rich params. Null (every pre-MS6 row)
+  // = legacy body-params-only sends, byte-identical to before.
+  templateComponents Json?
   subject         String?
   body            String
-  audienceType    String // customers | leads_stage | segment
+  // MS5: optional HTML part for email broadcasts (same rule as
+  // MessageTemplate.htmlBody: email only, authored as-is). For
+  // A/B broadcasts it is stored on variant A only; variant B's
+  // htmlBody stays null.
+  htmlBody        String?
+  audienceType    String // customers | leads_stage | segment | custom | saved | csv
   audienceStage   String? // when audienceType = leads_stage
   audienceSegment String?
+  // MS3: when audienceType = custom, the inline audience-builder
+  // definition ({ entity, match, conditions } — validated by
+  // messaging/audience-rules.ts). When saved, audienceSavedId points
+  // at the SavedAudience whose definition is used (a deleted saved
+  // audience fails preview/send honestly, never silently widens).
+  // When csv, audienceCsv holds the raw pasted address list as an
+  // array of strings (parsed + validated at create; unmatched and
+  // invalid entries are counted at resolve time, never dropped
+  // silently).
+  audienceDefinition Json?
+  audienceSavedId    String?
+  audienceCsv        Json?
   // A/B test: two broadcasts share an abGroupId, one per variant.
   abVariant      String? // A | B
   abGroupId      String?
   // CX10: broadcast exclusions and opt-out
   excludePastDays Int?
   excludeOptOut   Boolean  @default(true)
-  status          String   @default("draft") // draft | sending | sent | partial | failed
+  // "daily"|"weekly", interval: int >= 1, weekdays?: int[]
+  // (0-6, Asia/Dhaka calendar days), endsAt?: ISO string }.
+  // The value lives on the ONE pending instance of the chain:
+  // when an instance finalizes, the engine creates the next
+  // instance (status "scheduled") holding the recurrence and
+  // clears it here. recurrenceGroupId ties the whole chain
+  // together (A/B variants share one group, like abGroupId).
+  // Null (every pre-MS8 row) = one-off broadcast, unchanged.
+  recurrence        Json?
+  recurrenceGroupId String?
+  status          String   @default("draft") // draft | scheduled | sending | paused | sent | partial | failed | cancelled
+  // MS10: archive marker for sent-family broadcasts that must
+  // keep their history (delete is draft/cancelled only). An
+  // archived broadcast is hidden from the default list and
+  // refuses send/schedule until unarchived. Null = not archived
+  // (every pre-MS10 row).
+  archivedAt      DateTime?
+  // CX10: when true, sendBroadcast drops every audience member who
+  // already has a CONFIRMED (status "sent") MessageDelivery from
+  // ANY earlier broadcast of this org (any channel). Failed
+  // deliveries never exclude. Default false = pre-CX10 behaviour.
+  excludePreviousRecipients Boolean @default(false)
+  // MS1: when set (and status is "scheduled"), the broadcast_send_sweep
+  // automation job prepares + sends the broadcast once this time is
+  // due. Null (every pre-MS1 row) = no schedule.
+  scheduledAt       DateTime?
+  // MS1: the resolved recipient set, materialized by
+  // prepareBroadcast so a send can pause/resume/retry across
+  // requests and a crashed "sending" row can be recovered by the
+  // sweep. Entries: { type, id, name, email, phone, status:
+  // "pending"|"sent"|"failed"|"skipped", attempts, error?,
+  // providerMessageId?, address? }. Null = never prepared.
+  // Bounded by the per-send plan cap (max 5000 recipients).
+  recipientSnapshot Json?
   totalRecipients Int      @default(0)
   sentCount       Int      @default(0)
   failedCount     Int      @default(0)
@@ -1549,6 +2201,32 @@ model Broadcast {
   deliveries      MessageDelivery[]
 
   @@index([organizationId, createdAt])
+  // MS8: chain lookups by recurrence group.
+  @@index([organizationId, recurrenceGroupId])
+}
+
+// MS3: a named, reusable audience definition for the Messaging
+// audience builder. (Named MessagingSavedAudience because
+// `SavedAudience` already exists — the Ads campaign builder's
+// targeting presets.) `definition` is the Json shape validated by
+// messaging/audience-rules.ts ({ entity: "customers"|"leads",
+// match: "all"|"any", conditions: [...] }, max 20 conditions).
+// Broadcasts reference a saved audience by id only; the definition
+// is read at resolve time, so editing a saved audience changes
+// future previews/sends of DRAFT broadcasts — a sent broadcast is
+// unaffected because its recipients were materialized into the
+// MS1 snapshot at prepare time.
+model MessagingSavedAudience {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  definition     Json
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }
 
 model MessageDelivery {
@@ -1560,14 +2238,136 @@ model MessageDelivery {
   recipientType     String // customer | lead
   recipientId       String?
   address           String // email address or phone number actually used
-  status            String // sent | failed
+  status            String // sent | failed | skipped (MS2: recipient opted out; provider never called)
   providerMessageId String? // proof of acceptance by the provider; null = not sent
   error             String?
+  // MS7: post-send lifecycle, SEPARATE from the send-outcome
+  // `status` above (which the MS1 final-status math reads and
+  // which must not change meaning). deliveryStatus: null (no
+  // post-send signal yet) | delivered | read | failed. Written
+  // ONLY by real signals: WhatsApp status webhooks (monotonic —
+  // delivered/read are never erased by a later failed) and the
+  // signed email open pixel (openedAt). Email has no delivered
+  // signal over SMTP and platform SMS has no documented DLR
+  // query API (see docs/messaging-b4-acceptance.md), so those
+  // channels honestly stay null.
+  deliveryStatus    String?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  openedAt          DateTime?
   createdAt         DateTime @default(now())
   broadcast         Broadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, broadcastId])
   @@index([organizationId, createdAt])
+  // MS7: WhatsApp webhook statuses match broadcast deliveries by
+  // the Meta message id stored in providerMessageId.
+  @@index([organizationId, providerMessageId])
+}
+
+// MS5: one row per REAL click on a tracked broadcast link. Rows
+// are created ONLY by the public redirect endpoint after the
+// signed token verifies (a tampered token records nothing and
+// does not redirect). `url` is the final destination the visitor
+// was sent to (UTM parameters already applied at send time).
+// MS7 will aggregate these; MS5 only records them.
+model MessageLinkClick {
+  id             String   @id @default(uuid())
+  organizationId String
+  broadcastId    String
+  // "customer:<id>" | "lead:<id>" | "csv:<address>" | "test:<address>"
+  recipientKey   String
+  url            String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, broadcastId])
+  @@index([organizationId, createdAt])
+}
+
+// MS2: per-(org, channel, address) messaging consent record. The
+// address is stored NORMALIZED (email trimmed + lowercased; phone in
+// normalizeBdPhone form when possible, else digits only) so the
+// send paths and the preference store always compare the same
+// string. One row per address: a START/unsubscribe flips the SAME
+// row's status, keeping the latest source. Enforced by the shared
+// broadcast resolver (suppression + WhatsApp opt-in) and by
+// sendToRecipient (suppression only — broadcasts AND workflows).
+model MessagePreference {
+  id             String   @id @default(uuid())
+  organizationId String
+  channel        String // email | sms | whatsapp
+  address        String // normalized (see above)
+  recipientType  String? // customer | lead, when known
+  recipientId    String?
+  status         String // opted_out | opted_in
+  source         String // unsubscribe_link | inbound_keyword | manual | import
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, channel, address])
+  @@index([organizationId, status])
+}
+
+// MS4: per-organization sender configuration (one row per org,
+// MessagingSetting pattern). A missing row — every pre-MS4 org —
+// means "no tenant senders": all sends fall back to the platform
+// SMTP / platform SSL Wireless exactly as before. Secrets
+// (smtpPassEncrypted, smsApiKeyEncrypted) are AES-256-GCM sealed
+// (platform-config seal/unseal) and NEVER returned by any API;
+// the safe view reports only configured booleans + non-secret
+// fields. The rate columns are the ORG's own entered per-unit
+// prices (minor units / poisha) used ONLY for preview estimates —
+// null means "rate not set" and no estimate is shown.
+model MessagingSenderConfig {
+  id             String   @id @default(uuid())
+  organizationId String   @unique
+  // Tenant SMTP (verified by a real handshake before saving).
+  smtpHost         String?
+  smtpPort         Int?
+  smtpUser         String?
+  smtpPassEncrypted String?
+  fromAddress      String?
+  fromName         String?
+  // Optional: the DKIM selector to check for the From domain in
+  // the domain-health view. Without it DKIM is "not_checked".
+  dkimSelector     String?
+  // Tenant SMS gateway: sslwireless | bulksmsbd | alphasms.
+  smsGateway         String?
+  smsApiKeyEncrypted String?
+  smsSenderId        String?
+  smsApiUrl          String? // optional base-URL override
+  // Org-entered rates for preview estimates (minor units).
+  smsCostPerPartMinor          Int?
+  whatsappCostPerMessageMinor  Int?
+  emailCostPerMessageMinor     Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// MS2: per-organization messaging consent settings (one row per
+// org, CrmSetting pattern). A missing row reads as the defaults
+// below — frequencyCapPerDay 1, whatsappOptInRequired false —
+// which is also the pre-MS2 state of every org.
+model MessagingSetting {
+  id                      String   @id @default(uuid())
+  organizationId          String   @unique
+  // Broadcast sends per recipient per rolling 24h (confirmed
+  // deliveries only). 0 = off. Broadcasts only — workflow /
+  // transactional sends are never frequency-capped.
+  frequencyCapPerDay      Int      @default(1)
+  // When true, WhatsApp broadcasts reach ONLY recipients with an
+  // opted_in MessagePreference for (org, whatsapp, phone).
+  whatsappOptInRequired   Boolean  @default(false)
+  // MS5: link tracking for BROADCAST sends (email + sms). True
+  // (the default) = links gain UTM parameters and are wrapped in
+  // the signed /public/messaging/redirect/:token redirect (clicks
+  // recorded as MessageLinkClick). False = links are sent exactly
+  // as authored on every channel — no UTM, no wrap. Workflow sends
+  // are never rewritten either way.
+  linkTrackingEnabled     Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model Workflow {
@@ -1658,6 +2458,14 @@ model WhatsAppTemplate {
   language       String   @default("bn")
   category       String?  // UTILITY | MARKETING | AUTHENTICATION (as in Meta)
   bodyText       String?  // preview text for agents; Meta owns the real body
+  // MS6: Meta-side state, populated by the template sync / submit
+  // flow (InboxService). All NULL on legacy local-only rows — a
+  // null status means "never verified with Meta", never approved.
+  metaTemplateId String?  // Meta's message_template id, as returned
+  status         String?  // Meta's status as returned (APPROVED | PENDING | REJECTED | PAUSED | DISABLED | …), or NOT_ON_META after a complete sync that did not return it
+  qualityRating  String?  // quality_score.score as returned (GREEN | YELLOW | RED | UNKNOWN)
+  components     Json?    // Meta's components array, as returned by sync or as authored at submit
+  lastSyncedAt   DateTime? // last time sync/submit touched this row from Meta data
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1705,13 +2513,75 @@ model InboxSetting {
   // windows: [{ days: [0..6], start: "HH:mm", end: "HH:mm" }] } }
   // in the organization's timezone. Null = no schedule anywhere.
   aiScheduleByChannel   Json?
-  // CX7: To Chase — gentle auto-follow-up for incomplete chat order bot sessions
+  // CX12b: post-delivery review requests — opt-in (this messages
+  // customers, so default OFF) + the delay after delivery before
+  // the review_request_sweep sends the ask.
+  reviewRequestEnabled   Boolean  @default(false)
+  reviewRequestDelayHours Int     @default(24)
+  // CX7: "To Chase" — gentle follow-up nudges to customers whose
+  // order-bot session stalled before completion. Opt-in (this
+  // messages customers, so default OFF). First nudge after
+  // chaseFirstDelayMinutes of session quiet, then every
+  // chaseIntervalMinutes, at most chaseMaxAttempts times. Quiet
+  // hours (org timezone) suppress sends when respected.
   chaseEnabled           Boolean  @default(false)
-  chaseIntervalMinutes   Int      @default(30)
+  chaseFirstDelayMinutes Int      @default(60)
+  chaseIntervalMinutes   Int      @default(240)
+  chaseMaxAttempts       Int      @default(3)
+  chaseQuietHoursRespect Boolean  @default(true)
+  chaseQuietStartHour    Int      @default(22)
+  chaseQuietEndHour      Int      @default(8)
+  // Owner CX7 variant fields (his series): kept alongside ours —
+  // his chase service reads these names.
   maxChaseAttempts       Int      @default(2)
   chaseMessage           String?
+  // IN4: layered SLA + active escalation chain. slaByChannel
+  // optionally overrides the first-response minutes per channel:
+  // { "whatsapp": 30, ... } (validated at the settings write
+  // path; a channel absent from the map uses the org default).
+  // slaVipMinutes optionally overrides BOTH for VIP conversations
+  // (latest order >= escalationThresholdMinor); null = VIP uses
+  // the channel/default layer like everyone else. The chain
+  // (inbox_sla_sweep job): at 75% of the effective limit the
+  // assignee is warned (always on — it is only a notification to
+  // the person already responsible); slaEscalateAfterMinutes
+  // after a breach the team lead is alerted when
+  // slaLeadAlertEnabled (default ON, it only notifies), and the
+  // conversation is auto-reassigned to the least-busy eligible
+  // agent only when slaAutoReassignEnabled (default OFF — moving
+  // work between people is opt-in, like every customer-affecting
+  // automation in this schema).
+  slaByChannel           Json?
+  slaVipMinutes          Int?
+  slaEscalateAfterMinutes Int     @default(30)
+  slaLeadAlertEnabled    Boolean  @default(true)
+  slaAutoReassignEnabled Boolean  @default(false)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+}
+
+// CX7: one chase chain per bot session (sessionId UNIQUE is the
+// dedupe guard — a session can never grow two chains). Created
+// lazily by the order_chase_sweep the first time the session is
+// considered. stoppedReason is terminal (completed | stop_word |
+// human_took_over | max_attempts | session_ended); lastEvent is a
+// non-terminal trail (e.g. customer_replied). attempts counts
+// CONFIRMED sends only — a failed send stamps lastFailedAt and
+// does not consume an attempt.
+model OrderChase {
+  id             String    @id @default(uuid())
+  organizationId String
+  sessionId      String    @unique
+  conversationId String
+  attempts       Int       @default(0)
+  lastChasedAt   DateTime?
+  lastFailedAt   DateTime?
+  stoppedReason  String?
+  lastEvent      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, stoppedReason])
 }
 
 // One active order-taking bot session per conversation.
@@ -1757,6 +2627,37 @@ model CourierShipment {
 
   @@index([organizationId, orderId])
   @@index([organizationId, status])
+}
+
+// CX12b: post-delivery review request + the collected review.
+// ONE row per order (orderId unique — the double-delivery guard).
+// Created at delivery with status "pending_send"; the
+// review_request_sweep sends the ask when the org's delay has
+// passed and stamps "requested"; a captured rating/comment stamps
+// "received". A row is NEVER marked sent without a confirmed send
+// — channel-less orders stay visibly pending_send. "declined" is
+// part of the status vocabulary but no v1 flow produces it (there
+// is no decline parsing; an ignored ask simply stays "requested").
+// reviewToken is the public review-page credential (CX6 pattern).
+model OrderReview {
+  id             String    @id @default(uuid())
+  organizationId String
+  orderId        String    @unique
+  customerId     String?
+  conversationId String?
+  rating         Int?
+  comment        String?
+  source         String?
+  status         String    @default("pending_send")
+  reviewToken    String    @unique
+  deliveredAt    DateTime
+  requestedAt    DateTime?
+  receivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, conversationId])
 }
 
 // Result of an AI-vision check on a payment screenshot sent in chat.
@@ -2700,7 +3601,7 @@ model SocialComment {
   commentText       String
   sentiment         String   @default("NEUTRAL") // POSITIVE | NEUTRAL | NEGATIVE | SPAM
   intent            String   @default("GENERAL") // PRICE_QUERY | DELIVERY_QUERY | COMPLAINT | GENERAL | PRODUCT_INFO
-  status            String   @default("PENDING") // PENDING | AUTO_REPLIED | MANUALLY_REPLIED | HIDDEN | ESCALATED
+  status            String   @default("PENDING") // PENDING | AUTO_REPLIED | MANUALLY_REPLIED | HIDDEN | ESCALATED | DELETED (IN8: DELETED only after Graph confirms)
   replyText         String?
   repliedAt         DateTime?
   isPrivateDmSent   Boolean  @default(false)
@@ -2715,6 +3616,16 @@ model SocialComment {
   // externalCommentId).
   aiReplyDueAt      DateTime?
   aiReplyBatchOf    String?
+  // IN8b: comment-queue assignment — the team member responsible
+  // for this comment (plain user id, SocialComment style: no
+  // relation). Null = unassigned. SLA/snooze are NOT applied to
+  // comments: they are conversation clocks with no comment-side
+  // sweep, so no such fields exist here (see in8-acceptance).
+  assignedUserId    String?
+  // IN8c: the inbox conversation created/linked when a Graph
+  // private reply to this comment was CONFIRMED sent. Null until
+  // then — a failed private reply never sets it.
+  dmConversationId  String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -2855,3 +3766,188 @@ model PracticeSession {
   @@index([organizationId, status])
 }
 
+// EC6: one row per (store, platform customer id) a local Customer is
+// known by. A Customer has ONE legacy externalId/source pair (used by
+// order sync matching); identities are the multi-store truth — the
+// same person can be customer 123 in the Woo store and gid …/456 in
+// the Shopify store while remaining a single Customer row.
+model CustomerStoreIdentity {
+  id             String   @id @default(uuid())
+  organizationId String
+  customerId     String
+  storeId        String
+  externalId     String // the customer id in that store's platform
+  emailSnapshot  String?
+  phoneSnapshot  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  store          Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, externalId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, storeId])
+}
+
+// EC7: a tenant's OWN store discount code — NOT the SaaS-plan
+// `Coupon` model (that one is global to the platform's billing).
+// Codes are unique per organization. Money is integer minor units.
+model StoreDiscount {
+  id             String    @id @default(uuid())
+  organizationId String
+  code           String
+  kind           String // percent | fixed | free_shipping
+  value          Int // percent 1-90 | fixed amount in minor units | 0 for free_shipping
+  minOrderMinor  BigInt?
+  scopeType      String    @default("all") // all | products | categories
+  scopeIds       Json? // local product ids or category ids, per scopeType
+  startsAt       DateTime?
+  endsAt         DateTime?
+  usageLimit     Int?
+  usedCount      Int       @default(0)
+  active         Boolean   @default(true)
+  origin         String    @default("manual") // manual | woocommerce | shopify
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  syncs          StoreDiscountSync[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, active])
+}
+
+// EC7: per-store push/pull state of a StoreDiscount (mirrors the
+// StoreListing pattern: syncStatus + verbatim lastError).
+model StoreDiscountSync {
+  id             String   @id @default(uuid())
+  organizationId String
+  discountId     String
+  storeId        String
+  externalId     String? // coupon id (Woo) or discount node gid (Shopify)
+  syncStatus     String   @default("pending") // pending | synced | failed
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  discount       StoreDiscount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  store          Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([discountId, storeId])
+  @@index([organizationId, storeId])
+}
+
+// EC10: an abandoned checkout observed on a CONNECTED store
+// (today: Shopify checkouts webhooks / REST backfill). The S4
+// tracker-derived carts stay computed-on-read; these rows are the
+// platform-reported counterpart. `status` is the stored lifecycle;
+// "recovered" is computed on read against real orders (see the
+// commerce abandoned service) rather than guessed here.
+model AbandonedStoreCheckout {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  storeId            String
+  externalCheckoutId String
+  email              String?
+  phone              String?
+  items              Json? // [{ name, quantity, priceMinor }]
+  totalMinor         BigInt   @default(0)
+  currency           String   @default("BDT")
+  checkoutUrl        String?
+  status             String   @default("open") // open | recovered | expired
+  abandonedAt        DateTime
+  recoveredOrderId   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store              Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, externalCheckoutId])
+  @@index([organizationId, abandonedAt])
+  @@index([organizationId, status])
+}
+
+// EC8 (Native Storefront v2): per-org storefront configuration.
+// Absence of a row (or shopEnabled = false) means the public shop
+// does not exist for the org — the public API answers 404.
+model StorefrontSetting {
+  id                 String       @id @default(uuid())
+  organizationId     String       @unique
+  shopEnabled        Boolean      @default(false)
+  shopName           String?
+  announcementText   String?
+  showFeatured       Boolean      @default(true)
+  showCategories     Boolean      @default(true)
+  showSearch         Boolean      @default(true)
+  metaDescription    String?
+  featuredProductIds Json? // ordered product ids, org-scoped (validated on write)
+  // Custom-domain ownership proof: the merchant publishes this token
+  // as a TXT record at _qosprey-verify.<domain>; domainVerifiedAt is
+  // set only after a real DNS lookup returns the exact token.
+  domainVerifyToken  String?
+  domainVerifiedAt   DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// EC8: native shipping zones. Match priority is by KIND tier first
+// (district_list > inside_dhaka/outside_dhaka > all), then position.
+// chargeMinor / freeAboveMinor are integer minor units (poisha).
+model ShippingZone {
+  id              String       @id @default(uuid())
+  organizationId  String
+  name            String
+  kind            String // inside_dhaka | outside_dhaka | district_list | all
+  districts       Json? // string[] of BD_DISTRICTS names (district_list only)
+  chargeMinor     BigInt
+  deliveryDays    Int?
+  freeAboveMinor  BigInt?
+  active          Boolean      @default(true)
+  position        Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active, position])
+}
+
+// EC8: guest server-side cart for the native storefront. The token
+// is the guest credential (sent via the x-cart-token header); it is
+// stored as issued, matching the brief. status: open | converted.
+model StoreCart {
+  id             String         @id @default(uuid())
+  organizationId String
+  token          String         @unique
+  email          String?
+  phone          String?
+  status         String         @default("open")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items          StoreCartItem[]
+
+  @@index([organizationId, status, updatedAt])
+}
+
+model StoreCartItem {
+  id          String          @id @default(uuid())
+  cartId      String
+  productId   String
+  variantId   String?
+  quantity    Int
+  // EC8 bump: when true AND the product carries bump data, the bump
+  // amount is added once for this line at quote/checkout (mirrors
+  // the single-product checkout's [Special Add-On] order line).
+  includeBump Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  cart        StoreCart       @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product     Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  // NOTE: SQL unique treats NULL variantId rows as distinct, so the
+  // application layer merges null-variant lines explicitly.
+  @@unique([cartId, productId, variantId])
+  @@index([cartId])
+  @@index([productId])
+}

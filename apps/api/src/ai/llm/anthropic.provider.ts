@@ -1,4 +1,4 @@
-import { LlmProvider, LlmMessage, LlmResult, LlmStreamChunk, LlmConfigError, FetchFn, estimateTokens, iterateSseJson, throwStreamHttpError } from "./llm.types";
+import { LlmProvider, LlmMessage, LlmResult, LlmStreamChunk, LlmVisionImage, LlmConfigError, FetchFn, estimateTokens, iterateSseJson, throwStreamHttpError } from "./llm.types";
 
 export class AnthropicProvider implements LlmProvider {
   readonly name = "anthropic";
@@ -17,6 +17,36 @@ export class AnthropicProvider implements LlmProvider {
       body: JSON.stringify({
         model: this.model, system: system || undefined,
         messages: rest, max_tokens: opts?.maxTokens ?? 2000,
+      }),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Anthropic request failed (${res.status}): ${body?.error?.message ?? "unknown"}`);
+    const text = (body.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+    return {
+      text, model: body.model ?? this.model,
+      inputTokens: body.usage?.input_tokens ?? 0,
+      outputTokens: body.usage?.output_tokens ?? 0,
+      tokensEstimated: false,
+    };
+  }
+
+  /** CX8 vision: /v1/messages with a base64 image content block
+   *  before the text block — the Messages API's documented image
+   *  shape; same headers, error and usage shape as complete(). */
+  async completeVision(image: LlmVisionImage, prompt: string, opts?: { jsonMode?: boolean; maxTokens?: number }): Promise<LlmResult> {
+    const res = await this.fetchFn("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": this.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: image.mimeType, data: image.base64 } },
+            { type: "text", text: prompt },
+          ],
+        }],
+        max_tokens: opts?.maxTokens ?? 1000,
       }),
     });
     const body: any = await res.json().catch(() => ({}));

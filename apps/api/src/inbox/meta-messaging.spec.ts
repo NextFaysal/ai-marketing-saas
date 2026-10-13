@@ -23,7 +23,8 @@ describe("parseMetaWebhook", () => {
     const parsed = parseMetaWebhook(waPayload);
     expect(parsed.messages).toHaveLength(1);
     expect(parsed.messages[0]).toMatchObject({ channel: "whatsapp", externalContactId: "8801712345678", contactName: "Rahim Uddin", content: "দাম কত?", externalId: "wamid.1" });
-    expect(parsed.statuses).toEqual([{ channel: "whatsapp", externalId: "wamid.0", status: "delivered" }]);
+    // IN6a: statuses now also carry the platform timestamp (`at`).
+    expect(parsed.statuses).toEqual([{ channel: "whatsapp", externalId: "wamid.0", status: "delivered", at: new Date(1728000001000) }]);
   });
   it("parses Messenger messages and ignores echoes", () => {
     const parsed = parseMetaWebhook(msgrPayload);
@@ -35,8 +36,10 @@ describe("parseMetaWebhook", () => {
     // Merge note (owner series e115adf): the parser gained an
     // additive `comments` array (social comment ingest); the empty
     // shape assertions include it — behaviour otherwise unchanged.
-    expect(parseMetaWebhook(null)).toEqual({ messages: [], statuses: [], leadgens: [], comments: [] });
-    expect(parseMetaWebhook({})).toEqual({ messages: [], statuses: [], leadgens: [], comments: [] });
+    // IN6: the empty shape also gained additive `reactions` and
+    // `readWatermarks` arrays — behaviour otherwise unchanged.
+    expect(parseMetaWebhook(null)).toEqual({ messages: [], statuses: [], leadgens: [], comments: [], reactions: [], readWatermarks: [] });
+    expect(parseMetaWebhook({})).toEqual({ messages: [], statuses: [], leadgens: [], comments: [], reactions: [], readWatermarks: [] });
   });
 });
 

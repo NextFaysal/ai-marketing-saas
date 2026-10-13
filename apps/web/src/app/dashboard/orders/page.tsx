@@ -4,14 +4,29 @@ import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
+import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
 
 interface OrderItem { id: string; name: string; quantity: number; totalMinor: string }
 interface Order {
   id: string; externalNumber?: string | null; status: string; isCod: boolean;
   paymentMethod?: string | null; totalMinor: string; refundedMinor?: string; internalNote?: string | null; placedAt?: string | null;
+  // EC5: rows come from pubOrder (the raw order row), so these
+  // store-identity fields are present at runtime.
+  source?: string | null; externalId?: string | null; storeId?: string | null;
+  storeDraftId?: string | null; storeInvoiceUrl?: string | null;
   customer?: { firstName?: string | null; lastName?: string | null; phone?: string | null; email?: string | null } | null;
   items?: OrderItem[];
   risk?: { band: string; score: number | null } | null;
+}
+// EC5: GET commerce/orders/:orderId/push-state — what the
+// "স্টোর সিঙ্ক" panel renders. Errors from the store platform are
+// shown verbatim, never paraphrased as success.
+interface PushState {
+  orderId: string;
+  store: { id: string; name: string; platform: string; syncMode: string; refundPushEnabled: boolean; courierTrackingMetaKey: string | null } | null;
+  storeSyncStatus: string | null; storeSyncError: string | null;
+  storeDraftId: string | null; storeInvoiceUrl: string | null;
+  recentPushes: { id: string; operation: string; status: string; lastError: string | null; createdAt: string }[];
 }
 interface RiskDetail { band: string; score: number | null; decided: number; reasons: string[]; suggestion: string | null; phone?: string | null }
 const RISK_LABEL: Record<string, { text: string; cls: string }> = {
@@ -90,9 +105,63 @@ export default function OrdersPage() {
   const [actNote, setActNote] = useState("");
   const [actBusy, setActBusy] = useState("");
   const [actNotice, setActNotice] = useState("");
+  // EC5: store sync panel (push-state, store note, draft, return link).
+  const [pushState, setPushState] = useState<PushState | null>(null);
+  const [pushStateError, setPushStateError] = useState("");
+  const [storeNoteText, setStoreNoteText] = useState("");
+  const [syncBusy, setSyncBusy] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [returnUrl, setReturnUrl] = useState("");
+  const [copiedKey, setCopiedKey] = useState("");
   // Sales & Data S5: courier performance panel.
   const [perfDays, setPerfDays] = useState(30);
   const [perf, setPerf] = useState<CourierPerformance | null>(null);
+
+  // CX8: packing label scan + plain identifier search. A scan result
+  // NEVER auto-opens anything by itself: an exact match shows its
+  // order with an explicit button; phone-last4 results are a pick
+  // list; no-match shows the extracted values for a manual search.
+  const [labelQuery, setLabelQuery] = useState("");
+  const [labelScan, setLabelScan] = useState<LabelScanResultView | null>(null);
+  const [labelBusy, setLabelBusy] = useState("");
+  const [labelError, setLabelError] = useState("");
+
+  async function runLabelScan(file: File) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setLabelBusy("scan"); setLabelError(""); setLabelScan(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API_URL}/organizations/${orgId}/courier/label-scan`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+        body: form,
+      });
+      const body: any = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message ?? `HTTP ${res.status}`);
+      setLabelScan(body as LabelScanResultView);
+    } catch (err) { setLabelError(err instanceof Error ? err.message : "স্ক্যান ব্যর্থ"); }
+    finally { setLabelBusy(""); }
+  }
+
+  async function runLabelLookup() {
+    const orgId = getOrganizationId(); if (!orgId || !labelQuery.trim()) return;
+    setLabelBusy("lookup"); setLabelError(""); setLabelScan(null);
+    try {
+      const out = await apiFetch<LabelScanResultView>(`/organizations/${orgId}/courier/label-lookup`, {
+        method: "POST", body: JSON.stringify({ query: labelQuery.trim() }),
+      });
+      setLabelScan(out);
+    } catch (err) { setLabelError(err instanceof Error ? err.message : "খোঁজ ব্যর্থ"); }
+    finally { setLabelBusy(""); }
+  }
+
+  function openScannedOrder(m: LabelMatchView) {
+    const found = items.find((o) => o.id === m.orderId);
+    if (found) { openActions(found); return; }
+    setLabelError("অর্ডারটি পাওয়া গেছে, কিন্তু বর্তমান ফিল্টারের তালিকায় নেই — স্ট্যাটাস ফিল্টার 'সব স্ট্যাটাস' করে আবার দেখুন।");
+  }
 
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -100,10 +169,103 @@ export default function OrdersPage() {
       .then(setPerf).catch(() => setPerf(null));
   }, [perfDays]);
 
+  // CX12b: post-delivery reviews (list + per-order block). A row in
+  // pending_send was never sent — the UI says so, never dresses it
+  // up as requested.
+  interface ReviewRow { id: string; orderId: string; customerId?: string | null; rating: number | null; comment: string | null; source: string | null; status: string; requestedAt: string | null; receivedAt: string | null; createdAt: string; orderNumber: string | null; customerName: string | null }
+  const [reviews, setReviews] = useState<ReviewRow[]>([]);
+  const [reviewFilter, setReviewFilter] = useState("");
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<ReviewRow[]>(`/organizations/${orgId}/reviews`).then(setReviews).catch(() => setReviews([]));
+  }, []);
+  const reviewForOrder = (orderId: string) => reviews.find((r) => r.orderId === orderId) ?? null;
+  const stars = (n: number) => "★★★★★".slice(0, n) + "☆☆☆☆☆".slice(0, 5 - n);
+  const reviewStatusBn = (r: ReviewRow) => r.status === "received" ? "রিভিউ পাওয়া গেছে" : r.status === "requested" ? "রিভিউ চাওয়া হয়েছে" : "এখনো পাঠানো হয়নি";
+
+  // CX7: "To Chase" — chase records for stalled order-bot
+  // sessions. Only sessions the sweep has actually considered
+  // have a record; a failed send shows as such (lastFailedAt)
+  // and never counts as an attempt.
+  interface ChaseRow { id: string; sessionId: string; conversationId: string; attempts: number; lastChasedAt: string | null; lastFailedAt: string | null; stoppedReason: string | null; lastEvent: string | null; createdAt: string; updatedAt: string; sessionState: string | null; sessionStatus: string | null; productName: string | null }
+  const [chases, setChases] = useState<ChaseRow[]>([]);
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<ChaseRow[]>(`/organizations/${orgId}/order-chases`).then(setChases).catch(() => setChases([]));
+  }, []);
+  const chaseStopBn = (reason: string) => reason === "completed" ? "অর্ডার সম্পূর্ণ হয়েছে" : reason === "stop_word" ? "গ্রাহক থামতে বলেছেন" : reason === "human_took_over" ? "মানুষ দায়িত্ব নিয়েছেন" : reason === "max_attempts" ? "সর্বোচ্চ চেষ্টা শেষ" : reason === "session_ended" ? "সেশন শেষ হয়েছে" : reason;
+  const chaseStatusBn = (c: ChaseRow) => c.stoppedReason ? chaseStopBn(c.stoppedReason) : c.attempts > 0 ? `${c.attempts} বার মনে করানো হয়েছে` : c.lastEvent === "customer_replied" ? "গ্রাহক উত্তর দিয়েছেন — অপেক্ষায়" : "অনুস্মারকের অপেক্ষায়";
+
   function openActions(o: Order) {
     if (actOrder?.id === o.id) { setActOrder(null); return; }
     setActOrder(o); setActStatus(o.status); setActNote(o.internalNote ?? "");
     setActRefundTaka(""); setActRefundReason(""); setActNotice("");
+  }
+
+  const loadPushState = useCallback(async (orderId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const ps = await apiFetch<PushState>(`/organizations/${orgId}/commerce/orders/${orderId}/push-state`);
+      setPushState(ps); setPushStateError("");
+    } catch (err) {
+      // A failed load must never render as "no store / no pushes".
+      setPushState(null);
+      setPushStateError(err instanceof Error ? err.message : "স্টোর সিঙ্কের তথ্য লোড ব্যর্থ হয়েছে");
+    }
+  }, []);
+
+  // Load the store-sync panel whenever a (different) order is opened.
+  const actOrderId = actOrder?.id ?? null;
+  useEffect(() => {
+    setPushState(null); setPushStateError(""); setStoreNoteText("");
+    setSyncNotice(""); setSyncError(""); setReturnUrl(""); setCopiedKey("");
+    if (actOrderId) void loadPushState(actOrderId);
+  }, [actOrderId, loadPushState]);
+
+  async function copyText(key: string, text: string) {
+    try { await navigator.clipboard.writeText(text); setCopiedKey(key); }
+    catch { setSyncError("কপি করা যায়নি — লিংকটি হাতে কপি করুন।"); }
+  }
+
+  async function sendStoreNote() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder || !storeNoteText.trim()) return;
+    setSyncBusy("store-note"); setSyncNotice(""); setSyncError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/orders/${actOrder.id}/store-note`, {
+        method: "POST", body: JSON.stringify({ note: storeNoteText.trim() }),
+      });
+      setSyncNotice("নোট স্টোরে পাঠানোর জন্য queue-তে দেওয়া হয়েছে");
+      setStoreNoteText("");
+      await loadPushState(actOrder.id);
+    } catch (err) { setSyncError(err instanceof Error ? err.message : "স্টোরে নোট পাঠানো ব্যর্থ"); }
+    finally { setSyncBusy(""); }
+  }
+
+  async function createStoreDraft() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    setSyncBusy("draft"); setSyncNotice(""); setSyncError("");
+    try {
+      const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${actOrder.id}/create-store-draft`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setActOrder(updated);
+      setSyncNotice("স্টোরে Draft Order তৈরি হয়েছে।");
+      await loadPushState(actOrder.id);
+      await load();
+    } catch (err) { setSyncError(err instanceof Error ? err.message : "Draft Order তৈরি ব্যর্থ"); }
+    finally { setSyncBusy(""); }
+  }
+
+  async function createReturnLink() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    setSyncBusy("return-link"); setSyncNotice(""); setSyncError("");
+    try {
+      const out = await apiFetch<{ token: string }>(`/organizations/${orgId}/orders/${actOrder.id}/return-link`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setReturnUrl(`${window.location.origin}/returns/${out.token}`);
+    } catch (err) { setSyncError(err instanceof Error ? err.message : "রিটার্ন লিংক তৈরি ব্যর্থ"); }
+    finally { setSyncBusy(""); }
   }
 
   async function patchOrder(body: Record<string, unknown>, okMessage: string) {
@@ -395,6 +557,54 @@ export default function OrdersPage() {
         <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}</button>
       </div>
       <div className="card space-y-3">
+        <h2 className="font-semibold">📷 প্যাকিং — লেবেল স্ক্যান</h2>
+        <p className="text-xs text-slate-500">পার্সেলের লেবেলের ছবি দিলে AI ছবি থেকে ট্র্যাকিং কোড / অর্ডার নম্বর পড়ে সংশ্লিষ্ট অর্ডারটি খুঁজে দেয়। AI শুধু ছবিতে ছাপা মানই পড়ে — মিল না পেলে যা পড়েছে তা-ই দেখানো হবে, কিছু বানিয়ে বলা হবে না।</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className={`btn-primary btn-sm ${labelBusy ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+            {labelBusy === "scan" ? "ছবি পড়া হচ্ছে..." : "📷 Label Scan"}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={labelBusy !== ""}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void runLabelScan(f); }} />
+          </label>
+          <input className="input w-64" placeholder="ট্র্যাকিং কোড, অর্ডার নম্বর বা ফোনের শেষ ৪ ডিজিট" aria-label="🔢 নম্বর দিয়ে খুঁজুন" value={labelQuery}
+            onChange={(e) => setLabelQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runLabelLookup(); } }} />
+          <button className="btn-secondary btn-sm" disabled={labelBusy !== "" || !labelQuery.trim()} onClick={() => void runLabelLookup()}>{labelBusy === "lookup" ? "খোঁজা হচ্ছে..." : "🔢 নম্বর দিয়ে খুঁজুন"}</button>
+          <span className="text-[11px] text-slate-400">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
+        </div>
+        {labelError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{labelError}</p> : null}
+        {labelScan && !labelScan.available ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">AI ছবি পড়া এখন সেটআপ করা নেই — উপরের বক্সে নম্বর দিয়ে খুঁজুন।</p>
+        ) : null}
+        {labelScan && labelScan.matched ? (
+          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <span className="font-semibold">✓ মিলেছে:</span> অর্ডার #{labelScan.matched.orderNumber ?? labelScan.matched.orderId.slice(0, 8)}
+            {labelScan.matched.trackingCode ? ` · Tracking: ${labelScan.matched.trackingCode}` : ""}
+            {labelScan.matched.provider ? ` · ${labelScan.matched.provider}` : ""}
+            {labelScan.matched.shipmentStatus ? ` · শিপমেন্ট: ${labelScan.matched.shipmentStatus}` : ""}
+            <button className="ml-2 font-semibold text-emerald-900 underline" onClick={() => openScannedOrder(labelScan.matched!)}>অর্ডারটি খুলুন</button>
+          </div>
+        ) : null}
+        {labelScan && !labelScan.matched && labelScan.candidates.length > 0 ? (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-600">ফোনের শেষ ৪ ডিজিট মিলিয়ে সম্ভাব্য পার্সেল — সঠিকটি বেছে নিন (এভাবে কখনোই নিজে থেকে কোনো অর্ডার খোলে না):</p>
+            {labelScan.candidates.map((c) => (
+              <div key={c.shipmentId ?? c.orderId} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-sm">
+                <span className="font-medium">#{c.orderNumber ?? c.orderId.slice(0, 8)}</span>
+                {c.trackingCode ? <span className="text-slate-500">Tracking: {c.trackingCode}</span> : null}
+                {c.provider ? <span className="text-slate-500">{c.provider}</span> : null}
+                {c.shipmentStatus ? <span className="badge-slate">{c.shipmentStatus}</span> : null}
+                <button className="font-semibold text-brand-600 hover:underline" onClick={() => openScannedOrder(c)}>খুলুন</button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {labelScan && labelScan.available && !labelScan.matched && labelScan.candidates.length === 0 ? (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            কোনো মিল পাওয়া যায়নি।{extractedSummary(labelScan) ? ` ছবি/খোঁজ থেকে পড়া হয়েছে: ${extractedSummary(labelScan)} — এই মান দিয়ে হাতে খুঁজে দেখুন।` : " ছবি থেকে কোনো নম্বর পড়া যায়নি — ছবিটি আরও পরিষ্কার করে আবার চেষ্টা করুন, অথবা নম্বর দিয়ে খুঁজুন।"}
+          </p>
+        ) : null}
+      </div>
+      <div className="card space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold">🚚 কুরিয়ার — Steadfast</h2>
           <span className={courier?.connected ? "badge-green" : "badge-slate"}>{courier?.connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
@@ -529,6 +739,49 @@ export default function OrdersPage() {
           </ul>
           {riskDetail.suggestion ? <p className="text-sm font-medium text-amber-800">{riskDetail.suggestion}</p> : null}
           <p className="text-xs text-slate-400">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
+        </div>
+      ) : null}
+      {reviews.length > 0 ? (
+        <div className="card space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">⭐ গ্রাহক রিভিউ</h2>
+            <select className="input w-auto" value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value)}>
+              <option value="">সব রিভিউ</option>
+              <option value="5">৫ ★</option>
+              <option value="4">৪ ★</option>
+              <option value="3">৩ ★</option>
+              <option value="2">২ ★</option>
+              <option value="1">১ ★</option>
+              <option value="pending">এখনো পাঠানো হয়নি</option>
+              <option value="requested">রিভিউ চাওয়া হয়েছে</option>
+            </select>
+          </div>
+          {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).slice(0, 50).map((r) => (
+            <div key={r.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b py-1.5 text-sm last:border-0">
+              <span className="font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</span>
+              {r.customerName ? <span className="text-slate-600">{r.customerName}</span> : null}
+              {r.rating != null ? <span className="text-amber-500">{stars(r.rating)}</span> : <span className="badge-slate">{reviewStatusBn(r)}</span>}
+              {r.comment ? <span className="text-slate-700">“{r.comment}”</span> : null}
+              <span className="text-xs text-slate-400">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
+            </div>
+          ))}
+          {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).length === 0 ? <p className="text-sm text-slate-400">এই ফিল্টারে কোনো রিভিউ নেই</p> : null}
+        </div>
+      ) : null}
+      {chases.length > 0 ? (
+        <div className="card space-y-2">
+          <h2 className="font-semibold">🎯 To Chase — থেমে যাওয়া অর্ডার সেশন</h2>
+          <p className="text-xs text-slate-400">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
+          {chases.slice(0, 50).map((c) => (
+            <div key={c.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b py-1.5 text-sm last:border-0">
+              <span className="font-medium">{c.productName ?? "পণ্য অজানা"}</span>
+              <span className="badge-slate">{chaseStatusBn(c)}</span>
+              {c.sessionStatus ? <span className="text-slate-500">সেশন: {c.sessionStatus}{c.sessionState ? ` (${c.sessionState})` : ""}</span> : null}
+              {c.lastChasedAt ? <span className="text-xs text-slate-400">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
+              {c.lastFailedAt && (!c.lastChasedAt || c.lastFailedAt > c.lastChasedAt) ? <span className="text-xs text-red-500">সর্বশেষ পাঠানো ব্যর্থ হয়েছে — আবার চেষ্টা হবে</span> : null}
+              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-400">গ্রাহক উত্তর দিয়েছেন</span> : null}
+            </div>
+          ))}
         </div>
       ) : null}
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : items.length === 0 ? (
@@ -721,6 +974,99 @@ export default function OrdersPage() {
                         <p className="text-xs text-slate-400">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
                       </div>
                     </div>
+                    <div className="space-y-3 rounded-xl border bg-white p-3">
+                      <h4 className="text-sm font-semibold">🏬 স্টোর সিঙ্ক</h4>
+                      {syncNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{syncNotice}</p> : null}
+                      {syncError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{syncError}</p> : null}
+                      {pushStateError ? (
+                        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">স্টোর সিঙ্কের তথ্য লোড করা যায়নি: {pushStateError}</p>
+                      ) : !pushState ? (
+                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                      ) : !pushState.store ? (
+                        <p className="text-xs text-slate-400">এই অর্ডারের কোনো স্টোর নেই</p>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="text-sm">
+                            <span className="font-medium">{pushState.store.name}</span>
+                            <span className="text-slate-500"> ({pushState.store.platform})</span>
+                            <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">Sync মোড: {pushState.store.syncMode}</span>
+                          </p>
+                          {pushState.store.syncMode === "mirror" ? (
+                            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">এই স্টোরটি Mirror মোডে আছে — এই মোডে এখানকার কোনো পরিবর্তন স্টোরে Push হবে না। Push চালু করতে Sync Center থেকে মোড co-manage বা full-manage করুন।</p>
+                          ) : null}
+                          <p className="text-xs text-slate-600">
+                            সর্বশেষ Push অবস্থা: <span className="font-medium">{pushState.storeSyncStatus ?? "—"}</span>
+                            {pushState.storeDraftId ? <span> · Draft ID: {pushState.storeDraftId}</span> : null}
+                          </p>
+                          {pushState.storeSyncError ? (
+                            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{pushState.storeSyncError}</p>
+                          ) : null}
+                          {pushState.store.refundPushEnabled ? (
+                            <p className="text-xs text-emerald-700">স্টোরে refund push চালু আছে — refund রেকর্ড হলে স্টোরেও পাঠানো হবে।</p>
+                          ) : (
+                            <p className="text-xs text-amber-700">স্টোরে refund push বন্ধ আছে — শুধু লোকাল রেকর্ড হবে (OWNER চালু করতে পারেন Sync Center থেকে)</p>
+                          )}
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-slate-600">সাম্প্রতিক Push</p>
+                            {pushState.recentPushes.length === 0 ? (
+                              <p className="text-xs text-slate-400">এখনো কোনো Push হয়নি।</p>
+                            ) : pushState.recentPushes.map((p) => (
+                              <div key={p.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
+                                <span className="font-medium">{p.operation}</span>
+                                <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{p.status}</span>
+                                <span className="text-slate-400">{new Date(p.createdAt).toLocaleString("bn-BD")}</span>
+                                {p.lastError ? <span className="text-red-600">{p.lastError}</span> : null}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="space-y-2 border-t pt-3">
+                            <label className="text-sm font-medium">স্টোরে কাস্টমার-নোট</label>
+                            <p className="text-xs text-slate-400">এই নোটটি গ্রাহক স্টোরে দেখতে পাবেন — উপরের অভ্যন্তরীণ নোটের থেকে আলাদা, সেটি কখনো স্টোরে যায় না।</p>
+                            <textarea className="input" rows={2} maxLength={2000} placeholder="যেমন: আপনার অর্ডারটি প্যাক করা হয়েছে…" value={storeNoteText} onChange={(e) => setStoreNoteText(e.target.value)} />
+                            <button className="btn-primary btn-sm" disabled={syncBusy !== "" || !storeNoteText.trim()} onClick={sendStoreNote}>{syncBusy === "store-note" ? "পাঠানো হচ্ছে..." : "স্টোরে নোট পাঠান"}</button>
+                          </div>
+                          {pushState.storeInvoiceUrl ? (
+                            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                              <span className="font-medium">ইনভয়েস লিংক:</span>
+                              <a className="break-all text-brand-600 hover:underline" href={pushState.storeInvoiceUrl} target="_blank" rel="noreferrer">{pushState.storeInvoiceUrl}</a>
+                              <button className="btn-secondary btn-sm" onClick={() => copyText("invoice", pushState.storeInvoiceUrl!)}>{copiedKey === "invoice" ? "কপি হয়েছে ✓" : "ইনভয়েস লিংক কপি করুন"}</button>
+                            </div>
+                          ) : null}
+                          {!pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && (pushState.store !== null || !o.storeId) ? (
+                            <div className="border-t pt-3">
+                              <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
+                              <p className="mt-1 text-xs text-slate-400">এই অর্ডারটি এখনো স্টোরে তৈরি হয়নি — Draft হিসেবে স্টোরে তৈরি করা হবে।</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                      {pushState && !pushState.store && !pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && !o.storeId ? (
+                        <div className="border-t pt-3">
+                          <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
+                          <p className="mt-1 text-xs text-slate-400">এই অর্ডারের নিজের কোনো স্টোর নেই — একটিমাত্র co-manage/full-manage স্টোর থাকলে সেখানেই Draft তৈরি হবে, না হলে সার্ভারের কারণটি দেখানো হবে।</p>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                        <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createReturnLink}>{syncBusy === "return-link" ? "তৈরি হচ্ছে..." : "রিটার্ন লিংক তৈরি করুন"}</button>
+                        <a className="btn-secondary btn-sm" href={`/dashboard/commerce/print?orderId=${o.id}&kind=invoice`} target="_blank" rel="noreferrer">🧾 ইনভয়েস প্রিন্ট</a>
+                        <a className="btn-secondary btn-sm" href={`/dashboard/commerce/print?orderId=${o.id}&kind=slip`} target="_blank" rel="noreferrer">🏷️ প্যাকিং স্লিপ প্রিন্ট</a>
+                      </div>
+                      {returnUrl ? (
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                          <span className="font-medium">রিটার্ন লিংক:</span>
+                          <a className="break-all text-brand-600 hover:underline" href={returnUrl} target="_blank" rel="noreferrer">{returnUrl}</a>
+                          <button className="btn-secondary btn-sm" onClick={() => copyText("return", returnUrl)}>{copiedKey === "return" ? "কপি হয়েছে ✓" : "লিংক কপি করুন"}</button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {(() => { const rv = reviewForOrder(o.id); return rv ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                        <div className="text-sm font-semibold">⭐ গ্রাহক রিভিউ — {reviewStatusBn(rv)}</div>
+                        {rv.rating != null ? <div className="mt-1 text-base text-amber-500">{stars(rv.rating)} <span className="text-sm text-slate-600">({rv.rating}/৫)</span></div> : null}
+                        {rv.comment ? <p className="mt-1 text-sm text-slate-700">“{rv.comment}”</p> : null}
+                        <p className="mt-1 text-xs text-slate-400">{rv.receivedAt ? `পাওয়া গেছে: ${new Date(rv.receivedAt).toLocaleString("bn-BD")}` : rv.requestedAt ? `চাওয়া হয়েছে: ${new Date(rv.requestedAt).toLocaleString("bn-BD")}` : "কোনো চ্যানেল পাওয়া যায়নি বলে এখনো পাঠানো হয়নি"}{rv.source ? ` · মাধ্যম: ${rv.source === "chat" ? "চ্যাট" : "লিংক"}` : ""}</p>
+                      </div>
+                    ) : null; })()}
                   </div>
                 </td></tr>
               ); })() : null}

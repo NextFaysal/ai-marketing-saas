@@ -1,0 +1,134 @@
+/**
+ * MS8 — messaging journey presets: ready-made customer journeys
+ * (trigger + waits + a REAL message template) installed through
+ * the real WorkflowsService path (see
+ * MessagingService.installJourneyPreset).
+ *
+ * EVERY preset was audited against what the workflow engine
+ * actually executes — the trigger must really fire and its
+ * context must let resolveRecipient find a recipient, and every
+ * template variable used must be one the real context supplies
+ * (sendToRecipient merges { name: recipient.name, ...context }):
+ *
+ *  - order_created / order_delivered events carry an orderId;
+ *    enrichContext fills customerId / orderNumber / total, and
+ *    resolveRecipient resolves the customer. The post-purchase
+ *    and review-ask journeys can therefore really send.
+ *  - cart_abandoned contexts carry contactEmail / contactPhone
+ *    (+ itemsSummary / cartValue); resolveRecipient falls back
+ *    to a contact-based recipient, so the SMS recovery sends
+ *    when a phone exists and fails honestly when it does not.
+ *  - lead_created contexts carry { leadId, name, email, phone }
+ *    and resolve to the lead.
+ *
+ * A sixth candidate, winback_sweep (schedule trigger → send to
+ * inactive customers), was DROPPED: the schedule trigger's
+ * context is { date, scheduledFor, dayOfWeek } — it carries NO
+ * recipient at all, so its send step could only ever fail with
+ * "No recipient could be resolved". A preset that cannot run
+ * is worse than none; lead_followup takes its place. (See the
+ * B4 acceptance for the full audit.)
+ *
+ * delivered_review_ask deliberately carries NO review link: a
+ * real review link needs a per-order ReviewRequest token
+ * (ReviewsService.reviewLinkFor), which the order_delivered
+ * workflow context does not supply — inventing a URL would be
+ * fabrication, so the copy simply asks for a reply.
+ */
+
+export interface JourneyPreset {
+  key: string;
+  name: string;
+  descriptionBn: string;
+  /** One-line Bengali flow for the UI card: trigger → wait → send. */
+  flow: string;
+  trigger: string;
+  channel: "email" | "sms";
+  template: { name: string; subject?: string; body: string };
+  steps: (templateId: string) => Record<string, unknown>[];
+}
+
+export const JOURNEY_PRESETS: JourneyPreset[] = [
+  {
+    key: "post_purchase_thanks",
+    name: "কেনার পর ধন্যবাদ (ইমেইল)",
+    descriptionBn: "নতুন অর্ডারের ৩০ মিনিট পর ক্রেতাকে ধন্যবাদ জানিয়ে একটি ইমেইল পাঠায়।",
+    flow: "অর্ডার তৈরি → ৩০ মিনিট অপেক্ষা → ধন্যবাদ ইমেইল",
+    trigger: "order_created",
+    channel: "email",
+    template: {
+      name: "Journey: অর্ডারের ধন্যবাদ (ইমেইল)",
+      subject: "ধন্যবাদ, {{name}}! আপনার অর্ডার {{orderNumber}} পেয়েছি",
+      body: "আসসালামু আলাইকুম {{name}},\n\nআমাদের কাছ থেকে অর্ডার করার জন্য আন্তরিক ধন্যবাদ! আপনার অর্ডার নম্বর {{orderNumber}} — আমরা শীঘ্রই এটি প্রসেস করে পাঠিয়ে দেব।\n\nকোনো প্রশ্ন থাকলে এই ইমেইলেই জবাব দিন।",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 30 },
+      { type: "send_email", templateId },
+    ],
+  },
+  {
+    key: "post_purchase_thanks_sms",
+    name: "কেনার পর ধন্যবাদ (SMS)",
+    descriptionBn: "নতুন অর্ডারের ৩০ মিনিট পর ক্রেতাকে ধন্যবাদ জানিয়ে একটি SMS পাঠায়।",
+    flow: "অর্ডার তৈরি → ৩০ মিনিট অপেক্ষা → ধন্যবাদ SMS",
+    trigger: "order_created",
+    channel: "sms",
+    template: {
+      name: "Journey: অর্ডারের ধন্যবাদ (SMS)",
+      body: "ধন্যবাদ, {{name}}! আপনার অর্ডার {{orderNumber}} গ্রহণ করা হয়েছে। ডেলিভারির আপডেট শীঘ্রই পাবেন।",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 30 },
+      { type: "send_sms", templateId },
+    ],
+  },
+  {
+    key: "delivered_review_ask",
+    name: "ডেলিভারির পর রিভিউ চাওয়া (SMS)",
+    descriptionBn: "অর্ডার ডেলিভারির ২৪ ঘণ্টা পর SMS-এ ক্রেতার অভিজ্ঞতা জানতে চায়। (রিভিউ লিংক নেই — প্রতি-অর্ডারের রিভিউ টোকেন workflow context-এ থাকে না, তাই সরাসরি জবাব চাওয়া হয়।)",
+    flow: "অর্ডার ডেলিভারি → ২৪ ঘণ্টা অপেক্ষা → রিভিউ চাওয়া SMS",
+    trigger: "order_delivered",
+    channel: "sms",
+    template: {
+      name: "Journey: ডেলিভারির পর রিভিউ (SMS)",
+      body: "আসসালামু আলাইকুম {{name}}, আপনার অর্ডার {{orderNumber}} ডেলিভারি হয়েছে। পণ্যটি কেমন লাগলো? এই নম্বরেই জবাব দিয়ে আপনার অভিজ্ঞতা জানালে আমরা কৃতজ্ঞ থাকব।",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 1440 },
+      { type: "send_sms", templateId },
+    ],
+  },
+  {
+    key: "cart_recovery",
+    name: "কার্ট রিকভারি (SMS)",
+    descriptionBn: "কার্ট ফেলে যাওয়ার ১ ঘণ্টা পর SMS পাঠিয়ে অর্ডার সম্পন্ন করতে মনে করিয়ে দেয়। ফোন নম্বর না থাকলে পাঠানো যায় না — সেটি রান লগে সৎভাবে ব্যর্থ হিসেবে দেখাবে।",
+    flow: "কার্ট পরিত্যক্ত → ১ ঘণ্টা অপেক্ষা → রিকভারি SMS",
+    trigger: "cart_abandoned",
+    channel: "sms",
+    template: {
+      name: "Journey: কার্ট রিকভারি (SMS)",
+      body: "{{name}}, আপনি কার্টে কিছু পণ্য রেখে গেছেন ({{itemsSummary}})। স্টক শেষ হওয়ার আগেই অর্ডারটি সম্পন্ন করুন!",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 60 },
+      { type: "send_sms", templateId },
+    ],
+  },
+  {
+    key: "lead_followup",
+    name: "লিড ফলো-আপ (ইমেইল)",
+    descriptionBn: "নতুন লিড আসার ৩ দিন পর একটি ফলো-আপ ইমেইল পাঠায়, যাতে আগ্রহী ক্রেতা হারিয়ে না যায়।",
+    flow: "নতুন লিড → ৩ দিন অপেক্ষা → ফলো-আপ ইমেইল",
+    trigger: "lead_created",
+    channel: "email",
+    template: {
+      name: "Journey: লিড ফলো-আপ (ইমেইল)",
+      subject: "আপনার জিজ্ঞাসা নিয়ে ছোট্ট ফলো-আপ, {{name}}",
+      body: "আসসালামু আলাইকুম {{name}},\n\nকয়েকদিন আগে আপনি আমাদের সঙ্গে যোগাযোগ করেছিলেন — কোনো সাহায্য লাগলে বা কোনো প্রশ্ন থাকলে এই ইমেইলেই জবাব দিন, আমরা যত দ্রুত সম্ভব উত্তর দেব।\n\nধন্যবাদ!",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 4320 },
+      { type: "send_email", templateId },
+    ],
+  },
+];

@@ -65,4 +65,20 @@ export class UpdateOrderDto {
   @IsOptional() @IsIn(ORDER_PATCH_STATUSES) status?: string;
   @IsOptional() @ValidateNested() @Type(() => OrderRefundDto) refund?: OrderRefundDto;
   @IsOptional() @IsString() @MaxLength(2000) internalNote?: string | null;
+  /** EC5: delivery address (the free string on Order.address).
+   * Changing it also enqueues a store address push for
+   * co-manage/full-manage stores (Woo: shipping.address_1;
+   * Shopify: structured fields only — see OrderPushService). */
+  @IsOptional() @IsString() @MaxLength(1000) address?: string | null;
+}
+
+/** EC5: a customer-visible note pushed to the store order.
+ * Deliberately a separate action from internalNote, which is
+ * NEVER sent to any platform. */
+export class StoreNoteDto {
+  @IsString() @MaxLength(1000) note!: string;
+}
+
+export class CreateStoreDraftDto {
+  @IsOptional() @IsString() @MaxLength(80) storeId?: string;
 }

@@ -315,6 +315,11 @@ export class CourierService {
     const provider = this.providerOf(dto.provider);
     const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
     if (!order) throw new NotFoundException("Order not found in this organization");
+    // CX12a: a practice order must never become a real parcel —
+    // refused BEFORE any provider client is built or called.
+    if ((order as any).isPractice) {
+      throw new BadRequestException("এটি একটি প্র্যাক্টিস অর্ডার — প্র্যাক্টিস অর্ডারে কুরিয়ার বুকিং করা যায় না");
+    }
     const active = await (this.prisma as any).courierShipment.findFirst({
       where: { organizationId, orderId: order.id, provider },
     });
@@ -761,6 +766,10 @@ export class CourierService {
       where: { id: shipment.orderId, organizationId },
       include: { customer: { select: { phone: true, email: true } } },
     }).catch(() => null);
+    // CX12a defense-in-depth: practice orders can hold no shipment
+    // (booking refuses them), but if one ever did, no customer
+    // update of any kind (chat / SMS / email) may leave for it.
+    if ((order as any)?.isPractice) return;
     let link: string | null = null;
     try {
       const token = await this.ensureTrackingToken(organizationId, shipment);

@@ -54,6 +54,11 @@ export default function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "bkash" | "nagad">("cod");
   const [note, setNote] = useState("");
   const [includeBump, setIncludeBump] = useState(false);
+  // EC7: optional discount code. The server validates it at order
+  // time (the totals below are pre-coupon estimates); an invalid
+  // code refuses the order with the server's reason, shown inline.
+  const [couponCode, setCouponCode] = useState("");
+  const [couponError, setCouponError] = useState("");
 
   useEffect(() => {
     if (!slug) return;
@@ -89,6 +94,7 @@ export default function CheckoutPage() {
 
     setSubmitting(true);
     setError("");
+    setCouponError("");
 
     try {
       const res = await fetch(`${API_URL}/public/checkout/${slug}/order`, {
@@ -103,6 +109,7 @@ export default function CheckoutPage() {
           paymentMethod,
           note: note.trim() || undefined,
           includeBump,
+          couponCode: couponCode.trim() || undefined,
         }),
       });
 
@@ -114,7 +121,11 @@ export default function CheckoutPage() {
       const out = await res.json();
       setOrderCompleted(out);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "অর্ডার ব্যর্থ হয়েছে");
+      const msg = err instanceof Error ? err.message : "অর্ডার ব্যর্থ হয়েছে";
+      // A refused coupon keeps the form intact so the shopper can
+      // fix or drop the code; other failures keep the old behavior.
+      if (couponCode.trim()) setCouponError(msg);
+      else setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -184,6 +195,12 @@ export default function CheckoutPage() {
               <span className="text-slate-500">পেমেন্ট মেথড:</span>
               <span className="font-bold text-indigo-700">ক্যাশ অন ডেলিভারি (পণ্য পেয়ে টাকা দিন)</span>
             </div>
+            {orderCompleted.couponApplied ? (
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-slate-500">কুপন ছাড়:</span>
+                <span className="font-bold text-emerald-700">− ৳{(Number(orderCompleted.discountMinor ?? 0) / 100).toLocaleString("en-IN")}{orderCompleted.freeShippingApplied ? " + ফ্রি ডেলিভারি" : ""}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between pt-1 text-sm font-bold">
               <span className="text-slate-900">সর্বমোট প্রদেয় টাকা:</span>
               <span className="text-emerald-700 text-base">{orderCompleted.totalFormatted}</span>
@@ -461,6 +478,21 @@ export default function CheckoutPage() {
                   </div>
                 </div>
               ) : null}
+
+              {/* EC7: coupon code (validated by the server) */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">কুপন কোড (যদি থাকে)
+                  <input
+                    type="text"
+                    value={couponCode}
+                    onChange={(e) => { setCouponCode(e.target.value.toUpperCase()); setCouponError(""); }}
+                    placeholder="যেমন: EID10"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono uppercase focus:border-indigo-500 focus:outline-none"
+                  />
+                </label>
+                {couponError ? <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-medium text-rose-600">{couponError}</p> : null}
+                {couponCode.trim() ? <p className="text-[11px] text-slate-400">কুপনের ছাড় অর্ডার নিশ্চিত করার সময় সার্ভার থেকে যাচাই হয়ে মোটে যোগ হবে।</p> : null}
+              </div>
 
               {/* Price Calculation Breakdown */}
               <div className="space-y-2 text-xs">

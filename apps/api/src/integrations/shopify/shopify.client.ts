@@ -39,6 +39,16 @@ export class ShopifyClient {
     return this.paginate("/orders.json", "orders", updatedAtMin, maxPages, { status: "any" });
   }
 
+  /**
+   * REST checkouts endpoint = abandoned checkouts list; used by
+   * the EC10 backfill. GraphQL 2025-10 exposes no abandoned-
+   * checkout query, so REST is the only read path for these.
+   */
+  async listCheckouts(): Promise<any[]> {
+    const data = await this.get<any>("/checkouts.json", { limit: "250" });
+    return (data as any)?.checkouts ?? (Array.isArray(data) ? data : []);
+  }
+
   private async paginate(path: string, key: string, updatedAtMin: string | undefined, maxPages: number, extra: Record<string, string> = {}): Promise<any[]> {
     const out: any[] = [];
     let sinceId: string | undefined;
