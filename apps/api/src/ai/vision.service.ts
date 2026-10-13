@@ -1,6 +1,6 @@
 import { HttpException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { LlmFactory } from "./llm/llm.factory";
+import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 
 /**
  * CX8: the shared vision capability — the FIRST describe-image path
@@ -92,7 +92,7 @@ export class VisionService {
 
     let provider: ReturnType<LlmFactory["getProvider"]>;
     try {
-      provider = this.llm.getProvider();
+      provider = await providerForOrg(this.llm, organizationId);
     } catch (e) {
       // Unconfigured / misconfigured LLM (e.g. a real provider named
       // without a key) — an honest unavailable, never a throw, never

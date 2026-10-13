@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { subscribeInboxStream } from "@/lib/inbox-stream";
@@ -324,7 +325,14 @@ export default function InboxPage() {
   const [macroDraft, setMacroDraft] = useState<MacroStepDraft[]>([emptyMacroStep()]);
   const [bulkQrId, setBulkQrId] = useState("");
   const [bulkTplId, setBulkTplId] = useState("");
-  const [connectForm, setConnectForm] = useState({ channel: "whatsapp", accessToken: "", appSecret: "", verifyToken: "", phoneNumberId: "", pageId: "" });
+  // CC4: appSource arrives from the Connect Center ("নিজের অ্যাপ
+  // দিয়ে" deep-link sets ?appSource=own); the form's select can
+  // still change it. "own" uses the tenant's Meta app saved in
+  // the Connect Center — its secret, not a re-typed one.
+  const [connectForm, setConnectForm] = useState(() => ({
+    channel: "whatsapp", accessToken: "", appSecret: "", verifyToken: "", phoneNumberId: "", pageId: "",
+    appSource: typeof window !== "undefined" && new URLSearchParams(window.location.search).get("appSource") === "own" ? "own" : "platform",
+  }));
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [qrForm, setQrForm] = useState({ title: "", content: "" });
   const [tplForm, setTplForm] = useState({ name: "", language: "bn", category: "UTILITY", bodyText: "" });
@@ -4261,6 +4269,11 @@ export default function InboxPage() {
       </div>
 
       <div className={`${viewMode === "manage" && manageTab === "channels" ? "block" : "hidden"} space-y-4`}>
+        <div className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-800 ring-1 ring-inset ring-indigo-100">
+          🔗 <b>কানেক্ট সেন্টার:</b> সব চ্যানেল ও অ্যাকাউন্ট এখন এক জায়গা থেকেও কানেক্ট করা যায় —{" "}
+          <Link href="/dashboard/connections#cc-forms-messaging" className="font-semibold underline">কানেক্ট সেন্টারে চ্যানেল কানেক্ট করুন →</Link>{" "}
+          (WhatsApp/Messenger/Instagram, Telegram, Email — পাশাপাশি স্টোর, কুরিয়ার, বিজ্ঞাপন অ্যাকাউন্ট ও নিজের অ্যাপের কনফিগও সেখানে। এই পেজের ফ্লো আগের মতোই চলবে।)
+        </div>
         <div className="card space-y-4 p-5">
           <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
           <div className="grid gap-4 lg:grid-cols-3">
@@ -4340,6 +4353,13 @@ export default function InboxPage() {
             </label>
             <label className="block text-sm">Access Token<input className={inputCls} type="password" value={connectForm.accessToken} onChange={(e) => setConnectForm({ ...connectForm, accessToken: e.target.value })} required /></label>
             <label className="block text-sm">App Secret (প্ল্যাটফর্ম অ্যাপ ব্যবহার করলে খালি রাখুন)<input className={inputCls} type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder="নিজের Meta অ্যাপ থাকলে দিন" /></label>
+            <label className="block text-sm">কোন অ্যাপ দিয়ে কানেক্ট?
+              <select className={inputCls} value={connectForm.appSource} onChange={(e) => setConnectForm({ ...connectForm, appSource: e.target.value })}>
+                <option value="platform">আমাদের (প্ল্যাটফর্মের) Meta অ্যাপ</option>
+                <option value="own">নিজের Meta অ্যাপ (কানেক্ট সেন্টারে কনফিগার করা)</option>
+              </select>
+              {connectForm.appSource === "own" ? <span className="mt-1 block text-xs text-slate-400">নিজের অ্যাপ বেছে নিলে App Secret লাগবে না — কানেক্ট সেন্টারে সেভ করা আপনার অ্যাপের Secret-ই ব্যবহৃত হবে। সেখানে অ্যাপ কনফিগার করা না থাকলে কানেক্ট ব্যর্থ হবে।</span> : null}
+            </label>
             <label className="block text-sm">Verify Token (নিজে ঠিক করুন)<input className={inputCls} value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></label>
             <label className="block text-sm">Phone Number ID (WhatsApp)<input className={inputCls} value={connectForm.phoneNumberId} onChange={(e) => setConnectForm({ ...connectForm, phoneNumberId: e.target.value })} /></label>
             <label className="block text-sm">Page ID (Messenger/Instagram)<input className={inputCls} value={connectForm.pageId} onChange={(e) => setConnectForm({ ...connectForm, pageId: e.target.value })} /></label>

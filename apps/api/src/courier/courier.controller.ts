@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 import { CourierService } from "./courier.service";
+import { CourierRulesService } from "./courier-rules.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -10,7 +11,10 @@ import { RolesGuard } from "../common/roles.guard";
 @Controller("organizations/:organizationId/courier")
 @UseGuards(TenantGuard, RolesGuard)
 export class CourierController {
-  constructor(private readonly courier: CourierService) {}
+  constructor(
+    private readonly courier: CourierService,
+    private readonly rules: CourierRulesService,
+  ) {}
 
   @Get("connection")
   connection(@Param("organizationId") orgId: string, @Query("provider") provider?: string) {
@@ -19,6 +23,43 @@ export class CourierController {
 
   @Get("connections")
   connections(@Param("organizationId") orgId: string) { return this.courier.getConnections(orgId); }
+
+  // ---------- EC22: courier auto-selection rules ----------
+  @Get("rules")
+  listRules(@Param("organizationId") orgId: string) { return this.rules.list(orgId); }
+
+  @Post("rules") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  createRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: {
+    name: string; conditions: Record<string, unknown>; courierAccountId: string; priority?: number; active?: boolean;
+  }) {
+    return this.rules.create(orgId, user.userId, dto);
+  }
+
+  @Patch("rules/:ruleId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  updateRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("ruleId") ruleId: string, @Body() dto: {
+    name?: string; conditions?: Record<string, unknown>; courierAccountId?: string; priority?: number; active?: boolean;
+  }) {
+    return this.rules.update(orgId, user.userId, ruleId, dto);
+  }
+
+  @Delete("rules/:ruleId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  deleteRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("ruleId") ruleId: string) {
+    return this.rules.remove(orgId, user.userId, ruleId);
+  }
+
+  /** EC22: which courier WOULD this order be auto-booked with? */
+  @Get("suggestion/:orderId")
+  suggestion(@Param("organizationId") orgId: string, @Param("orderId") orderId: string) {
+    return this.rules.suggestion(orgId, orderId);
+  }
+
+  /** EC22: set/clear a courier account's tracking URL template. */
+  @Patch("tracking-template") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  setTrackingTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: {
+    provider?: string; trackingUrlTemplate?: string | null;
+  }) {
+    return this.courier.setTrackingTemplate(orgId, user.userId, dto.provider, dto.trackingUrlTemplate);
+  }
 
   @Post("connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   connect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectCourierDto) {

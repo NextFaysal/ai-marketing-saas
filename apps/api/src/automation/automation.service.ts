@@ -28,9 +28,12 @@ import { orgFlagEnabled } from "../common/feature-flags";
 import { platformSetting, effectiveLimits } from "../common/platform-settings";
 import { SyncOutboxService } from "../commerce/sync-outbox.service";
 import { CatalogPushService } from "../commerce/catalog-push.service";
+import { SubscriptionsService } from "../subscriptions/subscriptions.service";
+import { RetentionService } from "../storefront/retention.service";
+import { InstallmentsService } from "../installments/installments.service";
 
 export const JOB_TYPES = [
-  "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers",
+  "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "monthly_report", "saved_report_delivery", "meta_status_sync", "audience_refresh", "dayparting",
   "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
@@ -38,6 +41,15 @@ export const JOB_TYPES = [
   "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due", "broadcast_send_sweep",
   "inbox_autoreply_sweep", "comment_autoreply_sweep", "handover_timer_sweep",
   "courier_auto_sync", "review_request_sweep", "order_chase_sweep", "inbox_chase_sweep", "sync_outbox", "sale_schedule", "inbox_sla_sweep",
+  // EC24c: commerce (customer) subscription renewals — distinct
+  // from the SaaS billing "subscription_sweep" above.
+  "commerce_subscription_sweep",
+  // EC28: wishlist price-drop alerts (sweep detection — price
+  // writes have no single choke point).
+  "wishlist_price_alert_sweep",
+  // EC31: installment due reminders (due_soon / overdue SMS,
+  // exactly once per item per state).
+  "installment_due_sweep",
 ] as const;
 
 
@@ -64,6 +76,8 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "বেছে নেওয়া WooCommerce স্টোরের অর্ডারগুলো প্রতি ৩০ মিনিটে Sync হবে — নতুন অর্ডার ও স্ট্যাটাসের পরিবর্তন এখানে চলে আসবে।" },
   { key: "woo_customers_sync", name: "WooCommerce Customers Sync (টেমপ্লেট)", type: "woo_customers", targetKind: "integration", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
+  { key: "woo_reviews_sync", name: "WooCommerce Reviews Sync (টেমপ্লেট)", type: "woo_reviews", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের পণ্যের রিভিউগুলো Sync হবে — যেসব পণ্য এখানে ম্যাপ করা আছে শুধু সেগুলোর রিভিউ আসবে; ম্যাপ না থাকা পণ্যের রিভিউ বাদ যাবে। Shopify স্টোরে রিভিউর কোনো উৎস (মেটাফিল্ড) না থাকলে ফলাফলে unsupported দেখাবে।" },
   { key: "shopify_customers_sync", name: "Shopify Customers Sync (টেমপ্লেট)", type: "shopify_customers", targetKind: "integration", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া Shopify স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
   { key: "daily_briefing", name: "Daily AI Briefing (টেমপ্লেট)", type: "daily_briefing", targetKind: "org", intervalMinutes: 1440,
@@ -110,6 +124,12 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ১৫ মিনিটে: চ্যাটে অসম্পূর্ণ অর্ডার রেখে যাওয়া গ্রাহকদের ভদ্র ফলো-আপ পাঠাবে এবং আটকে থাকা বট সেশনগুলো সময়মতো পরিচালনা করবে।" },
   { key: "sync_outbox_process", name: "Store Sync Outbox (টেমপ্লেট)", type: "sync_outbox", targetKind: "org", intervalMinutes: 5,
     descriptionBn: "প্রতি ৫ মিনিটে স্টোরে পাঠানোর অপেক্ষমাণ পরিবর্তনগুলো (Sync Outbox) প্রসেস হবে; যে কাজ সংশ্লিষ্ট প্ল্যাটফর্মে এখনো সমর্থিত নয় তা failed হিসেবে verbatim কারণসহ থেকে যাবে, কখনো সফল দেখানো হবে না" },
+  { key: "commerce_subscription_sweep", name: "Commerce Subscription Renewal (টেমপ্লেট)", type: "commerce_subscription_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সময় হয়ে যাওয়া গ্রাহক সাবস্ক্রিপশনগুলোর জন্য COD নবায়ন অর্ডার তৈরি হবে (ডেলিভারি চার্জ ছাড়া)। পরপর ৫ বার ব্যর্থ হলে সাবস্ক্রিপশনটি স্বয়ংক্রিয়ভাবে বিরতি পাবে।" },
+  { key: "wishlist_price_alert_sweep", name: "Wishlist Price-Drop Alerts (টেমপ্লেট)", type: "wishlist_price_alert_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: উইশলিস্টে থাকা পণ্যের দাম যোগ করার সময়ের দামের (বা সর্বশেষ জানানো দামের) চেয়ে কমে গেলে গ্রাহককে SMS-এ জানানো হবে — একই দামে একবারই, আরও কমলে আবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
+  { key: "installment_due_sweep", name: "Installment Due Reminders (টেমপ্লেট)", type: "installment_due_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সক্রিয় কিস্তি প্ল্যানের মেয়াদ আসন্ন (আজ থেকে ২ দিনের মধ্যে) বা পার হয়ে যাওয়া অপaid কিস্তির জন্য গ্রাহককে SMS-এ একবার করে মনে করিয়ে দেওয়া হবে — প্রতিটি কিস্তির প্রতিটি অবস্থায় ঠিক একবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
   { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
     descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।" },
   { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
@@ -176,6 +196,20 @@ export class AutomationService implements OnModuleInit {
     // imported by AutomationModule (EmailProvider), so this adds
     // no module cycle.
     @Optional() private readonly messaging?: MessagingService,
+    // EC24c: commerce subscription renewals — SubscriptionsModule
+    // imports IntegrationsModule + AuditModule only, and nothing
+    // in it imports AutomationModule, so this adds no cycle
+    // (same pattern as catalogPush via CommerceModule).
+    @Optional() private readonly commerceSubscriptions?: SubscriptionsService,
+    // EC28: wishlist price-drop sweep — StorefrontModule is
+    // imported by AutomationModule for this; its chain
+    // (Integrations/Commerce/Messaging) never imports
+    // AutomationModule back, so this adds no cycle.
+    @Optional() private readonly retention?: RetentionService,
+    // EC31: installment due reminders — InstallmentsModule
+    // imports AuditModule + StorefrontModule only, and nothing
+    // in it imports AutomationModule, so this adds no cycle.
+    @Optional() private readonly installments?: InstallmentsService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -587,6 +621,7 @@ export class AutomationService implements OnModuleInit {
       case "shopify_products": return this.shopify.syncProducts(orgId, actor, job.targetId);
       case "shopify_orders": return this.shopify.syncOrders(orgId, actor, job.targetId);
       case "woo_customers": return this.integrations.syncCustomers(orgId, actor, job.targetId);
+      case "woo_reviews": return this.integrations.syncReviews(orgId, actor, job.targetId);
       case "shopify_customers": return this.shopify.syncCustomers(orgId, actor, job.targetId);
       // AD5: scheduled insights syncs go through the job entry
       // point so a sync-disabled account is SKIPPED (the skip
@@ -688,6 +723,9 @@ export class AutomationService implements OnModuleInit {
       case "audit_retention": return this.runAuditRetention();
       case "sync_outbox": return this.outbox ? this.outbox.processDueForOrg(orgId) : { skipped: "sync outbox unavailable" };
       case "sale_schedule": return this.catalogPush ? this.catalogPush.processSaleBoundariesForOrg(orgId) : { skipped: "catalog push unavailable" };
+      case "commerce_subscription_sweep": return this.commerceSubscriptions ? this.commerceSubscriptions.runDueForOrg(orgId) : { skipped: "commerce subscriptions unavailable" };
+      case "wishlist_price_alert_sweep": return this.retention ? this.retention.runWishlistPriceAlerts(orgId) : { skipped: "retention service unavailable" };
+      case "installment_due_sweep": return this.installments ? this.installments.runDueRemindersForOrg(orgId) : { skipped: "installments unavailable" };
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);

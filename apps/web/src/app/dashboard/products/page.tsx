@@ -18,7 +18,19 @@ interface ProductDetailExtra {
   barcode?: string | null;
   seoTitle?: string | null;
   seoDescription?: string | null;
+  taxRateBps?: number | null;
   tags?: EcTag[];
+  // EC24: product-model expansion fields (detail = full product row).
+  preorderEnabled?: boolean;
+  preorderReleaseDate?: string | null;
+  preorderLimit?: number | null;
+  digital?: boolean;
+  digitalFileUrl?: string | null;
+  digitalAccessLimit?: number | null;
+  subscriptionEnabled?: boolean;
+  subscriptionIntervalDays?: number | null;
+  subscriptionDiscountPercent?: number | null;
+  wholesaleTiers?: { minQty: number; priceMinor: string }[] | null;
 }
 
 type BulkAction = "price_percent" | "price_fixed" | "stock_set" | "category_set";
@@ -44,6 +56,7 @@ interface ProductItem {
   bumpTitle?: string | null;
   bumpPriceMinor?: string | null;
   bumpImageUrl?: string | null;
+  taxRateBps?: number | null;
 }
 
 interface VariantItem { id: string; name: string; sku?: string | null; stockQuantity?: number | null; priceMinor?: string | null }
@@ -115,9 +128,17 @@ export default function ProductsPage() {
     barcode: "",
     seoTitle: "",
     seoDescription: "",
+    taxRatePercent: "",
     tagIds: [] as string[],
   });
   const [saving, setSaving] = useState(false);
+  // EC24: compact product-model expansion section state.
+  const [ec24, setEc24] = useState({
+    preorderEnabled: false, preorderReleaseDate: "", preorderLimit: "",
+    digital: false, digitalFileUrl: "", digitalAccessLimit: "",
+    subscriptionEnabled: false, subscriptionIntervalDays: "", subscriptionDiscountPercent: "",
+    tiers: [] as { minQty: string; price: string }[],
+  });
   // EC3: categories / tags for the form + manager dialog.
   const [ecCategories, setEcCategories] = useState<EcCategory[]>([]);
   const [ecTags, setEcTags] = useState<EcTag[]>([]);
@@ -139,6 +160,10 @@ export default function ProductsPage() {
   const [bulkResult, setBulkResult] = useState<BulkApplyResult | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState("");
+  // CP5: batch store push summary.
+  const [pushBatchResult, setPushBatchResult] = useState<{ results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[]; enqueued: number } | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState("");
   // Sales & Data S1: stock adjustment dialog (adjustment form + movement history).
   const [stockFor, setStockFor] = useState<ProductItem | null>(null);
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -271,6 +296,20 @@ export default function ProductsPage() {
       await load(search);
     } catch (e) { setBulkMsg(e instanceof Error ? e.message : "প্রয়োগ ব্যর্থ হয়েছে"); }
     finally { setBulkBusy(false); }
+  }
+
+  async function onPushBatch() {
+    const orgId = getOrganizationId();
+    if (!orgId || selectedIds.size === 0) return;
+    setPushBusy(true); setPushMsg(""); setPushBatchResult(null);
+    try {
+      const result = await apiFetch<{ results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[]; enqueued: number }>(
+        `/organizations/${orgId}/products/push-batch`,
+        { method: "POST", body: JSON.stringify({ productIds: Array.from(selectedIds) }) },
+      );
+      setPushBatchResult(result);
+    } catch (e) { setPushMsg(e instanceof Error ? e.message : "স্টোরে পাঠানো ব্যর্থ হয়েছে"); }
+    finally { setPushBusy(false); }
   }
 
   const loadReport = useCallback(async () => {
@@ -448,7 +487,14 @@ export default function ProductsPage() {
       barcode: "",
       seoTitle: "",
       seoDescription: "",
+      taxRatePercent: "",
       tagIds: [],
+    });
+    setEc24({
+      preorderEnabled: false, preorderReleaseDate: "", preorderLimit: "",
+      digital: false, digitalFileUrl: "", digitalAccessLimit: "",
+      subscriptionEnabled: false, subscriptionIntervalDays: "", subscriptionDiscountPercent: "",
+      tiers: [],
     });
     setIsModalOpen(true);
   }
@@ -493,7 +539,28 @@ export default function ProductsPage() {
       barcode: extra.barcode || "",
       seoTitle: extra.seoTitle || "",
       seoDescription: extra.seoDescription || "",
+      // EC23: bps → percent for the form (750 → "7.5"); the detail
+      // wins, the list row is the fallback.
+      taxRatePercent: (() => {
+        const bps = extra.taxRateBps ?? p.taxRateBps ?? null;
+        return bps == null ? "" : String(bps / 100);
+      })(),
       tagIds: (extra.tags ?? []).map((t) => t.id),
+    });
+    setEc24({
+      preorderEnabled: !!extra.preorderEnabled,
+      preorderReleaseDate: extra.preorderReleaseDate ? String(extra.preorderReleaseDate).slice(0, 10) : "",
+      preorderLimit: extra.preorderLimit != null ? String(extra.preorderLimit) : "",
+      digital: !!extra.digital,
+      digitalFileUrl: extra.digitalFileUrl ?? "",
+      digitalAccessLimit: extra.digitalAccessLimit != null ? String(extra.digitalAccessLimit) : "",
+      subscriptionEnabled: !!extra.subscriptionEnabled,
+      subscriptionIntervalDays: extra.subscriptionIntervalDays != null ? String(extra.subscriptionIntervalDays) : "",
+      subscriptionDiscountPercent: extra.subscriptionDiscountPercent != null ? String(extra.subscriptionDiscountPercent) : "",
+      tiers: (extra.wholesaleTiers ?? []).map((t) => ({
+        minQty: String(t.minQty),
+        price: (() => { try { return minorToDecimal(String(t.priceMinor)); } catch { return ""; } })(),
+      })),
     });
     setIsModalOpen(true);
   }
@@ -509,8 +576,40 @@ export default function ProductsPage() {
     // EC3 extended fields shared by create + update. When the category
     // select is used it wins (and also writes the legacy text for the
     // existing list filter); with no categories loaded the text input rules.
+    // EC23: VAT percent (decimals allowed) → basis points.
+    // Empty = null (fall back to the shop default at checkout).
+    let taxRateBps: number | null = null;
+    if (form.taxRatePercent.trim()) {
+      const pct = Number(form.taxRatePercent);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+        setError("VAT হার 0–100% এর মধ্যে হতে হবে");
+        setSaving(false);
+        return;
+      }
+      taxRateBps = Math.round(pct * 100);
+    }
+
+    // EC24: expansion fields — taka inputs become minor-unit
+    // strings for tiers; empty optional numbers become null
+    // (explicit clear), so toggles off really turn features off.
+    const ec24Fields = {
+      preorderEnabled: ec24.preorderEnabled,
+      preorderReleaseDate: ec24.preorderReleaseDate ? new Date(`${ec24.preorderReleaseDate}T00:00:00`).toISOString() : null,
+      preorderLimit: ec24.preorderLimit.trim() ? Number(ec24.preorderLimit) : null,
+      digital: ec24.digital,
+      digitalFileUrl: ec24.digitalFileUrl.trim() || null,
+      digitalAccessLimit: ec24.digitalAccessLimit.trim() ? Number(ec24.digitalAccessLimit) : null,
+      subscriptionEnabled: ec24.subscriptionEnabled,
+      subscriptionIntervalDays: ec24.subscriptionIntervalDays.trim() ? Number(ec24.subscriptionIntervalDays) : null,
+      subscriptionDiscountPercent: ec24.subscriptionDiscountPercent.trim() ? Number(ec24.subscriptionDiscountPercent) : null,
+      wholesaleTiers: ec24.tiers
+        .filter((t) => t.minQty.trim() && t.price.trim())
+        .map((t) => ({ minQty: Number(t.minQty), priceMinor: String(Math.round(Number(t.price) * 100)) })),
+    };
+
     const selectedEcCategory = ecCategories.find((c) => c.id === form.categoryId);
     const ecFields = {
+      taxRateBps,
       categoryId: form.categoryId || undefined,
       category: selectedEcCategory ? selectedEcCategory.name : (form.category.trim() || undefined),
       weightGrams: form.weightGrams.trim() ? Number(form.weightGrams) : undefined,
@@ -540,6 +639,7 @@ export default function ProductsPage() {
             bumpPrice: form.bumpPrice.trim() || undefined,
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
             ...ecFields,
+            ...ec24Fields,
           }),
         });
 
@@ -568,6 +668,7 @@ export default function ProductsPage() {
             bumpPrice: form.bumpPrice.trim() || undefined,
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
             ...ecFields,
+            ...ec24Fields,
           }),
         });
 
@@ -779,10 +880,26 @@ export default function ProductsPage() {
           <button className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={bulkBusy} onClick={onBulkPreview}>
             {bulkBusy ? "হচ্ছে…" : "প্রিভিউ দেখুন"}
           </button>
+          <button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={pushBusy} onClick={onPushBatch}>
+            {pushBusy ? "পাঠানো হচ্ছে…" : "স্টোরে পাঠান"}
+          </button>
+          {pushMsg ? <span className="text-xs text-rose-700">{pushMsg}</span> : null}
           <button className="rounded-lg border px-3 py-1.5 text-xs text-slate-600" onClick={() => { setSelectedIds(new Set()); setBulkPreview(null); setBulkResult(null); }}>
             নির্বাচন সরান
           </button>
           {bulkMsg ? <span className="text-xs text-rose-700">{bulkMsg}</span> : null}
+        </div>
+      ) : null}
+      {pushBatchResult ? (
+        <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
+          <span className="font-bold">স্টোরে পাঠানোর ফলাফল:</span> মোট Enqueue হয়েছে {pushBatchResult.enqueued}টি
+          <ul className="mt-1 list-disc pl-5">
+            {pushBatchResult.results.map((r) => (
+              <li key={r.productId} className={r.ok ? "text-emerald-700" : "text-rose-700"}>
+                {items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.ok ? `পাঠানো হয়েছে (enqueued ${r.enqueued ?? 0}${r.skipped ? `, skipped ${r.skipped}` : ""})` : (r.error === "not_found" ? "পণ্যটি পাওয়া যায়নি" : r.error === "no_listings" ? "কোনো স্টোর Listing নেই" : (r.error ?? "অজানা এরর"))}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {bulkResult ? (
@@ -1333,6 +1450,22 @@ export default function ProductsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  VAT হার % (ঐচ্ছিক — ফাঁকা = দোকানের ডিফল্ট)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  placeholder="যেমন: 15 বা 7.5"
+                  value={form.taxRatePercent}
+                  onChange={(e) => setForm({ ...form, taxRatePercent: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   প্রোডাক্ট ইমেজ ইউআরএল (Image URL)
                 </label>
                 <input
@@ -1355,6 +1488,70 @@ export default function ProductsPage() {
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 />
+              </div>
+
+              {/* EC24: প্রি-অর্ডার / ডিজিটাল / সাবস্ক্রিপশন / পাইকারি স্তর */}
+              <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3.5 space-y-3">
+                <div className="text-xs font-bold text-violet-950">🧩 পণ্যের ধরন সম্প্রসারণ (প্রি-অর্ডার · ডিজিটাল · সাবস্ক্রিপশন · পাইকারি)</div>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input type="checkbox" checked={ec24.preorderEnabled} onChange={(e) => setEc24({ ...ec24, preorderEnabled: e.target.checked })} />
+                  প্রি-অর্ডার চালু (স্টক না থাকলেও অর্ডার নেওয়া যাবে)
+                </label>
+                {ec24.preorderEnabled ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-600">রিলিজের তারিখ
+                      <input type="date" value={ec24.preorderReleaseDate} onChange={(e) => setEc24({ ...ec24, preorderReleaseDate: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-600">প্রি-অর্ডার সীমা (ঐচ্ছিক)
+                      <input type="number" min="1" value={ec24.preorderLimit} onChange={(e) => setEc24({ ...ec24, preorderLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    </label>
+                  </div>
+                ) : null}
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input type="checkbox" checked={ec24.digital} onChange={(e) => setEc24({ ...ec24, digital: e.target.checked })} />
+                  ডিজিটাল পণ্য (ডেলিভারির পর ডাউনলোড লিংক)
+                </label>
+                {ec24.digital ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-600">ফাইল URL (আবশ্যক)
+                      <input type="url" value={ec24.digitalFileUrl} onChange={(e) => setEc24({ ...ec24, digitalFileUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-600">অ্যাক্সেস সীমা (ঐচ্ছিক)
+                      <input type="number" min="1" value={ec24.digitalAccessLimit} onChange={(e) => setEc24({ ...ec24, digitalAccessLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    </label>
+                  </div>
+                ) : null}
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input type="checkbox" checked={ec24.subscriptionEnabled} onChange={(e) => setEc24({ ...ec24, subscriptionEnabled: e.target.checked })} />
+                  সাবস্ক্রিপশন চালু (স্টাফ সাবস্ক্রিপশন তৈরি করতে পারবেন)
+                </label>
+                {ec24.subscriptionEnabled ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-600">ইন্টারভাল (দিন, আবশ্যক)
+                      <input type="number" min="1" value={ec24.subscriptionIntervalDays} onChange={(e) => setEc24({ ...ec24, subscriptionIntervalDays: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-600">নবায়ন ছাড় % (ঐচ্ছিক)
+                      <input type="number" min="0" max="100" value={ec24.subscriptionDiscountPercent} onChange={(e) => setEc24({ ...ec24, subscriptionDiscountPercent: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    </label>
+                  </div>
+                ) : null}
+
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold text-slate-600">পাইকারি স্তর (কমপক্ষে পরিমাণ → একক দাম ৳) — সর্বোচ্চ ১০টি, পরিমাণ বাড়তে হবে</p>
+                  {ec24.tiers.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <button type="button" onClick={() => setEc24({ ...ec24, tiers: ec24.tiers.filter((_, xi) => xi !== i) })} className="rounded-lg bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700">মুছুন</button>
+                    </div>
+                  ))}
+                  {ec24.tiers.length < 10 ? (
+                    <button type="button" onClick={() => setEc24({ ...ec24, tiers: [...ec24.tiers, { minQty: "", price: "" }] })} className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800">+ স্তর যোগ করুন</button>
+                  ) : null}
+                </div>
               </div>
 
               {/* ⚡ SaaS Super-Feature: 1-Click Order Bump / Upsell Offer */}

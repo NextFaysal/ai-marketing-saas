@@ -2,7 +2,7 @@ import { BadRequestException, HttpException, Injectable, NotFoundException, Opti
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
-import { LlmFactory } from "../ai/llm/llm.factory";
+import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { matchKnowledge } from "./business-brain";
 import { parseUnansweredDraft, type UnansweredDraftProposal } from "./in7-ai";
 
@@ -239,7 +239,7 @@ export class AiInstructionsService {
     if (!row) throw new NotFoundException("Unanswered question not found in this organization");
     const question = { id: row.id, questionText: row.questionText };
     let provider: any;
-    try { provider = this.llm?.getProvider(); } catch { provider = null; }
+    try { provider = this.llm ? await providerForOrg(this.llm, organizationId) : null; } catch { provider = null; }
     if (!provider?.isRealLlm) {
       return { proposal: null, provider: provider?.name ?? null, reason: "আসল AI provider যুক্ত নেই — খসড়া প্রস্তাব তৈরি হয়নি।", question };
     }

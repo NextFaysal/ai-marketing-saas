@@ -1,5 +1,6 @@
 import React from "react";
 import { fetchShopHome } from "@/lib/storefront-server";
+import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { ShopHeader } from "./ShopHeader";
 
 export default async function ShopLayout({
@@ -18,6 +19,11 @@ export default async function ShopLayout({
   const shopName = home.settings.shopName;
   const accent = home.organization.primaryColor || "#4f46e5";
   const paymentNote = home.businessProfile.paymentNote;
+  const locale = shopLocaleOf(home.settings.locale);
+  const t = shopT(locale);
+  // EC18 trust copy — empty merchant fields hide the block entirely.
+  const returnPolicyText = home.settings.returnPolicyText?.trim() || null;
+  const supportPhone = home.settings.supportPhone?.trim() || null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -26,6 +32,7 @@ export default async function ShopLayout({
         shopName={shopName}
         logoUrl={home.organization.logoUrl}
         primaryColor={home.organization.primaryColor}
+        locale={locale}
       />
       {home.settings.announcementText ? (
         <div className="text-center text-xs font-semibold text-white" style={{ backgroundColor: accent }}>
@@ -37,14 +44,22 @@ export default async function ShopLayout({
         <div className="mx-auto max-w-6xl space-y-2 px-4 py-8 text-center sm:px-6">
           <p className="text-sm font-bold text-slate-800">{shopName}</p>
           {home.businessProfile.codAvailable ? (
-            <p className="text-xs text-slate-500">ক্যাশ অন ডেলিভারি সুবিধা আছে — পণ্য হাতে পেয়ে টাকা পরিশোধ করুন।</p>
+            <p className="text-xs text-slate-500">{t.common.codAvailable}</p>
           ) : null}
           {paymentNote ? <p className="text-xs text-slate-500">{paymentNote}</p> : null}
           {home.businessProfile.bkashNumber ? (
-            <p className="text-xs text-slate-500">বিকাশ: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
+            <p className="text-xs text-slate-500">{t.common.bkash}: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
           ) : null}
           {home.businessProfile.nagadNumber ? (
-            <p className="text-xs text-slate-500">নগদ: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
+            <p className="text-xs text-slate-500">{t.common.nagad}: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
+          ) : null}
+          {supportPhone ? (
+            <p className="text-xs text-slate-500">{t.common.supportPhoneLabel}: <span className="font-mono font-semibold">{supportPhone}</span></p>
+          ) : null}
+          {returnPolicyText ? (
+            <p className="mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-slate-500">
+              <span className="font-semibold text-slate-600">{t.common.returnPolicyLabel}: </span>{returnPolicyText}
+            </p>
           ) : null}
         </div>
       </footer>

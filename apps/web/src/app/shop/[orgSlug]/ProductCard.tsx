@@ -2,6 +2,8 @@ import React from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
 import type { ShopProduct } from "@/lib/storefront-server";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { WishlistHeart } from "./WishlistHeart";
 
 export function priceText(minor: string): string {
   try {
@@ -11,21 +13,22 @@ export function priceText(minor: string): string {
   }
 }
 
-export function stockBadge(state: string): { label: string; cls: string } | null {
+export function stockBadge(state: string, locale: ShopLocale | string = "bn"): { label: string; cls: string } | null {
+  const t = shopT(locale);
   switch (state) {
     case "out_of_stock":
-      return { label: "স্টক শেষ", cls: "bg-rose-100 text-rose-700" };
+      return { label: t.product.outOfStock, cls: "bg-rose-100 text-rose-700" };
     case "low":
-      return { label: "স্টক কম আছে", cls: "bg-amber-100 text-amber-800" };
+      return { label: t.product.lowStock, cls: "bg-amber-100 text-amber-800" };
     case "in_stock":
-      return { label: "স্টকে আছে", cls: "bg-emerald-100 text-emerald-700" };
+      return { label: t.product.inStock, cls: "bg-emerald-100 text-emerald-700" };
     default:
       return null; // untracked — no stock claim
   }
 }
 
-export function ProductCard({ orgSlug, product }: { orgSlug: string; product: ShopProduct }) {
-  const badge = stockBadge(product.stockState);
+export function ProductCard({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
+  const badge = stockBadge(product.stockState, locale);
   const inner = (
     <>
       {product.imageUrl ? (
@@ -48,10 +51,20 @@ export function ProductCard({ orgSlug, product }: { orgSlug: string; product: Sh
     </>
   );
   const cls = "block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md";
-  if (!product.slug) return <div className={cls}>{inner}</div>;
+  // EC25: heart overlays the card; WishlistHeart stops propagation
+  // so tapping it never navigates the card Link.
+  const heart = (
+    <div className="absolute right-2.5 top-2.5 z-10">
+      <WishlistHeart orgSlug={orgSlug} productId={product.id} locale={locale} />
+    </div>
+  );
+  if (!product.slug) return <div className={`relative ${cls}`}>{heart}{inner}</div>;
   return (
-    <Link href={`/shop/${orgSlug}/products/${product.slug}`} className={cls}>
-      {inner}
-    </Link>
+    <div className="relative">
+      {heart}
+      <Link href={`/shop/${orgSlug}/products/${product.slug}`} className={cls}>
+        {inner}
+      </Link>
+    </div>
   );
 }

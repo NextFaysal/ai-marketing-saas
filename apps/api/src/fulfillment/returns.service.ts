@@ -7,6 +7,20 @@ import { InventoryService } from "../inventory/inventory.service";
 import { OrdersService } from "../orders/orders.service";
 import { InboxService } from "../inbox/inbox.service";
 import { EmailProvider } from "../messaging/email.provider";
+import { resolveShopifyClient } from "../integrations/commerce/shopify-catalog";
+import { readExternalVariantMap } from "../integrations/commerce/catalog-content";
+
+const SHOPIFY_INVENTORY_ADJUST = `mutation cpInventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
+  inventoryAdjustQuantities(input: $input) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message }
+  }
+}`;
+
+function shopifyGid(kind: string, id: string): string {
+  const s = String(id);
+  return s.startsWith("gid://") ? s : `gid://shopify/${kind}/${s}`;
+}
 
 export const RETURN_STATUSES = ["requested", "approved", "rejected", "return_shipped", "received", "completed"] as const;
 export const RETURN_RESOLUTIONS = ["refund", "exchange", "store_credit_note"] as const;
@@ -269,6 +283,11 @@ export class ReturnsService {
       data.restockAppliedAt = new Date();
     }
 
+    // 1b) CP4: Shopify partial restock — failure-isolated, runs
+    // AFTER the local restock block above. Never throws; its
+    // outcome lands on ReturnRequest.shopifyRestock.
+    await this.shopifyRestockHook(organizationId, rr, order);
+
     // 2) Resolution.
     if (rr.resolution === "refund") {
       const amount = rr.refundAmountMinor != null ? BigInt(rr.refundAmountMinor) : BigInt(order.totalMinor ?? 0) - BigInt(order.refundedMinor ?? 0);
@@ -325,6 +344,153 @@ export class ReturnsService {
           ? "আপনার রিটার্ন সম্পন্ন হয়েছে — এক্সচেঞ্জ অর্ডার তৈরি করা হয়েছে।"
           : "আপনার রিটার্ন সম্পন্ন হয়েছে।");
     return this.pub(await this.loadReturn(organizationId, rr.id));
+  }
+
+  /**
+   * CP4: mirror the LOCAL restock onto Shopify inventory — only
+   * the restocked quantities (partial restock is natural: the
+   * adjust delta is each return line's quantity, never the order
+   * quantity). Discovery mirrors shopify-catalog's inventory code:
+   * the listing's externalVariantMap carries the inventoryItemId
+   * (matched by the order item's externalVariationId when known,
+   * else the single mapped entry), and the location is the
+   * store's default StoreLocation. Adjustment uses Shopify's
+   * inventoryAdjustQuantities (a delta, unlike the catalog's
+   * absolute inventorySetQuantities).
+   *
+   * Scope discipline: non-Shopify stores and storeless orders
+   * leave shopifyRestock NULL (no attempted:false noise). Once a
+   * Shopify store is in scope the attempt is ALWAYS recorded —
+   * including total failure — and NOTHING here ever throws.
+   */
+  private async shopifyRestockHook(organizationId: string, rr: any, order: any): Promise<void> {
+    if (rr.restockDecision !== "restock") return;
+    const persist = async (value: Record<string, any>) => {
+      try {
+        await (this.prisma as any).returnRequest.update({ where: { id: rr.id }, data: { shopifyRestock: value } });
+      } catch { /* bookkeeping only — the local completion stands */ }
+    };
+    try {
+      if (!order?.storeId) return;
+      const store = await (this.prisma as any).store.findFirst({
+        where: { id: order.storeId, organizationId },
+      }).catch(() => null);
+      if (!store || store.platform !== "SHOPIFY") return;
+
+      const byId = new Map<string, any>((order.items ?? []).map((i: any) => [i.id, i]));
+      const lines: { productId: string; qty: number; ok: boolean; reason?: string }[] = [];
+      let totalAdjusted = 0;
+
+      // Client + location are resolved once; a failure here is
+      // recorded per-line below (attempted, not silent).
+      let client: any = null;
+      let setupError: string | null = null;
+      try {
+        let integration: any = null;
+        try {
+          integration = await (this.prisma as any).integration.findFirst({
+            where: { organizationId, storeId: store.id, provider: "shopify" },
+            include: { credential: true, store: true },
+          });
+        } catch {
+          integration = await (this.prisma as any).integration.findFirst({
+            where: { organizationId, storeId: store.id, provider: "shopify" },
+          });
+        }
+        if (!integration) throw new Error("shopify_integration_not_connected");
+        if (!integration.credential && typeof (this.prisma as any).integrationCredential?.findFirst === "function") {
+          const cred = await (this.prisma as any).integrationCredential.findFirst({ where: { integrationId: integration.id } }).catch(() => null);
+          if (cred) integration = { ...integration, credential: cred };
+        }
+        const resolved = await resolveShopifyClient({
+          prisma: this.prisma as any, organizationId, store, integration, payload: {},
+        });
+        if ("error" in resolved) throw new Error(resolved.error);
+        client = resolved.client;
+      } catch (e) {
+        setupError = e instanceof Error ? e.message : String(e);
+      }
+
+      let locationGid: string | null = null;
+      if (!setupError) {
+        try {
+          const loc = await (this.prisma as any).storeLocation.findFirst({
+            where: { storeId: store.id, isDefault: true },
+          });
+          const external = loc?.externalLocationId ?? loc?.externalId ?? null;
+          if (external) locationGid = shopifyGid("Location", String(external));
+          if (!locationGid) setupError = "shopify_location_not_mapped";
+        } catch {
+          setupError = "shopify_location_not_mapped";
+        }
+      }
+
+      for (const line of (rr.items ?? []) as ReturnLine[]) {
+        if (line.restock !== true || !(line.quantity > 0)) continue;
+        const oi = byId.get(line.orderItemId);
+        if (!oi?.productId) continue;
+        const productId = String(oi.productId);
+        const qty = line.quantity;
+        if (setupError) {
+          lines.push({ productId, qty, ok: false, reason: setupError });
+          continue;
+        }
+        const listing = await (this.prisma as any).storeListing.findFirst({
+          where: { organizationId, storeId: store.id, productId },
+        }).catch(() => null);
+        if (!listing) {
+          lines.push({ productId, qty, ok: false, reason: "no_listing" });
+          continue;
+        }
+        const map = readExternalVariantMap(listing.externalVariantMap);
+        let entry: { id: string; inventoryItemId?: string } | undefined;
+        const entries = Object.values(map);
+        if (oi.externalVariationId) {
+          entry = entries.find((en) => en.id === String(oi.externalVariationId) || shopifyGid("ProductVariant", en.id) === String(oi.externalVariationId));
+        }
+        if (!entry && entries.length === 1) entry = entries[0];
+        if (!entry?.inventoryItemId) {
+          lines.push({ productId, qty, ok: false, reason: "inventory_item_not_mapped" });
+          continue;
+        }
+        try {
+          const data = await client.request(SHOPIFY_INVENTORY_ADJUST, {
+            input: {
+              name: "available",
+              reason: "received",
+              changes: [{
+                inventoryItemId: shopifyGid("InventoryItem", entry.inventoryItemId),
+                locationId: locationGid,
+                delta: qty,
+              }],
+            },
+          });
+          const errs = data?.inventoryAdjustQuantities?.userErrors;
+          if (Array.isArray(errs) && errs.length > 0) {
+            lines.push({ productId, qty, ok: false, reason: errs.map((x: any) => x?.message ?? String(x)).join("; ") });
+            continue;
+          }
+          lines.push({ productId, qty, ok: true });
+          totalAdjusted += qty;
+        } catch (e) {
+          lines.push({ productId, qty, ok: false, reason: e instanceof Error ? e.message : String(e) });
+        }
+      }
+
+      await persist({
+        attempted: true,
+        succeeded: lines.length > 0 && lines.every((l) => l.ok),
+        qty: totalAdjusted,
+        lines,
+      });
+    } catch (e) {
+      await persist({
+        attempted: true,
+        succeeded: false,
+        qty: 0,
+        reason: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   /** Channel order: linked conversation -> email -> none.

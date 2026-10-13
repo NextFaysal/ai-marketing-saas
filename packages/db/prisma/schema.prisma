@@ -89,6 +89,14 @@ model Organization {
   knowledgeDocs  KnowledgeDocument[]
   stores         Store[]
   integrations   Integration[]
+  tenantAppConfigs TenantAppConfig[]
+  orgLlmConfig   OrgLlmConfig?
+  tenantPaymentGateways TenantPaymentGateway[]
+  tenantPaymentTransactions TenantPaymentTransaction[]
+  platformPaymentEnablements PlatformPaymentEnablement[]
+  walletAccount  WalletAccount?
+  walletTransactions WalletTransaction[]
+  payoutRequests PayoutRequest[]
   storeListings  StoreListing[]
   syncOutbox     SyncOutbox[]
   syncConflicts  SyncConflict[]
@@ -101,9 +109,29 @@ model Organization {
   returnRequests ReturnRequest[]
   customerStoreIdentities CustomerStoreIdentity[]
   storeDiscounts          StoreDiscount[]
+  promotions              Promotion[]
+  productFeeds            ProductFeed[]
+  suppliers               Supplier[]
+  purchaseOrders          PurchaseOrder[]
+  warehouses              Warehouse[]
+  binLocations            BinLocation[]
+  productBinAssignments   ProductBinAssignment[]
+  stockCountSessions      StockCountSession[]
+  courierRules            CourierRule[]
+  riders                  Rider[]
+  deliveryAssignments     DeliveryAssignment[]
+  taxSetting              TaxSetting?
+  invoiceCounters         InvoiceCounter[]
+  customerSubscriptions   CustomerSubscription[]
   abandonedStoreCheckouts AbandonedStoreCheckout[]
   storefrontSetting StorefrontSetting?
   shippingZones     ShippingZone[]
+  shippingRateRules ShippingRateRule[]
+  pickupPoints      PickupPoint[]
+  installmentPlans  InstallmentPlan[]
+  affiliatePartners AffiliatePartner[]
+  commissionEntries CommissionEntry[]
+  affiliatePayouts  AffiliatePayout[]
   storeCarts        StoreCart[]
   customers      Customer[]
   orders         Order[]
@@ -329,6 +357,32 @@ model Product {
   seoTitle       String?
   seoDescription String?
   categoryId     String?
+  // EC23: per-product VAT rate override in basis points
+  // (1500 = 15.00%; fractional BD rates like 7.5% need bps —
+  // whole-percent Int fields elsewhere cannot express them).
+  // Null = fall back to the org TaxSetting default.
+  taxRateBps     Int?
+  // EC24a: pre-order. When enabled, checkout accepts the item
+  // even at zero stock; those lines are stamped isPreorder and
+  // do NOT decrement stock at placement (stock may not exist
+  // yet). preorderLimit caps total open pre-ordered units.
+  preorderEnabled     Boolean   @default(false)
+  preorderReleaseDate DateTime?
+  preorderLimit       Int?
+  // EC24b: digital product. digitalFileUrl is a MERCHANT-hosted
+  // URL (no file hosting is built); it is revealed only on
+  // order-bound surfaces after delivery, never on public pages.
+  digital            Boolean  @default(false)
+  digitalFileUrl     String?
+  digitalAccessLimit Int?
+  // EC24c: subscription plan (COD/manual renewal ONLY — no
+  // payment gateway auto-charge exists or is implied).
+  subscriptionEnabled         Boolean @default(false)
+  subscriptionIntervalDays    Int?
+  subscriptionDiscountPercent Int?
+  // EC24d: wholesale price tiers [{ minQty, priceMinor }] —
+  // server-validated, ascending unique minQty.
+  wholesaleTiers      Json?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -341,6 +395,10 @@ model Product {
   bundleItems    BundleItem[]  @relation("BundleParent")
   bundleComponentIn BundleItem[] @relation("BundleComponent")
   storeCartItems StoreCartItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  binAssignments     ProductBinAssignment[]
+  stockCountLines    StockCountLine[]
+  customerSubscriptions CustomerSubscription[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, status])
@@ -542,6 +600,11 @@ model Store {
   // plugin reads (e.g. an AST-style plugin). Null = only the generic
   // tracking_provider/tracking_number meta keys + customer note.
   courierTrackingMetaKey String?
+  // CP: the store's own weight unit (g | kg | lb | oz), read
+  // from the Woo settings endpoint (woocommerce_weight_unit)
+  // when fetchable, else staff-set. Null = legacy kg assumption.
+  // Product push converts Product.weightGrams into this unit.
+  weightUnit     String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -573,12 +636,29 @@ model Integration {
   // updatedAt }). This is a RECORD of an attempt — a topic counts as
   // registered only when its status says so; never inferred.
   webhookStatus  Json?
+  // EC22: optional courier tracking URL template for THIS account,
+  // e.g. "https://courier.example/track/{trackingId}". Not a secret
+  // (shown to staff, used to build customer-facing links), so it
+  // lives outside the encrypted credential blob. Null = fall back
+  // to the built-in per-provider behaviour (today: no URL).
+  trackingUrlTemplate String?
   // EC2: how this integration authenticated. Null = the pre-EC2
   // legacy token path (Woo keys / Shopify shpat_ token).
   // "client_credentials" = Shopify Dev Dashboard grant (token
   // expires; tokenExpiresAt drives the refresh in ShopifyService).
   authType       String?
   tokenExpiresAt DateTime?
+  // CC2 (Connect Center): tenant-picked default connection within
+  // its category group (e.g. the default WhatsApp number). Set via
+  // PATCH organizations/:id/connections/:integrationId/default,
+  // which clears the flag on sibling rows of the same org+category.
+  isDefault      Boolean           @default(false)
+  // CC3/CC4 (Connect Center): which app this connection was made
+  // through — "platform" (the operator's app, the default for every
+  // pre-CC3 row) or "own" (the tenant's own app, configured via
+  // TenantAppConfig). Webhook verification and OAuth token refresh
+  // resolve their app secret from the matching source.
+  appSource      String            @default("platform")
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -601,6 +681,233 @@ model IntegrationCredential {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+// CC3 (Connect Center): the tenant's OWN developer app for a
+// platform — one row per (org, platform). This is the "own app"
+// half of the Connect Center's two app paths: connections made
+// with appSource="own" resolve their app secret / OAuth client
+// credentials from here instead of the operator's platform app.
+//
+// platform: "meta" (appId = Meta app id, secret = app secret) |
+//           "tiktok" (appId = TikTok client key, secret = client
+//           secret).
+// status: "verified" — a REAL platform call confirmed the
+//         credentials before saving (Meta: Graph API app lookup
+//         with the app access token).
+//         "configured" — saved WITHOUT a platform confirmation.
+//         TikTok offers no credential-check endpoint usable
+//         without a user authorization code (its OAuth token
+//         endpoint requires a code or refresh token), so TikTok
+//         configs are honestly "configured" — verification
+//         happens at the first OAuth connect, when the token
+//         exchange succeeds or fails with TikTok's own error.
+// The secret is stored ONLY as AES-256-GCM ciphertext (the
+// { appSecret } payload sealed via integrations/crypto.ts
+// encryptJson, MessagingSenderConfig pattern) and is never
+// returned by any API.
+model TenantAppConfig {
+  id              String       @id @default(uuid())
+  organizationId  String
+  platform        String // meta | tiktok
+  appId           String // Meta app id | TikTok client key
+  encryptedSecret String // sealed JSON: { appSecret }
+  status          String       @default("configured") // verified | configured
+  lastVerifiedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, platform])
+  @@index([organizationId])
+}
+
+// CC8 (Connect Center, Senders + AI keys): the tenant's OWN LLM
+// configuration — one per organization. When present and enabled,
+// AI calls that carry an organizationId resolve through THIS
+// provider+key (tenant key wins over the platform LLM for that
+// org); every other org keeps the platform-config resolution.
+// Verify-before-save: the row is written only after a REAL minimal
+// completion through the chosen provider succeeded (status
+// "verified"); a failed check saves nothing. The API key is
+// stored ONLY as AES-256-GCM ciphertext (the { apiKey } payload
+// sealed via integrations/crypto.ts encryptJson, TenantAppConfig
+// pattern) and is never returned by any API.
+model OrgLlmConfig {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  provider        String // openai | anthropic | gemini
+  model           String?
+  encryptedData   String // sealed JSON: { apiKey }
+  status          String       @default("configured") // verified | configured
+  isEnabled       Boolean      @default(true)
+  lastVerifiedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// CC9 (Connect Center, tenant's OWN payment gateway): the tenant's
+// own online gateway credentials — money settles DIRECTLY to the
+// tenant's merchant account; the platform never holds these funds
+// (platform payment + wallet is CC10, a separate model family).
+// One row per (org, provider). Verify semantics are per-provider
+// and honest (see connections service): bKash rows exist only
+// after a REAL grant-token call succeeded ("verified");
+// SSLCommerz offers NO pre-transaction credential check (its
+// validation API needs a val_id from a real transaction), so its
+// rows are "configured"; Nagad likewise has no check wired in
+// this codebase and saves as "configured". Credentials are
+// stored ONLY as AES-256-GCM ciphertext (sealed JSON via
+// integrations/crypto.ts encryptJson) and never returned by APIs.
+model TenantPaymentGateway {
+  id              String       @id @default(uuid())
+  organizationId  String
+  provider        String // sslcommerz | bkash | nagad (rocket is manual-number only — BusinessProfile path, never an API gateway here)
+  encryptedData   String // sealed JSON credentials (shape per provider)
+  status          String       @default("configured") // verified | configured
+  isEnabled       Boolean      @default(true)
+  lastVerifiedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions    TenantPaymentTransaction[]
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
+}
+
+// CC9: one payment attempt through a tenant's OWN gateway for one
+// order. A transaction becomes "verified_paid" ONLY on a
+// server-side verified gateway confirmation (SSLCommerz
+// validation API via the IPN's val_id / bKash execute+query) with
+// exact amount + currency match — a browser return NEVER moves
+// it. ipnPayload keeps the verified gateway payload as evidence.
+model TenantPaymentTransaction {
+  id              String       @id @default(uuid())
+  organizationId  String
+  gatewayId       String? // null for CC10 platform transactions (no tenant gateway row exists)
+  orderId         String
+  provider        String // sslcommerz | bkash | nagad
+  // CC10: whose gateway carried this payment. "own" = the
+  // tenant's own gateway (CC9; money settles directly to the
+  // tenant). "platform" = the platform's gateway (CC10; money
+  // lands in the platform account and the net amount is credited
+  // to the tenant's Wallet — see WalletAccount).
+  source          String       @default("own") // own | platform
+  amountMinor     BigInt
+  currency        String       @default("BDT")
+  status          String       @default("initiated") // initiated | verified_paid | failed | cancelled
+  providerTxnId   String? // SSLCommerz tran_id (ours) | bKash paymentID
+  valId           String? // SSLCommerz validation id, kept as evidence
+  ipnPayload      Json? // the verified gateway payload (evidence)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gateway         TenantPaymentGateway? @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([providerTxnId])
+}
+
+// CC10 (Connect Center, Platform Payment + Wallet): the tenant's
+// choice to accept PLATFORM-gateway payments, per provider. The
+// platform's own credentials live ONLY in the admin platform
+// config (sslcommerzConfig / bkashConfig) — this row stores NO
+// secret, just the tenant's enablement. A provider can only be
+// enabled when the platform actually has that gateway configured;
+// the service refuses otherwise (no fake checkout).
+model PlatformPaymentEnablement {
+  id             String       @id @default(uuid())
+  organizationId String
+  provider       String // sslcommerz | bkash (the providers the platform checkout wires)
+  isEnabled      Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
+}
+
+// CC10: one tenant's platform-payment wallet. balanceMinor is a
+// cached projection of the WalletTransaction ledger — every
+// change to it happens in the SAME database transaction as the
+// ledger row(s) that justify it, and it can never go negative
+// (enforced in the wallet service; there is no endpoint by which
+// a tenant can create a credit).
+model WalletAccount {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  currency       String       @default("BDT")
+  balanceMinor   BigInt       @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions   WalletTransaction[]
+  payoutRequests PayoutRequest[]
+
+  @@index([organizationId])
+}
+
+// CC10: append-only wallet ledger. amountMinor is SIGNED
+// (credits positive, debits negative); balanceAfterMinor is the
+// wallet balance immediately after this row — the pair (signed
+// amounts, running balance) makes every balance auditable.
+// Rows are never updated or deleted by any service path.
+model WalletTransaction {
+  id                String       @id @default(uuid())
+  organizationId    String
+  walletId          String
+  type              String // payment_credit | fee_debit | payout_debit | adjustment
+  amountMinor       BigInt // signed
+  balanceAfterMinor BigInt
+  refType           String? // e.g. tenant_payment_transaction | payout_request
+  refId             String?
+  note              String?
+  createdById       String? // set for admin adjustments (the acting admin's user id)
+  createdAt         DateTime     @default(now())
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  wallet            WalletAccount @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([walletId, createdAt])
+  @@index([refType, refId])
+}
+
+// CC10: a tenant's request to withdraw wallet balance. While a
+// request is pending (or approved-but-unpaid) its amount is HELD:
+// available balance = wallet balance − Σ(held amounts), so two
+// requests can never jointly exceed the balance. Money leaves
+// the wallet ONLY at admin mark-paid, which appends the
+// payout_debit ledger row and decrements the balance exactly
+// once, inside one transaction. destination holds the tenant's
+// payout details (bKash number / bank account) — sensitive,
+// tenant-scoped, never exposed to other tenants.
+model PayoutRequest {
+  id             String       @id @default(uuid())
+  organizationId String
+  walletId       String
+  amountMinor    BigInt
+  method         String // bkash | bank
+  destination    Json // tenant-entered payout details (sensitive)
+  status         String       @default("pending") // pending | approved | paid | rejected | cancelled
+  adminNote      String?
+  payoutRef      String? // reference the admin records when actually paying out
+  requestedById  String
+  decidedById    String? // admin who approved/rejected/marked paid
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  wallet         WalletAccount @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([status, createdAt])
 }
 
 // EC12: one WooCommerce wc-auth (1-click connect) attempt.
@@ -802,8 +1109,12 @@ model SyncConflict {
   field          String
   localValue     Json?
   remoteValue    Json?
+  // CP: per-field diff captured at creation:
+  // [{ field, localValue, remoteValue }] for the content fields
+  // that differ — enables per-field resolution in the queue UI.
+  fieldDiffs     Json?
   status         String    @default("open") // open | resolved
-  resolution     String? // local_wins | remote_wins (set by EC3 resolution)
+  resolution     String? // local_wins | remote_wins | per_field (set by resolution)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -828,14 +1139,24 @@ model Customer {
   customFields   Json?
   // CX10: opt-out unsubscribe flag
   unsubscribed   Boolean      @default(false)
+  // EC16: this customer's own referral code (tenant referral
+  // program — another customer presenting it at checkout gets
+  // the org-configured discount; the code USED is recorded on
+  // the order). Generated lazily, unique per org.
+  referralCode   String?
+  // EC24d: staff-set wholesale flag — wholesale tier pricing
+  // applies only to identified customers carrying this flag.
+  isWholesale    Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   orders         Order[]
   storeIdentities CustomerStoreIdentity[]
+  subscriptions  CustomerSubscription[]
 
   // Set when this record was merged into another customer.
   mergedIntoId String?
+  @@unique([organizationId, referralCode])
   @@index([organizationId, email])
   @@index([organizationId, phone])
   @@index([organizationId, externalId])
@@ -869,6 +1190,137 @@ model CustomerMergeRecord {
 
   @@index([organizationId, sourceCustomerId])
   @@index([organizationId, targetCustomerId])
+}
+
+// ---------- EC25 (the EC17 completion): storefront accounts ----------
+// Scalar-id style like the other EC-era tables (LandingPage &
+// friends): the account identity IS the org-scoped Customer row
+// (matched by phone, exactly as checkout upserts it). Services
+// resolve every row org-first; nothing here trusts a bare id.
+
+// EC25: one phone-OTP challenge for the native storefront. Only
+// the SHA-256 HASH of the 6-digit code is stored. A challenge dies
+// on expiry (5 min), on 5 failed attempts, on consumption, and
+// when a newer request for the same (org, phone) supersedes it —
+// consumedAt is stamped in every death case.
+model ShopOtpChallenge {
+  id             String    @id @default(uuid())
+  organizationId String
+  phone          String
+  codeHash       String
+  attempts       Int       @default(0)
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, phone, createdAt])
+}
+
+// EC25: a storefront customer session. The bearer token is shown
+// to the client exactly once, at verify time; only its SHA-256
+// hash is stored. Org-scoped: a token minted for one shop is
+// meaningless at another (organizationId equality is enforced on
+// every use).
+model ShopSession {
+  id             String    @id @default(uuid())
+  organizationId String
+  customerId     String
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastSeenAt     DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, customerId])
+  @@index([expiresAt])
+}
+
+// EC25: a storefront customer's saved delivery address.
+model CustomerAddress {
+  id             String   @id @default(uuid())
+  organizationId String
+  customerId     String
+  label          String?
+  recipientName  String
+  phone          String
+  addressLine    String
+  district       String
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, customerId])
+  @@index([customerId, isDefault])
+}
+
+// EC25: a wishlist entry. priceAtAddMinor snapshots the product's
+// price when the item was added, so the account page can show an
+// honest "price dropped" badge against the CURRENT price.
+model WishlistItem {
+  id              String   @id @default(uuid())
+  organizationId  String
+  customerId      String
+  productId       String
+  priceAtAddMinor BigInt
+  createdAt       DateTime @default(now())
+  // EC28: price-drop alert bookkeeping. lastNotifiedPriceMinor is
+  // the lowest price point the owner has already been alerted at
+  // (null = never alerted); a further drop below it alerts again,
+  // the same price never re-fires. lastAlertStatus records the
+  // last attempt honestly: sent | failed_no_channel (no SMS
+  // sender configured / send failed) — never a pretend "sent".
+  lastNotifiedPriceMinor BigInt?
+  lastAlertStatus        String?
+  lastAlertAt            DateTime?
+
+  @@unique([customerId, productId])
+  @@index([organizationId, customerId])
+}
+
+// EC28: back-in-stock alert subscription, placed from the public
+// product page while the item is out of stock. One PENDING row per
+// (org, product, variantSku, phone) — re-subscribing is idempotent.
+// status: pending | notified | failed_no_channel. A subscription
+// fires at most once: on the stock transition 0 → >0 the alert is
+// attempted exactly once and the row leaves "pending" forever; a
+// new stockout needs a new subscription. phone is stored
+// normalized (phoneKeyLoose digits); it is never exposed publicly.
+model StockAlertSubscription {
+  id             String    @id @default(uuid())
+  organizationId String
+  productId      String
+  variantSku     String?
+  phone          String
+  customerId     String?
+  status         String    @default("pending") // pending | notified | failed_no_channel
+  failureReason  String?
+  createdAt      DateTime  @default(now())
+  notifiedAt     DateTime?
+
+  @@index([organizationId, productId, status])
+  @@index([organizationId, phone])
+}
+
+// EC28: a product question asked from the public product page.
+// Lands as "pending" and is NOT public until staff answer it
+// (answering publishes). status: pending | published | hidden.
+// phone is optional, staff-only context — it is NEVER serialized
+// on any public surface.
+model ProductQuestion {
+  id             String    @id @default(uuid())
+  organizationId String
+  productId      String
+  customerName   String
+  phone          String?
+  question       String
+  answer         String?
+  answeredById   String?
+  status         String    @default("pending") // pending | published | hidden
+  createdAt      DateTime  @default(now())
+  answeredAt     DateTime?
+
+  @@index([organizationId, productId, status])
+  @@index([organizationId, status, createdAt])
 }
 
 model Order {
@@ -909,10 +1361,86 @@ model Order {
   // Sales & Data S2: merchant-only internal note on the order
   // (staff context; never sent to the customer or any platform).
   internalNote   String?
+  // EC13: landing-page attribution — set only by the landing
+  // order endpoint (source "landing"); null for every other path.
+  landingPageId   String?
+  landingVariantId String?
+  // EC18: customer-chosen delivery slot (DeliverySlot row of the
+  // same org) + the chosen calendar day as "YYYY-MM-DD" (Asia/Dhaka
+  // shopper day; a plain string keeps per-day capacity counting an
+  // exact equality match). Null = no slot chosen.
+  deliverySlotId  String?
+  deliveryDate    String?
+  // EC30: how this order is delivered — "home" (zone charge /
+  // weight rule) or "pickup" (customer collects at a PickupPoint;
+  // the point's own feeMinor was the delivery charge). Legacy rows
+  // default to "home". pickupPointId is the PickupPoint row of the
+  // same org when deliveryMethod = "pickup".
+  deliveryMethod  String  @default("home") // home | pickup
+  pickupPointId   String?
+  // EC30: the zone free-shipping threshold (ShippingZone.
+  // freeAboveMinor) zeroed this order's delivery charge;
+  // freeShippingZoneId records which zone's threshold applied.
+  // (A free-shipping COUPON is visible via the promotion/discount
+  // stamps instead — this pair is the EC30 zone-threshold stamp.)
+  freeShippingApplied Boolean @default(false)
+  freeShippingZoneId  String?
+  // EC30: the ShippingRateRule that set this order's delivery
+  // charge (weight-slab replacement), null when the zone flat
+  // charge (or a pickup fee / free shipping) applied.
+  shippingRateRuleId  String?
   currency       String       @default("BDT")
   subtotalMinor  BigInt       @default(0)
   shippingMinor  BigInt       @default(0)
   discountMinor  BigInt       @default(0)
+  // EC16: the promotion/referral split of discountMinor (which
+  // stays the TOTAL merchandise discount: coupon + promotion +
+  // referral, so every existing total/due computation is
+  // unchanged). promotionsApplied = [{ promotionId, name, type,
+  // amountMinor }] as evaluated at checkout; referralCode = the
+  // customer referral code presented at checkout (null = none).
+  promotionDiscountMinor BigInt @default(0)
+  promotionsApplied      Json?
+  referralDiscountMinor  BigInt @default(0)
+  referralCode           String?
+  // EC32: affiliate attribution — stamped at checkout ONLY when
+  // the org's affiliate program is enabled and the presented code
+  // resolved to an ACTIVE AffiliatePartner (and the buyer is not
+  // the partner themselves). Deliberately SEPARATE from the EC16
+  // customer referralCode above: referral = buyer discount,
+  // affiliate = partner commission ledger. affiliateCode keeps
+  // the code AS PRESENTED for audit/debugging; the partner link
+  // is the source of truth for commission.
+  affiliatePartnerId String?
+  affiliateCode      String?
+  // EC23: fiscal invoice serial INV-<fiscalYear>-<seq>, assigned
+  // once at first invoice generation (unique per org);
+  // taxBreakdown = per-rate snapshot taken at checkout:
+  // [{ rateBps, taxableMinor, taxMinor }] (amounts as strings).
+  invoiceNumber   String?
+  taxBreakdown    Json?
+  // EC24b: digital link reveal bookkeeping (order-level —
+  // the reveal button on tracking/success surfaces increments).
+  digitalAccessCount    Int       @default(0)
+  digitalLastAccessedAt DateTime?
+  // EC24d: wholesale lines applied at checkout, snapshot:
+  // [{ productId, minQty, priceMinor }] (priceMinor as string).
+  wholesaleBreakdown Json?
+  // EC24c: renewal orders created by the subscription sweep
+  // link back to their CustomerSubscription.
+  subscriptionId  String?
+  // EC29: free-gift outcome. giftPromotionId stamps the gift
+  // Promotion that fired (applied OR skipped); giftSkipped is true
+  // when the gift qualified but could not be added at placement
+  // (gift product/variant gone or out of stock) — an order never
+  // blocks on a gift.
+  giftPromotionId String?
+  giftSkipped     Boolean @default(false)
+  // EC29: gift wrap fee (a FEE like delivery — outside discounts
+  // and outside the tax base) + the customer's gift message
+  // (printed on the packing slip).
+  giftWrapMinor   BigInt  @default(0)
+  giftMessage     String?
   taxMinor       BigInt       @default(0)
   totalMinor     BigInt       @default(0)
   refundedMinor  BigInt       @default(0)
@@ -923,13 +1451,23 @@ model Order {
   store          Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items          OrderItem[]
+  installmentPlan InstallmentPlan?
+  affiliatePartner AffiliatePartner? @relation(fields: [affiliatePartnerId], references: [id], onDelete: SetNull)
+  commissionEntry  CommissionEntry?
   packingScans   PackingScanLog[]
   fulfillments   Fulfillment[]
   returnRequests ReturnRequest[]
 
   @@unique([organizationId, source, externalId])
+  @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status])
   @@index([organizationId, placedAt])
+  @@index([organizationId, affiliatePartnerId])
+  // EC34: POS "today's sales" strip queries org + source +
+  // createdAt together.
+  @@index([organizationId, source, createdAt])
+  @@index([organizationId, landingPageId])
+  @@index([organizationId, deliverySlotId, deliveryDate])
 }
 
 model OrderItem {
@@ -943,6 +1481,17 @@ model OrderItem {
   quantity    Int
   priceMinor  BigInt  @default(0)
   totalMinor  BigInt  @default(0)
+  // EC24a: this line was placed as a pre-order (no stock was
+  // decremented for it at placement).
+  isPreorder  Boolean @default(false)
+  // EC29: free-gift line (price 0; refund value 0 — an RMA may
+  // take the item back physically, never for money).
+  isGift      Boolean @default(false)
+  // EC29: this line is a component of a fixed-price Bundle set;
+  // priceMinor/totalMinor are the ALLOCATED amounts stamped at
+  // placement (allocated totals sum exactly to the bundle price).
+  bundleId    String?
+  bundleName  String?
   order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
@@ -991,6 +1540,13 @@ model ReturnRequest {
   organizationId    String
   orderId           String
   customerId        String?
+  // EC28: who opened this request — "staff" (EC9 link flow) or
+  // "customer" (self-service from the public tracking page).
+  source            String       @default("staff")
+  // EC28: the customer's ask on a self-service request:
+  // return | exchange. Null on staff link-flow rows (the ask is
+  // the submitted reason/items there; resolution stays staff's).
+  requestType       String?
   status            String       @default("requested") // requested | approved | rejected | return_shipped | received | completed
   reason            String?
   items             Json? // [{ orderItemId, quantity, condition? }]
@@ -1002,6 +1558,11 @@ model ReturnRequest {
   returnShipmentId  String? // CourierShipment booked for the return parcel
   exchangeOrderId   String? // manual order created on exchange completion
   restockAppliedAt  DateTime?
+  // CP: Shopify partial-restock attempt outcome for this return:
+  // { attempted, succeeded, qty, reason? } — written failure-
+  // isolated AFTER the local restock; the local flow never
+  // depends on it.
+  shopifyRestock    Json?
   notificationStatus String? // sent_inbox | sent_email | not_sent_no_channel | failed
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
@@ -1010,6 +1571,74 @@ model ReturnRequest {
 
   @@index([organizationId, orderId])
   @@index([organizationId, status, createdAt])
+}
+
+// EC23: per-org tax configuration. A separate model (not
+// BusinessProfile) because tax identity (TIN/BIN) and the
+// fiscal invoice sequence are accounting concerns, edited by
+// different staff than storefront branding. Rates are basis
+// points (Int): BD VAT includes fractional rates (7.5%).
+model TaxSetting {
+  id               String   @id @default(uuid())
+  organizationId   String   @unique
+  legalName        String?
+  tin              String?
+  binVatNo         String?
+  // Default VAT rate in basis points (1500 = 15.00%).
+  // Null = tax OFF — checkouts behave exactly as pre-EC23.
+  defaultVatBps    Int?
+  // BD retail norm: shelf prices already contain VAT, so the
+  // order's taxMinor is the VAT portion inside the total.
+  // false = VAT is added on top of the total at checkout.
+  pricesIncludeVat Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// EC23: fiscal invoice sequence per org per BD fiscal year
+// (Jul–Jun, "2026-27"). Incremented atomically inside the
+// invoice-issuing transaction; the (organizationId, fiscalYear)
+// unique row IS the lock.
+model InvoiceCounter {
+  id             String @id @default(uuid())
+  organizationId String
+  fiscalYear     String
+  lastSeq        Int    @default(0)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, fiscalYear])
+}
+
+// EC24c: a customer's standing subscription to a product.
+// Renewal orders are COD/manual (no gateway auto-charge).
+// unitPriceMinor + discountPercent are SNAPSHOTS taken at
+// creation — later product price edits never change them.
+model CustomerSubscription {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  customerId         String
+  productId          String
+  variantSku         String?
+  qty                Int      @default(1)
+  unitPriceMinor     BigInt
+  discountPercent    Int?
+  status             String   @default("active") // active | paused | cancelled
+  nextRunAt          DateTime
+  lastOrderId        String?
+  createdFromOrderId String?
+  // Consecutive sweep failures; at 5 the sweep sets
+  // status = "paused" (+ audit) so a broken subscription
+  // stops retrying forever.
+  failureCount       Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, nextRunAt])
+  @@index([organizationId, customerId])
 }
 
 model Visitor {
@@ -2614,6 +3243,14 @@ model CourierShipment {
   invoice            String
   status             String   @default("in_review")
   codAmountMinor     BigInt   @default(0)
+  // EC26: the COD cash the courier actually remitted for this
+  // shipment, recorded ONLY from a reconciliation import (or a
+  // staff accept_sheet resolution) — a delivered status alone
+  // never sets these. codCollectionSource = the
+  // ReconciliationImport id that recorded the collection.
+  codCollectedMinor  BigInt?
+  codCollectedAt     DateTime?
+  codCollectionSource String?
   recipientName      String
   recipientPhone     String
   recipientAddress   String
@@ -2622,11 +3259,96 @@ model CourierShipment {
   // CX6: public live-tracking token (ReportShare pattern — minted
   // lazily on first customer update/share, unique when present).
   trackingToken      String?  @unique
+  // EC22: the CourierRule that auto-selected this shipment's
+  // courier at booking time (null = staff chose explicitly, or no
+  // rule matched). Recorded so the choice stays explainable.
+  courierRuleId      String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   @@index([organizationId, orderId])
   @@index([organizationId, status])
+}
+
+// EC26: one courier COD settlement-sheet import. The merchant's
+// own sheet is the only source — no courier API is claimed. The
+// counts are the sum of its lines' outcomes (spec-asserted), and
+// fileHash makes re-importing the same file for the same
+// org+courier an explicit, refused-by-default act.
+model ReconciliationImport {
+  id                  String   @id @default(uuid())
+  organizationId      String
+  courierIntegrationId String
+  fileName            String?
+  fileHash            String
+  rowCount            Int      @default(0)
+  matchedCount        Int      @default(0)
+  mismatchCount       Int      @default(0)
+  notFoundCount       Int      @default(0)
+  duplicateCount      Int      @default(0)
+  status              String   @default("processed") // processed | failed
+  createdBy           String?
+  createdAt           DateTime @default(now())
+
+  @@index([organizationId, courierIntegrationId, createdAt])
+  @@index([organizationId, fileHash])
+}
+
+// EC26: one row of an imported settlement sheet, preserved
+// verbatim (raw values kept) whatever its outcome. expectedMinor
+// snapshots the shipment's booked COD amount (codAmountMinor) at
+// import time, so a line stays explainable even if the order is
+// edited later.
+model ReconciliationLine {
+  id               String   @id @default(uuid())
+  importId         String
+  organizationId   String
+  rowNumber        Int
+  rawTrackingId    String?
+  rawOrderRef      String?
+  sheetAmountMinor BigInt?
+  sheetChargeMinor BigInt?
+  sheetStatus      String?
+  matchedOrderId   String?
+  matchedShipmentId String?
+  expectedMinor    BigInt?
+  // matched | amount_mismatch | not_found | duplicate |
+  // already_collected | row_error
+  outcome          String
+  note             String?
+  reviewedAt       DateTime?
+  reviewedBy       String?
+  createdAt        DateTime @default(now())
+
+  @@index([importId, outcome])
+  @@index([organizationId, matchedShipmentId])
+}
+
+// EC26: saved CSV column mapping per (org, courier account) —
+// header-name based, so a repeat import of the same courier's
+// sheet is one click. mapping Json:
+// { trackingColumn, amountColumn, chargeColumn?, orderRefColumn?,
+//   statusColumn? } — values are the sheet's own header names.
+model ReconciliationProfile {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  courierIntegrationId String
+  mapping              Json
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([organizationId, courierIntegrationId])
+}
+
+// EC33: org-level inventory intelligence settings. leadTimeDays
+// feeds the velocity reorder mode (suggestedQty =
+// ceil(dailyVelocity × leadTimeDays) − currentStock).
+model InventorySetting {
+  id             String   @id @default(uuid())
+  organizationId String   @unique
+  leadTimeDays   Int      @default(14)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 // CX12b: post-delivery review request + the collected review.
@@ -2653,6 +3375,12 @@ model OrderReview {
   deliveredAt    DateTime
   requestedAt    DateTime?
   receivedAt     DateTime?
+  // EC15: staff moderation + reply for the public reviews engine.
+  // isVisible=false hides the review from every public surface;
+  // pending_send/requested rows are never public regardless.
+  replyText      String?
+  repliedAt      DateTime?
+  isVisible      Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -2665,21 +3393,202 @@ model OrderReview {
 model PaymentVerification {
   id                  String   @id @default(uuid())
   organizationId      String
-  conversationId      String
-  messageId           String   @unique
-  provider            String? // bkash | nagad | rocket | bank | unknown
+  // EC19: nullable since B8 — a staff-recorded order advance has
+  // no conversation/message behind it. Inbox extractions always
+  // set both, exactly as before.
+  conversationId      String?
+  messageId           String?  @unique
+  // EC19: the order this verification pays toward. Set by the
+  // staff advance endpoint (and null for legacy inbox rows).
+  orderId             String?
+  provider            String? // bkash | nagad | rocket | bank | cash | other | unknown
   trxId               String?
   amountMinor         BigInt?
   expectedAmountMinor BigInt?
   // matched | amount_mismatch | duplicate_trxid | no_expected_order | unverifiable
   verdict             String
+  // EC19: review state. Inbox extraction rows stay "pending" (the
+  // extraction is advisory; the agent decides). Staff-recorded
+  // advances are created "approved" with reviewedById = the staff
+  // member — the staff member IS the verifier. An order's paid
+  // advance is the sum of its APPROVED rows only.
+  status              String   @default("pending") // pending | approved | rejected
+  // EC19: null = legacy inbox extraction; "manual_advance" =
+  // recorded by staff against an order (no gateway involved).
+  source              String?
+  reviewedById        String?
+  note                String?
   flags               Json?
   rawExtraction       Json?
   modelProvider       String
   createdById         String?
   createdAt           DateTime @default(now())
 
+  // EC31: set when this approved row is a collection against one
+  // installment item — the row is the SAME approved-verification
+  // record the EC19 due math sums, so collecting an installment
+  // reduces the order's amountDueMinor by construction.
+  installmentItemId   String?
+
   @@index([organizationId, trxId])
+  @@index([organizationId, orderId])
+  @@index([organizationId, installmentItemId])
+}
+
+// EC31: a manual installment (কিস্তি) plan over one order's
+// amount due at creation time. totalMinor is a SNAPSHOT — later
+// order changes never rewrite the schedule. Collections are
+// approved PaymentVerification rows (installmentItemId set), so
+// the EC19 order due math stays the single source of truth.
+// status: active | completed | cancelled.
+model InstallmentPlan {
+  id               String           @id @default(uuid())
+  organizationId   String
+  orderId          String           @unique
+  totalMinor       BigInt
+  installmentCount Int
+  intervalDays     Int
+  startDate        DateTime
+  status           String           @default("active") // active | completed | cancelled
+  createdById      String?
+  note             String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items            InstallmentItem[]
+
+  @@index([organizationId, status])
+}
+
+model InstallmentItem {
+  id       String          @id @default(uuid())
+  planId   String
+  seq      Int
+  dueDate  DateTime
+  amountMinor BigInt
+  paidMinor   BigInt       @default(0)
+  paidAt      DateTime? // set when the item becomes fully paid
+  // EC31: reminder bookkeeping — exactly one notification attempt
+  // per state (due_soon / overdue). Status vocabulary mirrors the
+  // EC28 alert honesty: sent | failed_no_channel | failed. A
+  // failed_no_channel attempt still stamps the At field (the
+  // attempt happened; it is never retried silently — staff see
+  // the status on the plan), matching the brief's exactly-once
+  // per item per state.
+  dueSoonRemindedAt     DateTime?
+  dueSoonRemindStatus   String?
+  overdueRemindedAt     DateTime?
+  overdueRemindStatus   String?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  plan      InstallmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, seq])
+  @@index([planId])
+}
+
+// EC32: an affiliate partner of the org — a person/business who
+// shares ?ref=<code> links to the shop/landings and earns a
+// commission on attributed delivered orders. Deliberately NOT a
+// Customer and NOT the EC16 referral system: partners are
+// staff-managed, commissionPercent is validated 0–50, and the
+// code is org-unique + staff-editable. status: active | paused
+// (a paused partner's code attributes nothing).
+model AffiliatePartner {
+  id                String   @id @default(uuid())
+  organizationId    String
+  name              String
+  phone             String
+  email             String?
+  code              String
+  commissionPercent Int
+  status            String   @default("active") // active | paused
+  note              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orders            Order[]
+  commissionEntries CommissionEntry[]
+  payouts           AffiliatePayout[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+// EC32: one commission per attributed order (orderId UNIQUE —
+// repeated delivered transitions can never duplicate it).
+// Created by the failure-isolated order.delivered hook once the
+// order reaches the codebase's sold bucket (EC33 definition).
+// baseMinor = the order's goods payable at creation time:
+// subtotalMinor − discountMinor (ALL discounts incl. promotions
+// / coupon / referral; delivery charge and tax are NOT part of
+// the base). percentSnapshot freezes the partner's percent at
+// creation. status: pending → approved → paid; voided when the
+// order is fully refunded or cancelled while pending/approved
+// (paid entries are NEVER auto-voided — see the payout report's
+// paid_on_refunded_order flag). Partial refunds do not pro-rate
+// (v1, documented).
+model CommissionEntry {
+  id              String   @id @default(uuid())
+  organizationId  String
+  partnerId       String
+  orderId         String   @unique
+  baseMinor       BigInt
+  percentSnapshot Int
+  commissionMinor BigInt
+  status          String   @default("pending") // pending | approved | paid | voided
+  voidReason      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  partner         AffiliatePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, partnerId, status])
+  @@index([organizationId, status])
+}
+
+// EC32: a payout is a BOOKKEEPING RECORD ONLY — it documents
+// money the merchant paid the partner OUTSIDE the system
+// (bKash/Nagad/bank/cash by hand). The system never sends money
+// and no code may claim it did. Recording a payout flips the
+// partner's approved entries to paid in FIFO order (oldest
+// first) up to the cumulative coverage — see AffiliatesService.
+model AffiliatePayout {
+  id             String   @id @default(uuid())
+  organizationId String
+  partnerId      String
+  amountMinor    BigInt
+  method         String // bkash | nagad | bank | cash | other
+  reference      String?
+  note           String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  partner        AffiliatePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, partnerId, createdAt])
+}
+
+// EC18: a merchant-defined delivery time window shoppers can pick
+// at checkout. districtScope is a Json array of district names
+// (same vocabulary as BD_DISTRICTS); null/empty = every district.
+// capacityPerDay null = unlimited; otherwise checkout refuses once
+// the day's non-cancelled orders for the slot reach the capacity.
+model DeliverySlot {
+  id             String   @id @default(uuid())
+  organizationId String
+  label          String
+  startTime      String // "HH:mm"
+  endTime        String // "HH:mm"
+  districtScope  Json?
+  capacityPerDay Int?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, active])
 }
 
 // A website live-chat installation. Each site owns a 'webchat'
@@ -3446,6 +4355,11 @@ model SocialAccount {
   pictureUrl     String?
   status         String       @default("connected") // connected | disconnected
   lastError      String?
+  // CC4: which app this account was connected through —
+  // "platform" (operator's app; default, incl. every pre-CC4 row)
+  // or "own" (the tenant's TenantAppConfig app). Token refresh for
+  // TikTok resolves credentials from the matching source.
+  appSource      String       @default("platform")
   createdById    String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -3875,6 +4789,41 @@ model StorefrontSetting {
   shopEnabled        Boolean      @default(false)
   shopName           String?
   announcementText   String?
+  // EC19: how the featured section is filled — the merchant's own
+  // picks (featuredProductIds) or the real top sellers of the last
+  // 30 days computed from order items.
+  featuredMode       String       @default("merchant_picks") // merchant_picks | top_sellers
+  // EC19: storefront surface language (shop pages only; the
+  // dashboard stays Bengali). bn | en.
+  locale             String       @default("bn")
+  // EC18: branded public order-tracking page (/track/<slug>) on/off.
+  trackingPageEnabled Boolean     @default(true)
+  // EC18: merchant-written trust copy shown at checkout / shop
+  // footer / tracking page. Null/empty = the block is hidden,
+  // never placeholder text.
+  returnPolicyText   String?
+  deliveryPromiseText String?
+  supportPhone       String?
+  // EC16: tenant referral-as-discount config. Percent null =
+  // the referral discount is OFF (a presented code is recorded
+  // on the order but grants nothing). Min subtotal (minor units)
+  // is judged on the post-promotion merchandise subtotal.
+  referralDiscountPercent Int?
+  referralMinSubtotalMinor BigInt?
+  // EC32: affiliate program config. Enabled=false = presented
+  // codes are ignored entirely (no stamp, no commission).
+  // affiliateDefaultPercent pre-fills new partners (a partner's
+  // own commissionPercent is what snapshots onto entries).
+  // affiliateAttributionDays = how long a stored ?ref code stays
+  // attributable in the shopper's browser (web-side window).
+  affiliateEnabled         Boolean @default(false)
+  affiliateDefaultPercent  Int?
+  affiliateAttributionDays Int     @default(30)
+  // EC29: gift wrap option on the shop + single checkouts. The
+  // fee is merchant-set; null = no wrap price configured (wrap
+  // cannot be charged even when the flag is on).
+  giftWrapEnabled    Boolean @default(false)
+  giftWrapFeeMinor   BigInt?
   showFeatured       Boolean      @default(true)
   showCategories     Boolean      @default(true)
   showSearch         Boolean      @default(true)
@@ -3888,6 +4837,129 @@ model StorefrontSetting {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// EC13: a single-product landing page bound to one canonical
+// product. sections is a validated Json block list (fixed block
+// types only — see the landings section validator). Pixel/CAPI
+// comes from the org's BusinessProfile via the existing checkout
+// injection; a landing never carries its own pixel settings.
+model LandingPage {
+  id              String   @id @default(uuid())
+  organizationId  String
+  productId       String
+  slug            String   @unique
+  title           String
+  status          String   @default("draft") // draft | published | archived
+  sections        Json?
+  upsellProductId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, productId])
+}
+
+// EC13: an A/B variant of a landing. The control variant carries
+// the baseline presentation; assignment is a stable hash of the
+// visitor token over the weights (see the landings service).
+model LandingVariant {
+  id            String   @id @default(uuid())
+  landingId     String
+  name          String
+  isControl     Boolean  @default(false)
+  weight        Int      @default(100)
+  headline      String?
+  heroImageUrl  String?
+  ctaText       String?
+  showCompareAt Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([landingId])
+}
+
+// EC13: funnel beacons (no PII) — views and checkout starts per
+// landing/variant; orders and revenue come from Order rows with
+// landingPageId set.
+model LandingEvent {
+  id        String   @id @default(uuid())
+  landingId String
+  variantId String?
+  kind      String // view | checkout_started
+  createdAt DateTime @default(now())
+
+  @@index([landingId, kind, createdAt])
+}
+
+// EC15: a review pulled from a connected store (WooCommerce
+// today). productId is resolved through StoreListing by the
+// store's external product id; rows whose product cannot be
+// resolved are never created (the sync counts them as skipped).
+model ExternalReview {
+  id              String    @id @default(uuid())
+  organizationId  String
+  storeId         String
+  productId       String
+  externalId      String
+  authorName      String?
+  rating          Int
+  text            String?
+  imageUrls       Json?
+  status          String    @default("visible") // visible | hidden
+  createdAtRemote DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([storeId, externalId])
+  @@index([organizationId, productId])
+  @@index([organizationId, status])
+}
+
+// EC16: a cart-level promotion (separate from EC7 StoreDiscount
+// coupons). config is a per-type validated Json document (see
+// commerce/promotions.ts). Evaluation order = priority DESC.
+// Promotions are evaluated live at checkout against the items'
+// effective (sale-aware) prices; nothing is precomputed on the
+// product rows.
+model Promotion {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  type           String // bogo | tiered | flash
+  config         Json
+  startsAt       DateTime?
+  endsAt         DateTime?
+  active         Boolean   @default(true)
+  priority       Int       @default(0)
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active, priority])
+}
+
+// EC14: a product feed exposed at a secret token URL for
+// scheduled fetch by Meta Commerce / Google Merchant Center
+// (XML) or as a generic CSV. The token IS the credential
+// (rotate = old URL dies). Generation is per-request from the
+// org's real products; lastGeneratedAt records the last fetch.
+model ProductFeed {
+  id                    String    @id @default(uuid())
+  organizationId        String
+  channel               String // meta | google | tiktok
+  format                String // xml | csv
+  token                 String    @unique
+  includeOutOfStock     Boolean   @default(false)
+  defaultGoogleCategory String?
+  active                Boolean   @default(true)
+  lastGeneratedAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active])
 }
 
 // EC8: native shipping zones. Match priority is by KIND tier first
@@ -3909,6 +4981,47 @@ model ShippingZone {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, active, position])
+}
+
+// EC30: weight-slab delivery charge rules. A rule REPLACES the
+// matched zone's flat charge when zone (null = every zone) and
+// weight window both match. Weight windows are judged ONLY when
+// the cart weight is fully known (every line's product carries
+// weightGrams) — a weight is never invented to make a rule match.
+model ShippingRateRule {
+  id             String       @id @default(uuid())
+  organizationId String
+  shippingZoneId String? // null = applies to every zone
+  minWeightGrams Int? // inclusive lower bound; null = no lower bound
+  maxWeightGrams Int? // inclusive upper bound; null = no upper bound
+  chargeMinor    BigInt
+  priority       Int          @default(0)
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active, priority])
+}
+
+// EC30: a merchant outlet / agent point a shopper can choose as
+// the delivery destination instead of home delivery. The address
+// is the merchant's PUBLIC outlet info (shown on the tracking
+// page); feeMinor is the point's own pickup fee (usually 0).
+model PickupPoint {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  address        String
+  district       String
+  phone          String?
+  feeMinor       BigInt       @default(0)
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active])
 }
 
 // EC8: guest server-side cart for the native storefront. The token
@@ -3950,4 +5063,275 @@ model StoreCartItem {
   @@unique([cartId, productId, variantId])
   @@index([cartId])
   @@index([productId])
+}
+
+// ---------- EC29: fixed-price bundles & cart bundle lines ----------
+
+// EC29: a fixed-price bundle SET sold on the native shop — NOT
+// the EC4 BundleItem composition (that one is stock-only
+// decomposition of a single parent product). items is validated
+// Json: [{ productId, variantSku?, qty }] (2–10 entries, org
+// products, active). At checkout the set expands into component
+// OrderItems whose allocated totals sum EXACTLY to
+// bundlePriceMinor × bundleQty (see commerce/ec29-bundles.ts).
+model Bundle {
+  id               String   @id @default(uuid())
+  organizationId   String
+  name             String
+  description      String?
+  imageUrl         String?
+  items            Json
+  bundlePriceMinor BigInt
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([organizationId, active, sortOrder])
+}
+
+// EC29: a bundle line on a guest shop cart — kept apart from
+// StoreCartItem, whose productId is non-nullable and priced per
+// product; a bundle line is priced per SET by the Bundle row.
+model StoreCartBundle {
+  id        String   @id @default(uuid())
+  cartId    String
+  bundleId  String
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, bundleId])
+  @@index([cartId])
+}
+
+// ---------- EC20: Purchasing & suppliers ----------
+// A supplier the org buys stock from. Contact record only — no
+// money ever moves through this model.
+model Supplier {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  note           String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+
+  @@index([organizationId, active])
+}
+
+// EC20: one purchase order to one supplier. Status vocabulary:
+// draft | ordered | partially_received | received | cancelled.
+// Receiving writes stock through the S1 InventoryService ONLY
+// (reason "purchase_receive") and appends a ProductCost history
+// row (weighted-average) — this model never writes stock itself.
+model PurchaseOrder {
+  id             String    @id @default(uuid())
+  organizationId String
+  supplierId     String
+  status         String    @default("draft")
+  expectedDate   DateTime?
+  note           String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier       Supplier          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  items          PurchaseOrderItem[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, supplierId])
+}
+
+model PurchaseOrderItem {
+  id              String @id @default(uuid())
+  purchaseOrderId String
+  productId       String
+  // Variant identity mirrors StockMovement: the ProductVariant id
+  // as a plain column (resolved from the SKU at write time); `sku`
+  // is the display snapshot so the row stays readable if the
+  // variant is later renamed/deleted.
+  variantId       String?
+  sku             String?
+  qtyOrdered      Int
+  qtyReceived     Int    @default(0)
+  unitCostMinor   BigInt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+}
+
+// ---------- EC21: Warehouse & stock ops ----------
+// A physical warehouse of the org. NOTE: stock balances stay
+// org-global on Product/ProductVariant (the S1 model) — a
+// warehouse owns BIN LOCATIONS and stock-count sessions, it does
+// NOT split balances per warehouse in v1.
+model Warehouse {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  address        String?
+  isDefault      Boolean  @default(false)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bins           BinLocation[]
+  assignments    ProductBinAssignment[]
+  countSessions  StockCountSession[]
+
+  @@index([organizationId, active])
+}
+
+model BinLocation {
+  id             String   @id @default(uuid())
+  organizationId String
+  warehouseId    String
+  code           String // e.g. "A-03-12"
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse      Warehouse            @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  assignments    ProductBinAssignment[]
+
+  @@unique([warehouseId, code])
+  @@index([organizationId, warehouseId])
+}
+
+// EC21: the ONE primary bin of a product (or variant) inside one
+// warehouse. SQL unique treats NULL variantId rows as distinct —
+// the service enforces one product-level row per warehouse.
+model ProductBinAssignment {
+  id             String   @id @default(uuid())
+  organizationId String
+  warehouseId    String
+  binLocationId  String
+  productId      String
+  variantId      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse      Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  binLocation    BinLocation  @relation(fields: [binLocationId], references: [id], onDelete: Cascade)
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, productId, variantId])
+  @@index([organizationId, binLocationId])
+  @@index([organizationId, productId])
+}
+
+// EC21: a stock-count session. Lines snapshot systemQty at
+// creation; closing applies ONLY counted lines through the S1
+// InventoryService (reason "stock_count"); uncounted lines are
+// reported skipped, never zeroed. Closed sessions are immutable.
+model StockCountSession {
+  id             String    @id @default(uuid())
+  organizationId String
+  warehouseId    String
+  binLocationId  String? // optional scope: only this bin's lines
+  status         String    @default("open") // open | closed
+  createdById    String?
+  closedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse      Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  lines          StockCountLine[]
+
+  @@index([organizationId, status, createdAt])
+}
+
+model StockCountLine {
+  id         String  @id @default(uuid())
+  sessionId  String
+  productId  String
+  variantId  String?
+  systemQty  Int
+  countedQty Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  session    StockCountSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product    Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, productId, variantId])
+  @@index([sessionId])
+}
+
+// ---------- EC22: Delivery ops ----------
+// A merchant rule that auto-selects the courier account when a
+// shipment is booked WITHOUT an explicit provider choice.
+// conditions is validated Json: { districts?: string[],
+// minWeightGrams?, maxWeightGrams?, minOrderMinor? (string),
+// maxOrderMinor? (string), paymentType?: "cod"|"prepaid"|"any" }.
+// courierAccountId is the courier Integration row (provider
+// steadfast|pathao|redx); provider is its snapshot for display.
+model CourierRule {
+  id               String   @id @default(uuid())
+  organizationId   String
+  name             String
+  conditions       Json
+  courierAccountId String
+  provider         String
+  priority         Int      @default(0)
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active, priority])
+}
+
+// EC22: the org's own delivery rider (staff-operated records
+// only — no rider login/app in v1).
+model Rider {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  phone          String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments    DeliveryAssignment[]
+
+  @@index([organizationId, active])
+}
+
+// EC22: one order handed to one rider. Status vocabulary:
+// assigned | picked_up | delivered | returned. At most ONE
+// non-terminal (assigned|picked_up) assignment per order —
+// enforced in the service (a plain unique cannot express it).
+// Marking delivered drives the order to "completed" through
+// OrdersService.updateOrder (the same transition path staff
+// use); returned does not touch the order status in v1.
+model DeliveryAssignment {
+  id             String    @id @default(uuid())
+  organizationId String
+  orderId        String
+  riderId        String
+  assignedById   String?
+  status         String    @default("assigned")
+  note           String?
+  assignedAt     DateTime  @default(now())
+  pickedUpAt     DateTime?
+  deliveredAt    DateTime?
+  returnedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rider          Rider        @relation(fields: [riderId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, riderId, status])
+  @@index([organizationId, orderId])
+  @@index([organizationId, assignedAt])
 }

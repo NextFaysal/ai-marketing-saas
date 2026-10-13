@@ -2,6 +2,51 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { stableContentHash } from "./content-hash";
 
+/**
+ * CP1: the canonical content fields a field-level conflict diff is
+ * computed over — exactly the fields the inbound content snapshots
+ * carry (integrations.service.ts builds local/remote snapshots with
+ * name/priceMinor/status/stockQuantity/imageUrl, and PushContent
+ * adds compareAtMinor/description). A field is only diffed when it
+ * is PRESENT in at least one snapshot, so older/narrower snapshots
+ * never invent fields they never carried.
+ */
+export const CONFLICT_CONTENT_FIELDS = [
+  "name",
+  "priceMinor",
+  "compareAtMinor",
+  "stockQuantity",
+  "status",
+  "imageUrl",
+  "description",
+] as const;
+
+function jsonSafeValue(v: any): any {
+  if (v === undefined) return null;
+  if (typeof v === "bigint") return v.toString();
+  return v;
+}
+
+/** CP1: per-field diffs between the local and remote snapshots —
+ *  ONLY the fields whose JSON-safe values actually differ. */
+export function computeFieldDiffs(
+  localContent: Record<string, unknown> | null | undefined,
+  remoteContent: Record<string, unknown> | null | undefined,
+): { field: string; localValue: any; remoteValue: any }[] {
+  const diffs: { field: string; localValue: any; remoteValue: any }[] = [];
+  for (const field of CONFLICT_CONTENT_FIELDS) {
+    const hasLocal = !!localContent && Object.prototype.hasOwnProperty.call(localContent, field);
+    const hasRemote = !!remoteContent && Object.prototype.hasOwnProperty.call(remoteContent, field);
+    if (!hasLocal && !hasRemote) continue;
+    const localValue = jsonSafeValue((localContent as any)?.[field]);
+    const remoteValue = jsonSafeValue((remoteContent as any)?.[field]);
+    if (JSON.stringify(localValue) !== JSON.stringify(remoteValue)) {
+      diffs.push({ field, localValue, remoteValue });
+    }
+  }
+  return diffs;
+}
+
 @Injectable()
 export class ListingsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -121,6 +166,9 @@ export class ListingsService {
         field: "product",
         localValue: input.localContent,
         remoteValue: input.remoteContent,
+        // CP1: field-level diffs captured at creation so the queue
+        // UI can offer per-field resolution later.
+        fieldDiffs: computeFieldDiffs(input.localContent, input.remoteContent),
         status: "open",
       },
     });

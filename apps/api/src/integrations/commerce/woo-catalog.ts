@@ -242,6 +242,27 @@ function weightKg(weightGrams: number): string {
     .replace(/\.$/, "");
 }
 
+/**
+ * CP3: render a gram weight in the STORE's WooCommerce weight
+ * unit (Store.weightUnit, read from woocommerce_weight_unit or
+ * staff-set). Canonical storage stays grams; only the payload
+ * value changes. null/unknown unit = the legacy kg behaviour.
+ * lb/oz are rounded to 2dp (Woo accepts decimal strings).
+ */
+export function weightInUnit(weightGrams: number, unit?: string | null): string {
+  switch (unit) {
+    case "g":
+      return String(weightGrams);
+    case "lb":
+      return String(Math.round((weightGrams / 453.59237) * 100) / 100);
+    case "oz":
+      return String(Math.round((weightGrams / 28.349523125) * 100) / 100);
+    case "kg":
+    default:
+      return weightKg(weightGrams);
+  }
+}
+
 function deriveAttributes(content: PushContent): {
   productAttributes: any[];
   variationAttributes: (variant: PushContent["variants"][number]) => any[];
@@ -371,7 +392,7 @@ export async function pushProduct(args: CatalogArgs): Promise<AdapterExecuteResu
     };
     if (content.description) body.description = content.description;
     if (content.sku) body.sku = content.sku;
-    if (content.weightGrams !== null) body.weight = weightKg(content.weightGrams);
+    if (content.weightGrams !== null) body.weight = weightInUnit(content.weightGrams, args.store?.weightUnit);
     const dims: Record<string, string> = {};
     if (content.lengthCm !== null) dims.length = String(content.lengthCm);
     if (content.widthCm !== null) dims.width = String(content.widthCm);

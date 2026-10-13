@@ -150,9 +150,31 @@ export class CommerceService {
 
   // ---------- EC3: conflict resolution ----------
 
-  async resolveConflict(organizationId: string, actorId: string, conflictId: string, choice: string) {
-    if (choice !== "keep_local" && choice !== "take_remote") {
-      throw new BadRequestException('choice must be "keep_local" or "take_remote"');
+  /** CP1: write remote snapshot fields onto the Product row — the
+   *  ONE field mapping shared by take_remote (all fields present
+   *  in the snapshot) and per_field (only the fields the merchant
+   *  chose "remote" for). Money arrives as minor-unit strings. */
+  private remoteFieldsToProductData(rv: Record<string, any>): Record<string, any> {
+    const data: Record<string, any> = {};
+    if (rv.name !== undefined && rv.name !== null) data.name = rv.name;
+    if (rv.priceMinor !== undefined && rv.priceMinor !== null) data.priceMinor = BigInt(rv.priceMinor as any);
+    if (rv.compareAtMinor !== undefined && rv.compareAtMinor !== null) data.compareAtMinor = BigInt(rv.compareAtMinor as any);
+    if (rv.status !== undefined && rv.status !== null) data.status = rv.status;
+    if (rv.stockQuantity !== undefined) data.stockQuantity = rv.stockQuantity;
+    if (rv.imageUrl !== undefined) data.imageUrl = rv.imageUrl;
+    if (rv.description !== undefined) data.description = rv.description;
+    return data;
+  }
+
+  async resolveConflict(
+    organizationId: string,
+    actorId: string,
+    conflictId: string,
+    choice: string,
+    choices?: Record<string, string>,
+  ) {
+    if (choice !== "keep_local" && choice !== "take_remote" && choice !== "per_field") {
+      throw new BadRequestException('choice must be "keep_local", "take_remote" or "per_field"');
     }
     const conflict = await (this.prisma as any).syncConflict.findFirst({ where: { id: conflictId, organizationId } });
     if (!conflict) throw new NotFoundException("Conflict not found in this organization");
@@ -161,6 +183,49 @@ export class CommerceService {
     if (!listing) throw new NotFoundException("Listing not found in this organization");
 
     let resolved: any;
+    if (choice === "per_field") {
+      // CP1: validate against the diffs captured at creation —
+      // choices must cover EXACTLY the differing fields.
+      const diffs: any[] = Array.isArray((conflict as any).fieldDiffs) ? (conflict as any).fieldDiffs : [];
+      if (diffs.length === 0) {
+        throw new BadRequestException("এই Conflict-এ ফিল্ড-ভিত্তিক পার্থক্যের তথ্য নেই — পুরো লোকাল বা পুরো স্টোরের মান বেছে নিন");
+      }
+      const diffFields = diffs.map((d: any) => String(d?.field)).filter(Boolean);
+      const given = choices && typeof choices === "object" ? choices : {};
+      for (const key of Object.keys(given)) {
+        if (!diffFields.includes(key)) {
+          throw new BadRequestException(`অজানা ফিল্ড: "${key}" — এই Conflict-এ এই ফিল্ডে কোনো পার্থক্য নেই`);
+        }
+        if (given[key] !== "local" && given[key] !== "remote") {
+          throw new BadRequestException(`ফিল্ড "${key}"-এর জন্য সিদ্ধান্ত "local" বা "remote" হতে হবে`);
+        }
+      }
+      const missing = diffFields.filter((f) => !(f in given));
+      if (missing.length > 0) {
+        throw new BadRequestException(`ফিল্ড "${missing[0]}"-এর জন্য সিদ্ধান্ত (local/remote) দেওয়া হয়নি`);
+      }
+      const product = await (this.prisma as any).product.findFirst({ where: { id: listing.productId, organizationId } });
+      if (!product) throw new BadRequestException("Product no longer exists");
+      const remoteChosen: Record<string, any> = {};
+      for (const d of diffs) {
+        if (given[String(d.field)] === "remote") remoteChosen[String(d.field)] = d.remoteValue;
+      }
+      const data = this.remoteFieldsToProductData(remoteChosen);
+      if (Object.keys(data).length > 0) {
+        await (this.prisma as any).product.update({ where: { id: product.id }, data });
+      }
+      // Same ordering as keep_local: resolve FIRST (the push
+      // pipeline skips listings with an open conflict), listing to
+      // pending, THEN enqueue the forced push of the merged state.
+      resolved = await (this.prisma as any).syncConflict.update({
+        where: { id: conflict.id },
+        data: { status: "resolved", resolution: "per_field" },
+      });
+      await (this.prisma as any).storeListing.update({ where: { id: listing.id }, data: { syncStatus: "pending" } });
+      await this.catalogPush.enqueueProductPush(organizationId, listing.productId, { listingId: listing.id, force: true });
+      await this.auditLog(organizationId, actorId, "commerce.conflict_resolve", "SyncConflict", conflict.id, { choice, choices: given, listingId: listing.id });
+      return resolved;
+    }
     if (choice === "keep_local") {
       // Resolution order matters: CatalogPushService skips listings
       // with an OPEN conflict even when forced — so the conflict is
@@ -175,13 +240,8 @@ export class CommerceService {
     } else {
       const product = await (this.prisma as any).product.findFirst({ where: { id: listing.productId, organizationId } });
       if (!product) throw new BadRequestException("Product no longer exists");
-      const rv = (conflict.remoteValue ?? {}) as { name?: string; priceMinor?: string | number | bigint; status?: string; stockQuantity?: number; imageUrl?: string | null };
-      const data: Record<string, any> = {};
-      if (rv.name !== undefined && rv.name !== null) data.name = rv.name;
-      if (rv.priceMinor !== undefined && rv.priceMinor !== null) data.priceMinor = BigInt(rv.priceMinor as any);
-      if (rv.status !== undefined && rv.status !== null) data.status = rv.status;
-      if (rv.stockQuantity !== undefined) data.stockQuantity = rv.stockQuantity;
-      if (rv.imageUrl !== undefined) data.imageUrl = rv.imageUrl;
+      const rv = (conflict.remoteValue ?? {}) as Record<string, any>;
+      const data = this.remoteFieldsToProductData(rv);
       if (Object.keys(data).length > 0) {
         await (this.prisma as any).product.update({ where: { id: product.id }, data });
       }
@@ -487,16 +547,26 @@ export class CommerceService {
     organizationId: string,
     actorId: string,
     storeId: string,
-    dto: { syncMode: string; fieldOwnership?: Record<string, unknown> },
+    dto: { syncMode?: string; fieldOwnership?: Record<string, unknown>; weightUnit?: string | null },
   ) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
     if (!store) throw new NotFoundException("Store not found in this organization");
-    if (!(SYNC_MODES as readonly string[]).includes(dto.syncMode)) {
+    if (dto.syncMode === undefined && dto.weightUnit === undefined && dto.fieldOwnership === undefined) {
+      throw new BadRequestException("কমপক্ষে একটি সেটিং (syncMode / weightUnit) পাঠান");
+    }
+    if (dto.syncMode !== undefined && !(SYNC_MODES as readonly string[]).includes(dto.syncMode)) {
       throw new BadRequestException("syncMode must be mirror, co-manage, or full-manage");
     }
+    // CP3: manual weight-unit override on the same surface.
+    const WEIGHT_UNITS = ["g", "kg", "lb", "oz"];
+    if (dto.weightUnit !== undefined && dto.weightUnit !== null && !WEIGHT_UNITS.includes(dto.weightUnit)) {
+      throw new BadRequestException("weightUnit must be g, kg, lb or oz");
+    }
     const from = store.syncMode ?? "mirror";
-    const data: Record<string, any> = { syncMode: dto.syncMode };
+    const data: Record<string, any> = {};
+    if (dto.syncMode !== undefined) data.syncMode = dto.syncMode;
     if (dto.fieldOwnership !== undefined) data.fieldOwnership = dto.fieldOwnership;
+    if (dto.weightUnit !== undefined) data.weightUnit = dto.weightUnit;
     const updated = await (this.prisma as any).store.update({ where: { id: store.id }, data });
     await this.audit.log({
       organizationId,
@@ -504,7 +574,10 @@ export class CommerceService {
       action: "store.sync_mode",
       entityType: "Store",
       entityId: store.id,
-      metadata: { from, to: dto.syncMode },
+      metadata: {
+        from, to: dto.syncMode ?? from,
+        ...(dto.weightUnit !== undefined ? { weightUnit: dto.weightUnit } : {}),
+      },
     }).catch(() => undefined);
     return updated;
   }

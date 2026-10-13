@@ -8,7 +8,7 @@ import { ProductsService } from "../products/products.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { CommerceService } from "../commerce/commerce.service";
 import { DiscountsService } from "../commerce/discounts.service";
-import { LlmFactory } from "./llm/llm.factory";
+import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { PROPOSAL_TOOL_ROLES } from "./planner";
 
 export const PROPOSAL_TYPES = ["pause_campaign", "pause_ad_set", "resume_campaign", "resume_ad_set", "create_broadcast_draft", "create_followup_task", "create_quick_reply", "propose_price_change", "propose_stock_adjust", "propose_listing_publish", "propose_listing_unpublish", "propose_create_discount", "propose_product_copy"] as const;
@@ -284,7 +284,7 @@ export class ProposalsService {
       const product = await this.p().product.findFirst({ where: { id: dto.productId, organizationId: orgId } });
       if (!product) throw new NotFoundException("Product not found in this organization");
       if (!this.llmFactory) throw new BadRequestException("LLM সেবা এই context-এ পাওয়া যাচ্ছে না — কপি তৈরি করা যাবে না।");
-      const provider: any = this.llmFactory.getProvider();
+      const provider: any = await providerForOrg(this.llmFactory, orgId);
       if (!provider?.isRealLlm) throw new BadRequestException("কোনো আসল LLM কনফিগার করা নেই — dev-template দিয়ে বানানো (মিথ্যা) কপি তৈরি করা হবে না। LLM সেটিংসে আসল provider যোগ করুন।");
       let variants: any[] = Array.isArray(product.variants) ? product.variants : [];
       if (!variants.length && this.p().productVariant?.findMany) {

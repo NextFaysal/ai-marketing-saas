@@ -1,12 +1,20 @@
 import { IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 
 export class UpdateSyncModeDto {
-  @IsString() syncMode!: string;
+  // CP3: syncMode is now optional so the same store-settings
+  // surface can carry a weightUnit-only update.
+  @IsOptional() @IsString() syncMode?: string;
   @IsOptional() @IsObject() fieldOwnership?: Record<string, unknown>;
+  /** CP3: manual override of the store's weight unit (null clears
+   *  back to the legacy kg default). */
+  @IsOptional() @IsIn(["g", "kg", "lb", "oz"]) weightUnit?: string | null;
 }
 
 export class ResolveConflictDto {
-  @IsIn(["keep_local", "take_remote"]) choice!: string;
+  @IsIn(["keep_local", "take_remote", "per_field"]) choice!: string;
+  /** CP1: per_field only — { fieldName: "local" | "remote" } for
+   *  EXACTLY the fields in the conflict's fieldDiffs. */
+  @IsOptional() @IsObject() choices?: Record<string, string>;
 }
 
 export class ChannelPriceDto {
@@ -53,6 +61,46 @@ export class DiscountDto {
 
 export class SetDiscountActiveDto {
   @IsBoolean() active!: boolean;
+}
+
+/** EC16: create/update a Promotion. `config` is the per-type
+ * document validated server-side by validatePromotionConfig
+ * (bogo | tiered | flash); dates are ISO strings or null. */
+export class PromotionDto {
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsOptional() @IsIn(["bogo", "tiered", "flash", "gift"]) type?: string;
+  @IsOptional() @IsObject() config?: Record<string, unknown>;
+  @IsOptional() @IsString() startsAt?: string | null;
+  @IsOptional() @IsString() endsAt?: string | null;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsInt() @Min(-100) @Max(100) priority?: number;
+}
+
+export class SetPromotionActiveDto {
+  @IsBoolean() active!: boolean;
+}
+
+/** EC29: create/update a Bundle. `items` is the untyped
+ * component array ([{ productId, variantSku?, qty }]) validated
+ * server-side by BundlesService.validateItems; bundlePriceMinor
+ * is integer minor units as a decimal string. */
+export class BundleDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(2000) description?: string | null;
+  @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string | null;
+  @IsOptional() @IsArray() items?: any[];
+  @IsOptional() @IsString() bundlePriceMinor?: string;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(10000) sortOrder?: number;
+}
+
+/** EC16: cart-simulator preview — product ids + quantities are
+ * priced from the REAL product rows server-side; no client math. */
+export class PromotionPreviewDto {
+  @IsArray() items!: Array<{ productId: string; quantity?: number }>;
+  @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
+  @IsOptional() @IsString() @MaxLength(40) referralCode?: string;
+  @IsOptional() @IsString() @MaxLength(32) buyerPhone?: string;
 }
 
 export class GenerateCampaignDto {

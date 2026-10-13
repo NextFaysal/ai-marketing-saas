@@ -160,6 +160,37 @@ describe("ListingsService.detectInboundConflict", () => {
     expect(prisma.syncConflict.rows).toHaveLength(1);
   });
 
+  it("CP1: fieldDiffs capture ONLY the differing fields, JSON-safe", async () => {
+    const prisma = fakePrisma();
+    seedListing(prisma);
+    prisma.syncOutbox.rows.push({ id: "o1", organizationId: "org-1", storeId: "s1", entityType: "product", entityId: "p1", status: "pending" });
+    const svc = new ListingsService(prisma);
+    const conflict = await svc.detectInboundConflict({
+      organizationId: "org-1", storeId: "s1", productId: "p1", localContent: { ...BASE }, remoteContent: REMOTE_CHANGED,
+    });
+    // name/status/stockQuantity/imageUrl are identical — excluded.
+    expect(conflict.fieldDiffs).toEqual([
+      { field: "priceMinor", localValue: "1000", remoteValue: "1200" },
+    ]);
+  });
+
+  it("CP1: fieldDiffs convert BigInt values to strings and undefined to null", async () => {
+    const prisma = fakePrisma();
+    seedListing(prisma, { lastRemoteHash: "other", lastPushedHash: "other" });
+    prisma.syncOutbox.rows.push({ id: "o1", organizationId: "org-1", storeId: "s1", entityType: "product", entityId: "p1", status: "pending" });
+    const svc = new ListingsService(prisma);
+    const conflict = await svc.detectInboundConflict({
+      organizationId: "org-1", storeId: "s1", productId: "p1",
+      localContent: { name: "Shirt", priceMinor: 1000n, compareAtMinor: undefined, description: "local desc" } as any,
+      remoteContent: { name: "Shirt", priceMinor: 1500n, compareAtMinor: 2000n, description: "remote desc" } as any,
+    });
+    expect(conflict.fieldDiffs).toEqual([
+      { field: "priceMinor", localValue: "1000", remoteValue: "1500" },
+      { field: "compareAtMinor", localValue: null, remoteValue: "2000" },
+      { field: "description", localValue: "local desc", remoteValue: "remote desc" },
+    ]);
+  });
+
   it("returns null when there is no listing (or no externalId)", async () => {
     const prisma = fakePrisma();
     const svc = new ListingsService(prisma);

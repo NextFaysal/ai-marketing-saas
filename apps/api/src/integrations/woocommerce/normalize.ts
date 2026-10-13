@@ -67,11 +67,17 @@ function stripHtml(html: string): string {
 export interface NormalizedOrderItem {
   externalProductId?: string;
   externalVariationId?: string;
+  /** EC24: native checkouts / subscription renewals link the
+   * internal product directly (org-scoped resolution in
+   * upsertOrder) instead of via an external id or SKU. */
+  productId?: string;
   name: string;
   sku?: string;
   quantity: number;
   priceMinor: bigint;
   totalMinor: bigint;
+  /** EC24a: stamp the created OrderItem as a pre-order line. */
+  isPreorder?: boolean;
 }
 
 export interface NormalizedOrder {
@@ -93,6 +99,12 @@ export interface NormalizedOrder {
     email?: string; phone?: string; address?: Record<string, unknown>;
   };
   items: NormalizedOrderItem[];
+  /** EC24c: a caller that has ALREADY resolved the customer
+   * (org-scoped) may pin it — upsertOrder verifies it in-org and
+   * skips its external/email matching for this order. */
+  customerId?: string;
+  /** EC24c: renewal orders link back to their CustomerSubscription. */
+  subscriptionId?: string;
 }
 
 export function normalizeWooOrder(o: any): NormalizedOrder {

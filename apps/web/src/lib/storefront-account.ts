@@ -1,0 +1,346 @@
+/**
+ * EC25 — storefront customer accounts (client helpers).
+ *
+ * Login is phone + SMS OTP. The session token lives in
+ * localStorage keyed by org slug (`storefront-session-<slug>`)
+ * and travels in the `x-shop-session` header. A guest wishlist
+ * (productId array, `storefront-wishlist-<slug>`) is kept locally
+ * and merged into the account wishlist on login.
+ */
+import { API_URL } from "@/lib/api";
+
+export const SHOP_SESSION_EVENT = "storefront-session-changed";
+export const GUEST_WISHLIST_EVENT = "storefront-guest-wishlist-changed";
+
+export interface ShopCustomer {
+  id: string;
+  name: string | null;
+  phone: string;
+  email: string | null;
+}
+
+export interface ShopAddress {
+  id: string;
+  label: string | null;
+  recipientName: string;
+  phone: string;
+  addressLine: string;
+  district: string;
+  isDefault: boolean;
+}
+
+export interface MyOrderItem {
+  name: string;
+  quantity: number;
+  priceMinor: string;
+  totalMinor: string;
+  isGift: boolean;
+}
+
+export interface MyOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+  placedAt: string;
+  totalMinor: string;
+  itemCount: number;
+  items: MyOrderItem[];
+  hasTracking: boolean;
+}
+
+export interface MyOrderDetail extends MyOrder {
+  subtotalMinor: string;
+  discountMinor: string;
+  shippingMinor: string;
+  address: string | null;
+  giftSkipped: boolean;
+}
+
+export interface OrdersPage {
+  items: MyOrder[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
+export interface ReorderResult {
+  items: {
+    productId: string;
+    variantId: string | null;
+    variantSku: string | null;
+    name: string;
+    quantity: number;
+    currentPriceMinor: string;
+    available: true;
+  }[];
+  unavailable: { name: string; reason: string }[];
+}
+
+export interface WishlistItem {
+  productId: string;
+  name: string;
+  slug: string | null;
+  imageUrl: string | null;
+  currentPriceMinor: string;
+  priceAtAddMinor: string;
+  priceDropped: boolean;
+  stockState: string;
+  addedAt: string;
+}
+
+// --- storage keys -------------------------------------------------
+
+export function shopSessionKey(orgSlug: string): string {
+  return `storefront-session-${orgSlug}`;
+}
+
+export function guestWishlistKey(orgSlug: string): string {
+  return `storefront-wishlist-${orgSlug}`;
+}
+
+// --- session ------------------------------------------------------
+
+export function getShopSession(orgSlug: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(shopSessionKey(orgSlug));
+  } catch {
+    return null;
+  }
+}
+
+export function setShopSession(orgSlug: string, token: string): void {
+  try {
+    localStorage.setItem(shopSessionKey(orgSlug), token);
+  } catch { /* storage unavailable */ }
+  notifySessionChanged(orgSlug);
+}
+
+export function clearShopSession(orgSlug: string): void {
+  try {
+    localStorage.removeItem(shopSessionKey(orgSlug));
+  } catch { /* ignore */ }
+  notifySessionChanged(orgSlug);
+}
+
+export function notifySessionChanged(orgSlug: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(SHOP_SESSION_EVENT, { detail: { orgSlug } }));
+}
+
+// --- guest wishlist ------------------------------------------------
+
+export function getGuestWishlist(orgSlug: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(guestWishlistKey(orgSlug));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function setGuestWishlist(orgSlug: string, ids: string[]): void {
+  try {
+    localStorage.setItem(guestWishlistKey(orgSlug), JSON.stringify(ids));
+  } catch { /* ignore */ }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(GUEST_WISHLIST_EVENT, { detail: { orgSlug } }));
+  }
+}
+
+export function guestWishlistHas(orgSlug: string, productId: string): boolean {
+  return getGuestWishlist(orgSlug).includes(productId);
+}
+
+export function guestWishlistAdd(orgSlug: string, productId: string): void {
+  const list = getGuestWishlist(orgSlug);
+  if (!list.includes(productId)) setGuestWishlist(orgSlug, [...list, productId]);
+}
+
+export function guestWishlistRemove(orgSlug: string, productId: string): void {
+  setGuestWishlist(orgSlug, getGuestWishlist(orgSlug).filter((x) => x !== productId));
+}
+
+export function clearGuestWishlist(orgSlug: string): void {
+  try {
+    localStorage.removeItem(guestWishlistKey(orgSlug));
+  } catch { /* ignore */ }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(GUEST_WISHLIST_EVENT, { detail: { orgSlug } }));
+  }
+}
+
+// --- fetch helper ---------------------------------------------------
+
+const shopPath = (orgSlug: string) => `/public/shop/${encodeURIComponent(orgSlug)}`;
+
+async function accountFetch<T>(orgSlug: string, path: string, init: RequestInit = {}): Promise<T> {
+  const token = getShopSession(orgSlug);
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "x-shop-session": token } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    // A dead/expired session falls back to guest state everywhere.
+    if (res.status === 401 && token) clearShopSession(orgSlug);
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { message?: string }).message ?? `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// --- auth -----------------------------------------------------------
+
+export async function requestOtp(
+  orgSlug: string,
+  phone: string,
+): Promise<{ sent: true; expiresInSeconds: number }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/auth/request-otp`, {
+    method: "POST",
+    body: JSON.stringify({ phone }),
+  });
+}
+
+export async function verifyOtp(
+  orgSlug: string,
+  phone: string,
+  code: string,
+): Promise<{ token: string; customer: ShopCustomer; merge: { added: number; skipped: number } | null }> {
+  const out = await accountFetch<{ token: string; customer: ShopCustomer }>(
+    orgSlug,
+    `${shopPath(orgSlug)}/auth/verify`,
+    { method: "POST", body: JSON.stringify({ phone, code }) },
+  );
+  setShopSession(orgSlug, out.token);
+  // Merge the guest wishlist into the account, then clear it —
+  // a failed merge keeps the guest list (no silent loss).
+  let merge: { added: number; skipped: number } | null = null;
+  const guest = getGuestWishlist(orgSlug);
+  if (guest.length > 0) {
+    try {
+      merge = await mergeWishlist(orgSlug, guest);
+      clearGuestWishlist(orgSlug);
+    } catch { /* guest list retained; account page can retry implicitly next login */ }
+  }
+  return { token: out.token, customer: out.customer, merge };
+}
+
+export async function logout(orgSlug: string): Promise<void> {
+  try {
+    await accountFetch(orgSlug, `${shopPath(orgSlug)}/auth/logout`, { method: "POST" });
+  } catch { /* session is cleared locally regardless */ }
+  clearShopSession(orgSlug);
+}
+
+// --- account data -----------------------------------------------------
+
+export async function fetchMe(
+  orgSlug: string,
+): Promise<{ customer: ShopCustomer; defaultAddress: ShopAddress | null }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/me`);
+}
+
+export async function updateProfile(
+  orgSlug: string,
+  body: { name?: string; email?: string },
+): Promise<{ customer: ShopCustomer; defaultAddress: ShopAddress | null }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/profile`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchMyOrders(orgSlug: string, page = 1, pageSize = 10): Promise<OrdersPage> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/orders?page=${page}&pageSize=${pageSize}`);
+}
+
+export async function fetchMyOrder(orgSlug: string, orderId: string): Promise<MyOrderDetail> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/orders/${encodeURIComponent(orderId)}`);
+}
+
+export async function reorderOrder(orgSlug: string, orderId: string): Promise<ReorderResult> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/orders/${encodeURIComponent(orderId)}/reorder`, {
+    method: "POST",
+  });
+}
+
+// --- addresses ----------------------------------------------------------
+
+export async function fetchAddresses(orgSlug: string): Promise<{ items: ShopAddress[] }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/addresses`);
+}
+
+export async function createAddress(
+  orgSlug: string,
+  body: {
+    label?: string;
+    recipientName: string;
+    phone: string;
+    addressLine: string;
+    district: string;
+    isDefault?: boolean;
+  },
+): Promise<ShopAddress> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/addresses`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateAddress(
+  orgSlug: string,
+  id: string,
+  body: Partial<{
+    label: string;
+    recipientName: string;
+    phone: string;
+    addressLine: string;
+    district: string;
+    isDefault: boolean;
+  }>,
+): Promise<ShopAddress> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/addresses/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteAddress(orgSlug: string, id: string): Promise<void> {
+  await accountFetch(orgSlug, `${shopPath(orgSlug)}/account/addresses/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// --- wishlist (account) ---------------------------------------------------
+
+export async function fetchWishlist(orgSlug: string): Promise<{ items: WishlistItem[] }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/wishlist`);
+}
+
+export async function addWishlist(orgSlug: string, productId: string): Promise<unknown> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/wishlist`, {
+    method: "POST",
+    body: JSON.stringify({ productId }),
+  });
+}
+
+export async function removeWishlist(orgSlug: string, productId: string): Promise<unknown> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/wishlist/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function mergeWishlist(
+  orgSlug: string,
+  productIds: string[],
+): Promise<{ added: number; skipped: number }> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/wishlist/merge`, {
+    method: "POST",
+    body: JSON.stringify({ productIds }),
+  });
+}

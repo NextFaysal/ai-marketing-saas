@@ -2,7 +2,13 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Optional } 
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CatalogPushService } from "../commerce/catalog-push.service";
+import { EventsService } from "../common/events.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+
+/** EC28: emitted on a stock transition 0 → >0 so the storefront
+ * retention service can fire back-in-stock alerts. The
+ * EventsService dispatch is failure-isolated by design. */
+export const STOCK_INCREASED_EVENT = "inventory.stock_increased";
 
 /**
  * Sales & Data S1 — Inventory Movement.
@@ -40,6 +46,9 @@ export interface PlacedItemInput {
   productId: string | null;
   variantId?: string | null;
   quantity: number;
+  /** EC24a: pre-order line — skipped entirely (no decrement, no
+   * movement): the stock may not exist yet. See commerce/ec24.ts. */
+  isPreorder?: boolean;
 }
 
 @Injectable()
@@ -53,7 +62,34 @@ export class InventoryService {
     // wiring) keep working; when present, absolute balances after a
     // local stock change are pushed to connected stores.
     @Optional() private readonly catalogPush?: CatalogPushService,
+    // EC28: optional event bus for the back-in-stock hook; LAST
+    // param so existing positional constructions keep working.
+    @Optional() private readonly events?: EventsService,
   ) {}
+
+  /** EC28 — emit the restock transition (0 → >0 only). Never throws. */
+  private emitStockIncreased(
+    organizationId: string,
+    productId: string,
+    variant: { id?: string | null; sku?: string | null } | null,
+    prevBalance: number,
+    balanceAfter: number,
+  ): void {
+    if (!this.events) return;
+    if (!(prevBalance <= 0 && balanceAfter > 0)) return;
+    try {
+      this.events.emit(STOCK_INCREASED_EVENT, {
+        organizationId,
+        productId,
+        variantId: variant?.id ?? null,
+        variantSku: variant?.sku ?? null,
+        prevBalance,
+        balanceAfter,
+      });
+    } catch {
+      /* the event bus never breaks a stock write */
+    }
+  }
 
   /**
    * EC4 — notify the commerce layer that a local balance changed,
@@ -97,6 +133,8 @@ export class InventoryService {
     let decremented = 0;
     let skipped = 0;
     for (const line of lines) {
+      // EC24a: preorder lines never touch stock (counted as skipped).
+      if ((line as any).isPreorder) { skipped++; continue; }
       if (!line.productId || !line.quantity || line.quantity <= 0) { skipped++; continue; }
       const variantId = line.variantId ?? null;
       // Idempotency: one order_placed movement per
@@ -270,7 +308,7 @@ export class InventoryService {
         }).catch(() => null);
         variantId = variant?.id ?? null;
       }
-      lines.push({ productId: item.productId ?? null, variantId, quantity: item.quantity });
+      lines.push({ productId: item.productId ?? null, variantId, quantity: item.quantity, isPreorder: !!item.isPreorder });
     }
     return lines;
   }
@@ -328,6 +366,8 @@ export class InventoryService {
         });
         restored++;
         await this.notifyStockPush(organizationId, movement.productId, movement.variantId, balanceAfter);
+        // EC28: cancel/return restore is a stock-increase path too.
+        this.emitStockIncreased(organizationId, movement.productId, variant, (variant.stockQuantity as number), balanceAfter);
       } else {
         const product = await (this.prisma as any).product.findFirst({ where: { id: movement.productId, organizationId } });
         if (!product || product.stockQuantity == null) { skipped++; continue; }
@@ -343,6 +383,7 @@ export class InventoryService {
         });
         restored++;
         await this.notifyStockPush(organizationId, movement.productId, null, balanceAfter);
+        this.emitStockIncreased(organizationId, movement.productId, null, product.stockQuantity as number, balanceAfter);
       }
     }
     return { restored, skipped };
@@ -409,6 +450,10 @@ export class InventoryService {
     });
     await this.maybeLowStockAlert(organizationId, product, variant, current, newBalance);
     await this.notifyStockPush(organizationId, productId, variant?.id ?? null, newBalance);
+    // EC28: adjust() is the single choke point for manual adjust,
+    // purchase-receive, stock counts and return restock — a
+    // 0 → >0 transition here fires the back-in-stock hook.
+    this.emitStockIncreased(organizationId, productId, variant, current, newBalance);
     return { productId, variantId: variant?.id ?? null, stockQuantity: newBalance, movement };
   }
 

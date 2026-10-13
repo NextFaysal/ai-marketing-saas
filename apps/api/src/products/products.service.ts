@@ -6,12 +6,72 @@ import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto,
 import { CatalogPushService } from "../commerce/catalog-push.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
+import { PromotionsService, type CheckoutEvaluation } from "../commerce/promotions.service";
+import { AffiliatesService } from "../affiliates/affiliates.service";
+import type { PromotionLine } from "../commerce/promotions";
 import { computeStockDiverged, pendingOutboxKeys } from "../commerce/stock-divergence";
+import { assertEc24Conditionals, assertPreorderLimit, preorderInfo, validateWholesaleTiers } from "../commerce/ec24";
+
+/**
+ * EC24: normalize the product-model expansion fields for a
+ * create (full defaults) or an update (only present fields).
+ * Wholesale tiers are validated + normalized here — the same
+ * place EC23 validates taxRateBps. Date/limit fields are checked
+ * for shape; the digital/subscription conditionals are asserted
+ * by the caller against the effective (merged) state.
+ */
+export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const has = (k: string) => dto[k] !== undefined;
+  if (!partial || has("preorderEnabled")) out.preorderEnabled = !!dto.preorderEnabled;
+  if (!partial || has("preorderReleaseDate")) {
+    if (dto.preorderReleaseDate === null || dto.preorderReleaseDate === undefined) out.preorderReleaseDate = null;
+    else {
+      const d = new Date(dto.preorderReleaseDate);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException("প্রি-অর্ডার রিলিজের তারিখ সঠিক নয়");
+      out.preorderReleaseDate = d;
+    }
+  }
+  if (!partial || has("preorderLimit")) {
+    if (dto.preorderLimit === null || dto.preorderLimit === undefined) out.preorderLimit = null;
+    else if (!Number.isInteger(dto.preorderLimit) || dto.preorderLimit < 1) throw new BadRequestException("প্রি-অর্ডার সীমা কমপক্ষে ১ হতে হবে");
+    else out.preorderLimit = dto.preorderLimit;
+  }
+  if (!partial || has("digital")) out.digital = !!dto.digital;
+  if (!partial || has("digitalFileUrl")) out.digitalFileUrl = dto.digitalFileUrl?.trim() || null;
+  if (!partial || has("digitalAccessLimit")) {
+    if (dto.digitalAccessLimit === null || dto.digitalAccessLimit === undefined) out.digitalAccessLimit = null;
+    else if (!Number.isInteger(dto.digitalAccessLimit) || dto.digitalAccessLimit < 1) throw new BadRequestException("ডিজিটাল অ্যাক্সেস সীমা কমপক্ষে ১ হতে হবে");
+    else out.digitalAccessLimit = dto.digitalAccessLimit;
+  }
+  if (!partial || has("subscriptionEnabled")) out.subscriptionEnabled = !!dto.subscriptionEnabled;
+  if (!partial || has("subscriptionIntervalDays")) {
+    if (dto.subscriptionIntervalDays === null || dto.subscriptionIntervalDays === undefined) out.subscriptionIntervalDays = null;
+    else if (!Number.isInteger(dto.subscriptionIntervalDays) || dto.subscriptionIntervalDays < 0) throw new BadRequestException("সাবস্ক্রিপশন ইন্টারভাল সঠিক নয়");
+    else out.subscriptionIntervalDays = dto.subscriptionIntervalDays;
+  }
+  if (!partial || has("subscriptionDiscountPercent")) {
+    if (dto.subscriptionDiscountPercent === null || dto.subscriptionDiscountPercent === undefined) out.subscriptionDiscountPercent = null;
+    else if (!Number.isInteger(dto.subscriptionDiscountPercent) || dto.subscriptionDiscountPercent < 0 || dto.subscriptionDiscountPercent > 100) throw new BadRequestException("সাবস্ক্রিপশন ছাড় ০–১০০% এর মধ্যে হতে হবে");
+    else out.subscriptionDiscountPercent = dto.subscriptionDiscountPercent;
+  }
+  if (!partial || has("wholesaleTiers")) out.wholesaleTiers = validateWholesaleTiers(dto.wholesaleTiers);
+  return out;
+}
 import { parseMoneyToMinor } from "@repo/contracts";
 import { computeMargin } from "./pricing";
 import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+
+/** EC23: a tax rate is basis points — integer 0..10000 or null. */
+export function validateTaxRateBps(v: unknown): number | null {
+  if (v === undefined || v === null) return null;
+  if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 10000) {
+    throw new BadRequestException("VAT হার 0–10000 basis points-এর মধ্যে হতে হবে (1500 = 15%)");
+  }
+  return v as number;
+}
 
 function parseMoney(value: string, field: string): bigint {
   try { return parseMoneyToMinor(value); }
@@ -90,6 +150,13 @@ export class ProductsService {
     // + Optional so every positional spec construction keeps
     // working; the Nest module supplies it via CommerceModule.
     @Optional() private readonly discounts?: DiscountsService,
+    // EC16: unified promotion/coupon/referral evaluation. LAST
+    // param + Optional, same discipline as EC7; spec harnesses
+    // without it keep the EC7 coupon-only block below.
+    @Optional() private readonly promotions?: PromotionsService,
+    // EC32: affiliate attribution stamp. LAST param + Optional,
+    // same discipline; the stamp itself never throws.
+    @Optional() private readonly affiliates?: AffiliatesService,
   ) {}
 
   // ---------- EC3 shared helpers ----------
@@ -214,6 +281,14 @@ export class ProductsService {
         seoTitle: dto.seoTitle ?? null,
         seoDescription: dto.seoDescription ?? null,
         categoryId: dto.categoryId ?? null,
+        // EC23: per-product VAT override (null = org default).
+        taxRateBps: validateTaxRateBps(dto.taxRateBps),
+        // EC24: product-model expansion (validated + normalized).
+        ...(() => {
+          const fields = normalizeEc24Fields(dto, false);
+          assertEc24Conditionals(fields as any);
+          return fields;
+        })(),
         source: "manual",
       },
     });
@@ -246,6 +321,101 @@ export class ProductsService {
     return toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
   }
 
+  // ---------- EC18: delivery slots (local equivalents of the
+  // storefront helpers — this service has no StorefrontService
+  // dependency, so the shared rules are re-implemented here) ----
+
+  /** Public slot list for the single-product page: ACTIVE slots
+   * whose districtScope is empty (all districts) only — the
+   * shopper's district is unknown on this surface. Any error
+   * degrades to an empty list. */
+  private async publicDeliverySlots(organizationId: string): Promise<any[]> {
+    try {
+      const table = (this.prisma as any).deliverySlot;
+      if (!table?.findMany) return [];
+      const rows: any[] =
+        (await table.findMany({ where: { organizationId, active: true } }).catch(() => [])) ?? [];
+      return rows
+        .filter((s: any) => !Array.isArray(s.districtScope) || s.districtScope.length === 0)
+        .map((s: any) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** EC18: the org's merchant-written trust copy from
+   * StorefrontSetting. Failure-isolated — a missing table/row
+   * degrades to nulls (the web hides empty trust blocks). */
+  private async storefrontTrust(
+    organizationId: string,
+  ): Promise<{ returnPolicyText: string | null; deliveryPromiseText: string | null; supportPhone: string | null }> {
+    const empty = { returnPolicyText: null, deliveryPromiseText: null, supportPhone: null };
+    try {
+      const table = (this.prisma as any).storefrontSetting;
+      if (!table?.findFirst) return empty;
+      const s = await table.findFirst({ where: { organizationId } }).catch(() => null);
+      if (!s) return empty;
+      return {
+        returnPolicyText: s.returnPolicyText ?? null,
+        deliveryPromiseText: s.deliveryPromiseText ?? null,
+        supportPhone: s.supportPhone ?? null,
+      };
+    } catch {
+      return empty;
+    }
+  }
+
+  /** Validate a slot choice where the district is unknown
+   * (district = null ⇒ only all-district slots qualify). */
+  private async validateDeliverySlotChoice(
+    organizationId: string,
+    slotId: string,
+    dateStr: string,
+    district: string | null,
+  ): Promise<any> {
+    const table = (this.prisma as any).deliverySlot;
+    const slot = table?.findFirst
+      ? await table.findFirst({ where: { id: slotId, organizationId } }).catch(() => null)
+      : null;
+    if (!slot || slot.active === false) {
+      throw new BadRequestException("ডেলিভারি স্লটটি পাওয়া যায়নি বা বন্ধ আছে");
+    }
+    const scope: string[] = Array.isArray(slot.districtScope) ? slot.districtScope.map((d: any) => String(d)) : [];
+    if (scope.length > 0 && (district === null || !scope.includes(district))) {
+      throw new BadRequestException("এই স্লটটি আপনার এলাকার জন্য প্রযোজ্য নয়");
+    }
+    const dateMsg = "ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr ?? ""))) {
+      throw new BadRequestException(dateMsg);
+    }
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const probe = new Date(Date.UTC(y, m - 1, d));
+    if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+      throw new BadRequestException(dateMsg);
+    }
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date());
+    const [ty, tm, td] = today.split("-").map(Number);
+    const maxDate = new Date(Date.UTC(ty, tm - 1, td) + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    if (dateStr < today || dateStr > maxDate) {
+      throw new BadRequestException(dateMsg);
+    }
+    if (slot.capacityPerDay !== null && slot.capacityPerDay !== undefined) {
+      const orderTable = (this.prisma as any).order;
+      const count = orderTable?.count
+        ? await orderTable.count({
+            where: {
+              organizationId, deliverySlotId: slotId, deliveryDate: dateStr,
+              status: { not: "cancelled" },
+            },
+          }).catch(() => 0)
+        : 0;
+      if (Number(count) >= Number(slot.capacityPerDay)) {
+        throw new BadRequestException("এই স্লটটি পূর্ণ — অন্য স্লট বা তারিখ বেছে নিন");
+      }
+    }
+    return slot;
+  }
+
   /**
    * Public storefront query: returns product and organization delivery/payment settings
    */
@@ -267,7 +437,20 @@ export class ProductsService {
     if (!p) throw new NotFoundException("Product not found or inactive");
 
     const bp = p.organization?.businessProfile;
+    // EC29: top-level gift-wrap offer for the single checkout —
+    // only when the shop enabled it AND set a fee, else null.
+    let giftWrap: { enabled: true; feeMinor: string } | null = null;
+    try {
+      const sTable = (this.prisma as any).storefrontSetting;
+      const s = sTable?.findFirst
+        ? await sTable.findFirst({ where: { organizationId: p.organization.id } }).catch(() => null)
+        : null;
+      if (s?.giftWrapEnabled === true && s?.giftWrapFeeMinor != null) {
+        giftWrap = { enabled: true, feeMinor: String(s.giftWrapFeeMinor) };
+      }
+    } catch { giftWrap = null; }
     return {
+      giftWrap,
       product: {
         id: p.id,
         name: p.name,
@@ -278,6 +461,10 @@ export class ProductsService {
         priceMinor: p.priceMinor.toString(),
         compareAtMinor: p.compareAtMinor ? p.compareAtMinor.toString() : null,
         stockQuantity: p.stockQuantity,
+        // EC24a: public pre-order info (null when not a preorder product).
+        preorder: preorderInfo(p),
+        // EC24b: ONLY the flag — the file URL is never public.
+        digital: !!p.digital,
         bumpTitle: p.bumpTitle || null,
         bumpPriceMinor: p.bumpPriceMinor ? p.bumpPriceMinor.toString() : null,
         bumpImageUrl: p.bumpImageUrl || null,
@@ -293,14 +480,18 @@ export class ProductsService {
         id: p.organization.id,
         name: p.organization.name,
         slug: p.organization.slug,
-        insideDhakaFee: bp?.insideDhakaFeeMinor ? (Number(bp.insideDhakaFeeMinor) / 100).toString() : "60",
-        outsideDhakaFee: bp?.outsideDhakaFeeMinor ? (Number(bp.outsideDhakaFeeMinor) / 100).toString() : "120",
+        insideDhakaFee: bp?.deliveryChargeInsideMinor ? (Number(bp.deliveryChargeInsideMinor) / 100).toString() : "60",
+        outsideDhakaFee: bp?.deliveryChargeOutsideMinor ? (Number(bp.deliveryChargeOutsideMinor) / 100).toString() : "120",
         codAvailable: bp?.codAvailable !== false,
         bkashNumber: bp?.bkashNumber || null,
         nagadNumber: bp?.nagadNumber || null,
         paymentNote: bp?.paymentNote || null,
         metaPixelId: bp?.metaPixelId || null,
         tikTokPixelId: bp?.tikTokPixelId || null,
+        // EC18: all-district delivery slots the shopper may pick.
+        deliverySlots: await this.publicDeliverySlots(p.organization.id),
+        // EC18: merchant-written trust copy (null = block hidden).
+        ...(await this.storefrontTrust(p.organization.id)),
       },
     };
   }
@@ -325,23 +516,29 @@ export class ProductsService {
     if (!p) throw new NotFoundException("Product is unavailable or out of stock");
 
     const qty = Math.max(1, dto.quantity ?? 1);
+    // EC24a: a preorder-enabled product passes at zero/negative
+    // stock (this path's gate is product existence, as before);
+    // only its open-unit limit can refuse the order.
+    await assertPreorderLimit(this.prisma, p.organization.id, p, qty);
     const unitPriceMinor = BigInt(p.priceMinor);
     let subtotal = unitPriceMinor * BigInt(qty);
 
     const bp = p.organization?.businessProfile;
     const isOutside = dto.deliveryZone === "outside_dhaka";
     const shippingMinor = isOutside
-      ? (bp?.outsideDhakaFeeMinor ?? 12000n)
-      : (bp?.insideDhakaFeeMinor ?? 6000n);
+      ? (bp?.deliveryChargeOutsideMinor ?? 12000n)
+      : (bp?.deliveryChargeInsideMinor ?? 6000n);
 
     // Check if customer accepted 1-Click Order Bump Upsell
-    const items = [
+    const items: any[] = [
       {
         name: p.name,
         sku: p.sku || undefined,
         quantity: qty,
         priceMinor: unitPriceMinor,
         totalMinor: subtotal,
+        // EC24a: any order of a preorder-enabled product is a preorder line.
+        isPreorder: !!p.preorderEnabled,
       },
     ];
 
@@ -357,13 +554,38 @@ export class ProductsService {
       });
     }
 
-    // EC7: optional coupon. Validated against the subtotal
-    // (bump included); an invalid coupon fails the checkout with
-    // a Bengali reason BEFORE any order is written.
+    // EC7/EC16: discounts. With the EC16 service present this is
+    // the ONE unified evaluation (promotions → coupon → referral);
+    // without it, the EC7 coupon-only block below runs unchanged
+    // (identical result when no promotion applies). An invalid
+    // coupon fails the checkout with a Bengali reason BEFORE any
+    // order is written.
     let discountMinor = 0n;
     let freeShippingApplied = false;
     let appliedDiscountId: string | null = null;
-    if (dto.couponCode?.trim()) {
+    let ec16Evaluation: CheckoutEvaluation | null = null;
+    const bumpMinorForEval =
+      dto.includeBump && p.bumpPriceMinor && p.bumpTitle ? BigInt(p.bumpPriceMinor) : 0n;
+    if (this.promotions) {
+      ec16Evaluation = await this.promotions.evaluateCheckout(p.organization.id, {
+        lines: [
+          {
+            productId: p.id,
+            categoryId: (p as any).categoryId ?? null,
+            quantity: qty,
+            unitPriceMinor,
+            compareAtMinor: (p as any).compareAtMinor != null ? BigInt((p as any).compareAtMinor) : null,
+          },
+        ],
+        bumpMinor: bumpMinorForEval,
+        couponCode: dto.couponCode ?? null,
+        referralCode: dto.referralCode ?? null,
+        buyerPhone: dto.customerPhone,
+      });
+      discountMinor = ec16Evaluation.totalDiscountMinor;
+      freeShippingApplied = ec16Evaluation.couponFreeShipping;
+      appliedDiscountId = ec16Evaluation.appliedDiscountId;
+    } else if (dto.couponCode?.trim()) {
       if (!this.discounts) {
         throw new BadRequestException("কুপন সুবিধা এই deployment-এ নেই");
       }
@@ -387,8 +609,67 @@ export class ProductsService {
       appliedDiscountId = v.discount?.id ?? null;
     }
 
+    // EC29: gift placement (same PromotionsService.giftPlacement
+    // semantics as the shop checkout). The outcome is recorded
+    // on the evaluation BEFORE stampOrder runs below; a gift
+    // that cannot be placed never fails the order.
+    let giftInfo: { promotionName: string; productName: string; quantity: number } | null = null;
+    if (ec16Evaluation?.gift && this.promotions) {
+      const placement = await this.promotions.giftPlacement(p.organization.id, ec16Evaluation.gift);
+      if (placement) {
+        items.push({
+          productId: placement.product.id,
+          name: placement.product.name,
+          sku: placement.variant?.sku || placement.product.sku || undefined,
+          quantity: ec16Evaluation.gift.giftQty,
+          priceMinor: 0n,
+          totalMinor: 0n,
+          isGift: true,
+        });
+        ec16Evaluation.giftOutcome = "applied";
+        giftInfo = {
+          promotionName: ec16Evaluation.gift.name,
+          productName: placement.product.name,
+          quantity: ec16Evaluation.gift.giftQty,
+        };
+      } else {
+        ec16Evaluation.giftOutcome = "skipped";
+      }
+    }
+
+    // EC29: gift-wrap fee — only when requested AND the shop
+    // enabled it with a fee set (read from StorefrontSetting).
+    let giftWrapMinor = 0n;
+    if (dto.giftWrap) {
+      try {
+        const sTable = (this.prisma as any).storefrontSetting;
+        const s = sTable?.findFirst
+          ? await sTable.findFirst({ where: { organizationId: p.organization.id } }).catch(() => null)
+          : null;
+        if (s?.giftWrapEnabled === true && s?.giftWrapFeeMinor != null) {
+          giftWrapMinor = BigInt(s.giftWrapFeeMinor);
+        }
+      } catch { giftWrapMinor = 0n; }
+    }
+
+    // EC18: a chosen slot is validated BEFORE the order write
+    // (district unknown on this path ⇒ district = null, so only
+    // all-district slots qualify); a refusal means no order.
+    let chosenSlot: any = null;
+    if (dto.deliverySlotId || dto.deliveryDate) {
+      if (!dto.deliverySlotId || !dto.deliveryDate) {
+        throw new BadRequestException("স্লট বেছে নিলে তারিখও দিতে হবে");
+      }
+      chosenSlot = await this.validateDeliverySlotChoice(
+        p.organization.id, dto.deliverySlotId, dto.deliveryDate, null,
+      );
+    }
+
     const effectiveShippingMinor = freeShippingApplied ? 0n : BigInt(shippingMinor);
-    const total = subtotal - discountMinor + effectiveShippingMinor;
+    // EC23: exclusive VAT grows the total; inclusive VAT is already
+    // inside the prices (taxAddedMinor 0, total unchanged).
+    // EC29: the gift-wrap fee (when applied) is part of the total.
+    const total = subtotal - discountMinor + effectiveShippingMinor + (ec16Evaluation?.taxAddedMinor ?? 0n) + giftWrapMinor;
     const externalId = `checkout-${randomUUID()}`;
     const cleanPhone = dto.customerPhone.trim();
 
@@ -408,7 +689,7 @@ export class ProductsService {
         subtotalMinor: subtotal,
         shippingMinor: effectiveShippingMinor,
         discountMinor,
-        taxMinor: 0n,
+        taxMinor: ec16Evaluation?.taxMinor ?? 0n,
         totalMinor: total,
         refundedMinor: 0n,
         placedAt: new Date(),
@@ -425,6 +706,69 @@ export class ProductsService {
       },
       "manual"
     );
+
+    // EC18: stamp the validated slot choice onto the created
+    // order (the landings attribution pattern). The order itself
+    // is already placed — a stamp failure is logged, not fatal.
+    if (chosenSlot) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          await orderTable.update({
+            where: { id: order.id },
+            data: { deliverySlotId: chosenSlot.id, deliveryDate: dto.deliveryDate },
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `delivery slot stamp failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    // EC29: stamp the gift-wrap charge + message onto the
+    // created order (mirrors the slot stamp above; logged, not
+    // fatal — the fee already rode totalMinor in the upsert).
+    if (giftWrapMinor > 0n) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          await orderTable.update({
+            where: { id: order.id },
+            data: {
+              giftWrapMinor,
+              giftMessage: dto.giftMessage?.trim()?.slice(0, 200) || null,
+            },
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `gift wrap stamp failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    // EC16: stamp the promotion/referral split onto the created
+    // order (failure-isolated inside PromotionsService).
+    if (ec16Evaluation && this.promotions) {
+      await this.promotions.stampOrder(p.organization.id, "manual", externalId, ec16Evaluation);
+    }
+
+    // EC32: stamp affiliate attribution (failure-isolated
+    // inside AffiliatesService.stampAttribution).
+    if (this.affiliates) {
+      await this.affiliates.stampAttribution(p.organization.id, "manual", externalId, dto.affiliateCode, cleanPhone);
+    }
 
     // Stock: NO manual decrement here (merge integration fix).
     // upsertOrder's S1 inventory hook (applyOrderPlaced) already
@@ -443,6 +787,12 @@ export class ProductsService {
       });
     }
 
+    // EC16: the buyer's OWN referral code to share (additive,
+    // failure-isolated; null when unresolvable).
+    const yourReferralCode = this.promotions
+      ? await this.promotions.yourReferralCodeForPhone(p.organization.id, cleanPhone)
+      : null;
+
     return {
       success: true,
       orderNumber: externalId,
@@ -452,11 +802,32 @@ export class ProductsService {
       discountMinor: discountMinor.toString(),
       couponApplied: !!appliedDiscountId,
       freeShippingApplied,
+      promotionDiscountMinor: (ec16Evaluation?.promotionDiscountMinor ?? 0n).toString(),
+      promotionsApplied: (ec16Evaluation?.promotionsApplied ?? []).map((x) => ({
+        promotionId: x.promotionId,
+        name: x.name,
+        type: x.type,
+        amountMinor: x.amountMinor.toString(),
+      })),
+      referralDiscountMinor: (ec16Evaluation?.referralDiscountMinor ?? 0n).toString(),
+      referral: ec16Evaluation?.referral
+        ? { code: ec16Evaluation.referral.code }
+        : null,
+      yourReferralCode,
+      // EC29: gift outcome + wrap charge (additive).
+      gift: giftInfo,
+      giftSkipped: ec16Evaluation?.giftOutcome === "skipped",
+      giftWrapMinor: giftWrapMinor.toString(),
+      // EC23: VAT snapshot (breakdown rides stampOrder, like EC16).
+      taxMinor: (ec16Evaluation?.taxMinor ?? 0n).toString(),
+      taxAddedMinor: (ec16Evaluation?.taxAddedMinor ?? 0n).toString(),
       totalMinor: total.toString(),
       totalFormatted: `${(Number(total) / 100).toLocaleString("en-IN")} BDT`,
       customerName: dto.customerName,
       customerPhone: cleanPhone,
       deliveryAddress: dto.customerAddress,
+      // EC24b: success screen shows the digital-delivery note.
+      hasDigitalItems: !!p.digital,
     };
   }
 
@@ -682,7 +1053,18 @@ export class ProductsService {
 
   async update(organizationId: string, actorId: string, productId: string, dto: UpdateProductDto) {
     const existing = await this.getOne(organizationId, productId); // 404 + tenant scope
+    // EC23: validate the VAT override when present; the dto spread
+    // below carries it (including an explicit null = clear to default).
+    if ((dto as any).taxRateBps !== undefined) validateTaxRateBps((dto as any).taxRateBps);
     const data: any = { ...dto };
+    // EC24: normalize the expansion fields present in this update
+    // (tiers validated; release date parsed) and assert the
+    // digital/subscription conditionals against the MERGED state.
+    const ec24Fields = normalizeEc24Fields(dto, true);
+    Object.assign(data, ec24Fields);
+    if (Object.keys(ec24Fields).length) {
+      assertEc24Conditionals({ ...(existing as any), ...data });
+    }
     // EC3: tagIds are assignments, not a product column.
     const tagIds = (dto as any).tagIds as string[] | undefined;
     delete data.tagIds;
@@ -1218,6 +1600,62 @@ export class ProductsService {
       metadata: { action: dto.action, count: updated },
     });
     return { updated, failed, results };
+  }
+
+  /**
+   * CP5: batch store push — for each product, the SAME single-push
+   * path a product change uses (CatalogPushService.enqueueProductPush,
+   * which itself applies the full-manage / published / conflict
+   * rules per listing). Per-item failures never fail the batch:
+   * foreign/absent products report "not_found", products without
+   * any listing report "no_listings", and a throwing push reports
+   * its message. One audit row for the whole batch.
+   */
+  async pushBatch(organizationId: string, actorId: string, productIds: unknown) {
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      throw new BadRequestException("কমপক্ষে একটি পণ্য বেছে দিন");
+    }
+    if (productIds.length > 50) {
+      throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি পণ্য স্টোরে পাঠানো যায়");
+    }
+    const results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[] = [];
+    let enqueued = 0;
+    for (const rawId of productIds) {
+      const productId = String(rawId);
+      const product = await (this.prisma as any).product.findFirst({
+        where: { id: productId, organizationId },
+      }).catch(() => null);
+      if (!product) {
+        results.push({ productId, ok: false, error: "not_found" });
+        continue;
+      }
+      const listings = await (this.prisma as any).storeListing.findMany({
+        where: { organizationId, productId },
+      }).catch(() => []);
+      if (!listings || listings.length === 0) {
+        results.push({ productId, ok: false, error: "no_listings" });
+        continue;
+      }
+      if (!this.catalogPush) {
+        results.push({ productId, ok: false, error: "push_unavailable" });
+        continue;
+      }
+      try {
+        const r = await this.catalogPush.enqueueProductPush(organizationId, productId);
+        enqueued += r?.enqueued ?? 0;
+        results.push({ productId, ok: true, enqueued: r?.enqueued ?? 0, skipped: r?.skipped ?? 0 });
+      } catch (e) {
+        results.push({ productId, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "products.push_batch",
+      entityType: "Product",
+      metadata: { count: productIds.length, enqueued },
+    });
+    return { results, enqueued };
   }
 
   // ---------- EC3: duplicate ----------

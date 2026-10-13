@@ -13,6 +13,8 @@ import { CommerceModule } from "../commerce/commerce.module";
 
 import { PackingScanController } from "./packing-scan.controller";
 import { PackingScanService } from "./packing-scan.service";
+import { ProductReviewsService } from "./product-reviews.service";
+import { ProductReviewsController, PublicProductReviewsController } from "./product-reviews.controller";
 
 // Milestone 65: manual orders enter via the integrations upsert.
 // Sales & Data S2: InventoryModule supplies the stock-restore
@@ -26,6 +28,6 @@ import { PackingScanService } from "./packing-scan.service";
 // CX8 (owner series): PackingScanController/Service for parcel
 // packing verification. EC5/EC9: CommerceModule supplies the
 // fulfillment/RMA services OrdersService composes.
-@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule], controllers: [OrdersController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController], providers: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService], exports: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService] })
+@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule], controllers: [OrdersController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController], providers: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService], exports: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService] })
 export class OrdersModule {}
 

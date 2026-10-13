@@ -11,6 +11,27 @@ import { WOO_WEBHOOK_TOPICS, registerWooWebhooks } from "./woocommerce/woo-webho
 import { ListingsService } from "./commerce/listings.service";
 import { normalizeWooProduct, normalizeWooVariation, normalizeWooOrder, NormalizedOrder, NormalizedProduct } from "./woocommerce/normalize";
 import { normalizeWooCustomer, upsertSyncedCustomer } from "./customer-sync";
+import { ShopifyGraphQLClient } from "./shopify/shopify-graphql.client";
+
+function stripReviewHtml(html: unknown): string | null {
+  if (typeof html !== "string") return null;
+  const out = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return out || null;
+}
+
+/** EC15 fixture shape for a Shopify reviews metafield value: a
+ * JSON array of { id?, authorName?|author?|reviewer?, rating,
+ * text?|review?|comment?, createdAt?|date? }. Anything else is
+ * not parseable review data. */
+export function parseShopifyReviewMetafield(value: unknown): any[] | null {
+  let parsed: any = value;
+  if (typeof value === "string") {
+    try { parsed = JSON.parse(value); } catch { return null; }
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out = parsed.filter((e: any) => e && Number.isInteger(Number(e.rating)) && Number(e.rating) >= 1 && Number(e.rating) <= 5);
+  return out.length ? out : null;
+}
 
 const MAX_SYNC_PAGES = 10; // 10 pages x 100 = at most 1000 records per manual sync run
 const PER_PAGE = 100;
@@ -516,7 +537,14 @@ export class IntegrationsService {
   async upsertOrder(organizationId: string, storeId: string | null, o: NormalizedOrder, source = "woocommerce"): Promise<"created" | "updated"> {
     // Customer: match by store external id, then email, within this org only.
     let customerId: string | null = null;
-    if (o.customer.externalId || o.customer.email) {
+    // EC24c: a pre-resolved customerId (verified in-org) wins.
+    if ((o as any).customerId) {
+      const pinned = await (this.prisma as any).customer.findFirst({
+        where: { id: (o as any).customerId, organizationId },
+      }).catch(() => null);
+      if (pinned) customerId = pinned.id;
+    }
+    if (!customerId && (o.customer.externalId || o.customer.email)) {
       let customer = null;
       if (o.customer.externalId) {
         customer = await (this.prisma as any).customer.findFirst({ where: { organizationId, source: source, externalId: o.customer.externalId } });
@@ -545,6 +573,9 @@ export class IntegrationsService {
       subtotalMinor: o.subtotalMinor, shippingMinor: o.shippingMinor, discountMinor: o.discountMinor,
       taxMinor: o.taxMinor, totalMinor: o.totalMinor, refundedMinor: o.refundedMinor,
       placedAt: o.placedAt ?? null,
+      // EC24c: stamp the subscription link only when the caller
+      // supplies one — store syncs never clear an existing link.
+      ...((o as any).subscriptionId ? { subscriptionId: (o as any).subscriptionId } : {}),
     };
     const existing = await (this.prisma as any).order.findFirst({
       where: { organizationId, source: source, externalId: o.externalId },
@@ -570,7 +601,15 @@ export class IntegrationsService {
     for (const item of o.items) {
       let productId: string | null = null;
       let resolvedProduct: any = null;
-      if (item.externalProductId) {
+      if ((item as any).productId) {
+        // EC24: direct internal link — org-scoped, foreign id = no link.
+        const prod = await (this.prisma as any).product.findFirst({
+          where: { organizationId, id: (item as any).productId },
+        });
+        productId = prod?.id ?? null;
+        resolvedProduct = prod ?? null;
+      }
+      if (!productId && item.externalProductId) {
         const prod = await (this.prisma as any).product.findFirst({
           where: { organizationId, source: source, externalId: item.externalProductId },
         });
@@ -589,6 +628,13 @@ export class IntegrationsService {
           externalVariationId: item.externalVariationId ?? null,
           name: item.name, sku: item.sku ?? null, quantity: item.quantity,
           priceMinor: item.priceMinor, totalMinor: item.totalMinor,
+          // EC24a: pre-order stamp (additive; default false).
+          isPreorder: !!(item as any).isPreorder,
+          // EC29: gift / bundle stamps (additive; defaults
+          // false / null / null when the caller sets neither).
+          isGift: !!(item as any).isGift,
+          bundleId: (item as any).bundleId ?? null,
+          bundleName: (item as any).bundleName ?? null,
         },
       });
       if (productId && item.externalProductId) {
@@ -687,6 +733,164 @@ export class IntegrationsService {
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
       throw new BadRequestException(`Customer sync failed: ${message}`);
+    }
+  }
+
+  // ---------- EC15: Review sync ----------
+  /** Build the Shopify GraphQL client for the reviews probe.
+   * Separated so specs can stub it; returns null when the stored
+   * credential carries no usable access token. */
+  async buildShopifyGraphqlClientForReviews(integration: any): Promise<any | null> {
+    try {
+      if (!integration?.store?.url || !integration?.credential?.encryptedData) return null;
+      const secrets: any = decryptJson<any>(integration.credential.encryptedData);
+      if (!secrets?.accessToken) return null;
+      return new ShopifyGraphQLClient(integration.store.url, secrets.accessToken);
+    } catch { return null; }
+  }
+
+  private async upsertExternalReview(data: any): Promise<"created" | "updated"> {
+    const existing = await (this.prisma as any).externalReview?.findFirst({
+      where: { storeId: data.storeId, externalId: data.externalId },
+    }).catch(() => null);
+    if (existing) {
+      await (this.prisma as any).externalReview.update({ where: { id: existing.id }, data });
+      return "updated";
+    }
+    await (this.prisma as any).externalReview.create({ data });
+    return "created";
+  }
+
+  async syncReviews(organizationId: string, actorId: string, integrationId: string) {
+    const integration = await this.getIntegration(organizationId, integrationId);
+    if (integration.provider === "shopify") return this.syncShopifyReviews(organizationId, actorId, integration);
+    if (integration.provider !== "woocommerce") {
+      throw new BadRequestException("Review sync is only available for WooCommerce/Shopify integrations");
+    }
+    const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "reviews", status: "RUNNING" } });
+    const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
+    try {
+      if (!integration.storeId) throw new BadRequestException("Integration has no store");
+      const client = await this.buildClient(integration);
+      for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
+        const res = await client.listProductReviews(page, PER_PAGE);
+        for (const review of res.items) {
+          stats.fetched++;
+          const rating = Number(review?.rating);
+          if (!review?.id || !review?.product_id || !Number.isInteger(rating) || rating < 1 || rating > 5) { stats.skipped++; continue; }
+          const listing = await (this.prisma as any).storeListing?.findFirst({
+            where: { storeId: integration.storeId, externalId: String(review.product_id) },
+          }).catch(() => null);
+          if (!listing?.productId) { stats.skipped++; continue; }
+          const result = await this.upsertExternalReview({
+            organizationId, storeId: integration.storeId, productId: listing.productId,
+            externalId: String(review.id),
+            authorName: review.reviewer ?? null,
+            rating,
+            text: stripReviewHtml(review.review),
+            // Woo core reviews carry no review photos — reviewer_avatar_urls
+            // are avatars and must NOT be presented as review images.
+            imageUrls: [],
+            status: review.status && review.status !== "approved" ? "hidden" : "visible",
+            createdAtRemote: review.date_created_gmt ? new Date(review.date_created_gmt + "Z") : review.date_created ? new Date(review.date_created) : null,
+          });
+          stats[result]++;
+        }
+        if (page >= res.totalPages) break;
+      }
+      const done = await (this.prisma as any).syncJob.update({
+        where: { id: job.id }, data: { status: "COMPLETED", ...stats, completedAt: new Date() },
+      });
+      await (this.prisma as any).integration.update({
+        where: { id: integrationId }, data: { lastSyncAt: new Date(), status: "CONNECTED", lastError: null },
+      });
+      await this.audit.log({ organizationId, userId: actorId, action: "sync.reviews", entityType: "SyncJob", entityId: job.id, metadata: { ...stats, platform: "woocommerce" } });
+      return { ...done, total: stats.fetched, platform: "woocommerce" };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Sync failed";
+      await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } }).catch(() => undefined);
+      await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } }).catch(() => undefined);
+      throw new BadRequestException(`Review sync failed: ${message}`);
+    }
+  }
+
+  /**
+   * EC15 Shopify probe: Shopify core has no product-reviews API.
+   * The only in-store place reviews can live without a reviews
+   * app is a product metafield, so we probe listed products'
+   * metafields (global/reviews namespaces). No parseable data —
+   * or an unusable client — is a NORMAL unsupported result,
+   * never a fake success and never an exception.
+   */
+  private async syncShopifyReviews(organizationId: string, actorId: string, integration: any) {
+    const integrationId = integration.id;
+    const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "reviews", status: "RUNNING" } });
+    const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
+    const unsupported = async () => {
+      const marker = "unsupported_no_reviews_source";
+      const done = await (this.prisma as any).syncJob.update({
+        where: { id: job.id },
+        data: { status: "COMPLETED", ...stats, error: `shopify:${marker}`, completedAt: new Date() },
+      }).catch(() => ({ id: job.id, status: "COMPLETED", ...stats }));
+      await this.audit.log({ organizationId, userId: actorId, action: "sync.reviews", entityType: "SyncJob", entityId: job.id, metadata: { platform: "shopify", reviews: marker, ...stats } }).catch(() => undefined);
+      return { ...done, platform: "shopify", reviews: marker, total: stats.fetched };
+    };
+    try {
+      if (!integration.storeId) return unsupported();
+      const client = await this.buildShopifyGraphqlClientForReviews(integration);
+      if (!client || typeof client.request !== "function") return unsupported();
+      const query = `query { products(first: 20) { edges { node { id legacyResourceId metafields(first: 50) { edges { node { namespace key value } } } } } } }`;
+      let data: any;
+      try { data = await client.request(query); } catch { return unsupported(); }
+      const edges = data?.products?.edges ?? [];
+      let foundAny = false;
+      for (const edge of edges) {
+        const node = edge?.node;
+        if (!node) continue;
+        const externalProductId = node.legacyResourceId != null ? String(node.legacyResourceId) : null;
+        const mfEdges = node.metafields?.edges ?? [];
+        for (const mf of mfEdges) {
+          const field = mf?.node;
+          if (!field) continue;
+          const ns = String(field.namespace ?? "");
+          const key = String(field.key ?? "");
+          if (!(ns === "reviews" || (ns === "global" && key.toLowerCase().includes("review")))) continue;
+          const entries = parseShopifyReviewMetafield(field.value);
+          if (!entries) continue;
+          foundAny = true;
+          if (!externalProductId) { stats.skipped += entries.length; continue; }
+          const listing = await (this.prisma as any).storeListing?.findFirst({
+            where: { storeId: integration.storeId, externalId: externalProductId },
+          }).catch(() => null);
+          if (!listing?.productId) { stats.skipped += entries.length; continue; }
+          for (const entry of entries) {
+            stats.fetched++;
+            const externalId = String(entry.id ?? entry.externalId ?? `${externalProductId}:${stats.fetched}:${entry.authorName ?? entry.author ?? ""}:${entry.rating}`);
+            const result = await this.upsertExternalReview({
+              organizationId, storeId: integration.storeId, productId: listing.productId,
+              externalId,
+              authorName: entry.authorName ?? entry.author ?? entry.reviewer ?? null,
+              rating: Number(entry.rating),
+              text: stripReviewHtml(entry.text ?? entry.review ?? entry.comment ?? null),
+              imageUrls: Array.isArray(entry.imageUrls) ? entry.imageUrls.filter((x: any) => typeof x === "string") : [],
+              status: "visible",
+              createdAtRemote: entry.createdAt || entry.date ? new Date(entry.createdAt ?? entry.date) : null,
+            });
+            stats[result]++;
+          }
+        }
+      }
+      if (!foundAny) return unsupported();
+      const done = await (this.prisma as any).syncJob.update({
+        where: { id: job.id }, data: { status: "COMPLETED", ...stats, completedAt: new Date() },
+      });
+      await this.audit.log({ organizationId, userId: actorId, action: "sync.reviews", entityType: "SyncJob", entityId: job.id, metadata: { ...stats, platform: "shopify" } });
+      return { ...done, total: stats.fetched, platform: "shopify" };
+    } catch (e) {
+      // Probe failures degrade to the honest unsupported result —
+      // Shopify simply may have no reviews source configured.
+      this.logger.warn(`shopify reviews probe failed: ${e instanceof Error ? e.message : "unknown"}`);
+      return unsupported();
     }
   }
 

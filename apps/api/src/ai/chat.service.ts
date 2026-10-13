@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { LlmFactory } from "./llm/llm.factory";
+import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { ToolsService } from "./tools.service";
 import { ProposalsService } from "./proposals.service";
 import { keywordPlan, sanitizePlan, detectLanguage, TOOL_CATALOG, TOOL_ROLES, PlannedToolCall } from "./planner";
@@ -295,7 +295,7 @@ export class ChatService {
     const persona = (conv as any)?.persona ?? "general";
     await this.checkDailyLimit(organizationId);
     const language = detectLanguage(content);
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     await (this.prisma as any).aIMessage.create({
       data: { conversationId, role: "user", content: content.slice(0, 8000), ...(attachment ? { attachmentName: attachment.name.slice(0, 120), attachmentKind: attachment.kind === "image" ? "image" : "file", attachmentText: attachment.text.slice(0, 12000) } : {}) },
@@ -504,7 +504,7 @@ export class ChatService {
     const persona = (conv as any)?.persona ?? "general";
     await this.checkDailyLimit(organizationId);
     const language = detectLanguage(content);
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     await (this.prisma as any).aIMessage.create({
       data: { conversationId, role: "user", content: content.slice(0, 8000), ...(attachment ? { attachmentName: attachment.name.slice(0, 120), attachmentKind: attachment.kind === "image" ? "image" : "file", attachmentText: attachment.text.slice(0, 12000) } : {}) },

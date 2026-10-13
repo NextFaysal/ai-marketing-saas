@@ -86,6 +86,11 @@ function stubShopify() {
     lastProduct: null as any,
     inventoryQuantity: null as number | null,
     inventorySets: [] as any[],
+    // CP2 staged-upload fixtures.
+    stagedFail: false,
+    events: [] as string[],
+    lastFiles: null as any,
+    stagedInputs: [] as any[],
   };
 
   const respond = (data: any) => ({
@@ -96,10 +101,44 @@ function stubShopify() {
   });
 
   const fn = async (_url: string, init: any = {}) => {
+    const url = String(_url);
+    // CP2: the staged target PUT carries raw bytes (not JSON).
+    if ((init.method ?? "GET").toUpperCase() === "PUT" && url.includes("staged-uploads.example.com")) {
+      state.events.push("put");
+      if (!init.body) throw new Error("stub shopify: staged PUT without bytes");
+      return { ok: true, status: 200, text: async () => "", json: async () => ({}) };
+    }
+    // CP2: fetching the off-CDN source image bytes.
+    if (url.startsWith("https://images.example.com/")) {
+      state.events.push("fetch-src");
+      return {
+        ok: true, status: 200,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+        text: async () => "", json: async () => ({}),
+      };
+    }
     const parsed = JSON.parse(init.body);
     const query: string = parsed.query;
     const variables = parsed.variables ?? {};
     calls.push({ query, variables });
+
+    if (query.includes("stagedUploadsCreate")) {
+      state.events.push("stagedCreate");
+      state.stagedInputs.push(variables.input);
+      if (state.stagedFail) {
+        return respond({ stagedUploadsCreate: { stagedTargets: [], userErrors: [{ field: ["input"], message: "Staged upload denied" }] } });
+      }
+      return respond({
+        stagedUploadsCreate: {
+          stagedTargets: [{
+            url: "https://staged-uploads.example.com/target/1",
+            resourceUrl: "https://cdn.shopify.com/s/files/staged-1.jpg",
+            parameters: [],
+          }],
+          userErrors: [],
+        },
+      });
+    }
 
     if (query.includes("inventorySetQuantities")) {
       if (state.productSetUserErrors && query.includes("inventorySetQuantities") && false) {
@@ -112,10 +151,12 @@ function stubShopify() {
       return respond({ inventorySetQuantities: { inventoryAdjustmentGroup: { id: "gid://shopify/InventoryAdjustmentGroup/1" }, userErrors: [] } });
     }
     if (query.includes("productSet")) {
+      state.events.push("productSet");
       if (state.productSetUserErrors) {
         return respond({ productSet: { product: null, userErrors: state.productSetUserErrors } });
       }
       const input = variables.input;
+      state.lastFiles = input.files ?? null;
       const gid = input.id ?? "gid://shopify/Product/7001";
       const variants = (input.variants ?? []).map((v: any, i: number) => ({
         id: `gid://shopify/ProductVariant/${8001 + i}`,
@@ -284,6 +325,67 @@ describe("shopify-catalog pushProduct", () => {
     const listing = prisma.storeListing.rows[0];
     expect(listing.syncStatus).toBe("failed");
     expect(listing.lastSyncError).toBe("Title is too long; Variants are invalid");
+  });
+});
+
+describe("shopify-catalog CP2 staged uploads", () => {
+  function seedWithImages(prisma: any) {
+    seedSimpleProduct(prisma);
+    prisma.productImage.rows.push(
+      { id: "img-1", productId: "prod-1", url: "https://images.example.com/shirt.jpg", position: 0 },
+      { id: "img-2", productId: "prod-1", url: "https://cdn.shopify.com/s/files/existing.jpg", position: 1 },
+    );
+  }
+
+  it("staged sequence runs create -> fetch bytes -> PUT -> productSet, CDN image skipped, outcomes recorded", async () => {
+    const prisma = fakePrisma();
+    seedWithImages(prisma);
+    const shop = stubShopify();
+
+    const res = await shopifyCatalog.pushProduct({
+      prisma, organizationId: "org-1", store, integration,
+      payload: { listingId: "lst-1", productId: "prod-1" }, fetchFn: shop.fn,
+    });
+
+    expect(res.ok).toBe(true);
+    // Full staged sequence, in order, before the productSet write.
+    expect(shop.state.events).toEqual(["stagedCreate", "fetch-src", "put", "productSet"]);
+    expect(shop.state.stagedInputs).toEqual([
+      [{ resource: "IMAGE", filename: "shirt.jpg", mimeType: "image/jpeg", httpMethod: "PUT" }],
+    ]);
+    // The staged resourceUrl is attached in the SAME files slot;
+    // the CDN image goes through untouched.
+    expect(shop.state.lastFiles).toEqual([
+      { originalSource: "https://cdn.shopify.com/s/files/staged-1.jpg", contentType: "IMAGE" },
+      { originalSource: "https://cdn.shopify.com/s/files/existing.jpg", contentType: "IMAGE" },
+    ]);
+    expect(res.responseSummary.images).toEqual([
+      { src: "https://images.example.com/shirt.jpg", via: "staged" },
+      { src: "https://cdn.shopify.com/s/files/existing.jpg", via: "cdn" },
+    ]);
+  });
+
+  it("staged failure falls back to the original URL and records url_fallback with the error", async () => {
+    const prisma = fakePrisma();
+    seedWithImages(prisma);
+    const shop = stubShopify();
+    shop.state.stagedFail = true;
+
+    const res = await shopifyCatalog.pushProduct({
+      prisma, organizationId: "org-1", store, integration,
+      payload: { listingId: "lst-1", productId: "prod-1" }, fetchFn: shop.fn,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(shop.state.events).not.toContain("put");
+    expect(shop.state.lastFiles).toEqual([
+      { originalSource: "https://images.example.com/shirt.jpg", contentType: "IMAGE" },
+      { originalSource: "https://cdn.shopify.com/s/files/existing.jpg", contentType: "IMAGE" },
+    ]);
+    expect(res.responseSummary.images).toEqual([
+      { src: "https://images.example.com/shirt.jpg", via: "url_fallback", error: "Staged upload denied" },
+      { src: "https://cdn.shopify.com/s/files/existing.jpg", via: "cdn" },
+    ]);
   });
 });
 

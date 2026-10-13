@@ -1,0 +1,12 @@
+-- EC27 (Storefront SEO & Discovery): NO schema change.
+--
+-- Sitemap lastmod, JSON-LD structured data, canonical/OG meta,
+-- the upgraded shop search (name/description/SKU/category-name)
+-- and bought-together are all computed at read time from rows
+-- that already exist (Product.updatedAt, EC15 unified reviews,
+-- Order/OrderItem, CourierShipment). This migration is recorded
+-- deliberately so the Phase-3 migration sequence stays explicit
+-- and auditable; it changes nothing in the database.
+--
+-- NOT run on any real DB from the build sandbox; required at deploy.
+SELECT 1;

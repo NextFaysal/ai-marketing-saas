@@ -4,6 +4,7 @@ import { AuditService } from "../audit/audit.service";
 import { RiskService } from "../orders/risk.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { CustomFieldsService, renderCustomFieldValue } from "../crm/custom-fields.service";
+import { ErasureService } from "./erasure.service";
 
 const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(" ") || c.name || null;
 
@@ -20,7 +21,18 @@ export class CustomersService {
     private readonly audit: AuditService,
     @Optional() private readonly risk?: RiskService,
     @Optional() private readonly customFields?: CustomFieldsService,
+    // CP6: shared erasure logic (also injected by ShopifyService
+    // for GDPR customers/redact). Optional + fallback so existing
+    // positional spec constructions keep working.
+    @Optional() private readonly erasure?: ErasureService,
   ) {}
+
+  /** CP6: GDPR deep erasure — see ErasureService for the exact
+   *  erase-vs-keep contract. OWNER/ADMIN only at the route. */
+  async eraseCustomer(organizationId: string, actorId: string, customerId: string) {
+    const svc = this.erasure ?? new ErasureService(this.prisma as any, this.audit);
+    return svc.eraseCustomer(organizationId, actorId, customerId);
+  }
 
   async list(organizationId: string, q?: string) {
     return this.rowsWithStats(organizationId, q, 100);
@@ -45,6 +57,8 @@ export class CustomersService {
         phone: c.phone, email: c.email, source: c.source, createdAt: c.createdAt,
         // CRM C4: carried through so the export can append def columns.
         customFields: c.customFields ?? null,
+        // EC24d: wholesale flag for the customers list/toggle.
+        isWholesale: !!c.isWholesale,
         orderCount: orders.length,
         totalSpentMinor: String(orders.reduce((s: bigint, o: any) => s + BigInt(o.totalMinor), 0n)),
       };
@@ -94,6 +108,8 @@ export class CustomersService {
     firstName?: string | null; lastName?: string | null;
     email?: string | null; phone?: string | null;
     customFields?: Record<string, unknown> | null;
+    /** EC24d: staff-set wholesale flag. */
+    isWholesale?: boolean;
   }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
     if (!customer) throw new NotFoundException("Customer not found in this organization");
@@ -102,6 +118,7 @@ export class CustomersService {
     if (dto.lastName !== undefined) data.lastName = dto.lastName?.trim() || null;
     if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
     if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
+    if (dto.isWholesale !== undefined) data.isWholesale = !!dto.isWholesale;
     if (dto.customFields !== undefined) {
       if (dto.customFields === null) data.customFields = null;
       else if (this.customFields) {

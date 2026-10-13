@@ -17,9 +17,12 @@ import { ReportSharesModule } from "../reports/report-shares.module";
 import { CourierModule } from "../courier/courier.module";
 import { OrdersModule } from "../orders/orders.module";
 import { CommerceModule } from "../commerce/commerce.module";
+import { SubscriptionsModule } from "../subscriptions/subscriptions.module";
+import { StorefrontModule } from "../storefront/storefront.module";
+import { InstallmentsModule } from "../installments/installments.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule, SubscriptionsModule, StorefrontModule, InstallmentsModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService],
   exports: [AutomationService],

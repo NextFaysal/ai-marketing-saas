@@ -263,6 +263,104 @@ const INVENTORY_SET = `mutation ecInventorySet($input: InventorySetQuantitiesInp
   }
 }`;
 
+/* ------------------------------------------------------------------ */
+/* CP2: staged uploads for off-CDN images                              */
+/*                                                                     */
+/* Shopify's documented staged-upload contract for IMAGE resources:    */
+/* stagedUploadsCreate (httpMethod PUT) -> PUT the raw image bytes     */
+/* to the target url -> the returned resourceUrl identifies the        */
+/* staged file. The existing push mechanism is productSet `files`      */
+/* ([{ originalSource, contentType: "IMAGE" }]); a staged resourceUrl   */
+/* is attached in that SAME originalSource slot, so the write path      */
+/* (one productSet call + read-back) is unchanged. Any per-image        */
+/* failure falls back to passing the original URL exactly as before    */
+/* CP2, and the outcome is recorded on the result summary.             */
+/* ------------------------------------------------------------------ */
+
+const STAGED_UPLOADS_CREATE = `mutation ecStagedUploadsCreate($input: [StagedUploadInput!]!) {
+  stagedUploadsCreate(input: $input) {
+    stagedTargets { url resourceUrl parameters { name value } }
+    userErrors { field message }
+  }
+}`;
+
+export interface ProductImageRecord {
+  src: string;
+  via: "staged" | "url_fallback" | "cdn";
+  error?: string;
+}
+
+function imageMimeType(src: string): string {
+  const path = (() => { try { return new URL(src).pathname.toLowerCase(); } catch { return src.toLowerCase(); } })();
+  if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".webp")) return "image/webp";
+  if (path.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+}
+
+function imageFilename(src: string): string {
+  try {
+    const base = new URL(src).pathname.split("/").filter(Boolean).pop();
+    if (base) return decodeURIComponent(base);
+  } catch { /* fall through */ }
+  return "image.jpg";
+}
+
+async function stagedUploadImage(
+  client: ShopifyGraphQLClient,
+  fetchFn: typeof fetch,
+  src: string,
+): Promise<string> {
+  const mimeType = imageMimeType(src);
+  const data = await client.request<any>(STAGED_UPLOADS_CREATE, {
+    input: [{ resource: "IMAGE", filename: imageFilename(src), mimeType, httpMethod: "PUT" }],
+  });
+  const payload = data?.stagedUploadsCreate;
+  const ue = userErrorsOf(payload);
+  if (ue) throw new Error(ue);
+  const target = payload?.stagedTargets?.[0];
+  if (!target?.url || !target?.resourceUrl) throw new Error("shopify_staged_upload_target_missing");
+  const srcRes: any = await fetchFn(src);
+  if (!srcRes?.ok) throw new Error(`staged_source_fetch_failed_${srcRes?.status ?? "unknown"}`);
+  const bytes = await srcRes.arrayBuffer();
+  const putRes: any = await fetchFn(target.url, {
+    method: "PUT",
+    headers: { "Content-Type": mimeType },
+    body: bytes,
+  });
+  if (!putRes?.ok) throw new Error(`staged_upload_put_failed_${putRes?.status ?? "unknown"}`);
+  return String(target.resourceUrl);
+}
+
+/** Resolve every product image to the source that goes into the
+ *  productSet files input, recording how each one got there. */
+async function resolveProductImages(
+  client: ShopifyGraphQLClient,
+  fetchFn: typeof fetch,
+  images: string[],
+): Promise<{ files: { originalSource: string; contentType: string }[]; records: ProductImageRecord[] }> {
+  const files: { originalSource: string; contentType: string }[] = [];
+  const records: ProductImageRecord[] = [];
+  for (const src of images) {
+    let host = "";
+    try { host = new URL(src).host; } catch { host = ""; }
+    if (host === "cdn.shopify.com") {
+      files.push({ originalSource: src, contentType: "IMAGE" });
+      records.push({ src, via: "cdn" });
+      continue;
+    }
+    try {
+      const resourceUrl = await stagedUploadImage(client, fetchFn, src);
+      files.push({ originalSource: resourceUrl, contentType: "IMAGE" });
+      records.push({ src, via: "staged" });
+    } catch (e) {
+      files.push({ originalSource: src, contentType: "IMAGE" });
+      records.push({ src, via: "url_fallback", error: errMsg(e) });
+    }
+  }
+  return { files, records };
+}
+
 function shopifyStatus(publishState: string): string {
   if (publishState === "published") return "ACTIVE";
   if (publishState === "archived") return "ARCHIVED";
@@ -300,8 +398,14 @@ export async function pushProduct(args: CatalogArgs): Promise<AdapterExecuteResu
       metafields.push({ namespace: "global", key: "description_tag", type: "single_line_text_field", value: content.seoDescription });
     }
     if (metafields.length > 0) input.metafields = metafields;
+    // CP2: off-CDN images go through staged uploads first (with a
+    // per-image URL fallback); the resolved sources land in the
+    // same productSet files input as before.
+    let imageRecords: ProductImageRecord[] = [];
     if (content.images.length > 0) {
-      input.files = content.images.map((url) => ({ originalSource: url, contentType: "IMAGE" }));
+      const resolvedImages = await resolveProductImages(client, (args.fetchFn ?? fetch) as typeof fetch, content.images);
+      imageRecords = resolvedImages.records;
+      input.files = resolvedImages.files;
     }
     if (content.variants.length > 0) {
       input.productOptions = [{ name: "Variant", values: content.variants.map((v) => ({ name: v.name })) }];
@@ -380,6 +484,7 @@ export async function pushProduct(args: CatalogArgs): Promise<AdapterExecuteResu
 
     // Inline inventory: tracked quantities + a mapped default location.
     const summary: Record<string, any> = { remoteId };
+    if (imageRecords.length > 0) summary.images = imageRecords;
     {
       const quantities: { inventoryItemId: string; quantity: number }[] = [];
       if (content.variants.length > 0) {

@@ -66,6 +66,47 @@ describe("StoreHealthService", () => {
     expect(out.checks.find((c) => c.key === "connection")?.status).toBe("pass");
   });
 
+  it("CP3: woo weight unit is read from settings/general and persisted when it differs", async () => {
+    delete process.env.API_PUBLIC_URL;
+    globalThis.fetch = (async (url: any) => {
+      const u = String(url);
+      const respond = (data: any) => ({ ok: true, status: 200, headers: new Headers(), json: async () => data, text: async () => JSON.stringify(data) });
+      if (u.includes("/settings/general")) return respond([{ id: "woocommerce_weight_unit", value: "lb" }, { id: "woocommerce_dimension_unit", value: "cm" }]);
+      if (u.includes("/system_status")) return respond({ environment: { site_title: "Shop", version: "6.5" }, database: { wc_database_version: "8.0" } });
+      return respond({});
+    }) as any;
+    const updates: any[] = [];
+    const fakePrisma: any = { store: { update: async (args: any) => { updates.push(args); return { id: args.where.id, ...args.data }; } } };
+    const integration = wooIntegration({ store: { id: "store-1", url: "https://shop.example.com", currency: "BDT", weightUnit: "kg" } });
+    const svc = new StoreHealthService(fakeIntegrations(integration), {} as any, fakePrisma);
+    const out = await svc.getHealth("org-1", "int-woo");
+    expect(updates).toEqual([{ where: { id: "store-1" }, data: { weightUnit: "lb" } }]);
+    const check = out.checks.find((c) => c.key === "weight_unit");
+    expect(check?.status).toBe("pass");
+    expect(check?.evidence).toContain("lb");
+  });
+
+  it("CP3: a failing settings read is failure-isolated — health returns, stored unit kept", async () => {
+    delete process.env.API_PUBLIC_URL;
+    globalThis.fetch = (async (url: any) => {
+      const u = String(url);
+      if (u.includes("/settings/general")) throw new Error("settings boom");
+      if (u.includes("/system_status")) {
+        return { ok: true, status: 200, headers: new Headers(), json: async () => ({ environment: { site_title: "Shop", version: "6.5" }, database: {} }), text: async () => "" };
+      }
+      throw new Error(`unexpected ${u}`);
+    }) as any;
+    const updates: any[] = [];
+    const fakePrisma: any = { store: { update: async (args: any) => { updates.push(args); return {}; } } };
+    const integration = wooIntegration({ store: { id: "store-1", url: "https://shop.example.com", currency: "BDT", weightUnit: "kg" } });
+    const svc = new StoreHealthService(fakeIntegrations(integration), {} as any, fakePrisma);
+    const out = await svc.getHealth("org-1", "int-woo");
+    expect(out.checks.find((c) => c.key === "connection")?.status).toBe("pass");
+    expect(out.checks.find((c) => c.key === "weight_unit")).toBeUndefined();
+    expect(updates).toHaveLength(0);
+    expect(integration.store.weightUnit).toBe("kg");
+  });
+
   it("shopify missing scopes are named verbatim in evidence", async () => {
     delete process.env.API_PUBLIC_URL;
     const integration = {

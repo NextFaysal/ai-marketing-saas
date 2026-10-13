@@ -237,6 +237,64 @@ async function seedVariableProduct(prisma: any) {
   });
 }
 
+describe("CP3 weightInUnit + payload weight", () => {
+  it("conversion table for 1000g", () => {
+    expect(wooCatalog.weightInUnit(1000, "kg")).toBe("1");
+    expect(wooCatalog.weightInUnit(1000, "g")).toBe("1000");
+    expect(wooCatalog.weightInUnit(1000, "lb")).toBe("2.2");
+    expect(wooCatalog.weightInUnit(1000, "oz")).toBe("35.27");
+    // null/unknown unit = legacy kg behaviour.
+    expect(wooCatalog.weightInUnit(1000, null)).toBe("1");
+    expect(wooCatalog.weightInUnit(1500, undefined)).toBe("1.5");
+    expect(wooCatalog.weightInUnit(1500, "stone")).toBe("1.5");
+  });
+
+  function seedSimple(prisma: any, weightGrams: number | null) {
+    prisma.product.rows.push({
+      id: "prod-w", organizationId: "org-1", name: "Scale Item", sku: "W-1", description: null,
+      priceMinor: 10000n, compareAtMinor: null, currency: "BDT", stockQuantity: 2, imageUrl: null,
+      category: null, categoryId: null, barcode: null, weightGrams,
+      lengthCm: null, widthCm: null, heightCm: null, seoTitle: null, seoDescription: null,
+    });
+    prisma.storeListing.rows.push({
+      id: "lst-w", organizationId: "org-1", storeId: "store-1", productId: "prod-w", externalId: "",
+      externalVariantMap: null, publishState: "published", channelPriceMinor: null, channelStock: null,
+      syncStatus: "synced", lastSyncError: null, lastPushedHash: null,
+      saleStartsAt: null, saleEndsAt: null, saleActive: false,
+    });
+  }
+
+  it.each([
+    ["kg", "1"], ["g", "1000"], ["lb", "2.2"], ["oz", "35.27"],
+  ])("payload weight uses the store's unit (%s -> %s for 1000g)", async (unit, expected) => {
+    const prisma = fakePrisma();
+    seedSimple(prisma, 1000);
+    const server = stubWooServer();
+    const res = await wooCatalog.pushProduct({
+      prisma, organizationId: "org-1",
+      store: { ...store, weightUnit: unit }, integration,
+      payload: { listingId: "lst-w", productId: "prod-w" }, fetchFn: server.fn,
+    });
+    expect(res.ok).toBe(true);
+    const createCall = server.calls.find((c) => c.method === "POST" && c.path === "/products");
+    expect(createCall!.body.weight).toBe(expected);
+  });
+
+  it("weight field is omitted when the product has no weightGrams", async () => {
+    const prisma = fakePrisma();
+    seedSimple(prisma, null);
+    const server = stubWooServer();
+    const res = await wooCatalog.pushProduct({
+      prisma, organizationId: "org-1",
+      store: { ...store, weightUnit: "lb" }, integration,
+      payload: { listingId: "lst-w", productId: "prod-w" }, fetchFn: server.fn,
+    });
+    expect(res.ok).toBe(true);
+    const createCall = server.calls.find((c) => c.method === "POST" && c.path === "/products");
+    expect("weight" in createCall!.body).toBe(false);
+  });
+});
+
 describe("woo-catalog pushProduct", () => {
   it("creates a variable product: batch variations, taxonomy create-on-miss, read-back -> listing synced with variant map", async () => {
     const prisma = fakePrisma();

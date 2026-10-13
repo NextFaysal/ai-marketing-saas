@@ -43,11 +43,23 @@ import { Cx8Module } from "./cx8/cx8.module";
 import { CommerceModule } from "./commerce/commerce.module";
 import { FulfillmentModule } from "./fulfillment/fulfillment.module";
 import { StorefrontModule } from "./storefront/storefront.module";
+import { LandingsModule } from "./landings/landings.module";
+import { FeedsModule } from "./feeds/feeds.module";
+import { PurchasingModule } from "./purchasing/purchasing.module";
+import { WarehouseModule } from "./warehouse/warehouse.module";
+import { DeliveryModule } from "./delivery/delivery.module";
+import { TaxModule } from "./tax/tax.module";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+import { SubscriptionsModule } from "./subscriptions/subscriptions.module";
+import { ConnectionsModule } from "./connections/connections.module";
+import { InstallmentsModule } from "./installments/installments.module";
+import { AffiliatesModule } from "./affiliates/affiliates.module";
+import { PosModule } from "./pos/pos.module";
 import { JwtAuthGuard } from "./common/jwt-auth.guard";
 import { ThrottlerGuard } from "./common/throttler.guard";
 
 @Module({
-  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule, Cx8Module, CommerceModule, FulfillmentModule, StorefrontModule],
+  imports: [PrismaModule, AuditModule, AuthModule, OrganizationsModule, HealthModule, ProductsModule, ImportsModule, KnowledgeModule, IntegrationsModule, OrdersModule, TrackingModule, AttributionModule, AdsModule, AnalyticsModule, AiModule, InboxModule, CrmModule, CompetitorsModule, CampaignsModule, AutomationModule, EventsModule, MessagingModule, WorkflowsModule, CourierModule, CustomersModule, ConversionsModule, OfflineConversionsModule, PortfolioModule, AdminModule, CreativesModule, AudiencesModule, CatalogsModule, PublishingModule, ReportSharesModule, PaymentsModule, SupportModule, FeedbackModule, InventoryModule, SocialModule, Cx8Module, CommerceModule, FulfillmentModule, StorefrontModule, LandingsModule, FeedsModule, PurchasingModule, WarehouseModule, DeliveryModule, TaxModule, ReconciliationModule, SubscriptionsModule, ConnectionsModule, InstallmentsModule, AffiliatesModule, PosModule],
   // Milestone 61: the throttler runs BEFORE the JWT guard so
   // brute force is rejected before any password verification.
   providers: [

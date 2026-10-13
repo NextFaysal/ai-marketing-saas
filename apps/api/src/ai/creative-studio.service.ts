@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { LlmFactory } from "./llm/llm.factory";
+import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { estimateTokens } from "./llm/llm.types";
 import { CampaignsService } from "../campaigns/campaigns.service";
 import { policyFindingsForText } from "../campaigns/policy-check";
@@ -102,7 +102,7 @@ export class CreativeStudioService {
     if (dto.tone) facts.push(`Tone: ${dto.tone}`);
     const factsText = facts.join("\n");
 
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     let variants: StudioVariantInput[] = [];
     let notice: string | undefined;

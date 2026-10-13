@@ -17,6 +17,8 @@ interface Detail {
     id: string; name?: string | null; firstName?: string | null; lastName?: string | null;
     phone?: string | null; email?: string | null; source: string; createdAt: string; mergedIntoId?: string | null;
     customFields?: Record<string, unknown> | null;
+    // EC24d: staff-set wholesale flag.
+    isWholesale?: boolean;
   };
   orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; totalMinor: string; createdAt: string }[];
   conversations: { id: string; channel: string; status: string; lastMessagePreview?: string | null; lastMessageAt?: string | null; unreadCount: number }[];
@@ -47,11 +49,15 @@ export default function CustomersPage() {
   const [mergeTarget, setMergeTarget] = useState("");
   const [custDefs, setCustDefs] = useState<CustomFieldDef[]>([]);
   const [editForm, setEditForm] = useState({ firstName: "", lastName: "", email: "", phone: "" });
+  // EC24d: wholesale toggle in the customer edit form.
+  const [editWholesale, setEditWholesale] = useState(false);
   const [editCf, setEditCf] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
+  // CP6: GDPR erasure report for the last erased customer.
+  const [eraseReport, setEraseReport] = useState<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number } | null>(null);
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
@@ -108,6 +114,7 @@ export default function CustomersPage() {
         firstName: d.customer.firstName ?? "", lastName: d.customer.lastName ?? "",
         email: d.customer.email ?? "", phone: d.customer.phone ?? "",
       });
+      setEditWholesale(!!d.customer.isWholesale);
       setEditCf(customFieldsToRaw(custDefs, d.customer.customFields));
     }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
@@ -125,6 +132,7 @@ export default function CustomersPage() {
         body: JSON.stringify({
           firstName: editForm.firstName || null, lastName: editForm.lastName || null,
           email: editForm.email || null, phone: editForm.phone || null,
+          isWholesale: editWholesale,
           ...(Object.keys(customFields).length ? { customFields } : {}),
         }),
       });
@@ -133,6 +141,24 @@ export default function CustomersPage() {
       setNotice("কাস্টমারের তথ্য সেভ হয়েছে।");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // CP6: GDPR deep erasure — irreversible PII removal. Order
+  // financial records stay; the confirm dialog says so plainly.
+  async function doErase() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    if (!confirm("এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে। নিশ্চিত তো?")) return;
+    setBusy("erase"); setError(""); setNotice(""); setEraseReport(null);
+    try {
+      const report = await apiFetch<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number }>(
+        `/organizations/${orgId}/customers/${detail.customer.id}/erase`, { method: "POST" },
+      );
+      setEraseReport(report);
+      setNotice("কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।");
+      await load();
+      await open(report.customerId);
+    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
@@ -201,6 +227,17 @@ export default function CustomersPage() {
                   </label>
                   <button className="btn-warning" disabled={!mergeTarget || busy !== ""} onClick={doMerge}>{busy === "merge" ? "মার্জ হচ্ছে..." : "মার্জ করুন"}</button>
                 </div>
+                <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-red-100 pt-3">
+                  <button className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={doErase}>
+                    {busy === "erase" ? "মোছা হচ্ছে..." : "🗑️ ব্যক্তিগত তথ্য মুছে ফেলুন (GDPR)"}
+                  </button>
+                  <span className="text-xs text-slate-500">শুধু Owner/Admin পারবেন। অর্ডারের আর্থিক রেকর্ড থেকে যাবে, ব্যক্তিগত তথ্য থাকবে না।</span>
+                </div>
+                {eraseReport ? (
+                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    মোছার হিসাব: অর্ডার ঠিকানা মোছা হয়েছে {eraseReport.ordersAnonymized}টি · স্টোর পরিচিতি মোছা {eraseReport.identitiesDeleted}টি · রিভিউ পরিচয় গোপন {eraseReport.reviewsRedacted}টি · Abandoned checkout মোছা {eraseReport.abandonedCheckoutsDeleted}টি
+                  </p>
+                ) : null}
               </div>
               <div className="card space-y-3">
                 <h3 className="font-semibold">✏️ তথ্য সম্পাদনা</h3>
@@ -218,6 +255,10 @@ export default function CustomersPage() {
                     <input className="input mt-1" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
                   </label>
                   <CustomFieldsEditor defs={custDefs} raw={editCf} onChange={(k, v) => setEditCf({ ...editCf, [k]: v })} />
+                  <label className="flex items-center gap-2 text-sm md:col-span-2">
+                    <input type="checkbox" checked={editWholesale} onChange={(e) => setEditWholesale(e.target.checked)} />
+                    পাইকারি ক্রেতা (দোকানে চেকআউটে পাইকারি স্তরের দাম প্রযোজ্য হবে)
+                  </label>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>

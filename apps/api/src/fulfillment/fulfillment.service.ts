@@ -186,18 +186,134 @@ export class FulfillmentService {
       const createdToday = f.createdAt && new Date(f.createdAt).getTime() >= dayStart.getTime();
       return createdToday || f.status === "pending" || f.status === "packed";
     }).sort((a: any, b: any) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+    // EC21: bin-location enrichment (picking walk order). Stock
+    // is org-global, so bins resolve against ONE warehouse: the
+    // org's default active warehouse, falling back to the
+    // earliest-created active one. ALL bin logic is wrapped in
+    // try/catch — on ANY error (e.g. the EC21 tables missing on
+    // an older deploy) lines keep their original order with
+    // binCode "—" and the board never breaks.
+    let binWarehouse: any = null;
+    let binAssignments: any[] = [];
+    let binCodeById = new Map<string, string>();
+    let binReady = false;
+    try {
+      const warehouses: any[] = (((await (this.prisma as any).warehouse.findMany({
+        where: { organizationId, active: true },
+      })) ?? []) as any[]).slice().sort((a: any, b: any) =>
+        new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+      binWarehouse = warehouses.find((w: any) => w.isDefault === true) ?? warehouses[0] ?? null;
+      if (binWarehouse) {
+        binAssignments = ((await (this.prisma as any).productBinAssignment.findMany({
+          where: { organizationId, warehouseId: binWarehouse.id },
+        })) ?? []) as any[];
+        const bins: any[] = ((await (this.prisma as any).binLocation.findMany({
+          where: { organizationId, warehouseId: binWarehouse.id },
+        })) ?? []) as any[];
+        binCodeById = new Map(bins.map((b: any) => [b.id, b.code]));
+        binReady = true;
+      }
+    } catch {
+      binWarehouse = null; binAssignments = []; binCodeById = new Map(); binReady = false;
+    }
+    // EC30: pickup label. Pickup orders carry the pickup point's
+    // name so staff hand the parcel to the right outlet. Points
+    // are bulk-resolved ONCE for the whole board (orders first,
+    // then the referenced points), failure-isolated like the bin
+    // enrichment above — a missing table/point reads as a null
+    // name and the board never breaks.
+    let pickupNameById = new Map<string, string>();
+    const pickupIdByOrderId = new Map<string, string | null>();
+    try {
+      const orderIds = [...new Set(rows.map((f: any) => String(f.orderId)).filter(Boolean))];
+      if (orderIds.length > 0) {
+        const orderRows: any[] = ((await (this.prisma as any).order.findMany({
+          where: { organizationId, id: { in: orderIds } },
+        }).catch(() => [])) ?? []) as any[];
+        for (const o of orderRows) {
+          if (o.deliveryMethod === "pickup") {
+            pickupIdByOrderId.set(String(o.id), o.pickupPointId ? String(o.pickupPointId) : null);
+          }
+        }
+        const pointIds = [...new Set([...pickupIdByOrderId.values()].filter(Boolean).map(String))];
+        if (pointIds.length > 0) {
+          const points: any[] = ((await (this.prisma as any).pickupPoint.findMany({
+            where: { organizationId, id: { in: pointIds } },
+          }).catch(() => [])) ?? []) as any[];
+          pickupNameById = new Map(points.map((p: any) => [String(p.id), p.name]));
+        }
+      }
+    } catch {
+      pickupNameById = new Map();
+    }
+    const variantCache = new Map<string, string | null>();
+    const resolveBinCode = async (oi: any): Promise<string> => {
+      if (!binReady || !binWarehouse || !oi?.productId) return "—";
+      try {
+        // Variant identity: an item with a sku resolves its
+        // variant by (productId, sku) on ProductVariant — the
+        // same rule InventoryService.loadOrderLines uses.
+        let variantId: string | null = null;
+        if (oi.sku) {
+          const key = `${oi.productId}::${oi.sku}`;
+          if (!variantCache.has(key)) {
+            const variant = await (this.prisma as any).productVariant
+              .findFirst({ where: { productId: oi.productId, sku: oi.sku } })
+              .catch(() => null);
+            variantCache.set(key, variant?.id ?? null);
+          }
+          variantId = variantCache.get(key) ?? null;
+        }
+        // Exact (product, variant) assignment first, then the
+        // product-level (variantId null) assignment.
+        let found = variantId
+          ? binAssignments.find((a: any) => a.productId === oi.productId && (a.variantId ?? null) === variantId)
+          : undefined;
+        if (!found) {
+          found = binAssignments.find((a: any) => a.productId === oi.productId && (a.variantId ?? null) === null);
+        }
+        if (!found) return "—";
+        return binCodeById.get(found.binLocationId) ?? "—";
+      } catch {
+        return "—";
+      }
+    };
+
     const enriched: any[] = [];
     for (const f of rows) {
       const order = await (this.prisma as any).order.findFirst({ where: { id: f.orderId, organizationId }, include: { items: true } }).catch(() => null);
+      const lines: any[] = [];
+      for (const l of ((f.items ?? []) as FulfillmentItemLine[])) {
+        const oi = (order?.items ?? []).find((i: any) => i.id === l.orderItemId);
+        lines.push({ ...l, name: oi?.name ?? l.orderItemId, binCode: await resolveBinCode(oi) });
+      }
+      // Walk order: binCode ascending, "—" LAST; Array.sort is
+      // stable in Node, so ties keep their original order. When
+      // bin resolution is unavailable, lines are NOT re-sorted.
+      const sortedLines = binReady
+        ? [...lines].sort((a, b) => {
+            const aDash = a.binCode === "—";
+            const bDash = b.binCode === "—";
+            if (aDash && bDash) return 0;
+            if (aDash) return 1;
+            if (bDash) return -1;
+            return a.binCode < b.binCode ? -1 : a.binCode > b.binCode ? 1 : 0;
+          })
+        : lines;
       enriched.push({
         ...f,
         orderNumber: order?.externalNumber ?? null,
         orderStatus: order?.status ?? null,
+        // EC30: pickup orders name their pickup point (null when
+        // the point row is gone); home orders carry no label.
+        ...(pickupIdByOrderId.has(String(f.orderId))
+          ? {
+              pickupPointName:
+                pickupNameById.get(pickupIdByOrderId.get(String(f.orderId)) ?? "") ?? null,
+            }
+          : {}),
         itemCount: ((f.items ?? []) as FulfillmentItemLine[]).reduce((s, l) => s + (l.quantity ?? 0), 0),
-        lines: ((f.items ?? []) as FulfillmentItemLine[]).map((l) => {
-          const oi = (order?.items ?? []).find((i: any) => i.id === l.orderItemId);
-          return { ...l, name: oi?.name ?? l.orderItemId };
-        }),
+        lines: sortedLines,
       });
     }
     return { date: dayStart.toISOString(), total: enriched.length, fulfillments: enriched };

@@ -3,7 +3,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchShopHome } from "@/lib/storefront-server";
+import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
+import { buildShopJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
+import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "./ProductCard";
+import { AffiliateRefCapture } from "./AffiliateRefCapture";
+import { BundleCard } from "./BundleCard";
+import { RecentlyViewedStrip } from "./RecentlyViewed";
 
 type Params = Promise<{ orgSlug: string }>;
 type Search = Promise<{ q?: string; category?: string; page?: string }>;
@@ -11,14 +17,18 @@ type Search = Promise<{ q?: string; category?: string; page?: string }>;
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { orgSlug } = await params;
   const home = await fetchShopHome(orgSlug);
-  if (!home) return { title: "দোকান পাওয়া যায়নি" };
+  if (!home) return { title: shopT("bn").common.shopNotFound };
   const cover = home.featuredProducts[0]?.imageUrl ?? home.products[0]?.imageUrl ?? null;
+  const canonical = canonicalShopUrl(sitemapUrlBase(), orgSlug);
   return {
     title: home.settings.shopName,
     description: home.settings.metaDescription ?? undefined,
+    // EC27: canonical + OG URL for the shop home.
+    alternates: { canonical },
     openGraph: {
       title: home.settings.shopName,
       description: home.settings.metaDescription ?? undefined,
+      url: canonical,
       images: cover ? [cover] : undefined,
     },
   };
@@ -46,9 +56,28 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const { settings, categories, featuredProducts, products, pagination } = home;
   const accent = home.organization.primaryColor || "#4f46e5";
   const filtering = !!q || !!category;
+  const locale = shopLocaleOf(settings.locale);
+  const t = shopT(locale);
 
   return (
     <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
+      {/* EC27: Organization + WebSite JSON-LD from real shop data. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: jsonLdScript(
+            buildShopJsonLd({
+              base: sitemapUrlBase(),
+              orgSlug,
+              shopName: settings.shopName,
+              description: settings.metaDescription,
+              logoUrl: home.organization.logoUrl,
+            }),
+          ),
+        }}
+      />
+      {/* EC32: capture a partner ?ref= code for checkout attribution. */}
+      <AffiliateRefCapture orgSlug={orgSlug} />
       {/* Hero */}
       <section className="rounded-3xl bg-white p-8 text-center shadow-sm border border-slate-200">
         <h1 className="text-3xl font-black text-slate-900 sm:text-4xl">{settings.shopName}</h1>
@@ -60,11 +89,11 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
               type="search"
               name="q"
               defaultValue={q}
-              placeholder="পণ্য খুঁজুন…"
+              placeholder={t.home.searchPlaceholder}
               className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-indigo-600 focus:outline-none"
             />
             <button type="submit" className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: accent }}>
-              খুঁজুন
+              {t.home.searchButton}
             </button>
           </form>
         ) : null}
@@ -78,7 +107,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
             className={`rounded-full px-4 py-1.5 text-xs font-bold ${!category ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
             style={!category ? { backgroundColor: accent } : undefined}
           >
-            সব পণ্য
+            {t.home.allProducts}
           </Link>
           {categories.map((c) => {
             const value = c.slug ?? c.id ?? c.name;
@@ -97,40 +126,55 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
         </section>
       ) : null}
 
-      {/* Featured */}
-      {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
+      {/* EC29: bundles strip */}
+      {(home.bundles ?? []).length > 0 && !filtering ? (
         <section className="space-y-4">
-          <h2 className="text-xl font-black text-slate-900">⭐ ফিচার্ড পণ্য</h2>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {featuredProducts.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} />
+          <h2 className="text-xl font-black text-slate-900">{t.home.bundlesHeading}</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {(home.bundles ?? []).map((b) => (
+              <BundleCard key={b.id} orgSlug={orgSlug} bundle={b} locale={locale} />
             ))}
           </div>
         </section>
       ) : null}
 
+      {/* Featured */}
+      {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
+        <section className="space-y-4">
+          <h2 className="text-xl font-black text-slate-900">{t.home.featured}</h2>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            {featuredProducts.map((p) => (
+              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* EC27: recently viewed (localStorage only; hidden while filtering) */}
+      {!filtering ? <RecentlyViewedStrip orgSlug={orgSlug} locale={locale} /> : null}
+
       {/* Product grid */}
       <section className="space-y-4">
         <h2 className="text-xl font-black text-slate-900">
-          {filtering ? "খোঁজার ফলাফল" : "সব পণ্য"}
-          <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}টি)</span>
+          {filtering ? t.home.searchResults : t.home.allProducts}
+          <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}{t.home.itemsSuffix})</span>
         </h2>
         {products.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
             <p className="text-3xl">🔍</p>
             <p className="mt-2 text-sm font-semibold text-slate-600">
-              {filtering ? "এই খোঁজে কোনো পণ্য পাওয়া যায়নি — অন্য নাম বা ক্যাটাগরি দিয়ে চেষ্টা করুন।" : "এই দোকানে এখনো কোনো পণ্য যোগ করা হয়নি।"}
+              {filtering ? t.home.emptyFiltered : t.home.emptyNoProducts}
             </p>
             {filtering ? (
               <Link href={`/shop/${orgSlug}`} className="mt-3 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white">
-                সব পণ্য দেখুন
+                {t.home.viewAllProducts}
               </Link>
             ) : null}
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
             {products.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} />
+              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
             ))}
           </div>
         )}
@@ -139,13 +183,13 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
           <nav className="flex items-center justify-center gap-2 pt-2">
             {page > 1 ? (
               <Link href={shopHref(orgSlug, q, category, page - 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
-                ← আগের পেজ
+                {t.home.prevPage}
               </Link>
             ) : null}
-            <span className="text-xs font-semibold text-slate-500">পেজ {pagination.page} / {pagination.totalPages}</span>
+            <span className="text-xs font-semibold text-slate-500">{t.home.page} {pagination.page} / {pagination.totalPages}</span>
             {page < pagination.totalPages ? (
               <Link href={shopHref(orgSlug, q, category, page + 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
-                পরের পেজ →
+                {t.home.nextPage}
               </Link>
             ) : null}
           </nav>

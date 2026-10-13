@@ -2,6 +2,7 @@ import { createHmac } from "crypto";
 import { IntegrationsService } from "./integrations.service";
 import { ShopifyService } from "./shopify/shopify.service";
 import { encryptJson, decryptJson } from "./crypto";
+import { ErasureService } from "../customers/erasure.service";
 
 // Generic in-memory fake (same makeTable pattern as integrations.service.spec.ts).
 function makeTable() {
@@ -216,5 +217,33 @@ describe("EC2 Shopify GDPR", () => {
     const rawBody = JSON.stringify({ shop_id: 1, shop_domain: "test.myshopify.com" });
     await expect(shopify.handleGdpr("customers/redact", rawBody, "AAAAbad", "wh-2"))
       .rejects.toThrow("Invalid Shopify webhook signature");
+  });
+
+  it("CP6: customers/redact erases the resolved local customer; ack shape unchanged", async () => {
+    delete process.env.SHOPIFY_APP_SECRET;
+    const { prisma, apiSecret } = setup();
+    (prisma as any).customerStoreIdentity = makeTable();
+    (prisma as any).externalReview = makeTable();
+    (prisma as any).abandonedStoreCheckout = makeTable();
+    prisma.customer.rows.push({
+      id: "cust-1", organizationId: "org-1", externalId: "777", firstName: "Ayesha", lastName: "Rahman",
+      email: "ayesha@example.com", phone: "01700000000", address: { city: "Dhaka" }, customFields: null, referralCode: null,
+    });
+    prisma.order.rows.push({ id: "ord-1", organizationId: "org-1", customerId: "cust-1", address: "House 9, Dhaka", totalMinor: 12000n });
+    const integrations = new IntegrationsService(prisma as any, audit);
+    const erasure = new ErasureService(prisma as any, audit);
+    const shopify = new ShopifyService(prisma as any, audit, integrations, undefined, erasure);
+    const payload = { shop_id: 12345, shop_domain: "test.myshopify.com", customer: { id: 777, email: "ayesha@example.com" } };
+    const rawBody = JSON.stringify(payload);
+    const hmac = createHmac("sha256", apiSecret).update(rawBody, "utf8").digest("base64");
+    const out: any = await shopify.handleGdpr("customers/redact", rawBody, hmac, "wh-cp6");
+    expect(out).toEqual({ received: true, recorded: true, topic: "customers/redact" });
+    const c = prisma.customer.rows[0];
+    expect(c.firstName).toBe("মুছে ফেলা হয়েছে");
+    expect(c.email).toBeNull();
+    expect(c.phone).toBeNull();
+    expect(prisma.order.rows[0].address).toBeNull();
+    expect(prisma.order.rows[0].totalMinor).toBe(12000n);
+    expect(auditLogs.some((l) => l.action === "customers.erase" && l.userId === "shopify_gdpr")).toBe(true);
   });
 });

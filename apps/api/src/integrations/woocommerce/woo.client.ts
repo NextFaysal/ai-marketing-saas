@@ -132,6 +132,16 @@ export class WooClient {
     return { items: data, totalPages: Number(headers.get("x-wp-totalpages") ?? 1), total: Number(headers.get("x-wp-total") ?? data.length) };
   }
 
+  /** EC15: GET /products/reviews — core Woo review objects carry
+   * reviewer / reviewer_avatar_urls (avatars, NOT review photos),
+   * rating, review (may contain HTML), product_id, date_created. */
+  async listProductReviews(page = 1, perPage = 100, productId?: number | string): Promise<WooPage<any>> {
+    const params: Record<string, string | number> = { page, per_page: perPage };
+    if (productId !== undefined && productId !== null && productId !== "") params.product = productId;
+    const { data, headers } = await this.get<any[]>("/products/reviews", params);
+    return { items: Array.isArray(data) ? data : [], totalPages: Number(headers.get("x-wp-totalpages") ?? 1), total: Number(headers.get("x-wp-total") ?? (Array.isArray(data) ? data.length : 0)) };
+  }
+
   async listCustomers(page = 1, perPage = 100, modifiedAfter?: string): Promise<WooPage<any>> {
     const params: Record<string, string | number> = { page, per_page: perPage, orderby: "date_modified", order: "asc" };
     if (modifiedAfter) params.modified_after = modifiedAfter;

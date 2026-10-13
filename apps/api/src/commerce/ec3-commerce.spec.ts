@@ -172,6 +172,74 @@ describe("CommerceService.resolveConflict", () => {
     seedListingAndConflict(prisma);
     await expect(svc.resolveConflict("org-1", "u1", "c1", "merge_magic")).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  // ---------- CP1: per-field resolution ----------
+
+  function seedPerField(prisma: any) {
+    seedListingAndConflict(prisma, {
+      fieldDiffs: [
+        { field: "name", localValue: "Shirt", remoteValue: "Remote Shirt" },
+        { field: "priceMinor", localValue: "1000", remoteValue: "2500" },
+        { field: "stockQuantity", localValue: 5, remoteValue: 3 },
+        { field: "description", localValue: "local desc", remoteValue: "remote desc" },
+      ],
+    });
+    prisma.product.rows[0].description = "local desc";
+    prisma.product.rows[0].compareAtMinor = null;
+  }
+
+  it("CP1 per_field: applies EXACTLY the chosen sides, resolves before enqueue, audits choices", async () => {
+    const { svc, prisma, pushLog, audits } = makeSvc();
+    seedPerField(prisma);
+    const choices = { name: "remote", priceMinor: "local", stockQuantity: "remote", description: "local" };
+    const result = await svc.resolveConflict("org-1", "u1", "c1", "per_field", choices);
+    expect(result.status).toBe("resolved");
+    expect(result.resolution).toBe("per_field");
+    const product = prisma.product.rows[0];
+    expect(product.name).toBe("Remote Shirt"); // remote chosen
+    expect(product.priceMinor).toBe(1000n); // local chosen — untouched
+    expect(product.stockQuantity).toBe(3); // remote chosen
+    expect(product.description).toBe("local desc"); // local chosen — untouched
+    // keep_local ordering: resolved + pending BEFORE the forced push.
+    expect(pushLog).toHaveLength(1);
+    expect(pushLog[0].kind).toBe("enqueueProductPush");
+    expect(pushLog[0].opts).toEqual({ listingId: "l1", force: true });
+    expect(pushLog[0].conflictStatusAtCall).toBe("resolved");
+    expect(pushLog[0].listingStatusAtCall).toBe("pending");
+    const audit = audits.find((a: any) => a.action === "commerce.conflict_resolve");
+    expect(audit.metadata.choice).toBe("per_field");
+    expect(audit.metadata.choices).toEqual(choices);
+  });
+
+  it("CP1 per_field: missing choice 400s naming the missing field (Bengali)", async () => {
+    const { svc, prisma } = makeSvc();
+    seedPerField(prisma);
+    await expect(
+      svc.resolveConflict("org-1", "u1", "c1", "per_field", { name: "remote", priceMinor: "local", stockQuantity: "remote" }),
+    ).rejects.toThrow(/description/);
+    await expect(
+      svc.resolveConflict("org-1", "u1", "c1", "per_field", { name: "remote", priceMinor: "local", stockQuantity: "remote" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.syncConflict.rows[0].status).toBe("open");
+  });
+
+  it("CP1 per_field: unknown field 400s", async () => {
+    const { svc, prisma } = makeSvc();
+    seedPerField(prisma);
+    await expect(
+      svc.resolveConflict("org-1", "u1", "c1", "per_field", {
+        name: "remote", priceMinor: "local", stockQuantity: "remote", description: "local", sku: "remote",
+      }),
+    ).rejects.toThrow(/sku/);
+    expect(prisma.syncConflict.rows[0].status).toBe("open");
+  });
+
+  it("CP1 per_field: 400s when the conflict carries no fieldDiffs", async () => {
+    const { svc, prisma } = makeSvc();
+    seedListingAndConflict(prisma); // legacy row — no fieldDiffs
+    await expect(svc.resolveConflict("org-1", "u1", "c1", "per_field", { name: "remote" }))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
 });
 
 describe("CommerceService listing actions", () => {
@@ -267,6 +335,22 @@ describe("CommerceService locations", () => {
     const { svc, prisma } = makeSvc();
     prisma.store.rows.push({ id: "s1", organizationId: "org-1", platform: "WOOCOMMERCE", name: "Shop" });
     await expect(svc.refreshLocations("org-1", "u1", "s1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("CommerceService CP3 weight-unit override (updateSyncMode surface)", () => {
+  it("weightUnit-only update persists + audits; invalid unit 400s; syncMode still works", async () => {
+    const { svc, prisma, audits } = makeSvc();
+    prisma.store.rows.push({ id: "s1", organizationId: "org-1", platform: "WOOCOMMERCE", name: "Shop", syncMode: "mirror", weightUnit: null });
+    const updated = await svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: "lb" });
+    expect(updated.weightUnit).toBe("lb");
+    expect(updated.syncMode).toBe("mirror"); // untouched
+    expect(audits.some((a: any) => a.action === "store.sync_mode" && a.metadata?.weightUnit === "lb")).toBe(true);
+    await expect(svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: "stone" })).rejects.toBeInstanceOf(BadRequestException);
+    const cleared = await svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: null });
+    expect(cleared.weightUnit).toBeNull();
+    const mode = await svc.updateSyncMode("org-1", "u1", "s1", { syncMode: "full-manage" });
+    expect(mode.syncMode).toBe("full-manage");
   });
 });
 

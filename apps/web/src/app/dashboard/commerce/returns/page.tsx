@@ -6,6 +6,8 @@ import { getOrganizationId } from "@/lib/org";
 interface ReturnLine { orderItemId: string; quantity: number; condition?: string; restock?: boolean }
 interface ReturnRow {
   id: string; orderId: string; orderNumber: string | null; status: string;
+  // EC28: who opened the request + the customer's ask, when self-service.
+  source?: string | null; requestType?: string | null;
   reason: string | null; resolution: string | null;
   refundAmountMinor: string | null; restockDecision: string | null;
   notificationStatus: string | null; exchangeOrderId: string | null;
@@ -162,6 +164,15 @@ export default function ReturnsPage() {
                   <div className="text-sm">
                     <span className="font-semibold">অর্ডার: {r.orderNumber ?? r.orderId}</span>
                     <span className={`ml-3 rounded px-2 py-0.5 text-xs font-semibold ${statusBadge(r.status)}`}>{r.status}</span>
+                    {/* EC28: source badge — customer self-service requests are
+                        handled identically, just labelled. */}
+                    {r.source === "customer" ? (
+                      <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
+                        👤 গ্রাহক নিজে{r.requestType ? ` · ${r.requestType === "exchange" ? "এক্সচেঞ্জ" : "রিটার্ন"}` : ""}
+                      </span>
+                    ) : (
+                      <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">স্টাফ</span>
+                    )}
                     <span className="mt-1 block text-xs text-slate-500">{new Date(r.createdAt).toLocaleString("bn-BD")}</span>
                     {r.reason ? <span className="mt-1 block">কারণ: {r.reason}</span> : null}
                     <span className="mt-1 block text-xs text-slate-600">

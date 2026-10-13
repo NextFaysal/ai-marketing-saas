@@ -136,8 +136,22 @@ export default function CommerceHubPage() {
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href="/dashboard/commerce/sync" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔄 Sync Center</Link>
           <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏷️ Discounts / কুপন</Link>
+          <Link href="/dashboard/commerce/promotions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🎁 প্রমোশন</Link>
+          <Link href="/dashboard/commerce/bundles" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧺 বান্ডল</Link>
+          <Link href="/dashboard/commerce/feeds" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📡 প্রোডাক্ট ফিড</Link>
           <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🛒 Abandoned Carts</Link>
           <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏪 Storefront / দোকান</Link>
+          <Link href="/dashboard/commerce/landings" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🚀 ল্যান্ডিং পেজ</Link>
+          <Link href="/dashboard/commerce/reviews" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">⭐ রিভিউ মডারেশন</Link>
+          <Link href="/dashboard/commerce/questions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">❓ পণ্য প্রশ্নোত্তর</Link>
+          <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧾 ক্রয় / Purchasing</Link>
+          <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏭 গুদাম / Warehouse</Link>
+          <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧮 কর ও হিসাব / Accounting</Link>
+          <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💵 COD মিলকরণ</Link>
+          <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📊 ইনভেন্টরি বুদ্ধিমত্তা</Link>
+          <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔁 সাবস্ক্রিপশন / Subscriptions</Link>
+          <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 কিস্তি / Installments</Link>
+          <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🤝 অ্যাফিলিয়েট</Link>
           <Link href="/dashboard/integrations" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔌 Integrations</Link>
         </div>
       </div>
@@ -229,6 +243,27 @@ export default function CommerceHubPage() {
               ) : null}
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
+        </StatCard>
+
+        <StatCard href="/dashboard/commerce/landings" title="ল্যান্ডিং পেজ">
+          <p className="text-sm text-slate-500">
+            এক পণ্যের ফানেল পেজ তৈরি করুন — সেকশন সাজানো, A/B ভ্যারিয়েন্ট, পোস্ট-অর্ডার আপসেল আর
+            ভিউ→অর্ডার কনভার্সন পরিসংখ্যানসহ।
+          </p>
+        </StatCard>
+
+        <StatCard href="/dashboard/commerce/bundles" title="বান্ডল অফার">
+          <p className="text-sm text-slate-500">
+            ২–১০টি পণ্যের কম্বো প্যাক একটি বান্ডল দামে — দোকানের হোম পেজের বান্ডল স্ট্রিপ থেকে
+            ক্রেতা এক ক্লিকে কার্টে যোগ করতে পারে।
+          </p>
+        </StatCard>
+
+        <StatCard href="/dashboard/commerce/reviews" title="রিভিউ মডারেশন">
+          <p className="text-sm text-slate-500">
+            নিজের দোকানের ডেলিভারি-পরবর্তী রিভিউ আর WooCommerce/Shopify থেকে টানা রিভিউ এক জায়গায় —
+            লুকান/দেখান ও নিজের দোকানের রিভিউতে উত্তর দিন।
+          </p>
         </StatCard>
 
         <div className="card p-5">

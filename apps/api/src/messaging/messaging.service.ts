@@ -1,7 +1,7 @@
 import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { LlmFactory } from "../ai/llm/llm.factory";
+import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { estimateTokens } from "../ai/llm/llm.types";
 import { formatMinor } from "@repo/contracts";
 import { SEND_TIME_MIN_EVENTS, segmentSuggestionsFromCounts, summarizeSendTimeEvents } from "./messaging-ai";
@@ -1278,9 +1278,9 @@ export class MessagingService {
     });
   }
 
-  private messagingAiProvider() {
+  private async messagingAiProvider(organizationId: string) {
     try {
-      return this.llm.getProvider();
+      return await providerForOrg(this.llm, organizationId);
     } catch (e) {
       // A real provider named without a key / an unknown name:
       // an honest 502 with the configuration error verbatim —
@@ -1364,7 +1364,7 @@ export class MessagingService {
     if (dto.audienceHint?.trim()) facts.push(`Audience: ${dto.audienceHint.trim()}`);
     const factsText = facts.join("\n");
 
-    const provider = this.messagingAiProvider();
+    const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
       // Dev-template path (creative-studio precedent): the dev
       // provider is NOT a model, so its output is never
@@ -1463,7 +1463,7 @@ export class MessagingService {
     const subject = String(dto.subject ?? "").trim();
     if (!subject) throw new BadRequestException("subject is required");
     await this.checkMessagingAiLimit(organizationId);
-    const provider = this.messagingAiProvider();
+    const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
       const bengali = /[\u0980-\u09FE]/.test(subject); // Bengali Unicode block
       const variants = [

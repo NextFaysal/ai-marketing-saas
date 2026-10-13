@@ -12,6 +12,7 @@ import { ShopifyGraphQLClient } from "./shopify-graphql.client";
 import { BULK_PRODUCTS_QUERY, parseBulkProductsJsonl } from "./shopify-bulk";
 import { ensureShopifyWebhookSubscriptions } from "./shopify-webhooks";
 import { normalizeShopifyCustomerNode, upsertSyncedCustomer } from "../customer-sync";
+import { ErasureService } from "../../customers/erasure.service";
 import { upsertAbandonedStoreCheckout } from "./shopify-checkouts";
 
 const EC_CUSTOMERS_QUERY = `query ecCustomers($first: Int!, $after: String) { customers(first: $first, after: $after) { edges { node { id firstName lastName email phone defaultAddress { address1 address2 city zip country phone } } } pageInfo { hasNextPage endCursor } } }`;
@@ -42,6 +43,8 @@ export class ShopifyService {
     private readonly audit: AuditService,
     private readonly integrations: IntegrationsService,
     @Optional() private readonly inventory?: InventoryService,
+    // CP6: shared GDPR erasure (see customers/erasure.service).
+    @Optional() private readonly erasure?: ErasureService,
   ) {}
 
   async connect(organizationId: string, actorId: string, dto: { storeId: string; accessToken: string; apiSecret: string }) {
@@ -295,6 +298,33 @@ export class ShopifyService {
         action: `shopify.gdpr.${topic.replace("/", "_")}`, entityType: "Integration", entityId: integration.id,
         metadata: { shopDomain },
       });
+    }
+    // CP6: customers/redact now actually erases — resolve the
+    // local customer by Shopify externalId, else by email, and run
+    // the shared deep erasure. Failure-isolated: the webhook ack
+    // ({ received, recorded, topic }) is unchanged either way, and
+    // the HMAC/dedupe behaviour above is untouched.
+    if (topic === "customers/redact" && this.erasure) {
+      try {
+        const extId = payload?.customer?.id != null ? String(payload.customer.id) : null;
+        const email = payload?.customer?.email ?? null;
+        let customer: any = null;
+        if (extId) {
+          customer = await (this.prisma as any).customer.findFirst({
+            where: { organizationId: integration.organizationId, externalId: extId },
+          }).catch(() => null);
+        }
+        if (!customer && email) {
+          customer = await (this.prisma as any).customer.findFirst({
+            where: { organizationId: integration.organizationId, email },
+          }).catch(() => null);
+        }
+        if (customer) {
+          await this.erasure.eraseCustomer(integration.organizationId, "shopify_gdpr", customer.id);
+        }
+      } catch (e) {
+        this.logger.warn(`GDPR customers/redact erasure failed: ${e instanceof Error ? e.message : "unknown"}`);
+      }
     }
     if (topic === "shop/redact") {
       await (this.prisma as any).integration.update({ where: { id: integration.id }, data: { status: "DISCONNECTED" } });

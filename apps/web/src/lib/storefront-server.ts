@@ -32,14 +32,39 @@ export interface ShopProduct {
   categoryId: string | null;
   sku: string | null;
   priceMinor: string;
+  // EC27: product row timestamp — the sitemap's lastmod source.
+  updatedAt?: string | null;
   compareAtMinor: string | null;
   currency: string;
   imageUrl: string | null;
   images: string[];
   stockQuantity: number | null;
   stockState: "untracked" | "out_of_stock" | "low" | "in_stock" | string;
+  // EC24a: pre-order info (null when not a preorder product).
+  preorder?: { enabled: true; releaseDate: string | null } | null;
+  // EC24b: digital flag only — the file URL is never in this payload.
+  digital?: boolean;
   bump: { title: string; priceMinor: string; imageUrl: string | null } | null;
   variants: ShopProductVariant[];
+}
+
+export interface ShopBundleComponent {
+  productId: string;
+  name: string;
+  variantSku: string | null;
+  qty: number;
+  unitPriceMinor: string;
+}
+
+export interface ShopBundle {
+  id: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  bundlePriceMinor: string;
+  regularTotalMinor: string;
+  savingsMinor: string | null;
+  components: ShopBundleComponent[];
 }
 
 export interface ShopHome {
@@ -50,7 +75,20 @@ export interface ShopHome {
     showCategories: boolean;
     showSearch: boolean;
     metaDescription: string | null;
+    // EC19/B8: shop-surface locale + featured mode.
+    locale?: "bn" | "en" | string;
+    featuredMode?: string;
+    // EC18/B8: branded tracking page + checkout trust copy.
+    trackingPageEnabled?: boolean;
+    returnPolicyText?: string | null;
+    deliveryPromiseText?: string | null;
+    supportPhone?: string | null;
+    // EC29: gift-wrap offer on the shop checkout.
+    giftWrapEnabled?: boolean;
+    giftWrapFeeMinor?: string | null;
   };
+  // EC29: active bundles for the home-page strip.
+  bundles?: ShopBundle[];
   organization: {
     id: string;
     name: string;
@@ -80,6 +118,25 @@ export interface ShopProductDetail {
     seo: { title: string | null; description: string | null };
   };
   related: ShopProduct[];
+  // EC27: co-purchased products from real sold orders (empty when
+  // nothing clears the >= 2 co-occurrence threshold — no filler).
+  boughtTogether?: ShopProduct[];
+  // EC18/EC19/B8 additions on the product-detail payload.
+  settings?: {
+    locale?: "bn" | "en" | string;
+    trackingPageEnabled?: boolean;
+    returnPolicyText?: string | null;
+    deliveryPromiseText?: string | null;
+    supportPhone?: string | null;
+  };
+  organization?: {
+    id: string;
+    name: string;
+    slug: string;
+    brandName: string | null;
+    logoUrl: string | null;
+    primaryColor: string | null;
+  };
 }
 
 async function serverGet<T>(path: string): Promise<T | null> {
@@ -128,4 +185,38 @@ export async function fetchAllProductSlugs(orgSlug: string): Promise<string[]> {
     slugs.push(...next.products.map((p) => p.slug));
   }
   return slugs.filter((s): s is string => !!s);
+}
+
+/** EC27: every ACTIVE product's slug + updatedAt for the sitemap. */
+export async function fetchAllProductSitemapEntries(
+  orgSlug: string,
+): Promise<{ slug: string; updatedAt: string | null }[]> {
+  const first = await fetchShopHome(orgSlug, "", "", "1", "60");
+  if (!first) return [];
+  const entries = first.products
+    .filter((p) => !!p.slug)
+    .map((p) => ({ slug: p.slug as string, updatedAt: p.updatedAt ?? null }));
+  const totalPages = first.pagination?.totalPages ?? 1;
+  for (let page = 2; page <= Math.min(totalPages, 200); page++) {
+    const next = await fetchShopHome(orgSlug, "", "", String(page), "60");
+    if (!next) break;
+    entries.push(
+      ...next.products
+        .filter((p) => !!p.slug)
+        .map((p) => ({ slug: p.slug as string, updatedAt: p.updatedAt ?? null })),
+    );
+  }
+  return entries;
+}
+
+/** EC27: the EC15 unified reviews summary for JSON-LD (null when
+ * the endpoint is unreachable — the rating is then omitted). */
+export async function fetchProductReviewsSummary(
+  orgSlug: string,
+  productSlug: string,
+): Promise<{ average: number | null; count: number } | null> {
+  const data = await serverGet<{ summary?: { average: number | null; count: number } }>(
+    `/public/shop/${encodeURIComponent(orgSlug)}/products/${encodeURIComponent(productSlug)}/reviews`,
+  );
+  return data?.summary ?? null;
 }

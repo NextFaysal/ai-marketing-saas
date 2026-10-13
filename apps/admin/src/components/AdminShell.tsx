@@ -17,6 +17,7 @@ const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: s
       { label: "Users", icon: "👤", href: "/users" },
       { label: "Organizations", icon: "🏢", href: "/orgs" },
       { label: "SaaS Billing", icon: "💳", href: "/billing" },
+      { label: "Wallet Payouts", icon: "🏦", href: "/payouts" },
       { label: "Support Tickets", icon: "🎫", href: "/tickets" },
       { label: "Audit Trail", icon: "🧾", href: "/audit" },
     ],

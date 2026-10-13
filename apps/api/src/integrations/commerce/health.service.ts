@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
 import { IntegrationsService } from "../integrations.service";
 import { ShopifyService } from "../shopify/shopify.service";
 import { WooClient } from "../woocommerce/woo.client";
@@ -26,6 +27,10 @@ export class StoreHealthService {
   constructor(
     private readonly integrations: IntegrationsService,
     private readonly shopify: ShopifyService,
+    // CP3: optional so existing positional constructions keep
+    // working; Nest supplies PrismaService (global module). Falls
+    // back to the IntegrationsService's own prisma handle.
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   async getHealth(organizationId: string, integrationId: string) {
@@ -109,6 +114,33 @@ export class StoreHealthService {
       } catch (e) {
         checks.push({ key: "wc_version", label: "WordPress / WooCommerce সংস্করণ", status: "unknown", evidence: e instanceof Error ? e.message : "unknown error" });
       }
+
+      // CP3: read the store's real weight unit from the Woo
+      // settings endpoint and persist it on the Store row when it
+      // differs — product pushes convert grams into this unit.
+      // Failure-isolated: any error keeps the stored value and
+      // never fails the health check.
+      try {
+        const { data } = await client.get<any>("/settings/general");
+        const rows = Array.isArray(data) ? data : [];
+        const entry = rows.find((r: any) => r?.id === "woocommerce_weight_unit");
+        const unit = entry?.value ? String(entry.value) : null;
+        if (unit) {
+          const storeId = (integration as any).storeId ?? integration.store?.id ?? null;
+          const current = integration.store?.weightUnit ?? null;
+          if (unit !== current && storeId) {
+            const prisma: any = (this as any).prisma ?? (this.integrations as any)?.prisma ?? null;
+            if (prisma?.store?.update) {
+              await prisma.store.update({ where: { id: storeId }, data: { weightUnit: unit } });
+              if (integration.store) integration.store.weightUnit = unit;
+            }
+          }
+          checks.push({
+            key: "weight_unit", label: "ওজনের একক", status: "pass",
+            evidence: `স্টোরের ওজনের একক: ${unit}`,
+          });
+        }
+      } catch { /* keep the existing Store.weightUnit — see above */ }
 
       const base = process.env.API_PUBLIC_URL?.replace(/\/+$/, "");
       if (!base) {

@@ -7,7 +7,7 @@ import { getOrganizationId } from "@/lib/org";
 // GET /organizations/:id/stores returns the full Store rows
 // (IntegrationsService.listStores), so refundPushEnabled /
 // courierTrackingMetaKey are present at runtime.
-interface Store { id: string; name: string; url?: string; platform?: string; syncMode?: string; refundPushEnabled?: boolean; courierTrackingMetaKey?: string | null }
+interface Store { id: string; name: string; url?: string; platform?: string; syncMode?: string; refundPushEnabled?: boolean; courierTrackingMetaKey?: string | null; weightUnit?: string | null }
 interface Listing {
   id: string; storeId: string; productId: string; externalId: string | null;
   publishState: string; syncStatus: string; lastSyncError?: string | null;
@@ -20,11 +20,18 @@ interface OutboxItem {
   id: string; storeId: string; entityType: string; entityId: string; operation: string;
   status: string; attempts: number; lastError?: string | null; nextRetryAt?: string | null; createdAt: string;
 }
+interface ConflictFieldDiff { field: string; localValue: unknown; remoteValue: unknown }
 interface Conflict {
   id: string; storeId: string; listingId: string; field: string; localValue: unknown; remoteValue: unknown; status: string; createdAt: string;
+  fieldDiffs?: ConflictFieldDiff[] | null;
   listing?: { product?: { name: string } | null; store?: { name: string } | null } | null;
   store?: { name: string } | null;
   product?: { name: string } | null;
+}
+
+function fmtConflictValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
 }
 interface StoreLocation { id: string; name: string; externalLocationId: string | null; isDefault: boolean }
 
@@ -73,6 +80,9 @@ export default function SyncCenterPage() {
   const [busy, setBusy] = useState("");
   // EC4: conflict resolve confirm + store locations.
   const [confirmConflict, setConfirmConflict] = useState<{ id: string; choice: "keep_local" | "take_remote" } | null>(null);
+  // CP1: per-field resolution — expanded conflict + per-field picks.
+  const [expandedConflictId, setExpandedConflictId] = useState("");
+  const [fieldChoices, setFieldChoices] = useState<Record<string, Record<string, "local" | "remote">>>({});
   const [locations, setLocations] = useState<StoreLocation[]>([]);
   const [locationsError, setLocationsError] = useState("");
   const [locationsBusy, setLocationsBusy] = useState("");
@@ -84,6 +94,9 @@ export default function SyncCenterPage() {
   const [trackingBusy, setTrackingBusy] = useState(false);
   const [trackingError, setTrackingError] = useState("");
   const [trackingNotice, setTrackingNotice] = useState("");
+  // CP3: manual weight-unit override.
+  const [weightBusy, setWeightBusy] = useState(false);
+  const [weightError, setWeightError] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -158,6 +171,19 @@ export default function SyncCenterPage() {
     } finally { setRefundBusy(false); }
   }
 
+  async function saveWeightUnit(unit: string) {
+    const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
+    setWeightBusy(true); setWeightError(""); setNotice("");
+    try {
+      const updated = await apiFetch<Store>(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/sync-mode`, {
+        method: "PATCH", body: JSON.stringify({ weightUnit: unit === "" ? null : unit }),
+      });
+      setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+      setNotice(`"${selectedStore.name}" স্টোরের ওজনের একক এখন ${updated.weightUnit ?? "kg (ডিফল্ট)"}।`);
+    } catch (e) { setWeightError(e instanceof Error ? e.message : "ওজনের একক বদলানো ব্যর্থ"); }
+    finally { setWeightBusy(false); }
+  }
+
   async function saveTrackingMetaKey() {
     const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
     setTrackingBusy(true); setTrackingError(""); setTrackingNotice("");
@@ -201,6 +227,21 @@ export default function SyncCenterPage() {
       });
       setNotice(choice === "keep_local" ? "Conflict নিষ্পত্তি হয়েছে — লোকাল মান রাখা হয়েছে।" : "Conflict নিষ্পত্তি হয়েছে — স্টোরের মান নেওয়া হয়েছে।");
       setConfirmConflict(null);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function applyPerField(c: Conflict) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const choices = fieldChoices[c.id] ?? {};
+    setError(""); setNotice(""); setBusy(`conflict-${c.id}`);
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/conflicts/${c.id}/resolve`, {
+        method: "POST", body: JSON.stringify({ choice: "per_field", choices }),
+      });
+      setNotice("Conflict নিষ্পত্তি হয়েছে — ফিল্ড অনুযায়ী বেছে নেওয়া মানগুলো প্রয়োগ হয়েছে।");
+      setExpandedConflictId("");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
     finally { setBusy(""); }
@@ -329,6 +370,25 @@ export default function SyncCenterPage() {
               })}
             </div>
             <p className="mt-2 text-xs text-slate-400">মোড বদলানো শুধু Owner/Admin করতে পারেন।</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="block text-sm">ওজনের একক (WooCommerce)
+                <select
+                  className="input mt-1"
+                  value={selectedStore.weightUnit ?? ""}
+                  disabled={weightBusy}
+                  onChange={(e) => saveWeightUnit(e.target.value)}
+                >
+                  <option value="">ডিফল্ট (kg)</option>
+                  <option value="g">g (গ্রাম)</option>
+                  <option value="kg">kg (কিলোগ্রাম)</option>
+                  <option value="lb">lb (পাউন্ড)</option>
+                  <option value="oz">oz (আউন্স)</option>
+                </select>
+              </label>
+              {weightBusy ? <span className="pt-5 text-xs text-slate-400">সংরক্ষণ হচ্ছে…</span> : null}
+            </div>
+            <p className="text-xs text-slate-400">স্টোরের আসল একক Health Check-এ Woo Settings থেকে পড়ে সংরক্ষণ করা হয়; এখান থেকে হাতে বদলানো যায়। পণ্যের ওজন গ্রামে সংরক্ষিত থাকে, পাঠানোর সময় এই এককে রূপান্তর হয়।</p>
+            {weightError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{weightError}</p> : null}
             <div className="mt-4 space-y-3 border-t pt-4">
               <label className="flex items-start gap-2 text-sm">
                 <input
@@ -510,8 +570,13 @@ export default function SyncCenterPage() {
                   const isOpen = c.status.toLowerCase() === "open";
                   const productName = c.listing?.product?.name ?? c.product?.name ?? null;
                   const storeName = c.listing?.store?.name ?? c.store?.name ?? null;
+                  const diffs = Array.isArray(c.fieldDiffs) ? c.fieldDiffs : [];
+                  const expanded = expandedConflictId === c.id;
+                  const picks = fieldChoices[c.id] ?? {};
+                  const allPicked = diffs.length > 0 && diffs.every((d) => picks[d.field] === "local" || picks[d.field] === "remote");
                   return (
-                    <tr key={c.id} className="border-b last:border-0">
+                    <React.Fragment key={c.id}>
+                    <tr className="border-b last:border-0">
                       <td className="py-2 pr-3">{c.field}</td>
                       <td className="py-2 pr-3">
                         {productName ?? "—"}
@@ -548,11 +613,47 @@ export default function SyncCenterPage() {
                                 onClick={() => setConfirmConflict({ id: c.id, choice: "take_remote" })}>
                                 স্টোরেরটা নিন
                               </button>
+                              {diffs.length > 0 ? (
+                                <button className="rounded-lg border border-purple-300 px-3 py-1.5 text-xs font-semibold text-purple-700 disabled:opacity-50" disabled={busy !== ""}
+                                  onClick={() => setExpandedConflictId(expanded ? "" : c.id)}>
+                                  {expanded ? "বিস্তারিত লুকান" : "ফিল্ড অনুযায়ী বেছে নিন"}
+                                </button>
+                              ) : null}
                             </div>
                           )
                         ) : null}
                       </td>
                     </tr>
+                    {isOpen && expanded && diffs.length > 0 ? (
+                      <tr className="border-b bg-purple-50/50">
+                        <td colSpan={7} className="px-3 py-3">
+                          <div className="space-y-2">
+                            <p className="text-xs font-semibold text-slate-600">প্রতিটি ফিল্ডের জন্য কোন পক্ষের মান থাকবে বেছে নিন:</p>
+                            {diffs.map((d) => (
+                              <div key={d.field} className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-2 text-xs">
+                                <span className="w-28 font-mono font-semibold">{d.field}</span>
+                                <label className="flex items-center gap-1.5">
+                                  <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "local"}
+                                    onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "local" } }))} />
+                                  লোকাল: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.localValue)}</span>
+                                </label>
+                                <label className="flex items-center gap-1.5">
+                                  <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "remote"}
+                                    onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "remote" } }))} />
+                                  স্টোরের: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.remoteValue)}</span>
+                                </label>
+                              </div>
+                            ))}
+                            <button className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                              disabled={busy !== "" || !allPicked} onClick={() => applyPerField(c)}>
+                              {busy === `conflict-${c.id}` ? "হচ্ছে…" : "ফিল্ড অনুযায়ী প্রয়োগ করুন"}
+                            </button>
+                            {!allPicked ? <span className="ml-2 text-xs text-slate-500">সব ফিল্ড বেছে নিলে বোতামটি সক্রিয় হবে।</span> : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

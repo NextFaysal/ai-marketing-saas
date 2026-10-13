@@ -15,6 +15,9 @@ interface CheckoutData {
     priceMinor: string;
     compareAtMinor?: string | null;
     stockQuantity?: number | null;
+    // EC24a/b: pre-order info + digital flag (badges only).
+    preorder?: { enabled: true; releaseDate: string | null } | null;
+    digital?: boolean;
     bumpTitle?: string | null;
     bumpPriceMinor?: string | null;
     bumpImageUrl?: string | null;
@@ -32,7 +35,25 @@ interface CheckoutData {
     paymentNote?: string | null;
     metaPixelId?: string | null;
     tikTokPixelId?: string | null;
+    // EC18/B8: all-district delivery slots + trust copy (when the
+    // payload provides them; empty trust fields render nothing).
+    deliverySlots?: { id: string; label: string; startTime: string; endTime: string }[];
+    deliveryPromiseText?: string | null;
+    supportPhone?: string | null;
+    returnPolicyText?: string | null;
+    // EC29: gift-wrap config may also ride on the organization.
+    giftWrap?: { enabled: boolean; feeMinor: string | null } | null;
   };
+  // EC29: gift-wrap offer from the checkout-info payload (absent = hidden).
+  giftWrap?: { enabled: boolean; feeMinor: string | null } | null;
+}
+
+function slotDateString(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 export default function CheckoutPage() {
@@ -59,6 +80,15 @@ export default function CheckoutPage() {
   // code refuses the order with the server's reason, shown inline.
   const [couponCode, setCouponCode] = useState("");
   const [couponError, setCouponError] = useState("");
+  // EC16: optional referral code (a friend's code) — the server
+  // validates it and computes any discount at order time.
+  const [referralCode, setReferralCode] = useState("");
+  // EC18: delivery slot picker (slots from the checkout payload).
+  const [slotId, setSlotId] = useState("");
+  const [slotDate, setSlotDate] = useState("");
+  // EC29: gift wrap + message (only when the payload offers it).
+  const [giftWrap, setGiftWrap] = useState(false);
+  const [giftMessage, setGiftMessage] = useState("");
 
   useEffect(() => {
     if (!slug) return;
@@ -110,6 +140,9 @@ export default function CheckoutPage() {
           note: note.trim() || undefined,
           includeBump,
           couponCode: couponCode.trim() || undefined,
+          referralCode: referralCode.trim() || undefined,
+          ...(slotId && slotDate ? { deliverySlotId: slotId, deliveryDate: slotDate } : {}),
+          ...(giftWrap ? { giftWrap: true, giftMessage: giftMessage.trim() || undefined } : {}),
         }),
       });
 
@@ -161,6 +194,9 @@ export default function CheckoutPage() {
   }
 
   const { product, organization } = data;
+  // EC29: gift-wrap config (top-level payload field, organization fallback).
+  const giftWrapCfg = data.giftWrap ?? organization.giftWrap ?? null;
+  const giftWrapFeeTaka = giftWrapCfg?.feeMinor ? Number(giftWrapCfg.feeMinor) / 100 : 0;
   const unitPrice = Number(product.priceMinor) / 100;
   const bumpPrice = (product.bumpPriceMinor && includeBump) ? Number(product.bumpPriceMinor) / 100 : 0;
   const subtotal = (unitPrice * quantity) + bumpPrice;
@@ -201,15 +237,47 @@ export default function CheckoutPage() {
                 <span className="font-bold text-emerald-700">− ৳{(Number(orderCompleted.discountMinor ?? 0) / 100).toLocaleString("en-IN")}{orderCompleted.freeShippingApplied ? " + ফ্রি ডেলিভারি" : ""}</span>
               </div>
             ) : null}
+            {(orderCompleted.promotionsApplied ?? []).map((p: { promotionId: string; name: string; amountMinor: string }) => (
+              <div key={p.promotionId} className="flex justify-between border-b pb-2">
+                <span className="text-slate-500">প্রমোশন ছাড় — {p.name}:</span>
+                <span className="font-bold text-emerald-700">− ৳{(Number(p.amountMinor ?? 0) / 100).toLocaleString("en-IN")}</span>
+              </div>
+            ))}
+            {orderCompleted.referralDiscountMinor && Number(orderCompleted.referralDiscountMinor) > 0 ? (
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-slate-500">রেফারেল ছাড়{orderCompleted.referral?.code ? ` (${orderCompleted.referral.code})` : ""}:</span>
+                <span className="font-bold text-emerald-700">− ৳{(Number(orderCompleted.referralDiscountMinor) / 100).toLocaleString("en-IN")}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between pt-1 text-sm font-bold">
               <span className="text-slate-900">সর্বমোট প্রদেয় টাকা:</span>
               <span className="text-emerald-700 text-base">{orderCompleted.totalFormatted}</span>
             </div>
           </div>
+          {orderCompleted.hasDigitalItems ? (
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900">
+              ডিজিটাল পণ্য: ডেলিভারির পর ট্র্যাকিং পেজে ডাউনলোড লিংক পাওয়া যাবে
+            </div>
+          ) : null}
+
+          {orderCompleted.yourReferralCode ? (
+            <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-3 text-xs font-bold text-indigo-900">
+              🎁 আপনার রেফারেল কোড: <span className="font-mono">{orderCompleted.yourReferralCode}</span> — বন্ধুদের দিলে তারা ছাড় পাবেন
+            </div>
+          ) : null}
 
           <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
             🔒 আপনার পার্সেলটি ঢাকা বা ঢাকার বাইরে ২-৩ কার্যদিবসের মধ্যে কুরিয়ারের মাধ্যমে পৌঁছে দেওয়া হবে।
           </div>
+
+          {organization.slug ? (
+            <a
+              href={`/track/${organization.slug}`}
+              className="block w-full rounded-xl bg-indigo-600 text-white font-semibold py-3 text-xs hover:bg-indigo-700 transition-colors"
+            >
+              📦 অর্ডার ট্র্যাক করুন
+            </a>
+          ) : null}
 
           <button
             onClick={() => window.location.reload()}
@@ -350,6 +418,45 @@ export default function CheckoutPage() {
               </div>
             </div>
 
+            {/* EC18: delivery slot picker — all-district slots from the payload */}
+            {(organization.deliverySlots ?? []).length > 0 ? (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  ডেলিভারি স্লট বেছে নিন (ঐচ্ছিক)
+                </label>
+                <select
+                  value={slotId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setSlotId(next);
+                    if (next && !slotDate) setSlotDate(slotDateString(0));
+                    if (!next) setSlotDate("");
+                  }}
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
+                >
+                  <option value="">স্লট বেছে নিইনি</option>
+                  {(organization.deliverySlots ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>{s.label} ({s.startTime} – {s.endTime})</option>
+                  ))}
+                </select>
+                {slotId ? (
+                  <div className="mt-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-1">ডেলিভারির তারিখ *</label>
+                    <input
+                      type="date"
+                      required
+                      min={slotDateString(0)}
+                      max={slotDateString(7)}
+                      value={slotDate}
+                      onChange={(e) => setSlotDate(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">স্লট বেছে নিলে তারিখ দেওয়া বাধ্যতামূলক।</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {/* Payment Method Option */}
             <div className="border-t pt-3">
               <label className="block text-xs font-bold text-slate-700 mb-1.5">পেমেন্ট মেথড:</label>
@@ -382,6 +489,30 @@ export default function CheckoutPage() {
                 className="w-full rounded-lg border border-slate-200 p-2 text-xs"
               />
             </div>
+
+            {/* EC29: gift wrap — hidden unless the payload offers it */}
+            {giftWrapCfg?.enabled && giftWrapCfg.feeMinor ? (
+              <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
+                <p className="text-xs font-bold text-pink-900">🎁 উপহার</p>
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-800">
+                  <input type="checkbox" checked={giftWrap} onChange={(e) => setGiftWrap(e.target.checked)} />
+                  গিফট র‍্যাপ করুন (+৳{giftWrapFeeTaka.toLocaleString("en-IN")} যোগ হবে)
+                </label>
+                {giftWrap ? (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">গিফট বার্তা (ঐচ্ছিক)</label>
+                    <textarea
+                      rows={2}
+                      maxLength={200}
+                      value={giftMessage}
+                      onChange={(e) => setGiftMessage(e.target.value)}
+                      placeholder="যেমন: শুভ জন্মদিন! 🎉"
+                      className="w-full rounded-lg border border-pink-200 bg-white p-2 text-xs focus:outline-none"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {/* Right Column: Product Summary & Order Total */}
@@ -405,6 +536,12 @@ export default function CheckoutPage() {
                 )}
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-slate-900 line-clamp-2">{product.name}</h3>
+                  {product.preorder ? (
+                    <span className="inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">প্রি-অর্ডার{product.preorder.releaseDate ? ` · ${new Date(product.preorder.releaseDate).toLocaleDateString("bn-BD")}` : ""}</span>
+                  ) : null}
+                  {product.digital ? (
+                    <span className="ml-1 inline-block rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ডিজিটাল পণ্য</span>
+                  ) : null}
                   <div className="flex items-center gap-2">
                     <span className="text-base font-extrabold text-indigo-700">
                       {formatMinor(BigInt(product.priceMinor))}
@@ -494,6 +631,19 @@ export default function CheckoutPage() {
                 {couponCode.trim() ? <p className="text-[11px] text-slate-400">কুপনের ছাড় অর্ডার নিশ্চিত করার সময় সার্ভার থেকে যাচাই হয়ে মোটে যোগ হবে।</p> : null}
               </div>
 
+              {/* EC16: referral code (a friend's code, optional) */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">রেফারেল কোড (বন্ধুর কোড, যদি থাকে)
+                  <input
+                    type="text"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value)}
+                    placeholder="বন্ধুর রেফারেল কোড"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </label>
+              </div>
+
               {/* Price Calculation Breakdown */}
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between text-slate-600">
@@ -506,6 +656,12 @@ export default function CheckoutPage() {
                     <span>+ ৳{bumpPrice.toLocaleString("en-IN")}</span>
                   </div>
                 ) : null}
+                {giftWrap && giftWrapCfg?.enabled ? (
+                  <div className="flex justify-between text-slate-600">
+                    <span>🎁 গিফট র‍্যাপ:</span>
+                    <span className="font-semibold text-slate-900">+ ৳{giftWrapFeeTaka.toLocaleString("en-IN")}</span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between text-slate-600">
                   <span>ডেলিভারি চার্জ:</span>
                   <span className="font-semibold text-slate-900">৳{deliveryCharge}</span>
@@ -515,6 +671,18 @@ export default function CheckoutPage() {
                   <span className="text-indigo-600 text-lg">৳{grandTotal.toLocaleString("en-IN")}</span>
                 </div>
               </div>
+
+              {/* EC18 trust copy near the place-order button — hidden when empty. */}
+              {organization.deliveryPromiseText?.trim() || organization.supportPhone?.trim() ? (
+                <div className="space-y-1 rounded-xl bg-slate-50 p-3 text-center">
+                  {organization.deliveryPromiseText?.trim() ? (
+                    <p className="text-xs font-semibold text-slate-700">🚚 {organization.deliveryPromiseText.trim()}</p>
+                  ) : null}
+                  {organization.supportPhone?.trim() ? (
+                    <p className="text-xs text-slate-500">সাপোর্ট: <span className="font-mono font-semibold">{organization.supportPhone.trim()}</span></p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {/* Submit Button */}
               <button
@@ -532,6 +700,14 @@ export default function CheckoutPage() {
             </div>
           </div>
         </form>
+
+        {/* EC18: return policy in the page footer area — hidden when empty. */}
+        {organization.returnPolicyText?.trim() ? (
+          <footer className="rounded-2xl border border-slate-200 bg-white p-5">
+            <h2 className="text-sm font-bold text-slate-800">রিটার্ন নীতি</h2>
+            <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-slate-600">{organization.returnPolicyText.trim()}</p>
+          </footer>
+        ) : null}
       </div>
     </div>
   );

@@ -6,10 +6,53 @@ import { formatMinor } from "@repo/contracts";
 import { EmptyState, KpiCard } from "@repo/ui";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
 
-interface OrderItem { id: string; name: string; quantity: number; totalMinor: string }
+interface OrderItem {
+  id: string; name: string; quantity: number; totalMinor: string;
+  // EC29: free-gift lines + bundle membership markers.
+  isGift?: boolean; bundleId?: string | null; bundleName?: string | null;
+}
+// EC31: installment plan as serialized by InstallmentsService
+// (direct object, no envelope; collect/cancel/create return the same shape).
+interface InstallmentItemRow {
+  id: string; seq: number; dueDate: string | null; dueDay: string;
+  amountMinor: string; paidMinor: string; remainingMinor: string;
+  paidAt: string | null; fullyPaid: boolean; overdue: boolean;
+}
+interface InstallmentPlan {
+  id: string; orderId: string; totalMinor: string; installmentCount: number;
+  intervalDays: number; startDate: string | null; status: string; note: string | null;
+  paidMinor: string; remainingMinor: string; items: InstallmentItemRow[];
+  orderAmountDueMinor?: string;
+}
+// EC18/EC19 (B8): staff order-detail payment verification rows.
+interface PaymentVerificationRow {
+  id: string; provider: string | null; trxId: string | null; amountMinor: string | number | null;
+  status: string; source: string | null; note: string | null; createdAt: string; reviewedById: string | null;
+}
 interface Order {
   id: string; externalNumber?: string | null; status: string; isCod: boolean;
   paymentMethod?: string | null; totalMinor: string; refundedMinor?: string; internalNote?: string | null; placedAt?: string | null;
+  // EC18 (B8): list rows carry { label, date }; the detail carries
+  // the full slot + payment-verification enrichment.
+  deliverySlot?: { id?: string; label: string; startTime?: string; endTime?: string; date: string } | null;
+  // EC30: delivery method + chosen pickup point (list + detail).
+  deliveryMethod?: string;
+  pickupPoint?: { id: string; name: string; address: string; district: string; phone: string | null; feeMinor: string } | null;
+  paymentVerifications?: PaymentVerificationRow[];
+  advancePaidMinor?: string;
+  amountDueMinor?: string;
+  // EC16: promotion / referral discounts recorded on the order.
+  promotionDiscountMinor?: string;
+  referralDiscountMinor?: string;
+  referralCode?: string | null;
+  promotionsApplied?: { promotionId: string; name: string; type: string; amountMinor: string }[] | null;
+  // EC24d: wholesale tier snapshot stamped at shop checkout.
+  wholesaleBreakdown?: { productId: string; minQty: number; priceMinor: string }[] | null;
+  // EC29: gift wrap + gift promotion outcome on the order.
+  giftWrapMinor?: string;
+  giftMessage?: string | null;
+  giftPromotionId?: string | null;
+  giftSkipped?: boolean;
   // EC5: rows come from pubOrder (the raw order row), so these
   // store-identity fields are present at runtime.
   source?: string | null; externalId?: string | null; storeId?: string | null;
@@ -36,7 +79,12 @@ const RISK_LABEL: Record<string, { text: string; cls: string }> = {
   unknown: { text: "ঝুঁকি: তথ্য নেই", cls: "bg-slate-100 text-slate-500" },
 };
 interface Stats { totalOrders: number; codOrders: number; codSharePercent: number; deliveredRevenueMinor: string; byStatus: { status: string; count: number }[] }
-interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string }
+interface Shipment { id: string; orderId: string; trackingCode?: string | null; status: string; provider: string; trackingUrl?: string | null; courierRuleId?: string | null }
+// EC22: courier auto-select rules + tracking templates, riders.
+interface CourierRule { id: string; name: string; conditions: { districts?: string[]; minWeightGrams?: number; maxWeightGrams?: number; minOrderMinor?: string | number; maxOrderMinor?: string | number; paymentType?: string }; courierAccountId: string; provider: string; priority: number; active: boolean }
+interface CourierSuggestion { ruleId: string | null; ruleName?: string | null; provider?: string | null; reason?: string | null }
+interface RiderRow { id: string; name: string; phone?: string | null; active: boolean }
+interface DeliveryAssignmentRow { id: string; orderId: string; orderNumber?: string | null; orderStatus?: string | null; orderTotalMinor?: string; orderAddress?: string | null; riderId: string; riderName?: string | null; status: string; assignedAt?: string; note?: string | null }
 // Sales & Data S5: row shape from GET organizations/:id/courier/performance.
 interface ProviderPerformance { provider: string; booked: number; delivered: number; returned: number; cancelled: number; inFlight: number; decided: number; deliveryRate: number | null; returnRate: number | null; avgDeliveryHours: null }
 interface CourierPerformance { days: number; deliveryTimeAvailable: boolean; providers: ProviderPerformance[]; totals: ProviderPerformance }
@@ -83,7 +131,19 @@ export default function OrdersPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResults, setBulkResults] = useState<{ requested: number; booked: number; skipped: number; failed: number; results: { orderId: string; ok: boolean; skipped?: boolean; trackingCode?: string; error?: string }[] } | null>(null);
   const [bookForm, setBookForm] = useState({ name: "", phone: "", address: "", note: "", provider: "steadfast", pStoreId: "", pCityId: "", pZoneId: "", pAreaId: "", weightKg: "0.5", rAreaId: "", rAreaName: "", rStoreId: "" });
-  const [conns, setConns] = useState<{ provider: string; connected: boolean }[]>([]);
+  const [conns, setConns] = useState<{ provider: string; connected: boolean; id?: string; trackingUrlTemplate?: string | null }[]>([]);
+  // EC22: rules / tracking templates / booking suggestion / rider panel.
+  const [courierRules, setCourierRules] = useState<CourierRule[]>([]);
+  const [ruleForm, setRuleForm] = useState({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true });
+  const [editingRule, setEditingRule] = useState<CourierRule | null>(null);
+  const [ruleBusy, setRuleBusy] = useState("");
+  const [ruleNotice, setRuleNotice] = useState("");
+  const [trackingTemplates, setTrackingTemplates] = useState<Record<string, string>>({});
+  const [bookSuggestion, setBookSuggestion] = useState<CourierSuggestion | null>(null);
+  const [riders, setRiders] = useState<RiderRow[]>([]);
+  const [orderAssignments, setOrderAssignments] = useState<DeliveryAssignmentRow[]>([]);
+  const [assignRiderId, setAssignRiderId] = useState("");
+  const [riderBusy, setRiderBusy] = useState("");
   const [pathaoForm, setPathaoForm] = useState({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
   const [redxForm, setRedxForm] = useState({ accessToken: "", baseUrl: "" });
   const [pStores, setPStores] = useState<any[]>([]);
@@ -105,6 +165,24 @@ export default function OrdersPage() {
   const [actNote, setActNote] = useState("");
   const [actBusy, setActBusy] = useState("");
   const [actNotice, setActNotice] = useState("");
+  // EC19 (B8): staff-recorded advance payment form.
+  const [advAmount, setAdvAmount] = useState("");
+  const [advMethod, setAdvMethod] = useState("bkash");
+  const [advRef, setAdvRef] = useState("");
+  const [advNote, setAdvNote] = useState("");
+  const [advBusy, setAdvBusy] = useState(false);
+  const [advError, setAdvError] = useState("");
+  const [advNotice, setAdvNotice] = useState("");
+  // EC31: installment plan for the opened order.
+  const [instPlan, setInstPlan] = useState<InstallmentPlan | null>(null);
+  const [instLoaded, setInstLoaded] = useState(false);
+  const [instError, setInstError] = useState("");
+  const [instBusy, setInstBusy] = useState("");
+  const [instCount, setInstCount] = useState("3");
+  const [instInterval, setInstInterval] = useState("30");
+  const [instStart, setInstStart] = useState("");
+  const [instNote, setInstNote] = useState("");
+  const [collectForms, setCollectForms] = useState<Record<string, { amount: string; method: string; reference: string; note: string }>>({});
   // EC5: store sync panel (push-state, store note, draft, return link).
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [pushStateError, setPushStateError] = useState("");
@@ -219,8 +297,162 @@ export default function OrdersPage() {
   useEffect(() => {
     setPushState(null); setPushStateError(""); setStoreNoteText("");
     setSyncNotice(""); setSyncError(""); setReturnUrl(""); setCopiedKey("");
+    setAdvAmount(""); setAdvRef(""); setAdvNote(""); setAdvError(""); setAdvNotice("");
     if (actOrderId) void loadPushState(actOrderId);
   }, [actOrderId, loadPushState]);
+
+  // EC18/EC19 (B8): enrich the opened order with the staff detail
+  // payload (delivery slot + payment verifications + advance/due).
+  // A failed load leaves the row data as-is — never renders as
+  // "no payments".
+  useEffect(() => {
+    if (!actOrderId) return;
+    const orgId = getOrganizationId(); if (!orgId) return;
+    let alive = true;
+    apiFetch<Order>(`/organizations/${orgId}/orders/${actOrderId}`)
+      .then((detail) => {
+        if (!alive || !detail) return;
+        setActOrder((prev) => (prev && prev.id === detail.id ? { ...prev, ...detail } : prev));
+      })
+      .catch(() => undefined);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actOrderId]);
+
+  // EC31: load the installment plan for the opened order. A 404
+  // (no plan) is treated as "no plan", never as an error banner.
+  useEffect(() => {
+    setInstPlan(null); setInstLoaded(false); setInstError(""); setCollectForms({});
+    setInstCount("3"); setInstInterval("30"); setInstNote("");
+    setInstStart(() => { const d = new Date(); const mm = String(d.getMonth() + 1).padStart(2, "0"); const dd = String(d.getDate()).padStart(2, "0"); return `${d.getFullYear()}-${mm}-${dd}`; });
+    if (!actOrderId) return;
+    const orgId = getOrganizationId(); if (!orgId) { setInstLoaded(true); return; }
+    let alive = true;
+    apiFetch<InstallmentPlan>(`/organizations/${orgId}/orders/${actOrderId}/installment-plan`)
+      .then((plan) => { if (alive) { setInstPlan(plan ?? null); setInstLoaded(true); } })
+      .catch(() => { if (alive) { setInstPlan(null); setInstLoaded(true); } });
+    return () => { alive = false; };
+  }, [actOrderId]);
+
+  // Prefill per-item collect forms with each item's remaining amount.
+  useEffect(() => {
+    if (!instPlan) return;
+    setCollectForms((prev) => {
+      const next = { ...prev };
+      for (const item of instPlan.items) {
+        if (!next[item.id]) {
+          // Exact minor→taka string conversion (no floats).
+          let amount = "";
+          try {
+            const v = BigInt(item.remainingMinor); const whole = v / 100n; const frac = v % 100n;
+            amount = frac === 0n ? whole.toString() : `${whole.toString()}.${String(frac).padStart(2, "0")}`;
+          } catch { amount = ""; }
+          next[item.id] = { amount, method: "bkash", reference: "", note: "" };
+        }
+      }
+      return next;
+    });
+  }, [instPlan]);
+
+  function applyInstPlan(plan: InstallmentPlan) {
+    setInstPlan(plan);
+    if (plan.orderAmountDueMinor !== undefined) {
+      setActOrder((prev) => (prev && prev.id === plan.orderId ? { ...prev, amountDueMinor: plan.orderAmountDueMinor } : prev));
+    }
+  }
+
+  async function createInstPlan() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    setInstBusy("create"); setInstError("");
+    try {
+      const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/orders/${actOrder.id}/installment-plan`, {
+        method: "POST",
+        body: JSON.stringify({
+          installmentCount: Number(instCount),
+          intervalDays: Number(instInterval),
+          startDate: instStart,
+          ...(instNote.trim() ? { note: instNote.trim() } : {}),
+        }),
+      });
+      applyInstPlan(plan);
+      await load();
+    } catch (err) { setInstError(err instanceof Error ? err.message : "কিস্তি প্ল্যান তৈরি ব্যর্থ"); }
+    finally { setInstBusy(""); }
+  }
+
+  async function collectInstItem(item: InstallmentItemRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const form = collectForms[item.id];
+    if (!form) return;
+    const raw = form.amount.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setInstError("টাকার পরিমাণ ঠিকভাবে লিখুন (যেমন: 200 বা 200.50)।"); return; }
+    const minor = BigInt(Math.round(Number(raw) * 100));
+    if (minor <= 0n) { setInstError("সংগ্রহের পরিমাণ ০-এর বেশি হতে হবে।"); return; }
+    setInstBusy(`collect-${item.id}`); setInstError("");
+    try {
+      const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/installment-items/${item.id}/collect`, {
+        method: "POST",
+        body: JSON.stringify({
+          amountMinor: minor.toString(),
+          method: form.method,
+          reference: form.reference.trim() || undefined,
+          note: form.note.trim() || undefined,
+        }),
+      });
+      applyInstPlan(plan);
+      await load();
+    } catch (err) { setInstError(err instanceof Error ? err.message : "সংগ্রহ রেকর্ড ব্যর্থ"); }
+    finally { setInstBusy(""); }
+  }
+
+  async function cancelInstPlan() {
+    const orgId = getOrganizationId(); if (!orgId || !instPlan) return;
+    if (!window.confirm("এই কিস্তি প্ল্যানটি বাতিল করবেন? ইতিমধ্যে সংগ্রহ করা টাকা সংগ্রহ হিসেবেই থাকবে।")) return;
+    setInstBusy("cancel"); setInstError("");
+    try {
+      const plan = await apiFetch<InstallmentPlan>(`/organizations/${orgId}/installments/${instPlan.id}/cancel`, { method: "POST" });
+      applyInstPlan(plan);
+      await load();
+    } catch (err) { setInstError(err instanceof Error ? err.message : "প্ল্যান বাতিল ব্যর্থ"); }
+    finally { setInstBusy(""); }
+  }
+
+  // EC22: rider assignments for the opened order.
+  const loadOrderAssignments = useCallback(async (orderId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try { setOrderAssignments(await apiFetch<DeliveryAssignmentRow[]>(`/organizations/${orgId}/delivery/assignments?orderId=${encodeURIComponent(orderId)}`)); }
+    catch { setOrderAssignments([]); }
+  }, []);
+  useEffect(() => {
+    setOrderAssignments([]); setAssignRiderId("");
+    if (actOrderId) void loadOrderAssignments(actOrderId);
+  }, [actOrderId, loadOrderAssignments]);
+
+  async function recordAdvance() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    const raw = advAmount.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) { setAdvError("টাকার পরিমাণ ঠিকভাবে লিখুন (যেমন: 200 বা 200.50)।"); return; }
+    const minor = BigInt(Math.round(Number(raw) * 100));
+    if (minor <= 0n) { setAdvError("অগ্রিমের পরিমাণ ০-এর বেশি হতে হবে।"); return; }
+    setAdvBusy(true); setAdvError(""); setAdvNotice("");
+    try {
+      const updated = await apiFetch<Order>(`/organizations/${orgId}/orders/${actOrder.id}/advance-verification`, {
+        method: "POST",
+        body: JSON.stringify({
+          amountMinor: minor.toString(),
+          method: advMethod,
+          reference: advRef.trim() || undefined,
+          note: advNote.trim() || undefined,
+        }),
+      });
+      // The endpoint returns the enriched order detail.
+      setActOrder((prev) => (prev ? { ...prev, ...updated } : updated));
+      setAdvAmount(""); setAdvRef(""); setAdvNote("");
+      setAdvNotice("অগ্রিম পেমেন্ট রেকর্ড হয়েছে।");
+      await load();
+    } catch (err) { setAdvError(err instanceof Error ? err.message : "অগ্রিম রেকর্ড ব্যর্থ"); }
+    finally { setAdvBusy(false); }
+  }
 
   async function copyText(key: string, text: string) {
     try { await navigator.clipboard.writeText(text); setCopiedKey(key); }
@@ -328,13 +560,99 @@ export default function OrdersPage() {
       const [conn, ships, allConns] = await Promise.all([
         apiFetch<{ connected: boolean }>(`/organizations/${orgId}/courier/connection`),
         apiFetch<Shipment[]>(`/organizations/${orgId}/courier/shipments`),
-        apiFetch<{ provider: string; connected: boolean }[]>(`/organizations/${orgId}/courier/connections`).catch(() => []),
+        apiFetch<{ provider: string; connected: boolean; id?: string; trackingUrlTemplate?: string | null }[]>(`/organizations/${orgId}/courier/connections`).catch(() => []),
       ]);
       setCourier(conn); setShipments(ships); setConns(allConns as any);
+      setTrackingTemplates((prev) => {
+        const next = { ...prev };
+        for (const c of allConns as { provider: string; trackingUrlTemplate?: string | null }[]) {
+          if (next[c.provider] === undefined) next[c.provider] = c.trackingUrlTemplate ?? "";
+        }
+        return next;
+      });
+      apiFetch<CourierRule[]>(`/organizations/${orgId}/courier/rules`).then(setCourierRules).catch(() => setCourierRules([]));
+      apiFetch<RiderRow[]>(`/organizations/${orgId}/delivery/riders`).then(setRiders).catch(() => setRiders([]));
     } catch { /* courier is optional */ }
   }, []);
   useEffect(() => { loadCourier(); }, [loadCourier]);
   const shipmentFor = (orderId: string) => shipments.find((s) => s.orderId === orderId);
+
+  // EC22: rule CRUD + tracking template + suggestion + rider assignment helpers.
+  function ruleConditionsSummary(r: CourierRule): string {
+    const c = r.conditions ?? {};
+    const parts: string[] = [];
+    if (c.districts?.length) parts.push(`জেলা: ${c.districts.join(", ")}`);
+    if (c.minWeightGrams != null || c.maxWeightGrams != null) parts.push(`ওজন: ${c.minWeightGrams ?? "—"}–${c.maxWeightGrams ?? "—"} গ্রাম`);
+    if (c.minOrderMinor != null || c.maxOrderMinor != null) parts.push(`অর্ডার মূল্য: ${c.minOrderMinor != null ? formatMinor(BigInt(c.minOrderMinor)) : "—"} – ${c.maxOrderMinor != null ? formatMinor(BigInt(c.maxOrderMinor)) : "—"}`);
+    if (c.paymentType) parts.push(`পেমেন্ট: ${c.paymentType}`);
+    return parts.length ? parts.join(" · ") : "সব অর্ডারে প্রযোজ্য";
+  }
+  async function saveRule(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const conditions: CourierRule["conditions"] = {};
+    if (ruleForm.districts.trim()) conditions.districts = ruleForm.districts.split(",").map((s) => s.trim()).filter(Boolean);
+    if (ruleForm.minWeightGrams) conditions.minWeightGrams = Number(ruleForm.minWeightGrams);
+    if (ruleForm.maxWeightGrams) conditions.maxWeightGrams = Number(ruleForm.maxWeightGrams);
+    if (ruleForm.minOrderTaka.trim()) { const m = BigInt(Math.round(Number(ruleForm.minOrderTaka) * 100)); conditions.minOrderMinor = m.toString(); }
+    if (ruleForm.maxOrderTaka.trim()) { const m = BigInt(Math.round(Number(ruleForm.maxOrderTaka) * 100)); conditions.maxOrderMinor = m.toString(); }
+    if (ruleForm.paymentType) conditions.paymentType = ruleForm.paymentType;
+    setRuleBusy("save"); setRuleNotice("");
+    try {
+      const body = { name: ruleForm.name.trim(), conditions, courierAccountId: ruleForm.courierAccountId, provider: ruleForm.provider, priority: Number(ruleForm.priority) || 0, active: ruleForm.active };
+      if (editingRule) await apiFetch(`/organizations/${orgId}/courier/rules/${editingRule.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      else await apiFetch(`/organizations/${orgId}/courier/rules`, { method: "POST", body: JSON.stringify(body) });
+      setRuleNotice("নিয়ম সংরক্ষণ হয়েছে।");
+      setEditingRule(null);
+      setRuleForm({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true });
+      setCourierRules(await apiFetch<CourierRule[]>(`/organizations/${orgId}/courier/rules`));
+    } catch (err) { setRuleNotice(err instanceof Error ? err.message : "নিয়ম সংরক্ষণ ব্যর্থ"); }
+    finally { setRuleBusy(""); }
+  }
+  async function deleteRule(r: CourierRule) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setRuleBusy(`del-${r.id}`);
+    try { await apiFetch(`/organizations/${orgId}/courier/rules/${r.id}`, { method: "DELETE" }); setCourierRules(await apiFetch<CourierRule[]>(`/organizations/${orgId}/courier/rules`)); }
+    catch (err) { setRuleNotice(err instanceof Error ? err.message : "মুছতে ব্যর্থ"); }
+    finally { setRuleBusy(""); }
+  }
+  async function saveTrackingTemplate(provider: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setRuleBusy(`tpl-${provider}`); setRuleNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/courier/tracking-template`, { method: "PATCH", body: JSON.stringify({ provider, trackingUrlTemplate: trackingTemplates[provider]?.trim() ? trackingTemplates[provider].trim() : null }) });
+      setRuleNotice("ট্র্যাকিং টেমপ্লেট সংরক্ষণ হয়েছে।");
+      await loadCourier();
+    } catch (err) { setRuleNotice(err instanceof Error ? err.message : "টেমপ্লেট সংরক্ষণ ব্যর্থ"); }
+    finally { setRuleBusy(""); }
+  }
+  async function loadSuggestion(orderId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const s = await apiFetch<CourierSuggestion>(`/organizations/${orgId}/courier/suggestion/${orderId}`);
+      setBookSuggestion(s);
+      if (s && s.ruleId && s.provider) {
+        setBookForm((prev) => ({ ...prev, provider: s.provider as string }));
+        void loadProviderLists(s.provider);
+      }
+    } catch { setBookSuggestion(null); /* suggestion is advisory — never break the booking form */ }
+  }
+  async function assignRider() {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder || !assignRiderId) return;
+    setRiderBusy("assign");
+    try {
+      await apiFetch(`/organizations/${orgId}/delivery/assignments`, { method: "POST", body: JSON.stringify({ orderId: actOrder.id, riderId: assignRiderId }) });
+      await loadOrderAssignments(actOrder.id);
+    } catch (err) { setCourierNotice(err instanceof Error ? err.message : "রাইডার বরাদ্দ ব্যর্থ"); }
+    finally { setRiderBusy(""); }
+  }
+  async function transitionAssignment(a: DeliveryAssignmentRow, status: string) {
+    const orgId = getOrganizationId(); if (!orgId || !actOrder) return;
+    setRiderBusy(`tr-${a.id}`);
+    try { await apiFetch(`/organizations/${orgId}/delivery/assignments/${a.id}/transition`, { method: "POST", body: JSON.stringify({ status }) }); await loadOrderAssignments(actOrder.id); }
+    catch (err) { setCourierNotice(err instanceof Error ? err.message : "অবস্থা বদল ব্যর্থ"); }
+    finally { setRiderBusy(""); }
+  }
 
   async function connectCourier(e: React.FormEvent) {
     e.preventDefault();
@@ -675,6 +993,60 @@ export default function OrdersPage() {
         </div>
       </div>
       <div className="card space-y-3">
+        <h2 className="font-semibold">⚙️ কুরিয়ার অটো-সিলেক্ট নিয়ম</h2>
+        <p className="text-xs text-slate-500">শর্ত মিললে বুকিংয়ের সময় কুরিয়ার নিজে থেকে সাজেস্ট হবে — স্টাফ চাইলে বদলাতে পারবেন। Priority বেশি হলে সেই নিয়ম আগে যাচাই হয়।</p>
+        {ruleNotice ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{ruleNotice}</p> : null}
+        {courierRules.length === 0 ? <p className="text-sm text-slate-400">কোনো নিয়ম নেই।</p> : (
+          <ul className="space-y-1.5">
+            {[...courierRules].sort((a, b) => b.priority - a.priority).map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span><span className="font-medium">{r.name}</span> <span className="text-slate-500">→ {r.provider}</span> <span className="badge-slate ml-1">Priority {r.priority}</span> <span className={r.active ? "badge-green ml-1" : "badge-slate ml-1"}>{r.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span>
+                  <span className="block text-xs text-slate-500">{ruleConditionsSummary(r)}</span></span>
+                <span className="flex gap-2">
+                  <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingRule(r); setRuleForm({ name: r.name, provider: r.provider, courierAccountId: r.courierAccountId, priority: String(r.priority), districts: (r.conditions.districts ?? []).join(", "), minWeightGrams: r.conditions.minWeightGrams != null ? String(r.conditions.minWeightGrams) : "", maxWeightGrams: r.conditions.maxWeightGrams != null ? String(r.conditions.maxWeightGrams) : "", minOrderTaka: r.conditions.minOrderMinor != null ? String(Number(r.conditions.minOrderMinor) / 100) : "", maxOrderTaka: r.conditions.maxOrderMinor != null ? String(Number(r.conditions.maxOrderMinor) / 100) : "", paymentType: r.conditions.paymentType ?? "", active: r.active }); }}>সম্পাদনা</button>
+                  <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={ruleBusy !== ""} onClick={() => deleteRule(r)}>মুছুন</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form onSubmit={saveRule} className="grid gap-2 border-t pt-3 sm:grid-cols-3">
+          <input className="input" placeholder="নিয়মের নাম *" value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} required />
+          <select className="input" value={ruleForm.courierAccountId} onChange={(e) => { const c = conns.find((x) => (x.id ?? x.provider) === e.target.value); setRuleForm({ ...ruleForm, courierAccountId: e.target.value, provider: c?.provider ?? ruleForm.provider }); }} required>
+            <option value="">কুরিয়ার অ্যাকাউন্ট বেছে নিন</option>
+            {conns.filter((c) => c.connected).map((c) => <option key={c.provider} value={c.id ?? c.provider}>{c.provider}</option>)}
+            {courierRules.map((r) => <option key={`rule-${r.id}`} value={r.courierAccountId}>{r.provider} (বিদ্যমান নিয়ম থেকে)</option>)}
+          </select>
+          <input className="input" type="number" placeholder="Priority" value={ruleForm.priority} onChange={(e) => setRuleForm({ ...ruleForm, priority: e.target.value })} />
+          <input className="input" placeholder="জেলা (কমা দিয়ে, ঐচ্ছিক)" value={ruleForm.districts} onChange={(e) => setRuleForm({ ...ruleForm, districts: e.target.value })} />
+          <input className="input" type="number" placeholder="সর্বনিম্ন ওজন (গ্রাম)" value={ruleForm.minWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, minWeightGrams: e.target.value })} />
+          <input className="input" type="number" placeholder="সর্বোচ্চ ওজন (গ্রাম)" value={ruleForm.maxWeightGrams} onChange={(e) => setRuleForm({ ...ruleForm, maxWeightGrams: e.target.value })} />
+          <input className="input" inputMode="decimal" placeholder="সর্বনিম্ন অর্ডার মূল্য (৳)" value={ruleForm.minOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, minOrderTaka: e.target.value })} />
+          <input className="input" inputMode="decimal" placeholder="সর্বোচ্চ অর্ডার মূল্য (৳)" value={ruleForm.maxOrderTaka} onChange={(e) => setRuleForm({ ...ruleForm, maxOrderTaka: e.target.value })} />
+          <select className="input" value={ruleForm.paymentType} onChange={(e) => setRuleForm({ ...ruleForm, paymentType: e.target.value })}>
+            <option value="">পেমেন্ট টাইপ: যেকোনো</option>
+            <option value="cod">COD</option>
+            <option value="prepaid">Prepaid</option>
+          </select>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ruleForm.active} onChange={(e) => setRuleForm({ ...ruleForm, active: e.target.checked })} /> সক্রিয়</label>
+          <div className="flex gap-2 sm:col-span-2">
+            <button className="btn-primary btn-sm" disabled={ruleBusy !== ""}>{ruleBusy === "save" ? "হচ্ছে…" : editingRule ? "নিয়ম আপডেট করুন" : "নিয়ম যোগ করুন"}</button>
+            {editingRule ? <button type="button" className="btn-secondary btn-sm" onClick={() => { setEditingRule(null); setRuleForm({ name: "", provider: "", courierAccountId: "", priority: "10", districts: "", minWeightGrams: "", maxWeightGrams: "", minOrderTaka: "", maxOrderTaka: "", paymentType: "", active: true }); }}>বাতিল</button> : null}
+          </div>
+        </form>
+        <div className="space-y-2 border-t pt-3">
+          <p className="text-sm font-medium">ট্র্যাকিং URL টেমপ্লেট</p>
+          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-400">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
+            <div key={c.provider} className="flex flex-wrap items-center gap-2">
+              <span className="w-24 text-sm font-medium">{c.provider}</span>
+              <input className="input flex-1" placeholder="https://…/track/{trackingId}" value={trackingTemplates[c.provider] ?? ""} onChange={(e) => setTrackingTemplates({ ...trackingTemplates, [c.provider]: e.target.value })} />
+              <button type="button" className="btn-secondary btn-sm" disabled={ruleBusy !== ""} onClick={() => saveTrackingTemplate(c.provider)}>{ruleBusy === `tpl-${c.provider}` ? "হচ্ছে…" : "সংরক্ষণ"}</button>
+            </div>
+          ))}
+          <p className="text-xs text-slate-400">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
+        </div>
+      </div>
+      <div className="card space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold">🚚 কুরিয়ার পারফরম্যান্স</h2>
           <label className="flex items-center gap-2 text-sm text-slate-500">সময়কাল
@@ -834,7 +1206,10 @@ export default function OrdersPage() {
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
                   <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
-                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button></td>
+                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
+                    {o.deliverySlot ? <span className="mt-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
+                    {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
+                  </td>
                   <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-400">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
                   <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
@@ -851,8 +1226,14 @@ export default function OrdersPage() {
                   <td className="px-4 py-3">{o.placedAt ? new Date(o.placedAt).toLocaleDateString() : "—"}</td>
                   <td className="px-4 py-3">
                     {(() => { const sh = shipmentFor(o.id); return sh ? (
-                      <span className="inline-flex items-center gap-1" title={sh.provider}>
+                      <span className="inline-flex flex-wrap items-center gap-1" title={sh.provider}>
                         <span className="badge-indigo" title={sh.trackingCode ?? ""}>🚚 {sh.status}</span>
+                        {sh.trackingUrl ? (
+                          <a className="text-xs font-semibold text-brand-600 hover:underline" href={sh.trackingUrl} target="_blank" rel="noreferrer">🔗 ট্র্যাক করুন{sh.trackingCode ? ` (${sh.trackingCode})` : ""}</a>
+                        ) : sh.trackingCode ? <span className="text-xs text-slate-500">{sh.trackingCode}</span> : null}
+                        {sh.courierRuleId ? (
+                          <span className="badge-slate" title={sh.courierRuleId}>নিয়ম অনুযায়ী নির্বাচিত{courierRules.find((r) => r.id === sh.courierRuleId) ? `: ${courierRules.find((r) => r.id === sh.courierRuleId)?.name}` : ""}</span>
+                        ) : null}
                         <button className="text-xs font-semibold text-brand-600 hover:underline" disabled={courierBusy !== ""} onClick={() => syncShipment(sh.id)}>স্ট্যাটাস যাচাই</button>
                         <button className="text-xs font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️ লেবেল</button>
                       </span>
@@ -863,7 +1244,8 @@ export default function OrdersPage() {
                         setQuoteOut(null);
                         const firstConnected = conns.find((c) => c.connected)?.provider ?? "steadfast";
                         setBookForm({ name: [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" "), phone: o.customer?.phone ?? "", address: "", note: "", provider: firstConnected, pStoreId: "", pCityId: "", pZoneId: "", pAreaId: "", weightKg: "0.5", rAreaId: "", rAreaName: "", rStoreId: "" });
-                        if (opening) await loadProviderLists(firstConnected);
+                        setBookSuggestion(null);
+                        if (opening) { await loadProviderLists(firstConnected); void loadSuggestion(o.id); }
                       }}>পার্সেল বুক করুন</button>
                     ) : <span className="text-xs text-slate-400">—</span>; })()}
                   </td>
@@ -871,6 +1253,9 @@ export default function OrdersPage() {
               ))}
               {bookingFor ? (() => { const order = items.find((x) => x.id === bookingFor); if (!order) return null; return (
                 <tr className="border-t bg-indigo-50/60"><td colSpan={9} className="px-4 py-3">
+                  {bookSuggestion?.ruleId ? (
+                    <p className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">নিয়ম অনুযায়ী সাজেশন: {bookSuggestion.ruleName ?? "নিয়ম"} — {bookSuggestion.reason ?? ""} (কুরিয়ার আগেই বেছে দেওয়া হয়েছে; চাইলে বদলাতে পারবেন)</p>
+                  ) : null}
                   <div className="grid gap-2 sm:grid-cols-4">
                     <select className="input" value={bookForm.provider} onChange={async (e) => { setBookForm({ ...bookForm, provider: e.target.value }); setQuoteOut(null); await loadProviderLists(e.target.value); }}>
                       {(["steadfast", "pathao", "redx"] as const).map((p) => {
@@ -974,6 +1359,212 @@ export default function OrdersPage() {
                         <p className="text-xs text-slate-400">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
                       </div>
                     </div>
+                    {/* EC18/EC19 (B8): delivery slot + payments / advances */}
+                    <div className="space-y-3 rounded-xl border bg-white p-3">
+                      <h4 className="text-sm font-semibold">💳 পেমেন্ট ও ডেলিভারি স্লট</h4>
+                      {o.deliverySlot ? (
+                        <p className="text-sm">🕐 ডেলিভারি স্লট: <b>{o.deliverySlot.label}</b>{o.deliverySlot.startTime && o.deliverySlot.endTime ? ` (${o.deliverySlot.startTime} – ${o.deliverySlot.endTime})` : ""} · তারিখ: <b>{o.deliverySlot.date}</b></p>
+                      ) : (
+                        <p className="text-xs text-slate-400">এই অর্ডারে কোনো ডেলিভারি স্লট বেছে নেওয়া হয়নি।</p>
+                      )}
+                      {o.deliveryMethod === "pickup" && o.pickupPoint ? (
+                        <p className="text-sm">📍 পিকআপ: <b>{o.pickupPoint.name}</b> — {o.pickupPoint.address}, {o.pickupPoint.district}{o.pickupPoint.phone ? <> · ফোন: <span className="font-mono">{o.pickupPoint.phone}</span></> : null} · ফি: <b>{(() => { try { return formatMinor(BigInt(o.pickupPoint.feeMinor)); } catch { return o.pickupPoint.feeMinor; } })()}</b></p>
+                      ) : null}
+                      {o.advancePaidMinor !== undefined || o.amountDueMinor !== undefined ? (
+                        <div className="flex flex-wrap gap-4 text-sm">
+                          {o.advancePaidMinor !== undefined ? <span>অগ্রিম পরিশোধিত: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(o.advancePaidMinor)); } catch { return o.advancePaidMinor; } })()}</b></span> : null}
+                          {o.amountDueMinor !== undefined ? <span>বকেয়া: <b>{(() => { try { return formatMinor(BigInt(o.amountDueMinor)); } catch { return o.amountDueMinor; } })()}</b></span> : null}
+                        </div>
+                      ) : null}
+                      {(o.promotionsApplied ?? []).length > 0 || o.referralCode ? (
+                        <div className="space-y-1 text-sm">
+                          {(o.promotionsApplied ?? []).map((pa) => (
+                            <p key={pa.promotionId}>🎁 প্রমোশন: <b>{pa.name}</b> — ছাড়: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(pa.amountMinor)); } catch { return pa.amountMinor; } })()}</b></p>
+                          ))}
+                          {o.referralCode ? (
+                            <p>🤝 রেফারেল কোড: <b className="font-mono">{o.referralCode}</b>
+                              {o.referralDiscountMinor !== undefined && Number(o.referralDiscountMinor) > 0 ? (
+                                <> — ছাড়: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(o.referralDiscountMinor)); } catch { return o.referralDiscountMinor; } })()}</b></>
+                              ) : null}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {(o.wholesaleBreakdown ?? []).length > 0 ? (
+                        <div className="space-y-1 text-sm">
+                          <p className="font-semibold text-amber-800">🏷️ পাইকারি মূল্য প্রযোজ্য</p>
+                          {(o.wholesaleBreakdown ?? []).map((w) => (
+                            <p key={w.productId} className="text-xs text-slate-600">
+                              পণ্য {w.productId} — কমপক্ষে {w.minQty}টির স্তর: একক দাম {(() => { try { return formatMinor(BigInt(w.priceMinor)); } catch { return w.priceMinor; } })()}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                      {/* EC29: order items with gift / bundle markers + wrap + gift message */}
+                      {(o.items ?? []).length > 0 ? (
+                        <div className="space-y-1 border-t pt-3">
+                          <p className="text-xs font-semibold text-slate-600">অর্ডারের পণ্য</p>
+                          {(o.items ?? []).map((it) => (
+                            <div key={it.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
+                              <span className="font-medium">{it.name} × {it.quantity}</span>
+                              {it.isGift ? <span className="rounded bg-pink-100 px-1.5 py-0.5 font-bold text-pink-700">🎁 উপহার</span> : null}
+                              {it.bundleName ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-800">বান্ডল: {it.bundleName}</span> : null}
+                              <span className="ml-auto font-semibold">{it.isGift ? "৳০" : (() => { try { return formatMinor(BigInt(it.totalMinor)); } catch { return it.totalMinor; } })()}</span>
+                            </div>
+                          ))}
+                          {o.giftWrapMinor !== undefined && Number(o.giftWrapMinor) > 0 ? (
+                            <div className="flex justify-between rounded-lg bg-pink-50 px-3 py-1.5 text-xs">
+                              <span className="font-medium text-pink-900">🎁 গিফট র‍্যাপ ফি</span>
+                              <span className="font-semibold">{(() => { try { return formatMinor(BigInt(o.giftWrapMinor)); } catch { return o.giftWrapMinor; } })()}</span>
+                            </div>
+                          ) : null}
+                          {o.giftSkipped ? (
+                            <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">উপহার পণ্যের স্টক শেষ থাকায় এই অর্ডারে উপহার যোগ করা যায়নি।</p>
+                          ) : null}
+                          {o.giftMessage ? (
+                            <div className="rounded-lg border-2 border-pink-300 bg-pink-50 px-3 py-2 text-sm font-semibold text-pink-900">
+                              🎁 গিফট বার্তা: {o.giftMessage}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {(o.paymentVerifications ?? []).length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-slate-600">পেমেন্ট যাচাই / অগ্রিমের রেকর্ড</p>
+                          {(o.paymentVerifications ?? []).map((pv) => (
+                            <div key={pv.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
+                              <span className="font-medium">{pv.provider ?? "—"}</span>
+                              <span className="font-semibold">{(() => { try { return pv.amountMinor != null ? formatMinor(BigInt(pv.amountMinor)) : "—"; } catch { return String(pv.amountMinor ?? "—"); } })()}</span>
+                              {pv.trxId ? <span className="font-mono">TrxID: {pv.trxId}</span> : null}
+                              <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{pv.status}</span>
+                              <span className="text-slate-500">{pv.source === "manual_advance" ? "স্টাফ রেকর্ড" : pv.source ?? ""}</span>
+                              <span className="text-slate-400">{new Date(pv.createdAt).toLocaleString("bn-BD")}</span>
+                              {pv.note ? <span className="text-slate-500">· {pv.note}</span> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="space-y-2 border-t pt-3">
+                        <label className="text-sm font-medium">অগ্রিম পেমেন্ট রেকর্ড করুন</label>
+                        {advError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{advError}</p> : null}
+                        {advNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{advNotice}</p> : null}
+                        <div className="grid gap-2 sm:grid-cols-4">
+                          <input className="input" placeholder="পরিমাণ (টাকা)" inputMode="decimal" value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} />
+                          <select className="input" value={advMethod} onChange={(e) => setAdvMethod(e.target.value)}>
+                            <option value="bkash">বিকাশ</option>
+                            <option value="nagad">নগদ</option>
+                            <option value="rocket">রকেট</option>
+                            <option value="cash">ক্যাশ</option>
+                            <option value="bank">ব্যাংক</option>
+                            <option value="other">অন্যান্য</option>
+                          </select>
+                          <input className="input" placeholder="রেফারেন্স / TrxID (ঐচ্ছিক)" value={advRef} onChange={(e) => setAdvRef(e.target.value)} />
+                          <input className="input" placeholder="নোট (ঐচ্ছিক)" value={advNote} onChange={(e) => setAdvNote(e.target.value)} />
+                        </div>
+                        <button className="btn-primary btn-sm" disabled={advBusy || advAmount.trim() === ""} onClick={recordAdvance}>
+                          {advBusy ? "রেকর্ড হচ্ছে..." : "অগ্রিম রেকর্ড করুন"}
+                        </button>
+                        <p className="text-xs text-slate-400">স্টাফের রেকর্ড করা অগ্রিম যাচাইকৃত (approved) হিসেবেই ধরা হয় — রেকর্ডকারীই যাচাইকারী।</p>
+                      </div>
+                    </div>
+                    {/* EC31: installment plan for this order */}
+                    <div className="space-y-3 rounded-xl border bg-white p-3">
+                      <h4 className="text-sm font-semibold">💰 কিস্তি প্ল্যান</h4>
+                      {instError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{instError}</p> : null}
+                      {!instLoaded ? (
+                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                      ) : !instPlan ? (
+                        (() => { let due = 0n; try { due = BigInt(o.amountDueMinor ?? "0"); } catch { due = 0n; } return due > 0n ? (
+                          <div className="space-y-2">
+                            <p className="text-xs text-slate-500">এই অর্ডারে বকেয়া {(() => { try { return formatMinor(BigInt(o.amountDueMinor ?? "0")); } catch { return o.amountDueMinor; } })()} — তা কিস্তিতে ভাগ করে একটি প্ল্যান তৈরি করুন। প্ল্যানের মোট হবে আজকের বকেয়ার স্ন্যাপশট।</p>
+                            <div className="grid gap-2 sm:grid-cols-4">
+                              <label className="block text-xs font-medium text-slate-600">কিস্তির সংখ্যা (২–২৪)
+                                <input className="input mt-1" type="number" min={2} max={24} value={instCount} onChange={(e) => setInstCount(e.target.value)} />
+                              </label>
+                              <label className="block text-xs font-medium text-slate-600">ব্যবধান দিন (১–৯০)
+                                <input className="input mt-1" type="number" min={1} max={90} value={instInterval} onChange={(e) => setInstInterval(e.target.value)} />
+                              </label>
+                              <label className="block text-xs font-medium text-slate-600">শুরুর তারিখ
+                                <input className="input mt-1" type="date" value={instStart} onChange={(e) => setInstStart(e.target.value)} />
+                              </label>
+                              <label className="block text-xs font-medium text-slate-600">নোট (ঐচ্ছিক)
+                                <input className="input mt-1" value={instNote} onChange={(e) => setInstNote(e.target.value)} />
+                              </label>
+                            </div>
+                            <button className="btn-primary btn-sm" disabled={instBusy !== "" || !instStart} onClick={createInstPlan}>
+                              {instBusy === "create" ? "তৈরি হচ্ছে..." : "কিস্তি প্ল্যান তৈরি করুন"}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400">এই অর্ডারে বকেয়া নেই — কিস্তি প্ল্যান দরকার নেই।</p>
+                        ); })()
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-3 text-sm">
+                            <span>মোট: <b>{(() => { try { return formatMinor(BigInt(instPlan.totalMinor)); } catch { return instPlan.totalMinor; } })()}</b></span>
+                            <span>পরিশোধিত: <b className="text-emerald-700">{(() => { try { return formatMinor(BigInt(instPlan.paidMinor)); } catch { return instPlan.paidMinor; } })()}</b></span>
+                            <span>বাকি: <b>{(() => { try { return formatMinor(BigInt(instPlan.remainingMinor)); } catch { return instPlan.remainingMinor; } })()}</b></span>
+                            <span className={`rounded px-2 py-0.5 text-xs font-semibold ${instPlan.status === "active" ? "bg-emerald-100 text-emerald-700" : instPlan.status === "completed" ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 text-slate-600"}`}>{instPlan.status === "active" ? "সক্রিয়" : instPlan.status === "completed" ? "সম্পূর্ণ" : instPlan.status === "cancelled" ? "বাতিল" : instPlan.status}</span>
+                            {instPlan.note ? <span className="text-xs text-slate-500">নোট: {instPlan.note}</span> : null}
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs">
+                              <thead><tr className="border-b text-slate-500"><th className="py-1.5 pr-2">ক্রম</th><th className="py-1.5 pr-2">তারিখ</th><th className="py-1.5 pr-2">পরিমাণ</th><th className="py-1.5 pr-2">পরিশোধিত</th><th className="py-1.5 pr-2">অবস্থা</th>{instPlan.status === "active" ? <th className="py-1.5">সংগ্রহ</th> : null}</tr></thead>
+                              <tbody>
+                                {instPlan.items.map((item) => {
+                                  const remaining = (() => { try { return BigInt(item.remainingMinor); } catch { return 0n; } })();
+                                  const paid = (() => { try { return BigInt(item.paidMinor); } catch { return 0n; } })();
+                                  const pill = item.fullyPaid
+                                    ? { text: "সম্পূর্ণ পরিশোধিত", cls: "bg-emerald-100 text-emerald-700" }
+                                    : item.overdue
+                                      ? { text: "অতিবাহিত", cls: "bg-red-100 text-red-700" }
+                                      : paid > 0n
+                                        ? { text: "আংশিক", cls: "bg-amber-100 text-amber-700" }
+                                        : { text: "বাকি", cls: "bg-slate-100 text-slate-600" };
+                                  const form = collectForms[item.id];
+                                  return (
+                                    <tr key={item.id} className="border-b last:border-0 align-top">
+                                      <td className="py-2 pr-2 font-medium">{item.seq}</td>
+                                      <td className="py-2 pr-2">{item.dueDay}</td>
+                                      <td className="py-2 pr-2">{(() => { try { return formatMinor(BigInt(item.amountMinor)); } catch { return item.amountMinor; } })()}</td>
+                                      <td className="py-2 pr-2">{(() => { try { return formatMinor(BigInt(item.paidMinor)); } catch { return item.paidMinor; } })()}</td>
+                                      <td className="py-2 pr-2"><span className={`rounded px-1.5 py-0.5 font-semibold ${pill.cls}`}>{pill.text}</span></td>
+                                      {instPlan.status === "active" ? (
+                                        <td className="py-2">
+                                          {remaining > 0n && form ? (
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <input className="input w-24" placeholder="টাকা" inputMode="decimal" value={form.amount} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, amount: e.target.value } }))} />
+                                              <select className="input w-auto" value={form.method} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, method: e.target.value } }))}>
+                                                <option value="bkash">বিকাশ</option>
+                                                <option value="nagad">নগদ</option>
+                                                <option value="rocket">রকেট</option>
+                                                <option value="cash">ক্যাশ</option>
+                                                <option value="bank">ব্যাংক</option>
+                                                <option value="other">অন্যান্য</option>
+                                              </select>
+                                              <input className="input w-32" placeholder="রেফারেন্স (ঐচ্ছিক)" value={form.reference} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, reference: e.target.value } }))} />
+                                              <input className="input w-32" placeholder="নোট (ঐচ্ছিক)" value={form.note} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, note: e.target.value } }))} />
+                                              <button className="btn-primary btn-sm" disabled={instBusy !== "" || form.amount.trim() === ""} onClick={() => collectInstItem(item)}>
+                                                {instBusy === `collect-${item.id}` ? "হচ্ছে..." : "সংগ্রহ করুন"}
+                                              </button>
+                                            </div>
+                                          ) : <span className="text-slate-400">—</span>}
+                                        </td>
+                                      ) : null}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          {instPlan.status === "active" ? (
+                            <button className="btn-ghost btn-sm text-red-600" disabled={instBusy !== ""} onClick={cancelInstPlan}>
+                              {instBusy === "cancel" ? "বাতিল হচ্ছে..." : "প্ল্যান বাতিল করুন"}
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
                     <div className="space-y-3 rounded-xl border bg-white p-3">
                       <h4 className="text-sm font-semibold">🏬 স্টোর সিঙ্ক</h4>
                       {syncNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{syncNotice}</p> : null}
@@ -1058,6 +1649,29 @@ export default function OrdersPage() {
                           <button className="btn-secondary btn-sm" onClick={() => copyText("return", returnUrl)}>{copiedKey === "return" ? "কপি হয়েছে ✓" : "লিংক কপি করুন"}</button>
                         </div>
                       ) : null}
+                    </div>
+                    <div className="space-y-2 rounded-xl border bg-white p-3">
+                      <h4 className="text-sm font-semibold">🛵 রাইডার ডেলিভারি (নিজস্ব)</h4>
+                      {(() => { const active = orderAssignments.find((a) => a.status === "assigned" || a.status === "picked_up") ?? orderAssignments[0]; return active ? (
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                          <span className="font-medium">{active.riderName ?? active.riderId}</span>
+                          <span className={`rounded px-2 py-0.5 text-xs font-semibold ${active.status === "delivered" ? "bg-green-100 text-green-700" : active.status === "returned" ? "bg-red-100 text-red-700" : active.status === "picked_up" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{active.status === "assigned" ? "বরাদ্দ হয়েছে" : active.status === "picked_up" ? "তোলা হয়েছে" : active.status === "delivered" ? "ডেলিভারি সম্পন্ন" : active.status === "returned" ? "ফেরত" : active.status}</span>
+                          {active.status === "assigned" ? <button type="button" className="btn-secondary btn-sm" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "picked_up")}>তোলা হয়েছে</button> : null}
+                          {active.status === "picked_up" ? <>
+                            <button type="button" className="btn-primary btn-sm" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "delivered")}>ডেলিভারি সম্পন্ন</button>
+                            <button type="button" className="btn-secondary btn-sm text-red-600" disabled={riderBusy !== ""} onClick={() => transitionAssignment(active, "returned")}>ফেরত</button>
+                          </> : null}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <select className="input w-auto" value={assignRiderId} onChange={(e) => setAssignRiderId(e.target.value)}>
+                            <option value="">রাইডার বেছে নিন</option>
+                            {riders.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          </select>
+                          <button type="button" className="btn-primary btn-sm" disabled={riderBusy !== "" || !assignRiderId} onClick={assignRider}>{riderBusy === "assign" ? "হচ্ছে…" : "রাইডার বরাদ্দ করুন"}</button>
+                          {riders.filter((r) => r.active).length === 0 ? <span className="text-xs text-slate-400">সক্রিয় রাইডার নেই — গুদাম পেজের রাইডার ট্যাব থেকে যোগ করুন।</span> : null}
+                        </div>
+                      ); })()}
                     </div>
                     {(() => { const rv = reviewForOrder(o.id); return rv ? (
                       <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">

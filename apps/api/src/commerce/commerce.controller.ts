@@ -3,19 +3,25 @@ import { CommerceService } from "./commerce.service";
 import { OrderPushService } from "./order-push.service";
 import { SyncOutboxService } from "./sync-outbox.service";
 import { DiscountsService } from "./discounts.service";
+import { PromotionsService } from "./promotions.service";
+import { BundlesService } from "./bundles.service";
 import { AbandonedCheckoutsService } from "./abandoned-checkouts.service";
 import { CommerceAnalyticsService } from "./commerce-analytics.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 import {
+  BundleDto,
   ChannelPriceDto,
   CreateLocationDto,
   DiscountDto,
   GenerateCampaignDto,
+  PromotionDto,
+  PromotionPreviewDto,
   ResolveConflictDto,
   SaleScheduleDto,
   SetDiscountActiveDto,
+  SetPromotionActiveDto,
   UpdateLocationDto,
   UpdateRefundPushDto,
   UpdateSyncModeDto,
@@ -38,8 +44,10 @@ export class CommerceController {
     private readonly outbox: SyncOutboxService,
     private readonly orderPush: OrderPushService,
     private readonly discounts: DiscountsService,
+    private readonly promotions: PromotionsService,
     private readonly abandoned: AbandonedCheckoutsService,
     private readonly analytics: CommerceAnalyticsService,
+    private readonly bundles: BundlesService,
   ) {}
 
   // ---------- EC11: per-store analytics + Commerce Hub ----------
@@ -122,7 +130,7 @@ export class CommerceController {
     @Param("conflictId") conflictId: string,
     @Body() dto: ResolveConflictDto,
   ) {
-    return this.commerce.resolveConflict(orgId, user.userId, conflictId, dto.choice);
+    return this.commerce.resolveConflict(orgId, user.userId, conflictId, dto.choice, dto.choices);
   }
 
   @Post("listings/:listingId/publish")
@@ -324,6 +332,111 @@ export class CommerceController {
   @Roles(...WRITE_ROLES)
   pullDiscounts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("storeId") storeId: string) {
     return this.discounts.pullFromStore(orgId, user.userId, storeId);
+  }
+
+  // ---------- EC16: promotions v2 ----------
+
+  @Get("promotions")
+  listPromotions(@Param("organizationId") orgId: string) {
+    return this.promotions.list(orgId);
+  }
+
+  @Get("promotions/:promotionId")
+  getPromotion(@Param("organizationId") orgId: string, @Param("promotionId") promotionId: string) {
+    return this.promotions.getOne(orgId, promotionId);
+  }
+
+  @Post("promotions")
+  @Roles(...WRITE_ROLES)
+  createPromotion(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: PromotionDto) {
+    return this.promotions.create(orgId, user.userId, dto);
+  }
+
+  @Patch("promotions/:promotionId")
+  @Roles(...WRITE_ROLES)
+  updatePromotion(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("promotionId") promotionId: string,
+    @Body() dto: PromotionDto,
+  ) {
+    return this.promotions.update(orgId, user.userId, promotionId, dto);
+  }
+
+  @Post("promotions/:promotionId/active")
+  @Roles(...WRITE_ROLES)
+  setPromotionActive(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("promotionId") promotionId: string,
+    @Body() dto: SetPromotionActiveDto,
+  ) {
+    return this.promotions.setActive(orgId, user.userId, promotionId, dto.active === true);
+  }
+
+  @Delete("promotions/:promotionId")
+  @Roles(...WRITE_ROLES)
+  deletePromotion(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("promotionId") promotionId: string,
+  ) {
+    return this.promotions.remove(orgId, user.userId, promotionId);
+  }
+
+  @Post("promotions/preview")
+  previewPromotion(@Param("organizationId") orgId: string, @Body() dto: PromotionPreviewDto) {
+    return this.promotions.preview(orgId, dto);
+  }
+
+  // ---------- EC29: bundles ----------
+
+  @Get("bundles")
+  listBundles(@Param("organizationId") orgId: string) {
+    return this.bundles.list(orgId);
+  }
+
+  @Get("bundles/:bundleId")
+  getBundle(@Param("organizationId") orgId: string, @Param("bundleId") bundleId: string) {
+    return this.bundles.getOne(orgId, bundleId);
+  }
+
+  @Post("bundles")
+  @Roles(...WRITE_ROLES)
+  createBundle(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BundleDto) {
+    return this.bundles.create(orgId, user.userId, dto);
+  }
+
+  @Patch("bundles/:bundleId")
+  @Roles(...WRITE_ROLES)
+  updateBundle(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("bundleId") bundleId: string,
+    @Body() dto: BundleDto,
+  ) {
+    return this.bundles.update(orgId, user.userId, bundleId, dto);
+  }
+
+  @Post("bundles/:bundleId/active")
+  @Roles(...WRITE_ROLES)
+  setBundleActive(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("bundleId") bundleId: string,
+    @Body() dto: SetPromotionActiveDto,
+  ) {
+    return this.bundles.setActive(orgId, user.userId, bundleId, dto.active === true);
+  }
+
+  @Delete("bundles/:bundleId")
+  @Roles(...WRITE_ROLES)
+  deleteBundle(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("bundleId") bundleId: string,
+  ) {
+    return this.bundles.remove(orgId, user.userId, bundleId);
   }
 
   // ---------- EC10: unified abandoned carts / store checkouts ----------

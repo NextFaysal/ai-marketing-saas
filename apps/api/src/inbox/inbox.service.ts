@@ -9,7 +9,7 @@ import { WooClient } from "../integrations/woocommerce/woo.client";
 import { randomUUID } from "crypto";
 import { parseMetaWebhook } from "./webhook.parser";
 import { SocialCommentsService } from "./social-comments.service";
-import { LlmFactory } from "../ai/llm/llm.factory";
+import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { EventsService } from "../common/events.service";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { RealtimeService } from "./realtime.service";
@@ -33,6 +33,7 @@ import { LeadAssignmentService } from "../crm/lead-assignment.service";
 import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
 import { applyReaction, nextDeliveryPatch, reactionEmoji } from "./message-lifecycle";
@@ -434,15 +435,34 @@ export class InboxService {
   // ----- Connection management -----
   async connectMessaging(organizationId: string, actorId: string, dto: {
     channel: string; accessToken: string; appSecret?: string; verifyToken: string;
-    phoneNumberId?: string; pageId?: string; wabaId?: string;
+    phoneNumberId?: string; pageId?: string; wabaId?: string; appSource?: string;
   }) {
     if (!["whatsapp", "messenger", "instagram"].includes(dto.channel)) throw new BadRequestException("channel must be whatsapp, messenger or instagram");
+    if (dto.appSource != null && !["platform", "own"].includes(dto.appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    const appSource = dto.appSource === "own" ? "own" : "platform";
+    // CC4 (Connect Center): appSource "own" connects under the
+    // tenant's OWN Meta app (TenantAppConfig, CC3 — verified
+    // before it was saved). Its secret joins the app-secret
+    // resolution order: explicit per-call secret → tenant app
+    // config (when own) → platform config. Without a saved own
+    // config the connect is refused up front — never silently
+    // downgraded to the platform app the tenant did not choose.
+    let tenantAppSecret: string | null = null;
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "meta");
+      if (!own) {
+        throw new BadRequestException("নিজের Meta অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Meta অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।");
+      }
+      tenantAppSecret = own.appSecret;
+    }
     // The app secret may be omitted when the platform Meta app is
     // configured by the operator (Milestone 33): the tenant connects
     // under the platform app and webhook verification falls back to
     // the platform secret. With neither, connecting is refused —
     // an unverifiable webhook would be a silent security hole.
-    if (!dto.appSecret) {
+    if (!dto.appSecret && !tenantAppSecret) {
       await ensurePlatformConfig(this.prisma).catch(() => undefined);
       if (!getPlatformConfigSync().metaApp?.appSecret) {
         throw new BadRequestException("An app secret is required: provide your Meta app secret, or ask the platform admin to configure the platform Meta app in the Admin Console");
@@ -451,7 +471,7 @@ export class InboxService {
     if (dto.channel === "whatsapp" && !dto.phoneNumberId) throw new BadRequestException("phoneNumberId is required for WhatsApp");
     if (dto.channel === "instagram" && !dto.pageId) throw new BadRequestException("pageId (the Facebook Page linked to the Instagram account) is required for Instagram");
     const secrets: MessagingSecrets = {
-      accessToken: dto.accessToken, appSecret: dto.appSecret ?? "", verifyToken: dto.verifyToken,
+      accessToken: dto.accessToken, appSecret: dto.appSecret || tenantAppSecret || "", verifyToken: dto.verifyToken,
       phoneNumberId: dto.phoneNumberId, pageId: dto.pageId,
       // MS6: the WABA id is stored only for WhatsApp connects; it
       // is ignored for messenger/instagram.
@@ -463,17 +483,43 @@ export class InboxService {
     const me = await new MetaMessagingClient(secrets).verifyToken().catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta token verification failed");
     });
-    const integration = await (this.prisma as any).integration.create({
-      data: {
-        organizationId, provider: dto.channel, status: "CONNECTED",
-        externalAccountId: dto.phoneNumberId ?? dto.pageId ?? me.id,
-      },
+    // CC2 (Connect Center): messaging integrations are keyed by
+    // (organizationId, provider, externalAccountId). A SECOND
+    // account (a different WhatsApp number / Page) gets its own row
+    // and coexists with the first; reconnecting the SAME account
+    // refreshes that row's stored credential in place instead of
+    // piling up duplicate rows for one account.
+    const externalAccountId = dto.phoneNumberId ?? dto.pageId ?? me.id;
+    const existing = await (this.prisma as any).integration.findFirst({
+      where: { organizationId, provider: dto.channel, externalAccountId },
     });
-    await (this.prisma as any).integrationCredential.create({
-      data: { integrationId: integration.id, encryptedData: encryptJson(secrets) },
-    });
-    await this.audit.log({ organizationId, userId: actorId, action: "integration.messaging.connected", entityType: "Integration", entityId: integration.id, metadata: { channel: dto.channel } });
-    return { id: integration.id, provider: integration.provider, status: integration.status, externalAccountId: integration.externalAccountId };
+    let integration = existing;
+    if (existing) {
+      integration = await (this.prisma as any).integration.update({
+        where: { id: existing.id },
+        data: { status: "CONNECTED", lastError: null, appSource },
+      });
+      const refreshed = await (this.prisma as any).integrationCredential
+        .update({ where: { integrationId: existing.id }, data: { encryptedData: encryptJson(secrets) } })
+        .catch(() => null);
+      if (!refreshed) {
+        await (this.prisma as any).integrationCredential.create({
+          data: { integrationId: existing.id, encryptedData: encryptJson(secrets) },
+        });
+      }
+    } else {
+      integration = await (this.prisma as any).integration.create({
+        data: {
+          organizationId, provider: dto.channel, status: "CONNECTED",
+          externalAccountId, appSource,
+        },
+      });
+      await (this.prisma as any).integrationCredential.create({
+        data: { integrationId: integration.id, encryptedData: encryptJson(secrets) },
+      });
+    }
+    await this.audit.log({ organizationId, userId: actorId, action: "integration.messaging.connected", entityType: "Integration", entityId: integration.id, metadata: { channel: dto.channel, reconnected: Boolean(existing), appSource } });
+    return { id: integration.id, provider: integration.provider, status: integration.status, externalAccountId: integration.externalAccountId, appSource: integration.appSource ?? appSource };
   }
 
   async listMessagingIntegrations(organizationId: string) {
@@ -490,7 +536,7 @@ export class InboxService {
       if (i.provider === "whatsapp" && i.credential?.encryptedData) {
         try { wabaId = decryptJson<MessagingSecrets>(i.credential.encryptedData).wabaId ?? null; } catch { wabaId = null; }
       }
-      return { id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, createdAt: i.createdAt, lastError: i.lastError, wabaId };
+      return { id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, createdAt: i.createdAt, lastError: i.lastError, wabaId, appSource: i.appSource ?? "platform" };
     });
   }
 
@@ -3042,7 +3088,7 @@ export class InboxService {
       if (!messages?.length) return failNote("এই কথোপকথনে এখনো কোনো বার্তা নেই।");
       const history = [...messages].reverse();
       let provider: any;
-      try { provider = this.llm.getProvider(); } catch { provider = null; }
+      try { provider = await providerForOrg(this.llm, organizationId); } catch { provider = null; }
       if (!provider?.isRealLlm) return failNote("আসল AI provider যুক্ত নেই।");
       const profile = (await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
       const threadText = history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n");
@@ -3268,7 +3314,7 @@ export class InboxService {
       return null;
     }
     let provider: any;
-    try { provider = this.llm.getProvider(); } catch { return null; }
+    try { provider = await providerForOrg(this.llm, organizationId); } catch { return null; }
     if (!provider?.isRealLlm) return null; // dev templates never autopilot
     const result = await provider.complete([
       {
@@ -4468,7 +4514,7 @@ export class InboxService {
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
     if (!message?.content) throw new NotFoundException("Message not found or has no text");
     if (!["en", "bn"].includes(target)) throw new BadRequestException("target must be en or bn");
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
       // Honest boundary: templates cannot translate. No fake output.
       throw new BadRequestException("অনুবাদের জন্য একটি আসল LLM provider দরকার (LLM_PROVIDER ও API key সেট করুন)। Dev template দিয়ে অনুবাদ সম্ভব নয়।");
@@ -4491,7 +4537,7 @@ export class InboxService {
     });
     if (messages.length === 0) throw new BadRequestException("এই কথোপকথনে কোনো বার্তা নেই");
     const history = [...messages].reverse();
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
     let summary: string;
     if (provider.isRealLlm) {
       const result = await provider.complete([
@@ -4547,7 +4593,7 @@ export class InboxService {
   }> {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     await this.checkAiAllowed(organizationId, "next_action");
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
     if (!provider?.isRealLlm) return { proposal: null, provider: provider?.name ?? null, reason: "আসল AI provider যুক্ত নেই — প্রস্তাব তৈরি হয়নি।" };
     const messages = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "desc" }, take: 20,
@@ -6679,7 +6725,7 @@ export class InboxService {
     });
     const history = [...recent].reverse();
     const lastInbound = [...history].reverse().find((m: any) => m.direction === "in");
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     const [profile, policies, products] = await Promise.all([
       (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }),
@@ -6732,7 +6778,7 @@ export class InboxService {
     const partial = String(partialRaw ?? "");
     if (partial.trim().length < 2) return { completion: "" };
     await this.checkAiAllowed(organizationId, "ghost_complete");
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) return { completion: "" }; // dev template NEVER fabricates a ghost
 
     const recent = await (this.prisma as any).channelMessage.findMany({
@@ -6793,7 +6839,7 @@ export class InboxService {
       throw new BadRequestException("tone must be polite, professional or sales");
     }
     await this.checkAiAllowed(organizationId, "tone_rewrite");
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
       // Honest boundary, same style as translateMessage.
       throw new BadRequestException("টোন বদলাতে একটি আসল LLM provider দরকার (LLM_PROVIDER ও API key সেট করুন)। Dev template দিয়ে টোন বদলানো সম্ভব নয়।");

@@ -6,6 +6,8 @@ import { CatalogPushService } from "./catalog-push.service";
 import { OrderPushService } from "./order-push.service";
 import { CustomerPushService } from "./customer-push.service";
 import { DiscountsService } from "./discounts.service";
+import { PromotionsService } from "./promotions.service";
+import { BundlesService } from "./bundles.service";
 import { AbandonedCheckoutsService } from "./abandoned-checkouts.service";
 import { CommerceAnalyticsService } from "./commerce-analytics.service";
 import { CommerceAdapterRegistry } from "../integrations/commerce/adapters";
@@ -24,9 +26,11 @@ import { TrackingModule } from "../tracking/tracking.module";
     OrderPushService,
     CustomerPushService,
     DiscountsService,
+    PromotionsService,
+    BundlesService,
     AbandonedCheckoutsService,
     CommerceAnalyticsService,
   ],
-  exports: [SyncOutboxService, CommerceService, CatalogPushService, OrderPushService, CustomerPushService, DiscountsService, CommerceAnalyticsService],
+  exports: [SyncOutboxService, CommerceService, CatalogPushService, OrderPushService, CustomerPushService, DiscountsService, PromotionsService, BundlesService, CommerceAnalyticsService],
 })
 export class CommerceModule {}

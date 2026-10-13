@@ -27,6 +27,7 @@ interface PlatformConfigView {
   image: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
   tiktokApp: { source: string; clientKey: string | null; redirectUri: string | null; audited: boolean; secretConfigured: boolean };
   googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
+  wallet: { source: string; feeBps: number };
   note: string;
 }
 
@@ -174,6 +175,15 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("bkash", { clear: true }, "bKash Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-500">সেভ করার সময় আসল Token Grant দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, bKash-এর Error হুবহু দেখানো হয় (প্রাপ্ত Token সংরক্ষণ করা হয় না)। Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">🏦 Wallet — প্ল্যাটফর্ম পেমেন্ট ফি (CC10)</span>{srcBadge(cfg.wallet.source)}</div>
+          <label className="block text-sm">ফি (basis points — 200 = 2%)<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("wallet", { feeBps: Number(val("pc-wallet-fee")) }, "Wallet ফি সেভ হয়েছে — এখন থেকে যাচাই হওয়া প্ল্যাটফর্ম পেমেন্টে এই হারেই ফি কাটা হবে।")}>সেভ করুন</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("wallet", { clear: true }, "Wallet কনফিগ মোছা হয়েছে — ফি এখন 0 (কোনো ফি কাটা হবে না)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">এই ফি শুধু প্ল্যাটফর্ম গেটওয়ে (উপরের SSLCommerz/bKash — প্ল্যাটফর্মের অ্যাকাউন্ট) দিয়ে আসা Tenant পেমেন্টে কাটা হয়: যাচাইকৃত পেমেন্টের মুহূর্তে তখনকার হারেই হিসাব হয়, Tenant-এর Wallet-এ নিট অংশ জমা হয় (ledger-এ ফি আলাদা row)। সেট না থাকলে ফি 0 — কখনো অনুমান করা হয় না। Tenant-এর নিজের গেটওয়ের (CC9) টাকায় কোনো ফি নেই। Payout পরিচালনা: Wallet Payouts পেজে।</p>
         </div>
         <div className="acard space-y-3">
           <div className="flex items-center justify-between"><span className="font-semibold">🎵 TikTok App (Social Posts — SP8)</span>{srcBadge(cfg.tiktokApp.source)}</div>

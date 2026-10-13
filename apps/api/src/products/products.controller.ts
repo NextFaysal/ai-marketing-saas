@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ProductsService } from "./products.service";
-import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto } from "./products.dto";
+import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, PushBatchDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto } from "./products.dto";
 import { CurrentUser, AuthUser, Roles, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -56,6 +56,12 @@ export class ProductsController {
   @Post("bulk-edit/apply") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   bulkEditApply(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkEditDto) {
     return this.products.bulkEditApply(orgId, user.userId, dto);
+  }
+
+  /** CP5: batch push to stores (per-item results, never all-or-nothing). */
+  @Post("push-batch") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  pushBatch(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: PushBatchDto) {
+    return this.products.pushBatch(orgId, user.userId, dto.productIds);
   }
 
   @Get("categories")

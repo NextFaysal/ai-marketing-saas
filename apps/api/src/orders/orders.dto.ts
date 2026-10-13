@@ -82,3 +82,15 @@ export class StoreNoteDto {
 export class CreateStoreDraftDto {
   @IsOptional() @IsString() @MaxLength(80) storeId?: string;
 }
+
+/** EC19: a staff-recorded advance payment against an order
+ * (bKash/Nagad/etc. paid directly to the merchant and verified
+ * by the staff member recording it). The amount is integer
+ * minor units as a decimal string — BigInt-safe end to end.
+ * The service re-parses it and enforces amount <= amount due. */
+export class AdvanceVerificationDto {
+  @IsString() @MaxLength(30) amountMinor!: string;
+  @IsIn(["bkash", "nagad", "rocket", "cash", "bank", "other"]) method!: string;
+  @IsOptional() @IsString() @MaxLength(120) reference?: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}

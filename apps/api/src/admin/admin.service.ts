@@ -1319,12 +1319,13 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
+      this.rawConfigRow("walletConfig"),
     ]);
     return {
       llm: {
@@ -1389,6 +1390,12 @@ export class AdminService {
         redirectUri: gg?.redirectUri ?? (process.env.GOOGLE_REDIRECT_URI || null),
         secretConfigured: Boolean(gg?.clientSecretEncrypted || process.env.GOOGLE_CLIENT_SECRET),
       },
+      wallet: {
+        // CC10: the platform fee on platform-gateway payments.
+        // Unset ⇒ 0 — a fee is never invented.
+        source: wal ? "admin" : "none",
+        feeBps: wal && Number.isInteger(Number(wal.feeBps)) ? Number(wal.feeBps) : 0,
+      },
       note: "Boot secrets (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY) stay in the server environment by design — the encryption key cannot be stored inside what it encrypts.",
     };
   }
@@ -1399,7 +1406,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -1469,6 +1476,15 @@ export class AdminService {
       if (patch.sandbox !== undefined) setField("sandbox", patch.sandbox === true);
       setSecret("appSecret", "appSecretEncrypted", patch.appSecret, patch.clearSecret);
       setSecret("password", "passwordEncrypted", patch.password, undefined);
+    } else if (area === "wallet") {
+      // CC10: platform wallet fee, basis points only — validated
+      // server-side; the fee applied to a payment is whatever is
+      // configured at the moment that payment is verified.
+      if (patch.feeBps !== undefined) {
+        const feeBps = Number(patch.feeBps);
+        if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new BadRequestException("feeBps must be an integer 0-10000 (basis points)");
+        setField("feeBps", feeBps);
+      }
     } else if (area === "image") {
       if (patch.provider !== undefined) {
         const p = String(patch.provider).toLowerCase();

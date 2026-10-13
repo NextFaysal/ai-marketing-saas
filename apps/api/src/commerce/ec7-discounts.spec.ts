@@ -240,7 +240,7 @@ describe("EC7 checkout coupon flow (ProductsService.placePublicOrder)", () => {
       categoryId: "c1", bumpTitle: null, bumpPriceMinor: null, variants: [],
       organization: {
         id: "org-1", name: "Shop",
-        businessProfile: { insideDhakaFeeMinor: 6000n, outsideDhakaFeeMinor: 12000n },
+        businessProfile: { deliveryChargeInsideMinor: 6000n, deliveryChargeOutsideMinor: 12000n },
       },
     });
     const outbox = new SyncOutboxService(prisma, registryStub);
@@ -302,5 +302,47 @@ describe("EC7 checkout coupon flow (ProductsService.placePublicOrder)", () => {
     expect(orderPayloads[0].shippingMinor).toBe(6000n);
     expect(orderPayloads[0].totalMinor).toBe(26000n);
     expect(res.couponApplied).toBe(false);
+  });
+
+  // B8 Part-0 regression: placePublicOrder + getPublicProductBySlug
+  // used to read the non-existent BusinessProfile.insideDhakaFeeMinor
+  // / outsideDhakaFeeMinor, so the merchant's configured charges
+  // (deliveryChargeInsideMinor / deliveryChargeOutsideMinor) were
+  // silently ignored and every order fell back to 6000/12000.
+  it("B8: configured BusinessProfile delivery charges are charged exactly (inside + outside)", async () => {
+    const { prisma, products, orderPayloads, dto } = setupCheckout();
+    const bp = prisma.product.rows[0].organization.businessProfile;
+    bp.deliveryChargeInsideMinor = 7500n;
+    bp.deliveryChargeOutsideMinor = 15500n;
+    await products.placePublicOrder("widget", { ...dto });
+    expect(orderPayloads[0].shippingMinor).toBe(7500n);
+    await products.placePublicOrder("widget", { ...dto, deliveryZone: "outside_dhaka" });
+    expect(orderPayloads[1].shippingMinor).toBe(15500n);
+  });
+
+  it("B8: checkout info displays the configured charges, and defaults when unset", async () => {
+    const { prisma, products } = setupCheckout();
+    const bp = prisma.product.rows[0].organization.businessProfile;
+    bp.deliveryChargeInsideMinor = 7500n;
+    bp.deliveryChargeOutsideMinor = 15500n;
+    const info: any = await products.getPublicProductBySlug("widget");
+    expect(info.organization.insideDhakaFee).toBe("75");
+    expect(info.organization.outsideDhakaFee).toBe("155");
+    bp.deliveryChargeInsideMinor = null;
+    bp.deliveryChargeOutsideMinor = null;
+    const infoDefault: any = await products.getPublicProductBySlug("widget");
+    expect(infoDefault.organization.insideDhakaFee).toBe("60");
+    expect(infoDefault.organization.outsideDhakaFee).toBe("120");
+  });
+
+  it("B8: unconfigured (null) BusinessProfile charges fall back to the 6000/12000 defaults", async () => {
+    const { prisma, products, orderPayloads, dto } = setupCheckout();
+    const bp = prisma.product.rows[0].organization.businessProfile;
+    bp.deliveryChargeInsideMinor = null;
+    bp.deliveryChargeOutsideMinor = null;
+    await products.placePublicOrder("widget", { ...dto });
+    expect(orderPayloads[0].shippingMinor).toBe(6000n);
+    await products.placePublicOrder("widget", { ...dto, deliveryZone: "outside_dhaka" });
+    expect(orderPayloads[1].shippingMinor).toBe(12000n);
   });
 });

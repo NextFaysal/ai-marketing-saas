@@ -12,6 +12,12 @@ export class ConnectMessagingDto {
   // MS6: WhatsApp Business Account id (whatsapp connects only;
   // ignored for other channels). Needed for template sync/submit.
   @IsOptional() @IsString() wabaId?: string;
+  // CC4: which Meta app this connection belongs to — "platform"
+  // (default; the operator's app) or "own" (the tenant's
+  // TenantAppConfig app; its saved secret is used when no
+  // per-call appSecret is given, and the connect refuses when
+  // no own config exists).
+  @IsOptional() @IsIn(["platform", "own"]) appSource?: string;
 }
 /** MS6: set or clear (null/empty) the WABA id on the org's
  * connected WhatsApp integration. */

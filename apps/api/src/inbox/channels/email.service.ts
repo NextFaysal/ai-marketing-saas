@@ -67,17 +67,44 @@ export class EmailChannelService {
     } catch (e) {
       throw new BadRequestException(`SMTP verification failed: ${e instanceof Error ? e.message : "connection error"}`);
     }
-    const integration = await (this.prisma as any).integration.create({
-      data: { organizationId, provider: "email", status: "CONNECTED", externalAccountId: creds.user },
+    // CC7 (Connect Center): keyed by (organizationId, provider,
+    // externalAccountId) — the key is the mailbox address, which
+    // is a VERIFIED identifier here: the IMAP login and the SMTP
+    // handshake above both just succeeded with exactly this user,
+    // so the address is proven, not merely typed. Reconnecting the
+    // SAME mailbox refreshes its row + sealed credential in place;
+    // a SECOND, different mailbox gets its own row and coexists —
+    // the CC2 discipline connectMessaging got in B1.
+    const existing = await (this.prisma as any).integration.findFirst({
+      where: { organizationId, provider: "email", externalAccountId: creds.user },
     });
-    await (this.prisma as any).integrationCredential.create({
-      data: { integrationId: integration.id, encryptedData: encryptJson(creds) },
-    });
+    let integration = existing;
+    if (existing) {
+      integration = await (this.prisma as any).integration.update({
+        where: { id: existing.id },
+        data: { status: "CONNECTED", lastError: null },
+      });
+      const refreshed = await (this.prisma as any).integrationCredential
+        .update({ where: { integrationId: existing.id }, data: { encryptedData: encryptJson(creds) } })
+        .catch(() => null);
+      if (!refreshed) {
+        await (this.prisma as any).integrationCredential.create({
+          data: { integrationId: existing.id, encryptedData: encryptJson(creds) },
+        });
+      }
+    } else {
+      integration = await (this.prisma as any).integration.create({
+        data: { organizationId, provider: "email", status: "CONNECTED", externalAccountId: creds.user },
+      });
+      await (this.prisma as any).integrationCredential.create({
+        data: { integrationId: integration.id, encryptedData: encryptJson(creds) },
+      });
+    }
     await this.audit.log({
       organizationId, userId: actorId, action: "inbox.email.connected", entityType: "Integration",
-      entityId: integration.id, metadata: { mailbox: creds.user },
+      entityId: integration.id, metadata: { mailbox: creds.user, reconnected: Boolean(existing) },
     });
-    return { integrationId: integration.id, mailbox: creds.user };
+    return { integrationId: integration.id, mailbox: creds.user, reconnected: Boolean(existing) };
   }
 
   /** Pull unread mail into the inbox. Idempotent: messages are

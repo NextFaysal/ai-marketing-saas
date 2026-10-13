@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { CreateManualOrderDto, CreateStoreDraftDto, StoreNoteDto, UpdateOrderDto } from "./orders.dto";
+import { AdvanceVerificationDto, CreateManualOrderDto, CreateStoreDraftDto, StoreNoteDto, UpdateOrderDto } from "./orders.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -46,6 +46,12 @@ export class OrdersController {
 
   @Get(":orderId")
   getOne(@Param("organizationId") orgId: string, @Param("orderId") id: string) { return this.orders.getOne(orgId, id); }
+
+  /** EC19: record a staff-verified advance payment on an order. */
+  @Post(":orderId/advance-verification") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  recordAdvanceVerification(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: AdvanceVerificationDto) {
+    return this.orders.recordAdvanceVerification(orgId, user.userId, id, dto);
+  }
 
   /** EC5: create a draft order in the connected store. */
   @Post(":orderId/create-store-draft") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")

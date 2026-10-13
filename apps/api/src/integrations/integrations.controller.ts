@@ -114,6 +114,11 @@ export class IntegrationsController {
     return this.integrations.syncCustomers(orgId, user.userId, id);
   }
 
+  @Post("integrations/:integrationId/sync/reviews") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  syncReviews(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
+    return this.integrations.syncReviews(orgId, user.userId, id);
+  }
+
   @Get("integrations/:integrationId/sync-jobs")
   syncJobs(@Param("organizationId") orgId: string, @Param("integrationId") id: string) {
     return this.integrations.listSyncJobs(orgId, id);

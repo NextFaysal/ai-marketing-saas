@@ -9,13 +9,20 @@ import { InventoryService } from "../inventory/inventory.service";
 import { OrderPushService } from "../commerce/order-push.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import type { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
+import type { AdvanceVerificationDto, CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
 
 function pubOrder(o: any) {
   return {
     ...o,
     subtotalMinor: o.subtotalMinor?.toString(), shippingMinor: o.shippingMinor?.toString(),
     discountMinor: o.discountMinor?.toString(), taxMinor: o.taxMinor?.toString(),
+    // EC16: the promotion/referral split of discountMinor.
+    promotionDiscountMinor: o.promotionDiscountMinor?.toString() ?? "0",
+    referralDiscountMinor: o.referralDiscountMinor?.toString() ?? "0",
+    // EC29: gift-wrap charge as a string (other gift fields —
+    // giftPromotionId / giftSkipped / giftMessage — ride the
+    // spread above untouched).
+    giftWrapMinor: o.giftWrapMinor?.toString() ?? "0",
     totalMinor: o.totalMinor?.toString(), refundedMinor: o.refundedMinor?.toString(),
     items: o.items?.map((i: any) => ({ ...i, priceMinor: i.priceMinor?.toString(), totalMinor: i.totalMinor?.toString() })),
   };
@@ -312,6 +319,154 @@ export class OrdersService {
     return result;
   }
 
+  // ---------- EC19: staff-recorded advance verification ----------
+
+  /** All PaymentVerification rows for one order (newest first),
+   * serialized with BigInt money as strings. A missing delegate
+   * (partial deployment) degrades to an empty list. */
+  private async verificationRowsForOrder(organizationId: string, orderId: string): Promise<any[]> {
+    const table = (this.prisma as any).paymentVerification;
+    if (!table?.findMany) return [];
+    const rows = await table
+      .findMany({ where: { organizationId, orderId }, orderBy: { createdAt: "desc" } })
+      .catch(() => []);
+    return rows ?? [];
+  }
+
+  private serializeVerification(row: any) {
+    return {
+      ...row,
+      amountMinor: row.amountMinor != null ? String(row.amountMinor) : null,
+      expectedAmountMinor: row.expectedAmountMinor != null ? String(row.expectedAmountMinor) : null,
+    };
+  }
+
+  /** Sum of APPROVED verification amounts (null amounts count 0). */
+  private approvedAdvanceSum(rows: any[]): bigint {
+    let sum = 0n;
+    for (const row of rows) {
+      if (row.status !== "approved") continue;
+      if (row.amountMinor === null || row.amountMinor === undefined) continue;
+      try { sum += BigInt(row.amountMinor as any); } catch { /* unparseable stored amount counts 0 */ }
+    }
+    return sum;
+  }
+
+  /** Resolve the DeliverySlot row for an order (org-scoped),
+   * failure-isolated: any problem yields null, never a 500. */
+  private async deliverySlotForOrder(organizationId: string, order: any): Promise<any | null> {
+    if (!order?.deliverySlotId) return null;
+    try {
+      const table = (this.prisma as any).deliverySlot;
+      if (!table?.findFirst) return null;
+      const slot = await table.findFirst({ where: { id: order.deliverySlotId, organizationId } });
+      if (!slot) return null;
+      return {
+        id: slot.id, label: slot.label, startTime: slot.startTime, endTime: slot.endTime,
+        date: order.deliveryDate ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** EC30: resolve the PickupPoint row for an order (org-scoped,
+   * any status — a since-deactivated point still displays),
+   * failure-isolated exactly like deliverySlotForOrder. */
+  private async pickupPointForOrder(organizationId: string, order: any): Promise<any | null> {
+    if (!order?.pickupPointId) return null;
+    try {
+      const table = (this.prisma as any).pickupPoint;
+      if (!table?.findFirst) return null;
+      const point = await table.findFirst({ where: { id: order.pickupPointId, organizationId } });
+      if (!point) return null;
+      return {
+        id: point.id, name: point.name, address: point.address, district: point.district,
+        phone: point.phone ?? null,
+        feeMinor: point.feeMinor != null ? String(point.feeMinor) : "0",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * EC19: record an advance the customer paid directly to the
+   * merchant (bKash/Nagad/…) and that the recording staff member
+   * has verified. Backed by a PaymentVerification row created
+   * already "approved" (source "manual_advance") — the staff
+   * member IS the verifier; there is no gateway involved. The
+   * amount may never exceed what is still due on the order.
+   */
+  async recordAdvanceVerification(organizationId: string, actorId: string, orderId: string, dto: AdvanceVerificationDto) {
+    const order = await (this.prisma as any).order.findFirst({
+      where: { id: orderId, organizationId },
+    });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+
+    let amount: bigint;
+    try { amount = BigInt(dto.amountMinor as any); } catch { amount = 0n; }
+    if (amount <= 0n) {
+      throw new BadRequestException("Advance amount must be a positive amount in minor units");
+    }
+
+    const table = (this.prisma as any).paymentVerification;
+    if (!table?.create) throw new BadRequestException("Payment verification is not available in this deployment");
+
+    const existingRows: any[] = table.findMany
+      ? ((await table.findMany({ where: { organizationId, orderId } }).catch(() => [])) ?? [])
+      : [];
+    const paidSoFar = this.approvedAdvanceSum(existingRows);
+    const total = BigInt(order.totalMinor ?? 0);
+    const due = total > paidSoFar ? total - paidSoFar : 0n;
+    if (amount > due) {
+      throw new BadRequestException(
+        `Advance ${amount.toString()} exceeds the amount still due on this order (${due.toString()})`,
+      );
+    }
+
+    if (dto.reference) {
+      let duplicate: any = null;
+      if (table.findFirst) {
+        duplicate = await table.findFirst({
+          where: { organizationId, trxId: dto.reference, status: "approved" },
+        }).catch(() => null);
+      } else if (table.findMany) {
+        const rows = (await table.findMany({ where: { organizationId } }).catch(() => [])) ?? [];
+        duplicate = rows.find((r: any) => r.trxId === dto.reference && r.status === "approved") ?? null;
+      }
+      if (duplicate) {
+        throw new BadRequestException("This transaction reference has already been recorded as a verified payment");
+      }
+    }
+
+    const row = await table.create({
+      data: {
+        organizationId,
+        orderId,
+        conversationId: order.conversationId ?? order.codConversationId ?? null,
+        messageId: null,
+        provider: dto.method,
+        trxId: dto.reference ?? null,
+        amountMinor: amount,
+        expectedAmountMinor: order.totalMinor ?? null,
+        verdict: "matched",
+        status: "approved",
+        source: "manual_advance",
+        reviewedById: actorId,
+        createdById: actorId,
+        modelProvider: "manual_staff",
+        note: dto.note ?? null,
+      },
+    });
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.advance_verification_recorded",
+      entityType: "PaymentVerification", entityId: row.id,
+      metadata: { orderId, amountMinor: amount.toString(), method: dto.method },
+    }).catch(() => undefined);
+    return this.getOne(organizationId, orderId);
+  }
+
   /** Events must never throw into the request path. */
   private safeEmit(event: string, organizationId: string, context: Record<string, unknown>) {
     try { this.events?.emit(event, { organizationId, context }); } catch { /* fire-and-forget */ }
@@ -337,6 +492,53 @@ export class OrdersService {
       }),
     ]);
     const mapped = items.map(pubOrder);
+    // EC18: attach the chosen delivery slot per row (one batched
+    // fetch for the page). Failure-isolated: rows ship with a null
+    // slot rather than failing the listing.
+    try {
+      const slotIds = [...new Set(items.map((o: any) => o.deliverySlotId).filter(Boolean).map((x: any) => String(x)))];
+      const slotById = new Map<string, any>();
+      if (slotIds.length > 0) {
+        const table = (this.prisma as any).deliverySlot;
+        const slots = table?.findMany
+          ? ((await table.findMany({ where: { organizationId, id: { in: slotIds } } }).catch(() => [])) ?? [])
+          : [];
+        for (const slot of slots) slotById.set(String(slot.id), slot);
+      }
+      items.forEach((o: any, idx: number) => {
+        const slot = o.deliverySlotId ? slotById.get(String(o.deliverySlotId)) : null;
+        (mapped[idx] as any).deliverySlot = slot
+          ? { id: slot.id, label: slot.label, startTime: slot.startTime, endTime: slot.endTime, date: o.deliveryDate ?? null }
+          : null;
+      });
+    } catch {
+      for (const item of mapped) (item as any).deliverySlot = null;
+    }
+    // EC30: attach the chosen pickup point per row (one batched
+    // fetch for the page), mirroring the delivery slot attach.
+    try {
+      const pointIds = [...new Set(items.map((o: any) => o.pickupPointId).filter(Boolean).map((x: any) => String(x)))];
+      const pointById = new Map<string, any>();
+      if (pointIds.length > 0) {
+        const table = (this.prisma as any).pickupPoint;
+        const points = table?.findMany
+          ? ((await table.findMany({ where: { organizationId, id: { in: pointIds } } }).catch(() => [])) ?? [])
+          : [];
+        for (const point of points) pointById.set(String(point.id), point);
+      }
+      items.forEach((o: any, idx: number) => {
+        const point = o.pickupPointId ? pointById.get(String(o.pickupPointId)) : null;
+        (mapped[idx] as any).pickupPoint = point
+          ? {
+              id: point.id, name: point.name, address: point.address, district: point.district,
+              phone: point.phone ?? null,
+              feeMinor: point.feeMinor != null ? String(point.feeMinor) : "0",
+            }
+          : null;
+      });
+    } catch {
+      for (const item of mapped) (item as any).pickupPoint = null;
+    }
     // M50: light risk summary per row (band + score). Enrichment must
     // never break the listing — on any failure rows ship without it.
     if (this.risk) {
@@ -435,6 +637,20 @@ export class OrdersService {
     });
     if (!o) throw new NotFoundException("Order not found in this organization");
     const out: any = pubOrder(o);
+    // EC19: payment verifications + advance/due math. The paid
+    // advance is the sum of APPROVED rows only, capped at the
+    // order total; the due is what remains (>= 0).
+    const verificationRows = await this.verificationRowsForOrder(organizationId, orderId);
+    const total = BigInt(o.totalMinor ?? 0);
+    const paidSum = this.approvedAdvanceSum(verificationRows);
+    const advancePaid = paidSum > total ? total : paidSum;
+    out.paymentVerifications = verificationRows.map((row: any) => this.serializeVerification(row));
+    out.advancePaidMinor = advancePaid.toString();
+    out.amountDueMinor = (total - advancePaid).toString();
+    // EC18: the chosen delivery slot, when one was picked.
+    out.deliverySlot = await this.deliverySlotForOrder(organizationId, o);
+    // EC30: the chosen pickup point, when the order is a pickup.
+    out.pickupPoint = await this.pickupPointForOrder(organizationId, o);
     if (this.risk) {
       try { out.risk = await this.risk.forOrder(organizationId, o); } catch { /* advisory only */ }
     }
