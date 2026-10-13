@@ -26,9 +26,18 @@ CREATE TABLE "OrderChase" (
 CREATE UNIQUE INDEX "OrderChase_sessionId_key" ON "OrderChase"("sessionId");
 CREATE INDEX "OrderChase_organizationId_stoppedReason_idx" ON "OrderChase"("organizationId", "stoppedReason");
 
-ALTER TABLE "InboxSetting" ADD COLUMN "chaseEnabled" BOOLEAN NOT NULL DEFAULT false;
+-- HOTFIX (2026-10-13, live deploy failure): "chaseEnabled" and
+-- "chaseIntervalMinutes" are already added by
+-- 20261012140000_cx_batch4_features (the owner's parallel CX Batch 4,
+-- integrated alongside this one). Re-adding them here made
+-- `prisma migrate deploy` fail with 42701 (column already exists) on
+-- every real database, which stopped the API container from starting
+-- (compose command is `migrate deploy && node main.js`).
+-- This migration never successfully applied anywhere in sequence, so
+-- removing the two duplicate ADD COLUMN lines is safe. The interval
+-- column's DB default is aligned to this package's 240 below.
 ALTER TABLE "InboxSetting" ADD COLUMN "chaseFirstDelayMinutes" INTEGER NOT NULL DEFAULT 60;
-ALTER TABLE "InboxSetting" ADD COLUMN "chaseIntervalMinutes" INTEGER NOT NULL DEFAULT 240;
+ALTER TABLE "InboxSetting" ALTER COLUMN "chaseIntervalMinutes" SET DEFAULT 240;
 ALTER TABLE "InboxSetting" ADD COLUMN "chaseMaxAttempts" INTEGER NOT NULL DEFAULT 3;
 ALTER TABLE "InboxSetting" ADD COLUMN "chaseQuietHoursRespect" BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE "InboxSetting" ADD COLUMN "chaseQuietStartHour" INTEGER NOT NULL DEFAULT 22;
