@@ -351,6 +351,13 @@ export default function InboxPage() {
   const [ctxW, setCtxW] = useState<number>(() => { try { return clampPane(Number(localStorage.getItem("inbox.ctxW")) || 320, 260, 520); } catch { return 320; } });
   const [ctxOpen, setCtxOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false);
+  const [stageMenuOpen, setStageMenuOpen] = useState(false);
+  const [filterExpanded, setFilterExpanded] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"chat" | "customer">("chat");
   const [newMsgOpen, setNewMsgOpen] = useState(false);
   const [newMsgForm, setNewMsgForm] = useState({ channel: "whatsapp", recipient: "", message: "" });
   const [showEmoji, setShowEmoji] = useState(false);
@@ -638,6 +645,7 @@ export default function InboxPage() {
       setNotes(await apiFetch<Note[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/notes`).catch(() => []));
       setVerifications(await apiFetch<PaymentVerification[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/payment-verifications`).catch(() => []));
       setMobileChat(true);
+      setMobileTab("chat");
       if (conv.unreadCount > 0) {
         await apiFetch(`/organizations/${orgId}/inbox/conversations/${conv.id}/read`, { method: "POST" });
         loadConversations();
@@ -654,6 +662,65 @@ export default function InboxPage() {
       setActive({ ...active, ...updated });
       loadConversations();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  async function shareTracking() {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setBusy("track");
+    try {
+      const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" });
+      setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`);
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  async function bookCourier() {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    const order = context?.orders?.[0];
+    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
+    setBusy("courier");
+    try {
+      const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
+      const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
+      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
+      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
+      if (!address) return;
+      const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
+      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  async function requestRefund() {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
+    setBusy("refund");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) });
+      setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)");
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  async function exportCsv() {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    try {
+      const token = localStorage.getItem("accessToken");
+      const base = (window as any).location.origin;
+      const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) throw new Error("Export ব্যর্থ");
+      const blob = await res.blob();
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
+    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+  }
+
+  function markSpam() {
+    if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) {
+      void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" });
+    }
   }
 
   async function connect(e: React.FormEvent) {
@@ -1018,8 +1085,293 @@ export default function InboxPage() {
     return null;
   };
 
+  const renderCustomerContent = (isDrawer = false) => {
+    if (!active) return null;
+    return (
+      <div className="space-y-4">
+        {isDrawer && (
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 xl:hidden">
+            <span className="text-sm font-bold text-slate-900">গ্রাহক প্রোফাইল ও নিয়ন্ত্রণ</span>
+            <button className="rounded-xl bg-white px-2.5 py-1.5 text-xs font-semibold shadow-2xs border border-slate-200" onClick={() => setCtxOpen(false)}>✕ বন্ধ</button>
+          </div>
+        )}
+
+        {/* Customer Profile Card */}
+        <div className="card space-y-3 p-4 shadow-2xs border border-slate-200/80">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">👤 কাস্টমার প্রোফাইল</span>
+            {context?.lead ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200/60">Lead: {context.lead.stage}</span> : null}
+          </div>
+
+          {context?.customer ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <ContactAvatar name={context.customer.name ?? active.contactName} channel={active.channel} size="lg" />
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 truncate">{context.customer.name ?? active.contactName ?? "—"}</div>
+                  <div className="text-xs text-slate-500 flex flex-col gap-0.5 mt-0.5">
+                    {context.customer.phone || active.contactPhone ? (
+                      <a href={`tel:${context.customer.phone ?? active.contactPhone}`} className="text-indigo-600 hover:underline">
+                        📞 {context.customer.phone ?? active.contactPhone}
+                      </a>
+                    ) : null}
+                    {context.customer.email ? <span className="truncate">✉️ {context.customer.email}</span> : null}
+                  </div>
+                </div>
+              </div>
+
+              {context.lifetime ? (
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">মোট অর্ডার</div>
+                    <div className="mt-1 text-lg font-black text-slate-900">{context.lifetime.orderCount}টি</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">Lifetime স্পেন্ড</div>
+                    <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-slate-50 p-3 text-center text-xs text-slate-500">
+              কোনো Customer রেকর্ডের সাথে যুক্ত নয়{context?.lead ? "" : " (নতুন কন্ট্যাক্ট হলে Lead তৈরি হয়েছে)"}।
+            </div>
+          )}
+
+          {context?.lead && !context?.customer ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="badge-brand">Lead: {context.lead.stage}</span>
+              <span className="badge-slate">{context.lead.source}</span>
+              {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor)}</span> : null}
+              {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
+            </div>
+          ) : null}
+          {context?.orders?.length ? (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
+              <div className="space-y-1.5">
+                {context.orders.map((o) => (
+                  <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
+                      <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
+                    </div>
+                    {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
+                    {o.isCod ? (
+                      <div className="mt-1 flex items-center gap-2">
+                        {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
+                          : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">✓ COD কনফার্মড</span>
+                          : o.codConfirmationStatus === "declined" ? <span className="badge-red">✗ গ্রাহক বাতিল করেছে</span>
+                          : ["pending", "on-hold", "processing"].includes(o.status) ? (
+                            <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? "পাঠাচ্ছি..." : "COD কনফার্ম পাঠান"}</button>
+                          ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Quick Action Tiles */}
+        <div className="card p-4 space-y-3">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <button
+              type="button"
+              className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+              onClick={() => setOrderOpen((v) => !v)}
+            >
+              <span className="text-base">📄</span>
+              <span>ইনভয়েস পাঠান</span>
+            </button>
+            <button
+              type="button"
+              className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+              onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
+            >
+              <span className="text-base">📋</span>
+              <span>টাস্ক তৈরি</span>
+            </button>
+            <button
+              type="button"
+              className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-amber-400 hover:bg-amber-50/50 hover:text-amber-800 transition"
+              onClick={() => { setComposerMode("note"); setMobileTab("chat"); focusComposer(); }}
+            >
+              <span className="text-base">📝</span>
+              <span>নোট যোগ করুন</span>
+            </button>
+            <button
+              type="button"
+              className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-emerald-400 hover:bg-emerald-50/50 hover:text-emerald-800 transition"
+              onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
+            >
+              <span className="text-base">✓</span>
+              <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* AI Conversation Summary Card */}
+        <div className="card p-4 space-y-2 border-indigo-100 bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
+              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
+              <span>AI কনভারসেশন সামারি</span>
+            </div>
+            <button
+              className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
+              disabled={busy !== ""}
+              onClick={summarize}
+            >
+              {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
+            </button>
+          </div>
+
+          {active.summaryText ? (
+            <div className="rounded-xl bg-white/90 p-3 text-xs leading-relaxed text-slate-700 shadow-2xs ring-1 ring-slate-100 whitespace-pre-line">
+              {active.summaryText}
+              <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
+                <span>{active.summaryProvider ?? "AI Engine"}</span>
+                <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
+              গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
+            </div>
+          )}
+        </div>
+
+        {/* Command Profile (if available) */}
+        {profile ? (
+          <div className="card space-y-3 p-4">
+            <div className="section-title">🎯 Command Profile</div>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <span className="badge-indigo">Stage: {profile.conversation?.pipelineStage}</span>
+              {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
+              {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
+              {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
+            </div>
+            {profile.conversations?.length > 1 ? (
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
+                <div className="space-y-1">
+                  {profile.conversations.map((c: any) => (
+                    <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
+                      onClick={() => { if (c.id !== active.id) void openConversation({ id: c.id } as Conversation); }}>
+                      <span className="flex items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? "—"}</span></span>
+                      <span className="shrink-0 text-slate-400">{c.status}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {profile.payments?.verifications?.length ? (
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
+                {profile.payments.verifications.map((v: any) => (
+                  <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
+                    {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Responsibility & Tags & Chat Order */}
+        <div className="card space-y-3 p-4">
+          <div className="section-title">দায়িত্ব ও Tag</div>
+          {active.spamFlag ? (
+            <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+              <div className="text-xs font-semibold text-amber-800">🚫 Spam সন্দেহভাজন</div>
+              <p className="mt-0.5 text-xs text-amber-700">{active.spamReason ?? ""}</p>
+              <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>Spam নয়, ঠিক আছে</button>
+            </div>
+          ) : null}
+          {botSession?.status === "active" ? (
+            <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
+              <div className="text-xs font-semibold text-indigo-800">🤖 অর্ডার Bot চলছে — ধাপ: {botSession.state}</div>
+              <p className="mt-0.5 text-xs text-indigo-600">গ্রাহক নিজে "এজেন্ট" লিখলে বা আপনি উত্তর দিলেই বট থেমে যাবে।</p>
+              <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
+                const orgId = getOrganizationId(); if (!orgId || !active) return;
+                try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice("বট থামানো হয়েছে।"); await refreshActive(); }
+                catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+              }}>বট থামান</button>
+            </div>
+          ) : null}
+          {active.csatRating ? (
+            <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
+          ) : null}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
+              <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
+            </div>
+            {orderOpen ? (
+              <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
+                {orderItems.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5">
+                    <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
+                      {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency)}</option>)}
+                    </select>
+                    <input className="input !w-14 !py-1.5 !text-xs" type="number" min={1} max={99} value={it.quantity} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, quantity: Number(e.target.value) || 1 } : x))} />
+                    <button className="text-slate-400 hover:text-red-500" onClick={() => setOrderItems(orderItems.filter((_, j) => j !== idx))}>✕</button>
+                  </div>
+                ))}
+                <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
+                <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
+                <div className="flex items-end gap-2">
+                  <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
+                  <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
+                </div>
+                <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? "তৈরি হচ্ছে..." : "Order তৈরি করুন"}</button>
+                <p className="text-[10px] text-slate-400">দাম ক্যাটালগ থেকেই হিসাব হয়। WooCommerce যুক্ত থাকলে অর্ডারটি স্টোরেও পাঠানোর চেষ্টা করা হয়, ফলাফল জানিয়ে দেওয়া হয়।</p>
+              </div>
+            ) : null}
+          </div>
+          <label className="block text-sm">Assignee
+            <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
+              <option value="">কেউ নয়</option>
+              {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
+            </select>
+          </label>
+          <div>
+            <div className="mb-1 flex flex-wrap gap-1">
+              {(active.tags ?? []).map((t) => (
+                <span key={t} className="badge-brand">{t}<button className="ml-1 font-bold" onClick={() => patchConversation({ tags: (active.tags ?? []).filter((x) => x !== t) })}>×</button></span>
+              ))}
+              {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Tag নেই</span> : null}
+            </div>
+            <div className="flex gap-1.5">
+              <input className="input flex-1" placeholder="নতুন Tag লিখে Enter" value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && tagInput.trim()) { patchConversation({ tags: [...(active.tags ?? []), tagInput.trim()] }); setTagInput(""); } }} />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className={viewMode === "list" ? "flex h-[calc(100dvh-164px)] flex-col gap-3 sm:h-[calc(100dvh-180px)] lg:h-[calc(100dvh-116px)]" : "space-y-6"}>
+      {/* Invisible backdrop to dismiss open dropdowns */}
+      {(actionMenuOpen || stageMenuOpen || attachMenuOpen || aiMenuOpen || formatMenuOpen) && (
+        <div
+          className="fixed inset-0 z-30 bg-transparent"
+          onClick={() => {
+            setActionMenuOpen(false);
+            setStageMenuOpen(false);
+            setAttachMenuOpen(false);
+            setAiMenuOpen(false);
+            setFormatMenuOpen(false);
+          }}
+        />
+      )}
       {/* Modern Top Command Bar */}
       <div className="shrink-0 rounded-2xl border border-slate-200/80 bg-white/80 p-2.5 shadow-sm backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1386,7 +1738,7 @@ export default function InboxPage() {
             ))}
           </div>
 
-          {/* Status Sub-filter Bar (সব, অপঠিত, সমাধানকৃত, স্প্যাম) */}
+          {/* Clean Status & Filter Toggle Bar */}
           <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-xl bg-slate-100/70 p-1 text-xs">
             <div className="flex items-center gap-1">
               <button
@@ -1413,44 +1765,65 @@ export default function InboxPage() {
               >
                 সমাধানকৃত
               </button>
-              <button
-                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
-                  filters.spamOnly ? "bg-white text-rose-600 shadow-2xs" : "text-slate-600 hover:text-slate-900"
-                }`}
-                onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
-              >
-                স্প্যাম
-              </button>
             </div>
 
-            <div className="flex items-center gap-1">
-              <select
-                className="rounded-lg border-0 bg-transparent py-0.5 text-xs font-semibold text-slate-500 focus:ring-0 cursor-pointer"
-                value={filters.assignee}
-                onChange={(e) => onFilter({ assignee: e.target.value })}
-                title="অ্যাসাইনি ফিল্টার"
-              >
-                <option value="">সকল সদস্য</option>
-                <option value="me">আমারগুলো</option>
-                <option value="unassigned">অনির্ধারিত</option>
-              </select>
-            </div>
             <button
-              className={`rounded-xl border px-2.5 py-1 text-xs font-semibold transition ${
-                selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50"
+              onClick={() => setFilterExpanded((v) => !v)}
+              className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                filterExpanded || filters.spamOnly || filters.assignee || filters.tag || selectMode
+                  ? "bg-blue-50 text-blue-700 font-bold"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
-              title="একসাথে একাধিক কথোপকথন বেছে অ্যাকশন নিন"
-              onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
+              title="ফিল্টার ও বাল্ক অ্যাকশন"
             >
-              ☑️ বাল্ক
+              <span>⚙️ ফিল্টার</span>
+              {(filters.spamOnly || filters.assignee || filters.tag || selectMode) && (
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+              )}
             </button>
           </div>
-          <input
-            className="rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none"
-            placeholder="🏷️ Tag দিয়ে ফিল্টার (যেমন vip, repeat)..."
-            value={filters.tag}
-            onChange={(e) => onFilter({ tag: e.target.value })}
-          />
+
+          {/* Expandable Advanced Filters & Bulk Tools */}
+          {filterExpanded ? (
+            <div className="shrink-0 space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2 text-xs animate-in fade-in">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-slate-500">অ্যাসাইনি:</span>
+                  <select
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-2xs focus:ring-0 cursor-pointer"
+                    value={filters.assignee}
+                    onChange={(e) => onFilter({ assignee: e.target.value })}
+                  >
+                    <option value="">সকল সদস্য</option>
+                    <option value="me">আমারগুলো</option>
+                    <option value="unassigned">অনির্ধারিত</option>
+                  </select>
+                </div>
+                <button
+                  className={`rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                    filters.spamOnly ? "bg-rose-100 text-rose-700 font-bold" : "text-slate-600 hover:bg-slate-200"
+                  }`}
+                  onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
+                >
+                  🚫 স্প্যাম
+                </button>
+                <button
+                  className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
+                    selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                  onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
+                >
+                  ☑️ বাল্ক
+                </button>
+              </div>
+              <input
+                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+                placeholder="🏷️ Tag দিয়ে খুঁজুন (যেমন vip, repeat)..."
+                value={filters.tag}
+                onChange={(e) => onFilter({ tag: e.target.value })}
+              />
+            </div>
+          ) : null}
           {selectedIds.size > 0 ? (
             <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
               <div className="flex items-center justify-between gap-2">
@@ -1624,85 +1997,133 @@ export default function InboxPage() {
                   <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">📎 ছেড়ে দিন — ফাইলটি পাঠানো হবে</span>
                 </div>
               ) : null}
-              {/* Modern Thread Header (AiPraktor / Qosprey Design v2) */}
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-3">
-                  <button className="rounded-xl border border-slate-200 bg-white p-2 text-xs font-semibold text-slate-700 shadow-xs lg:hidden hover:bg-slate-50" onClick={() => setMobileChat(false)}>
-                    ← তালিকা
+              {/* Modern Sleek Thread Header with Dropdown Actions */}
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs lg:hidden hover:bg-slate-50"
+                    onClick={() => setMobileChat(false)}
+                    title="কথোপকথন তালিকায় ফিরুন"
+                  >
+                    <span>←</span> <span className="hidden xs:inline">তালিকা</span>
                   </button>
                   <ContactAvatar
                     name={active.contactName ?? active.contactPhone}
                     channel={active.channel}
-                    size="lg"
+                    size="md"
                     isOnline={active.channel === "webchat" && isVisitorOnline(active)}
                   />
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm sm:text-base">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-bold text-slate-900 text-sm sm:text-base truncate">
                         {active.contactName ?? active.contactPhone ?? "গ্রাহক"}
                       </span>
-                      {/* Online Pulse Indicator */}
+                      {/* Online Indicator */}
                       <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         Online
                       </span>
                     </div>
 
-                    {/* Customer Tags Row (Matching Demo 3 & 4) */}
+                    {/* Customer Tags & Stage Row */}
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200">
-                        👑 VIP Customer
-                      </span>
                       <ChannelChip channel={active.channel} />
-                      {active.mood && moodChip(active.mood)}
-                      {active.pipelineStage ? (
-                        <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200">
-                          {active.pipelineStage}
+                      {active.tags?.includes("vip") && (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200">
+                          👑 VIP
                         </span>
-                      ) : null}
+                      )}
+                      {active.mood && moodChip(active.mood)}
+
+                      {/* Interactive Pipeline Stage Dropdown */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => { setStageMenuOpen((v) => !v); setActionMenuOpen(false); }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 transition"
+                          title="পাইপলাইন স্টেজ পরিবর্তন"
+                        >
+                          <span>🏷️ {active.pipelineStage ? active.pipelineStage.toUpperCase() : "NEW"}</span>
+                          <span className="text-[8px]">▾</span>
+                        </button>
+                        {stageMenuOpen && (
+                          <div className="absolute left-0 top-full mt-1.5 z-40 w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in zoom-in-95">
+                            {[
+                              { id: "new", label: "🆕 New Lead" },
+                              { id: "talking", label: "💬 Talking" },
+                              { id: "ordered", label: "🛒 Order Placed" },
+                              { id: "delivered", label: "✅ Delivered" },
+                              { id: "repeat", label: "🔁 Repeat" },
+                            ].map((st) => (
+                              <button
+                                key={st.id}
+                                type="button"
+                                className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition ${
+                                  active.pipelineStage === st.id ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-700 hover:bg-slate-50"
+                                }`}
+                                onClick={() => {
+                                  setStageMenuOpen(false);
+                                  patchConversation({ pipelineStage: st.id });
+                                }}
+                              >
+                                {st.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Right Header Actions (Call, Video, Search, Context Drawer, Status) */}
-                <div className="flex items-center gap-2">
-                  <div className="hidden sm:flex items-center gap-1 rounded-xl bg-slate-100/70 p-1">
-                    {active.contactPhone ? (
-                      <a
-                        href={`tel:${active.contactPhone}`}
-                        className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
-                        title="সরাসরি কল করুন"
-                      >
-                        📞
-                      </a>
-                    ) : null}
+                {/* Right Header Actions: Mobile Tab, Status, Action Dropdown */}
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {/* On Mobile: Segmented Tab for Chat vs Customer Info */}
+                  <div className="flex items-center rounded-xl bg-slate-100 p-0.5 text-xs font-semibold lg:hidden">
                     <button
-                      className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
-                      title="ভিডিও কল"
-                      onClick={() => setNotice("ভিডিও মিটিং লিংক তৈরি হচ্ছে...")}
+                      className={`rounded-lg px-2.5 py-1 transition-all ${
+                        mobileTab === "chat" ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-500"
+                      }`}
+                      onClick={() => setMobileTab("chat")}
                     >
-                      📹
+                      💬 চ্যাট
                     </button>
                     <button
-                      className="rounded-lg p-1.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-2xs transition"
-                      title="কথোপকথনে অনুসন্ধান"
-                      onClick={() => { const el = document.getElementById("inbox-search"); el?.focus(); }}
+                      className={`rounded-lg px-2.5 py-1 transition-all ${
+                        mobileTab === "customer" ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-500"
+                      }`}
+                      onClick={() => setMobileTab("customer")}
                     >
-                      🔍
+                      👤 প্রোফাইল
                     </button>
                   </div>
 
-                  <button className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs xl:hidden hover:bg-slate-50" onClick={() => setCtxOpen(true)}>
+                  {/* Phone Call Button */}
+                  {active.contactPhone ? (
+                    <a
+                      href={`tel:${active.contactPhone}`}
+                      className="hidden sm:flex rounded-xl border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition"
+                      title="সরাসরি ফোন কল করুন"
+                    >
+                      📞
+                    </a>
+                  ) : null}
+
+                  {/* Customer Profile Button for Tablet/Desktop */}
+                  <button
+                    className="hidden sm:flex xl:hidden items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50"
+                    onClick={() => setCtxOpen(true)}
+                  >
                     <span>👤</span> <span>প্রোফাইল</span>
                   </button>
 
                   {/* Status Switcher pill */}
-                  <div className="flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+                  <div className="hidden xs:flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold">
                     {(["open", "pending", "closed"] as const).map((s) => (
                       <button
                         key={s}
-                        className={`rounded-lg px-2.5 py-1 transition-all ${
-                          active.status === s ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
+                        className={`rounded-lg px-2 sm:px-2.5 py-1 transition-all ${
+                          active.status === s ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-500 hover:text-slate-900"
                         }`}
                         onClick={() => patchConversation({ status: s })}
                       >
@@ -1710,136 +2131,141 @@ export default function InboxPage() {
                       </button>
                     ))}
                   </div>
-                </div>
-              </div>
 
-              {/* Thread Action Controls */}
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5 rounded-xl bg-slate-50/80 p-2 text-xs ring-1 ring-slate-100">
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-400 font-medium ml-1">স্টেজ:</span>
-                  <select
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
-                    value={active.pipelineStage ?? "new"}
-                    onChange={(e) => patchConversation({ pipelineStage: e.target.value })}
-                    title="Pipeline Stage"
-                  >
-                    <option value="new">🆕 New</option>
-                    <option value="talking">💬 Talking</option>
-                    <option value="ordered">🛒 Ordered</option>
-                    <option value="delivered">✅ Delivered</option>
-                    <option value="repeat">🔁 Repeat</option>
-                  </select>
-                </div>
-
-                <div className="h-4 w-px bg-slate-200 mx-1" />
-
-                <button
-                  className="flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 font-semibold text-sky-700 hover:bg-sky-100 transition disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
-                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
-                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
-                  }}
-                >
-                  <span>🚚</span> <span>ট্র্যাকিং</span>
-                </button>
-
-                <button
-                  className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId) return;
-                    const order = context?.orders?.[0];
-                    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
-                    setBusy("courier");
-                    try {
-                      const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
-                      const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
-                      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
-                      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
-                      if (!address) return;
-                      const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
-                      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
-                      await refreshActive();
-                    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
-                  }}
-                >
-                  <span>📦</span> <span>কুরিয়ার বুকিং</span>
-                </button>
-
-                <button
-                  className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-700 hover:bg-amber-100 transition disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId) return;
-                    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
-                    setBusy("refund");
-                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)"); await refreshActive(); }
-                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
-                  }}
-                >
-                  <span>💸</span> <span>রিফান্ড</span>
-                </button>
-
-                <button
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId) return;
-                    try {
-                      const token = localStorage.getItem("accessToken");
-                      const base = (window as any).location.origin;
-                      const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-                      if (!res.ok) throw new Error("Export ব্যর্থ");
-                      const blob = await res.blob();
-                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
-                    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
-                  }}
-                >
-                  <span>⬇️</span> <span>CSV</span>
-                </button>
-
-                <button
-                  className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 font-semibold text-red-600 hover:bg-red-100 transition disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={() => { if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}
-                >
-                  <span>🚫</span> <span>Spam</span>
-                </button>
-
-                {active.status !== "closed" ? (
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <select
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
-                      value={closeOutcome}
-                      onChange={(e) => setCloseOutcome(e.target.value)}
-                      title="বন্ধ করার ফলাফল (Outcome)"
-                    >
-                      <option value="sale">🛒 Sale হয়েছে</option>
-                      <option value="no_sale_price">💰 No-sale: দাম</option>
-                      <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
-                      <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
-                      <option value="support_resolved">🛠️ Support সমাধান</option>
-                      <option value="spam">🚫 Spam</option>
-                      <option value="other">• অন্যান্য</option>
-                    </select>
+                  {/* ⚡ Organized Action Menu Dropdown */}
+                  <div className="relative">
                     <button
-                      className="rounded-lg bg-slate-900 px-3 py-1 font-semibold text-white shadow-xs hover:bg-slate-800 transition"
-                      onClick={() => patchConversation({ status: "closed", outcome: closeOutcome })}
+                      type="button"
+                      onClick={() => { setActionMenuOpen((v) => !v); setStageMenuOpen(false); }}
+                      className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold shadow-2xs transition ${
+                        actionMenuOpen
+                          ? "border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-500/20"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300"
+                      }`}
+                      title="অ্যাকশন মেনু"
                     >
-                      ✓ ক্লোজ
+                      <span>⚡</span>
+                      <span className="hidden sm:inline">অ্যাকশন</span>
+                      <span className="text-[10px]">▾</span>
                     </button>
+
+                    {actionMenuOpen && (
+                      <div className="absolute right-0 top-full mt-2 z-40 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl ring-1 ring-slate-900/5 animate-in fade-in zoom-in-95">
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">অর্ডার ও কুরিয়ার</div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-700 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setActionMenuOpen(false); void shareTracking(); }}
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-100 text-sky-700 text-sm">🚚</span>
+                          <div>
+                            <div className="font-bold text-slate-900">ট্র্যাকিং পাঠান</div>
+                            <div className="text-[10px] text-slate-400">শিপমেন্ট ট্র্যাকিং কোড শেয়ার করুন</div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-700 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setActionMenuOpen(false); void bookCourier(); }}
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 text-violet-700 text-sm">📦</span>
+                          <div>
+                            <div className="font-bold text-slate-900">কুরিয়ার বুকিং</div>
+                            <div className="text-[10px] text-slate-400">Steadfast / Pathao কুরিয়ারে বুক করুন</div>
+                          </div>
+                        </button>
+
+                        <div className="my-1.5 border-t border-slate-100" />
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">বিলিং ও ডেটা</div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-amber-50 hover:text-amber-800 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setActionMenuOpen(false); void requestRefund(); }}
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-800 text-sm">💸</span>
+                          <div>
+                            <div className="font-bold text-slate-900">রিফান্ড অনুরোধ</div>
+                            <div className="text-[10px] text-slate-400">বিলিং ওনারকে রিফান্ড নোট পাঠান</div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setActionMenuOpen(false); void exportCsv(); }}
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 text-sm">⬇️</span>
+                          <div>
+                            <div className="font-bold text-slate-900">কথোপকথন CSV Export</div>
+                            <div className="text-[10px] text-slate-400">মেসেজ হিস্ট্রি ডাউনলোড করুন</div>
+                          </div>
+                        </button>
+
+                        <div className="my-1.5 border-t border-slate-100" />
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">মডারেশন ও রেজোলিউশন</div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setActionMenuOpen(false); markSpam(); }}
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-100 text-rose-700 text-sm">🚫</span>
+                          <div>
+                            <div className="font-bold text-rose-700">Spam হিসেবে মার্ক ও বন্ধ</div>
+                            <div className="text-[10px] text-rose-400">স্প্যাম চিহ্নিত করে চ্যাট ক্লোজ করুন</div>
+                          </div>
+                        </button>
+
+                        {active.status !== "closed" ? (
+                          <div className="mt-2 rounded-xl bg-slate-50 p-2 text-xs">
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">ফলাফল সহ বন্ধ করুন:</label>
+                            <div className="flex gap-1.5">
+                              <select
+                                className="flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
+                                value={closeOutcome}
+                                onChange={(e) => setCloseOutcome(e.target.value)}
+                              >
+                                <option value="sale">🛒 Sale হয়েছে</option>
+                                <option value="no_sale_price">💰 No-sale: দাম</option>
+                                <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
+                                <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
+                                <option value="support_resolved">🛠️ Support সমাধান</option>
+                                <option value="spam">🚫 Spam</option>
+                                <option value="other">• অন্যান্য</option>
+                              </select>
+                              <button
+                                type="button"
+                                className="rounded-lg bg-slate-900 px-3 py-1 font-bold text-white hover:bg-slate-800 transition"
+                                onClick={() => { setActionMenuOpen(false); patchConversation({ status: "closed", outcome: closeOutcome }); }}
+                              >
+                                ✓ ক্লোজ
+                              </button>
+                            </div>
+                          </div>
+                        ) : active.outcome ? (
+                          <div className="mt-2 rounded-xl bg-slate-50 p-2 text-center text-xs font-medium text-slate-500">
+                            ফলাফল: <span className="font-bold text-slate-700">{active.outcome}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
-                ) : active.outcome ? (
-                  <span className="ml-auto font-medium text-slate-500">ফলাফল: {active.outcome}</span>
-                ) : null}
+                </div>
               </div>
 
-              {/* Inbox Next-Gen P1: the thread's ONE scroll region —
-                  banners + messages + drafts scroll together; the
-                  header rows above and the composer below stay put. */}
-              <div ref={threadScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
+              {mobileTab === "customer" ? (
+                <div className="min-h-0 flex-1 overflow-y-auto p-1 lg:hidden">
+                  {renderCustomerContent(false)}
+                </div>
+              ) : (
+                <>
+                  {/* Inbox Next-Gen P1: the thread's ONE scroll region —
+                      banners + messages + drafts scroll together; the
+                      header rows above and the composer below stay put. */}
+                  <div ref={threadScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
               {active.autoReplyPaused ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100">
                   <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।</span>
@@ -2193,74 +2619,210 @@ export default function InboxPage() {
                   </div>
                 ) : null}
 
-                {/* Toolbar & Send Controls */}
-                <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2">
-                  <div className="flex flex-wrap items-center gap-1">
+                {/* Clean Modern Composer Toolbar */}
+                <div className="mt-1 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                  <div className="flex items-center gap-1">
                     {composerMode === "reply" ? (
                       <>
-                        <button type="button" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="Quick Reply ( / চাপলেও আসে )" onClick={() => setShowQuick((s) => !s)}>
+                        {/* Quick Reply & Emoji */}
+                        <button
+                          type="button"
+                          className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                          title="কুইক রিপ্লাই ( / চাপলেও আসে )"
+                          onClick={() => { setShowQuick((s) => !s); setAttachMenuOpen(false); setAiMenuOpen(false); }}
+                        >
                           ⚡
                         </button>
-                        <button type="button" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="ইমোজি" onClick={() => setShowEmoji((s) => !s)}>
+                        <button
+                          type="button"
+                          className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                          title="ইমোজি বাছুন"
+                          onClick={() => { setShowEmoji((s) => !s); setAttachMenuOpen(false); setAiMenuOpen(false); }}
+                        >
                           😀
                         </button>
-                        {active.channel === "whatsapp" ? (
-                          <>
-                            <button type="button" className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="বোল্ড (*লেখা*)" onClick={() => applyFormat("bold")}>
-                              B
-                            </button>
-                            <button type="button" className="rounded-lg px-2 py-1 text-xs italic font-serif text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="ইটালিক (_লেখা_)" onClick={() => applyFormat("italic")}>
-                              I
-                            </button>
-                            <button type="button" className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="বুলেট তালিকা" onClick={() => applyFormat("list")}>
-                              • তালিকা
-                            </button>
-                          </>
-                        ) : null}
-                        <button type="button" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="পণ্য ক্যাটালগ" onClick={() => setShowPicker((s) => !s)}>
-                          🛍️
-                        </button>
-                        <button type="button" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="ছবির URL" onClick={() => setShowImage((s) => !s)}>
-                          🖼️
-                        </button>
-                        <button type="button" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition" title="ফাইল/ছবি আপলোড (সর্বোচ্চ 2MB)" disabled={busy !== ""} onClick={() => fileInputRef.current?.click()}>
-                          📎
-                        </button>
+
+                        {/* Attachments Dropdown Menu */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition ${
+                              attachMenuOpen || showPicker || showImage
+                                ? "bg-indigo-50 text-indigo-700"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                            onClick={() => {
+                              setAttachMenuOpen((v) => !v);
+                              setShowEmoji(false);
+                              setShowQuick(false);
+                              setAiMenuOpen(false);
+                              setFormatMenuOpen(false);
+                            }}
+                            title="ফাইল, প্রোডাক্ট বা ছবি যুক্ত করুন"
+                          >
+                            <span>📎</span>
+                            <span className="hidden sm:inline">সংযুক্তি</span>
+                            <span className="text-[10px]">▾</span>
+                          </button>
+
+                          {attachMenuOpen && (
+                            <div className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in zoom-in-95">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                                onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
+                              >
+                                <span className="text-base">📁</span>
+                                <div>
+                                  <div>ফাইল / ছবি আপলোড</div>
+                                  <div className="text-[10px] text-slate-400">সর্বোচ্চ 2MB</div>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
+                                onClick={() => { setAttachMenuOpen(false); setShowPicker((s) => !s); setShowImage(false); }}
+                              >
+                                <span className="text-base">🛍️</span>
+                                <div>
+                                  <div>প্রোডাক্ট ক্যাটালগ</div>
+                                  <div className="text-[10px] text-slate-400">পণ্যের কার্ড পাঠান</div>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                                onClick={() => { setAttachMenuOpen(false); setShowImage((s) => !s); setShowPicker(false); }}
+                              >
+                                <span className="text-base">🖼️</span>
+                                <div>
+                                  <div>ছবির লিঙ্ক (URL)</div>
+                                  <div className="text-[10px] text-slate-400">পাবলিক URL থেকে পাঠান</div>
+                                </div>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Voice Recorder */}
                         <VoiceRecorder disabled={busy !== ""} onSend={(f) => void sendMediaFiles([f])} onError={(msg) => setError(msg)} />
-                        <button type="button" className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 px-3 py-1.5 text-xs font-bold text-blue-700 hover:from-blue-100 hover:to-indigo-100 transition shadow-2xs flex items-center gap-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={suggestDraft}>
-                          <span>✨</span>
-                          <span>{busy === "draft" ? "লিখছি..." : "AI রিপ্লাই"}</span>
-                        </button>
-                        <span className="relative inline-flex">
-                          <button type="button" className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-2xs disabled:opacity-50" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>
-                            🎨 টোন
-                          </button>
-                          {showToneMenu ? (
-                            <span className="absolute bottom-full left-0 z-30 mb-2 flex w-40 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                              <button type="button" className="rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 transition" disabled={busy !== ""} onClick={() => void applyTone("polite")}>মার্জিত</button>
-                              <button type="button" className="rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 transition" disabled={busy !== ""} onClick={() => void applyTone("professional")}>পেশাদার</button>
-                              <button type="button" className="rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 transition" disabled={busy !== ""} onClick={() => void applyTone("sales")}>সেলস-বান্ধব</button>
-                            </span>
-                          ) : null}
-                        </span>
-                        {prevReply !== null ? (
-                          <button type="button" className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 transition" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>
-                            ↩ আগের
-                          </button>
-                        ) : null}
+
+                        {/* WhatsApp Text Formatting Menu */}
+                        {active.channel === "whatsapp" && (
+                          <div className="relative hidden sm:block">
+                            <button
+                              type="button"
+                              className="rounded-xl px-2 py-1 text-xs font-serif font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                              title="টেক্সট ফরম্যাটিং"
+                              onClick={() => { setFormatMenuOpen((v) => !v); setAttachMenuOpen(false); setAiMenuOpen(false); }}
+                            >
+                              𝑩▾
+                            </button>
+                            {formatMenuOpen && (
+                              <div className="absolute bottom-full left-0 z-40 mb-2 flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in">
+                                <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold hover:bg-slate-100" onClick={() => { applyFormat("bold"); setFormatMenuOpen(false); }}>
+                                  <span>B</span> <span>বোল্ড (*লেখা*)</span>
+                                </button>
+                                <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs italic hover:bg-slate-100" onClick={() => { applyFormat("italic"); setFormatMenuOpen(false); }}>
+                                  <span>I</span> <span>ইটালিক (_লেখা_)</span>
+                                </button>
+                                <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs hover:bg-slate-100" onClick={() => { applyFormat("list"); setFormatMenuOpen(false); }}>
+                                  <span>•</span> <span>বুলেট তালিকা</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     ) : null}
+
                     <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,audio/*,video/mp4,video/webm,application/pdf"
                       onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) void sendMediaFiles(files); }} />
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {busy === "send" || busy === "note" || busy === "media" ? (
-                      <span className="text-xs text-slate-400 font-medium animate-pulse">প্রসেসিং…</span>
-                    ) : null}
+                  {/* Right Actions: AI Tools Dropdown & Send Button */}
+                  <div className="flex items-center gap-1.5">
+                    {composerMode === "reply" && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-purple-50 px-2.5 sm:px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-2xs hover:from-indigo-100 hover:to-purple-100 transition disabled:opacity-50"
+                          disabled={busy !== ""}
+                          onClick={() => { setAiMenuOpen((v) => !v); setAttachMenuOpen(false); setFormatMenuOpen(false); }}
+                        >
+                          <span>✨</span>
+                          <span className="hidden sm:inline">{busy === "draft" ? "লিখছি..." : "AI টুলস"}</span>
+                          <span className="text-[10px]">▾</span>
+                        </button>
+
+                        {aiMenuOpen && (
+                          <div className="absolute bottom-full right-0 z-40 mb-2 w-52 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in zoom-in-95">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition disabled:opacity-50"
+                              disabled={busy !== ""}
+                              onClick={() => { setAiMenuOpen(false); void suggestDraft(); }}
+                            >
+                              <span>✨</span>
+                              <div>
+                                <div>AI রিপ্লাই সাজেস্ট</div>
+                                <div className="text-[10px] font-normal text-slate-400">স্মার্ট উত্তর ড্রাফট করুন</div>
+                              </div>
+                            </button>
+
+                            <div className="my-1 border-t border-slate-100" />
+                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">টোন পরিবর্তন</div>
+
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40"
+                              disabled={!reply.trim() || busy !== ""}
+                              onClick={() => { setAiMenuOpen(false); void applyTone("polite"); }}
+                            >
+                              <span>🌸</span> <span>মার্জিত টোন</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40"
+                              disabled={!reply.trim() || busy !== ""}
+                              onClick={() => { setAiMenuOpen(false); void applyTone("professional"); }}
+                            >
+                              <span>💼</span> <span>পেশাদার টোন</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40"
+                              disabled={!reply.trim() || busy !== ""}
+                              onClick={() => { setAiMenuOpen(false); void applyTone("sales"); }}
+                            >
+                              <span>🎯</span> <span>সেলস-বান্ধব টোন</span>
+                            </button>
+
+                            {prevReply !== null && (
+                              <button
+                                type="button"
+                                className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 pt-1.5 px-2.5 py-1 text-left text-xs font-semibold text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                                onClick={() => {
+                                  const prev = prevReply;
+                                  setPrevReply(null);
+                                  setReply(prev);
+                                  setGhost("");
+                                  ghostForRef.current = "";
+                                  setAiMenuOpen(false);
+                                }}
+                              >
+                                <span>↩</span> <span>আগের লেখায় ফিরুন</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Send Button */}
                     <button
                       type="button"
-                      className={`flex items-center justify-center rounded-2xl px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 ${
+                      className={`flex items-center justify-center gap-1.5 rounded-xl px-4 sm:px-5 py-2 text-xs font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 ${
                         composerMode === "note"
                           ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/25"
                           : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30"
@@ -2269,10 +2831,8 @@ export default function InboxPage() {
                       onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}
                       title="Enter চাপলে পাঠানো হবে"
                     >
-                      <span className="flex items-center gap-1.5">
-                        <span>{composerMode === "note" ? "🔒 নোট সংরক্ষণ" : "পাঠান"}</span>
-                        <span>🚀</span>
-                      </span>
+                      <span>{composerMode === "note" ? "নোট সংরক্ষণ" : "পাঠান"}</span>
+                      <span>🚀</span>
                     </button>
                   </div>
                 </div>
@@ -2300,6 +2860,8 @@ export default function InboxPage() {
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? "পাঠাচ্ছি..." : "ছবি পাঠান"}</button>
                 </div>
               ) : null}
+                </>
+              )}
             </div>
           ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
         </div>
@@ -2307,273 +2869,14 @@ export default function InboxPage() {
         {/* ---- Customer context + controls + notes ----
             Inbox Next-Gen P1: third grid column on xl+ (own scroll);
             below xl it becomes a right-side drawer opened from the
-            thread header (the panel used to drop under the thread
-            and force a page scroll). */}
+            thread header. */}
         {active ? (
           <div
             className={`${ctxOpen ? "fixed inset-0 z-50 flex justify-end bg-slate-900/40" : "hidden"} xl:static xl:z-auto xl:block xl:min-h-0 xl:overflow-y-auto xl:bg-transparent xl:pr-0.5`}
             onClick={(e) => { if (e.target === e.currentTarget) setCtxOpen(false); }}
           >
             <div className="h-full w-[340px] max-w-[94vw] space-y-4 overflow-y-auto bg-[#f6f7fb] p-3 shadow-2xl xl:h-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:bg-transparent xl:p-0 xl:shadow-none">
-              <div className="flex items-center justify-between xl:hidden">
-                <span className="text-sm font-bold">গ্রাহক ও নিয়ন্ত্রণ</span>
-                <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>✕ বন্ধ করুন</button>
-              </div>
-            <div className="card space-y-4 p-4 shadow-sm border border-slate-200/80">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">👤 কাস্টমার প্রোফাইল</span>
-                {context?.lead ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200/60">Lead: {context.lead.stage}</span> : null}
-              </div>
-
-              {context?.customer ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <ContactAvatar name={context.customer.name ?? active.contactName} channel={active.channel} size="lg" />
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-900 truncate">{context.customer.name ?? active.contactName ?? "—"}</div>
-                      <div className="text-xs text-slate-500 flex flex-col gap-0.5 mt-0.5">
-                        {context.customer.phone || active.contactPhone ? (
-                          <a href={`tel:${context.customer.phone ?? active.contactPhone}`} className="text-indigo-600 hover:underline">
-                            📞 {context.customer.phone ?? active.contactPhone}
-                          </a>
-                        ) : null}
-                        {context.customer.email ? <span className="truncate">✉️ {context.customer.email}</span> : null}
-                      </div>
-                    </div>
-                  </div>
-
-                  {context.lifetime ? (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">মোট অর্ডার</div>
-                        <div className="mt-1 text-lg font-black text-slate-900">{context.lifetime.orderCount}টি</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">Lifetime স্পেন্ড</div>
-                        <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="rounded-xl bg-slate-50 p-3 text-center text-xs text-slate-500">
-                  কোনো Customer রেকর্ডের সাথে যুক্ত নয়{context?.lead ? "" : " (নতুন কন্ট্যাক্ট হলে Lead তৈরি হয়েছে)"}।
-                </div>
-              )}
-
-              {context?.lead && !context?.customer ? (
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="badge-brand">Lead: {context.lead.stage}</span>
-                  <span className="badge-slate">{context.lead.source}</span>
-                  {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor)}</span> : null}
-                  {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
-                </div>
-              ) : null}
-              {context?.orders?.length ? (
-                <div>
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
-                  <div className="space-y-1.5">
-                    {context.orders.map((o) => (
-                      <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
-                          <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
-                        </div>
-                        {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
-                        {o.isCod ? (
-                          <div className="mt-1 flex items-center gap-2">
-                            {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
-                              : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">✓ COD কনফার্মড</span>
-                              : o.codConfirmationStatus === "declined" ? <span className="badge-red">✗ গ্রাহক বাতিল করেছে</span>
-                              : ["pending", "on-hold", "processing"].includes(o.status) ? (
-                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? "পাঠাচ্ছি..." : "COD কনফার্ম পাঠান"}</button>
-                              ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            {profile ? (
-              <div className="card space-y-3 p-4">
-                <div className="section-title">🎯 Command Profile</div>
-                <div className="flex flex-wrap gap-1.5 text-[11px]">
-                  <span className="badge-indigo">Stage: {profile.conversation.pipelineStage}</span>
-                  {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
-                  {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
-                  {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
-                </div>
-                {profile.conversations?.length > 1 ? (
-                  <div>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
-                    <div className="space-y-1">
-                      {profile.conversations.map((c: any) => (
-                        <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
-                          onClick={() => { if (c.id !== active.id) void openConversation({ id: c.id } as Conversation); }}>
-                          <span className="flex items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? "—"}</span></span>
-                          <span className="shrink-0 text-slate-400">{c.status}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {profile.payments?.verifications?.length ? (
-                  <div>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
-                    {profile.payments.verifications.map((v: any) => (
-                      <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
-                        {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {/* Quick Action Tiles (Matching Demo 3 & 4) */}
-            <div className="card p-4 space-y-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
-                  onClick={() => setOrderOpen((v) => !v)}
-                >
-                  <span className="text-base">📄</span>
-                  <span>ইনভয়েস পাঠান</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
-                  onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
-                >
-                  <span className="text-base">📋</span>
-                  <span>টাস্ক তৈরি</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-amber-400 hover:bg-amber-50/50 hover:text-amber-800 transition"
-                  onClick={() => { setComposerMode("note"); focusComposer(); }}
-                >
-                  <span className="text-base">📝</span>
-                  <span>নোট যোগ করুন</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-emerald-400 hover:bg-emerald-50/50 hover:text-emerald-800 transition"
-                  onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
-                >
-                  <span className="text-base">✓</span>
-                  <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* AI Conversation Summary Card (Matching Demo 3 & 4) */}
-            <div className="card p-4 space-y-2 border-indigo-100 bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/30">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
-                  <span>AI কনভারসেশন সামারি</span>
-                </div>
-                <button
-                  className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
-                  disabled={busy !== ""}
-                  onClick={summarize}
-                >
-                  {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
-                </button>
-              </div>
-
-              {active.summaryText ? (
-                <div className="rounded-xl bg-white/90 p-3 text-xs leading-relaxed text-slate-700 shadow-2xs ring-1 ring-slate-100 whitespace-pre-line">
-                  {active.summaryText}
-                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
-                    <span>{active.summaryProvider ?? "AI Engine"}</span>
-                    <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
-                  গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
-                </div>
-              )}
-            </div>
-
-            <div className="card space-y-3 p-4">
-              <div className="section-title">দায়িত্ব ও Tag</div>
-              {active.spamFlag ? (
-                <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
-                  <div className="text-xs font-semibold text-amber-800">🚫 Spam সন্দেহভাজন</div>
-                  <p className="mt-0.5 text-xs text-amber-700">{active.spamReason ?? ""}</p>
-                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>Spam নয়, ঠিক আছে</button>
-                </div>
-              ) : null}
-              {botSession?.status === "active" ? (
-                <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
-                  <div className="text-xs font-semibold text-indigo-800">🤖 অর্ডার Bot চলছে — ধাপ: {botSession.state}</div>
-                  <p className="mt-0.5 text-xs text-indigo-600">গ্রাহক নিজে "এজেন্ট" লিখলে বা আপনি উত্তর দিলেই বট থেমে যাবে।</p>
-                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId || !active) return;
-                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice("বট থামানো হয়েছে।"); await refreshActive(); }
-                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-                  }}>বট থামান</button>
-                </div>
-              ) : null}
-              {active.csatRating ? (
-                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
-              ) : null}
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
-                  <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
-                </div>
-                {orderOpen ? (
-                  <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
-                    {orderItems.map((it, idx) => (
-                      <div key={idx} className="flex items-center gap-1.5">
-                        <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
-                          {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency)}</option>)}
-                        </select>
-                        <input className="input !w-14 !py-1.5 !text-xs" type="number" min={1} max={99} value={it.quantity} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, quantity: Number(e.target.value) || 1 } : x))} />
-                        <button className="text-slate-400 hover:text-red-500" onClick={() => setOrderItems(orderItems.filter((_, j) => j !== idx))}>✕</button>
-                      </div>
-                    ))}
-                    <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
-                    <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
-                    <div className="flex items-end gap-2">
-                      <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
-                      <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
-                    </div>
-                    <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? "তৈরি হচ্ছে..." : "Order তৈরি করুন"}</button>
-                    <p className="text-[10px] text-slate-400">দাম ক্যাটালগ থেকেই হিসাব হয়। WooCommerce যুক্ত থাকলে অর্ডারটি স্টোরেও পাঠানোর চেষ্টা করা হয়, ফলাফল জানিয়ে দেওয়া হয়।</p>
-                  </div>
-                ) : null}
-              </div>
-              <label className="block text-sm">Assignee
-                <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
-                  <option value="">কেউ নয়</option>
-                  {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
-                </select>
-              </label>
-              <div>
-                <div className="mb-1 flex flex-wrap gap-1">
-                  {(active.tags ?? []).map((t) => (
-                    <span key={t} className="badge-brand">{t}<button className="ml-1 font-bold" onClick={() => patchConversation({ tags: (active.tags ?? []).filter((x) => x !== t) })}>×</button></span>
-                  ))}
-                  {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Tag নেই</span> : null}
-                </div>
-                <div className="flex gap-1.5">
-                  <input className="input flex-1" placeholder="নতুন Tag লিখে Enter" value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && tagInput.trim()) { patchConversation({ tags: [...(active.tags ?? []), tagInput.trim()] }); setTagInput(""); } }} />
-                </div>
-              </div>
-            </div>
-
+              {renderCustomerContent(ctxOpen)}
             </div>
           </div>
         ) : null}
@@ -3398,8 +3701,8 @@ export default function InboxPage() {
         </div>
       ) : null}
 
-      {/* 📱 Mobile Bottom Navigation Bar (Matching Demo 1 & 2 Images) */}
-      <nav aria-label="মোবাইল ইনবক্স মেনু" className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 py-2 backdrop-blur-lg sm:hidden shadow-lg">
+      {/* 📱 Mobile Bottom Navigation Bar (Hidden during active chat so composer is never covered) */}
+      <nav aria-label="মোবাইল ইনবক্স মেনু" className={`fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 py-2 backdrop-blur-lg sm:hidden shadow-lg ${mobileChat ? "hidden" : ""}`}>
         <button
           onClick={() => { setViewMode("list"); setMobileChat(false); }}
           className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
