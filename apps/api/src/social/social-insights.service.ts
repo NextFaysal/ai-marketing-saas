@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SocialService } from "./social.service";
 import { SocialPublishService } from "./social-publish.service";
+import { SocialOAuthService } from "./social-oauth.service";
+import { ThreadsClient } from "./threads.client";
 import { MetaSocialPublisher, SocialPostInsights, isTokenDeadError } from "./meta-publisher";
 import { PdfCanvas, buildPdf } from "../courier/pdf";
 
@@ -38,11 +40,14 @@ export const INSIGHTS_BULK_LIMIT = 100;
 /** Best-time needs at least this many posts WITH insights. */
 export const BEST_TIME_MIN_POSTS = 10;
 
-/** Every metric key an insights object can carry. */
+/** Every metric key an insights object can carry. SN7 adds the
+ * Threads-native keys (views/likes/replies/reposts/quotes —
+ * "shares" was already shared with the Page vocabulary). */
 export const INSIGHT_METRIC_KEYS = [
   "reactions", "comments", "shares",
   "likeCount", "commentsCount",
   "impressions", "reach", "saved", "plays",
+  "views", "likes", "replies", "reposts", "quotes",
 ] as const;
 
 /**
@@ -57,7 +62,11 @@ export function engagementScore(insights: unknown): number | null {
   const obj = insights as Record<string, unknown>;
   const keys = obj.platform === "instagram"
     ? ["likeCount", "commentsCount"]
-    : ["reactions", "comments", "shares"];
+    : obj.platform === "threads"
+      // SN7: Threads' engagement = its documented interaction
+      // metrics (views is reach, not engagement — excluded).
+      ? ["likes", "replies", "reposts", "quotes"]
+      : ["reactions", "comments", "shares"];
   let total = 0;
   let any = false;
   for (const key of keys) {
@@ -289,6 +298,8 @@ export function buildMonthlyReportPdf(rows: MonthlyReportRow[], month: string): 
 @Injectable()
 export class SocialInsightsService {
   private readonly publisher: MetaSocialPublisher;
+  private readonly oauth: SocialOAuthService;
+  private readonly threads: ThreadsClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -296,7 +307,15 @@ export class SocialInsightsService {
     private readonly social: SocialService,
     private readonly publish: SocialPublishService,
     @Optional() publisher?: MetaSocialPublisher,
+    // SN7: Threads insights need the refresh-aware token path +
+    // the Threads client. Appended LAST (positional compat);
+    // production defaults mirror SocialPublishService's own
+    // default OAuth instance construction.
+    @Optional() oauth?: SocialOAuthService,
+    @Optional() threadsClient?: ThreadsClient,
   ) {
+    this.oauth = oauth ?? new SocialOAuthService(prisma, audit);
+    this.threads = threadsClient ?? new ThreadsClient();
     // Same injection pattern as SocialPublishService: the module
     // does not provide MetaSocialPublisher, so it defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -325,6 +344,17 @@ export class SocialInsightsService {
       }
     }
     const { account, accessToken } = await this.publish.resolveAccountToken(post.organizationId, post.socialAccountId);
+    // SN7: Threads media insights — the documented metric set
+    // only, through the refresh-aware token (a 60-day token can
+    // be inside the skew window). A metric Threads omits stays
+    // absent from the stored object (the SP7 rule above). A
+    // missing threads_manage_insights scope on an older connect
+    // surfaces Meta's permission error verbatim.
+    if (account.platform === "threads") {
+      const freshToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+      const metrics = await this.threads.getMediaInsights(freshToken, String(post.platformPostId));
+      return { platform: "threads", ...metrics } as unknown as SocialPostInsights;
+    }
     // Instagram's insights metrics differ for video (Reels) — the
     // post's own media refs say which shape it was published as.
     const isVideo = (Array.isArray(post.mediaRefs) ? post.mediaRefs : [])
@@ -649,12 +679,14 @@ export class SocialInsightsService {
    * invented number. Failure-isolated per account; a dead token
    * marks the account like the publish path does. One audit row
    * records the counts (system actor for the automation job).
+   * SN7 extends the same discipline to Threads accounts
+   * (followers_count via user insights, refresh-aware token).
    */
   async snapshotFollowers(organizationId: string, actorId = "system") {
     const timeZone = await this.orgTimeZone(organizationId);
     const day = dayInTimeZone(new Date(), timeZone);
     const accounts = await (this.prisma as any).socialAccount.findMany({
-      where: { organizationId, status: "connected", platform: { in: ["meta_page", "instagram"] } },
+      where: { organizationId, status: "connected", platform: { in: ["meta_page", "instagram", "threads"] } },
     }).catch(() => []);
     const list = Array.isArray(accounts) ? accounts : [];
     const results: { accountId: string; status: "snapshotted" | "skipped" | "failed"; followers?: number; error?: string }[] = [];
@@ -663,8 +695,18 @@ export class SocialInsightsService {
     let failed = 0;
     for (const account of list) {
       try {
-        const { accessToken } = await this.publish.resolveAccountToken(organizationId, account.id);
-        const followers = await this.publisher.getFollowerCount(accessToken, account.platform, account.externalId);
+        // SN7: a Threads account's count comes from USER insights
+        // (followers_count) with the refresh-aware token — the
+        // profile itself carries no follower field. A null count
+        // SKIPS the account below, exactly like a Meta null.
+        let followers: number | null;
+        if (account.platform === "threads") {
+          const freshToken = await this.oauth.ensureAccessToken(organizationId, account);
+          followers = await this.threads.getFollowerCount(freshToken, account.externalId);
+        } else {
+          const { accessToken } = await this.publish.resolveAccountToken(organizationId, account.id);
+          followers = await this.publisher.getFollowerCount(accessToken, account.platform, account.externalId);
+        }
         if (followers === null) {
           skipped++;
           results.push({ accountId: account.id, status: "skipped" });

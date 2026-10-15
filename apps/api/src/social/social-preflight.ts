@@ -109,6 +109,20 @@ export function validateForPlatform(
     return null;
   }
 
+  if (platform === "threads") {
+    // SN7: Threads' documented ceilings — a post's text is at
+    // most 500 characters, and a carousel holds at most 20
+    // items (2–20; a single item is a plain media post). Text-
+    // only and single-media posts are fine as-is.
+    if (caption.length > 500) {
+      return "Threads-এর পোস্ট সর্বোচ্চ ৫০০ অক্ষরের হতে পারবে — ক্যাপশন ছোট করুন।";
+    }
+    if (refs.length > 20) {
+      return "Threads Carousel-এ সর্বোচ্চ ২০টি মিডিয়া রাখা যায় — মিডিয়ার সংখ্যা কমিয়ে আবার চেষ্টা করুন।";
+    }
+    return null;
+  }
+
   if (platform === "telegram") {
     // SN6: Telegram takes text alone, ONE photo/video, or a
     // media group of 2–10 photo/video (Bot API sendMediaGroup's

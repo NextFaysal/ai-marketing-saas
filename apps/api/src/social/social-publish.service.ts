@@ -11,6 +11,7 @@ import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
 import { LinkedInClient } from "./linkedin.client";
 import { TelegramClient, TELEGRAM_CAPTION_MAX, TELEGRAM_TEXT_MAX } from "./telegram.client";
+import { ThreadsClient, ThreadsPublisher } from "./threads.client";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -89,6 +90,9 @@ export class SocialPublishService {
   // SN6: Telegram Bot API client (bot-token platform — the token
   // comes from resolveAccountToken like Meta's, no OAuth seam).
   private readonly telegramClient: TelegramClient;
+  // SN7: Threads container publisher + raw client (permalink).
+  private readonly threadsPublisher: ThreadsPublisher;
+  private readonly threadsClient: ThreadsClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -113,11 +117,16 @@ export class SocialPublishService {
     @Optional() tiktokClient?: TikTokClient,
     // SN6: appended after the SN1 clients for the same reason.
     @Optional() telegramClient?: TelegramClient,
+    // SN7: appended after the SN6 client for the same reason.
+    @Optional() threadsPublisher?: ThreadsPublisher,
+    @Optional() threadsClient?: ThreadsClient,
   ) {
     this.links = links;
     this.youtubeClient = youtubeClient ?? new YouTubeClient();
     this.tiktokClient = tiktokClient ?? new TikTokClient();
     this.telegramClient = telegramClient ?? new TelegramClient();
+    this.threadsClient = threadsClient ?? new ThreadsClient();
+    this.threadsPublisher = threadsPublisher ?? new ThreadsPublisher(this.threadsClient);
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -348,6 +357,14 @@ export class SocialPublishService {
       return this.publishToTelegram(post, account, accessToken);
     }
 
+    // SN7: Threads takes its own dispatch — the container flow
+    // needs public media URLs (Meta fetches them), but NOT the
+    // Meta publisher; and its token must be the OAuth service's
+    // refresh-aware one (60-day long-lived tokens).
+    if (account.platform === "threads") {
+      return this.publishToThreads(post, account);
+    }
+
     const assetRows: any[] = [];
     for (const ref of (post.mediaRefs ?? []) as { assetId: string; kind: string }[]) {
       const asset = await prisma.mediaAsset.findFirst({
@@ -557,6 +574,65 @@ export class SocialPublishService {
    * never from the possibly-stale snapshot resolveAccountToken
    * decrypted on the way in.
    */
+  /**
+   * SN7 — Threads publish (spike doc §১.২): resolve the media to
+   * public URLs (Meta fetches them — the SP1 path, with the PP1
+   * SVG→PNG raster for images like the Meta flow), then the
+   * container flow (create → bounded poll → publish) runs in
+   * ThreadsPublisher. The token is the OAuth service's
+   * refresh-aware one. Threads has no link field: a linkUrl is
+   * appended to the text when not already in it — and if that
+   * append would cross the documented 500-char ceiling, the
+   * post fails here with the pre-flight's own message rather
+   * than silently dropping the link or truncating the caption.
+   * The permalink is a best-effort follow-up call: its failure
+   * leaves platformUrl null — the post IS published.
+   */
+  private async publishToThreads(post: any, account: any): Promise<SocialPublishResult> {
+    const prisma = this.prisma as any;
+    const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+    const caption = String(post.caption ?? "");
+    const linkUrl = typeof post.linkUrl === "string" && post.linkUrl ? post.linkUrl : null;
+    let text = caption;
+    if (linkUrl && !caption.includes(linkUrl)) {
+      const withLink = caption ? `${caption}\n\n${linkUrl}` : linkUrl;
+      if (withLink.length > 500) {
+        throw new PermanentPublishError("Threads-এর পোস্ট সর্বোচ্চ ৫০০ অক্ষরের হতে পারবে — ক্যাপশন ছোট করুন অথবা লিংকটি ক্যাপশনের ভিতরে রাখুন।");
+      }
+      text = withLink;
+    }
+    const refs = (Array.isArray(post.mediaRefs) ? post.mediaRefs : []) as { assetId: string; kind: string }[];
+    const media: { kind: "image" | "video"; url: string }[] = [];
+    for (const ref of refs) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: ref.assetId, organizationId: post.organizationId },
+      });
+      if (!asset) {
+        throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+      }
+      let resolved = asset;
+      if (ref.kind === "image" && String(asset.contentType ?? "").includes("svg")) {
+        try {
+          resolved = await this.raster.ensurePngAsset(post.organizationId, post.createdById, asset);
+        } catch (e) {
+          throw new PermanentPublishError(`SVG থেকে PNG তৈরি করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      media.push({
+        kind: ref.kind === "video" ? "video" : "image",
+        url: await this.publicUrlForAsset(post, resolved),
+      });
+    }
+    const { mediaId } = await this.threadsPublisher.publish({
+      accessToken,
+      threadsUserId: String(account.externalId),
+      text,
+      media,
+    });
+    const platformUrl = await this.threadsClient.getPermalink(accessToken, mediaId).catch(() => null);
+    return { platformPostId: mediaId, platformUrl, outcome: "published" };
+  }
+
   /** Split a long Telegram text at the documented 4096-char
    * message ceiling, preferring a newline boundary. */
   private chunkTelegramText(text: string): string[] {

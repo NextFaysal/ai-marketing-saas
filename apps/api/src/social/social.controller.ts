@@ -142,6 +142,15 @@ export class SocialController {
     return this.oauth.connectTelegramChannel(orgId, user.userId, dto);
   }
 
+  // SN7: Threads OAuth connect — same shape as TikTok/YouTube.
+  // ?appSource=own connects through the tenant's OWN Threads app
+  // (Connect Center → নিজের অ্যাপ → Threads). One authorization
+  // yields one Threads profile, so there is no picker.
+  @Get("accounts/threads/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  threadsConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.threadsConnectUrl(orgId, user.userId, appSource);
+  }
+
   // SP8/SP9: what the UI may honestly claim about the OAuth
   // platforms (configured? TikTok audited?) — booleans only.
   @Get("platform-modes")
@@ -885,6 +894,21 @@ export class SocialOAuthCallbackController {
     @Res() res: Response,
   ) {
     const url = await this.oauth.handleLinkedInCallback({ code, state, error });
+    return res.redirect(302, url);
+  }
+
+  // SN7: Threads callbacks land back on the SOCIAL POSTS page
+  // (where the connect started), with social_connected=threads
+  // or a social_error explanation.
+  @Public()
+  @Get("threads/callback")
+  async threadsCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const url = await this.oauth.handleThreadsCallback({ code, state, error });
     return res.redirect(302, url);
   }
 }
