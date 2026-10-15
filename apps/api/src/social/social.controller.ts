@@ -17,7 +17,7 @@ import { SocialShareService } from "./social-share.service";
 import { SocialStockService } from "./social-stock.service";
 import { SocialCoachService } from "./social-coach.service";
 import {
-  BulkMediaDto, BulkSocialPostsDto, ConnectTelegramDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
+  BulkMediaDto, BulkSocialPostsDto, ConnectTelegramDto, CoverMediaDto, CreateCaptionTestDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
   AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
@@ -461,6 +461,10 @@ export class SocialController {
   @Get("insights/summary")
   insightsSummary(@Param("organizationId") orgId: string) { return this.insights.getInsightsSummary(orgId); }
 
+  // SN10: caption-test pairs for the Analytics comparison.
+  @Get("insights/caption-tests")
+  insightsCaptionTests(@Param("organizationId") orgId: string) { return this.insights.listCaptionTests(orgId); }
+
   // SU4: hashtag performance from the org's own published posts.
   @Get("insights/hashtags")
   insightsHashtags(@Param("organizationId") orgId: string) { return this.insights.hashtagPerformance(orgId); }
@@ -723,6 +727,13 @@ export class SocialController {
   @Post("posts/:id/clone") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   clonePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.social.clonePost(orgId, user.userId, id);
+  }
+
+  // SN10: caption test — pair this draft with a fresh clone draft
+  // under one captionTestId (drafts only; see the service).
+  @Post("posts/:id/caption-test") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createCaptionTest(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateCaptionTestDto) {
+    return this.social.createCaptionTest(orgId, user.userId, id, dto);
   }
 
   // SU8: cross-post derive — fresh drafts for the target

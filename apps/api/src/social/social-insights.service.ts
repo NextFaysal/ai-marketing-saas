@@ -512,6 +512,90 @@ export class SocialInsightsService {
     return { tags, postsConsidered };
   }
 
+  /**
+   * SN10 — Caption Test comparison: every post carrying a
+   * captionTestId, grouped by that id. Numbers are the stored
+   * insights verbatim (engagementScore over present fields only);
+   * metricsPresent lists ONLY the metric keys actually present as
+   * numbers — when engagementScore is null, no engagement-family
+   * key can appear there, because none was present. Link clicks
+   * are the real SocialLinkClick rows for the post. There is
+   * deliberately NO winner field anywhere: both numbers are shown
+   * and the reader decides. closeCall is tri-state — true/false
+   * only when BOTH posts are published AND both have an
+   * engagement score; otherwise null (not decidable yet).
+   */
+  async listCaptionTests(organizationId: string) {
+    const rows = await (this.prisma as any).socialPost.findMany({
+      where: { organizationId, captionTestId: { not: null } },
+      orderBy: { createdAt: "asc" },
+    }).catch(() => []);
+    const posts = Array.isArray(rows) ? rows : [];
+    const accountIds = [...new Set(posts.map((p: any) => p.socialAccountId).filter(Boolean))];
+    const accounts = accountIds.length
+      ? await (this.prisma as any).socialAccount.findMany({
+          where: { organizationId, id: { in: accountIds } },
+        }).catch(() => [])
+      : [];
+    const accountById = new Map<string, any>(
+      (Array.isArray(accounts) ? accounts : []).map((a: any) => [a.id as string, a]),
+    );
+    const byTest = new Map<string, any[]>();
+    for (const post of posts) {
+      const list = byTest.get(post.captionTestId) ?? [];
+      list.push(post);
+      byTest.set(post.captionTestId, list);
+    }
+    const tests: any[] = [];
+    for (const [captionTestId, groupPosts] of byTest.entries()) {
+      const serialized: any[] = [];
+      for (const post of groupPosts) {
+        const account = accountById.get(post.socialAccountId);
+        const insights = post.insights && typeof post.insights === "object"
+          ? (post.insights as Record<string, unknown>) : null;
+        const metricsPresent = insights
+          ? INSIGHT_METRIC_KEYS.filter((k) => typeof insights[k] === "number" && Number.isFinite(insights[k] as number))
+          : [];
+        const linkClicksRaw = await (this.prisma as any).socialLinkClick?.count?.({
+          where: { socialPostId: post.id },
+        }).catch(() => 0) ?? 0;
+        serialized.push({
+          id: post.id,
+          caption: post.caption ?? "",
+          status: post.status,
+          scheduledAt: post.scheduledAt ?? null,
+          publishedAt: post.publishedAt ?? null,
+          platformUrl: post.platformUrl ?? null,
+          platform: account?.platform ?? null,
+          accountName: account?.name ?? null,
+          engagement: engagementScore(post.insights),
+          metricsPresent,
+          insightsFetchedAt: post.insightsFetchedAt ?? null,
+          linkClicks: typeof linkClicksRaw === "number" ? linkClicksRaw : 0,
+        });
+      }
+      const bothPublished = serialized.length >= 2 && serialized.every((p: any) => p.status === "published");
+      let closeCall: boolean | null = null;
+      if (bothPublished && serialized.length >= 2) {
+        const a = serialized[0].engagement;
+        const b = serialized[1].engagement;
+        if (typeof a === "number" && typeof b === "number") {
+          const max = Math.max(a, b);
+          closeCall = max > 0 ? Math.abs(a - b) / max < 0.10 : a === b;
+        }
+      }
+      tests.push({ captionTestId, posts: serialized, bothPublished, closeCall });
+    }
+    // Newest test first (by its newest post's creation time).
+    const createdById = new Map<string, number>();
+    for (const post of posts) {
+      const t = post.createdAt ? new Date(post.createdAt).getTime() : 0;
+      createdById.set(post.captionTestId, Math.max(createdById.get(post.captionTestId) ?? 0, t));
+    }
+    tests.sort((x, y) => (createdById.get(y.captionTestId) ?? 0) - (createdById.get(x.captionTestId) ?? 0));
+    return { tests };
+  }
+
   // ---------- SU7: analytics v2 ----------
 
   /** The org's timezone (getInsightsSummary's pattern). */

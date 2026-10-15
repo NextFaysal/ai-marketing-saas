@@ -20,7 +20,7 @@ import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind, defaultMediaFileName } from "../inbox/media-sniff";
 import { SOCIAL_MEDIA_KINDS, SOCIAL_POST_STATUSES } from "./social.constants";
 import {
-  CreateHashtagSetDto, CreateSocialPostDto, CreateSocialPostGroupDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
+  CreateCaptionTestDto, CreateHashtagSetDto, CreateSocialPostDto, CreateSocialPostGroupDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
   ScheduleSocialPostDto, UpdateHashtagSetDto, UpdateSocialPostDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { validateForPlatform, videoOnlyViolation } from "./social-preflight";
@@ -232,6 +232,9 @@ export class SocialService {
       // the UI only learns WHETHER one exists.)
       autoDraftKind: row.autoDraftKind ?? null,
       autoDraftRef: row.autoDraftRef ?? null,
+      // SN10: caption-test pair id (null = not in a test; two
+      // drafts sharing one id are compared in Analytics).
+      captionTestId: row.captionTestId ?? null,
       // SU8: YouTube metadata + cover + story flag.
       youtubeTitle: row.youtubeTitle ?? null,
       youtubeTags: Array.isArray(row.youtubeTags) ? row.youtubeTags : null,
@@ -1334,6 +1337,68 @@ export class SocialService {
     });
     const account = await this.accountSummary(organizationId, post.socialAccountId);
     return this.serializePost(post, account);
+  }
+
+  /**
+   * SN10 — Caption Test: pair ONE draft with a fresh clone draft
+   * sharing a captionTestId, so the two can later be scheduled at
+   * different times and compared honestly in Analytics (no winner
+   * is ever declared — see SocialInsightsService.listCaptionTests).
+   * A pair holds at most two posts: a source already in a full
+   * pair is refused; a source in a half pair (partner deleted)
+   * reuses its existing test id. The partner is built by clonePost
+   * (fresh draft, new group when grouped, captionTestId NOT
+   * carried by clone itself) and then stamped with the test id —
+   * and, only when a non-blank replacement caption is supplied,
+   * that caption.
+   */
+  async createCaptionTest(organizationId: string, actorId: string, postId: string, dto?: CreateCaptionTestDto) {
+    const source = await this.getPostRow(organizationId, postId);
+    if (source.status !== "draft") {
+      throw new BadRequestException("Caption Test শুধু Draft পোস্ট থেকে তৈরি করা যায়।");
+    }
+    let captionTestId: string = source.captionTestId ?? "";
+    let updatedSource: any = source;
+    if (captionTestId) {
+      const existing = await (this.prisma as any).socialPost.findMany({
+        where: { organizationId, captionTestId },
+      }).catch(() => []);
+      const count = Array.isArray(existing) ? existing.length : 0;
+      if (count >= 2) {
+        throw new BadRequestException("Caption Test-এর জোড়া ইতিমধ্যে পূর্ণ — একটি টেস্টে সর্বোচ্চ দুটি পোস্ট থাকে।");
+      }
+    } else {
+      captionTestId = randomUUID();
+      updatedSource = await (this.prisma as any).socialPost.update({
+        where: { id: source.id },
+        data: { captionTestId },
+      });
+    }
+    const cloned = await this.clonePost(organizationId, actorId, postId);
+    const partnerId = (cloned as any).id as string;
+    const override = typeof dto?.caption === "string" ? dto.caption.trim() : "";
+    const partnerData: Record<string, unknown> = { captionTestId };
+    if (override) partnerData.caption = override;
+    await (this.prisma as any).socialPost.update({
+      where: { id: partnerId },
+      data: partnerData,
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "social.caption_test_created",
+      entityType: "SocialPost", entityId: partnerId,
+      metadata: { sourcePostId: source.id, captionTestId },
+    });
+    // Re-read both rows so the serializations carry the stamped
+    // captionTestId (clonePost's own return predates the stamp).
+    const sourceRow = await this.getPostRow(organizationId, source.id).catch(() => updatedSource);
+    const partnerRow = await this.getPostRow(organizationId, partnerId);
+    const sourceAccount = await this.accountSummary(organizationId, sourceRow.socialAccountId);
+    const partnerAccount = await this.accountSummary(organizationId, partnerRow.socialAccountId);
+    return {
+      captionTestId,
+      source: this.serializePost(sourceRow, sourceAccount),
+      partner: this.serializePost(partnerRow, partnerAccount),
+    };
   }
 
   /**

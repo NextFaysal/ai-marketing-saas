@@ -81,6 +81,13 @@ export class UpdateSocialPostDto {
   @IsOptional() @IsBoolean() isStory?: boolean;
 }
 
+// SN10: create a caption test from one draft — an optional
+// replacement caption for the partner draft (absent/blank keeps
+// the source caption, which the service enforces).
+export class CreateCaptionTestDto {
+  @IsOptional() @IsString() @MaxLength(5000) caption?: string;
+}
+
 // SU8: cross-post derive — one source post, several target
 // accounts; incompatible targets are skipped with a warning
 // (service), never a hard failure of the whole derive.
