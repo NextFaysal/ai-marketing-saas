@@ -278,6 +278,9 @@ export default function SocialPostsPage() {
     saleEnabled: false,
     backInStockEnabled: false,
     reviewMilestoneEnabled: false,
+    rssEnabled: false,
+    youtubeEnabled: false,
+    rssFeedUrl: "",
     maxDraftsPerDay: 5,
     socialAccountId: "",
   });

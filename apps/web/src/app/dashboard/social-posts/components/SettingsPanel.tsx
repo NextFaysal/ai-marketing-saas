@@ -287,6 +287,13 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             </label>
           ))}
         </div>
+        {/* SN8: the RSS/Atom feed the syndication sweep reads. */}
+        <label className="block text-sm">RSS Feed URL
+          <input type="text" className={inputCls} value={autoDraftForm.rssFeedUrl} disabled={busy !== "" || !autoDraftLoaded}
+            onChange={(e) => setAutoDraftForm((f) => ({ ...f, rssFeedUrl: e.target.value }))}
+            placeholder="https://example.com/feed.xml" />
+        </label>
+        <p className="text-xs text-slate-500">এই উৎসগুলো (RSS feed ও নিজের YouTube চ্যানেল) থেকে Draft তৈরি হতে Automations-এ “Social Syndication Sweep” job template-টি চালু থাকতে হবে। দৈনিক cap commerce auto-draft-এর সঙ্গে মিলিয়ে হিসাব হয় — এগুলো কখনো নিজে থেকে Publish হয় না, শুধু Draft তৈরি হয়।</p>
         <div className="flex flex-wrap items-end gap-3">
           <label className="block text-sm">প্রতিদিন সর্বোচ্চ draft সংখ্যা (১–২০)
             <input type="number" min={1} max={20} className="input mt-1 w-28" value={autoDraftForm.maxDraftsPerDay}
