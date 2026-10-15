@@ -78,10 +78,16 @@ export function DetailDrawer({ open, title, sub, onClose, children, footer }: {
   const closeRef = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
     if (!open) return;
+    // ADNX17: return focus to the invoking element on close
+    // (previously focus was lost to <body>).
+    const prev = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (prev && document.contains(prev)) prev.focus();
+    };
   }, [open, onClose]);
   if (!open) return null;
   return (
@@ -148,7 +154,7 @@ export function loadSavedViews(page: string): SavedView[] {
   } catch { return []; }
 }
 
-function storeSavedViews(page: string, views: SavedView[]) {
+export function storeSavedViews(page: string, views: SavedView[]) {
   try { localStorage.setItem(savedViewsKey(page), JSON.stringify(views)); } catch { /* private mode etc. */ }
 }
 
@@ -190,7 +196,7 @@ export function SavedViewsBar({ page, current, onApply }: {
         <input className="ainput !w-36 !py-1 text-xs" placeholder="নতুন View-এর নাম" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
         <button type="button" className="abtn-secondary !px-2 !py-1 text-xs" disabled={!name.trim()} onClick={save}>বর্তমান ফিল্টার সেভ করুন</button>
       </span>
-      {views.length === 0 ? <span className="text-[11px] text-slate-600">বর্তমান ফিল্টার অবস্থা নাম দিয়ে সেভ করে পরে এক চাপে ফেরত আনুন।</span> : null}
+      {views.length === 0 ? <span className="text-[11px] text-slate-400">বর্তমান ফিল্টার অবস্থা নাম দিয়ে সেভ করে পরে এক চাপে ফেরত আনুন।</span> : null}
     </div>
   );
 }
@@ -315,8 +321,23 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const confirmRef = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
-    if (open) { setValue(initialValue); setError(""); setTimeout(() => inputRef.current?.focus(), 30); }
+    if (!open) return;
+    setValue(initialValue); setError("");
+    // ADNX17: focus always lands inside the dialog — the input
+    // when one exists, otherwise the confirm button (previously
+    // a no-input modal left focus on the page behind it) — and
+    // focus returns to the invoking element on close/unmount.
+    const prev = document.activeElement as HTMLElement | null;
+    const t = setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+      else confirmRef.current?.focus();
+    }, 30);
+    return () => {
+      clearTimeout(t);
+      if (prev && document.contains(prev)) prev.focus();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open ]);
   React.useEffect(() => {
@@ -348,7 +369,7 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
           {error ? <p className="mt-2 text-sm text-red-300">{error}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" className="abtn-secondary" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
-            <button type="button" className={danger ? "abtn-danger" : "abtn"} onClick={submit} disabled={busy}>{busy ? "হচ্ছে…" : confirmLabel}</button>
+            <button ref={confirmRef} type="button" className={danger ? "abtn-danger" : "abtn"} onClick={submit} disabled={busy}>{busy ? "হচ্ছে…" : confirmLabel}</button>
           </div>
         </div>
       </div>
@@ -376,14 +397,18 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
  */
 export interface ChartPoint { label: string; value: number }
 
-export function Chart({ variant = "bar", points, formatValue, seriesLabel }: {
+export function Chart({ variant = "bar", points, formatValue, seriesLabel, defaultShowTable = false }: {
   variant?: "bar" | "line";
   points: ChartPoint[];
   formatValue: (v: number) => string;
   seriesLabel: string;
+  /** ADNX17: initial state of the data-table fallback (default
+   *  false = exactly the pre-ADNX17 behaviour; exists so tests
+   *  can render the fallback table directly). */
+  defaultShowTable?: boolean;
 }) {
   const [active, setActive] = React.useState<number | null>(null);
-  const [showTable, setShowTable] = React.useState(false);
+  const [showTable, setShowTable] = React.useState(defaultShowTable);
   if (points.length === 0) return <EmptyState title="চার্টের কোনো ডেটা নেই।" />;
   const W = 640, H = 240, PADX = 10, TOP = 18, BOTTOM = 30;
   const innerW = W - PADX * 2, innerH = H - TOP - BOTTOM;
@@ -476,18 +501,23 @@ export function dismissToast(id: number) {
   emitToasts();
 }
 
-export function toast(message: string, kind: ToastKind = "success", action?: { label: string; run: () => void }) {
+export function toast(message: string, kind: ToastKind = "success", action?: { label: string; run: () => void }): number {
   const id = ++toastSeq;
   toastItems = [...toastItems, { id, kind, message, actionLabel: action?.label, onAction: action?.run }];
   emitToasts();
   setTimeout(() => dismissToast(id), 6000);
+  return id;
 }
 
 /** Hook form of the same single implementation. */
 export function useToast() { return toast; }
 
 export function ToastHost() {
-  const [items, setItems] = React.useState<ToastItem[]>([]);
+  // ADNX17: initialise from the store's current snapshot so a host
+  // mounted after a toast was pushed still shows it (the shell
+  // mounts the host once, before any toast, so live behaviour is
+  // unchanged; this also makes the store honestly testable).
+  const [items, setItems] = React.useState<ToastItem[]>(() => [...toastItems]);
   React.useEffect(() => {
     const l = (v: ToastItem[]) => setItems(v);
     toastListeners.add(l);

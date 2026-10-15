@@ -90,7 +90,7 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label="Admin navigation">
       {!collapsed && favItems.length === 0 ? (
-        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-600">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
+        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-400">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
       ) : null}
       {!collapsed && favItems.length > 0 ? (
         <div>

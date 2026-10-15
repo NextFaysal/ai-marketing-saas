@@ -67,7 +67,7 @@ export default function AdminLoginPage() {
             </div>
           ))}
         </div>
-        <div className="relative text-xs text-slate-600">© 2026 Qosprey · Operator access only</div>
+        <div className="relative text-xs text-slate-400">© 2026 Qosprey · Operator access only</div>
       </section>
 
       {/* Form panel */}

@@ -397,7 +397,7 @@ export default function SystemPage() {
             {errors.sources.map((s) => (
               <div key={s.source} className="rounded-xl border border-slate-800 p-3">
                 <div className="flex items-center justify-between"><b className="text-sm">{s.source}</b><span className={s.count > 0 ? "abadge-red" : "abadge-green"}>{s.count}</span></div>
-                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{fmtDateTime(e.at)}</span></div>)}
+                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-400">{fmtDateTime(e.at)}</span></div>)}
                 {s.count === 0 ? <p className="mt-1 text-xs text-slate-400">কোনো Error নেই।</p> : null}
               </div>
             ))}
