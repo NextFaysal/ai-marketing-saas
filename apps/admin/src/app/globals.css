@@ -143,7 +143,10 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 
 /* ---------- Detail drawer (right-side quick view) ---------- */
 .adrawer-scrim { @apply fixed inset-0 z-50 bg-black/70; transition: opacity 200ms ease; }
-.adrawer-detail { @apply fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] flex-col border-l border-slate-700 bg-slate-900 shadow-2xl; transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
+/* ADNX10: full-screen on mobile (plan §৩ — drawer পূর্ণ পর্দা),
+   420px side panel from sm up. Applies to every DetailDrawer
+   (audit detail, orgs/users quick-view) — one shared pattern. */
+.adrawer-detail { @apply fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-slate-700 bg-slate-900 shadow-2xl sm:w-[420px] sm:max-w-[92vw]; transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
 .adrawer-head { @apply flex items-start gap-3 border-b border-slate-800 px-5 py-4; }
 .adrawer-body { @apply min-w-0 flex-1 overflow-y-auto px-5 py-4; }
 .adrawer-foot { @apply border-t border-slate-800 px-5 py-3.5; }

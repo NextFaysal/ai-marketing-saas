@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState, SavedViewsBar } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, SavedViewsBar, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -23,8 +23,6 @@ export default function TicketsPage() {
   const [filter, setFilter] = useState<string>("");
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [reply, setReply] = useState("");
-  const [note, setNote] = useState("");
-  const [error, setError] = useState("");
   // ADX12: list loading / load-failure states — before, the initial
   // load and a failed load both showed the "no tickets" card.
   const [loading, setLoading] = useState(true);
@@ -41,8 +39,11 @@ export default function TicketsPage() {
     apiFetch<{ admins: Admin[] }>("/admin/security").then((s) => setAdmins(s.admins ?? [])).catch(() => undefined);
   }, []);
 
+  // ADNX10: the page's old inline error/note banners move to the
+  // ONE toast system (NB2 rule — neither banner carried persistent
+  // state a toast cannot: both were transient action feedback).
   const open = async (id: string) => {
-    try { setSelected(await apiFetch<Ticket>(`/admin/tickets/${id}`)); } catch (e) { setError(e instanceof Error ? e.message : "Ticket খোলা যায়নি"); }
+    try { setSelected(await apiFetch<Ticket>(`/admin/tickets/${id}`)); } catch (e) { toast(e instanceof Error ? e.message : "Ticket খোলা যায়নি", "error"); }
   };
 
   // ADX10: inbox ordering — জরুরি (high priority) আগে, তারপর সর্বশেষ
@@ -57,13 +58,12 @@ export default function TicketsPage() {
 
   const sendReply = async () => {
     if (!selected || !reply.trim()) return;
-    setError(""); setNote("");
     try {
       const res = await apiFetch<{ emailSent: number; emailError: string | null }>(`/admin/tickets/${selected.id}/messages`, { method: "POST", body: JSON.stringify({ body: reply }) });
       setReply("");
-      setNote(res.emailError ? `উত্তর সেভ হয়েছে, কিন্তু ইমেইল যায়নি: ${res.emailError}` : `উত্তর পাঠানো হয়েছে · ${res.emailSent} জনকে ইমেইলে জানানো হয়েছে`);
+      toast(res.emailError ? `উত্তর সেভ হয়েছে, কিন্তু ইমেইল যায়নি: ${res.emailError}` : `উত্তর পাঠানো হয়েছে · ${res.emailSent} জনকে ইমেইলে জানানো হয়েছে`, res.emailError ? "error" : "success");
       await open(selected.id); await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "উত্তর যায়নি"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "উত্তর যায়নি", "error"); }
   };
 
   const update = async (patch: Record<string, unknown>) => {
@@ -71,16 +71,17 @@ export default function TicketsPage() {
     try {
       await apiFetch(`/admin/tickets/${selected.id}/status`, { method: "POST", body: JSON.stringify(patch) });
       await open(selected.id); await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "আপডেট হয়নি"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "আপডেট হয়নি", "error"); }
   };
 
   return (
     <AdminShell title="Support Tickets">
-      {error ? <p className="anote" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</p> : null}
-      {note ? <p className="anote">{note}</p> : null}
-      <div className="mb-3 flex flex-wrap gap-2">
+      <PageHead sub="Tenant Support Ticket inbox — তালিকা থেকে বেছে একই পেজে কথোপকথন ও উত্তর।" />
+      {/* ADNX10: status filter chips become a horizontal rail on
+          mobile (no wrap stack), wrapping again from sm up. */}
+      <div className="mb-3 flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
         {FILTERS.map((f) => (
-          <button key={f || "all"} onClick={() => setFilter(f)} className={filter === f ? "abtn abtn-primary" : "abtn"}>{f ? STATUS_LABEL[f] : "সব"}</button>
+          <button key={f || "all"} onClick={() => setFilter(f)} className={`shrink-0 ${filter === f ? "abtn abtn-primary" : "abtn"}`}>{f ? STATUS_LABEL[f] : "সব"}</button>
         ))}
       </div>
       {/* ADX14: saved views — this page's only filter state is the
@@ -108,10 +109,14 @@ export default function TicketsPage() {
             </button>
           ))}
         </div>
-        <div className={`acard ${selected ? "" : "hidden lg:block"}`}>
+        {/* ADNX10: mobile is a true two-step flow — step 1 is the
+            list alone (hidden above while a ticket is open), step 2
+            is the conversation as a full-screen sheet with the back
+            action at the top; lg keeps list + detail side by side. */}
+        <div className={`acard ${selected ? "max-lg:fixed max-lg:inset-0 max-lg:z-[45] max-lg:overflow-y-auto max-lg:rounded-none" : "hidden lg:block"}`}>
           {!selected ? <p className="amut">একটি Ticket বেছে নিন।</p> : (
             <>
-              <button className="abtn w-full sm:w-auto lg:hidden" style={{ marginBottom: 10 }} onClick={() => setSelected(null)}>← তালিকায় ফিরুন</button>
+              <button className="abtn sticky top-0 z-10 w-full sm:w-auto lg:hidden" style={{ marginBottom: 10 }} onClick={() => setSelected(null)}>← তালিকায় ফিরুন</button>
               <div className="ahead">
                 <h3 style={{ margin: 0 }}>{selected.subject}</h3>
                 <span className="abadge">{STATUS_LABEL[selected.status] ?? selected.status}</span>

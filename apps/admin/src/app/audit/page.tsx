@@ -1,11 +1,18 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DetailDrawer, EmptyState, ErrorState, FilterBar, SavedViewsBar } from "@/components/ui";
+import { DetailDrawer, EmptyState, ErrorState, FilterBar, PageHead, SavedViewsBar } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
 interface Row { id: string; action: string; entityType: string; entityId?: string | null; userId?: string | null; organizationId?: string | null; ipAddress?: string | null; createdAt: string; metadata?: Record<string, unknown> | null }
+
+// ADNX10: action-prefix colour mapping on the ONE v4 status scale
+// (globals --a-status-*): auth.* is security-sensitive → warning,
+// admin.* is the console's own work → info, everything else →
+// neutral. Presentation only — the action text itself is unchanged.
+const actionBadge = (action: string) =>
+  action.startsWith("auth.") ? "astatus-warning" : action.startsWith("admin.") ? "astatus-info" : "astatus-neutral";
 
 export default function AuditPage() {
   const [rows, setRows] = React.useState<Row[]>([]);
@@ -52,10 +59,17 @@ export default function AuditPage() {
     a.href = url; a.download = "audit-export.csv"; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
+  // ADNX10: FilterBar pattern completed — the bar already carried
+  // actor (User ID) / action prefix / entity type / date range; it
+  // now also reports its active-filter count on the mobile toggle,
+  // like the NB2 list pages (defaults: prefix "admin.", take 100).
+  const activeFilters = (prefix !== "admin." ? 1 : 0) + (organizationId.trim() ? 1 : 0) + (userId.trim() ? 1 : 0)
+    + (entityType.trim() ? 1 : 0) + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0) + (take !== "100" ? 1 : 0);
   return (
     <AdminShell title="🧾 Audit Trail">
+      <PageHead sub="সব গুরুত্বপূর্ণ কাজের রেকর্ড — Actor, Action, Entity ও তারিখ দিয়ে ফিল্টার করুন।" />
       <div className="acard overflow-hidden p-0">
-        <FilterBar collapsible className="border-b border-slate-800">
+        <FilterBar collapsible activeCount={activeFilters} className="border-b border-slate-800">
           <span className="text-sm text-slate-400">Action prefix:</span>
           <select className="ainput w-full sm:w-48" value={prefix} onChange={(e) => setPrefix(e.target.value)}>
             <option value="admin.">শুধু Admin অ্যাকশন</option>
@@ -94,11 +108,11 @@ export default function AuditPage() {
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-800">
               <td data-label="সময়" className="atd whitespace-nowrap text-slate-400">{fmtDateTime(r.createdAt)}</td>
-              <td data-label="Action" className="atd font-medium">{r.action}</td>
+              <td data-label="Action" className="atd"><span className={actionBadge(r.action)}>{r.action}</span></td>
               <td data-label="Entity" className="atd text-slate-400">{r.entityType}{r.entityId ? ` · ${r.entityId.slice(0, 8)}…` : ""}</td>
               <td data-label="Actor" className="atd text-slate-400">{r.userId ? `${r.userId.slice(0, 8)}…` : "—"}</td>
               <td data-label="IP" className="atd text-slate-400">{r.ipAddress ?? "—"}</td>
-              <td data-label="বিস্তারিত" className="atd max-w-xs text-slate-500"><span className="inline-block max-w-[180px] truncate align-middle">{r.metadata ? JSON.stringify(r.metadata) : ""}</span><button type="button" className="abtn-secondary ml-2 !px-2 !py-0.5 text-xs" onClick={() => setDrawerRow(r)}>খুলুন</button></td>
+              <td data-label="বিস্তারিত" className="atd max-w-xs text-slate-400"><span className="inline-block max-w-[180px] truncate align-middle">{r.metadata ? JSON.stringify(r.metadata) : ""}</span><button type="button" className="abtn-secondary ml-2 !px-2 !py-0.5 text-xs" onClick={() => setDrawerRow(r)}>খুলুন</button></td>
             </tr>
           ))}</tbody>
         </table>
@@ -109,12 +123,12 @@ export default function AuditPage() {
       <DetailDrawer open={drawerRow !== null} title={drawerRow?.action ?? ""} sub={drawerRow ? fmtDateTime(drawerRow.createdAt) : undefined} onClose={() => setDrawerRow(null)}>
         {drawerRow ? (
           <div className="space-y-2.5 text-sm">
-            <div><span className="text-slate-500">Entity: </span>{drawerRow.entityType}{drawerRow.entityId ? ` · ${drawerRow.entityId}` : ""}</div>
-            <div><span className="text-slate-500">Actor (User ID): </span>{drawerRow.userId ?? "—"}</div>
-            <div><span className="text-slate-500">Organization ID: </span>{drawerRow.organizationId ?? "—"}</div>
-            <div><span className="text-slate-500">IP: </span>{drawerRow.ipAddress ?? "—"}</div>
+            <div><span className="text-slate-400">Entity: </span>{drawerRow.entityType}{drawerRow.entityId ? ` · ${drawerRow.entityId}` : ""}</div>
+            <div><span className="text-slate-400">Actor (User ID): </span>{drawerRow.userId ?? "—"}</div>
+            <div><span className="text-slate-400">Organization ID: </span>{drawerRow.organizationId ?? "—"}</div>
+            <div><span className="text-slate-400">IP: </span>{drawerRow.ipAddress ?? "—"}</div>
             <div>
-              <div className="mb-1 text-slate-500">Metadata</div>
+              <div className="mb-1 text-slate-400">Metadata</div>
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-slate-900 p-3 text-xs text-slate-300">{drawerRow.metadata ? JSON.stringify(drawerRow.metadata, null, 2) : "—"}</pre>
             </div>
           </div>
