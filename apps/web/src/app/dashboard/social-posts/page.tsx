@@ -14,6 +14,7 @@ import {
   type Sp7SocialPost,
 } from "@/lib/social-post-insights";
 import { bucketPostsByDay, localInputToUtcIso, monthCells, orgDayKey, utcToLocalInput } from "@/lib/social-calendar";
+import { rescheduledIsoKeepingTime } from "@/lib/social-board";
 import {
   ASPECT_OPTIONS,
   buildMediaQuery,
@@ -71,7 +72,8 @@ import { EmptyState } from "@repo/ui";
 // for the page body, and by the panel components directly).
 import {
   ACCOUNT_STATUS_META, ApprovalStatusPill, MAX_MEDIA, PLATFORM_LABELS, POST_STATUS_META,
-  type AiCopyResponse, type AiCopyVariant, type AiProductOption, type AiScriptResult,
+  type AiCopyResponse, type AiCopyVariant, type AiPlatformVariant, type AiProductOption, type AiScriptResult,
+  type CarouselOutline,
   type ContentPlan, type DeriveResult, type DeriveWarning, type DiscoveredPage,
   type EvergreenFormState, type HashtagInsight, type HashtagSet, type MediaAsset,
   type MediaFolder, type MediaUsage, type PlatformModes, type SelectedMedia,
@@ -189,6 +191,14 @@ export default function SocialPostsPage() {
   const [scriptTopic, setScriptTopic] = useState("");
   const [scriptProductId, setScriptProductId] = useState("");
   const [aiScript, setAiScript] = useState<AiScriptResult | null>(null);
+  // SN4: AI platform variants (returned only — applying one writes
+  // it into the per-account variant overrides by hand), per-field
+  // translation results, and per-post repurpose results.
+  const [aiPlatformVariants, setAiPlatformVariants] = useState<AiPlatformVariant[]>([]);
+  const [aiVariantDropped, setAiVariantDropped] = useState(0);
+  const [translations, setTranslations] = useState<Record<string, { text: string; targetLang: "bn" | "en" }>>({});
+  const [repurposeScriptByPost, setRepurposeScriptByPost] = useState<Record<string, AiScriptResult>>({});
+  const [repurposeOutlineByPost, setRepurposeOutlineByPost] = useState<Record<string, CarouselOutline>>({});
 
   // SP4 image panel (AI image + template poster). The product
   // selects REUSE the SP3 aiProducts state — one fetch, shared.
@@ -208,7 +218,7 @@ export default function SocialPostsPage() {
 
   // SP5: org timezone, list/calendar/queue views, schedule inputs.
   const [orgTz, setOrgTz] = useState("Asia/Dhaka");
-  const [viewMode, setViewMode] = useState<"list" | "calendar" | "queue">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar" | "queue" | "board">("list");
   const [calCursor, setCalCursor] = useState<{ y: number; m: number }>(() => {
     const [y, m] = orgDayKey(new Date().toISOString(), "Asia/Dhaka").split("-").map(Number);
     return { y, m };
@@ -728,6 +738,94 @@ export default function SocialPostsPage() {
       });
       setAiScript(res);
     } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // --- SN4: AI platform variants / translation / repurpose -----------------
+
+  async function generatePlatformVariants() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!caption.trim()) { setError("আগে মূল ক্যাপশন লিখুন — AI সেটাকেই platform অনুযায়ী সাজাবে।"); return; }
+    const platforms = [...new Set(composerTargets.map((a) => a.platform))];
+    if (platforms.length === 0) { setError("আগে অন্তত একটি অ্যাকাউন্ট বেছে নিন — কোন কোন platform-এর variant লাগবে তা সেখান থেকেই ঠিক হয়।"); return; }
+    setBusy("ai-variants"); setError("");
+    try {
+      const res = await apiFetch<{ variants: AiPlatformVariant[]; droppedCount: number }>(
+        `/organizations/${orgId}/social/posts/ai-variants`, {
+          method: "POST",
+          body: JSON.stringify({ caption: caption.trim(), platforms }),
+        });
+      setAiPlatformVariants(res.variants);
+      setAiVariantDropped(res.droppedCount ?? 0);
+      setNotice(res.droppedCount > 0
+        ? `Platform variant তৈরি হয়েছে — ${res.droppedCount.toLocaleString("bn-BD")}টি variant যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।`
+        : "Platform variant তৈরি হয়েছে — পছন্দেরটি সংশ্লিষ্ট অ্যাকাউন্টের Variant ঘরে বসান।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Platform variant তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4: write one generated platform variant into the variant
+   * overrides of every targeted account on that platform. Nothing
+   * is saved to the server — it only fills the composer fields,
+   * exactly like typing them by hand. */
+  function applyPlatformVariant(platform: string, text: string) {
+    const targets = composerTargets.filter((a) => a.platform === platform);
+    if (targets.length === 0) return;
+    setVariantOverrides((s) => {
+      const next = { ...s };
+      for (const a of targets) next[a.id] = { ...next[a.id], caption: text };
+      return next;
+    });
+    setNotice(`${targets.map((a) => a.name).join(", ")} — এই অ্যাকাউন্টের Variant ঘরে AI-এর লেখা বসানো হয়েছে। চাইলে বদলে নিন, তারপর Draft সংরক্ষণ করুন।`);
+  }
+
+  /** SN4: translate one composer field's text. The result is only
+   * SHOWN next to the field (keyed preview) — the field itself
+   * changes when the user taps "বসান" in the panel. */
+  async function translateComposerText(key: string, text: string, targetLang: "bn" | "en") {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!text.trim()) { setError("আগে লেখা লিখুন — অনুবাদ করতে লেখা লাগবে।"); return; }
+    setBusy(`ai-translate-${key}`); setError("");
+    try {
+      const res = await apiFetch<{ text: string }>(`/organizations/${orgId}/social/posts/ai-translate`, {
+        method: "POST",
+        body: JSON.stringify({ text: text.trim(), targetLang }),
+      });
+      setTranslations((s) => ({ ...s, [key]: { text: res.text, targetLang } }));
+    } catch (e) { setError(e instanceof Error ? e.message : "অনুবাদ ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4 repurpose: Reel script from the post's own caption via
+   * the SU4 script endpoint (returned only, kept per post). */
+  async function generateRepurposeScript(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const topic = (p.caption ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+    if (!topic) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Script বানাতে ক্যাপশন লাগবে।"); return; }
+    setBusy(`repurpose-script-${p.id}`); setError("");
+    try {
+      const res = await apiFetch<AiScriptResult>(`/organizations/${orgId}/social/posts/ai-script`, {
+        method: "POST",
+        body: JSON.stringify({ topic, language: aiLanguage }),
+      });
+      setRepurposeScriptByPost((s) => ({ ...s, [p.id]: res }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Script তৈরি ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN4 repurpose: carousel outline from the post's caption
+   * (returned only, kept per post). */
+  async function generateCarouselOutline(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!(p.caption ?? "").trim()) { setError("এই পোস্টে কোনো ক্যাপশন নেই — Carousel outline বানাতে ক্যাপশন লাগবে।"); return; }
+    setBusy(`repurpose-outline-${p.id}`); setError("");
+    try {
+      const res = await apiFetch<CarouselOutline>(`/organizations/${orgId}/social/posts/ai-carousel-outline`, {
+        method: "POST",
+        body: JSON.stringify({ caption: p.caption.trim() }),
+      });
+      setRepurposeOutlineByPost((s) => ({ ...s, [p.id]: res }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Carousel outline তৈরি ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
 
@@ -1348,8 +1446,16 @@ export default function SocialPostsPage() {
   const fmtInTz = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("bn-BD", { timeZone: orgTz }) : "");
 
   async function doSchedule(p: Sp7SocialPost) {
-    const orgId = getOrganizationId(); if (!orgId) return;
     const value = scheduleInputs[p.id] || (p.scheduledAt ? utcToLocalInput(p.scheduledAt, orgTz) : "");
+    if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
+    await doScheduleValue(p, value);
+  }
+
+  /** SN3: schedule with an explicit datetime-local value — the
+   * board's schedule modal calls this; the list form's doSchedule
+   * above delegates here too. Same endpoint, same gates. */
+  async function doScheduleValue(p: Sp7SocialPost, value: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
     if (!value) { setError("আগে তারিখ ও সময় বেছে নিন।"); return; }
     setBusy(`schedule-${p.id}`); setError("");
     try {
@@ -1360,6 +1466,27 @@ export default function SocialPostsPage() {
       setNotice("পোস্টটি শিডিউল করা হয়েছে — নির্ধারিত সময়ে প্রকাশ হবে (Social Post Publisher Job চালু থাকলে)।");
       await loadPosts();
     } catch (e) { setError(e instanceof Error ? e.message : "শিডিউল করা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  /** SN3: calendar drag — move a scheduled post to another day,
+   * keeping its org-timezone wall time. Goes through the SAME
+   * schedule endpoint (so the approval/client gates decide); on
+   * refusal the posts state never changed, so the chip simply
+   * stays on its original day and the server's reason shows. */
+  async function reschedulePostToDay(p: Sp7SocialPost, dayKey: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!p.scheduledAt) return;
+    if (orgDayKey(p.scheduledAt, orgTz) === dayKey) return;
+    setBusy(`cal-drag-${p.id}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social/posts/${p.id}/schedule`, {
+        method: "POST",
+        body: JSON.stringify({ scheduledAt: rescheduledIsoKeepingTime(p.scheduledAt, dayKey, orgTz) }),
+      });
+      setNotice("পোস্টটির তারিখ বদলে দেওয়া হয়েছে — সময় আগেরটাই আছে।");
+      await loadPosts();
+    } catch (e) { setError(e instanceof Error ? e.message : "তারিখ বদলানো ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
 
@@ -2152,7 +2279,7 @@ export default function SocialPostsPage() {
 
   // SU11: the panel context — page.tsx keeps ALL state and
   // handlers; the components under components/ only render.
-  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
+  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, aiPlatformVariants, aiVariantDropped, translations, repurposeScriptByPost, repurposeOutlineByPost, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doScheduleValue, reschedulePostToDay, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, generatePlatformVariants, applyPlatformVariant, translateComposerText, generateRepurposeScript, generateCarouselOutline, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
   bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, csvImportResults, importPostsCsv,
   members, myUserId, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost,
   noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel,

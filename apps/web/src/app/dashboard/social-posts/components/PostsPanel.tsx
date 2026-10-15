@@ -3,7 +3,11 @@ import React, { useState } from "react";
 import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, POST_STATUS_META, MediaThumb, PostStatusPill, AccountAvatar, PlatformDot } from "./shared";
 import { SHARE_LINK_STATUS_META, shareLinkStatus } from "@/lib/social-posts-sn";
-import { orgDayKey } from "@/lib/social-calendar";
+import { orgDayKey, utcToLocalInput } from "@/lib/social-calendar";
+import {
+  BOARD_COLUMNS, boardColumnForPost, boardDropAction, boardMenuActions, isCalendarDraggable,
+  type BoardActionKind, type BoardColumnId,
+} from "@/lib/social-board";
 import { weekdayLabelBn } from "@/lib/social-composer";
 import { EmptyState } from "@repo/ui";
 
@@ -40,9 +44,54 @@ function PlatformChip({ platform }: { platform?: string | null }) {
   );
 }
 export function PostsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, } = c;
+  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, submitApproval, doPublishNow, doCancelSchedule, doScheduleValue, reschedulePostToDay, requireApproval, repurposeScriptByPost, repurposeOutlineByPost, generateRepurposeScript, generateCarouselOutline, } = c;
   // SN2: which created share link was just copied (button feedback).
   const [copiedShareId, setCopiedShareId] = useState("");
+  // SN3: board drag-over highlight, the schedule modal (post id +
+  // datetime-local value), and the repurpose copy feedback. All
+  // ephemeral UI state — the posts themselves never move locally;
+  // a drop only calls the existing page handlers, and the server's
+  // answer (via loadPosts inside them) decides where a card sits.
+  const [boardDragOver, setBoardDragOver] = useState<BoardColumnId | null>(null);
+  const [scheduleModal, setScheduleModal] = useState<{ postId: string; value: string } | null>(null);
+  const [copiedRepurposeId, setCopiedRepurposeId] = useState("");
+  const scheduleModalPost = scheduleModal ? posts.find((x) => x.id === scheduleModal.postId) ?? null : null;
+
+  /** SN3: the next future occurrence of a posting slot as a
+   * datetime-local value in the org timezone ("" when none of the
+   * next 8 days yields a future slot time). */
+  function nextSlotInputValue(slot: { weekday: number; time: string }): string {
+    const now = new Date();
+    const nowLocal = utcToLocalInput(now.toISOString(), orgTz);
+    for (let add = 0; add < 8; add += 1) {
+      const probe = new Date(now.getTime() + add * 86_400_000);
+      const key = orgDayKey(probe.toISOString(), orgTz);
+      if (new Date(`${key}T12:00:00Z`).getUTCDay() !== slot.weekday) continue;
+      const value = `${key}T${slot.time}`;
+      if (value > nowLocal) return value;
+    }
+    return "";
+  }
+
+  function runBoardAction(p: (typeof posts)[number], action: BoardActionKind) {
+    if (action === "submit") void submitApproval(p);
+    else if (action === "approve") void approvePost(p);
+    else if (action === "publish") void doPublishNow(p);
+    else if (action === "cancel-schedule") void doCancelSchedule(p);
+    else if (action === "schedule") {
+      setScheduleModal({ postId: p.id, value: p.scheduledAt ? utcToLocalInput(p.scheduledAt, orgTz) : "" });
+    }
+  }
+
+  function handleBoardDrop(postId: string, target: BoardColumnId) {
+    const p = posts.find((x) => x.id === postId);
+    setBoardDragOver(null);
+    if (!p) return;
+    const r = boardDropAction(p, target, { requireApproval });
+    if (r.kind === "noop") return;
+    if (r.kind === "invalid") { c.setError(r.reason); return; }
+    runBoardAction(p, r.kind);
+  }
   return (
 <>
       {/* SU2: posting slots (queue) */}
@@ -155,6 +204,7 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
           <button type="button" className={viewMode === "list" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => setViewMode("list")}>তালিকা</button>
           <button type="button" className={viewMode === "calendar" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => setViewMode("calendar")}>ক্যালেন্ডার</button>
           <button type="button" className={viewMode === "queue" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => setViewMode("queue")}>সারি (Queue)</button>
+          <button type="button" className={viewMode === "board" ? "btn-primary btn-sm" : "btn-secondary btn-sm"} onClick={() => setViewMode("board")}>বোর্ড (Board)</button>
           {viewMode !== "list" ? <span className="text-xs text-slate-400">ফিল্টার শুধু তালিকা ভিউতে প্রযোজ্য — এই ভিউতে সব পোস্ট দেখানো হচ্ছে।</span> : null}
         </div>
         {viewMode === "list" ? (
@@ -398,6 +448,66 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
                     );
                   })}
                 </div>
+                {/* SN4: repurpose — script + carousel outline come
+                    back from the AI endpoints and are only SHOWN
+                    here; the Messaging handoff opens the Messaging
+                    composer with the caption prefilled as a draft.
+                    Nothing is saved or sent by any of these. */}
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">🔁 Repurpose (অন্য রূপে সাজান)</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateRepurposeScript(p)}>
+                      {busy === `repurpose-script-${p.id}` ? "Script তৈরি হচ্ছে..." : "🎬 Reel Script বানান"}
+                    </button>
+                    <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => generateCarouselOutline(p)}>
+                      {busy === `repurpose-outline-${p.id}` ? "Outline তৈরি হচ্ছে..." : "🖼️ Carousel Outline বানান"}
+                    </button>
+                    {(p.caption ?? "").trim() && encodeURIComponent(p.caption).length <= 1800 ? (
+                      <a className="btn-secondary btn-sm" href={`/dashboard/messaging?prefill=${encodeURIComponent(p.caption)}`}>✉️ Messaging Draft-এ নিন</a>
+                    ) : null}
+                    {(p.caption ?? "").trim() ? (
+                      <button type="button" className="btn-secondary btn-sm" onClick={() => { void navigator.clipboard?.writeText(p.caption); setCopiedRepurposeId(p.id); }}>
+                        {copiedRepurposeId === p.id ? "কপি হয়েছে ✓" : "📋 ক্যাপশন কপি করুন"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-slate-400">Messaging লিংকটি এই ক্যাপশনটি Messaging composer-এর খসড়া ঘরে বসাবে — কিছুই পাঠানো হবে না।{(p.caption ?? "").trim() && encodeURIComponent(p.caption).length > 1800 ? " ক্যাপশনটি লম্বা বলে লিংকে নেওয়া যায়নি — কপি করে Messaging-এ বসান।" : ""}</p>
+                  {repurposeScriptByPost[p.id] ? (
+                    <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                      <p className="text-sm font-semibold text-slate-800">{repurposeScriptByPost[p.id].hook}</p>
+                      {repurposeScriptByPost[p.id].onScreenText.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-medium text-slate-500">পর্দায় দেখানো লেখা</div>
+                          <ul className="list-inside list-disc text-sm text-slate-700">
+                            {repurposeScriptByPost[p.id].onScreenText.map((line, i) => <li key={i}>{line}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {repurposeScriptByPost[p.id].shotList.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-medium text-slate-500">Shot তালিকা</div>
+                          <ol className="list-inside list-decimal text-sm text-slate-700">
+                            {repurposeScriptByPost[p.id].shotList.map((shot, i) => <li key={i}>{shot}</li>)}
+                          </ol>
+                        </div>
+                      ) : null}
+                      {repurposeScriptByPost[p.id].captionDraft ? (
+                        <p className="whitespace-pre-wrap text-sm text-slate-600">Caption খসড়া: {repurposeScriptByPost[p.id].captionDraft}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {repurposeOutlineByPost[p.id] ? (
+                    <div className="space-y-1.5 rounded-xl bg-slate-50 p-3">
+                      <div className="text-xs font-medium text-slate-500">Carousel Outline — {repurposeOutlineByPost[p.id].slides.length.toLocaleString("bn-BD")}টি slide</div>
+                      <ol className="list-inside list-decimal space-y-1 text-sm text-slate-700">
+                        {repurposeOutlineByPost[p.id].slides.map((slide, i) => <li key={i} className="whitespace-pre-wrap">{slide}</li>)}
+                      </ol>
+                      {repurposeOutlineByPost[p.id].droppedCount > 0 ? (
+                        <p className="text-[11px] text-amber-700">{repurposeOutlineByPost[p.id].droppedCount.toLocaleString("bn-BD")}টি slide যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
                 {/* SD4: tracked-link stats live in the expander too */}
                 {renderLinkStats(p)}
               </div>
@@ -443,15 +553,25 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
                 const dayPosts = calBuckets.get(cell.key) ?? [];
                 const isToday = cell.key === orgDayKey(new Date().toISOString(), orgTz);
                 return (
-                  <div key={cell.key} className={`min-h-[92px] rounded-lg border p-1.5 ${cell.inMonth ? "bg-white" : "bg-slate-50"} ${isToday ? "soc-cal-today" : "border-slate-100"}`}>
+                  <div key={cell.key}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const id = e.dataTransfer.getData("text/plain");
+                      const post = posts.find((x) => x.id === id);
+                      if (post) void reschedulePostToDay(post, cell.key);
+                    }}
+                    className={`min-h-[92px] rounded-lg border p-1.5 ${cell.inMonth ? "bg-white" : "bg-slate-50"} ${isToday ? "soc-cal-today" : "border-slate-100"}`}>
                     <div className={`text-xs font-semibold ${cell.inMonth ? "text-slate-700" : "text-slate-300"}`}>{cell.day.toLocaleString("bn-BD")}</div>
                     <div className="mt-1 space-y-1">
                       {dayPosts.slice(0, 3).map((p) => {
                         const t = p.scheduledAt ?? p.publishedAt;
                         return (
                           <button key={p.id} type="button" onClick={() => setSelectedPostId(p.id)}
-                            className={`flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[11px] ${POST_STATUS_META[p.status]?.cls ?? "bg-slate-100 text-slate-600"}`}
-                            title={p.caption}>
+                            draggable={isCalendarDraggable(p)}
+                            onDragStart={(e) => { e.dataTransfer.setData("text/plain", p.id); e.dataTransfer.effectAllowed = "move"; }}
+                            className={`flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[11px] ${POST_STATUS_META[p.status]?.cls ?? "bg-slate-100 text-slate-600"} ${isCalendarDraggable(p) ? "cursor-grab" : ""}`}
+                            title={isCalendarDraggable(p) ? `${p.caption} — অন্য দিনে টেনে নিলে একই সময়ে তারিখ বদলাবে` : p.caption}>
                             <PlatformDot platform={p.account?.platform ?? ""} />
                             <span className="truncate">{t ? `${new Date(t).toLocaleTimeString("bn-BD", { timeZone: orgTz, hour: "2-digit", minute: "2-digit" })} ` : ""}{p.caption || "(ক্যাপশন নেই)"}</span>
                           </button>
@@ -538,7 +658,7 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
               </div>
             ) : null}
           </div>
-        ) : (
+        ) : viewMode === "queue" ? (
           <div className="space-y-2">
             {queuePosts.length === 0 ? (
               <div className="soc-empty">
@@ -572,8 +692,126 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
               </div>
             )}
           </div>
+        ) : (
+          /* SN3: pipeline board — the loaded posts grouped by the
+             pure boardColumnForPost mapping. Dragging a card (or
+             using its move buttons) only calls the SAME handlers
+             the list view uses; the card's place is whatever the
+             server-refreshed posts say afterwards, so a refused
+             move simply leaves the card where it was, with the
+             server's reason in the page banner. */
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400">বোর্ডে বর্তমানে লোড করা {posts.length.toLocaleString("bn-BD")}টি পোস্টই দেখা যাচ্ছে। কার্ড টেনে অন্য কলামে ফেললে সংশ্লিষ্ট কাজটাই (অনুমোদন / শিডিউল / প্রকাশ) চলবে — সার্ভার আটকালে কার্ড আগের জায়গাতেই থাকবে ও কারণ উপরে দেখা যাবে।{postsNextCursor ? " আরও পোস্ট থাকলে নিচের “আরও দেখুন” দিয়ে লোড করুন।" : ""}</p>
+            <div className="grid items-start gap-3 md:grid-cols-3 xl:grid-cols-5">
+              {BOARD_COLUMNS.map((col) => {
+                const colPosts = posts.filter((p) => boardColumnForPost(p) === col.id);
+                return (
+                  <div key={col.id}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setBoardDragOver(col.id); }}
+                    onDragLeave={() => setBoardDragOver((cur) => (cur === col.id ? null : cur))}
+                    onDrop={(e) => { e.preventDefault(); handleBoardDrop(e.dataTransfer.getData("text/plain"), col.id); }}
+                    className={`min-h-[120px] space-y-2 rounded-2xl bg-slate-50 p-2.5 ring-1 ring-inset ${boardDragOver === col.id ? "ring-2 ring-[var(--brand-from)]" : "ring-slate-200/70"}`}>
+                    <div className="flex items-center justify-between px-1 pt-1">
+                      <span className="text-sm font-semibold text-slate-800">{col.label}</span>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">{colPosts.length.toLocaleString("bn-BD")}</span>
+                    </div>
+                    {colPosts.length === 0 ? (
+                      <p className="px-1 pb-2 text-xs text-slate-400">এই ধাপে কোনো পোস্ট নেই।</p>
+                    ) : colPosts.map((p) => (
+                      <div key={p.id} draggable={p.status !== "publishing"}
+                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", p.id); e.dataTransfer.effectAllowed = "move"; }}
+                        className="card cursor-grab space-y-2 p-3 active:cursor-grabbing">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <AccountAvatar name={p.account?.name ?? ""} platform={p.account?.platform ?? ""} />
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{p.account?.name ?? ""}</span>
+                          <PlatformChip platform={p.account?.platform} />
+                        </div>
+                        {p.mediaRefs[0] ? <MediaThumb assetId={p.mediaRefs[0].assetId} kind={p.mediaRefs[0].kind} className="h-24 w-full rounded-lg object-cover" /> : null}
+                        <p className="whitespace-pre-wrap text-[13px] text-slate-700 line-clamp-3">{p.caption || <span className="text-slate-400">(ক্যাপশন নেই)</span>}</p>
+                        {p.scheduledAt ? <p className="text-xs font-semibold text-slate-700">🕒 {fmtInTz(p.scheduledAt)}</p> : null}
+                        {p.status === "published" && p.publishedAt ? <p className="text-xs font-semibold text-slate-700">প্রকাশিত: {fmtInTz(p.publishedAt)}</p> : null}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <PostStatusPill status={p.status} />
+                          {renderApprovalBadge(p)}
+                        </div>
+                        {p.error ? <p className="break-words text-[11px] text-red-600">{p.error}</p> : null}
+                        {/* Move menu — the touch path to the exact
+                            same moves a drag makes. */}
+                        {boardMenuActions(p, { requireApproval }).length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
+                            {boardMenuActions(p, { requireApproval }).map((a) => (
+                              <button key={a.action} type="button" disabled={busy !== ""}
+                                className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-200 disabled:opacity-50"
+                                onClick={() => runBoardAction(p, a.action)}>
+                                {a.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            {postsNextCursor ? (
+              <div className="flex justify-center">
+                <button type="button" className="btn-secondary disabled:opacity-50" disabled={busy !== ""} onClick={() => loadMorePosts()}>
+                  {busy === "posts-more" ? "লোড হচ্ছে..." : "আরও দেখুন (আরও পোস্ট লোড করুন)"}
+                </button>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
+
+      {/* SN3: schedule picker for board moves into the Scheduled
+          column — a datetime field plus the account's posting
+          slots as one-tap quick picks. Confirming calls the same
+          doScheduleValue the list form uses. */}
+      {scheduleModal && scheduleModalPost ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-3 sm:items-center" role="dialog" aria-modal="true"
+          onClick={() => setScheduleModal(null)}>
+          <div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="font-semibold">🕒 শিডিউল করুন</div>
+            <div className="flex items-center gap-2 text-sm">
+              <AccountAvatar name={scheduleModalPost.account?.name ?? ""} platform={scheduleModalPost.account?.platform ?? ""} />
+              <span className="font-medium">{scheduleModalPost.account?.name ?? ""}</span>
+              <PlatformChip platform={scheduleModalPost.account?.platform} />
+            </div>
+            <p className="line-clamp-2 whitespace-pre-wrap text-sm text-slate-600">{scheduleModalPost.caption || "(ক্যাপশন নেই)"}</p>
+            <label className="block text-sm">তারিখ ও সময় ({orgTz})
+              <input type="datetime-local" className="input mt-1" value={scheduleModal.value}
+                onChange={(e) => setScheduleModal((s) => (s ? { ...s, value: e.target.value } : s))} />
+            </label>
+            {postingSlots.filter((s) => s.enabled && s.socialAccountId === scheduleModalPost.socialAccountId).length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-slate-500">Posting Slot থেকে বেছে নিন</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {postingSlots.filter((s) => s.enabled && s.socialAccountId === scheduleModalPost.socialAccountId).map((s) => {
+                    const value = nextSlotInputValue(s);
+                    if (!value) return null;
+                    return (
+                      <button key={s.id} type="button" className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
+                        onClick={() => setScheduleModal((cur) => (cur ? { ...cur, value } : cur))}>
+                        {weekdayLabelBn(s.weekday)} · {s.time}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <button type="button" className="btn-secondary btn-sm" onClick={() => setScheduleModal(null)}>বাতিল</button>
+              <button type="button" className="btn-primary btn-sm disabled:opacity-50"
+                disabled={busy !== "" || !scheduleModal.value}
+                onClick={async () => { await doScheduleValue(scheduleModalPost, scheduleModal.value); setScheduleModal(null); }}>
+                {busy === `schedule-${scheduleModalPost.id}` ? "শিডিউল হচ্ছে..." : "শিডিউল করুন"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
 </>
   );

@@ -133,6 +133,19 @@ export interface AiCopyResponse {
   notice?: string;
 }
 
+// SN4 contract types (AI platform variants + carousel outline —
+// both returned only; the composer applies them by hand).
+export interface AiPlatformVariant {
+  platform: string;
+  caption: string;
+  policy: { status: string; findings: AiPolicyFinding[] };
+}
+
+export interface CarouselOutline {
+  slides: string[];
+  droppedCount: number;
+}
+
 export interface HashtagSet {
   id: string;
   name: string;
@@ -520,6 +533,15 @@ export interface SocialPageCtx {
   setScriptProductId: React.Dispatch<React.SetStateAction<string>>;
   aiScript: AiScriptResult | null;
   setAiScript: React.Dispatch<React.SetStateAction<AiScriptResult | null>>;
+  // SN4: AI platform variants (returned only) + per-field
+  // translation results, keyed "caption" / `variant-${accountId}`
+  // in the composer and `post-${postId}` in the repurpose menu.
+  aiPlatformVariants: AiPlatformVariant[];
+  aiVariantDropped: number;
+  translations: Record<string, { text: string; targetLang: "bn" | "en" }>;
+  // SN4 repurpose results per post (script reuses AiScriptResult).
+  repurposeScriptByPost: Record<string, AiScriptResult>;
+  repurposeOutlineByPost: Record<string, CarouselOutline>;
   aiImagePrompt: string;
   setAiImagePrompt: React.Dispatch<React.SetStateAction<string>>;
   aiImageProductId: string;
@@ -542,8 +564,8 @@ export interface SocialPageCtx {
   setFilterAccountId: React.Dispatch<React.SetStateAction<string>>;
   orgTz: string;
   setOrgTz: React.Dispatch<React.SetStateAction<string>>;
-  viewMode: "list" | "calendar" | "queue";
-  setViewMode: React.Dispatch<React.SetStateAction<"list" | "calendar" | "queue">>;
+  viewMode: "list" | "calendar" | "queue" | "board";
+  setViewMode: React.Dispatch<React.SetStateAction<"list" | "calendar" | "queue" | "board">>;
   scheduleInputs: Record<string, string>;
   setScheduleInputs: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   selectedPostId: string | null;
@@ -664,8 +686,10 @@ export interface SocialPageCtx {
   deletePostingSlot: any;
   fmtInTz: any;
   doSchedule: any;
+  doScheduleValue: any;
   doCancelSchedule: any;
   doPublishNow: any;
+  reschedulePostToDay: any;
   upsertPost: any;
   refreshPostInsights: any;
   refreshAllInsights: any;
@@ -682,6 +706,11 @@ export interface SocialPageCtx {
   materializeContentPlan: any;
   generateAiScript: any;
   generateAiCopy: any;
+  generatePlatformVariants: any;
+  applyPlatformVariant: any;
+  translateComposerText: any;
+  generateRepurposeScript: any;
+  generateCarouselOutline: any;
   toggleHashtag: any;
   applyHashtagSet: any;
   saveHashtagSet: any;
