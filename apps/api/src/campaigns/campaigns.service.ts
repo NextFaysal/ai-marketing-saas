@@ -1169,6 +1169,23 @@ export class CampaignsService implements OnModuleInit {
     return { available: true, sources, records, presets };
   }
 
+  /** DX3 🚩 mini-fix: the CN6 source catalogue WITHOUT a
+   *  plan. The CN16 full-funnel wizard needs the same real
+   *  counts at layer-selection time, when no plan exists
+   *  yet — the studio above is plan-scoped (records belong
+   *  to the plan's account, presets to an ad set), so only
+   *  `sources` + the availability semantics carry over.
+   *  This is the identical AudiencesService.sourceCatalog
+   *  computation the studio embeds — no second counting
+   *  implementation exists. */
+  async audienceSourceCatalog(organizationId: string) {
+    if (!this.audiences) {
+      return { available: false, reason: "AudiencesService এই Deployment-এ যুক্ত নেই", sources: [] as Awaited<ReturnType<AudiencesService["sourceCatalog"]>> };
+    }
+    const sources = await this.audiences.sourceCatalog(organizationId);
+    return { available: true, sources };
+  }
+
   /** Attach a Meta audience id to an ad set's targeting
    *  list (include or exclude), deduplicated. The caller
    *  has already checked the plan is editable. */
@@ -4479,6 +4496,85 @@ export class CampaignsService implements OnModuleInit {
       totalByCurrency: [...byCurrency.entries()].map(([currency, a]) => ({
         currency, spendMinor: a.spend.toString(), impressions: a.impressions, clicks: a.clicks, conversions: a.conversions,
       })),
+    };
+  }
+
+  /** DX2: the hub "এই সপ্তাহে" (this week) strip aggregate —
+   * read-only, no schema. It exists because NONE of its four
+   * numbers is reachable from the web in one load: portfolio
+   * totals carry no date window (all-time only), CN7
+   * recommendations and creative fatigue are per-plan
+   * endpoints (an org-wide count would need 2 calls per
+   * published plan), and the offline loop's last success is
+   * buried in the log list. Everything here is computed from
+   * the SAME read-models the rest of the builder uses —
+   * DailyAdMetric campaign-level rows (the portfolioTotals
+   * filter), planRecommendations, planCreativeInsights and
+   * the OfflineConversionLog — never a second definition.
+   * Windows are rolling: last 7 days vs the previous 7 days.
+   * Currencies are never mixed. The per-plan loops are
+   * bounded (25 most recently updated published plans) and
+   * the bound is reported, not hidden. */
+  async weekSummary(organizationId: string) {
+    const p = this.prisma as any;
+    const now = new Date();
+    const dayMs = 86400000;
+    const thisStart = new Date(now.getTime() - 7 * dayMs);
+    const prevStart = new Date(now.getTime() - 14 * dayMs);
+    const rows = await p.dailyAdMetric.findMany({ where: { organizationId, date: { gte: prevStart } }, take: 20000 }).catch(() => []);
+    const accounts = await p.adAccount.findMany({ where: { organizationId } }).catch(() => []);
+    const accById = new Map((accounts as any[]).map((a) => [a.id, a]));
+    const byCurrency = new Map<string, { thisWeek: bigint; prevWeek: bigint }>();
+    for (const r of rows as any[]) {
+      if ((r.adSetExternalId ?? "") !== "" || (r.adExternalId ?? "") !== "") continue; // campaign-level only
+      const d = new Date(r.date);
+      if (d < prevStart || d > now) continue;
+      const currency = accById.get(r.adAccountId)?.currency ?? "BDT";
+      const g = byCurrency.get(currency) ?? { thisWeek: 0n, prevWeek: 0n };
+      if (d >= thisStart) g.thisWeek += BigInt(r.spendMinor ?? 0); else g.prevWeek += BigInt(r.spendMinor ?? 0);
+      byCurrency.set(currency, g);
+    }
+    const plans = await p.campaignPlan.findMany({
+      where: { organizationId, externalCampaignId: { not: null } }, orderBy: { updatedAt: "desc" }, take: 100,
+    }).catch(() => []);
+    const checked = (plans as any[]).slice(0, 25);
+    let recommendationTotal = 0;
+    let topRecommendation: { planId: string; name: string; count: number } | null = null;
+    let fatigueTotal = 0;
+    let topFatigue: { planId: string; name: string; count: number } | null = null;
+    for (const plan of checked) {
+      const rec = await this.planRecommendations(organizationId, plan.id).catch(() => null);
+      const n = rec?.recommendations?.length ?? 0;
+      recommendationTotal += n;
+      if (n > 0 && (!topRecommendation || n > topRecommendation.count)) topRecommendation = { planId: plan.id, name: plan.name, count: n };
+      const ins = await this.planCreativeInsights(organizationId, plan.id).catch(() => null);
+      const f = (ins?.ads ?? []).filter((a: any) => a.fatigued).length;
+      fatigueTotal += f;
+      if (f > 0 && (!topFatigue || f > topFatigue.count)) topFatigue = { planId: plan.id, name: plan.name, count: f };
+    }
+    const settings = p.offlineConversionSetting?.findMany
+      ? await p.offlineConversionSetting.findMany({ where: { organizationId } }).catch(() => [])
+      : [];
+    const configured = (settings as any[]).some((s) => s.enabled);
+    const logs = p.offlineConversionLog?.findMany
+      ? await p.offlineConversionLog.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 200 }).catch(() => [])
+      : [];
+    const lastSuccess = (logs as any[]).find((l) => l.status === "sent");
+    const failedLast7Days = (logs as any[]).filter((l) => l.status === "failed" && new Date(l.createdAt) >= thisStart).length;
+    return {
+      label: "last_7_days_vs_previous_7_days_from_synced_rows",
+      windowDays: 7,
+      spendByCurrency: [...byCurrency.entries()].map(([currency, g]) => ({
+        currency, thisWeekMinor: g.thisWeek.toString(), prevWeekMinor: g.prevWeek.toString(),
+      })),
+      recommendations: { total: recommendationTotal, plansChecked: checked.length, publishedPlans: (plans as any[]).length, topPlan: topRecommendation },
+      fatigue: { total: fatigueTotal, topPlan: topFatigue },
+      offlineLoop: {
+        configured,
+        lastSuccessAt: lastSuccess ? new Date(lastSuccess.createdAt).toISOString() : null,
+        lastSuccessPlatform: lastSuccess?.platform ?? null,
+        failedLast7Days,
+      },
     };
   }
 

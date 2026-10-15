@@ -2,9 +2,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { asList } from "@/lib/as-list";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { mentionSegments } from "@/lib/campaign-cn10";
+import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
+import { chipForStep, chipSymbol, createSaverRegistry, markDirty, markFailed, markSaved, readinessCounts, runStepSavers, saveStateLabel, startSaving, stepIndexForKey, type SaveState } from "@/lib/campaign-step-shell";
 
 interface AdAccount { id: string; name: string; platform: string; sourceType: string; externalId?: string | null; platformStatusBucket?: string | null; integrationId?: string | null }
 interface Product { id: string; name: string; priceMinor: string; currency: string }
@@ -151,7 +154,7 @@ const fmtStudyTime = (v: unknown): string => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("bn-BD");
 };
 const fmtTotalsSpend = (t: any): string => {
-  try { return t?.spendMinor != null ? formatMinor(BigInt(t.spendMinor)) : "—"; } catch { return String(t?.spendMinor ?? "—"); }
+  try { return t?.spendMinor != null ? fmtMoneyBn(t.spendMinor) : "—"; } catch { return String(t?.spendMinor ?? "—"); }
 };
 
 export default function CampaignBuilderPage() {
@@ -243,6 +246,9 @@ export default function CampaignBuilderPage() {
   const [xdEditId, setXdEditId] = useState<string | null>(null);
   const [xdForm, setXdForm] = useState<any>(null);
   const [xdResult, setXdResult] = useState<Record<string, string>>({});
+  // DX3 (CN17): the last create call's notCarried list, rendered
+  // as a list (the notice string keeps its exact old text too).
+  const [xdNote, setXdNote] = useState<{ notCarried: string[] } | null>(null);
   // Frontier NB8 / CN18: the campaign report share link,
   // created through the existing report-shares lifecycle.
   const [shareLink, setShareLink] = useState("");
@@ -250,12 +256,19 @@ export default function CampaignBuilderPage() {
   // governance (members for @mentions, versions, approval chain,
   // last recorded activity). Loading surfaces reuse `busy`.
   const [activeStep, setActiveStep] = useState(0);
+  // Design Round 2: true while a deep-linked plan (?id=) is
+  // still loading, so the create screen does not flash first.
+  const [planLoading, setPlanLoading] = useState(false);
   const [members, setMembers] = useState<{ id: string; role: string; user: { id: string; name: string; email: string } }[]>([]);
   const [myRole, setMyRole] = useState("");
   const [versions, setVersions] = useState<{ id: string; kind: string; createdAt: string; createdById?: string | null }[] | null>(null);
   const [versionDiffs, setVersionDiffs] = useState<Record<string, { differs: boolean; summary: { topLevelChanged: string[]; adSetsAdded: number; adSetsRemoved: number; adSetsChanged: number; adsAdded: number; adsRemoved: number; adsChanged: number } }>>({});
   const [lastActivity, setLastActivity] = useState<{ available: boolean; actorName?: string | null; action?: string | null; at?: string | null } | null>(null);
   const [twoStep, setTwoStep] = useState<boolean | null>(null);
+  // DX2: unified honest save-state + the step a failed autosave
+  // was trying to reach (the retry button resumes to it).
+  const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  const [pendingStep, setPendingStep] = useState<number | null>(null);
 
   const orgId = typeof window !== "undefined" ? getOrganizationId() : null;
   const editable = plan ? ["draft", "rejected"].includes(plan.status) : false;
@@ -264,7 +277,7 @@ export default function CampaignBuilderPage() {
   useEffect(() => {
     const cat = adSetForm.catalogRecordId;
     if (!cat || !orgId) { setFormSets([]); return; }
-    apiFetch<ProductSetRec[]>(`/organizations/${orgId}/catalogs/${cat}/product-sets`).then(setFormSets).catch(() => setFormSets([]));
+    apiFetch<ProductSetRec[]>(`/organizations/${orgId}/catalogs/${cat}/product-sets`).then((r) => setFormSets(asList(r))).catch(() => setFormSets([]));
   }, [adSetForm.catalogRecordId, orgId]);
 
   const reloadLeadForms = useCallback(async () => {
@@ -276,6 +289,10 @@ export default function CampaignBuilderPage() {
   const loadPlan = useCallback(async (id: string) => {
     const o = getOrganizationId(); if (!o) return;
     setPlan(await apiFetch<Plan>(`/organizations/${o}/campaign-plans/${id}`));
+    // DX2: readiness is fetched on plan load (and after each
+    // autosave) so the step chips + summary rail are live from
+    // the start — not only after the Review button is pressed.
+    apiFetch<NonNullable<typeof readiness>>(`/organizations/${o}/campaign-plans/${id}/readiness`, { method: "POST", body: JSON.stringify({}) }).then(setReadiness).catch(() => undefined);
     apiFetch<StudioData>(`/organizations/${o}/campaign-plans/${id}/audience-studio`).then(setStudio).catch(() => setStudio(null));
     apiFetch<NonNullable<typeof lastActivity>>(`/organizations/${o}/campaign-plans/${id}/last-activity`).then(setLastActivity).catch(() => setLastActivity(null));
   }, []);
@@ -284,22 +301,29 @@ export default function CampaignBuilderPage() {
     (async () => {
       const o = getOrganizationId(); if (!o) return;
       try {
-        const [accs, prods] = await Promise.all([
+        const [accsRaw, prodsRaw] = await Promise.all([
           apiFetch<AdAccount[]>(`/organizations/${o}/ad-accounts`),
           apiFetch<Product[]>(`/organizations/${o}/products`),
         ]);
+        // List responses may be bare arrays OR paginated
+        // envelopes ({ items }) — /products has been an
+        // envelope since the EC pagination, and storing the
+        // envelope crashed this page at products.map
+        // (2026-10-15 live incident). asList normalizes
+        // every list this page stores.
+        const accs = asList<AdAccount>(accsRaw);
         setAccounts(accs);
-        setProducts(prods);
-        apiFetch(`/organizations/${o}/creatives`).then((r: any) => setAssets(r)).catch(() => undefined);
-        apiFetch(`/organizations/${o}/social/media`).then((r: any) => setMediaAssets(r)).catch(() => undefined);
-        apiFetch(`/organizations/${o}/audiences`).then((r: any) => setAudList(r)).catch(() => undefined);
-        apiFetch(`/organizations/${o}/audiences/saved/list`).then((r: any) => setSavedList(r)).catch(() => undefined);
-        apiFetch(`/organizations/${o}/campaign-plans/templates/list`).then((r: any) => setTemplates(r)).catch(() => undefined);
-        apiFetch(`/organizations/${o}/campaign-plans/blueprints/list`).then((r: any) => setBlueprints(r)).catch(() => undefined);
-        apiFetch<CatalogRec[]>(`/organizations/${o}/catalogs`).then((r) => setCatalogs(r)).catch(() => undefined);
-        apiFetch<LeadFormRec[]>(`/organizations/${o}/campaign-plans/lead-forms/list`).then((r) => setLeadForms(r)).catch(() => undefined);
+        setProducts(asList<Product>(prodsRaw));
+        apiFetch(`/organizations/${o}/creatives`).then((r: any) => setAssets(asList(r))).catch(() => undefined);
+        apiFetch(`/organizations/${o}/social/media`).then((r: any) => setMediaAssets(asList(r))).catch(() => undefined);
+        apiFetch(`/organizations/${o}/audiences`).then((r: any) => setAudList(asList(r))).catch(() => undefined);
+        apiFetch(`/organizations/${o}/audiences/saved/list`).then((r: any) => setSavedList(asList(r))).catch(() => undefined);
+        apiFetch(`/organizations/${o}/campaign-plans/templates/list`).then((r: any) => setTemplates(asList(r))).catch(() => undefined);
+        apiFetch(`/organizations/${o}/campaign-plans/blueprints/list`).then((r: any) => setBlueprints(asList(r))).catch(() => undefined);
+        apiFetch<CatalogRec[]>(`/organizations/${o}/catalogs`).then((r) => setCatalogs(asList(r))).catch(() => undefined);
+        apiFetch<LeadFormRec[]>(`/organizations/${o}/campaign-plans/lead-forms/list`).then((r) => setLeadForms(asList(r))).catch(() => undefined);
         apiFetch<NonNullable<typeof waDestinations>>(`/organizations/${o}/campaign-plans/whatsapp-destinations`).then((r) => setWaDestinations(r)).catch(() => undefined);
-        apiFetch<CustomFieldLite[]>(`/organizations/${o}/crm/custom-fields`).then((r) => setCustomFields(r.filter((f) => !f.archivedAt))).catch(() => undefined);
+        apiFetch<CustomFieldLite[]>(`/organizations/${o}/crm/custom-fields`).then((r) => setCustomFields(asList<CustomFieldLite>(r).filter((f) => !f.archivedAt))).catch(() => undefined);
         // CN11 governance reads: org members (team-page response
         // shape) for the @mention picker, my role for the
         // OWNER/ADMIN approval-chain toggle, and the chain setting.
@@ -309,7 +333,11 @@ export default function CampaignBuilderPage() {
         if (accs.length) setCreateForm((f) => ({ ...f, adAccountId: f.adAccountId || accs.find((a) => a.platform === "meta")?.id || "" }));
       } catch { /* lists are optional for viewing */ }
       const id = params.get("id");
-      if (id) { try { await loadPlan(id); } catch (e) { setError(e instanceof Error ? e.message : "Plan load failed"); } }
+      // DX3 (J4): deep links may name the landing step — the
+      // funnel wizard's finish lands on Review (step 4).
+      const stepParam = Number(params.get("step"));
+      if (id && Number.isInteger(stepParam) && stepParam >= 0 && stepParam <= 4) setActiveStep(stepParam);
+      if (id) { setPlanLoading(true); try { await loadPlan(id); } catch (e) { setError(e instanceof Error ? e.message : "Plan load failed"); } finally { setPlanLoading(false); } }
     })();
   }, [params, loadPlan]);
 
@@ -564,8 +592,13 @@ export default function CampaignBuilderPage() {
     );
   };
 
-  // CN10: guided steps are presentation — the rail scrolls to the
-  // section that already owns the controls; nothing is remounted.
+  // DX2: real step-shell. CN10's scroll anchors become steps —
+  // exactly one step's sections are visible at a time (sections
+  // whose forms use uncontrolled DOM inputs stay mounted with a
+  // `hidden` class instead of unmounting, so typed-but-unsaved
+  // values are never lost; see the per-section notes in the JSX).
+  // Step ↔ readiness-check mapping lives in
+  // lib/campaign-step-shell.ts (STEP_CHECK_KEYS).
   const CBX_STEPS = [
     { label: "Objective", anchor: "cbx-step-objective" },
     { label: "Audience", anchor: "cbx-step-audience" },
@@ -573,21 +606,310 @@ export default function CampaignBuilderPage() {
     { label: "Creative", anchor: "cbx-step-creative" },
     { label: "Review / Readiness", anchor: "cbx-step-review" },
   ];
-  const goStep = (i: number) => {
-    setActiveStep(i);
-    document.getElementById(CBX_STEPS[i].anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const domVal = (id: string): string => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ?? "";
+  const domExists = (id: string): boolean => typeof document !== "undefined" && !!document.getElementById(id);
+
+  const fetchReadiness = async () => {
+    if (!orgId || !plan) return null;
+    const res = await apiFetch<NonNullable<typeof readiness>>(`/organizations/${orgId}/campaign-plans/${plan.id}/readiness`, { method: "POST", body: JSON.stringify({}) }).catch(() => null);
+    if (res) setReadiness(res);
+    return res;
+  };
+  const noteSaved = () => { setSaveState((prev) => markSaved(prev, new Date())); setPendingStep(null); };
+
+  // DX2 savers: each performs EXACTLY the apiFetch call its
+  // section's existing save button performs (same endpoint, same
+  // body built from the same DOM inputs), and returns whether
+  // that call succeeded. "Saved" is only ever shown when these
+  // return true.
+  const runAdSetEditSave = async (adSet: AdSet): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const g = (id: string) => (document.getElementById(id) as HTMLInputElement)?.value ?? "";
+    const csv = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
+    const bidStrategy = g(`es-bidstrategy-${adSet.id}`);
+    const body: Record<string, unknown> = {
+      name: g(`es-name-${adSet.id}`),
+      countries: csv(g(`es-countries-${adSet.id}`)).map((c) => c.toUpperCase()),
+      interests: parseEntries(g(`es-interests-${adSet.id}`)),
+      platforms: csv(g(`es-platforms-${adSet.id}`)), positions: csv(g(`es-positions-${adSet.id}`)), devices: csv(g(`es-devices-${adSet.id}`)),
+      cities: parseCities(g(`es-cities-${adSet.id}`)),
+      postcodes: csv(g(`es-postcodes-${adSet.id}`)), locationTypes: csv(g(`es-loctypes-${adSet.id}`)),
+      locales: csv(g(`es-locales-${adSet.id}`)).map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0),
+      behaviors: parseEntries(g(`es-behaviors-${adSet.id}`)), narrowInterests: parseEntries(g(`es-narrow-${adSet.id}`)),
+      demographics: { educationStatuses: adSet.targeting.demographics?.educationStatuses ?? [], relationshipStatuses: adSet.targeting.demographics?.relationshipStatuses ?? [], lifeEvents: parseEntries(g(`es-life-${adSet.id}`)), workPositions: parseEntries(g(`es-work-${adSet.id}`)) },
+      targetingExpansion: (document.getElementById(`es-expansion-${adSet.id}`) as HTMLInputElement)?.checked ?? false,
+      bidStrategy: bidStrategy || "lowest_cost",
+      bidAmount: bidStrategy === "bid_cap" ? g(`es-bidamount-${adSet.id}`) : "",
+      costPerResultGoal: bidStrategy === "cost_cap" ? g(`es-costgoal-${adSet.id}`) : "",
+      roasGoal: bidStrategy === "roas_goal" ? g(`es-roasgoal-${adSet.id}`) : "",
+      conversionEvent: g(`es-event-${adSet.id}`) || null,
+      catalogRecordId: g(`es-catalog-${adSet.id}`) || null,
+      productSetId: g(`es-pset-${adSet.id}`) || null,
+      leadFormId: g(`es-leadform-${adSet.id}`) || null,
+      destinationType: g(`es-dest-${adSet.id}`),
+      whatsappIntegrationId: g(`es-dest-${adSet.id}`) === "WHATSAPP" ? g(`es-wa-${adSet.id}`) || null : null,
+    };
+    const d = g(`es-budget-${adSet.id}`); const l = g(`es-life-${adSet.id}`);
+    if (d || l) { body.dailyBudget = d || undefined; body.lifetimeBudget = l || undefined; }
+    const res = await wrap(`es-${adSet.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}`, { method: "PATCH", body: JSON.stringify(body) }));
+    if (res) { setEditSetId(null); setNotice("Ad Set আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
+    return res != null;
+  };
+  const runAdEditSave = async (ad: AdItem): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const g = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement)?.value ?? "";
+    const gs = (id: string) => (document.getElementById(id) as HTMLSelectElement)?.value ?? "";
+    const lines = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
+    const placements: Record<string, Record<string, string>> = {};
+    if (gs(`ea-feed-${ad.id}`)) placements.feed = { imageAssetId: gs(`ea-feed-${ad.id}`) };
+    const vv = gs(`ea-verticalvideo-${ad.id}`); const vi = gs(`ea-vertical-${ad.id}`);
+    if (vi || vv) placements.vertical = { ...(vi ? { imageAssetId: vi } : {}), ...(vv ? { videoAssetId: vv } : {}) };
+    const creativeEnhancements: Record<string, boolean> = {};
+    for (const enh of CN5_ENHANCEMENTS) creativeEnhancements[enh.key] = (document.getElementById(`ee-${ad.id}-${enh.key}`) as HTMLInputElement)?.checked ?? false;
+    const res = await wrap(`ea-${ad.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ads/${ad.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: g(`ea-name-${ad.id}`), linkUrl: g(`ea-link-${ad.id}`),
+        textOptions: { primaryTexts: lines(g(`ea-primaries-${ad.id}`)), headlines: lines(g(`ea-headlines-${ad.id}`)), descriptions: lines(g(`ea-descs-${ad.id}`)) },
+        placementAssets: placements, creativeEnhancements,
+      }),
+    }));
+    if (res) { setEditAdId(null); setNotice("Ad আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
+    return res != null;
+  };
+  const runXdSave = async (d: XDraft): Promise<boolean> => {
+    if (!orgId || !plan || !xdForm) return false;
+    const countries = xdForm.countries.split(",").map((x: string) => x.trim()).filter(Boolean);
+    const lines = (v: string) => v.split("\n").map((x: string) => x.trim()).filter(Boolean);
+    const fields = d.platform === "google" && d.kind === "pmax" ? {
+      name: xdForm.name, dailyBudget: xdForm.dailyBudget, countryCodes: countries, finalUrl: xdForm.finalUrl,
+      businessName: xdForm.businessName, logoUrl: xdForm.logoUrl,
+      headlines: lines(xdForm.headlinesText), longHeadlines: lines(xdForm.longHeadlinesText),
+      descriptions: lines(xdForm.descriptionsText), imageUrls: lines(xdForm.imageUrlsText),
+    } : d.platform === "google" ? {
+      name: xdForm.name, dailyBudget: xdForm.dailyBudget, countryCodes: countries, finalUrl: xdForm.finalUrl,
+      headlines: lines(xdForm.headlinesText),
+      descriptions: lines(xdForm.descriptionsText),
+      keywords: xdForm.keywordsText.split("\n").map((x: string) => x.trim()).filter(Boolean).map((l: string) => { const [text, mt] = l.split("|").map((y) => y?.trim()); return { text, ...(mt ? { matchType: mt } : {}) }; }),
+    } : {
+      name: xdForm.name, dailyBudget: xdForm.dailyBudget, countryCodes: countries, adText: xdForm.adText, landingUrl: xdForm.landingUrl,
+      ...(xdForm.imageUrl ? { imageUrl: xdForm.imageUrl } : {}), ...(xdForm.videoUrl ? { videoUrl: xdForm.videoUrl } : {}),
+      objectiveType: xdForm.objectiveType || "TRAFFIC",
+      ...(xdForm.pixelId ? { pixelId: xdForm.pixelId } : {}), ...(xdForm.optimizationEvent ? { optimizationEvent: xdForm.optimizationEvent } : {}),
+    };
+    const res = await wrap(`xd-save-${d.id}`, () => apiFetch<{ problems: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}`, { method: "PATCH", body: JSON.stringify({ fields }) }));
+    if (res) {
+      if (res.problems.length) setXdResult((st) => ({ ...st, [d.id]: `⚠ সেভ হয়েছে, কিন্তু ঘাটতি: ${res.problems.join(" · ")}` }));
+      else { setNotice("Draft সেভ হয়েছে — সব Field ঠিক আছে।"); noteSaved(); setXdEditId(null); setXdForm(null); }
+      const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
+      if (list) setXdrafts(list);
+    }
+    return res != null;
+  };
+  const runBudgetModeSave = async (): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const mode = (document.getElementById("plan-bmode") as HTMLSelectElement)?.value ?? "abo";
+    const d = (document.getElementById("plan-cdaily") as HTMLInputElement)?.value ?? "";
+    const l = (document.getElementById("plan-clife") as HTMLInputElement)?.value ?? "";
+    const res = await wrap("bmode", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ budgetMode: mode, campaignDailyBudget: d, campaignLifetimeBudget: l }) }));
+    if (res) { setPlan(res); setNotice("Budget Mode/Campaign Budget সেভ হয়েছে — Publish এর সময় এই কাঠামোই যাবে।"); noteSaved(); }
+    return res != null;
+  };
+  const runCapSave = async (): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const v = (document.getElementById("plan-cap") as HTMLInputElement)?.value ?? "";
+    const res = await wrap("cap", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ dailyBudgetCap: v }) }));
+    if (res) { setPlan(res); setNotice(v ? "দৈনিক Budget Cap সেট হয়েছে — Submit/Publish এ যাচাই হবে।" : "Budget Cap সরানো হয়েছে।"); noteSaved(); }
+    return res != null;
+  };
+  const runScheduleSave = async (adSet: AdSet): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const st = domVal(`sched-start-${adSet.id}`); const en = domVal(`sched-end-${adSet.id}`);
+    if (!st && !en) { setError("শুরু বা শেষের সময় দিন"); return false; }
+    const res = await wrap(`sched-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/schedule`, { method: "POST", body: JSON.stringify({ startTime: st ? new Date(st).toISOString() : undefined, endTime: en ? new Date(en).toISOString() : undefined }) }));
+    if (res) { setPlan(res); setNotice("সময়সূচি Meta তে আপডেট হয়েছে।"); noteSaved(); }
+    return res != null;
+  };
+  const runDaypartSave = async (adSet: AdSet): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const raw = (document.getElementById(`daypart-${adSet.id}`) as HTMLTextAreaElement)?.value ?? "";
+    const windows = raw.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const [day, startHour, endHour] = l.split(",").map((x) => Number(x.trim())); return { day, startHour, endHour }; });
+    const res = await wrap(`dp-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/daypart`, { method: "POST", body: JSON.stringify({ windows, tz: "Asia/Dhaka" }) }));
+    if (res) { setPlan(res); setNotice("Dayparting সেভ হয়েছে। Dayparting Job (Automations পেজে তৈরি করুন) সময়মতো Ad Set চালু/বন্ধ করবে।"); noteSaved(); }
+    return res != null;
+  };
+  const runPublishedBudgetSave = async (adSet: AdSet): Promise<boolean> => {
+    if (!orgId || !plan) return false;
+    const v = (document.getElementById(`budget-${adSet.id}`) as HTMLInputElement)?.value;
+    if (!v) { setError("নতুন বাজেট লিখুন"); return false; }
+    const res = await wrap(`budget-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget: v }) }));
+    if (res) { setPlan(res); setNotice("Meta তে বাজেট আপডেট হয়েছে (Meta নিশ্চিত করেছে)।"); noteSaved(); }
+    return res != null;
+  };
+
+  // DX2 saver registry: every section lives in this one
+  // component, so sections "register" their primary saver here
+  // (into the lib registry) based on which editor is open and
+  // which uncontrolled DOM inputs diverge from the saved plan.
+  // Action-only sections (submit/approve/publish, comments,
+  // versions, experiments, series, xdraft actions other than
+  // its edit-save, guardrails, clone, studio creates) register
+  // nothing and never block navigation.
+  const registerCurrentSavers = (registry: ReturnType<typeof createSaverRegistry>) => {
+    if (!plan || !orgId) return;
+    if (editSetId) {
+      const adSet = plan.adSets.find((x) => x.id === editSetId);
+      if (adSet) {
+        // One PATCH spans targeting + budget + destination, so
+        // it registers on both the Audience and Budget steps.
+        registry.register(1, `es-${adSet.id}`, () => runAdSetEditSave(adSet));
+        registry.register(2, `es-${adSet.id}`, () => runAdSetEditSave(adSet));
+      }
+    }
+    if (plan.status === "published") {
+      for (const adSet of plan.adSets) {
+        if (!adSet.externalAdSetId) continue;
+        if (domExists(`sched-start-${adSet.id}`)) {
+          const st = domVal(`sched-start-${adSet.id}`); const en = domVal(`sched-end-${adSet.id}`);
+          const curSt = adSet.startTime ? String(adSet.startTime).slice(0, 16) : "";
+          const curEn = adSet.endTime ? String(adSet.endTime).slice(0, 16) : "";
+          if ((st || en) && (st !== curSt || en !== curEn)) registry.register(1, `sched-${adSet.id}`, () => runScheduleSave(adSet));
+        }
+        if (domExists(`daypart-${adSet.id}`)) {
+          const raw = domVal(`daypart-${adSet.id}`);
+          const cur = Array.isArray((adSet as any).daypart) ? (adSet as any).daypart.map((w: any) => `${w.day},${w.startHour},${w.endHour}`).join("\n") : "";
+          if (raw.trim() !== cur.trim()) registry.register(1, `dp-${adSet.id}`, () => runDaypartSave(adSet));
+        }
+        if (domExists(`budget-${adSet.id}`) && domVal(`budget-${adSet.id}`)) registry.register(2, `budget-${adSet.id}`, () => runPublishedBudgetSave(adSet));
+      }
+    }
+    if (editable) {
+      const moneyEq = (a: string, b: string) => (a.trim() === "" && b.trim() === "") || (a.trim() !== "" && b.trim() !== "" && Number(a) === Number(b));
+      if (domExists("plan-bmode")) {
+        const curD = plan.campaignDailyBudgetMinor ? String(Number(plan.campaignDailyBudgetMinor) / 100) : "";
+        const curL = plan.campaignLifetimeBudgetMinor ? String(Number(plan.campaignLifetimeBudgetMinor) / 100) : "";
+        if (domVal("plan-bmode") !== (plan.budgetMode ?? "abo") || !moneyEq(domVal("plan-cdaily"), curD) || !moneyEq(domVal("plan-clife"), curL)) registry.register(2, "bmode", runBudgetModeSave);
+      }
+      if (domExists("plan-cap")) {
+        const cur = (plan as any).dailyBudgetCapMinor ? String(Number((plan as any).dailyBudgetCapMinor) / 100) : "";
+        if (!moneyEq(domVal("plan-cap"), cur)) registry.register(2, "cap", runCapSave);
+      }
+    }
+    if (editAdId) {
+      const ad = plan.adSets.flatMap((x) => x.ads).find((a) => a.id === editAdId);
+      if (ad) registry.register(3, `ea-${ad.id}`, () => runAdEditSave(ad));
+    }
+    if (xdEditId && xdForm) {
+      const d = (xdrafts ?? []).find((x) => x.id === xdEditId);
+      if (d) registry.register(4, `xd-${d.id}`, () => runXdSave(d));
+    }
+  };
+  const currentStepSaverCount = (step: number): number => {
+    const registry = createSaverRegistry();
+    registerCurrentSavers(registry);
+    return registry.saversFor(step).length;
+  };
+  const refreshDirty = () => {
+    try {
+      const n = currentStepSaverCount(activeStep);
+      setSaveState((prev) => {
+        if (prev.kind === "saving" || prev.kind === "failed") return prev;
+        if (n > 0) return markDirty(prev);
+        return prev.kind === "dirty" ? { kind: "idle" } : prev;
+      });
+    } catch { /* DOM not ready yet — the dirty state stays as-is */ }
+  };
+
+  // DX2 autosave on step change (owner decision): leaving a
+  // dirty step runs its savers first; success moves on, any
+  // failure stays on the step in the failed/retry state.
+  const goStep = async (target: number, force = false): Promise<boolean> => {
+    if (!force && target === activeStep) return true;
+    const registry = createSaverRegistry();
+    registerCurrentSavers(registry);
+    const savers = registry.saversFor(activeStep);
+    if (savers.length > 0) {
+      setSaveState((prev) => startSaving(prev));
+      const ok = await runStepSavers(savers);
+      if (!ok) {
+        setSaveState((prev) => markFailed(prev));
+        setPendingStep(target === activeStep ? null : target);
+        return false;
+      }
+      setSaveState((prev) => markSaved(prev, new Date()));
+      setPendingStep(null);
+      await fetchReadiness();
+    }
+    setActiveStep(target);
+    return true;
+  };
+  const retrySave = async () => {
+    const target = pendingStep;
+    const ok = await goStep(target ?? activeStep, true);
+    if (ok) setPendingStep(null);
+  };
+  const renderSaveIndicator = () => (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 text-sm leading-[1.7]" role="status">
+      <span className={saveState.kind === "failed" ? "font-semibold text-red-700" : saveState.kind === "saved" ? "font-semibold text-emerald-700" : "text-slate-600"}>{saveStateLabel(saveState)}</span>
+      {saveState.kind === "failed" ? (
+        <button type="button" className="btn-secondary btn-sm min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void retrySave(); }}>আবার চেষ্টা করুন</button>
+      ) : null}
+    </div>
+  );
+  // Design Round 2 (tabs pattern): ArrowLeft/ArrowRight move
+  // between steps from the rail, Home/End jump to the ends —
+  // through the same goStep, so autosave still runs first and
+  // a failed save keeps focus (and the user) on the step.
+  const focusStepButton = (i: number) => {
+    document.querySelector<HTMLElement>(`[data-step-btn="${i}"]`)?.focus();
+  };
+  const focusStepPanel = (i: number) => {
+    document.getElementById(CBX_STEPS[i]?.anchor ?? "")?.focus();
+  };
+  const onStepRailKeyDown = (e: React.KeyboardEvent) => {
+    const next = stepIndexForKey(activeStep, e.key, CBX_STEPS.length);
+    if (next === null) return;
+    e.preventDefault();
+    if (next === activeStep) { focusStepButton(next); return; }
+    void goStep(next).then((ok) => { if (ok) focusStepButton(next); });
   };
   const stepRail = (
-    <nav className="cbx-step-rail" aria-label="Campaign Builder ধাপ">
-      {CBX_STEPS.map((s, i) => (
-        <button key={s.label} type="button" className={`cbx-step-btn ${activeStep === i ? "cbx-step-btn-active" : ""}`} onClick={() => goStep(i)}>
-          <span className="cbx-step-num">{i + 1}</span> {s.label}
-        </button>
-      ))}
+    <nav className="cbx-step-rail xl:flex-col xl:items-stretch" aria-label="Campaign Builder ধাপ" onKeyDown={onStepRailKeyDown}>
+      {CBX_STEPS.map((st, i) => {
+        const chip = chipForStep(readiness?.checks ?? null, i);
+        return (
+          <button key={st.label} type="button" data-step-btn={i} aria-current={activeStep === i ? "step" : undefined} style={{ minHeight: 40 }} className={`cbx-step-btn min-h-[40px] xl:w-full xl:justify-start ${activeStep === i ? "cbx-step-btn-active" : ""}`} onClick={() => { void goStep(i); }}>
+            <span className="cbx-step-num">{i + 1}</span> {st.label} <span aria-label={`Readiness: ${chip}`}>{chipSymbol(chip)}</span>
+          </button>
+        );
+      })}
     </nav>
+  );
+  const stepNavButtons = (
+    <div className="flex items-center justify-between gap-2 pt-2">
+      <span>{activeStep > 0 ? <button type="button" className="btn-secondary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep - 1).then((ok) => { if (ok) focusStepPanel(activeStep - 1); }); }}>← আগের ধাপ</button> : null}</span>
+      <span>{activeStep < CBX_STEPS.length - 1 ? <button type="button" className="btn-primary min-h-[40px]" style={{ minHeight: 40 }} disabled={busy !== ""} onClick={() => { void goStep(activeStep + 1).then((ok) => { if (ok) focusStepPanel(activeStep + 1); }); }}>পরের ধাপ →</button> : null}</span>
+    </div>
   );
 
   const inputCls = "input mt-1";
+
+  if (!plan && planLoading) {
+    // Design Round 2: a deep-linked plan is still loading —
+    // skeleton in the shell's shape instead of flashing the
+    // create screen (the .cbx-skel blocks DX2 already uses).
+    return (
+      <div className="space-y-6 pb-24 lg:pb-0">
+        {stepRail}
+        <div className="space-y-3" aria-hidden>
+          <div className="cbx-skel" style={{ height: 30, width: "45%" }} />
+          <div className="cbx-skel" style={{ height: 120 }} />
+          <div className="cbx-skel" style={{ height: 220 }} />
+        </div>
+        <p className="sr-only">Plan লোড হচ্ছে…</p>
+      </div>
+    );
+  }
 
   if (!plan) {
     return (
@@ -597,7 +919,7 @@ export default function CampaignBuilderPage() {
           <h1 className="page-title">Campaign Builder</h1>
           <p className="text-sm text-slate-500">নতুন Plan তৈরি করুন। এটি শুধুই Draft, Meta তে কিছু যাবে না অনুমোদন ও Publish ছাড়া।</p>
         </div>
-        {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+        {error ? <div role="alert" className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm"><span>⛔</span><span>{error}</span></div> : null}
         <form id="cbx-create-form" onSubmit={createPlan} className="space-y-3 card p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="block text-sm">Plan এর নাম<input className={inputCls} value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} required placeholder="Eid Sale 2026" /></label>
@@ -699,58 +1021,197 @@ export default function CampaignBuilderPage() {
   }
 
   return (
-    <div className="space-y-6 pb-24 lg:pb-0">
+    <div className="space-y-6 pb-24 lg:pb-0 r2-print-doc r2-print-builder" onChange={refreshDirty}>
+      {/* DX2 shell: step list left (xl) / horizontal chips below xl,
+          content middle, summary rail right (existing grid below). */}
+      <div className="xl:grid xl:grid-cols-[210px_minmax(0,1fr)] xl:items-start xl:gap-5">
       {stepRail}
-      <div id="cbx-step-objective" className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0 space-y-6">
+      {renderSaveIndicator()}
+      <div id="cbx-step-objective" tabIndex={-1} className={`r2-step-enter flex flex-wrap items-center justify-between gap-3 ${activeStep === 1 || activeStep === 2 || activeStep === 3 ? "hidden" : ""}`}>
         <div>
+          <div className={activeStep !== 0 ? "hidden" : ""}>
           <h1 className="page-title">{plan.name}</h1>
           {(plan as any).seriesId ? <p className="mt-1 inline-block rounded bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">🔁 Series Instance — {(plan as any).seriesInstanceDate ? new Date((plan as any).seriesInstanceDate).toLocaleString("bn-BD") : ""}</p> : null}
           <p className="text-sm text-slate-500">{plan.objective} · অবস্থা: <span className="font-semibold">{STATUS_LABEL[plan.status] ?? plan.status}</span> <span className={`cbx-pill cbx-pill-${plan.status}`}>{STATUS_LABEL[plan.status] ?? plan.status}</span>
             {plan.status === "published" ? <> · Meta অবস্থা: <span className="font-semibold">{plan.metaStatus}</span> · Campaign ID: {plan.externalCampaignId}</> : null}
           </p>
           <p className="mt-1 text-sm text-slate-600">
-            💰 মোট দৈনিক বাজেট: <span className="font-semibold">{formatMinor(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span>
-            {" · "}Lifetime মোট: {formatMinor(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}
-            {(plan as any).dailyBudgetCapMinor ? <> · 🧢 দৈনিক Cap: {formatMinor(BigInt((plan as any).dailyBudgetCapMinor))}</> : null}
+            💰 মোট দৈনিক বাজেট: <span className="font-semibold">{fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span>
+            {" · "}Lifetime মোট: {fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}
+            {(plan as any).dailyBudgetCapMinor ? <> · 🧢 দৈনিক Cap: {fmtMoneyBn((plan as any).dailyBudgetCapMinor)}</> : null}
           </p>
           <p className="mt-1 text-sm text-slate-600">
             🧮 Budget Mode (CN2): <span className="font-semibold">{plan.advantagePlus ? "CBO — Advantage+ (Campaign পর্যায়ে)" : plan.budgetMode === "cbo" ? "CBO — বাজেট Campaign পর্যায়ে" : "ABO — বাজেট Ad Set পর্যায়ে"}</span>
-            {plan.budgetMode === "cbo" || plan.advantagePlus ? <> · Campaign দৈনিক: {plan.campaignDailyBudgetMinor ? formatMinor(BigInt(plan.campaignDailyBudgetMinor)) : "—"} · Lifetime: {plan.campaignLifetimeBudgetMinor ? formatMinor(BigInt(plan.campaignLifetimeBudgetMinor)) : "—"}</> : null}
+            {plan.budgetMode === "cbo" || plan.advantagePlus ? <> · Campaign দৈনিক: {plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—"} · Lifetime: {plan.campaignLifetimeBudgetMinor ? fmtMoneyBn(plan.campaignLifetimeBudgetMinor) : "—"}</> : null}
           </p>
           {lastActivity?.available ? <p className="mt-1 text-sm text-slate-600">🕘 সর্বশেষ কার্যকলাপ: {lastActivity.actorName ?? "—"}{lastActivity.action ? ` · ${lastActivity.action}` : ""}{lastActivity.at ? ` · ${new Date(lastActivity.at).toLocaleString("bn-BD")}` : ""} <span className="text-xs text-slate-400">(সর্বশেষ রেকর্ড করা কার্যকলাপ — কে এখন অনলাইনে আছেন তা নয়)</span></p> : null}
           {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 rounded-lg bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800">প্রথম অনুমোদন সম্পন্ন — দ্বিতীয় অনুমোদন বাকি{plan.firstApprovedAt ? ` (প্রথম অনুমোদন: ${new Date(plan.firstApprovedAt).toLocaleString("bn-BD")})` : ""}</p> : null}
           {plan.publishAt ? <p className="mt-1 rounded-lg bg-sky-50 px-3 py-1.5 text-sm text-sky-800">🚀 Launch নির্ধারিত: {new Date(plan.publishAt).toLocaleString("bn-BD")} — সময় হলে Publish হবে (PAUSED অবস্থায়)।</p> : null}
+          </div>
+          {/* DX2 / J3: the destination choice lives IN the Objective
+              step. It binds the same adSetForm state the New Ad Set
+              form (Audience step) submits, so picking here is the
+              same choice — not a second, divergent one. Existing
+              ad sets keep their own Destination select in their
+              edit form. */}
+          <div className={`mt-3 space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm ${activeStep !== 0 ? "hidden" : ""}`}>
+            <p className="font-semibold leading-[1.7]">🧭 কোথায় পাঠাবেন (Destination) <span className="text-xs font-normal text-slate-500">— নতুন Ad Set এর জন্য; Objective এর সঙ্গেই এই সিদ্ধান্ত</span></p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block text-sm">Destination (CN13 — Click-to-WhatsApp)
+                <select className="input mt-1" value={adSetForm.destinationType} onChange={(e) => setAdSetForm({ ...adSetForm, destinationType: e.target.value, whatsappIntegrationId: "" })}>
+                  <option value="">Website (সাধারণ)</option>
+                  <option value="WHATSAPP">WhatsApp — Click-to-WhatsApp Ad</option>
+                </select>
+              </label>
+              {adSetForm.destinationType === "WHATSAPP" ? (
+                <label className="block text-sm">WhatsApp Connection (শুধু Connected টাই চলবে)
+                  <select className="input mt-1" value={adSetForm.whatsappIntegrationId} onChange={(e) => setAdSetForm({ ...adSetForm, whatsappIntegrationId: e.target.value })}>
+                    <option value="">Connection বেছে নিন</option>
+                    {(waDestinations?.destinations ?? []).map((d) => (
+                      <option key={d.integrationId} value={d.integrationId} disabled={!d.connected}>
+                        {d.phoneNumberId ?? "Phone Number ID নেই"} · WABA {d.wabaId ?? "—"}{d.isDefault ? " · Default" : ""}{d.connected ? "" : ` · ${d.status} (ব্যবহারযোগ্য নয়)`}
+                      </option>
+                    ))}
+                  </select>
+                  {(waDestinations?.destinations ?? []).filter((d) => d.connected).length === 0 ? (
+                    <span className="mt-1 block text-xs font-medium text-red-600">⛔ কোনো Connected WhatsApp Connection নেই — আগে Connect Center থেকে WhatsApp Connect করুন। নম্বর হাতে লিখে দেওয়া যায় না; সেভের সময় নম্বরটি Meta থেকে পড়ে যাচাই করা হয়।</span>
+                  ) : (
+                    <span className="mt-1 block text-xs text-slate-500">সেভের সময় এই Connection এর নম্বর Meta থেকে পড়া হবে — এখানে কোনো নম্বর লেখা যায় না। Goal হিসেবে সাধারণত CONVERSATIONS নিন; Readiness এ Connection এর অবস্থা Error আকারে দেখা যাবে।</span>
+                  )}
+                </label>
+              ) : null}
+            </div>
+            <p className="text-xs leading-[1.7] text-slate-500">এই বাছাইটি Audience ধাপের "নতুন Ad Set" ফর্মের Destination — দুটো একই State; যেকোনো এক জায়গায় বদলালেই অন্যটিতে দেখা যাবে।</p>
+          </div>
+          <div className={activeStep !== 4 ? "hidden" : ""}>
+          {(perf || pacing || breakdowns) ? <p className="mt-4 text-sm font-bold text-slate-700">১ · সারাংশ — কী অবস্থা (আগে সংখ্যা)</p> : null}
           {perf ? (
             <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm">
               <p className="font-semibold">📊 এই Plan এর পারফরম্যান্স (আসল সিঙ্ক হওয়া ডেটা)</p>
               {!perf.totals ? <p className="text-xs text-slate-500">কোনো Metric ডেটা নেই।</p> : (
                 <>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                    <span>খরচ: <b>{formatMinor(BigInt(perf.totals.spendMinor))}</b></span>
-                    <span>Impressions: <b>{perf.totals.impressions.toLocaleString()}</b></span>
-                    <span>Clicks: <b>{perf.totals.clicks.toLocaleString()}</b></span>
+                    <span>খরচ: <b>{fmtMoneyBn(perf.totals.spendMinor)}</b></span>
+                    <span>Impressions: <b>{fmtNumBn(perf.totals.impressions)}</b></span>
+                    <span>Clicks: <b>{fmtNumBn(perf.totals.clicks)}</b></span>
                     <span>CTR: <b>{perf.totals.ctrPercent ?? "—"}%</b></span>
                     <span>Conversions: <b>{perf.totals.conversions}</b></span>
-                    <span>CPA: <b>{perf.totals.cpaMinor ? formatMinor(BigInt(perf.totals.cpaMinor)) : "—"}</b></span>
-                    <span>নিজস্ব অর্ডার: <b>{perf.totals.firstPartyOrders}</b> · Revenue: <b>{formatMinor(BigInt(perf.totals.firstPartyRevenueMinor))}</b></span>
+                    <span>CPA: <b>{perf.totals.cpaMinor ? fmtMoneyBn(perf.totals.cpaMinor) : "—"}</b></span>
+                    <span>নিজস্ব অর্ডার: <b>{perf.totals.firstPartyOrders}</b> · Revenue: <b>{fmtMoneyBn(perf.totals.firstPartyRevenueMinor)}</b></span>
                     <span>ROAS: <b>{perf.totals.roas ?? "—"}</b></span>
                   </div>
                   {perf.perAdSet.filter((s) => s.spendMinor !== "0").map((s) => (
-                    <div key={s.adSetId} className="text-xs text-slate-600">{s.name}: খরচ {formatMinor(BigInt(s.spendMinor))} · {s.impressions.toLocaleString()} imp · {s.conversions} conv</div>
+                    <div key={s.adSetId} className="text-xs text-slate-600">{s.name}: খরচ {fmtMoneyBn(s.spendMinor)} · {fmtNumBn(s.impressions)} imp · {s.conversions} conv</div>
                   ))}
                 </>
               )}
+            </div>
+          ) : null}
+          {pacing ? (
+            <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
+              <p className="font-semibold">⏱ Pacing (CN2) — খরচের গতি</p>
+              {pacing.status === "no_data" ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ কোনো Metric Row নেই — Sync হওয়া ডেটা ছাড়া Pacing হিসাব হয় না।</p> : (
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  <span>এ পর্যন্ত খরচ: <b>{fmtMoneyBn(pacing.spentMinor)}</b></span>
+                  <span>আজ পর্যন্ত প্রত্যাশিত: <b>{pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—"}</b></span>
+                  <span>পার্থক্য: <b>{pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—"}</b></span>
+                  <span>দিন: <b>{pacing.daysElapsed ?? "—"}{pacing.daysTotal ? ` / ${pacing.daysTotal}` : ""}</b></span>
+                  <span>Mode: <b>{pacing.budgetMode ?? "—"}</b></span>
+                </div>
+              )}
+              <p className="mt-1 text-xs text-slate-400">DailyAdMetric এর আসল Campaign-level Row থেকে হিসাব করা — এটি Forecast বা Meta এর সংখ্যা নয়।</p>
+            </div>
+          ) : null}
+          {breakdowns ? (
+            <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm">
+              <p className="font-semibold">📈 Breakdown (CN7) — Ads Sync-এর সংরক্ষিত Row থেকে</p>
+              {!breakdowns.published ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ Plan টি এখনো Publish হয়নি।</p> : (
+                <div className="mt-1 grid gap-2 md:grid-cols-2">
+                  {([["age", "বয়স"], ["gender", "লিঙ্গ"], ["placement", "Placement"], ["device", "Device"]] as const).map(([dim, label]) => {
+                    const d = breakdowns.dimensions[dim];
+                    return (
+                      <div key={dim} className="rounded-lg bg-white/60 p-2">
+                        <p className="text-xs font-semibold">{label}</p>
+                        {!d || !d.hasData ? <p className="text-xs text-slate-400">কোনো ডেটা নেই — Breakdown Sync হলে এখানে আসবে।</p> : d.rows.slice(0, 6).map((r) => (
+                          <div key={r.key} className="text-xs text-slate-600">{r.key}: খরচ {fmtMoneyBn(r.spendMinor)} · {fmtNumBn(r.impressions)} imp · {fmtNumBn(r.clicks)} clicks · {r.conversions} conv · CPA {r.cpaMinor ? fmtMoneyBn(r.cpaMinor) : "—"}</div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+          {recs ? (
+            <>
+              <p className="mt-4 text-sm font-bold text-slate-700">২ · মরা ও জেতা (CN7-এর হিসাবে)</p>
+              <div className="mt-2 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                {recs.recommendations.filter((r) => r.type === "dead_ad_set").map((r, i) => (
+                  <div key={`dw-d${i}`} className="text-xs leading-[1.7] text-slate-700">🪦 <b>{r.name}</b> — মরা: খরচ {fmtMoneyBn(r.evidence.spendMinor)} · {fmtNumBn(r.evidence.impressions)} Impression · Conversion 0</div>
+                ))}
+                {recs.recommendations.filter((r) => r.type === "budget_shift").map((r, i) => (
+                  <div key={`dw-w${i}`} className="text-xs leading-[1.7] text-slate-700">🏆 <b>{r.evidence.winnerName}</b> — জেতা: CPA {r.evidence.winnerCpaMinor ? fmtMoneyBn(r.evidence.winnerCpaMinor) : "—"} · {fmtNumBn(r.evidence.winnerConversions)} Conversion (Donor: {r.evidence.donorName})</div>
+                ))}
+                {recs.recommendations.filter((r) => r.type === "dead_ad_set" || r.type === "budget_shift").length === 0 ? <p className="text-xs text-slate-500">মরা বা জেতা — CN7-এর হিসাবে এখন কিছু চিহ্নিত হয়নি।</p> : null}
+              </div>
+            </>
+          ) : null}
+          {creativeInsights ? <p className="mt-4 text-sm font-bold text-slate-700">৩ · Fatigue (CN7)</p> : null}
+          {creativeInsights ? (
+            <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm">
+              <p className="font-semibold">🎨 Creative Insights (CN7) — Leaderboard + Fatigue</p>
+              <p className="text-xs text-slate-500">{creativeInsights.rule}</p>
+              {creativeInsights.ads.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad নেই।</p> : creativeInsights.ads.map((a) => (
+                <div key={a.adId} className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
+                  <span className="font-medium">{a.name}</span>
+                  {!a.hasData ? <span className="text-slate-400">সিঙ্ক হওয়া ডেটা নেই</span> : (<>
+                    <span>খরচ {fmtMoneyBn(a.spendMinor)}</span><span>CTR {a.ctrPercent ?? "—"}%</span>
+                    <span>Frequency {a.frequency ?? "—"}</span><span>CPA {a.cpaMinor ? fmtMoneyBn(a.cpaMinor) : "—"}</span>
+                    {a.fatigued ? <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">😫 Fatigued — CTR ↓{a.ctrDropPercent}%</span> : null}
+                  </>)}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {recs ? <p className="mt-4 text-sm font-bold text-slate-700">৪ · প্রস্তাব (CN7) — প্রমাণ আগে, Action পরে</p> : null}
+          {recs ? (
+            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+              <p className="font-semibold">💡 সুপারিশ (CN7) — Deterministic Heuristic, আসল ডেটা থেকে</p>
+              <p className="text-xs text-slate-500">Dead Ad Set ধরা হয় খরচ ≥ {fmtMoneyBn(recs.thresholds.deadAdSetSpendMinor)} ও Conversion 0 হলে; Budget Shift প্রস্তাব {recs.thresholds.budgetShiftPercent}%। কোনো সুপারিশ নিজে থেকে কিছু বদলায় না।</p>
+              {recs.recommendations.length === 0 ? <p className="mt-1 text-xs text-emerald-700">এখনকার ডেটায় কোনো সুপারিশ নেই।</p> : recs.recommendations.map((r, i) => (
+                <div key={i} className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-slate-700">
+                  {r.type === "fatigued_creative" ? (<>
+                    <p>😫 <b>{r.name}</b> — Creative ক্লান্ত: Frequency {r.evidence.frequency}, CTR কমেছে {r.evidence.ctrDropPercent}%, খরচ {fmtMoneyBn(r.evidence.spendMinor)}।</p>
+                    <button className="btn-secondary btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
+                      const res = await wrap(`rec-fresh-${r.adId}`, () => apiFetch<{ draftId: string; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations/apply`, { method: "POST", body: JSON.stringify({ kind: "create_fresh_draft", adId: r.adId }) }));
+                      if (res) setNotice(res.note);
+                    }}>📝 Fresh Creative Draft তৈরি করুন</button>
+                  </>) : r.type === "dead_ad_set" ? (<>
+                    <p>🪦 <b>{r.name}</b> — খরচ {fmtMoneyBn(r.evidence.spendMinor)}, {fmtNumBn(r.evidence.impressions)} Impression, কিন্তু Conversion 0।</p>
+                    <button className="btn-warning btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
+                      const res = await wrap(`rec-pause-${r.adSetId}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${r.adSetId}/status`, { method: "POST", body: JSON.stringify({ target: "PAUSED" }) }));
+                      if (res) { setNotice("Meta নিশ্চিত করেছে — Ad Set টি Pause হয়েছে।"); await loadPlan(plan.id); }
+                    }}>⏸ এই Ad Set Pause করুন (Meta-তে)</button>
+                  </>) : r.type === "budget_shift" ? (<>
+                    <p>💸 <b>Budget Shift প্রস্তাব:</b> "{r.evidence.donorName}" (CPA {r.evidence.donorCpaMinor ? fmtMoneyBn(r.evidence.donorCpaMinor) : "—"}, {r.evidence.donorConversions} conv) থেকে "{r.evidence.winnerName}" (CPA {fmtMoneyBn(r.evidence.winnerCpaMinor)}, {r.evidence.winnerConversions} conv)-এ দৈনিক {fmtMoneyBn(r.proposal.shiftMinor)} সরান — Donor {fmtMoneyBn(r.proposal.fromDailyAfterMinor)}, Winner {fmtMoneyBn(r.proposal.toDailyAfterMinor)} হবে।</p>
+                    <p className="mt-0.5 text-slate-500">প্রয়োগ করতে সংশ্লিষ্ট Ad Set-এর "💰 বাজেট আপডেট"-এ নতুন মান বসান — এটি শুধু প্রস্তাব, কিছুই বদলায়নি।</p>
+                  </>) : null}
+                </div>
+              ))}
             </div>
           ) : null}
           {plan.status === "published" ? (
           <div className="mt-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
             <p className="font-semibold">🔗 Client Report Link <span className="text-xs font-normal text-slate-400">(CN18 — এই Plan-এর Totals + Breakdowns + Pacing; অভ্যন্তরীণ মন্তব্য/অনুমোদনের তথ্য যায় না)</span></p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600">রিপোর্টের সময়সীমা</span>
               <select className="input w-36" id="share-days">
                 <option value="7">শেষ ৭ দিন</option>
                 <option value="30">শেষ ৩০ দিন</option>
                 <option value="90">শেষ ৯০ দিন</option>
               </select>
+              <span className="text-xs font-semibold text-slate-600">লিংকের মেয়াদ</span>
               <select className="input w-44" id="share-exp">
                 <option value="7">Link-এর মেয়াদ ৭ দিন</option>
                 <option value="30">Link-এর মেয়াদ ৩০ দিন</option>
@@ -769,87 +1230,10 @@ export default function CampaignBuilderPage() {
           {waConvs ? (
             <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
               <p className="font-semibold">💬 WhatsApp কথোপকথন (CN13) — মোট শুরু হওয়া কথোপকথন: <b>{waConvs.available ? waConvs.totalConversations ?? 0 : "—"}</b></p>
-              {!waConvs.available ? <p className="text-xs text-slate-500">পাওয়া যাচ্ছে না: {waConvs.reason ?? ""}</p> : waConvs.perAd.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad এখনো নেই — কথোপকথন গোনা হবে Publish এর পর, WhatsApp Webhook এ আসা কথোপকথন থেকে।</p> : waConvs.perAd.map((a) => (
+              {!waConvs.available ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">⚠ পাওয়া যাচ্ছে না: {waConvs.reason ?? ""}</p> : waConvs.perAd.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad এখনো নেই — কথোপকথন গোনা হবে Publish এর পর, WhatsApp Webhook এ আসা কথোপকথন থেকে।</p> : waConvs.perAd.map((a) => (
                 <div key={a.adId} className="text-xs text-slate-600">{a.name} ({a.adSetName}): <b>{a.conversationsStarted}</b>টি কথোপকথন শুরু</div>
               ))}
               <p className="mt-1 text-xs text-slate-400">{waConvs.label}</p>
-            </div>
-          ) : null}
-          {pacing ? (
-            <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
-              <p className="font-semibold">⏱ Pacing (CN2) — খরচের গতি</p>
-              {pacing.status === "no_data" ? <p className="text-xs text-slate-500">কোনো Metric Row নেই — Sync হওয়া ডেটা ছাড়া Pacing হিসাব হয় না।</p> : (
-                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span>এ পর্যন্ত খরচ: <b>{formatMinor(BigInt(pacing.spentMinor))}</b></span>
-                  <span>আজ পর্যন্ত প্রত্যাশিত: <b>{pacing.expectedMinor != null ? formatMinor(BigInt(pacing.expectedMinor)) : "—"}</b></span>
-                  <span>পার্থক্য: <b>{pacing.varianceMinor != null ? formatMinor(BigInt(pacing.varianceMinor)) : "—"}</b></span>
-                  <span>দিন: <b>{pacing.daysElapsed ?? "—"}{pacing.daysTotal ? ` / ${pacing.daysTotal}` : ""}</b></span>
-                  <span>Mode: <b>{pacing.budgetMode ?? "—"}</b></span>
-                </div>
-              )}
-              <p className="mt-1 text-xs text-slate-400">DailyAdMetric এর আসল Campaign-level Row থেকে হিসাব করা — এটি Forecast বা Meta এর সংখ্যা নয়।</p>
-            </div>
-          ) : null}
-          {breakdowns ? (
-            <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm">
-              <p className="font-semibold">📈 Breakdown (CN7) — Ads Sync-এর সংরক্ষিত Row থেকে</p>
-              {!breakdowns.published ? <p className="text-xs text-slate-500">Plan টি এখনো Publish হয়নি।</p> : (
-                <div className="mt-1 grid gap-2 md:grid-cols-2">
-                  {([["age", "বয়স"], ["gender", "লিঙ্গ"], ["placement", "Placement"], ["device", "Device"]] as const).map(([dim, label]) => {
-                    const d = breakdowns.dimensions[dim];
-                    return (
-                      <div key={dim} className="rounded-lg bg-white/60 p-2">
-                        <p className="text-xs font-semibold">{label}</p>
-                        {!d || !d.hasData ? <p className="text-xs text-slate-400">কোনো ডেটা নেই — Breakdown Sync হলে এখানে আসবে।</p> : d.rows.slice(0, 6).map((r) => (
-                          <div key={r.key} className="text-xs text-slate-600">{r.key}: খরচ {formatMinor(BigInt(r.spendMinor))} · {r.impressions.toLocaleString()} imp · {r.clicks.toLocaleString()} clicks · {r.conversions} conv · CPA {r.cpaMinor ? formatMinor(BigInt(r.cpaMinor)) : "—"}</div>
-                        ))}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : null}
-          {creativeInsights ? (
-            <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm">
-              <p className="font-semibold">🎨 Creative Insights (CN7) — Leaderboard + Fatigue</p>
-              <p className="text-xs text-slate-500">{creativeInsights.rule}</p>
-              {creativeInsights.ads.length === 0 ? <p className="text-xs text-slate-500">Publish হওয়া কোনো Ad নেই।</p> : creativeInsights.ads.map((a) => (
-                <div key={a.adId} className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
-                  <span className="font-medium">{a.name}</span>
-                  {!a.hasData ? <span className="text-slate-400">সিঙ্ক হওয়া ডেটা নেই</span> : (<>
-                    <span>খরচ {formatMinor(BigInt(a.spendMinor))}</span><span>CTR {a.ctrPercent ?? "—"}%</span>
-                    <span>Frequency {a.frequency ?? "—"}</span><span>CPA {a.cpaMinor ? formatMinor(BigInt(a.cpaMinor)) : "—"}</span>
-                    {a.fatigued ? <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">😫 Fatigued — CTR ↓{a.ctrDropPercent}%</span> : null}
-                  </>)}
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {recs ? (
-            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-              <p className="font-semibold">💡 সুপারিশ (CN7) — Deterministic Heuristic, আসল ডেটা থেকে</p>
-              <p className="text-xs text-slate-500">Dead Ad Set ধরা হয় খরচ ≥ {formatMinor(BigInt(recs.thresholds.deadAdSetSpendMinor))} ও Conversion 0 হলে; Budget Shift প্রস্তাব {recs.thresholds.budgetShiftPercent}%। কোনো সুপারিশ নিজে থেকে কিছু বদলায় না।</p>
-              {recs.recommendations.length === 0 ? <p className="mt-1 text-xs text-emerald-700">এখনকার ডেটায় কোনো সুপারিশ নেই।</p> : recs.recommendations.map((r, i) => (
-                <div key={i} className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-slate-700">
-                  {r.type === "fatigued_creative" ? (<>
-                    <p>😫 <b>{r.name}</b> — Creative ক্লান্ত: Frequency {r.evidence.frequency}, CTR কমেছে {r.evidence.ctrDropPercent}%, খরচ {formatMinor(BigInt(r.evidence.spendMinor))}।</p>
-                    <button className="btn-secondary btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
-                      const res = await wrap(`rec-fresh-${r.adId}`, () => apiFetch<{ draftId: string; note: string }>(`/organizations/${orgId}/campaign-plans/${plan.id}/recommendations/apply`, { method: "POST", body: JSON.stringify({ kind: "create_fresh_draft", adId: r.adId }) }));
-                      if (res) setNotice(res.note);
-                    }}>📝 Fresh Creative Draft তৈরি করুন</button>
-                  </>) : r.type === "dead_ad_set" ? (<>
-                    <p>🪦 <b>{r.name}</b> — খরচ {formatMinor(BigInt(r.evidence.spendMinor))}, {r.evidence.impressions.toLocaleString()} Impression, কিন্তু Conversion 0।</p>
-                    <button className="btn-warning btn-sm mt-1" disabled={busy !== ""} onClick={async () => {
-                      const res = await wrap(`rec-pause-${r.adSetId}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${r.adSetId}/status`, { method: "POST", body: JSON.stringify({ target: "PAUSED" }) }));
-                      if (res) { setNotice("Meta নিশ্চিত করেছে — Ad Set টি Pause হয়েছে।"); await loadPlan(plan.id); }
-                    }}>⏸ এই Ad Set Pause করুন (Meta-তে)</button>
-                  </>) : r.type === "budget_shift" ? (<>
-                    <p>💸 <b>Budget Shift প্রস্তাব:</b> "{r.evidence.donorName}" (CPA {r.evidence.donorCpaMinor ? formatMinor(BigInt(r.evidence.donorCpaMinor)) : "—"}, {r.evidence.donorConversions} conv) থেকে "{r.evidence.winnerName}" (CPA {formatMinor(BigInt(r.evidence.winnerCpaMinor))}, {r.evidence.winnerConversions} conv)-এ দৈনিক {formatMinor(BigInt(r.proposal.shiftMinor))} সরান — Donor {formatMinor(BigInt(r.proposal.fromDailyAfterMinor))}, Winner {formatMinor(BigInt(r.proposal.toDailyAfterMinor))} হবে।</p>
-                    <p className="mt-0.5 text-slate-500">প্রয়োগ করতে সংশ্লিষ্ট Ad Set-এর "💰 বাজেট আপডেট"-এ নতুন মান বসান — এটি শুধু প্রস্তাব, কিছুই বদলায়নি।</p>
-                  </>) : null}
-                </div>
-              ))}
             </div>
           ) : null}
           {guardrails ? (
@@ -883,7 +1267,7 @@ export default function CampaignBuilderPage() {
             <div className="mt-2 space-y-1 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
               <p className="font-semibold">🎨 Creative Health ({creativeHealth.adsChecked}টি Ad)</p>
               {creativeHealth.findings.length === 0 ? <p className="text-xs text-emerald-700">কোনো সতর্কতা নেই।</p> : creativeHealth.findings.map((f, i) => (
-                <div key={i} className="text-xs"><span className={f.level === "error" ? "font-semibold text-red-700" : "font-semibold text-amber-700"}>{f.level === "error" ? "✗" : "⚠"} {f.adName}:</span> <span className="text-slate-600">{f.message}</span></div>
+                <div key={i} className="text-xs"><span className={f.level === "error" ? "font-semibold text-red-700" : "font-semibold text-amber-700"}>{f.level === "error" ? "⛔" : "⚠"} {f.adName}:</span> <span className="text-slate-600">{f.message}</span></div>
               ))}
               <p className="text-xs text-slate-400">এসব Heuristic পরামর্শ — Meta এর রায় নয়।</p>
             </div>
@@ -891,7 +1275,7 @@ export default function CampaignBuilderPage() {
           {plan.rejectionReason ? <p className="text-sm text-red-600">প্রত্যাখ্যানের কারণ: {plan.rejectionReason}</p> : null}
           {plan.status === "published" ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {plan.metaEffectiveStatus ? <span className={plan.metaEffectiveStatus === "ACTIVE" ? "badge badge-success" : plan.metaEffectiveStatus === "PAUSED" ? "badge badge-muted" : "badge badge-danger"}>Meta কার্যকর অবস্থা: {plan.metaEffectiveStatus}</span> : null}
+              {plan.metaEffectiveStatus ? <span className={plan.metaEffectiveStatus === "ACTIVE" ? "badge badge-green" : plan.metaEffectiveStatus === "PAUSED" ? "badge badge-slate" : "badge badge-red"}>Meta কার্যকর অবস্থা: {plan.metaEffectiveStatus}</span> : null}
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const res = await wrap("statussync", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/status-sync`, { method: "POST" }));
                 if (res) { setPlan(res); setNotice(res.healthIssues?.length ? `Meta অবস্থা আনা হয়েছে — ${res.healthIssues.length}টি সমস্যা পাওয়া গেছে।` : "Meta অবস্থা আনা হয়েছে — কোনো সমস্যা নেই।"); }
@@ -903,7 +1287,7 @@ export default function CampaignBuilderPage() {
               <p className="font-semibold">🛡 Policy Pre-flight ফলাফল ({preflight.checkedAds}টি বিজ্ঞাপন যাচাই হয়েছে)</p>
               {preflight.findings.map((f, i) => (
                 <div key={i} className="rounded-lg bg-white p-2">
-                  <span className={f.severity === "high" ? "badge badge-danger" : f.severity === "medium" ? "badge badge-muted" : "badge badge-success"}>{f.severity}</span>{" "}
+                  <span className={f.severity === "high" ? "badge badge-red" : f.severity === "medium" ? "badge badge-amber" : "badge badge-green"}>{f.severity}</span>{" "}
                   <b>{f.adName}</b> ({f.field}): “{f.snippet}”<br />
                   <span className="text-slate-600">{f.explanation}</span><br />
                   <span className="text-green-700">পরামর্শ: {f.suggestion}</span>
@@ -918,8 +1302,9 @@ export default function CampaignBuilderPage() {
               <ul className="mt-1 list-inside list-disc">{plan.healthIssues.map((h, i) => <li key={i}>{h.level}: {h.name} — {h.status}</li>)}</ul>
             </div>
           ) : null}
+          </div>
         </div>
-        <div id="cbx-step-budget" className="flex flex-wrap gap-2">
+        <div id="cbx-step-budget" tabIndex={-1} className={`r2-step-enter flex flex-wrap gap-2 ${activeStep !== 2 && activeStep !== 4 ? "hidden" : ""}`}>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("dup", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/duplicate`, { method: "POST", body: JSON.stringify({}) }));
             if (res) { setPlan(res); setNotice("Plan এর কপি তৈরি হয়েছে (নতুন Draft, কোনো Meta ID নেই)।"); }
@@ -934,7 +1319,7 @@ export default function CampaignBuilderPage() {
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("ready", () => apiFetch<NonNullable<typeof readiness>>(`/organizations/${orgId}/campaign-plans/${plan.id}/readiness`, { method: "POST", body: JSON.stringify({}) }));
             if (res) { setReadiness(res); setNotice(res.ready ? "Readiness যাচাই: সব ঠিক আছে।" : "Readiness যাচাই: সমস্যা পাওয়া গেছে — উপরে দেখুন।"); }
-          }}>✅ Readiness যাচাই</button>
+          }}>✓ Readiness যাচাই</button>
           <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={async () => {
             const res = await wrap("chealth", () => apiFetch<NonNullable<typeof creativeHealth>>(`/organizations/${orgId}/campaign-plans/${plan.id}/creative-health`, { method: "POST", body: JSON.stringify({}) }));
             if (res) { setCreativeHealth(res); setNotice(res.findings.length === 0 ? `Creative Health: ${res.adsChecked}টি Ad এ কোনো সতর্কতা নেই।` : `Creative Health: ${res.findings.length}টি সতর্কতা — নিচে দেখুন।`); }
@@ -951,7 +1336,7 @@ export default function CampaignBuilderPage() {
                 const d = (document.getElementById("plan-cdaily") as HTMLInputElement)?.value ?? "";
                 const l = (document.getElementById("plan-clife") as HTMLInputElement)?.value ?? "";
                 const res = await wrap("bmode", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ budgetMode: mode, campaignDailyBudget: d, campaignLifetimeBudget: l }) }));
-                if (res) { setPlan(res); setNotice("Budget Mode/Campaign Budget সেভ হয়েছে — Publish এর সময় এই কাঠামোই যাবে।"); }
+                if (res) { setPlan(res); setNotice("Budget Mode/Campaign Budget সেভ হয়েছে — Publish এর সময় এই কাঠামোই যাবে।"); noteSaved(); }
               }}>🧮 Budget Mode</button>
             </span>
           ) : null}
@@ -961,7 +1346,7 @@ export default function CampaignBuilderPage() {
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                 const v = (document.getElementById("plan-cap") as HTMLInputElement)?.value ?? "";
                 const res = await wrap("cap", () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ dailyBudgetCap: v }) }));
-                if (res) { setPlan(res); setNotice(v ? "দৈনিক Budget Cap সেট হয়েছে — Submit/Publish এ যাচাই হবে।" : "Budget Cap সরানো হয়েছে।"); }
+                if (res) { setPlan(res); setNotice(v ? "দৈনিক Budget Cap সেট হয়েছে — Submit/Publish এ যাচাই হবে।" : "Budget Cap সরানো হয়েছে।"); noteSaved(); }
               }}>🧢 Cap</button>
             </span>
           ) : null}
@@ -1037,7 +1422,7 @@ export default function CampaignBuilderPage() {
         </div>
       </div>
       {experiments ? (
-        <div className="space-y-3 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm">
+        <div className={`space-y-3 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm ${activeStep !== 4 ? "hidden" : ""}`}>
           <p className="font-semibold">🧪 Meta Experiment (CN15) — Meta Ad Study (SPLIT_TEST)</p>
           <p className="text-xs text-slate-500">দুটি Published Variant Campaign এর উপর Meta নিজে Study চালায় — Experiment তৈরি করলে Campaign দুটির অবস্থা বদলায় না, কিছু Publish হয় না। Significance/Winner এই Platform হিসাব করে না; Meta-র Read-back হুবহু দেখানো হয়।</p>
           <div className="space-y-2 rounded-lg bg-white/60 p-3">
@@ -1072,7 +1457,7 @@ export default function CampaignBuilderPage() {
         </div>
       ) : null}
       {seriesList ? (
-        <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm">
+        <div className={`space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm ${activeStep !== 4 ? "hidden" : ""}`}>
           <p className="font-semibold">🔁 Recurring Series (CN16) — এই Plan থেকে নিয়মিত Instance</p>
           <p className="text-xs text-slate-500">Series শুধু Draft Instance তৈরি করে — প্রতিটি Instance আলাদাভাবে Approval Flow দিয়ে যাবে; Series নিজে কিছু Publish করে না। আগের Instance Draft-এ থাকলে পরেরটি তৈরি আটকে থাকে (একটির বেশি Pending Draft জমে না)।</p>
           <div className="space-y-2 rounded-lg bg-white/60 p-3">
@@ -1107,19 +1492,27 @@ export default function CampaignBuilderPage() {
           ))}
         </div>
       ) : null}
-      {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+      {error ? <div role="alert" className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm"><span>⛔</span><span>{error}</span></div> : null}
+      {notice ? (
+        <div role="status" className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span>✓</span>
+            <span>{notice}</span>
+          </div>
+          <button type="button" onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">✕ বন্ধ</button>
+        </div>
+      ) : null}
 
       <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start lg:gap-5">
       <div className="min-w-0 space-y-6">
-      <div id="cbx-step-audience" className="space-y-6">
-      <span id="cbx-step-creative" className="block scroll-mt-24" />
+      <div id="cbx-step-audience" tabIndex={-1} className={`r2-step-enter space-y-6 ${activeStep === 0 || activeStep === 4 ? "hidden" : ""}`}>
+      <span id="cbx-step-creative" tabIndex={-1} className="block scroll-mt-24" />
       {plan.adSets.map((adSet) => (
         <div key={adSet.id} className="space-y-3 card p-5">
           <div className="flex items-center justify-between">
             <div className="font-semibold">Ad Set: {adSet.name}</div>
             {editable ? (
-              <span className="flex gap-1">
+              <span className={`flex gap-1 ${activeStep !== 1 && activeStep !== 2 ? "hidden" : ""}`}>
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const opening = editSetId !== adSet.id;
                   setEditSetId(opening ? adSet.id : null);
@@ -1135,21 +1528,21 @@ export default function CampaignBuilderPage() {
               </span>
             ) : null}
             {plan.status === "published" && adSet.externalAdSetId ? (
-              <span className="flex items-center gap-1">
+              <span className={`flex items-center gap-1 ${activeStep !== 2 ? "hidden" : ""}`}>
                 <input className="input w-28" placeholder="নতুন দৈনিক বাজেট" id={`budget-${adSet.id}`} />
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const v = (document.getElementById(`budget-${adSet.id}`) as HTMLInputElement)?.value;
                   if (!v) { setError("নতুন বাজেট লিখুন"); return; }
                   const res = await wrap(`budget-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget: v }) }));
-                  if (res) { setPlan(res); setNotice("Meta তে বাজেট আপডেট হয়েছে (Meta নিশ্চিত করেছে)।"); }
+                  if (res) { setPlan(res); setNotice("Meta তে বাজেট আপডেট হয়েছে (Meta নিশ্চিত করেছে)।"); noteSaved(); }
                 }}>💰 বাজেট আপডেট</button>
               </span>
             ) : null}
             <div className="text-xs text-slate-400">
-              {adSet.dailyBudgetMinor ? `দৈনিক বাজেট ${formatMinor(BigInt(adSet.dailyBudgetMinor))}` : ""} · {adSet.optimizationGoal} · দেশ: {(adSet.targeting.countries ?? []).join(", ")}
+              {adSet.dailyBudgetMinor ? `দৈনিক বাজেট ${fmtMoneyBn(adSet.dailyBudgetMinor)}` : ""} · {adSet.optimizationGoal} · দেশ: {(adSet.targeting.countries ?? []).join(", ")}
               {adSet.targeting.cities?.length ? ` · শহর: ${adSet.targeting.cities.map((c) => c.key).join(", ")}` : ""}
               {adSet.targeting.locales?.length ? ` · Locale: ${adSet.targeting.locales.join(",")}` : ""}
-              {adSet.bidStrategy ? ` · 🎯 ${adSet.bidStrategy}${adSet.bidAmountMinor ? ` ${formatMinor(BigInt(adSet.bidAmountMinor))}` : ""}${adSet.costGoalMinor ? ` ${formatMinor(BigInt(adSet.costGoalMinor))}` : ""}${adSet.roasAverageFloor ? ` ROAS ≥ ${adSet.roasAverageFloor / 10000}` : ""}` : ""}
+              {adSet.bidStrategy ? ` · 🎯 ${adSet.bidStrategy}${adSet.bidAmountMinor ? ` ${fmtMoneyBn(adSet.bidAmountMinor)}` : ""}${adSet.costGoalMinor ? ` ${fmtMoneyBn(adSet.costGoalMinor)}` : ""}${adSet.roasAverageFloor ? ` ROAS ≥ ${adSet.roasAverageFloor / 10000}` : ""}` : ""}
               {adSet.conversionEvent ? ` · 🎯 Event: ${adSet.conversionEvent}` : ""}
               {adSet.__productSet ? ` · 🛍️ Catalog: ${adSet.__catalog?.name ?? ""} / ${adSet.__productSet.name}` : ""}
               {adSet.__leadForm ? ` · 📋 Form: ${adSet.__leadForm.name} (${adSet.__leadForm.status === "created" ? "Meta তে তৈরি" : "লোকাল"})` : ""}
@@ -1159,7 +1552,7 @@ export default function CampaignBuilderPage() {
               {adSet.startTime || adSet.endTime ? ` · 🗓 ${adSet.startTime ? new Date(adSet.startTime).toLocaleString("bn-BD") : "…"} → ${adSet.endTime ? new Date(adSet.endTime).toLocaleString("bn-BD") : "…"}` : ""}
             </div>
             {plan.status === "published" && adSet.externalAdSetId ? (
-              <span className="flex items-center gap-1">
+              <span className={`flex items-center gap-1 ${activeStep !== 1 ? "hidden" : ""}`}>
                 <input type="datetime-local" className="input w-48" id={`sched-start-${adSet.id}`} defaultValue={adSet.startTime ? String(adSet.startTime).slice(0, 16) : ""} />
                 <input type="datetime-local" className="input w-48" id={`sched-end-${adSet.id}`} defaultValue={adSet.endTime ? String(adSet.endTime).slice(0, 16) : ""} />
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
@@ -1167,18 +1560,18 @@ export default function CampaignBuilderPage() {
                   const en = (document.getElementById(`sched-end-${adSet.id}`) as HTMLInputElement)?.value;
                   if (!st && !en) { setError("শুরু বা শেষের সময় দিন"); return; }
                   const res = await wrap(`sched-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/schedule`, { method: "POST", body: JSON.stringify({ startTime: st ? new Date(st).toISOString() : undefined, endTime: en ? new Date(en).toISOString() : undefined }) }));
-                  if (res) { setPlan(res); setNotice("সময়সূচি Meta তে আপডেট হয়েছে।"); }
+                  if (res) { setPlan(res); setNotice("সময়সূচি Meta তে আপডেট হয়েছে।"); noteSaved(); }
                 }}>🗓 সময়সূচি</button>
               </span>
             ) : null}
             {plan.status === "published" && adSet.externalAdSetId ? (
-              <span className="flex items-center gap-1">
+              <span className={`flex items-center gap-1 ${activeStep !== 1 ? "hidden" : ""}`}>
                 <textarea className="input w-64" rows={1} id={`daypart-${adSet.id}`} placeholder="Dayparting: দিন,শুরু,শেষ — যেমন 5,9,23 (শুক্র ৯টা-২৩টা)" defaultValue={Array.isArray((adSet as any).daypart) ? (adSet as any).daypart.map((w: any) => `${w.day},${w.startHour},${w.endHour}`).join("\n") : ""} />
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const raw = (document.getElementById(`daypart-${adSet.id}`) as HTMLTextAreaElement)?.value ?? "";
                   const windows = raw.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const [day, startHour, endHour] = l.split(",").map((x) => Number(x.trim())); return { day, startHour, endHour }; });
                   const res = await wrap(`dp-${adSet.id}`, () => apiFetch<Plan>(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}/daypart`, { method: "POST", body: JSON.stringify({ windows, tz: "Asia/Dhaka" }) }));
-                  if (res) { setPlan(res); setNotice("Dayparting সেভ হয়েছে। Dayparting Job (Automations পেজে তৈরি করুন) সময়মতো Ad Set চালু/বন্ধ করবে।"); }
+                  if (res) { setPlan(res); setNotice("Dayparting সেভ হয়েছে। Dayparting Job (Automations পেজে তৈরি করুন) সময়মতো Ad Set চালু/বন্ধ করবে।"); noteSaved(); }
                 }}>🌗 Dayparting</button>
               </span>
             ) : null}
@@ -1186,7 +1579,7 @@ export default function CampaignBuilderPage() {
           {(adSet as any).funnelLayer ? <div><span className="rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">🧭 {(adSet as any).funnelLayer} Layer</span></div> : null}
           {(adSet as any).funnelIncomplete ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">⚠️ অসম্পূর্ণ Layer: {(adSet as any).funnelIncomplete}</p> : null}
           {editable && editSetId === adSet.id ? (
-            <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+            <div className={`space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 ${activeStep !== 1 && activeStep !== 2 ? "hidden" : ""}`}>
               <div className="text-sm font-semibold">Ad Set সম্পাদনা</div>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                 <label className="block text-sm">নাম<input className="input" id={`es-name-${adSet.id}`} defaultValue={adSet.name} /></label>
@@ -1293,16 +1686,16 @@ export default function CampaignBuilderPage() {
                   const d = g(`es-budget-${adSet.id}`); const l = g(`es-life-${adSet.id}`);
                   if (d || l) { body.dailyBudget = d || undefined; body.lifetimeBudget = l || undefined; }
                   const res = await wrap(`es-${adSet.id}`, () => apiFetch(`/organizations/${orgId}/campaign-plans/${plan.id}/ad-sets/${adSet.id}`, { method: "PATCH", body: JSON.stringify(body) }));
-                  if (res) { setEditSetId(null); setNotice("Ad Set আপডেট হয়েছে।"); await loadPlan(plan.id); }
+                  if (res) { setEditSetId(null); setNotice("Ad Set আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
                 }}>সংরক্ষণ</button>
                 <button className="btn-secondary btn-sm" onClick={() => setEditSetId(null)}>বাতিল</button>
               </div>
             </div>
           ) : null}
-          <div className="space-y-2">
+          <div className={`space-y-2 ${activeStep !== 3 ? "hidden" : ""}`}>
             {adSet.ads.map((ad) => (
               <div key={ad.id} className="rounded-lg bg-slate-50 p-3 text-sm">
-                <div className="font-medium">{ad.name} {(ad as any).format && (ad as any).format !== "link" ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{(ad as any).format}</span> : null} {ad.createdByAi ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">AI Draft</span> : null} {ad.externalAdId ? <span className="text-xs text-slate-400">Meta ID: {ad.externalAdId}</span> : null} {ad.effectiveStatus ? <span className={ad.effectiveStatus === "ACTIVE" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : ad.effectiveStatus === "PAUSED" ? "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600" : "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700"}>{ad.effectiveStatus}</span> : null}</div>
+                <div className="font-medium">{ad.name} {(ad as any).format && (ad as any).format !== "link" ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{(ad as any).format}</span> : null} {ad.createdByAi ? <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">AI Draft</span> : null} {ad.externalAdId ? <span className="text-xs text-slate-400">Meta ID: {ad.externalAdId}</span> : null} {ad.effectiveStatus ? <span className={ad.effectiveStatus === "ACTIVE" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : ad.effectiveStatus === "PAUSED" ? "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600" : "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700"}>{ad.effectiveStatus}</span> : null}</div>
                 <p className="mt-0.5 whitespace-pre-wrap">{ad.primaryText}</p>
                 {ad.headline ? <div className="text-slate-500">Headline: {ad.headline}</div> : null}
                 <a className="text-xs text-blue-600" href={ad.linkUrl} target="_blank" rel="noreferrer">{ad.linkUrl}</a>
@@ -1404,7 +1797,7 @@ export default function CampaignBuilderPage() {
                             placementAssets: placements, creativeEnhancements,
                           }),
                         }));
-                        if (res) { setEditAdId(null); setNotice("Ad আপডেট হয়েছে।"); await loadPlan(plan.id); }
+                        if (res) { setEditAdId(null); setNotice("Ad আপডেট হয়েছে।"); noteSaved(); await loadPlan(plan.id); }
                       }}>সংরক্ষণ</button>
                       <button className="btn-secondary btn-sm" onClick={() => setEditAdId(null)}>বাতিল</button>
                     </div>
@@ -1414,9 +1807,9 @@ export default function CampaignBuilderPage() {
             ))}
             {adSet.ads.length === 0 ? <p className="text-sm text-slate-400">কোনো Ad নেই</p> : null}
           </div>
-          <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+          <div className={`space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 ${activeStep !== 1 ? "hidden" : ""}`}>
             <div className="text-sm font-semibold">🎯 Audience Studio <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN6 — বিদ্যমান Audiences সিস্টেম দিয়েই)</span></div>
-            {!studio ? <p className="text-xs text-slate-500">Studio তথ্য লোড হয়নি।</p> : studio.available === false ? <p className="text-xs text-amber-700">পাওয়া যাচ্ছে না: {studio.reason}</p> : (
+            {!studio ? <p className="rounded-lg border border-slate-200 bg-white/60 p-2 text-xs leading-[1.7] text-slate-500">ℹ️ Studio তথ্য লোড হয়নি।</p> : studio.available === false ? <p className="rounded-lg border border-amber-200 bg-white/60 p-2 text-xs leading-[1.7] text-amber-700">⚠ পাওয়া যাচ্ছে না: {studio.reason}</p> : (
               <>
                 {(adSet.targeting.exclusionPresets ?? []).length > 0 ? (
                   <div className="text-xs text-slate-600">🚫 সক্রিয় Exclusion Preset: {(adSet.targeting.exclusionPresets ?? []).map((p) => <span key={p.key} className="mr-1 rounded bg-white px-1.5 py-0.5 font-medium">{p.name}</span>)}</div>
@@ -1435,7 +1828,7 @@ export default function CampaignBuilderPage() {
                 <div className="grid gap-1">
                   {studio.sources.map((s) => (
                     <div key={s.key} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2 py-1 text-xs">
-                      <span>{s.label} — {s.available ? `${(s.contactCount ?? 0).toLocaleString()}টি Contact` : <span className="text-amber-700">পাওয়া যাচ্ছে না: {s.reason}</span>}</span>
+                      <span>{s.label} — {s.available ? `${fmtNumBn(s.contactCount ?? 0)}টি Contact` : <span className="text-amber-700">পাওয়া যাচ্ছে না: {s.reason}</span>}</span>
                       {editable && s.available ? (
                         <button className="rounded border px-2 py-0.5 font-semibold" disabled={busy !== ""} onClick={async () => {
                           const source = s.key.startsWith("recent_purchasers") ? "recent_purchasers" : s.key.startsWith("rfm_") ? "rfm_segment" : s.key;
@@ -1475,11 +1868,11 @@ export default function CampaignBuilderPage() {
                   }}>📊 Audience Size ও Overlap দেখুন</button>
                   {insights[adSet.id] ? (
                     <div className="mt-1 space-y-0.5 text-xs text-slate-600">
-                      {insights[adSet.id].included.map((a) => <div key={a.externalAudienceId}>অন্তর্ভুক্ত: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? a.size.toLocaleString() : "অজানা (Unknown)"}{a.sizeSource ? ` (${a.sizeSource})` : ""}</div>)}
-                      {insights[adSet.id].excluded.map((a) => <div key={a.externalAudienceId}>বাদ দেওয়া: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? a.size.toLocaleString() : "অজানা (Unknown)"}</div>)}
+                      {insights[adSet.id].included.map((a) => <div key={a.externalAudienceId}>অন্তর্ভুক্ত: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? fmtNumBn(a.size) : "অজানা (Unknown)"}{a.sizeSource ? ` (${a.sizeSource})` : ""}</div>)}
+                      {insights[adSet.id].excluded.map((a) => <div key={a.externalAudienceId}>বাদ দেওয়া: {a.name ?? a.externalAudienceId} — Size: {a.size != null ? fmtNumBn(a.size) : "অজানা (Unknown)"}</div>)}
                       {insights[adSet.id].warnings.map((w) => <div key={w.code + w.message} className="text-amber-700">⚠️ {w.message}</div>)}
                       <div>Overlap: {insights[adSet.id].overlap.status === "not_applicable" ? "প্রযোজ্য নয়" : "হিসাব করা যায় না"} — {insights[adSet.id].overlap.reason}</div>
-                      <div>Delivery Estimate: {insights[adSet.id].estimate.available ? `${(insights[adSet.id].estimate.lowerBound ?? 0).toLocaleString()}–${(insights[adSet.id].estimate.upperBound ?? 0).toLocaleString()} জন/দিন` : `পাওয়া যাচ্ছে না (${insights[adSet.id].estimate.reason ?? "—"})`}</div>
+                      <div>Delivery Estimate: {insights[adSet.id].estimate.available ? `${fmtNumBn(insights[adSet.id].estimate.lowerBound ?? 0)}–${fmtNumBn(insights[adSet.id].estimate.upperBound ?? 0)} জন/দিন` : `পাওয়া যাচ্ছে না (${insights[adSet.id].estimate.reason ?? "—"})`}</div>
                     </div>
                   ) : null}
                 </div>
@@ -1487,7 +1880,7 @@ export default function CampaignBuilderPage() {
             )}
           </div>
           {editable ? (
-            <div className="grid gap-3 border-t pt-3 lg:grid-cols-2">
+            <div className={`grid gap-3 border-t pt-3 lg:grid-cols-2 ${activeStep !== 3 ? "hidden" : ""}`}>
               <div className="space-y-2">
                 <div className="text-sm font-semibold">হাতে Ad যোগ করুন</div>
                 <input className="input" placeholder="Ad এর নাম" value={adForms[adSet.id]?.name ?? ""} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), name: e.target.value } }))} />
@@ -1543,7 +1936,7 @@ export default function CampaignBuilderPage() {
                       <label key={enh.key} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={!!adForms[adSet.id]?.enhancements?.[enh.key]} onChange={(e) => setAdForms((s) => ({ ...s, [adSet.id]: { ...(s[adSet.id] ?? emptyAdForm), enhancements: { ...(s[adSet.id]?.enhancements ?? {}), [enh.key]: e.target.checked } } }))} /> {enh.label}</label>
                     ))}
                   </div>
-                  <p className="text-[11px] text-slate-500">Publish এ Link/Video Ad এ অপশনগুলো Meta এর Asset Feed দিয়ে যায়; Carousel/Catalog/Lead Ad এ শুধু প্রথম অপশন যায় (Readiness এ সতর্কবার্তা থাকে)।</p>
+                  <p className="text-[11px] leading-[1.7] text-slate-500">Publish এ Link/Video Ad এ অপশনগুলো Meta এর Asset Feed দিয়ে যায়; Carousel/Catalog/Lead Ad এ শুধু প্রথম অপশন যায় (Readiness এ সতর্কবার্তা থাকে)।</p>
                 </div>
                 {adSet.destinationType === "WHATSAPP" ? (
                   <div className="space-y-2 rounded-lg bg-emerald-50 p-2">
@@ -1551,7 +1944,7 @@ export default function CampaignBuilderPage() {
                     <input className="input" placeholder="স্বাগত বার্তা (Greeting) — যেমন: স্বাগতম! কীভাবে সাহায্য করতে পারি?" value={adForms[adSet.id]?.waGreeting ?? ""} onChange={(e) => setAdField(adSet.id, "waGreeting", e.target.value)} />
                     <input className="input" placeholder="আগে থেকে লেখা বার্তা (Prefill) — যেমন: আমি এই পণ্যটি অর্ডার করতে চাই" value={adForms[adSet.id]?.waPrefill ?? ""} onChange={(e) => setAdField(adSet.id, "waPrefill", e.target.value)} />
                     <textarea className="input" rows={2} placeholder="Ice Breaker প্রশ্ন — প্রতি লাইনে একটি (সর্বোচ্চ ৩টি; দিলে Prefill এর বদলে এগুলো যাবে)" value={adForms[adSet.id]?.waIce ?? ""} onChange={(e) => setAdField(adSet.id, "waIce", e.target.value)} />
-                    <p className="text-[11px] text-slate-500">এগুলো Meta এর Page Welcome Message হিসেবে Publish এর সময় পাঠানো হয়। কিছুই না লিখলে Welcome Block যাবে না।</p>
+                    <p className="text-[11px] leading-[1.7] text-slate-500">এগুলো Meta এর Page Welcome Message হিসেবে Publish এর সময় পাঠানো হয়। কিছুই না লিখলে Welcome Block যাবে না।</p>
                   </div>
                 ) : null}
                 <button className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => addAd(adSet.id)}>Ad যোগ করুন</button>
@@ -1571,7 +1964,7 @@ export default function CampaignBuilderPage() {
       ))}
 
       {editable ? (
-        <form onSubmit={addAdSet} className="space-y-3 card p-5">
+        <form onSubmit={addAdSet} className={`space-y-3 card p-5 ${activeStep !== 1 ? "hidden" : ""}`}>
           <div className="font-semibold">নতুন Ad Set</div>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <label className="block text-sm">নাম<input className={inputCls} value={adSetForm.name} onChange={(e) => setAdSetForm({ ...adSetForm, name: e.target.value })} required /></label>
@@ -1672,7 +2065,7 @@ export default function CampaignBuilderPage() {
                 }}>খুঁজুন</button>
               </div>
               {tSearch.available === false ? <p className="text-xs text-amber-600">পাওয়া যাচ্ছে না: {tSearch.reason}</p> : null}
-              {tSearch.results.length > 0 ? <ul className="space-y-0.5 text-xs text-slate-600">{tSearch.results.map((r) => <li key={r.id}>{r.name ?? "—"} · ID: <span className="font-mono">{r.id}</span>{r.audienceSizeLower != null ? ` · আনুমানিক Audience: ${r.audienceSizeLower.toLocaleString()}–${(r.audienceSizeUpper ?? 0).toLocaleString()}` : ""}</li>)}</ul> : null}
+              {tSearch.results.length > 0 ? <ul className="space-y-0.5 text-xs text-slate-600">{tSearch.results.map((r) => <li key={r.id}>{r.name ?? "—"} · ID: <span className="font-mono">{r.id}</span>{r.audienceSizeLower != null ? ` · আনুমানিক Audience: ${fmtNumBn(r.audienceSizeLower)}–${fmtNumBn(r.audienceSizeUpper ?? 0)}` : ""}</li>)}</ul> : null}
             </div>
             <label className="block text-sm">Custom Audience IDs (Meta ID, কমা দিয়ে)<input className={inputCls} value={adSetForm.audienceIds} onChange={(e) => setAdSetForm({ ...adSetForm, audienceIds: e.target.value })} placeholder={audList.filter((a) => a.externalAudienceId).map((a) => a.externalAudienceId).join(", ") || "যেমন: 23850..."} /></label>
             <label className="block text-sm">বাদ দিতে Audience IDs<input className={inputCls} value={adSetForm.excludeIds} onChange={(e) => setAdSetForm({ ...adSetForm, excludeIds: e.target.value })} /></label>
@@ -1702,29 +2095,46 @@ export default function CampaignBuilderPage() {
       </div>
 
       {(plan.status === "approved" || plan.status === "published" || plan.status === "publish_failed") ? (
-        <div className="card space-y-3 p-5">
+        <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
           <div className="font-semibold">🌐 অন্য প্ল্যাটফর্মে Draft <span className="text-xs font-normal text-slate-400">(CB6 · CN17: Performance Max ও TikTok Objective)</span></div>
           <p className="text-xs text-slate-500">এই অনুমোদিত Plan থেকে Google Search, Google Performance Max বা TikTok এ PAUSED Draft তৈরি হবে — বিদ্যমান Publish পথ দিয়েই। যা Map করা যাবে না তা তালিকা করে জানানো হবে; সেক্ষেত্রে কোনো কল যাবে না, Payload টি Export হিসেবে দেখাবে। TikTok Objective শুধু এই Draft পথের জন্য — সরাসরি Publish পেজের আচরণ অপরিবর্তিত।</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <select className="input w-40" id="x-platform">
-              <option value="google">Google Ads</option>
-              <option value="tiktok">TikTok Ads</option>
-            </select>
-            <select className="input w-52" id="x-kind" title="Google Draft-এর ধরন">
-              <option value="search">Google: Search (RSA)</option>
-              <option value="pmax">Google: Performance Max</option>
-            </select>
-            <select className="input w-56" id="x-objective" title="TikTok Objective (শুধু Draft পথে)">
-              <option value="TRAFFIC">TikTok: Traffic</option>
-              <option value="WEB_CONVERSIONS">TikTok: Website Conversions</option>
-              <option value="LEAD_GENERATION">TikTok: Lead Generation</option>
-            </select>
-            <input className="input w-44" id="x-pixel" placeholder="TikTok Pixel ID (Conversions হলে)" />
-            <input className="input w-52" id="x-event" placeholder="Optimization Event (যেমন COMPLETE_PAYMENT)" />
-            <select className="input w-64" id="x-account">
-              <option value="">Target Account বেছে নিন</option>
-              {accounts.filter((a) => a.platform === "google" || a.platform === "tiktok").map((a) => <option key={a.id} value={a.id}>{a.name} ({a.platform})</option>)}
-            </select>
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-600">প্ল্যাটফর্ম ও Target Account</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <select className="input w-40" id="x-platform">
+                  <option value="google">Google Ads</option>
+                  <option value="tiktok">TikTok Ads</option>
+                </select>
+                <select className="input w-64" id="x-account">
+                  <option value="">Target Account বেছে নিন</option>
+                  {accounts.filter((a) => a.platform === "google" || a.platform === "tiktok").map((a) => <option key={a.id} value={a.id}>{a.name} ({a.platform})</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-xs font-semibold text-slate-600">Google হলে — Draft-এর ধরন</div>
+                <select className="input mt-1 w-52" id="x-kind" title="Google Draft-এর ধরন">
+                  <option value="search">Google: Search (RSA)</option>
+                  <option value="pmax">Google: Performance Max</option>
+                </select>
+                <p className="mt-1 text-xs leading-[1.7] text-slate-500">Performance Max-এ Keyword থাকে না; এই Path-এ Video Asset ও Audience Signal যায় না — যা যায়নি তা Draft-এ তালিকা হয়ে থাকে।</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-xs font-semibold text-slate-600">TikTok হলে — Objective</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <select className="input w-56" id="x-objective" title="TikTok Objective (শুধু Draft পথে)">
+                    <option value="TRAFFIC">TikTok: Traffic</option>
+                    <option value="WEB_CONVERSIONS">TikTok: Website Conversions</option>
+                    <option value="LEAD_GENERATION">TikTok: Lead Generation</option>
+                  </select>
+                  <input className="input w-44" id="x-pixel" placeholder="TikTok Pixel ID (Conversions হলে)" />
+                  <input className="input w-52" id="x-event" placeholder="Optimization Event (যেমন COMPLETE_PAYMENT)" />
+                </div>
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-[1.7] text-amber-800">⚠ LEAD_GENERATION এই Flow-তে তৈরি হয় না (Ad-এর সঙ্গে Instant Form বাঁধা লাগে) — Draft-এ পছন্দটি থাকে, Readiness কারণসহ আটকায়।</p>
+              </div>
+            </div>
             <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
               const platform = (document.getElementById("x-platform") as HTMLSelectElement)?.value ?? "google";
               const target = (document.getElementById("x-account") as HTMLSelectElement)?.value ?? "";
@@ -1736,18 +2146,25 @@ export default function CampaignBuilderPage() {
               const extra = platform === "google" ? { kind } : { objectiveType, ...(pixelId ? { pixelId } : {}), ...(optimizationEvent ? { optimizationEvent } : {}) };
               const res = await wrap("xplat", () => apiFetch<{ status: string; unmapped: string[]; notCarried?: string[]; transformations: string[]; publication?: { externalCampaignId?: string | null } }>(`/organizations/${orgId}/campaign-plans/${plan.id}/cross-platform`, { method: "POST", body: JSON.stringify({ platform, targetAdAccountId: target, ...extra }) }));
               if (res) {
+                setXdNote({ notCarried: res.notCarried ?? [] });
                 if (res.status === "created") setNotice(`${platform === "google" ? "Google" : "TikTok"} এ PAUSED Draft তৈরি হয়েছে (Campaign ID: ${res.publication?.externalCampaignId ?? "—"})। Publish Log এ রেকর্ড আছে।${res.notCarried?.length ? ` যা এই ধরনে যায়নি: ${res.notCarried.join(" · ")}` : ""}`);
                 else if (res.status === "blocked") setError(`Draft হয়নি — ঘাটতি: ${res.unmapped.join(" · ")}`);
                 else setError("প্ল্যাটফর্ম Publish ব্যর্থ হয়েছে — Publish Log এ কারণ লেখা আছে।");
                 await loadPlan(plan.id);
               }
             }}>Draft তৈরি করুন</button>
+            {xdNote && xdNote.notCarried.length ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-[1.7] text-amber-800">
+                <p className="font-semibold">⚠ এই ধরনে যা যায়নি (notCarried):</p>
+                <ul className="mt-1 list-inside list-disc">{xdNote.notCarried.map((n, i) => <li key={i}>{n}</li>)}</ul>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
 
       {(plan.status === "approved" || plan.status === "published" || plan.status === "publish_failed") ? (
-        <div className="card space-y-3 p-5">
+        <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
           <div className="font-semibold">📂 Cross-Platform Drafts <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN9)</span></div>
           <p className="text-xs text-slate-500">উপরে তৈরি প্রতিটি Draft এখানে সংরক্ষিত থাকে — Field Edit, Readiness যাচাই, স্থানীয় Preview, আর Re-publish (সবসময় নতুন PAUSED Draft; আগেরটি বদলায় না) করা যায়। Status Sync-এ প্ল্যাটফর্মের Status পড়ার পথ নেই বলে সৎভাবে তা-ই জানানো হয়।</p>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
@@ -1763,7 +2180,7 @@ export default function CampaignBuilderPage() {
                     <span className={d.status === "created" ? "rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-semibold text-green-700" : d.status === "blocked" ? "rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700" : d.status === "failed" ? "rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" : "rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"}>{d.status}{d.externalCampaignId ? ` · ${d.externalCampaignId}` : ""}</span>
                   </div>
                   {d.lastError ? <p className="mt-1 text-xs text-red-600">{d.lastError}</p> : null}
-                  {Array.isArray(d.unmapped) && d.unmapped.length ? <p className="mt-1 text-xs text-amber-700">ঘাটতি: {d.unmapped.join(" · ")}</p> : null}
+                  {Array.isArray(d.unmapped) && d.unmapped.length ? <p className="mt-1 text-xs leading-[1.7] text-amber-700">{d.status === "created" ? "যা এই ধরনে যায়নি (notCarried)" : "ঘাটতি"}: {d.unmapped.join(" · ")}</p> : null}
                   <p className="mt-1 text-xs text-slate-500">{d.platform === "google" && d.kind === "pmax" ? `Headline ${(d.fields?.headlines ?? []).length}টি · Long ${(d.fields?.longHeadlines ?? []).length}টি · Description ${(d.fields?.descriptions ?? []).length}টি · ছবি ${(d.fields?.imageUrls ?? []).length}টি · Business: ${d.fields?.businessName ?? "—"} · ${(d.fields?.countryCodes ?? []).join(",")}` : d.platform === "google" ? `Headline ${(d.fields?.headlines ?? []).length}টি · Description ${(d.fields?.descriptions ?? []).length}টি · Keyword ${(d.fields?.keywords ?? []).length}টি · ${(d.fields?.countryCodes ?? []).join(",")}` : `Text: ${String(d.fields?.adText ?? "").slice(0, 60)} · ${(d.fields?.countryCodes ?? []).join(",")}`}</p>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => {
@@ -1781,7 +2198,7 @@ export default function CampaignBuilderPage() {
                     }}>✎ Edit</button>
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-ready-${d.id}`, () => apiFetch<{ ready: boolean; checks: { level: string; label: string; detail: string }[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/readiness`, { method: "POST", body: JSON.stringify({}) }));
-                      if (res) setXdResult((s) => ({ ...s, [d.id]: (res.ready ? "✅ Readiness: প্রস্তুত\n" : "⛔ Readiness: ঘাটতি আছে\n") + res.checks.map((c) => `${c.level === "error" ? "✗" : c.level === "warn" ? "⚠" : "✓"} ${c.label}: ${c.detail}`).join("\n") }));
+                      if (res) setXdResult((s) => ({ ...s, [d.id]: (res.ready ? "✓ Readiness: প্রস্তুত\n" : "⛔ Readiness: ঘাটতি আছে\n") + res.checks.map((c) => `${c.level === "error" ? "⛔" : c.level === "warn" ? "⚠" : "✓"} ${c.label}: ${c.detail}`).join("\n") }));
                     }}>✓ Readiness</button>
                     <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-prev-${d.id}`, () => apiFetch<any>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/preview`));
@@ -1790,7 +2207,7 @@ export default function CampaignBuilderPage() {
                     <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
                       const res = await wrap(`xd-pub-${d.id}`, () => apiFetch<{ status: string; note?: string; unmapped?: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}/publish`, { method: "POST", body: JSON.stringify({}) }));
                       if (res) {
-                        setXdResult((s) => ({ ...s, [d.id]: res.status === "created" ? `✅ ${res.note ?? "নতুন PAUSED Draft তৈরি হয়েছে।"}` : res.status === "blocked" ? `⛔ Readiness-এ আটকেছে: ${(res.unmapped ?? []).join(" · ")}` : "❌ Publish ব্যর্থ — Draft-এ কারণ লেখা আছে।" }));
+                        setXdResult((s) => ({ ...s, [d.id]: res.status === "created" ? `✓ ${res.note ?? "নতুন PAUSED Draft তৈরি হয়েছে।"}` : res.status === "blocked" ? `⛔ Readiness-এ আটকেছে: ${(res.unmapped ?? []).join(" · ")}` : "⛔ Publish ব্যর্থ — Draft-এ কারণ লেখা আছে।" }));
                         const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                         if (list) setXdrafts(list);
                       }
@@ -1803,12 +2220,14 @@ export default function CampaignBuilderPage() {
                   {xdResult[d.id] ? <pre className="mt-2 whitespace-pre-wrap rounded bg-white p-2 text-xs text-slate-600">{xdResult[d.id]}</pre> : null}
                   {xdEditId === d.id && xdForm ? (
                     <div className="mt-2 space-y-2 border-t pt-2">
+                      <p className="text-xs font-semibold text-slate-600">সাধারণ</p>
                       <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
                         <label className="block text-sm">নাম<input className="input" value={xdForm.name} onChange={(e) => setXdForm({ ...xdForm, name: e.target.value })} /></label>
                         <label className="block text-sm">দৈনিক বাজেট<input className="input" value={xdForm.dailyBudget} onChange={(e) => setXdForm({ ...xdForm, dailyBudget: e.target.value })} /></label>
                         <label className="block text-sm">দেশ (কমা দিয়ে)<input className="input" value={xdForm.countries} onChange={(e) => setXdForm({ ...xdForm, countries: e.target.value })} /></label>
                       </div>
                       {d.platform === "google" && d.kind === "pmax" ? (<>
+                        <p className="text-xs font-semibold text-slate-600">Asset Group — Performance Max</p>
                         <label className="block text-sm">Final URL<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
                         <div className="grid grid-cols-2 gap-2">
                           <label className="block text-sm">Business Name (≤২৫ অক্ষর)<input className="input" value={xdForm.businessName} onChange={(e) => setXdForm({ ...xdForm, businessName: e.target.value })} /></label>
@@ -1820,11 +2239,13 @@ export default function CampaignBuilderPage() {
                         <label className="block text-sm">Marketing Image URLs — প্রতি লাইনে একটি (১–২০টি)<textarea className="input font-mono text-xs" rows={3} value={xdForm.imageUrlsText} onChange={(e) => setXdForm({ ...xdForm, imageUrlsText: e.target.value })} /></label>
                         <p className="text-xs text-slate-400">Performance Max-এ Keyword থাকে না; এই Path-এ Video Asset ও Audience Signal যায় না।</p>
                       </>) : d.platform === "google" ? (<>
+                        <p className="text-xs font-semibold text-slate-600">Responsive Search Ad — Google Search</p>
                         <label className="block text-sm">Final URL<input className="input" value={xdForm.finalUrl} onChange={(e) => setXdForm({ ...xdForm, finalUrl: e.target.value })} /></label>
                         <label className="block text-sm">Headlines — প্রতি লাইনে একটি (৩–১৫টি, ≤৩০ অক্ষর)<textarea className="input font-mono text-xs" rows={5} value={xdForm.headlinesText} onChange={(e) => setXdForm({ ...xdForm, headlinesText: e.target.value })} /></label>
                         <label className="block text-sm">Descriptions — প্রতি লাইনে একটি (২–৪টি, ≤৯০ অক্ষর)<textarea className="input font-mono text-xs" rows={3} value={xdForm.descriptionsText} onChange={(e) => setXdForm({ ...xdForm, descriptionsText: e.target.value })} /></label>
                         <label className="block text-sm">Keywords — প্রতি লাইনে: text অথবা text|BROAD/PHRASE<textarea className="input font-mono text-xs" rows={4} value={xdForm.keywordsText} onChange={(e) => setXdForm({ ...xdForm, keywordsText: e.target.value })} /></label>
                       </>) : (<>
+                        <p className="text-xs font-semibold text-slate-600">TikTok Ad</p>
                         <label className="block text-sm">Ad Text (≤১০০ অক্ষর)<textarea className="input text-xs" rows={2} value={xdForm.adText} onChange={(e) => setXdForm({ ...xdForm, adText: e.target.value })} /></label>
                         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
                           <label className="block text-sm">Landing URL<input className="input" value={xdForm.landingUrl} onChange={(e) => setXdForm({ ...xdForm, landingUrl: e.target.value })} /></label>
@@ -1866,7 +2287,7 @@ export default function CampaignBuilderPage() {
                         const res = await wrap(`xd-save-${d.id}`, () => apiFetch<{ problems: string[] }>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts/${d.id}`, { method: "PATCH", body: JSON.stringify({ fields }) }));
                         if (res) {
                           if (res.problems.length) setXdResult((s) => ({ ...s, [d.id]: `⚠ সেভ হয়েছে, কিন্তু ঘাটতি: ${res.problems.join(" · ")}` }));
-                          else { setNotice("Draft সেভ হয়েছে — সব Field ঠিক আছে।"); setXdEditId(null); setXdForm(null); }
+                          else { setNotice("Draft সেভ হয়েছে — সব Field ঠিক আছে।"); noteSaved(); setXdEditId(null); setXdForm(null); }
                           const list = await apiFetch<XDraft[]>(`/organizations/${orgId}/campaign-plans/${plan.id}/xdrafts`).catch(() => null);
                           if (list) setXdrafts(list);
                         }
@@ -1880,7 +2301,7 @@ export default function CampaignBuilderPage() {
         </div>
       ) : null}
 
-      <div className="card space-y-3 p-5">
+      <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
         <div className="font-semibold">🔀 অন্য Ad Account-এ Clone <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN8)</span></div>
         <p className="text-xs text-slate-500">Plan টি অন্য Meta Account-এ নতুন DRAFT হিসেবে যাবে। Page/Pixel/Audience/Catalog শুধু তখনই যাবে যখন Target Account-এ তা যাচাই করা গেছে কিংবা আপনি আবার বেছে দিয়েছেন — বাকি সব Blocker হিসেবে তালিকায় আসবে, চুপচাপ যাবে না।</p>
         <div className="flex flex-wrap items-center gap-2">
@@ -1908,13 +2329,13 @@ export default function CampaignBuilderPage() {
             <p className="font-semibold text-sm">Mapping Report — {cloneReport.plan.name}</p>
             {cloneReport.blockers.length ? <div className="rounded bg-red-50 p-2 text-red-700">{cloneReport.blockers.map((b, i) => <p key={i}>⛔ {b}</p>)}</div> : <p className="text-emerald-700">✓ কোনো Blocker নেই — সব যাচাই/বাছাই সম্পূর্ণ।</p>}
             {cloneReport.mapping.map((m, i) => (
-              <p key={i}><span className={m.outcome === "carried_verified" ? "font-semibold text-emerald-700" : m.outcome === "carried_user_confirmed" ? "font-semibold text-sky-700" : "font-semibold text-red-700"}>{m.outcome === "carried_verified" ? "✓ যাচাই হয়ে গেছে" : m.outcome === "carried_user_confirmed" ? "✓ আপনার বাছাই" : "✗ বাদ (Blocker)"}</span> {m.adSet} · {m.field}: {m.detail}</p>
+              <p key={i}><span className={m.outcome === "carried_verified" ? "font-semibold text-emerald-700" : m.outcome === "carried_user_confirmed" ? "font-semibold text-sky-700" : "font-semibold text-red-700"}>{m.outcome === "carried_verified" ? "✓ যাচাই হয়ে গেছে" : m.outcome === "carried_user_confirmed" ? "✓ আপনার বাছাই" : "⛔ বাদ (Blocker)"}</span> {m.adSet} · {m.field}: {m.detail}</p>
             ))}
           </div>
         ) : null}
       </div>
 
-      <div className="card space-y-3 p-5">
+      <div className={`card space-y-3 p-5 ${activeStep !== 0 ? "hidden" : ""}`}>
         <div className="font-semibold">📋 Lead Forms (Instant Forms) <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN4)</span></div>
         <p className="text-xs text-slate-500">ফর্ম এখানে মডেল করা হয়; Meta তে তৈরি হয় এই Plan এর Ad Account দিয়ে — Meta নিশ্চিত করলেই ফর্মটি &quot;তৈরি&quot; হিসেবে গণ্য হয়। তৈরি ফর্ম পরে সম্পাদনা করলে তা নতুন লোকাল ফর্মে পরিণত হয় (Meta তে ফর্ম Edit হয় না)। লিড এলে এখানকার Field Mapping অনুযায়ী CRM Lead এ ক্ষেত্র বসে।</p>
         {leadForms.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো Lead Form নেই।</p> : (
@@ -1983,7 +2404,7 @@ export default function CampaignBuilderPage() {
         ) : null}
       </div>
 
-      <div className="card space-y-3 p-5">
+      <div className={`card space-y-3 p-5 ${activeStep !== 1 ? "hidden" : ""}`}>
         <div className="font-semibold">🎯 Dynamic Retargeting প্রিসেট <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN3)</span></div>
         <p className="text-xs text-slate-500">বিদ্যমান Audience Record দিয়ে Retargeting Ad Set এর খসড়া বানায়। নতুন Audience তৈরি করা CN6 এর কাজ — এখানে শুধু তৈরি Record ব্যবহার হয়; না থাকলে ঠিক কী নেই তা জানানো হয়।</p>
         <div className="flex flex-wrap items-end gap-2">
@@ -2021,7 +2442,7 @@ export default function CampaignBuilderPage() {
         {presetResult?.status === "created" && (presetResult.missing ?? []).length ? <p className="text-sm text-slate-500">তৈরি হয়েছে। নোট: {(presetResult.missing ?? []).join(" · ")}</p> : null}
       </div>
 
-      <div id="cbx-step-review" className="card space-y-3 p-5">
+      <div id="cbx-step-review" tabIndex={-1} className={`r2-step-enter card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
         <div className="flex items-center justify-between">
           <div className="font-semibold">💬 আলোচনা ও কার্যক্রম <span className="text-xs font-normal text-slate-400">(Campaign Builder CB4)</span></div>
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
@@ -2088,7 +2509,7 @@ export default function CampaignBuilderPage() {
       </div>
 
 
-      <div className="card space-y-3 p-5">
+      <div className={`card space-y-3 p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold">🗂 Plan Versions <span className="text-xs font-normal text-slate-400">(Campaign Builder Next CN11)</span></div>
           <span className="flex gap-2">
@@ -2139,33 +2560,51 @@ export default function CampaignBuilderPage() {
       </div>
       <aside className="cbx-rail mt-6 space-y-4 lg:mt-0">
         <div>
-          <p className="cbx-rail-title">✅ Readiness + 👁 Preview</p>
+          <p className="cbx-rail-title">📋 Plan সারাংশ</p>
+          <div className="mt-2 space-y-1 rounded-xl border bg-white p-3 text-sm leading-[1.7]">
+            <p className="font-semibold">{plan.name}</p>
+            <p className="text-xs text-slate-500">{plan.objective} · অবস্থা: <span className="font-semibold">{STATUS_LABEL[plan.status] ?? plan.status}</span></p>
+            <p className="text-xs text-slate-600">💰 মোট দৈনিক বাজেট: <span className="font-semibold">{readiness?.budget ? fmtMoneyBn(readiness.budget.dailyTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.dailyBudgetMinor ?? "0"), 0n))}</span> · Lifetime মোট: {readiness?.budget ? fmtMoneyBn(readiness.budget.lifetimeTotalMinor) : fmtMoneyBn(plan.adSets.reduce((a, s) => a + BigInt(s.lifetimeBudgetMinor ?? "0"), 0n))}</p>
+            <p className="text-xs text-slate-600">🧮 Budget Mode (CN2): <span className="font-semibold">{plan.advantagePlus ? "CBO — Advantage+ (Campaign পর্যায়ে)" : plan.budgetMode === "cbo" ? "CBO — বাজেট Campaign পর্যায়ে" : "ABO — বাজেট Ad Set পর্যায়ে"}</span>{plan.budgetMode === "cbo" || plan.advantagePlus ? <> · Campaign দৈনিক: {plan.campaignDailyBudgetMinor ? fmtMoneyBn(plan.campaignDailyBudgetMinor) : "—"}</> : null}</p>
+            {pacing ? <p className="text-xs text-slate-600">⏱ Pacing (CN2): এ পর্যন্ত খরচ: <b>{fmtMoneyBn(pacing.spentMinor)}</b> · আজ পর্যন্ত প্রত্যাশিত: <b>{pacing.expectedMinor != null ? fmtMoneyBn(pacing.expectedMinor) : "—"}</b> · পার্থক্য: <b>{pacing.varianceMinor != null ? fmtMoneyBn(pacing.varianceMinor) : "—"}</b></p> : null}
+            {readiness ? <p className="text-xs text-slate-600">Readiness সারাংশ: ⛔ Error ×{readinessCounts(readiness.checks).errors} · ⚠ Warning ×{readinessCounts(readiness.checks).warnings} · ✓ ঠিক আছে ×{readinessCounts(readiness.checks).oks}</p> : null}
+            {renderSaveIndicator()}
+          </div>
+        </div>
+        <div>
+          <p className="cbx-rail-title">✓ Readiness + 👁 Preview</p>
           {busy === "ready" ? <div className="mt-2 space-y-2"><div className="cbx-skel" style={{ height: 18 }} /><div className="cbx-skel" style={{ height: 18 }} /><div className="cbx-skel" style={{ height: 18 }} /></div> : null}
           {readiness ? (
             <div className={`mt-2 space-y-1 rounded-xl border p-3 text-sm ${readiness.ready ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-              <p className="font-semibold">{readiness.ready ? "✅ Readiness: প্রকাশের জন্য প্রস্তুত" : "⛔ Readiness: সমস্যা আছে"}</p>
+              <p className="font-semibold">{readiness.ready ? "✓ Readiness: প্রকাশের জন্য প্রস্তুত" : "⛔ Readiness: সমস্যা আছে"}</p>
               {readiness.checks.map((c, i) => (
                 <div key={i} className="text-xs">
-                  <span className={c.level === "error" ? "font-semibold text-red-700" : c.level === "warn" ? "font-semibold text-amber-700" : "font-semibold text-emerald-700"}>{c.level === "error" ? "✗" : c.level === "warn" ? "⚠" : "✓"} {c.label}:</span>{" "}
+                  <span className={c.level === "error" ? "font-semibold text-red-700" : c.level === "warn" ? "font-semibold text-amber-700" : "font-semibold text-emerald-700"}>{c.level === "error" ? "⛔" : c.level === "warn" ? "⚠" : "✓"} {c.label}:</span>{" "}
                   <span className="text-slate-600">{c.detail}</span>
                 </div>
               ))}
-              <p className="text-xs text-slate-500">
-                {readiness.estimate.available
-                  ? `📈 Meta এর আনুমানিক Reach (প্রথম Ad Set): ${readiness.estimate.lowerBound?.toLocaleString()} – ${readiness.estimate.upperBound?.toLocaleString()} জন — এটি Meta এর মডেল-ভিত্তিক Estimate, প্রতিশ্রুতি নয়।`
-                  : `📈 Reach Estimate পাওয়া যায়নি: ${readiness.estimate.reason ?? ""}`}
-              </p>
+              {readiness.estimate.available ? (
+                <p className="text-xs text-slate-500">{`📈 Meta এর আনুমানিক Reach (প্রথম Ad Set): ${fmtNumBn(readiness.estimate.lowerBound)} – ${fmtNumBn(readiness.estimate.upperBound)} জন — এটি Meta এর মডেল-ভিত্তিক Estimate, প্রতিশ্রুতি নয়।`}</p>
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-[1.7] text-slate-600">
+                  <p>{`📈 Reach Estimate পাওয়া যায়নি: ${readiness.estimate.reason ?? ""}`}</p>
+                  <p>পরের পদক্ষেপ: Meta সংযোগ ও Ad Account ঠিক আছে কিনা যাচাই করে আবার Readiness চালান।</p>
+                </div>
+              )}
               {readiness.estimates && readiness.estimates.length > 1 ? (
                 <div className="space-y-0.5">
                   {readiness.estimates.map((e) => (
-                    <p key={e.adSetId} className="text-xs text-slate-500">📈 {e.name}: {e.available ? `${e.lowerBound?.toLocaleString()} – ${e.upperBound?.toLocaleString()} জন (Meta Estimate)` : `পাওয়া যায়নি — ${e.reason ?? ""}`}</p>
+                    <p key={e.adSetId} className="text-xs text-slate-500">📈 {e.name}: {e.available ? `${fmtNumBn(e.lowerBound)} – ${fmtNumBn(e.upperBound)} জন (Meta Estimate)` : `পাওয়া যায়নি — ${e.reason ?? ""}`}</p>
                   ))}
                 </div>
               ) : null}
             </div>
           ) : null}
-          {!readiness && busy !== "ready" ? <p className="mt-2 text-xs text-slate-500">Readiness যাচাই এখনো চালানো হয়নি — উপরের "✅ Readiness যাচাই" বোতামে চালালে চেকলিস্ট এখানে আটকে (Sticky) থাকবে।</p> : null}
-          {(() => { const ad = previewAdId ? plan.adSets.flatMap((s) => s.ads).find((a) => a.id === previewAdId) : null; return ad ? <div className="mt-2 overflow-x-auto"><AdPreview ad={ad} pageName={plan.name} /></div> : <p className="mt-2 text-xs text-slate-500">কোনো Ad এর "👁 Preview" চাপলে তার Placement Preview এখানেও আটকে থাকবে।</p>; })()}
+          {!readiness && busy !== "ready" ? <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs leading-[1.7] text-slate-500"><p>ℹ️ Readiness যাচাই এখনো চালানো হয়নি — উপরের "✓ Readiness যাচাই" বোতামে চালালে চেকলিস্ট এখানে আটকে (Sticky) থাকবে।</p></div> : null}
+          {(() => { const ad = previewAdId ? plan.adSets.flatMap((s) => s.ads).find((a) => a.id === previewAdId) : null; const firstAd = ad ?? plan.adSets.flatMap((s) => s.ads)[0] ?? null; return (<>
+            {ad ? <div className="mt-2 overflow-x-auto"><AdPreview ad={ad} pageName={plan.name} /></div> : <p className="mt-2 text-xs text-slate-500">কোনো Ad এর "👁 Preview" চাপলে তার Placement Preview এখানেও আটকে থাকবে।</p>}
+            {!ad && firstAd ? <div className="mt-2 overflow-x-auto"><AdPreview ad={firstAd} pageName={plan.name} /></div> : null}
+          </>); })()}
         </div>
         <div className="border-t pt-3">
           <p className="cbx-rail-title">🏛 অনুমোদন কাঠামো (CN11)</p>
@@ -2174,7 +2613,7 @@ export default function CampaignBuilderPage() {
               <input type="checkbox" checked={twoStep} onChange={async (e) => {
                 const next = e.target.checked;
                 const res = await wrap("chain", () => apiFetch<{ twoStepApproval: boolean }>(`/organizations/${orgId}/campaign-plans/settings/approval-chain`, { method: "PATCH", body: JSON.stringify({ twoStepApproval: next }) }));
-                if (res) { setTwoStep(res.twoStepApproval); setNotice(res.twoStepApproval ? "দুই ধাপের অনুমোদন চালু হয়েছে — এখন থেকে Pending Plan এ দুইজন আলাদা Approver লাগবে।" : "দুই ধাপের অনুমোদন বন্ধ — আগের মতো এক ধাপের অনুমোদন চলবে।"); }
+                if (res) { setTwoStep(res.twoStepApproval); noteSaved(); setNotice(res.twoStepApproval ? "দুই ধাপের অনুমোদন চালু হয়েছে — এখন থেকে Pending Plan এ দুইজন আলাদা Approver লাগবে।" : "দুই ধাপের অনুমোদন বন্ধ — আগের মতো এক ধাপের অনুমোদন চলবে।"); }
               }} />
               <span>দুই ধাপের অনুমোদন (Two-step) {twoStep ? "চালু আছে" : "বন্ধ আছে"}</span>
             </label>
@@ -2182,6 +2621,9 @@ export default function CampaignBuilderPage() {
           {plan.status === "pending_approval" && plan.firstApproverId ? <p className="mt-1 text-xs font-semibold text-amber-700">প্রথম অনুমোদন সম্পন্ন — দ্বিতীয় অনুমোদন বাকি</p> : null}
         </div>
       </aside>
+      </div>
+      {stepNavButtons}
+      </div>
       </div>
 
       <div className="cbx-mobile-bar">
@@ -2193,12 +2635,12 @@ export default function CampaignBuilderPage() {
         {plan.status === "published" && plan.metaStatus === "ACTIVE" ? <button type="button" className="btn-warning btn-sm flex-1" disabled={busy !== ""} onClick={() => action("pause", "pause")}>Pause করুন</button> : null}
       </div>
       {plan.publishLogs.length > 0 ? (
-        <div className="card p-5">
+        <div className={`card p-5 ${activeStep !== 4 ? "hidden" : ""}`}>
           <div className="font-semibold">Publish Log (প্রতিটি Meta কলের রেকর্ড)</div>
           <div className="mt-2 space-y-1">
             {plan.publishLogs.map((l) => (
               <div key={l.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-sm">
-                <span><span className="font-medium capitalize">{l.step}</span> · {new Date(l.createdAt).toLocaleString()}</span>
+                <span><span className="font-medium capitalize">{l.step}</span> · {new Date(l.createdAt).toLocaleString("bn-BD")}</span>
                 <span className={l.status === "success" ? "text-green-600" : "text-red-600"}>{l.status}{l.externalId ? ` · ${l.externalId}` : ""}{l.error ? ` · ${l.error}` : ""}</span>
               </div>
             ))}

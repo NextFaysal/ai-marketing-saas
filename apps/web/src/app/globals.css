@@ -667,7 +667,7 @@
 .cbx-pill-draft { border-color: rgba(148,163,184,0.55); background: #f1f5f9; }
 .cbx-pill-pending_approval { background: color-mix(in srgb, var(--brand-from) 13%, #fff7ed); }
 .cbx-pill-pending_approval::before { background: #d97706; }
-.cbx-pill-approved::before { background: #0284c7; }
+.cbx-pill-approved::before { background: #059669; }
 .cbx-pill-published { background: color-mix(in srgb, var(--brand-to) 10%, #ecfdf5); }
 .cbx-pill-published::before { background: #059669; }
 .cbx-pill-publishing::before { background: var(--brand-from); }
@@ -706,3 +706,41 @@
 .cbx-view-chip-del:hover { background: rgba(220,38,38,0.1); color: #dc2626; }
 /* Bulk action bar (hub). */
 .cbx-bulk-bar { position: sticky; bottom: 12px; z-index: 40; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-radius: 16px; padding: 10px 14px; color: #fff; box-shadow: var(--shadow-pop); background-image: linear-gradient(120deg, color-mix(in srgb, var(--brand-from) 72%, #0f172a), color-mix(in srgb, var(--brand-to) 62%, #0f172a)); }
+
+/* ---------- Campaign Design Round 2 (additive) ---------- */
+/* Step/content entrance: reuses the Design v2 fade-rise
+   keyframes. Elements that toggle from display:none restart
+   the animation when shown, so a step body animates in on
+   every step switch with no JS. The global reduced-motion
+   block above neutralises it for reduced-motion users. */
+.r2-step-enter { animation: fade-rise .18s ease both; }
+
+/* Print: the builder (Review step) and the public /r report
+   are documents owners print/share. A page opts in with
+   .r2-print-doc on its root; the builder additionally uses
+   .r2-print-builder, which also suppresses the dashboard
+   chrome (sidebar / topbar / mobile tab bar — the builder
+   page itself contains no <header> or <aside> elements, so
+   these selectors can only match the layout's). The /r
+   page's own white-label <header> is content and prints. */
+@media print {
+  body:has(.r2-print-builder) aside,
+  body:has(.r2-print-builder) header,
+  body:has(.r2-print-builder) nav.fixed { display: none !important; }
+  .r2-print-doc .cbx-step-rail,
+  .r2-print-doc .cbx-rail,
+  .r2-print-doc .cbx-mobile-bar,
+  .r2-print-doc button { display: none !important; }
+  .r2-print-doc,
+  .r2-print-doc * {
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    border-color: #cbd5e1 !important;
+  }
+  .r2-print-doc .card,
+  .r2-print-doc section,
+  .r2-print-doc article { break-inside: avoid; }
+  .r2-print-doc a { color: #000 !important; text-decoration: none !important; }
+}

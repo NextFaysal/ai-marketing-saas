@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
+import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
 import { API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 
@@ -52,7 +53,7 @@ export default function PublicReportPage() {
   const money = (v: string) => formatMinor(BigInt(v));
   const accent = report?.branding?.primaryColor ?? undefined;
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-6">
+    <main className="r2-print-doc r2-step-enter mx-auto max-w-4xl space-y-6 p-6">
       <header>
         {/* Milestone 59: white-label header — the agency's own logo
             + brand name lead; the legal business name stays as the
@@ -64,10 +65,23 @@ export default function PublicReportPage() {
           {report?.branding?.name ?? report?.business ?? "Campaign Report"}
         </p>
         <h1 className="mt-1 text-2xl font-bold">{report?.title ?? "Campaign Report"}</h1>
-        {report ? <p className="text-sm text-slate-500">শেষ {report.days} দিন · তৈরি: {new Date(report.generatedAt).toLocaleString()}</p> : null}
+        {report ? <p className="text-sm text-slate-500">শেষ {report.days} দিন · তৈরি: {new Date(report.generatedAt).toLocaleString("bn-BD")}</p> : null}
       </header>
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">এই রিপোর্ট লিংকটি পাওয়া যায়নি বা মেয়াদ শেষ হয়ে গেছে। ({error})</div> : null}
-      {!report && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+      {!report && !error ? (
+        <div className="space-y-4">
+          <div className="space-y-3" aria-hidden>
+            <div className="skeleton h-24 w-full" />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="skeleton h-20" />
+              ))}
+            </div>
+            <div className="skeleton h-40 w-full" />
+          </div>
+          <p className="sr-only">লোড হচ্ছে...</p>
+        </div>
+      ) : null}
       {report?.kind === "executive" && report.sales && report.ads ? (<>
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
@@ -111,18 +125,18 @@ export default function PublicReportPage() {
       {report?.kind === "campaign" ? (() => {
         const ct = report.totals as unknown as CampaignTotals | null;
         return (<>
-          <p className="text-sm text-slate-500">Campaign: <b>{report.plan?.name}</b> · Objective: {report.plan?.objective}</p>
+          <p className="text-sm leading-[1.7] text-slate-500">Campaign: <b>{report.plan?.name}</b> · Objective: {report.plan?.objective}</p>
           {!report.published || !ct ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">এই Campaign-এর কোনো সিঙ্ক হওয়া Performance Data এখনো নেই।</p> : (<>
             <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[
-                ["Ad Spend", money(ct.spendMinor)],
-                ["Impressions", ct.impressions.toLocaleString()],
-                ["Clicks", ct.clicks.toLocaleString()],
+                ["Ad Spend", fmtMoneyBn(ct.spendMinor)],
+                ["Impressions", fmtNumBn(ct.impressions)],
+                ["Clicks", fmtNumBn(ct.clicks)],
                 ["CTR", ct.ctrPercent === null ? "—" : `${ct.ctrPercent}%`],
                 ["Conversions (Platform)", String(ct.conversions)],
-                ["CPA", ct.cpaMinor === null ? "—" : money(ct.cpaMinor)],
+                ["CPA", ct.cpaMinor === null ? "—" : fmtMoneyBn(ct.cpaMinor)],
                 ["নিজস্ব অর্ডার (Associated)", String(ct.firstPartyOrders)],
-                ["Revenue (Associated)", money(ct.firstPartyRevenueMinor)],
+                ["Revenue (Associated)", fmtMoneyBn(ct.firstPartyRevenueMinor)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border bg-white p-4">
                   <div className="text-xs text-slate-400">{label}</div>
@@ -135,7 +149,7 @@ export default function PublicReportPage() {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Ad Set</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Impressions</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">Conv.</th></tr></thead>
                   <tbody>{report.perAdSet.map((s, i) => (
-                    <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{s.name}</td><td className="px-4 py-3">{money(s.spendMinor)}</td><td className="px-4 py-3">{s.impressions.toLocaleString()}</td><td className="px-4 py-3">{s.clicks.toLocaleString()}</td><td className="px-4 py-3">{s.conversions}</td></tr>
+                    <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{s.name}</td><td className="px-4 py-3">{fmtMoneyBn(s.spendMinor)}</td><td className="px-4 py-3">{fmtNumBn(s.impressions)}</td><td className="px-4 py-3">{fmtNumBn(s.clicks)}</td><td className="px-4 py-3">{s.conversions}</td></tr>
                   ))}</tbody>
                 </table>
               </section>
@@ -148,14 +162,14 @@ export default function PublicReportPage() {
                     <table className="w-full text-left text-sm">
                       <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Segment</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">CTR</th><th className="px-4 py-3">Conv.</th><th className="px-4 py-3">CPA</th></tr></thead>
                       <tbody>{d.rows.map((r, i) => (
-                        <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{r.key}</td><td className="px-4 py-3">{money(r.spendMinor)}</td><td className="px-4 py-3">{r.clicks.toLocaleString()}</td><td className="px-4 py-3">{r.ctrPercent === null ? "—" : `${r.ctrPercent}%`}</td><td className="px-4 py-3">{r.conversions}</td><td className="px-4 py-3">{r.cpaMinor === null ? "—" : money(r.cpaMinor)}</td></tr>
+                        <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{r.key}</td><td className="px-4 py-3">{fmtMoneyBn(r.spendMinor)}</td><td className="px-4 py-3">{fmtNumBn(r.clicks)}</td><td className="px-4 py-3">{r.ctrPercent === null ? "—" : `${r.ctrPercent}%`}</td><td className="px-4 py-3">{r.conversions}</td><td className="px-4 py-3">{r.cpaMinor === null ? "—" : fmtMoneyBn(r.cpaMinor)}</td></tr>
                       ))}</tbody>
                     </table>
                   </div>
                 ) : <p className="text-xs text-slate-400">এই ভাগে কোনো Data নেই।</p>}
               </section>
             )) : null}
-            {report.pacing ? <p className="text-xs text-slate-500">Pacing ({report.pacing.label}): অবস্থা {report.pacing.status} · খরচ হয়েছে {money(report.pacing.spentMinor)}{report.pacing.expectedMinor ? ` · এই সময়ে প্রত্যাশিত ${money(report.pacing.expectedMinor)}` : ""}{report.pacing.daysElapsed !== null ? ` · দিন ${report.pacing.daysElapsed}${report.pacing.daysTotal ? `/${report.pacing.daysTotal}` : ""}` : ""}</p> : null}
+            {report.pacing ? <p className="text-xs leading-[1.7] text-slate-500">Pacing ({report.pacing.label}): অবস্থা {report.pacing.status} · খরচ হয়েছে {fmtMoneyBn(report.pacing.spentMinor)}{report.pacing.expectedMinor ? ` · এই সময়ে প্রত্যাশিত ${fmtMoneyBn(report.pacing.expectedMinor)}` : ""}{report.pacing.daysElapsed !== null ? ` · দিন ${report.pacing.daysElapsed}${report.pacing.daysTotal ? `/${report.pacing.daysTotal}` : ""}` : ""}</p> : null}
           </>)}
           <p className="text-xs text-slate-400">{report.note}</p>
         </>);

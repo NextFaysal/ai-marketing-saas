@@ -3,9 +3,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { asList } from "@/lib/as-list";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 import { monthGrid, planCalendarDate, sameDay } from "@/lib/campaign-cn10";
+import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
+import { relTimeBn } from "@/lib/rel-time-bn";
+import { layerSourceViews, type AudienceSourceEntry } from "@/lib/funnel-sources";
 import {
   CAMPAIGN_STATUS_META,
   CAMPAIGN_OBJECTIVES,
@@ -78,12 +82,35 @@ const SERIES_CADENCE_LABEL: Record<string, string> = { weekly: "সাপ্ত�
 
 type TabKey = "all" | "live" | "approval" | "blueprints";
 
+// DX2 hub views (separate from the TabKey status tabs, which
+// stay inside the Plans view exactly as before).
+type HubView = "plans" | "calendar" | "portfolio";
+
+// DX2 week-summary aggregate (GET campaign-plans/week-summary)
+// — the "এই সপ্তাহে" strip's single data source.
+interface WeekSummary {
+  label: string;
+  windowDays: number;
+  spendByCurrency: { currency: string; thisWeekMinor: string; prevWeekMinor: string }[];
+  recommendations: { total: number; plansChecked: number; publishedPlans: number; topPlan: { planId: string; name: string; count: number } | null };
+  fatigue: { total: number; topPlan: { planId: string; name: string; count: number } | null };
+  offlineLoop: { configured: boolean; lastSuccessAt: string | null; lastSuccessPlatform: string | null; failedLast7Days: number };
+}
+
 export default function CampaignsPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [hubView, setHubView] = useState<HubView>("plans");
+
+  // DX2: week strip + resume drafts — independent loads; a
+  // failure here must never take the rest of the hub down.
+  const [weekSummary, setWeekSummary] = useState<WeekSummary | null>(null);
+  const [weekLoading, setWeekLoading] = useState(true);
+  const [weekFailed, setWeekFailed] = useState(false);
+  const [resumeDrafts, setResumeDrafts] = useState<Plan[]>([]);
 
   // Filter & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -103,7 +130,7 @@ export default function CampaignsPage() {
   // saved views + launch calendar state.
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [listLoading, setListLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkReport, setBulkReport] = useState("");
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -116,6 +143,11 @@ export default function CampaignsPage() {
   const emptyFunnelForm = { name: "", adAccountId: "", objective: "OUTCOME_SALES", pageId: "", pixelId: "", primaryText: "", headline: "", linkUrl: "", callToAction: "SHOP_NOW", budgetMode: "abo", campaignDailyBudget: "", dailyBudgetCap: "", proDaily: "", proCountries: "BD", ageMin: "", ageMax: "", useRetargeting: false, reDaily: "", useRetention: false, rnDaily: "", catalogRecordId: "", productSetId: "" };
   const [funnelForm, setFunnelForm] = useState(emptyFunnelForm);
   const [funnelResult, setFunnelResult] = useState<FunnelResult | null>(null);
+  // DX3 🚩 mini-fix: the wizard's layer source counts
+  // (org-level CN6 catalogue, loaded when the wizard
+  // opens — see the effect below).
+  const [funnelSources, setFunnelSources] = useState<AudienceSourceEntry[] | null>(null);
+  const [funnelSourcesFailed, setFunnelSourcesFailed] = useState(false);
 
   // Campaign Builder Frontier NB8 (CN18): the budget
   // simulator (own-data only) + the competitor-response
@@ -225,6 +257,56 @@ export default function CampaignsPage() {
   }, [loadPlans]);
 
   const load = loadPlans;
+
+  // DX2: the "এই সপ্তাহে" strip aggregate. Kept fully
+  // independent of loadPlans/loadMeta — on failure the strip
+  // shows its own slim error row and the hub keeps working.
+  const loadWeekSummary = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) { setWeekLoading(false); return; }
+    setWeekLoading(true);
+    setWeekFailed(false);
+    try {
+      const res = await apiFetch<WeekSummary>(`/organizations/${orgId}/campaign-plans/week-summary`);
+      setWeekSummary(res);
+    } catch {
+      setWeekFailed(true);
+    } finally {
+      setWeekLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadWeekSummary(); }, [loadWeekSummary]);
+
+  // DX2 resume ("অসমাপ্ত কাজ"): ONE fetch of the newest Draft
+  // plans via the existing paged list endpoint (the server
+  // orders updatedAt desc). Silent on failure and when empty —
+  // the card simply does not render.
+  useEffect(() => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    apiFetch<{ items: Plan[]; total: number }>(`/organizations/${orgId}/campaign-plans?page=1&pageSize=3&status=draft`)
+      .then((r) => setResumeDrafts(Array.isArray(r?.items) ? r.items.slice(0, 3) : []))
+      .catch(() => undefined);
+  }, []);
+
+  // DX3 🚩 mini-fix: the funnel wizard's layer source
+  // counts, fetched when the wizard opens (the org-level
+  // catalogue — the same counts the Audience Studio
+  // shows, before any plan exists). Fully independent:
+  // on failure the wizard shows ONE honest unavailable
+  // line and submits exactly as before.
+  useEffect(() => {
+    if (!showFunnel) return;
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    let live = true;
+    setFunnelSourcesFailed(false);
+    apiFetch<{ available: boolean; sources: AudienceSourceEntry[] }>(`/organizations/${orgId}/campaign-plans/audience-sources`)
+      .then((r) => { if (live) setFunnelSources(Array.isArray(r?.sources) ? r.sources : []); })
+      .catch(() => { if (live) { setFunnelSources(null); setFunnelSourcesFailed(true); } });
+    return () => { live = false; };
+  }, [showFunnel]);
 
 
   async function wrap<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
@@ -421,6 +503,27 @@ export default function CampaignsPage() {
     }
   }
 
+  // DX3 🚩 mini-fix: one layer's source counts at
+  // selection time (under its checkbox in the form).
+  // Loaded → a line per source: real count in bn-BD; a
+  // real zero is the §5 amber empty state; a source that
+  // could not be gathered says so. Still loading → one
+  // muted line. Fetch failed → nothing here (the wizard
+  // shows ONE unavailable line above the form instead).
+  const funnelSourceLines = (layer: "retargeting" | "retention") => {
+    if (funnelSourcesFailed) return null;
+    if (!funnelSources) return <p className="text-xs leading-[1.7] text-slate-500">Audience Source-এর সংখ্যা লোড হচ্ছে…</p>;
+    return (
+      <div className="space-y-0.5">
+        {layerSourceViews(funnelSources, layer).map((v) => (
+          <p key={v.key} className={`text-xs leading-[1.7] ${v.state === "empty" ? "font-medium text-amber-700" : "text-slate-600"}`}>
+            {v.state === "empty" ? "⚠ " : ""}{v.text}
+          </p>
+        ))}
+      </div>
+    );
+  };
+
   // Computed Summaries
   const totalCount = total;
   const liveCount = useMemo(() => plans.filter((p) => p.status === "published" && p.metaStatus === "ACTIVE").length, [plans]);
@@ -470,6 +573,7 @@ export default function CampaignsPage() {
     }
   }
   function applyView(v: SavedView) {
+    setHubView("plans");
     const f = v.filters ?? {};
     setStatusFilter(f.statusFilter ?? "all");
     setObjectiveFilter(f.objectiveFilter ?? "all");
@@ -514,6 +618,19 @@ export default function CampaignsPage() {
     return planCount + seriesCount;
   }, [plans, seriesHub, calCursor]);
 
+  // DX2 week strip helpers — same minor/100 + bn-BD money
+  // style as the rest of this page. The % change is computed
+  // from the two real figures only; a zero previous week
+  // returns null (the card says so in words, never a fake %).
+  const fmtMinor = (minor: string) => (Number(BigInt(minor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 });
+  const weekChange = (thisMinor: string, prevMinor: string): { arrow: string; pct: string } | null => {
+    const prev = Number(BigInt(prevMinor));
+    if (prev === 0) return null;
+    const cur = Number(BigInt(thisMinor));
+    const pct = ((cur - prev) / prev) * 100;
+    return { arrow: pct > 0 ? "▲" : pct < 0 ? "▼" : "—", pct: Math.abs(pct).toLocaleString("bn-BD", { maximumFractionDigits: 1 }) };
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -542,93 +659,101 @@ export default function CampaignsPage() {
         </div>
       </div>
 
-      {/* CN8: Portfolio totals across ad accounts (platform-reported synced rows; currencies never mixed) */}
-      {portfolio && portfolio.accounts.length > 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-semibold text-slate-800">💼 Portfolio — সব Ad Account মিলিয়ে (CN8)</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {portfolio.totalByCurrency.map((t) => (
-              <span key={t.currency} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700">মোট ({t.currency}): খরচ {(Number(BigInt(t.spendMinor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 })} · {t.impressions.toLocaleString()} imp · {t.clicks.toLocaleString()} clicks · {t.conversions} conv</span>
-            ))}
+      {/* DX2 (J2): "এই সপ্তাহে" strip — owner decision: ON TOP of the hub, above every view */}
+      <section aria-label="এই সপ্তাহে" className="space-y-2">
+        <h2 className="text-sm font-bold text-slate-900">📅 এই সপ্তাহে</h2>
+        {weekFailed ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span aria-hidden>⚠️</span>
+            <span className="leading-[1.7]">সাপ্তাহিক সারাংশ লোড হয়নি</span>
+            <button type="button" className="btn-secondary btn-sm min-h-[40px] font-semibold" onClick={() => { void loadWeekSummary(); }}>আবার চেষ্টা করুন</button>
           </div>
-          <div className="mt-2 space-y-0.5">
-            {portfolio.accounts.map((a) => (
-              <p key={a.adAccountId} className="text-xs text-slate-600">{a.name} ({a.platform ?? "—"}, {a.currency}): খরচ {(Number(BigInt(a.spendMinor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 })} · {a.impressions.toLocaleString()} imp · {a.conversions} conv · CPA {a.cpaMinor ? (Number(BigInt(a.cpaMinor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 }) : "—"}</p>
-            ))}
-          </div>
-          <p className="mt-1 text-[11px] text-slate-400">DailyAdMetric-এর Campaign-level Row থেকে — প্ল্যাটফর্মের রিপোর্ট করা সংখ্যা, নিজস্ব Attribution থেকে আলাদা।</p>
-        </div>
-      ) : null}
-
-      {/* Frontier NB8 (CN18): budget simulator + competitor-response draft */}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-semibold text-slate-800">🧮 Budget Simulator (CN18)</p>
-          <p className="mt-1 text-xs text-slate-500">শুধু নিজের শেষ ৯০ দিনের আসল Campaign Data থেকে — Data কম থাকলে Simulator সৎভাবে না বলবে; কোনো Industry Benchmark বা AI অনুমান নেই।</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <select className="input w-48" value={simForm.objective} onChange={(e) => setSimForm({ ...simForm, objective: e.target.value })}>
-              <option value="OUTCOME_SALES">Sales</option>
-              <option value="OUTCOME_TRAFFIC">Traffic</option>
-              <option value="OUTCOME_LEADS">Leads</option>
-              <option value="OUTCOME_ENGAGEMENT">Engagement</option>
-              <option value="OUTCOME_AWARENESS">Awareness</option>
-            </select>
-            <input className="input w-32" type="number" min="1" value={simForm.dailyBudget} onChange={(e) => setSimForm({ ...simForm, dailyBudget: e.target.value })} placeholder="দৈনিক ৳" />
-            <input className="input w-24" type="number" min="1" max="90" value={simForm.days} onChange={(e) => setSimForm({ ...simForm, days: e.target.value })} placeholder="দিন" />
-            <button type="button" className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
-              const res = await wrap("simulator", () => apiFetch<any>(`/organizations/${getOrganizationId()}/campaign-plans/budget-simulator`, { method: "POST", body: JSON.stringify({ objective: simForm.objective, dailyBudget: simForm.dailyBudget || "0", days: Number(simForm.days) || 30 }) }));
-              if (res) setSimResult(res);
-            }}>হিসাব করুন</button>
-          </div>
-          {simResult ? (
-            simResult.available ? (
-              <div className="mt-2 text-xs text-slate-600">
-                <p>{simResult.method}</p>
-                <p className="mt-1">নমুনা: <b>{simResult.sample.campaigns}</b>টি Campaign · <b>{simResult.sample.campaignDays}</b> Campaign-Day · Currency {simResult.currency} · Median CPM {(Number(simResult.medians.cpmMinor) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 })}৳ · CTR {simResult.medians.ctrPercent}%{simResult.medians.cpaMinor ? ` · Median CPA ${(Number(simResult.medians.cpaMinor) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 })}৳` : ""}</p>
-                <p className="mt-1">সম্ভাব্য পরিসর ({simResult.input.days} দিনে): Impressions <b>{simResult.projected.impressions.low.toLocaleString()}–{simResult.projected.impressions.high.toLocaleString()}</b> · Clicks <b>{simResult.projected.clicks.low.toLocaleString()}–{simResult.projected.clicks.high.toLocaleString()}</b>{simResult.projected.conversions ? <> · Conversions <b>{simResult.projected.conversions.low.toLocaleString()}–{simResult.projected.conversions.high.toLocaleString()}</b></> : " · Conversions: অতীত Data-তে নেই"}</p>
-                <p className="mt-1 text-slate-400">{simResult.note}</p>
+        ) : weekLoading || !weekSummary ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-hidden>
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="animate-pulse rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="h-3 w-24 rounded bg-slate-200" />
+                <div className="mt-3 h-6 w-32 rounded bg-slate-200" />
+                <div className="mt-2 h-3 w-40 rounded bg-slate-100" />
               </div>
-            ) : <p className="mt-2 text-xs font-medium text-amber-700">⛔ {simResult.reason}</p>
-          ) : null}
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-semibold text-slate-800">🎯 প্রতিযোগী-প্রতিক্রিয়া Draft (CN18)</p>
-          <p className="mt-1 text-xs text-slate-500">নিয়ম: প্রতিযোগীর কোনো লেখা, ছবি বা Asset খসড়ায় আসে না — আসে শুধু তাদের কোণ/কাঠামো (আমাদের Insight থেকে); সব Copy তৈরি হয় আপনার নিজের পণ্যের তথ্য থেকে। ফলাফল একটি সাধারণ DRAFT Plan।</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
-              const [comps, prods] = await Promise.all([
-                apiFetch<{ id: string; name: string }[]>(`/organizations/${getOrganizationId()}/competitors`).catch(() => []),
-                apiFetch<{ id: string; name: string }[]>(`/organizations/${getOrganizationId()}/products`).catch(() => []),
-              ]);
-              setRespLists({ competitors: Array.isArray(comps) ? comps : [], products: Array.isArray(prods) ? prods : [] });
-            }}>তালিকা লোড করুন</button>
-            <select className="input w-48" value={respForm.competitorId} onChange={(e) => setRespForm({ ...respForm, competitorId: e.target.value })}>
-              <option value="">প্রতিযোগী বেছে নিন</option>
-              {(respLists?.competitors ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <select className="input w-48" value={respForm.productId} onChange={(e) => setRespForm({ ...respForm, productId: e.target.value })}>
-              <option value="">নিজের পণ্য বেছে নিন</option>
-              {(respLists?.products ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <select className="input w-52" value={respForm.adAccountId} onChange={(e) => setRespForm({ ...respForm, adAccountId: e.target.value })}>
-              <option value="">Meta Account বেছে নিন</option>
-              {accounts.filter((a) => a.platform === "meta").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <button type="button" className="btn-primary btn-sm" disabled={busy !== "" || !respForm.competitorId || !respForm.productId || !respForm.adAccountId} onClick={async () => {
-              const res = await wrap("competitor-response", () => apiFetch<any>(`/organizations/${getOrganizationId()}/campaign-plans/competitor-response`, { method: "POST", body: JSON.stringify(respForm) }));
-              if (res) { setRespResult(res); setNotice(`প্রতিযোগী-প্রতিক্রিয়া Draft তৈরি: "${res.plan.name}" — Builder-এ খুলে ঠিক করে নিন।`); }
-            }}>Draft তৈরি করুন</button>
+            ))}
           </div>
-          {respResult ? (
-            <div className="mt-2 text-xs text-slate-600">
-              <p>কোণ (আমাদের Insight থেকে): <b>{respResult.angleNote}</b></p>
-              <p className="mt-1">{respResult.rule}</p>
-              <p className="mt-1">{respResult.note} <Link className="font-medium text-brand-600 hover:underline" href={`/dashboard/campaign-builder?id=${respResult.plan.id}`}>Builder-এ খুলুন →</Link></p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">💰 খরচ (শেষ ৭ দিন)</p>
+              {weekSummary.spendByCurrency.length === 0 ? (
+                <p className="mt-2 text-sm leading-[1.7] text-slate-500">এই সপ্তাহে কোনো খরচের ডেটা নেই — Synced Campaign Row পাওয়া যায়নি।</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {weekSummary.spendByCurrency.map((c) => {
+                    const ch = weekChange(c.thisWeekMinor, c.prevWeekMinor);
+                    return (
+                      <div key={c.currency}>
+                        <div className="text-lg font-bold text-slate-900">{fmtMinor(c.thisWeekMinor)} <span className="text-xs font-semibold text-slate-500">{c.currency}</span></div>
+                        <p className="text-xs leading-[1.7] text-slate-500">আগের সপ্তাহ: {fmtMinor(c.prevWeekMinor)} {c.currency}{ch ? <> · <span className="font-semibold text-slate-700">{ch.arrow} {ch.pct}%</span></> : <> · আগের সপ্তাহে খরচ ছিল না</>}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          ) : null}
-        </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">💡 সুপারিশ (CN7)</p>
+              <div className="mt-2 text-2xl font-bold text-slate-900">{weekSummary.recommendations.total.toLocaleString("bn-BD")}টি</div>
+              <p className="text-xs leading-[1.7] text-slate-500">{weekSummary.recommendations.plansChecked.toLocaleString("bn-BD")}টি Published Plan যাচাই করা হয়েছে</p>
+              {weekSummary.recommendations.topPlan ? (
+                <Link href={`/dashboard/campaign-builder?id=${weekSummary.recommendations.topPlan.planId}`} className="mt-1 block min-h-[40px] text-sm font-medium leading-[1.7] text-brand-600 hover:underline">সবচেয়ে বেশি: {weekSummary.recommendations.topPlan.name} ({weekSummary.recommendations.topPlan.count.toLocaleString("bn-BD")}টি) →</Link>
+              ) : (
+                <p className="mt-1 text-xs leading-[1.7] text-slate-400">কোনো Plan-এ সুপারিশ নেই।</p>
+              )}
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">🎨 Creative Fatigue</p>
+              <div className="mt-2 text-2xl font-bold text-slate-900">{weekSummary.fatigue.total.toLocaleString("bn-BD")}টি</div>
+              {weekSummary.fatigue.topPlan ? (
+                <Link href={`/dashboard/campaign-builder?id=${weekSummary.fatigue.topPlan.planId}`} className="mt-1 block min-h-[40px] text-sm font-medium leading-[1.7] text-brand-600 hover:underline">সবচেয়ে বেশি: {weekSummary.fatigue.topPlan.name} ({weekSummary.fatigue.topPlan.count.toLocaleString("bn-BD")}টি) →</Link>
+              ) : (
+                <p className="mt-1 text-xs leading-[1.7] text-slate-400">কোনো Creative-এ Fatigue ধরা পড়েনি।</p>
+              )}
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">🔁 Conversion Loop (CN14)</p>
+              {!weekSummary.offlineLoop.configured ? (
+                <>
+                  <p className="mt-2 flex items-start gap-2 text-sm leading-[1.7] text-slate-600"><span aria-hidden>🔌</span><span>Offline Conversion সেটআপ হয়নি</span></p>
+                  <Link href="/dashboard/ad-accounts" className="btn-secondary btn-sm mt-2 inline-flex min-h-[40px] items-center font-semibold">সেটআপ করুন</Link>
+                </>
+              ) : (
+                <Link href="/dashboard/ad-accounts" className="mt-2 block min-h-[40px]">
+                  {weekSummary.offlineLoop.lastSuccessAt ? (
+                    <p className="text-sm leading-[1.7] text-slate-700">সর্বশেষ সফল Upload: {new Date(weekSummary.offlineLoop.lastSuccessAt).toLocaleString("bn-BD")}{weekSummary.offlineLoop.lastSuccessPlatform ? ` (${weekSummary.offlineLoop.lastSuccessPlatform})` : ""}</p>
+                  ) : (
+                    <p className="text-sm leading-[1.7] text-slate-500">এখনো কোনো সফল Upload নেই</p>
+                  )}
+                  {weekSummary.offlineLoop.failedLast7Days > 0 ? (
+                    <span className="mt-1 inline-flex rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">শেষ ৭ দিনে {weekSummary.offlineLoop.failedLast7Days.toLocaleString("bn-BD")}টি Upload ব্যর্থ</span>
+                  ) : null}
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* DX2 hub views — the TabKey status tabs stay inside the Plans view below */}
+      <div className="flex gap-2 overflow-x-auto border-b border-slate-200" role="tablist" aria-label="Campaign Hub Views">
+        {([
+          { key: "plans", label: "📋 পরিকল্পনা" },
+          { key: "calendar", label: "📅 ক্যালেন্ডার" },
+          { key: "portfolio", label: "💼 পোর্টফোলিও" },
+        ] as { key: HubView; label: string }[]).map((v) => (
+          <button key={v.key} type="button" role="tab" aria-selected={hubView === v.key} onClick={() => setHubView(v.key)} className={`min-h-[44px] whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition ${hubView === v.key ? "border-brand-600 text-brand-600" : "border-transparent text-slate-600 hover:text-slate-900"}`}>{v.label}</button>
+        ))}
       </div>
 
+      {hubView === "plans" && (
+        <>
       {/* Global Alerts */}
       {error && (
         <div className="flex items-center justify-between rounded-xl bg-red-50 p-4 text-sm text-red-700 border border-red-200 shadow-sm">
@@ -641,7 +766,7 @@ export default function CampaignsPage() {
       )}
 
       {notice && (
-        <div className="flex items-center justify-between rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800 border border-emerald-200 shadow-sm">
+        <div role="status" className="flex items-center justify-between rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800 border border-emerald-200 shadow-sm">
           <div className="flex items-center gap-2">
             <span>✓</span>
             <span>{notice}</span>
@@ -649,6 +774,24 @@ export default function CampaignsPage() {
           <button onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">✕ বন্ধ</button>
         </div>
       )}
+
+      {/* DX2: "অসমাপ্ত কাজ" resume card — newest Draft plans; renders nothing when there are none */}
+      {resumeDrafts.length > 0 ? (
+        <div className="card space-y-3 p-4">
+          <h3 className="text-sm font-bold text-slate-900">✏️ অসমাপ্ত কাজ</h3>
+          <div className="space-y-2">
+            {resumeDrafts.map((p) => (
+              <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 p-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-800">{p.name}</div>
+                  <div className="text-xs leading-[1.7] text-slate-500">আপডেট: <span title={new Date(p.updatedAt).toLocaleString("bn-BD")}>{relTimeBn(p.updatedAt)}</span> · Ad Sets: {p.adSetCount}টি</div>
+                </div>
+                <Link href={`/dashboard/campaign-builder?id=${p.id}`} className="btn-secondary btn-sm inline-flex min-h-[40px] items-center font-semibold">চালিয়ে যান →</Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* Top Metric Cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -781,8 +924,11 @@ export default function CampaignsPage() {
       {/* ============================================================== */}
       {activeTab !== "blueprints" && (
         <div className="space-y-4">
-          {/* Search & Filters Card */}
-          <div className="card p-4 space-y-3">
+          {/* Search & Filters Card — Design Round 2: sticky on
+              desktop so the working controls stay reachable on
+              long lists (not sticky on mobile: the card is tall
+              and would eat the small viewport). */}
+          <div className="card p-4 space-y-3 lg:sticky lg:top-2 lg:z-30">
             {/* CN10: saved views (CN11 API) — the current filter state, restorable in one click */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-slate-500">Saved Views:</span>
@@ -893,7 +1039,20 @@ export default function CampaignsPage() {
           )}
 
           {/* Campaign Cards List */}
-          {filteredPlans.length === 0 ? (
+          {listLoading && filteredPlans.length === 0 ? (
+            <div className="space-y-3" aria-hidden>
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="animate-pulse card p-4">
+                  <div className="flex flex-wrap gap-2">
+                    <div className="h-5 w-24 rounded-full bg-slate-200" />
+                    <div className="h-5 w-32 rounded-full bg-slate-100" />
+                  </div>
+                  <div className="mt-3 h-4 w-2/3 rounded bg-slate-200" />
+                  <div className="mt-2 h-3 w-1/2 rounded bg-slate-100" />
+                </div>
+              ))}
+            </div>
+          ) : filteredPlans.length === 0 ? (
             <div className="card p-8">
               <EmptyState
                 title="কোনো ক্যাম্পেইন পাওয়া যায়নি"
@@ -909,7 +1068,7 @@ export default function CampaignsPage() {
               />
             </div>
           ) : (
-            <div className="space-y-3">
+            <div key={`${activeTab}-${statusFilter}-${objectiveFilter}-${page}`} className="r2-step-enter space-y-3">
               {filteredPlans.map((p) => {
                 const sMeta = getCampaignStatusBadge(p.status);
                 const oMeta = getCampaignObjectiveMeta(p.objective);
@@ -965,7 +1124,7 @@ export default function CampaignsPage() {
                             Ad Sets: <strong className="text-slate-700">{p.adSetCount}টি</strong>
                           </span>
                           <span>
-                            আপডেট: <strong className="text-slate-700">{new Date(p.updatedAt).toLocaleString()}</strong>
+                            আপডেট: <strong className="text-slate-700" title={new Date(p.updatedAt).toLocaleString("bn-BD")}>{relTimeBn(p.updatedAt)}</strong>
                           </span>
                         </div>
                       </div>
@@ -975,12 +1134,12 @@ export default function CampaignsPage() {
                         <div className="text-xs text-slate-400">📊 প্ল্যাটফর্ম মেট্রিক্স: ডেটা নেই — এই Plan এর কোনো Meta Campaign নেই।</div>
                       ) : p.performance ? (
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                          <span>খরচ: <b>{(Number(BigInt(p.performance.spendMinor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 })}</b></span>
-                          <span>Impressions: <b>{p.performance.impressions.toLocaleString()}</b></span>
-                          <span>Clicks: <b>{p.performance.clicks.toLocaleString()}</b></span>
+                          <span>খরচ: <b>{fmtMoneyBn(p.performance.spendMinor)}</b></span>
+                          <span>Impressions: <b>{fmtNumBn(p.performance.impressions)}</b></span>
+                          <span>Clicks: <b>{fmtNumBn(p.performance.clicks)}</b></span>
                           <span>CTR: <b>{p.performance.ctrPercent ?? "—"}%</b></span>
                           <span>Conversions: <b>{p.performance.conversions}</b></span>
-                          <span>CPA: <b>{p.performance.cpaMinor ? (Number(BigInt(p.performance.cpaMinor)) / 100).toLocaleString("bn-BD", { minimumFractionDigits: 2 }) : "—"}</b></span>
+                          <span>CPA: <b>{p.performance.cpaMinor ? fmtMoneyBn(p.performance.cpaMinor) : "—"}</b></span>
                         </div>
                       ) : null}
 
@@ -1110,7 +1269,11 @@ export default function CampaignsPage() {
               <p className="text-xs text-slate-400">Series তার Source Plan থেকে নিয়মিত Draft Instance তৈরি করে — প্রতিটি Instance আলাদাভাবে Approval Flow দিয়ে যায়, কিছুই নিজে থেকে Publish হয় না। নতুন Series তৈরি হয় Builder-এ Source Plan খুলে "🔁 Series" বোতামে।</p>
             </div>
             {seriesHub.length === 0 ? (
-              <p className="text-sm text-slate-400">এখনো কোনো Series নেই।</p>
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3">
+                <span aria-hidden>🔁</span>
+                <p className="text-sm leading-[1.7] text-slate-500">এখনো কোনো Series নেই।</p>
+                <Link href="/dashboard/campaign-builder" className="inline-flex min-h-[40px] items-center text-sm font-medium text-brand-600 hover:underline">Builder-এ গিয়ে Source Plan থেকে Series তৈরি করুন →</Link>
+              </div>
             ) : (
               <div className="space-y-2">
                 {seriesHub.map((s) => (
@@ -1127,47 +1290,6 @@ export default function CampaignsPage() {
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
-          </div>
-
-          {/* CN10 launch calendar — Plan-স্তরের তারিখ (প্রকাশিত / নির্ধারিত / তৈরি), শুধু লোড হওয়া সারি থেকে */}
-          <div className="card p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">📅 লঞ্চ ক্যালেন্ডার</h3>
-                <p className="text-xs text-slate-400">প্রকাশিত (Published), নির্ধারিত উৎক্ষেপণ (Scheduled) ও তৈরির তারিখ — এই পেজে লোড হওয়া Campaign গুলো থেকে। সক্রিয় Series-এর পরের Instance-ও (🟣 🔁) ক্যালেন্ডারে দেখানো হয়। Ad Set-এর তারিখ তালিকার ডেটায় নেই, তাই দেখানো হয়নি।</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button type="button" className="btn-secondary btn-sm font-semibold" onClick={() => setCalCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))}>←</button>
-                <span className="text-sm font-bold text-slate-800">{calCursor.toLocaleDateString("bn-BD", { month: "long", year: "numeric" })}</span>
-                <button type="button" className="btn-secondary btn-sm font-semibold" onClick={() => setCalCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>→</button>
-              </div>
-            </div>
-            {calMonthCount === 0 ? (
-              <div className="cbx-empty">
-                <div className="cbx-empty-title">এই মাসে কোনো Campaign-এর তারিখ নেই</div>
-                <div className="cbx-empty-text">লোড হওয়া Campaign গুলোর প্রকাশ/নির্ধারিত/তৈরির তারিখ এই মাসে পড়েনি।</div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-7 gap-1">
-                {["সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি", "রবি"].map((d) => (
-                  <div key={d} className="pb-1 text-center text-[11px] font-bold text-slate-400">{d}</div>
-                ))}
-                {calCells.map((cell) => {
-                  const items = calItems.get(`${cell.day.getFullYear()}-${cell.day.getMonth()}-${cell.day.getDate()}`) ?? [];
-                  return (
-                    <div key={cell.day.toISOString()} className={`min-h-[64px] rounded-lg border p-1 ${cell.inMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 text-slate-300"} ${cell.isToday ? "ring-2 ring-[var(--brand-ring)]" : ""}`}>
-                      <div className="text-[11px] font-bold">{cell.day.getDate()}</div>
-                      {items.slice(0, 2).map((it, i) => (
-                        <div key={i} className={`mt-0.5 truncate text-[10px] font-medium leading-tight ${it.kind === "series" ? "rounded bg-violet-100 px-1 text-violet-800" : ""}`} title={it.display}>
-                          <span>{it.kind === "published" ? "🟢" : it.kind === "scheduled" ? "🟠" : it.kind === "series" ? "🟣" : "⚪"}</span> {it.display}
-                        </div>
-                      ))}
-                      {items.length > 2 ? <div className="text-[10px] font-semibold text-slate-400">+{items.length - 2}টি আরও</div> : null}
-                    </div>
-                  );
-                })}
               </div>
             )}
           </div>
@@ -1223,6 +1345,175 @@ export default function CampaignsPage() {
               );
             })}
           </div>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* CN10 launch calendar — Plan-স্তরের তারিখ (প্রকাশিত / নির্ধারিত / তৈরি), শুধু লোড হওয়া সারি থেকে */}
+      {hubView === "calendar" && (
+          <div className="card p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">📅 লঞ্চ ক্যালেন্ডার</h3>
+                <p className="text-xs text-slate-400">প্রকাশিত (Published), নির্ধারিত উৎক্ষেপণ (Scheduled) ও তৈরির তারিখ — এই পেজে লোড হওয়া Campaign গুলো থেকে। সক্রিয় Series-এর পরের Instance-ও (🟣 🔁) ক্যালেন্ডারে দেখানো হয়। Ad Set-এর তারিখ তালিকার ডেটায় নেই, তাই দেখানো হয়নি।</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" className="btn-secondary btn-sm font-semibold" onClick={() => setCalCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))}>←</button>
+                <span className="text-sm font-bold text-slate-800">{calCursor.toLocaleDateString("bn-BD", { month: "long", year: "numeric" })}</span>
+                <button type="button" className="btn-secondary btn-sm font-semibold" onClick={() => setCalCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>→</button>
+              </div>
+            </div>
+            {calMonthCount === 0 ? (
+              <div className="cbx-empty">
+                <div className="cbx-empty-title">এই মাসে কোনো Campaign-এর তারিখ নেই</div>
+                <div className="cbx-empty-text">লোড হওয়া Campaign গুলোর প্রকাশ/নির্ধারিত/তৈরির তারিখ এই মাসে পড়েনি।</div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-7 gap-1">
+                {["সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি", "রবি"].map((d) => (
+                  <div key={d} className="pb-1 text-center text-[11px] font-bold text-slate-400">{d}</div>
+                ))}
+                {calCells.map((cell) => {
+                  const items = calItems.get(`${cell.day.getFullYear()}-${cell.day.getMonth()}-${cell.day.getDate()}`) ?? [];
+                  return (
+                    <div key={cell.day.toISOString()} className={`min-h-[64px] rounded-lg border p-1 ${cell.inMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 text-slate-300"} ${cell.isToday ? "ring-2 ring-[var(--brand-ring)]" : ""}`}>
+                      <div className="text-[11px] font-bold">{cell.day.getDate()}</div>
+                      {items.slice(0, 2).map((it, i) => (
+                        <div key={i} className={`mt-0.5 truncate text-[10px] font-medium leading-tight ${it.kind === "series" ? "rounded bg-violet-100 px-1 text-violet-800" : ""}`} title={it.display}>
+                          <span>{it.kind === "published" ? "🟢" : it.kind === "scheduled" ? "🟠" : it.kind === "series" ? "🟣" : "⚪"}</span> {it.display}
+                        </div>
+                      ))}
+                      {items.length > 2 ? <div className="text-[10px] font-semibold text-slate-400">+{items.length - 2}টি আরও</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+      )}
+
+      {hubView === "portfolio" && (
+        <div className="space-y-6">
+      {/* Global Alerts */}
+      {error && (
+        <div className="flex items-center justify-between rounded-xl bg-red-50 p-4 text-sm text-red-700 border border-red-200 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError("")} className="text-xs text-red-500 hover:text-red-700">✕ বন্ধ</button>
+        </div>
+      )}
+
+      {notice && (
+        <div role="status" className="flex items-center justify-between rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800 border border-emerald-200 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span>✓</span>
+            <span>{notice}</span>
+          </div>
+          <button onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">✕ বন্ধ</button>
+        </div>
+      )}
+
+      {/* CN8: Portfolio totals across ad accounts (platform-reported synced rows; currencies never mixed) */}
+      {portfolio && portfolio.accounts.length > 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-slate-800">💼 Portfolio — সব Ad Account মিলিয়ে (CN8)</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {portfolio.totalByCurrency.map((t) => (
+              <span key={t.currency} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700">মোট ({t.currency}): খরচ {fmtMoneyBn(t.spendMinor)} · {fmtNumBn(t.impressions)} imp · {fmtNumBn(t.clicks)} clicks · {t.conversions} conv</span>
+            ))}
+          </div>
+          <div className="mt-2 space-y-0.5">
+            {portfolio.accounts.map((a) => (
+              <p key={a.adAccountId} className="text-xs text-slate-600">{a.name} ({a.platform ?? "—"}, {a.currency}): খরচ {fmtMoneyBn(a.spendMinor)} · {fmtNumBn(a.impressions)} imp · {a.conversions} conv · CPA {a.cpaMinor ? fmtMoneyBn(a.cpaMinor) : "—"}</p>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">DailyAdMetric-এর Campaign-level Row থেকে — প্ল্যাটফর্মের রিপোর্ট করা সংখ্যা, নিজস্ব Attribution থেকে আলাদা।</p>
+        </div>
+      ) : null}
+
+      {portfolio && portfolio.accounts.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="flex items-start gap-2 text-sm leading-[1.7] text-slate-600"><span aria-hidden>💼</span><span>Portfolio ডেটা নেই — কোনো Ad Account-এ এখনো Synced Campaign খরচ পাওয়া যায়নি।</span></p>
+          <Link href="/dashboard/ad-accounts" className="mt-1 inline-flex min-h-[40px] items-center text-sm font-medium text-brand-600 hover:underline">Ad Accounts দেখুন →</Link>
+        </div>
+      ) : null}
+
+      {/* Frontier NB8 (CN18): budget simulator + competitor-response draft */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-slate-800">🧮 Budget Simulator (CN18)</p>
+          <p className="mt-1 text-xs leading-[1.7] text-slate-500">শুধু নিজের শেষ ৯০ দিনের আসল Campaign Data থেকে — Data কম থাকলে Simulator সৎভাবে না বলবে; কোনো Industry Benchmark বা AI অনুমান নেই।</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select className="input w-48" value={simForm.objective} onChange={(e) => setSimForm({ ...simForm, objective: e.target.value })}>
+              <option value="OUTCOME_SALES">Sales</option>
+              <option value="OUTCOME_TRAFFIC">Traffic</option>
+              <option value="OUTCOME_LEADS">Leads</option>
+              <option value="OUTCOME_ENGAGEMENT">Engagement</option>
+              <option value="OUTCOME_AWARENESS">Awareness</option>
+            </select>
+            <input className="input w-32" type="number" min="1" value={simForm.dailyBudget} onChange={(e) => setSimForm({ ...simForm, dailyBudget: e.target.value })} placeholder="দৈনিক ৳" />
+            <input className="input w-24" type="number" min="1" max="90" value={simForm.days} onChange={(e) => setSimForm({ ...simForm, days: e.target.value })} placeholder="দিন" />
+            <button type="button" className="btn-primary btn-sm" disabled={busy !== ""} onClick={async () => {
+              const res = await wrap("simulator", () => apiFetch<any>(`/organizations/${getOrganizationId()}/campaign-plans/budget-simulator`, { method: "POST", body: JSON.stringify({ objective: simForm.objective, dailyBudget: simForm.dailyBudget || "0", days: Number(simForm.days) || 30 }) }));
+              if (res) setSimResult(res);
+            }}>হিসাব করুন</button>
+          </div>
+          {simResult ? (
+            simResult.available ? (
+              <div className="mt-2 text-xs leading-[1.7] text-slate-600">
+                <p className="text-sm text-slate-800">সম্ভাব্য পরিসর ({fmtNumBn(simResult.input.days)} দিনে): Impressions <b>{fmtNumBn(simResult.projected.impressions.low)}–{fmtNumBn(simResult.projected.impressions.high)}</b> · Clicks <b>{fmtNumBn(simResult.projected.clicks.low)}–{fmtNumBn(simResult.projected.clicks.high)}</b>{simResult.projected.conversions ? <> · Conversions <b>{fmtNumBn(simResult.projected.conversions.low)}–{fmtNumBn(simResult.projected.conversions.high)}</b></> : " · Conversions: অতীত Data-তে নেই"}</p>
+                <p className="mt-1">নমুনা: <b>{fmtNumBn(simResult.sample.campaigns)}</b>টি Campaign · <b>{fmtNumBn(simResult.sample.campaignDays)}</b> Campaign-Day · Currency {simResult.currency} · Median CPM {fmtMoneyBn(simResult.medians.cpmMinor)} · CTR {simResult.medians.ctrPercent}%{simResult.medians.cpaMinor ? ` · Median CPA ${fmtMoneyBn(simResult.medians.cpaMinor)}` : ""}</p>
+                <p className="mt-1 text-slate-500">{simResult.method}</p>
+                <p className="mt-1 text-slate-400">{simResult.note}</p>
+              </div>
+            ) : (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-[1.7] text-amber-800">
+                <p>⛔ {simResult.reason}</p>
+                <p className="mt-1">পরের পদক্ষেপ: এই Objective-এ আরও Campaign চালিয়ে আসল খরচের Data জমতে দিন — Data যথেষ্ট হলেই Simulator হিসাব দেবে।</p>
+              </div>
+            )
+          ) : null}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-slate-800">🎯 প্রতিযোগী-প্রতিক্রিয়া Draft (CN18)</p>
+          <p className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs leading-[1.7] text-slate-600">🛡 নিয়ম: প্রতিযোগীর কোনো লেখা, ছবি বা Asset খসড়ায় আসে না — আসে শুধু তাদের কোণ/কাঠামো (আমাদের Insight থেকে); সব Copy তৈরি হয় আপনার নিজের পণ্যের তথ্য থেকে। ফলাফল একটি সাধারণ DRAFT Plan।</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
+              const [comps, prods] = await Promise.all([
+                apiFetch<{ id: string; name: string }[]>(`/organizations/${getOrganizationId()}/competitors`).catch(() => []),
+                apiFetch<{ id: string; name: string }[]>(`/organizations/${getOrganizationId()}/products`).catch(() => []),
+              ]);
+              setRespLists({ competitors: asList(comps), products: asList(prods) });
+            }}>তালিকা লোড করুন</button>
+            <select className="input w-48" value={respForm.competitorId} onChange={(e) => setRespForm({ ...respForm, competitorId: e.target.value })}>
+              <option value="">প্রতিযোগী বেছে নিন</option>
+              {(respLists?.competitors ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <select className="input w-48" value={respForm.productId} onChange={(e) => setRespForm({ ...respForm, productId: e.target.value })}>
+              <option value="">নিজের পণ্য বেছে নিন</option>
+              {(respLists?.products ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select className="input w-52" value={respForm.adAccountId} onChange={(e) => setRespForm({ ...respForm, adAccountId: e.target.value })}>
+              <option value="">Meta Account বেছে নিন</option>
+              {accounts.filter((a) => a.platform === "meta").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <button type="button" className="btn-primary btn-sm" disabled={busy !== "" || !respForm.competitorId || !respForm.productId || !respForm.adAccountId} onClick={async () => {
+              const res = await wrap("competitor-response", () => apiFetch<any>(`/organizations/${getOrganizationId()}/campaign-plans/competitor-response`, { method: "POST", body: JSON.stringify(respForm) }));
+              if (res) { setRespResult(res); setNotice(`প্রতিযোগী-প্রতিক্রিয়া Draft তৈরি: "${res.plan.name}" — Builder-এ খুলে ঠিক করে নিন।`); }
+            }}>Draft তৈরি করুন</button>
+          </div>
+          {respResult ? (
+            <div className="mt-2 text-xs text-slate-600">
+              <p>কোণ (আমাদের Insight থেকে): <b>{respResult.angleNote}</b></p>
+              <p className="mt-1">{respResult.rule}</p>
+              <p className="mt-1">{respResult.note} <Link className="font-medium text-brand-600 hover:underline" href={`/dashboard/campaign-builder?id=${respResult.plan.id}`}>Builder-এ খুলুন →</Link></p>
+            </div>
+          ) : null}
+        </div>
+      </div>
         </div>
       )}
 
@@ -1315,15 +1606,44 @@ export default function CampaignsPage() {
         </div>
       )}
 
-      {/* NB7 CN16: Full-funnel Wizard Modal */}
+      {/* NB7 CN16 wizard — DX3 J4: full-screen flow. Left: the
+          three layers as a visual map; right: the same form,
+          same submitFunnel call, same layer semantics. */}
       {showFunnel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl space-y-4">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">🧭 Full-funnel Wizard</h3>
-              <p className="text-xs text-slate-500">একটিই Plan — Prospecting, Retargeting ও Retention Layer আলাদা Ad Set হিসেবে তৈরি হবে, প্রতিটিতে আপনার লেখা Starter Ad সহ। যেই Layer-এর ইনপুট (যেমন Audience Source-এ Contact) নেই, সেটি অসম্পূর্ণ (Incomplete) হিসেবে কারণসহ তৈরি হবে — চুপচাপ বাদ যাবে না। Plan টি Draft থাকবে; Publish আগের মতোই Approval Flow দিয়ে।</p>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50">
+          <div className="mx-auto w-full max-w-6xl space-y-4 p-4 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">🧭 Full-funnel Wizard</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-[1.7] text-slate-500">একটিই Plan — Prospecting, Retargeting ও Retention Layer আলাদা Ad Set হিসেবে তৈরি হবে, প্রতিটিতে আপনার লেখা Starter Ad সহ। যেই Layer-এর ইনপুট (যেমন Audience Source-এ Contact) নেই, সেটি অসম্পূর্ণ (Incomplete) হিসেবে কারণসহ তৈরি হবে — চুপচাপ বাদ যাবে না। Plan টি Draft থাকবে; Publish আগের মতোই Approval Flow দিয়ে।</p>
+              </div>
+              <button type="button" className="btn-secondary btn-sm min-h-[40px]" onClick={() => setShowFunnel(false)}>বন্ধ করুন</button>
             </div>
 
+            {funnelSourcesFailed ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-[1.7] text-amber-800">⚠ Audience Source-এর সংখ্যা এখন লোড করা যাচ্ছে না — সংখ্যা ছাড়াই Wizard আগের মতোই চলবে, কোনো Layer এতে আটকাবে না।</p>
+            ) : null}
+
+            <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+              <div className="space-y-2 lg:sticky lg:top-4">
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                  <div className="text-sm font-bold text-slate-800">🧭 Prospecting — নতুন মানুষ</div>
+                  <p className="mt-1 text-xs leading-[1.7] text-slate-600">যারা এখনো আপনার ব্যবসা চেনে না — দেশ/বয়স অনুযায়ী নতুন Audience। এই Layer সবসময় তৈরি হয়।</p>
+                </div>
+                <div className="text-center text-sm text-slate-400">↓</div>
+                <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+                  <div className="text-sm font-bold text-slate-800">🧭 Retargeting — দেখেছে, কিনেনি</div>
+                  <p className="mt-1 text-xs leading-[1.7] text-slate-600">Product Viewers + Cart Abandoners — পণ্য দেখেছে বা Cart-এ রেখেছে, কিন্তু কিনেনি।</p>
+                </div>
+                <div className="text-center text-sm text-slate-400">↓</div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="text-sm font-bold text-slate-800">🧭 Retention — আগের Buyers</div>
+                  <p className="mt-1 text-xs leading-[1.7] text-slate-600">যারা ইতিমধ্যে কিনেছে — তাদের কাছে আবার কেনার প্রস্তাব।</p>
+                </div>
+                <p className="text-xs leading-[1.7] text-slate-500">তিন Layer একই Plan-এর Ad Set; Budget Mode ও Cap পুরো Plan জুড়ে প্রযোজ্য।</p>
+              </div>
+
+              <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">Plan এর নাম<input className="input mt-1 w-full" value={funnelForm.name} onChange={(e) => setFunnelForm({ ...funnelForm, name: e.target.value })} placeholder="যেমন: Full Funnel — Eid" /></label>
               <label className="block text-sm">Meta Ad Account
@@ -1370,12 +1690,14 @@ export default function CampaignsPage() {
             </div>
 
             <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-3">
-              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={funnelForm.useRetargeting} onChange={(e) => setFunnelForm({ ...funnelForm, useRetargeting: e.target.checked })} /> 🧭 Retargeting Layer যোগ করুন (Product Viewers + Cart Abandoners)</label>
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={funnelForm.useRetargeting} onChange={(e) => setFunnelForm({ ...funnelForm, useRetargeting: e.target.checked })} /> 🧭 Retargeting Layer যোগ করুন (Product Viewers + Cart Abandoners) — Source-এ কেউ না থাকলে অসম্পূর্ণ Ad Set হিসেবে তৈরি হবে</label>
+              {funnelSourceLines("retargeting")}
               {funnelForm.useRetargeting ? <label className="block text-sm">দৈনিক বাজেট (টাকা)<input className="input mt-1 w-full" value={funnelForm.reDaily} onChange={(e) => setFunnelForm({ ...funnelForm, reDaily: e.target.value })} placeholder="500" /></label> : null}
             </div>
 
             <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={funnelForm.useRetention} onChange={(e) => setFunnelForm({ ...funnelForm, useRetention: e.target.checked })} /> 🧭 Retention Layer যোগ করুন (আগের Buyers)</label>
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={funnelForm.useRetention} onChange={(e) => setFunnelForm({ ...funnelForm, useRetention: e.target.checked })} /> 🧭 Retention Layer যোগ করুন (আগের Buyers) — Source-এ Buyer না থাকলে অসম্পূর্ণ Ad Set হিসেবে তৈরি হবে</label>
+              {funnelSourceLines("retention")}
               {funnelForm.useRetention ? (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label className="block text-sm">দৈনিক বাজেট (টাকা)<input className="input mt-1 w-full" value={funnelForm.rnDaily} onChange={(e) => setFunnelForm({ ...funnelForm, rnDaily: e.target.value })} placeholder="300" /></label>
@@ -1384,6 +1706,10 @@ export default function CampaignsPage() {
                 </div>
               ) : null}
             </div>
+
+            {(funnelForm.useRetargeting || funnelForm.useRetention) ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-[1.7] text-amber-800">⚠ চালু করা Layer-এর Source খালি থাকলে সেই Layer অসম্পূর্ণ Ad Set হিসেবে কারণসহ তৈরি হবে — বাদ যাবে না। তৈরি হওয়ার পর Builder-এর Readiness-এ কারণটি দেখা যাবে।</p>
+            ) : null}
 
             {funnelResult ? (
               <div className="space-y-2 rounded-lg bg-slate-50 p-3">
@@ -1395,15 +1721,17 @@ export default function CampaignsPage() {
                     {!l.reason && l.missingSources?.length ? <span className="text-xs text-slate-500">Missing Source: {l.missingSources.join(", ")}</span> : null}
                   </div>
                 ))}
-                <Link href={`/dashboard/campaign-builder?id=${funnelResult.plan.id}`} className="btn-primary btn-sm inline-flex font-semibold">Builder-এ Plan টি খুলুন →</Link>
+                <Link href={`/dashboard/campaign-builder?id=${funnelResult.plan.id}&step=4`} className="btn-primary btn-sm inline-flex font-semibold">Builder-এ Plan টি খুলুন (Review ধাপে) →</Link>
               </div>
             ) : null}
 
             <div className="flex justify-end gap-2 pt-2 border-t">
-              <button type="button" className="btn-secondary btn-sm" onClick={() => setShowFunnel(false)}>বন্ধ করুন</button>
-              <button type="button" className="btn-primary btn-sm" disabled={busy === "funnel-create"} onClick={submitFunnel}>
+              <button type="button" className="btn-secondary btn-sm min-h-[40px]" onClick={() => setShowFunnel(false)}>বন্ধ করুন</button>
+              <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy === "funnel-create"} onClick={submitFunnel}>
                 {busy === "funnel-create" ? "তৈরি হচ্ছে..." : "🧭 Full-funnel Plan তৈরি করুন"}
               </button>
+            </div>
+              </div>
             </div>
           </div>
         </div>
