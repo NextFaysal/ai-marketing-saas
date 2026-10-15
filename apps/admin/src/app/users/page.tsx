@@ -94,7 +94,7 @@ export default function UsersPage() {
           ))}</tbody>
         </DataTable>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
-        {sorted.length === 0 && !loading ? <EmptyState title="কোনো User পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
+        {sorted.length === 0 && !loading && !error ? <EmptyState title="কোনো User পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>
 
       <DetailDrawer

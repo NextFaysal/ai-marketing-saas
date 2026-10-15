@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState } from "@/components/ui";
+import { EmptyState, ErrorState } from "@/components/ui";
 import { useNavCounts, presentCounts } from "@/components/useNavCounts";
 import type { NavCounts } from "@/components/nav";
 import { apiFetch, formatMinorStr } from "@/lib/api";
@@ -180,6 +180,14 @@ export default function OverviewPage() {
         </div>
       )}
 
+      {/* ADNX4: full-page skeleton — the lower blocks also get a
+          skeleton on first load (before, only the KPI grid did). */}
+      {!data && !error ? (
+        <div className="mt-5 grid gap-4 xl:grid-cols-[1.6fr_1fr]" aria-hidden="true">
+          <div className="askel h-56" /><div className="askel h-56" />
+        </div>
+      ) : null}
+
       {/* RB6/RM12: Storage card — StoredFile registry totals.
           Hidden entirely when the overview cannot be loaded. */}
       {storage && storage.registryAvailable ? (
@@ -240,8 +248,10 @@ export default function OverviewPage() {
             <div className="font-semibold">সাম্প্রতিক Admin কার্যকলাপ</div>
             <a className="text-sm font-medium text-indigo-300 hover:text-indigo-200" href="/audit">সব Audit →</a>
           </div>
-          {!data ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
-            : data.recentAdminActions.length === 0 ? <p className="text-sm text-slate-500">এখনো কোনো Admin অ্যাকশন হয়নি।</p> : (
+          {!data && !error ? (
+              <div className="space-y-2.5" aria-hidden="true"><div className="askel-line" /><div className="askel-line" /><div className="askel-line" /><div className="askel-line" /></div>
+            ) : !data ? null
+            : data.recentAdminActions.length === 0 ? <EmptyState title="এখনো কোনো Admin অ্যাকশন হয়নি।" sub="কোনো Admin অ্যাকশন হলেই সর্বশেষগুলো এখানে দেখা যাবে।" /> : (
               <ol className="relative space-y-0 border-l border-slate-800 pl-5">
                 {data.recentAdminActions.map((a) => (
                   <li key={a.id} className="relative pb-4 last:pb-0">

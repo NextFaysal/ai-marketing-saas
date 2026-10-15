@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
+import { EmptyState, ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { API_URL, apiFetch, formatMinorStr, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -42,6 +42,7 @@ export default function BillingPage() {
   // "লোড হচ্ছে…" forever; it now gets an error state + retry.
   const [loadFailed, setLoadFailed] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadFailed(false);
     const summary = await apiFetch<Summary>("/admin/billing/summary").catch(() => null);
     setLoadFailed(summary === null);
     setSum(summary);
@@ -170,6 +171,7 @@ export default function BillingPage() {
         <label className="block text-sm">সর্বোচ্চ ব্যবহার (ঐচ্ছিক)<input id="cp-max" type="number" min="1" className="ainput mt-1" /></label>
       </div>
       <button className="abtn mt-3" onClick={createCoupon}>Coupon তৈরি করুন</button>
+      {coupons.length === 0 ? <div className="mt-3"><EmptyState title="কোনো Coupon নেই।" sub="উপরে প্রথম Coupon তৈরি করুন।" /></div> : null}
       {coupons.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-sm">
           {coupons.map((c) => (
@@ -247,7 +249,7 @@ export default function BillingPage() {
           </tr>
         ))}</tbody>
       </table>
-      {payments.length === 0 ? <p className="p-4 text-sm text-slate-500">এখনো কোনো পেমেন্ট রেকর্ড হয়নি।</p> : null}
+      {payments.length === 0 ? <div className="p-4"><EmptyState title="এখনো কোনো পেমেন্ট রেকর্ড হয়নি।" sub="Manual পেমেন্ট রেকর্ড করলেই বা Online Checkout সফল হলেই এখানে দেখা যাবে।" /></div> : null}
     </div>
   );
 
@@ -255,7 +257,7 @@ export default function BillingPage() {
     <div className="acard">
       <div className="mb-1 font-semibold">🧾 Online Checkout (Reconciliation)</div>
       <p className="mb-3 text-xs text-slate-500">Gateway Checkout গুলোর অবস্থা। <span className="text-amber-300">আটকে আছে</span> = ১ ঘণ্টার বেশি Initiated — "যাচাই করুন" Gateway এর নিজের রেকর্ড থেকে আবার নিশ্চিত করে (IPN হারিয়ে গেলে এটাই পুনরুদ্ধারের পথ)।</p>
-      {checkouts.length === 0 ? <p className="text-sm text-slate-500">কোনো Online Checkout নেই।</p> : (
+      {checkouts.length === 0 ? <EmptyState title="কোনো Online Checkout নেই।" sub="কোনো Tenant Online Checkout শুরু করলে এখানে দেখা যাবে।" /> : (
         <div className="overflow-x-auto">
           <table className="atable atable-cards atable-v3">
             <thead><tr><th className="ath">সময়</th><th className="ath">Org / প্ল্যান</th><th className="ath">Gateway</th><th className="ath">পরিমাণ</th><th className="ath">অবস্থা</th><th className="ath"></th></tr></thead>
@@ -279,7 +281,7 @@ export default function BillingPage() {
     <div className="acard">
       <div className="mb-1 font-semibold">📮 Dunning (PAST_DUE Reminder)</div>
       <p className="mb-3 text-xs text-slate-500">Reminder পাঠাতে Automations এ <code>dunning_reminders</code> Job তৈরি করুন (প্রতি Org এর জন্য)। প্রতিটি Stage (১/৩/৭ দিন) একবারই যায় — পাঠানো Stage এখানে দেখা যায়।</p>
-      {dunning.length === 0 ? <p className="text-sm text-emerald-300">কোনো PAST_DUE Org নেই।</p> : (
+      {dunning.length === 0 ? <EmptyState title="কোনো PAST_DUE Org নেই।" sub="সব Subscription হালনাগাদ আছে — Dunning লাগছে না।" /> : (
         <ul className="space-y-1.5 text-sm">{dunning.map((d) => (
           <li key={d.organizationId} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
             <a className="text-indigo-300 hover:underline" href={`/orgs/${d.organizationId}`}>{d.organizationName}</a>
@@ -293,7 +295,12 @@ export default function BillingPage() {
   return (
     <AdminShell title="💳 SaaS Billing">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
-      {!sum && loadFailed ? <ErrorState message="Billing Summary লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : !sum ? <p className="text-slate-400">লোড হচ্ছে…</p> : (
+      {!sum && loadFailed ? <ErrorState message="Billing Summary লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : !sum ? (
+        <div aria-hidden="true">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="askel-card" />)}</div>
+          <div className="askel-table mt-5" />
+        </div>
+      ) : (
         <>
           {/* ADX7 KPI strip — all five figures come from the billing
               summary the page already loads (the overdue count is

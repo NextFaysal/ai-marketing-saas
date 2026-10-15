@@ -3,7 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonDialog } from "@/components/AdminShell";
 import Breadcrumb from "@/components/Breadcrumb";
-import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
+import { EmptyState, ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -45,6 +45,7 @@ export default function OrgDetailPage() {
   // on "লোড হচ্ছে…" forever — same text as a slow load).
   const [loadFailed, setLoadFailed] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadFailed(false);
     const d = await apiFetch<OrgDetail>(`/admin/orgs/${id}`).catch(() => null);
     setLoadFailed(d === null);
     setData(d);
@@ -67,7 +68,7 @@ export default function OrgDetailPage() {
       await load();
     } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
   }
-  if (!data) return <AdminShell title="🏢 Organization">{loadFailed ? <ErrorState message="Organization লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-slate-400">লোড হচ্ছে…</p>}</AdminShell>;
+  if (!data) return <AdminShell title="🏢 Organization">{loadFailed ? <ErrorState message="Organization লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="space-y-4" aria-hidden="true"><div className="askel-card" /><div className="askel-table" /></div>}</AdminShell>;
   return (
     <AdminShell title={`🏢 ${data.name}`}>
       <Breadcrumb className="mb-4" items={[{ label: "Organizations", href: "/orgs" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />
@@ -99,6 +100,7 @@ export default function OrgDetailPage() {
             </div>
             <div className="pt-2 font-medium">সদস্যবৃন্দ</div>
             {data.members.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.user?.name ?? "?"} <span className="text-slate-500">{m.user?.email}</span> — <b>{m.role}</b>{m.user?.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{m.user?.status}</span> : null}</div>)}
+            {data.members.length === 0 ? <EmptyState title="কোনো সদস্য নেই।" sub="এই Organization-এ এখনো কোনো সদস্য যোগ হয়নি।" /> : null}
             <div className="pt-2 font-medium">Integrations (শুধু অবস্থা — গোপন তথ্য কখনো দেখানো হয় না)</div>
             {data.integrations.map((i) => <div key={i.id} className="rounded-lg bg-slate-800 px-3 py-2">{i.provider} — {i.status}</div>)}
             {data.integrations.length === 0 ? <p className="text-slate-500">কোনো Integration নেই।</p> : null}
@@ -197,6 +199,7 @@ export default function OrgDetailPage() {
                 </label>
               );
             })}
+            {flags.knownFlags.length === 0 ? <EmptyState title="কোনো Feature Flag নেই।" sub="এই Org-এর জন্য কোনো Flag সংজ্ঞায়িত নেই।" /> : null}
             <p className="text-xs text-slate-500">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
           </div>
         </div>
@@ -206,11 +209,11 @@ export default function OrgDetailPage() {
         <div className="atab-panel">
           <div className="acard space-y-2">
             <div className="font-semibold">🕵 Support View (শুধু সারসংক্ষেপ)</div>
-            {!support ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+            {!support ? <div className="askel-line" aria-hidden="true" /> : (
               <>
                 <div className="text-sm text-slate-400">সাম্প্রতিক Order</div>
                 {support.recentOrders.map((o) => <div key={o.id} className="rounded bg-slate-800 px-2 py-1.5 text-sm">#{o.externalNumber ?? o.id.slice(0, 8)} · {o.status} · {o.totalMinor}</div>)}
-                {support.recentOrders.length === 0 ? <p className="text-sm text-slate-500">কোনো Order নেই।</p> : null}
+                {support.recentOrders.length === 0 ? <EmptyState title="কোনো Order নেই।" sub="এই Organization-এর কোনো Order এখনো আসেনি।" /> : null}
                 <div className="pt-1 text-sm text-slate-400">সাম্প্রতিক কথোপকথন (বডি দেখতে কারণ লাগবে)</div>
                 {support.recentConversations.map((c) => (
                   <div key={c.id} className="flex items-center justify-between rounded bg-slate-800 px-2 py-1.5 text-sm">
@@ -225,6 +228,7 @@ export default function OrgDetailPage() {
                     }}>দেখুন</button>
                   </div>
                 ))}
+                {support.recentConversations.length === 0 ? <EmptyState title="কোনো কথোপকথন নেই।" sub="এই Organization-এর কোনো কথোপকথন এখনো আসেনি।" /> : null}
                 {convMessages.length > 0 ? (
                   <div className="max-h-56 space-y-1 overflow-auto rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
                     <div className="text-xs text-amber-300">⚠ এই Content Access Audit Log এ রেকর্ড হয়েছে।</div>
@@ -248,6 +252,7 @@ export default function OrgDetailPage() {
               <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
             </div>
             <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
+            {notes.length === 0 ? <EmptyState title="কোনো নোট নেই।" sub="উপরে প্রথম অভ্যন্তরীণ নোট যোগ করুন।" /> : null}
           </div>
         </div>
       ) : null}
@@ -293,8 +298,8 @@ function OrgHistory({ orgId }: { orgId: string }) {
   return (
     <div className="acard mt-4">
       <div className="mb-3 font-semibold">📜 Org 360 ইতিহাস (Audit + পেমেন্ট + অর্ডার + কথোপকথন + Sync + Ticket)</div>
-      {events === null ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
-        : events.length === 0 ? <p className="text-sm text-slate-500">কোনো ইভেন্ট নেই।</p> : (
+      {events === null ? <div className="askel-line" aria-hidden="true" />
+        : events.length === 0 ? <EmptyState title="কোনো ইভেন্ট নেই।" sub="এই Org-এর ইতিহাসে এখনো কোনো ইভেন্ট রেকর্ড হয়নি।" /> : (
           <ol className="relative border-l border-slate-800 pl-5">
             {events.slice(0, 30).map((e, i) => (
               <li key={i} className="relative pb-3.5 last:pb-0">

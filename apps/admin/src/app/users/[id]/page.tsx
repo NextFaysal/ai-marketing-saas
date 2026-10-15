@@ -3,7 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonDialog } from "@/components/AdminShell";
 import Breadcrumb from "@/components/Breadcrumb";
-import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
+import { EmptyState, ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -31,6 +31,7 @@ export default function UserDetailPage() {
   // ADX12: detail-load failure state (see org detail).
   const [loadFailed, setLoadFailed] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadFailed(false);
     const d = await apiFetch<Detail>(`/admin/users/${id}`).catch(() => null);
     setLoadFailed(d === null);
     setData(d);
@@ -47,7 +48,7 @@ export default function UserDetailPage() {
     } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
   }
 
-  if (!data) return <AdminShell title="👤 User">{loadFailed ? <ErrorState message="User লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-slate-400">লোড হচ্ছে…</p>}</AdminShell>;
+  if (!data) return <AdminShell title="👤 User">{loadFailed ? <ErrorState message="User লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="space-y-4" aria-hidden="true"><div className="askel-card" /><div className="askel-table" /></div>}</AdminShell>;
   return (
     <AdminShell title={`👤 ${data.name}`}>
       <Breadcrumb className="mb-4" items={[{ label: "Users", href: "/users" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />
@@ -82,7 +83,7 @@ export default function UserDetailPage() {
             <div><span className="text-slate-400">2FA:</span> {data.totpEnabled ? "চালু" : "বন্ধ"}</div>
             <div className="pt-2 font-medium">Membership সমূহ</div>
             {data.memberships.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.organizationName ?? m.organizationId} — <b>{m.role}</b></div>)}
-            {data.memberships.length === 0 ? <p className="text-slate-500">কোনো Organization এ সদস্য নন।</p> : null}
+            {data.memberships.length === 0 ? <EmptyState title="কোনো Organization এ সদস্য নন।" sub="এই User এখনো কোনো Organization-এ যোগ দেননি।" /> : null}
           </div>
         </div>
       ) : null}
@@ -92,6 +93,7 @@ export default function UserDetailPage() {
           <div className="acard">
             <div className="mb-2 font-semibold">সাম্প্রতিক কার্যকলাপ (Audit)</div>
             <ul className="space-y-1 text-sm text-slate-400">{data.auditTrail.map((a) => <li key={a.id} className="flex justify-between border-b border-slate-800 pb-1"><span>{a.action}</span><span>{fmtDateTime(a.createdAt)}</span></li>)}</ul>
+            {data.auditTrail.length === 0 ? <EmptyState title="কোনো কার্যকলাপ নেই।" sub="এই User-এর Audit-এ এখনো কোনো অ্যাকশন রেকর্ড হয়নি।" /> : null}
           </div>
         </div>
       ) : null}
@@ -105,6 +107,7 @@ export default function UserDetailPage() {
               <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "user", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
             </div>
             <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
+            {notes.length === 0 ? <EmptyState title="কোনো নোট নেই।" sub="উপরে প্রথম অভ্যন্তরীণ নোট যোগ করুন।" /> : null}
           </div>
         </div>
       ) : null}
