@@ -15,7 +15,7 @@ import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
 import { SocialShareService } from "./social-share.service";
 import {
-  BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
+  BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
   AssignSocialPostDto, CreateShareLinkDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
@@ -319,6 +319,24 @@ export class SocialController {
   @Post("posts/ai-script") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   generateScript(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateSocialScriptDto) {
     return this.socialAi.generateScript(orgId, user.userId, dto);
+  }
+
+  // SN4: AI platform variants / translation / carousel outline —
+  // all literal segments under posts (beside ai-script), all
+  // RETURN ONLY from the service (nothing is saved).
+  @Post("posts/ai-variants") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateVariants(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateSocialVariantsDto) {
+    return this.socialAi.generateVariants(orgId, user.userId, dto);
+  }
+
+  @Post("posts/ai-translate") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  translateText(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: TranslateSocialTextDto) {
+    return this.socialAi.translateText(orgId, user.userId, dto);
+  }
+
+  @Post("posts/ai-carousel-outline") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateCarouselOutline(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateCarouselOutlineDto) {
+    return this.socialAi.generateCarouselOutline(orgId, user.userId, dto);
   }
 
   // SU4: saved content plans — "content-plans" is its own first

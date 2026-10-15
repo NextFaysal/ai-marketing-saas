@@ -300,6 +300,29 @@ export class BulkSocialPostsDto {
   @IsOptional() @IsString() scheduledAt?: string;
 }
 
+// SN4: AI platform variants — an existing caption re-shaped per
+// platform (RETURN ONLY; nothing is saved). platforms is the
+// closed set checked in the service (unknown values are filtered
+// there, an all-unknown list is a Bengali 400 there).
+export class GenerateSocialVariantsDto {
+  @IsString() @MaxLength(2200) caption!: string;
+  @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) platforms!: string[];
+  @IsOptional() @IsString() @MaxLength(120) tone?: string;
+}
+
+// SN4: AI translation of a caption/text (RETURN ONLY). The
+// target language is the closed bn/en pair (also re-checked in
+// the service for direct callers).
+export class TranslateSocialTextDto {
+  @IsString() @MaxLength(2200) text!: string;
+  @IsIn(["bn", "en"]) targetLang!: string;
+}
+
+// SN4: AI carousel outline from a caption (RETURN ONLY).
+export class GenerateCarouselOutlineDto {
+  @IsString() @MaxLength(2200) caption!: string;
+}
+
 export class CreateTemplateImageDto {
   @IsOptional() @IsString() mediaAssetId?: string;
   @IsOptional() @IsString() productId?: string;
