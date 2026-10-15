@@ -48,7 +48,7 @@ export default function AdminLoginPage() {
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-lg shadow-[0_10px_24px_-8px_rgb(99_102_241/0.9)]">🛡</span>
           <div>
             <div className="text-lg font-bold tracking-tight">Qosprey Admin</div>
-            <div className="text-xs text-slate-500">SaaS Operator Console</div>
+            <div className="text-xs text-slate-400">SaaS Operator Console</div>
           </div>
         </div>
         <div className="relative max-w-md space-y-5">
@@ -73,16 +73,19 @@ export default function AdminLoginPage() {
       {/* Form panel */}
       <section className="flex items-center justify-center px-5 py-10 sm:px-10">
         <form onSubmit={submit} className="acard w-full max-w-sm space-y-4">
+          {/* ADNX14: this page has no AdminShell, so its heading
+              follows the PageHead typography pattern directly
+              (--a-fs-page scale: 24px, bold, tight tracking). */}
           <div className="text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl lg:hidden">🛡</div>
-            <h1 className="mt-2 text-xl font-bold">Admin লগইন</h1>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight">Admin লগইন</h1>
             <p className="text-sm text-slate-400">শুধুমাত্র Platform Admin দের জন্য</p>
           </div>
-          {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
+          {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300" role="alert">{error}</p> : null}
           <label className="block text-sm">ইমেইল<input className="ainput mt-1" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
           <label className="block text-sm">পাসওয়ার্ড<input className="ainput mt-1" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
           <button className="abtn w-full" disabled={busy}>{busy ? "যাচাই হচ্ছে…" : "Admin লগইন"}</button>
-          <p className="text-center text-xs text-slate-500">ভুল অ্যাকাউন্ট দিয়ে চেষ্টা করলে প্রবেশ মিলবে না। সব Admin কার্যকলাপ Audit Log এ থাকে।</p>
+          <p className="text-center text-xs text-slate-400">ভুল অ্যাকাউন্ট দিয়ে চেষ্টা করলে প্রবেশ মিলবে না। সব Admin কার্যকলাপ Audit Log এ থাকে।</p>
         </form>
       </section>
     </main>
