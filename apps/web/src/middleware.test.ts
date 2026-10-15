@@ -108,3 +108,49 @@ describe("middleware — panel redirect on shop hosts (TD5)", () => {
     expect(res.headers.get("x-middleware-rewrite")).toContain("/shop/boutique");
   });
 });
+
+describe("middleware — canonical shop redirect (TD7)", () => {
+  it("301-redirects legacy /shop/<slug> paths on platform hosts to the tenant subdomain", async () => {
+    stubByDomain({});
+    const home = await middleware(req("https://app.qosprey.com/shop/dhaka-fashion"));
+    expect(home.status).toBe(301);
+    expect(home.headers.get("location")).toBe("https://dhaka-fashion.qosprey.com/");
+
+    const product = await middleware(
+      req("https://qosprey.com/shop/dhaka-fashion/products/blue-panjabi?utm=fb"),
+    );
+    expect(product.status).toBe(301);
+    expect(product.headers.get("location")).toBe(
+      "https://dhaka-fashion.qosprey.com/products/blue-panjabi?utm=fb",
+    );
+  });
+
+  it("cannot loop: the redirect target rewrites, and a shop host never redirects its own /shop/ path", async () => {
+    stubByDomain({});
+    // Follow the 301 by hand: same path tail on the subdomain host.
+    const followed = await middleware(req("https://dhaka-fashion.qosprey.com/products/blue-panjabi?utm=fb"));
+    expect(followed.status).toBe(200);
+    expect(followed.headers.get("location")).toBeNull();
+    expect(followed.headers.get("x-middleware-rewrite")).toContain(
+      "/shop/dhaka-fashion/products/blue-panjabi",
+    );
+    // A /shop/ path arriving directly ON the shop host serves, no redirect.
+    const direct = await middleware(req("https://dhaka-fashion.qosprey.com/shop/dhaka-fashion"));
+    expect(direct.status).toBe(200);
+    expect(direct.headers.get("location")).toBeNull();
+  });
+
+  it("does not redirect reserved slugs or non-shop platform paths", async () => {
+    stubByDomain({});
+    for (const url of [
+      "https://app.qosprey.com/shop/app", // reserved — platform namespace
+      "https://app.qosprey.com/shop/fake", // reserved misleading name
+      "https://app.qosprey.com/shop", // no slug segment
+      "https://app.qosprey.com/dashboard",
+    ]) {
+      const res = await middleware(req(url));
+      expect(res.status, url).toBe(200);
+      expect(res.headers.get("location"), url).toBeNull();
+    }
+  });
+});

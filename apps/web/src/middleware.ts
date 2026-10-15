@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // must be able to import this module (every other testable module
 // in src/ is likewise imported relatively from its tests).
 import {
+  canonicalShopRedirectUrl,
   classifyHost,
   isPanelPath,
   normalizeHost,
@@ -40,6 +41,11 @@ import {
  * links with tokens survive the hop. The redirect is decided
  * BEFORE any shop rewrite. On platform hosts those paths serve
  * exactly as before.
+ *
+ * TD7 canonical redirect: a /shop/<slug> path arriving on a
+ * platform host 301-redirects to the tenant subdomain (the shop's
+ * canonical address). Shop hosts never take this branch — their
+ * /shop/ paths are the middleware's own rewrite target.
  */
 
 const cache = new Map<string, { slug: string | null; expires: number }>();
@@ -80,6 +86,18 @@ async function lookupSlug(host: string): Promise<string | null> {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  const host = normalizeHost(req.headers.get("host") ?? req.nextUrl.host);
+  if (shouldSkipHost(host)) return NextResponse.next();
+
+  // TD7: the legacy /shop/<slug> path on a PLATFORM host 301s to
+  // the shop's canonical tenant subdomain (path after the slug +
+  // query preserved). Decided before the internals skip below,
+  // which would otherwise swallow every /shop/ path; the helper
+  // itself refuses shop hosts, so the middleware's own rewrite
+  // target can never loop into this redirect.
+  const canonical = canonicalShopRedirectUrl(host, pathname, req.nextUrl.search);
+  if (canonical) return NextResponse.redirect(canonical, 301);
+
   // Never look up (or rewrite) platform internals / assets.
   if (
     pathname.startsWith("/shop/") ||
@@ -90,9 +108,6 @@ export async function middleware(req: NextRequest) {
   ) {
     return NextResponse.next();
   }
-
-  const host = normalizeHost(req.headers.get("host") ?? req.nextUrl.host);
-  if (shouldSkipHost(host)) return NextResponse.next();
 
   const cls = classifyHost(host);
   if (cls.kind === "platform" || cls.kind === "unknown") return NextResponse.next();

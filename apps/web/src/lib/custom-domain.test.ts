@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalShopRedirectUrl,
   classifyHost,
   isPanelPath,
   normalizeHost,
@@ -197,5 +198,44 @@ describe("isPanelPath / panelAppRedirectUrl (TD5)", () => {
       "https://app.qosprey.com/login?next=%2Fdashboard",
     );
     expect(panelAppRedirectUrl("/register")).toBe("https://app.qosprey.com/register");
+  });
+});
+
+describe("canonicalShopRedirectUrl (TD7)", () => {
+  it("redirects platform-host /shop/<slug> paths to the tenant subdomain, rest + query preserved", () => {
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop/dhaka-fashion")).toBe(
+      "https://dhaka-fashion.qosprey.com/",
+    );
+    expect(canonicalShopRedirectUrl("qosprey.com", "/shop/dhaka-fashion/products/blue-panjabi", "?x=1")).toBe(
+      "https://dhaka-fashion.qosprey.com/products/blue-panjabi?x=1",
+    );
+    expect(canonicalShopRedirectUrl("www.qosprey.com", "/shop/mirpur-shop/cart")).toBe(
+      "https://mirpur-shop.qosprey.com/cart",
+    );
+    expect(canonicalShopRedirectUrl("APP.Qosprey.com:443", "/shop/dhaka-fashion/checkout")).toBe(
+      "https://dhaka-fashion.qosprey.com/checkout",
+    );
+  });
+
+  it("never fires on a shop host — the rewrite target cannot loop", () => {
+    // Tenant subdomain host: a direct /shop/ path serves as-is.
+    expect(canonicalShopRedirectUrl("dhaka-fashion.qosprey.com", "/shop/dhaka-fashion")).toBeNull();
+    expect(canonicalShopRedirectUrl("dhaka-fashion.qosprey.com", "/shop/dhaka-fashion/products/a")).toBeNull();
+    // Custom-domain candidate host: not the platform's call either.
+    expect(canonicalShopRedirectUrl("dhaka-fashion.com", "/shop/dhaka-fashion")).toBeNull();
+    // Unknown (multi-level under the apex): untouched.
+    expect(canonicalShopRedirectUrl("a.b.qosprey.com", "/shop/dhaka-fashion")).toBeNull();
+  });
+
+  it("refuses reserved/malformed slugs and non-shop paths", () => {
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop/app")).toBeNull(); // reserved: platform itself
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop/fake")).toBeNull(); // reserved misleading
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop/bad--slug")).toBeNull(); // malformed
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop")).toBeNull();
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/shop/")).toBeNull();
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/dashboard")).toBeNull();
+    expect(canonicalShopRedirectUrl("app.qosprey.com", "/")).toBeNull();
+    expect(canonicalShopRedirectUrl("", "/shop/dhaka-fashion")).toBeNull();
+    expect(canonicalShopRedirectUrl(null, "/shop/dhaka-fashion")).toBeNull();
   });
 });

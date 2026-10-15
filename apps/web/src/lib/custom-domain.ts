@@ -21,6 +21,7 @@ import {
   PLATFORM_APEX_DOMAIN,
   checkSlugLocally,
   isReservedSlug,
+  shopSubdomainHost,
 } from "@repo/contracts";
 
 /** Top-level app routes that are NOT part of a shop. */
@@ -151,6 +152,46 @@ export function panelAppRedirectUrl(pathname: string, search?: string | null): s
   const rawSearch = String(search ?? "");
   const qs = rawSearch ? (rawSearch.startsWith("?") ? rawSearch : `?${rawSearch}`) : "";
   return `https://app.${PLATFORM_APEX_DOMAIN}${path}${qs}`;
+}
+
+// ---------- TD7: canonical redirect from the legacy shop path ----------
+
+/**
+ * TD7 — the legacy platform-host shop path /shop/<slug>[/...] is
+ * not the shop's address any more: its canonical home is the
+ * tenant subdomain. When a request arrives on a PLATFORM host with
+ * a /shop/<slug> path, this returns the absolute canonical URL to
+ * 301 to ({slug}.qosprey.com + the path after /shop/<slug>, query
+ * preserved).
+ *
+ * Deliberately narrow, and the reason it cannot loop:
+ * - Only `platform` hosts qualify. On a shop host (subdomain or
+ *   verified custom) a direct /shop/... path serves as-is — the
+ *   middleware's own rewrite target must never redirect.
+ * - The slug segment must pass the TD1 local check, so reserved
+ *   names (/shop/app → app.qosprey.com is a platform host serving
+ *   the path itself) and malformed segments never redirect.
+ * - v1 target is ALWAYS the tenant subdomain: metadata/sitemap
+ *   already name a verified custom domain as canonical when there
+ *   is one, but resolving that here would cost the middleware a
+ *   by-domain lookup per legacy-path request; the subdomain is
+ *   always correct, so the redirect stays lookup-free (decision
+ *   recorded in the TB3 acceptance).
+ */
+export function canonicalShopRedirectUrl(
+  host: string | null | undefined,
+  pathname: string,
+  search?: string | null,
+): string | null {
+  if (classifyHost(host).kind !== "platform") return null;
+  const m = /^\/shop\/([^/]+)(\/.*)?$/.exec(String(pathname ?? ""));
+  if (!m) return null;
+  const slug = m[1];
+  if (!checkSlugLocally(slug).ok) return null;
+  const rest = m[2] ?? "/";
+  const rawSearch = String(search ?? "");
+  const qs = rawSearch ? (rawSearch.startsWith("?") ? rawSearch : `?${rawSearch}`) : "";
+  return `https://${shopSubdomainHost(slug)}${rest}${qs}`;
 }
 
 /**
