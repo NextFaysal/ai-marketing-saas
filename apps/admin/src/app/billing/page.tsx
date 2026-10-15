@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, Tabs, askConfirm, askInput, toast } from "@/components/ui";
 import { API_URL, apiFetch, formatMinorStr, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -35,7 +35,13 @@ export default function BillingPage() {
   const [checkouts, setCheckouts] = React.useState<Checkout[]>([]);
   const [coupons, setCoupons] = React.useState<Coupon[]>([]);
   const [dunning, setDunning] = React.useState<DunningRow[]>([]);
-  const [msg, setMsg] = React.useState("");
+  // ADNX9: feedback moved to the toast system; form validation
+  // errors stay WITH their form (field-level, persistent until
+  // fixed) instead of a page-top banner.
+  const [formError, setFormError] = React.useState<{ org?: string; amount?: string }>({});
+  const [couponError, setCouponError] = React.useState("");
+  const [recordBusy, setRecordBusy] = React.useState(false);
+  const [couponBusy, setCouponBusy] = React.useState(false);
   const [tab, setTab] = React.useState("subs");
   const [form, setForm] = React.useState({ organizationId: "", amount: "", method: "bkash", reference: "", periodEnd: "" });
   // ADX12: a failed summary fetch used to leave the page on
@@ -57,7 +63,7 @@ export default function BillingPage() {
   async function openAuthed(path: string, filename?: string) {
     const token = getAdminToken();
     const res = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) { setMsg(`খুলতে ব্যর্থ: ${res.status}`); return; }
+    if (!res.ok) { toast(`খুলতে ব্যর্থ: ${res.status}`, "error"); return; }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     if (filename) {
@@ -82,25 +88,26 @@ export default function BillingPage() {
         method: "POST",
         body: JSON.stringify({ amountMinor: taka != null && Number.isFinite(taka) ? String(Math.round(taka * 100)) : undefined, reason, revokeAccess: revoke }),
       });
-      setMsg(`Refund রেকর্ড হয়েছে: ৳ ${formatMinorStr(out.refundedMinor)} মোট ফেরত।${out.accessRevoked ? " সাবস্ক্রিপশন PAST_DUE করা হয়েছে।" : ""}`);
+      toast(`Refund রেকর্ড হয়েছে: ৳ ${formatMinorStr(out.refundedMinor)} মোট ফেরত।${out.accessRevoked ? " সাবস্ক্রিপশন PAST_DUE করা হয়েছে।" : ""}`);
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "Refund ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "Refund ব্যর্থ", "error"); }
   }
 
   async function reconcile(c: Checkout) {
     try {
       const out = await apiFetch<any>(`/admin/billing/checkouts/${c.id}/reconcile`, { method: "POST", body: "{}" });
-      setMsg(out.ok ? (out.alreadyProcessed ? "ইতিমধ্যে সম্পন্ন ছিল।" : "✅ Gateway নিশ্চিত করেছে — সাবস্ক্রিপশন সক্রিয় হয়েছে।")
-        : `Gateway এখনো নিশ্চিত করেনি: ${out.reason ?? out.gatewayStatus ?? "অজানা"}`);
+      toast(out.ok ? (out.alreadyProcessed ? "ইতিমধ্যে সম্পন্ন ছিল।" : "Gateway নিশ্চিত করেছে — সাবস্ক্রিপশন সক্রিয় হয়েছে।")
+        : `Gateway এখনো নিশ্চিত করেনি: ${out.reason ?? out.gatewayStatus ?? "অজানা"}`, out.ok ? "success" : "error");
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "Reconcile ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "Reconcile ব্যর্থ", "error"); }
   }
 
   async function createCoupon() {
     const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
     const kind = val("cp-kind");
     const rawValue = Number(val("cp-value"));
-    if (!val("cp-code") || !rawValue) { setMsg("Coupon কোড ও মান দিন।"); return; }
+    if (!val("cp-code") || !rawValue) { setCouponError("Coupon কোড ও মান দিন।"); return; }
+    setCouponError(""); setCouponBusy(true);
     try {
       await apiFetch("/admin/coupons", {
         method: "POST",
@@ -112,9 +119,10 @@ export default function BillingPage() {
           maxRedemptions: val("cp-max") ? Number(val("cp-max")) : undefined,
         }),
       });
-      setMsg("Coupon তৈরি হয়েছে।");
+      toast("Coupon তৈরি হয়েছে।");
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "Coupon তৈরি ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "Coupon তৈরি ব্যর্থ", "error"); }
+    finally { setCouponBusy(false); }
   }
 
   async function toggleCoupon(c: Coupon) {
@@ -122,23 +130,29 @@ export default function BillingPage() {
     if (!reason) return;
     try {
       await apiFetch(`/admin/coupons/${c.id}/status`, { method: "POST", body: JSON.stringify({ active: !c.active, reason }) });
-      setMsg("Coupon অবস্থা বদলেছে।");
+      toast("Coupon অবস্থা বদলেছে।");
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
   }
 
   async function record() {
     const amountTaka = Number(form.amount);
-    if (!form.organizationId || !amountTaka || amountTaka <= 0) { setMsg("Organization ও সঠিক পরিমাণ দিন।"); return; }
+    const errs: { org?: string; amount?: string } = {};
+    if (!form.organizationId) errs.org = "Organization বেছে নিন।";
+    if (!amountTaka || amountTaka <= 0) errs.amount = "সঠিক পরিমাণ দিন।";
+    setFormError(errs);
+    if (errs.org || errs.amount) return;
+    setRecordBusy(true);
     try {
       await apiFetch("/admin/payments", { method: "POST", body: JSON.stringify({
         organizationId: form.organizationId, amountMinor: String(Math.round(amountTaka * 100)), method: form.method,
         reference: form.reference || undefined, periodEnd: form.periodEnd || undefined,
       }) });
-      setMsg("পেমেন্ট রেকর্ড হয়েছে।");
+      toast("পেমেন্ট রেকর্ড হয়েছে।");
       setForm({ ...form, amount: "", reference: "" });
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
+    finally { setRecordBusy(false); }
   }
 
   const planOverdueCard = sum ? (
@@ -154,7 +168,7 @@ export default function BillingPage() {
           </li>
         ))}</ul>
       )}
-      <p className="mt-2 text-xs text-slate-500">মেয়াদ শেষ হলে Subscription স্বয়ংক্রিয়ভাবে PAST_DUE হয় (subscription_sweep Job) — কিন্তু কোনো Org স্বয়ংক্রিয়ভাবে Suspend হয় না; সেটা Admin এর সিদ্ধান্ত।</p>
+      <p className="mt-2 text-xs text-slate-400">মেয়াদ শেষ হলে Subscription স্বয়ংক্রিয়ভাবে PAST_DUE হয় (subscription_sweep Job) — কিন্তু কোনো Org স্বয়ংক্রিয়ভাবে Suspend হয় না; সেটা Admin এর সিদ্ধান্ত।</p>
     </div>
   ) : null;
 
@@ -170,7 +184,8 @@ export default function BillingPage() {
         <label className="block text-sm">মেয়াদ শেষ (ঐচ্ছিক)<input id="cp-exp" type="date" className="ainput mt-1" /></label>
         <label className="block text-sm">সর্বোচ্চ ব্যবহার (ঐচ্ছিক)<input id="cp-max" type="number" min="1" className="ainput mt-1" /></label>
       </div>
-      <button className="abtn mt-3" onClick={createCoupon}>Coupon তৈরি করুন</button>
+      {couponError ? <p className="mt-2 text-sm text-red-300" role="alert">{couponError}</p> : null}
+      <button className="abtn mt-3" onClick={createCoupon} disabled={couponBusy}>{couponBusy ? "হচ্ছে…" : "Coupon তৈরি করুন"}</button>
       {coupons.length === 0 ? <div className="mt-3"><EmptyState title="কোনো Coupon নেই।" sub="উপরে প্রথম Coupon তৈরি করুন।" /></div> : null}
       {coupons.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-sm">
@@ -195,10 +210,14 @@ export default function BillingPage() {
         <select className="ainput mt-1" value={form.organizationId} onChange={(e) => setForm({ ...form, organizationId: e.target.value })}>
           <option value="">— বেছে নিন —</option>
           {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select></label>
+        </select>
+        {formError.org ? <span className="mt-1 block text-xs font-normal text-red-300">{formError.org}</span> : null}
+      </label>
       <div className="grid grid-cols-2 gap-2">
         <label className="block text-sm">পরিমাণ (টাকা)
-          <input className="ainput mt-1" type="number" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></label>
+          <input className="ainput mt-1" type="number" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          {formError.amount ? <span className="mt-1 block text-xs font-normal text-red-300">{formError.amount}</span> : null}
+        </label>
         <label className="block text-sm">মাধ্যম
           <select className="ainput mt-1" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>{METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
       </div>
@@ -208,8 +227,8 @@ export default function BillingPage() {
         <label className="block text-sm">মেয়াদ শেষ (এই পেমেন্টে)
           <input className="ainput mt-1" type="date" value={form.periodEnd} onChange={(e) => setForm({ ...form, periodEnd: e.target.value })} /></label>
       </div>
-      <button className="abtn" onClick={record}>রেকর্ড করুন</button>
-      <p className="text-xs text-slate-500">পেমেন্ট রেকর্ড করলে Subscription এর মেয়াদ নিজে বদলায় না — Org পেজ থেকে Plan/মেয়াদ আপডেট করুন।</p>
+      <button className="abtn" onClick={record} disabled={recordBusy}>{recordBusy ? "হচ্ছে…" : "রেকর্ড করুন"}</button>
+      <p className="text-xs text-slate-400">পেমেন্ট রেকর্ড করলে Subscription এর মেয়াদ নিজে বদলায় না — Org পেজ থেকে Plan/মেয়াদ আপডেট করুন।</p>
     </div>
   );
 
@@ -234,15 +253,15 @@ export default function BillingPage() {
               <div className="flex flex-wrap gap-1.5">
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => openAuthed(`/admin/payments/${p.id}/invoice`)}>🧾 Invoice</button>
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => {
-                  try { const out = await apiFetch<any>(`/admin/payments/${p.id}/invoice-email`, { method: "POST", body: "{}" }); setMsg(`Invoice ইমেইল পাঠানো হয়েছে (${out.sent} জনকে)।`); }
-                  catch (e) { setMsg(e instanceof Error ? e.message : "ইমেইল ব্যর্থ"); }
+                  try { const out = await apiFetch<any>(`/admin/payments/${p.id}/invoice-email`, { method: "POST", body: "{}" }); toast(`Invoice ইমেইল পাঠানো হয়েছে (${out.sent} জনকে)।`); }
+                  catch (e) { toast(e instanceof Error ? e.message : "ইমেইল ব্যর্থ", "error"); }
                 }}>✉ পাঠান</button>
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => refund(p)}>↩ Refund</button>
                 <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
                   const reason = await askInput({ title: "পেমেন্ট মুছে ফেলার কারণ (Audit এ Snapshot থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
                   if (!reason) return;
-                  try { await apiFetch(`/admin/payments/${p.id}`, { method: "DELETE", body: JSON.stringify({ reason }) }); setMsg("পেমেন্ট মোছা হয়েছে (Snapshot Audit এ আছে)।"); await load(); }
-                  catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+                  try { await apiFetch(`/admin/payments/${p.id}`, { method: "DELETE", body: JSON.stringify({ reason }) }); toast("পেমেন্ট মোছা হয়েছে (Snapshot Audit এ আছে)।"); await load(); }
+                  catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
                 }}>মুছুন</button>
               </div>
             </td>
@@ -256,7 +275,7 @@ export default function BillingPage() {
   const checkoutCard = (
     <div className="acard">
       <div className="mb-1 font-semibold">🧾 Online Checkout (Reconciliation)</div>
-      <p className="mb-3 text-xs text-slate-500">Gateway Checkout গুলোর অবস্থা। <span className="text-amber-300">আটকে আছে</span> = ১ ঘণ্টার বেশি Initiated — "যাচাই করুন" Gateway এর নিজের রেকর্ড থেকে আবার নিশ্চিত করে (IPN হারিয়ে গেলে এটাই পুনরুদ্ধারের পথ)।</p>
+      <p className="mb-3 text-xs text-slate-400">Gateway Checkout গুলোর অবস্থা। <span className="text-amber-300">আটকে আছে</span> = ১ ঘণ্টার বেশি Initiated — "যাচাই করুন" Gateway এর নিজের রেকর্ড থেকে আবার নিশ্চিত করে (IPN হারিয়ে গেলে এটাই পুনরুদ্ধারের পথ)।</p>
       {checkouts.length === 0 ? <EmptyState title="কোনো Online Checkout নেই।" sub="কোনো Tenant Online Checkout শুরু করলে এখানে দেখা যাবে।" /> : (
         <div className="overflow-x-auto">
           <table className="atable atable-cards atable-v3">
@@ -264,9 +283,9 @@ export default function BillingPage() {
             <tbody>{checkouts.map((c) => (
               <tr key={c.id}>
                 <td data-label="সময়" className="atd text-slate-400">{fmtDateTime(c.createdAt)}</td>
-                <td data-label="Org / প্ল্যান" className="atd">{c.organizationName ?? "—"}<div className="text-xs text-slate-500">{c.plan} · {c.tranId}{c.couponCode ? ` · 🎟 ${c.couponCode}` : ""}</div></td>
+                <td data-label="Org / প্ল্যান" className="atd">{c.organizationName ?? "—"}<div className="text-xs text-slate-400">{c.plan} · {c.tranId}{c.couponCode ? ` · 🎟 ${c.couponCode}` : ""}</div></td>
                 <td data-label="Gateway" className="atd">{c.gateway}</td>
-                <td data-label="পরিমাণ" className="atd">৳ {formatMinorStr(c.amountMinor)}{c.discountMinor !== "0" ? <div className="text-xs text-slate-500">ছাড় ৳ {formatMinorStr(c.discountMinor)}</div> : null}</td>
+                <td data-label="পরিমাণ" className="atd">৳ {formatMinorStr(c.amountMinor)}{c.discountMinor !== "0" ? <div className="text-xs text-slate-400">ছাড় ৳ {formatMinorStr(c.discountMinor)}</div> : null}</td>
                 <td data-label="অবস্থা" className="atd">{c.status === "success" ? <span className="abadge-green">success</span> : c.stuck ? <span className="abadge-red">আটকে আছে</span> : <span className="abadge-slate">{c.status}</span>}</td>
                 <td className="atd">{c.status === "initiated" ? <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => reconcile(c)}>যাচাই করুন</button> : null}</td>
               </tr>
@@ -280,7 +299,7 @@ export default function BillingPage() {
   const dunningCard = (
     <div className="acard">
       <div className="mb-1 font-semibold">📮 Dunning (PAST_DUE Reminder)</div>
-      <p className="mb-3 text-xs text-slate-500">Reminder পাঠাতে Automations এ <code>dunning_reminders</code> Job তৈরি করুন (প্রতি Org এর জন্য)। প্রতিটি Stage (১/৩/৭ দিন) একবারই যায় — পাঠানো Stage এখানে দেখা যায়।</p>
+      <p className="mb-3 text-xs text-slate-400">Reminder পাঠাতে Automations এ <code>dunning_reminders</code> Job তৈরি করুন (প্রতি Org এর জন্য)। প্রতিটি Stage (১/৩/৭ দিন) একবারই যায় — পাঠানো Stage এখানে দেখা যায়।</p>
       {dunning.length === 0 ? <EmptyState title="কোনো PAST_DUE Org নেই।" sub="সব Subscription হালনাগাদ আছে — Dunning লাগছে না।" /> : (
         <ul className="space-y-1.5 text-sm">{dunning.map((d) => (
           <li key={d.organizationId} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
@@ -294,10 +313,10 @@ export default function BillingPage() {
 
   return (
     <AdminShell title="💳 SaaS Billing">
-      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <PageHead sub="MRR, সংগ্রহ, Overdue, Coupon, Manual পেমেন্ট ও Dunning — SaaS আয়ের হিসাব এক জায়গায়।" />
       {!sum && loadFailed ? <ErrorState message="Billing Summary লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : !sum ? (
         <div aria-hidden="true">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="askel-card" />)}</div>
+          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-2 sm:overflow-visible sm:pb-0 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="askel-card" />)}</div>
           <div className="askel-table mt-5" />
         </div>
       ) : (
@@ -313,7 +332,7 @@ export default function BillingPage() {
               { label: "Trial চলছে", value: `${sum.trialingCount}টি Org` },
               { label: "মেয়াদ শেষ / Past Due", value: `${sum.overdue.length}টি Org` },
             ].map((c) => (
-              <div key={c.label} className="acard"><div className="text-xs uppercase tracking-wide text-slate-400">{c.label}</div><div className="mt-1 text-2xl font-bold">{c.value}</div></div>
+              <div key={c.label} className="acard min-w-[212px] snap-start sm:min-w-0"><div className="text-xs uppercase tracking-wide text-slate-400">{c.label}</div><div className="mt-1 text-2xl font-bold">{c.value}</div></div>
             ))}
           </div>
 
