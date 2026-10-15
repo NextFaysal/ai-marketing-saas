@@ -52,10 +52,10 @@ export interface ShopSitemapEntry {
  * just-created shop home). Inactive products never reach this
  * helper: the shop API only lists ACTIVE products.
  */
-export function buildShopSitemapEntries(
-  base: string,
-  orgSlug: string,
+function sitemapEntriesWith(
   products: Array<{ slug?: string | null; updatedAt?: string | Date | null }>,
+  homeUrl: string,
+  productUrl: (slug: string) => string,
 ): ShopSitemapEntry[] {
   const seen = new Set<string>();
   const productEntries: ShopSitemapEntry[] = [];
@@ -66,10 +66,36 @@ export function buildShopSitemapEntries(
     const d = p.updatedAt ? new Date(p.updatedAt) : null;
     const valid = d && !Number.isNaN(d.getTime()) ? d : null;
     if (valid && (!newest || valid.getTime() > newest.getTime())) newest = valid;
-    productEntries.push({
-      url: buildSitemapUrl(base, `/shop/${orgSlug}/products/${encodeURIComponent(p.slug)}`),
-      lastModified: valid,
-    });
+    productEntries.push({ url: productUrl(p.slug), lastModified: valid });
   }
-  return [{ url: buildSitemapUrl(base, `/shop/${orgSlug}`), lastModified: newest }, ...productEntries];
+  return [{ url: homeUrl, lastModified: newest }, ...productEntries];
+}
+
+export function buildShopSitemapEntries(
+  base: string,
+  orgSlug: string,
+  products: Array<{ slug?: string | null; updatedAt?: string | Date | null }>,
+): ShopSitemapEntry[] {
+  return sitemapEntriesWith(
+    products,
+    buildSitemapUrl(base, `/shop/${orgSlug}`),
+    (slug) => buildSitemapUrl(base, `/shop/${orgSlug}/products/${encodeURIComponent(slug)}`),
+  );
+}
+
+/**
+ * TD7: the same entries on the shop's canonical HOST base
+ * (canonicalShopBase): the shop lives at that host's root, so the
+ * home entry is the bare origin and products sit at /products/.
+ */
+export function buildCanonicalShopSitemapEntries(
+  canonicalBase: string,
+  products: Array<{ slug?: string | null; updatedAt?: string | Date | null }>,
+): ShopSitemapEntry[] {
+  const base = String(canonicalBase ?? "").replace(/\/+$/, "");
+  return sitemapEntriesWith(
+    products,
+    `${base}/`,
+    (slug) => `${base}/products/${encodeURIComponent(slug)}`,
+  );
 }

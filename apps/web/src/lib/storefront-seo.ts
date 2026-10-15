@@ -7,12 +7,51 @@
  * reviews — a rating is never fabricated. Availability is omitted
  * for untracked stock (no stock claim exists to make).
  */
+import { shopSubdomainHost } from "@repo/contracts";
 import { buildSitemapUrl } from "./storefront-sitemap";
 
+/** Legacy path-form canonical (web host + /shop/<slug>). Kept for
+ * compatibility; TD7 pages use the host-form below. */
 export function canonicalShopUrl(base: string, orgSlug: string, productSlug?: string): string {
   return productSlug
     ? buildSitemapUrl(base, `/shop/${orgSlug}/products/${encodeURIComponent(productSlug)}`)
     : buildSitemapUrl(base, `/shop/${orgSlug}`);
+}
+
+// ---------- TD7: host-form canonical base ----------
+
+/** Strip scheme/path/trailing dots from a stored custom domain. */
+export function normalizeCustomDomainHost(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.$/, "");
+}
+
+export interface CanonicalShopOrg {
+  slug: string;
+  customDomain?: string | null;
+  domainVerified?: boolean;
+}
+
+/**
+ * TD7 — THE canonical origin of a shop, exactly one per shop:
+ * the merchant's own domain when it is set AND verified (the EC8
+ * condition, as carried by the shop home payload), otherwise the
+ * tenant subdomain {slug}.qosprey.com from the TD1 contracts rule.
+ */
+export function canonicalShopBase(org: CanonicalShopOrg): string {
+  const domain = org.domainVerified ? normalizeCustomDomainHost(org.customDomain) : "";
+  if (domain) return `https://${domain}`;
+  return `https://${shopSubdomainHost(org.slug)}`;
+}
+
+/** Canonical URL on a host-form base: the shop lives at its root. */
+export function canonicalShopUrlAt(canonicalBase: string, productSlug?: string): string {
+  const base = String(canonicalBase ?? "").replace(/\/+$/, "");
+  return productSlug ? `${base}/products/${encodeURIComponent(productSlug)}` : `${base}/`;
 }
 
 /** Integer minor units → a major-unit decimal string ("500.00"). */
@@ -30,6 +69,9 @@ export function minorToMajorString(minor: string): string {
 export interface ProductJsonLdInput {
   base: string;
   orgSlug: string;
+  /** TD7: host-form canonical base (canonicalShopBase) — when
+   * given, URLs are built on it instead of the legacy path form. */
+  canonicalBase?: string;
   product: {
     name: string;
     slug?: string | null;
@@ -46,7 +88,11 @@ export interface ProductJsonLdInput {
 
 export function buildProductJsonLd(input: ProductJsonLdInput): Record<string, unknown> {
   const { product } = input;
-  const url = product.slug ? canonicalShopUrl(input.base, input.orgSlug, product.slug) : canonicalShopUrl(input.base, input.orgSlug);
+  const url = input.canonicalBase
+    ? canonicalShopUrlAt(input.canonicalBase, product.slug ?? undefined)
+    : product.slug
+      ? canonicalShopUrl(input.base, input.orgSlug, product.slug)
+      : canonicalShopUrl(input.base, input.orgSlug);
   const images = (product.images?.length ? product.images : product.imageUrl ? [product.imageUrl] : [])
     .filter((x): x is string => !!x);
   const offer: Record<string, unknown> = {
@@ -84,13 +130,17 @@ export function buildProductJsonLd(input: ProductJsonLdInput): Record<string, un
 export interface ShopJsonLdInput {
   base: string;
   orgSlug: string;
+  /** TD7: host-form canonical base — see ProductJsonLdInput. */
+  canonicalBase?: string;
   shopName: string;
   description?: string | null;
   logoUrl?: string | null;
 }
 
 export function buildShopJsonLd(input: ShopJsonLdInput): Record<string, unknown>[] {
-  const home = canonicalShopUrl(input.base, input.orgSlug);
+  const home = input.canonicalBase
+    ? canonicalShopUrlAt(input.canonicalBase)
+    : canonicalShopUrl(input.base, input.orgSlug);
   const organization: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "Organization",
