@@ -59,6 +59,11 @@ import {
   type SocialFollowers,
   type SocialTimeseries,
 } from "@/lib/social-analytics";
+import {
+  type SocialShareLink,
+  type SocialShareLinkCreated,
+  type YouTubePlaylistOption,
+} from "@/lib/social-posts-sn";
 import { EmptyState } from "@repo/ui";
 
 // SU11: the contract types, status constants, MediaThumb and
@@ -121,6 +126,11 @@ export default function SocialPostsPage() {
   const [ytIsShort, setYtIsShort] = useState(false);
   const [coverAssetId, setCoverAssetId] = useState("");
   const [isStory, setIsStory] = useState(false);
+  // SN1: YouTube playlist choice + the picked account's playlist
+  // list (loaded on demand from the SN1 endpoint).
+  const [ytPlaylistId, setYtPlaylistId] = useState("");
+  const [ytPlaylists, setYtPlaylists] = useState<YouTubePlaylistOption[]>([]);
+  const [ytPlaylistsAccountId, setYtPlaylistsAccountId] = useState("");
   // SU8: Derive panel (per post) — selected target accounts + the
   // API's warnings, shown verbatim.
   const [deriveOpenId, setDeriveOpenId] = useState<string | null>(null);
@@ -262,6 +272,12 @@ export default function SocialPostsPage() {
   const [timelineByPost, setTimelineByPost] = useState<Record<string, SocialTimelineEntry[]>>({});
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
   const [approvalTwoStep, setApprovalTwoStep] = useState(false);
+  // SN2: client approval share links (per-post list + the full URL
+  // of the most recently created link, shown once) and the
+  // require-client-approval settings toggle.
+  const [shareLinksByPost, setShareLinksByPost] = useState<Record<string, SocialShareLink[]>>({});
+  const [shareCreatedByPost, setShareCreatedByPost] = useState<Record<string, SocialShareLinkCreated>>({});
+  const [requireClientApproval, setRequireClientApproval] = useState(false);
   // SU10 web: account health rows + failure groups.
   const [accountHealth, setAccountHealth] = useState<SocialAccountHealthRow[]>([]);
   const [failureGroups, setFailureGroups] = useState<SocialFailureGroup[]>([]);
@@ -333,11 +349,30 @@ export default function SocialPostsPage() {
 
   const loadSocialSettings = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const res = await apiFetch<{ socialRequireApproval: boolean; socialApprovalTwoStep?: boolean }>(`/organizations/${orgId}/social/settings`);
+    const res = await apiFetch<{ socialRequireApproval: boolean; socialApprovalTwoStep?: boolean; socialRequireClientApproval?: boolean }>(`/organizations/${orgId}/social/settings`);
     setRequireApproval(!!res.socialRequireApproval);
     setApprovalTwoStep(!!res.socialApprovalTwoStep);
+    setRequireClientApproval(!!res.socialRequireClientApproval);
     setRequireApprovalLoaded(true);
   }, []);
+
+  // SN1: the picked YouTube account's playlists (composer select).
+  // Cached per account; the composer effect calls this whenever the
+  // selected YouTube account changes.
+  async function loadYouTubePlaylists(accountId: string) {
+    if (!accountId || ytPlaylistsAccountId === accountId) return;
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("yt-playlists"); setError("");
+    try {
+      const res = await apiFetch<{ playlists: YouTubePlaylistOption[] }>(`/organizations/${orgId}/social/accounts/${accountId}/youtube/playlists`);
+      setYtPlaylists(res.playlists ?? []);
+      setYtPlaylistsAccountId(accountId);
+    } catch (e) {
+      setYtPlaylists([]);
+      setYtPlaylistsAccountId(accountId);
+      setError(e instanceof Error ? e.message : "Playlist লোড করা যায়নি");
+    } finally { setBusy(""); }
+  }
 
   // SU9/SU10 web loaders — auxiliary like the other settings:
   // callers .catch() them so a failure never blanks the page.
@@ -1044,6 +1079,9 @@ export default function SocialPostsPage() {
     setYtIsShort(false);
     setCoverAssetId("");
     setIsStory(false);
+    setYtPlaylistId("");
+    setYtPlaylists([]);
+    setYtPlaylistsAccountId("");
   }
 
   /** SU8: the composer's optional platform fields as a save payload. */
@@ -1053,6 +1091,7 @@ export default function SocialPostsPage() {
       youtubeTags: parseYoutubeTagsInput(ytTagsInput),
       youtubeCategoryId: ytCategoryId,
       youtubeIsShort: ytIsShort,
+      youtubePlaylistId: ytPlaylistId,
       coverAssetId,
       isStory,
       isStoryApplicable,
@@ -1076,6 +1115,7 @@ export default function SocialPostsPage() {
     setYtTagsInput(youtubeTagsToInput(p.youtubeTags));
     setYtCategoryId(p.youtubeCategoryId ?? "");
     setYtIsShort(!!p.youtubeIsShort);
+    setYtPlaylistId(p.youtubePlaylistId ?? "");
     setCoverAssetId(p.coverAssetId ?? "");
     setIsStory(!!p.isStory);
     setError("");
@@ -1482,6 +1522,22 @@ export default function SocialPostsPage() {
     } finally { setBusy(""); }
   }
 
+  // SN2 web: the optional client-approval requirement (third gate).
+  async function saveRequireClientApproval(next: boolean) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("client-approval-requirement"); setError("");
+    try {
+      const res = await apiFetch<{ socialRequireClientApproval: boolean }>(`/organizations/${orgId}/social/settings`, {
+        method: "PATCH", body: JSON.stringify({ socialRequireClientApproval: next }),
+      });
+      setRequireClientApproval(!!res.socialRequireClientApproval);
+      setNotice(next ? "ক্লায়েন্ট অনুমোদন বাধ্যতামূলক করা হয়েছে — অনুমোদন ছাড়া publish/schedule আটকাবে।" : "ক্লায়েন্ট অনুমোদনের বাধ্যবাধকতা বন্ধ হয়েছে।");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "সেটিং সংরক্ষণ ব্যর্থ হয়েছে");
+      await loadSocialSettings().catch(() => undefined);
+    } finally { setBusy(""); }
+  }
+
   // SU11: bulk selection + actions over the post list.
   function togglePostSelected(postId: string) {
     setSelectedPostIds((prev) => {
@@ -1540,9 +1596,58 @@ export default function SocialPostsPage() {
 
   // SU9 web: per-post detail (notes / versions / timeline),
   // loaded together the first time the panel opens for a post.
+  // SN2: client share links for one post — loaded with the detail
+  // panel; failures stay local (the rest of the detail still opens).
+  async function loadShareLinks(postId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const links = await apiFetch<SocialShareLink[]>(`/organizations/${orgId}/social/posts/${postId}/share-links`);
+      setShareLinksByPost((s) => ({ ...s, [postId]: links }));
+    } catch { /* share list is auxiliary — detail opens without it */ }
+  }
+
+  async function createShareLink(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`share-create-${p.id}`); setError("");
+    try {
+      const created = await apiFetch<SocialShareLinkCreated>(`/organizations/${orgId}/social/posts/${p.id}/share-link`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
+      setNotice("ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
+      await loadShareLinks(p.id);
+    } catch (e) { setError(e instanceof Error ? e.message : "শেয়ার লিংক তৈরি করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function createGroupShareLink(p: Sp7SocialPost) {
+    const orgId = getOrganizationId(); if (!orgId || !p.postGroupId) return;
+    setBusy(`share-group-${p.id}`); setError("");
+    try {
+      const created = await apiFetch<SocialShareLinkCreated>(`/organizations/${orgId}/social/post-groups/${p.postGroupId}/share-link`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      setShareCreatedByPost((s) => ({ ...s, [p.id]: created }));
+      setNotice("গ্রুপের ক্লায়েন্ট শেয়ার লিংক তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "গ্রুপ শেয়ার লিংক তৈরি করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function revokeShareLink(p: Sp7SocialPost, linkId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`share-revoke-${linkId}`); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/social/share-links/${linkId}`, { method: "DELETE" });
+      setNotice("শেয়ার লিংক বাতিল করা হয়েছে।");
+      await loadShareLinks(p.id);
+    } catch (e) { setError(e instanceof Error ? e.message : "লিংক বাতিল করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
   async function togglePostDetail(p: Sp7SocialPost) {
     if (detailOpenId === p.id) { setDetailOpenId(null); return; }
     setDetailOpenId(p.id);
+    void loadShareLinks(p.id);
     if (notesByPost[p.id] && versionsByPost[p.id] && timelineByPost[p.id]) return;
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`detail-${p.id}`);
@@ -2047,11 +2152,11 @@ export default function SocialPostsPage() {
 
   // SU11: the panel context — page.tsx keeps ALL state and
   // handlers; the components under components/ only render.
-  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
+  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
   bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, csvImportResults, importPostsCsv,
   members, myUserId, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost,
   noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel,
-  approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost,
+  approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, requireClientApproval, saveRequireClientApproval,
   loadAccountHealth, loadFailureGroups, filteredPosts, calCells, calBuckets, calMonthTitle, selectedPost, queuePosts, pendingApprovalPosts, hasPublishedOrInsights, analyticsBars, analyticsHasTimeseriesData, followerHasGrowth, connectedAccounts, composerTargets, showFirstCommentInput, inputCls, activeTab, setActiveTab };
 
   const SU11_TABS = [

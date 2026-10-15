@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, ACCOUNT_STATUS_META, MAX_MEDIA, MediaThumb, formatMb, AccountAvatar, PlatformDot } from "./shared";
 import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequency } from "@/lib/social-composer";
@@ -17,7 +17,15 @@ import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequenc
  * list empties and stay as they are.
  */
 export function ComposerPanel({ c }: { c: SocialPageCtx }) {
-  const { accountSelected, accounts, aiCount, aiHashtags, aiImageProductId, aiImagePrompt, aiLanguage, aiNotice, aiProductId, aiProducts, aiScript, aiTopic, aiVariants, applyHashtagSet, assets, attachMedia, busy, caption, composerTargets, contentPlan, coverAssetId, createTemplatePoster, editingPostId, firstCommentText, generateAiCopy, generateAiImage, generateAiScript, generateContentPlan, hashtagInsights, hashtagSetName, hashtagSets, imageStatus, importError, importProductId, importProductImage, inputCls, isStory, linkUrl, loadAssets, loadMediaFolders, materializeContentPlan, mediaLimits, planAccountId, planFocus, planMonth, planPillars, planSelectedItems, platformModes, posts, recurrenceFrequency, recurrenceInterval, resetComposer, saveDraft, saveHashtagSet, scriptProductId, scriptTopic, selectedHashtags, selectedMedia, setAccountSelected, setAiCount, setAiImageProductId, setAiImagePrompt, setAiLanguage, setAiProductId, setAiTopic, setCaption, setCoverAssetId, setFirstCommentText, setHashtagSetName, setImportError, setImportProductId, setIsStory, setLinkUrl, setPlanAccountId, setPlanFocus, setPlanMonth, setPlanPillars, setPlanSelectedItems, setRecurrenceFrequency, setRecurrenceInterval, setScriptProductId, setScriptTopic, setSelectedMedia, setShowLibrary, setTemplateAssetId, setTemplateHeadline, setTemplateProductId, setTemplateSubtext, setVariantOverrides, setYtCategoryId, setYtIsShort, setYtTagsInput, setYtTitle, showAiPanel, showFirstCommentInput, showLibrary, templateAssetId, templateHeadline, templatePoster, templateProductId, templateSubtext, toggleAiPanel, toggleHashtag, uploadMedia, useAiCaption, variantOverrides, ytCategoryId, ytIsShort, ytTagsInput, ytTitle, csvImportResults, importPostsCsv, } = c;
+  const { accountSelected, accounts, aiCount, aiHashtags, aiImageProductId, aiImagePrompt, aiLanguage, aiNotice, aiProductId, aiProducts, aiScript, aiTopic, aiVariants, applyHashtagSet, assets, attachMedia, busy, caption, composerTargets, contentPlan, coverAssetId, createTemplatePoster, editingPostId, firstCommentText, generateAiCopy, generateAiImage, generateAiScript, generateContentPlan, hashtagInsights, hashtagSetName, hashtagSets, imageStatus, importError, importProductId, importProductImage, inputCls, isStory, linkUrl, loadAssets, loadMediaFolders, materializeContentPlan, mediaLimits, planAccountId, planFocus, planMonth, planPillars, planSelectedItems, platformModes, posts, recurrenceFrequency, recurrenceInterval, resetComposer, saveDraft, saveHashtagSet, scriptProductId, scriptTopic, selectedHashtags, selectedMedia, setAccountSelected, setAiCount, setAiImageProductId, setAiImagePrompt, setAiLanguage, setAiProductId, setAiTopic, setCaption, setCoverAssetId, setFirstCommentText, setHashtagSetName, setImportError, setImportProductId, setIsStory, setLinkUrl, setPlanAccountId, setPlanFocus, setPlanMonth, setPlanPillars, setPlanSelectedItems, setRecurrenceFrequency, setRecurrenceInterval, setScriptProductId, setScriptTopic, setSelectedMedia, setShowLibrary, setTemplateAssetId, setTemplateHeadline, setTemplateProductId, setTemplateSubtext, setVariantOverrides, setYtCategoryId, setYtIsShort, setYtTagsInput, setYtTitle, setYtPlaylistId, showAiPanel, showFirstCommentInput, showLibrary, templateAssetId, templateHeadline, templatePoster, templateProductId, templateSubtext, toggleAiPanel, toggleHashtag, uploadMedia, useAiCaption, variantOverrides, ytCategoryId, ytIsShort, ytTagsInput, ytTitle, ytPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, csvImportResults, importPostsCsv, } = c;
+
+  // SN1: the YouTube target in this composer session (if any) —
+  // its playlists feed the playlist select below.
+  const ytTarget = composerTargets.find((a) => a.platform === "youtube");
+  useEffect(() => {
+    if (ytTarget) void loadYouTubePlaylists(ytTarget.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ytTarget?.id]);
   // SD3: the drag-over highlight is pure presentation (no page state).
   const [dragOver, setDragOver] = useState(false);
 
@@ -92,8 +100,8 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
 
         {/* SU8: optional YouTube / Story platform fields */}
         <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-          <div className="text-sm font-semibold">▶️ YouTube / Story (ঐচ্ছিক)</div>
-          <p className="text-xs text-slate-400">এই ঘরগুলো শুধু সংশ্লিষ্ট platform-এর পোস্টে ব্যবহৃত হয় — খালি রাখলে আগের মতোই পোস্ট হবে।</p>
+          <div className="text-sm font-semibold">▶️ YouTube / Cover / Story (ঐচ্ছিক)</div>
+          <p className="text-xs text-slate-400">এই ঘরগুলো শুধু সংশ্লিষ্ট platform-এর পোস্টে ব্যবহৃত হয় — খালি রাখলে আগের মতোই পোস্ট হবে। Cover ছবিটি YouTube thumbnail হিসেবেও বসে, Facebook Page video-র cover হিসেবেও বসে।</p>
           <div className="flex flex-wrap items-end gap-3">
             <label className="block min-w-[220px] flex-1 text-sm">YouTube শিরোনাম (ঐচ্ছিক)
               <input className={inputCls} value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder="খালি রাখলে ক্যাপশনের প্রথম লাইন" />
@@ -101,7 +109,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
             <label className="block text-sm">YouTube Category ID (ঐচ্ছিক)
               <input className={`${inputCls} w-36`} value={ytCategoryId} onChange={(e) => setYtCategoryId(e.target.value)} placeholder="যেমন: 22" />
             </label>
-            <label className="block min-w-[220px] flex-1 text-sm">Cover ছবি (ঐচ্ছিক)
+            <label className="block min-w-[220px] flex-1 text-sm">Cover ছবি — YouTube thumbnail / Facebook video cover (ঐচ্ছিক)
               <select className={inputCls} value={coverAssetId} onChange={(e) => setCoverAssetId(e.target.value)}>
                 <option value="">কোনো Cover নয়</option>
                 {assets.filter((a) => a.kind === "image").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -111,6 +119,24 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
           <label className="block text-sm">YouTube Tags (কমা দিয়ে, ঐচ্ছিক)
             <input className={inputCls} value={ytTagsInput} onChange={(e) => setYtTagsInput(e.target.value)} placeholder="যেমন: ঈদ, অফার, শাড়ি" />
           </label>
+          {ytTarget ? (
+            <label className="block text-sm">YouTube Playlist (ঐচ্ছিক)
+              <select className={inputCls} value={ytPlaylistId} onChange={(e) => setYtPlaylistId(e.target.value)}>
+                <option value="">কোনো playlist নয়</option>
+                {ytPlaylistId && !ytPlaylists.some((pl) => pl.id === ytPlaylistId) ? (
+                  <option value={ytPlaylistId}>বর্তমান playlist ({ytPlaylistId})</option>
+                ) : null}
+                {ytPlaylists.map((pl) => <option key={pl.id} value={pl.id}>{pl.title}</option>)}
+              </select>
+              {busy === "yt-playlists" ? (
+                <span className="text-xs text-slate-400">Playlist লোড হচ্ছে…</span>
+              ) : ytPlaylistsAccountId === ytTarget.id && ytPlaylists.length === 0 ? (
+                <span className="text-xs text-slate-400">এই channel-এ কোনো playlist পাওয়া যায়নি।</span>
+              ) : (
+                <span className="text-xs text-slate-400">ভিডিওটি publish হওয়ার পর এই playlist-এ যোগ হবে।</span>
+              )}
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-4">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input type="checkbox" checked={ytIsShort} onChange={(e) => setYtIsShort(e.target.checked)} />

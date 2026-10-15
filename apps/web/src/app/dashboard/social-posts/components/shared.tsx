@@ -11,6 +11,7 @@ import { healthPill, type CsvImportResponse } from "@/lib/social-posts-su11";
 import type { MediaQueryFilters } from "@/lib/social-media-library";
 import type { MonthCell } from "@/lib/social-calendar";
 import type { TimeseriesBar } from "@/lib/social-analytics";
+import type { SocialShareLink, SocialShareLinkCreated, YouTubePlaylistOption } from "@/lib/social-posts-sn";
 
 // ---------------------------------------------------------------------------
 // SP2 contract types (docs/social-posts-package-plan.md, SP1 API contract).
@@ -430,6 +431,11 @@ export interface SocialPageCtx {
   setCoverAssetId: React.Dispatch<React.SetStateAction<string>>;
   isStory: boolean;
   setIsStory: React.Dispatch<React.SetStateAction<boolean>>;
+  ytPlaylistId: string;
+  setYtPlaylistId: React.Dispatch<React.SetStateAction<string>>;
+  ytPlaylists: YouTubePlaylistOption[];
+  ytPlaylistsAccountId: string;
+  loadYouTubePlaylists: (accountId: string) => Promise<void>;
   deriveOpenId: string | null;
   setDeriveOpenId: React.Dispatch<React.SetStateAction<string | null>>;
   deriveSelected: Record<string, Record<string, boolean>>;
@@ -604,6 +610,13 @@ export interface SocialPageCtx {
   memberLabel: any;
   approvalTwoStep: boolean;
   saveApprovalTwoStep: any;
+  shareLinksByPost: Record<string, SocialShareLink[]>;
+  shareCreatedByPost: Record<string, SocialShareLinkCreated>;
+  createShareLink: any;
+  createGroupShareLink: any;
+  revokeShareLink: any;
+  requireClientApproval: boolean;
+  saveRequireClientApproval: any;
   accountHealth: SocialAccountHealthRow[];
   failureGroups: SocialFailureGroup[];
   checkAccountHealth: any;

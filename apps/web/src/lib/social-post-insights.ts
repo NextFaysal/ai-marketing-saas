@@ -72,6 +72,8 @@ export interface Sp7SocialPost extends SocialPost {
   youtubeTags?: string[] | null;
   youtubeCategoryId?: string | null;
   youtubeIsShort?: boolean;
+  /** SN1: chosen YouTube playlist id (null = no playlist). */
+  youtubePlaylistId?: string | null;
   coverAssetId?: string | null;
   isStory?: boolean;
   /** SU9: the team member this post is assigned to (null =
