@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, toast, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, toast, useLastFilters, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -33,6 +33,10 @@ export default function OrgsPage() {
     setLoading(false);
   }, [q]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: one apply function for saved views AND last-used
+  // filter persistence (restored on mount, stored on change).
+  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); };
+  useLastFilters("orgs", { q, statusFilter, planFilter }, applyFilters);
 
   const bulk = async (status: string) => {
     const reason = await askInput({ title: `Bulk ${status} — ${selected.length}টি Org`, description: "কারণ (প্রতিটির Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
@@ -103,7 +107,7 @@ export default function OrgsPage() {
           <SavedViewsBar
             page="orgs"
             current={{ q, statusFilter, planFilter }}
-            onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); }}
+            onApply={applyFilters}
           />
         </div>
         <DataTable>

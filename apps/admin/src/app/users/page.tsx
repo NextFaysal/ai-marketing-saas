@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, useLastFilters, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -31,6 +31,10 @@ export default function UsersPage() {
     setLoading(false);
   }, [q]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: one apply function for saved views AND last-used
+  // filter persistence (restored on mount, stored on change).
+  const applyFilters = (s: Record<string, string>) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setAdminFilter(s.adminFilter ?? ""); };
+  useLastFilters("users", { q, statusFilter, adminFilter }, applyFilters);
 
   const onSort = (key: string) => {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -80,7 +84,7 @@ export default function UsersPage() {
           <SavedViewsBar
             page="users"
             current={{ q, statusFilter, adminFilter }}
-            onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setAdminFilter(s.adminFilter ?? ""); }}
+            onApply={applyFilters}
           />
         </div>
         <DataTable>

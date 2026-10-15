@@ -91,7 +91,7 @@ export function DetailDrawer({ open, title, sub, onClose, children, footer }: {
         <div className="adrawer-head">
           <div className="min-w-0 flex-1">
             <div className="truncate font-semibold">{title}</div>
-            {sub ? <div className="truncate text-xs text-slate-500">{sub}</div> : null}
+            {sub ? <div className="truncate text-xs text-slate-400">{sub}</div> : null}
           </div>
           <button ref={closeRef} type="button" className="abtn-secondary !px-2.5" aria-label="বন্ধ করুন" onClick={onClose}>✕</button>
         </div>
@@ -179,11 +179,11 @@ export function SavedViewsBar({ page, current, onApply }: {
   }
   return (
     <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Saved View</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Saved View</span>
       {views.map((v) => (
         <span key={v.name} className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">
           <button type="button" className="hover:text-white" title="এই View প্রয়োগ করুন" onClick={() => onApply(v.state)}>{v.name}</button>
-          <button type="button" className="rounded-full px-1 text-slate-500 hover:text-red-300" aria-label={`${v.name} মুছুন`} onClick={() => remove(v.name)}>✕</button>
+          <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label={`${v.name} মুছুন`} onClick={() => remove(v.name)}>✕</button>
         </span>
       ))}
       <span className="inline-flex items-center gap-1.5">
@@ -193,6 +193,50 @@ export function SavedViewsBar({ page, current, onApply }: {
       {views.length === 0 ? <span className="text-[11px] text-slate-600">বর্তমান ফিল্টার অবস্থা নাম দিয়ে সেভ করে পরে এক চাপে ফেরত আনুন।</span> : null}
     </div>
   );
+}
+
+// ---------------------------------------------------------------- Last-used filters (ADNX15)
+/**
+ * ADNX15: last-used filter persistence — the companion to saved
+ * views above. A list page's CURRENT filter state is stored on
+ * every change (`admin_last_filters_<page>`, same guarded
+ * localStorage pattern as saved views) and restored once on
+ * mount, so an operator who returns to a page finds the filters
+ * they last used. Applying a saved view or clearing the filters
+ * simply overwrites the stored state on the next change — there
+ * is one source of truth (the page's own filter state) and no
+ * new filter semantics. Blocked/corrupt storage degrades to the
+ * page's defaults, never an error.
+ */
+const lastFiltersKey = (page: string) => `admin_last_filters_${page}`;
+
+export function loadLastFilters(page: string): Record<string, string> | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(lastFiltersKey(page)) ?? "null");
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, val]) => typeof val === "string")) as Record<string, string>;
+  } catch { return null; }
+}
+
+export function storeLastFilters(page: string, state: Record<string, string>) {
+  try { localStorage.setItem(lastFiltersKey(page), JSON.stringify(state)); } catch { /* private mode etc. */ }
+}
+
+export function useLastFilters(page: string, current: Record<string, string>, onApply: (state: Record<string, string>) => void) {
+  const [ready, setReady] = React.useState(false);
+  const applyRef = React.useRef(onApply);
+  applyRef.current = onApply;
+  React.useEffect(() => {
+    const stored = loadLastFilters(page);
+    if (stored) applyRef.current(stored);
+    setReady(true);
+    // Restore runs once per page mount by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+  const currentJson = JSON.stringify(current);
+  React.useEffect(() => {
+    if (ready) storeLastFilters(page, JSON.parse(currentJson) as Record<string, string>);
+  }, [page, ready, currentJson]);
 }
 
 // ---------------------------------------------------------------- DataTable v3 (ADNX2)
@@ -296,7 +340,7 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
           <div className="font-semibold">{title}</div>
           {description ? <p className="mt-1.5 text-sm text-slate-400">{description}</p> : null}
           {showInput ? (
-            <label className="mt-3 block text-sm">{inputLabel}{inputOptional ? <span className="text-slate-500"> (ঐচ্ছিক)</span> : null}
+            <label className="mt-3 block text-sm">{inputLabel}{inputOptional ? <span className="text-slate-400"> (ঐচ্ছিক)</span> : null}
               <input ref={inputRef} className="ainput mt-1" value={value} placeholder={inputPlaceholder} onChange={(e) => setValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
             </label>

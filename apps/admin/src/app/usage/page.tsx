@@ -2,7 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
-import { EmptyState, ErrorState, PageHead, SortableTh, type SortDir } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, SavedViewsBar, SortableTh, useLastFilters, type SortDir } from "@/components/ui";
 
 interface Row { organizationId: string; name: string; status: string; aiCalls30d: number; aiTokens30d: number; deliveries30d: number; broadcastsTotal: number; workflowRuns30d: number; courierShipmentsTotal: number; orders30d: number; storageBytes: number; mediaAssets: number }
 
@@ -96,6 +96,12 @@ function AiFeatureSection() {
     finally { setLoading(false); }
   }, []);
   React.useEffect(() => { load(days); }, [days, load]);
+  // ADNX15: this section's filter state (day window + org text
+  // filter) gains saved views and last-used persistence — the
+  // main ranking table above has no filter state to save (sort
+  // only), so it is intentionally not wired.
+  const applyAiFilters = (s: Record<string, string>) => { setDays(Number(s.days) || 30); setFilter(s.filter ?? ""); };
+  useLastFilters("usage-ai", { days: String(days), filter }, applyAiFilters);
 
   const f = filter.trim().toLowerCase();
   const filtered = f ? rows.filter((r) => r.orgName.toLowerCase().includes(f) || r.organizationId.toLowerCase().includes(f)) : rows;
@@ -137,6 +143,9 @@ function AiFeatureSection() {
         <input className="ainput px-2 py-1 text-sm sm:!w-64" placeholder="Org নাম বা ID দিয়ে ফিল্টার" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={downloadCsv}>⬇ CSV Export</button>
         {loading ? <span className="text-xs text-slate-400">লোড হচ্ছে…</span> : null}
+      </div>
+      <div className="mb-3 rounded-xl border border-slate-800">
+        <SavedViewsBar page="usage-ai" current={{ days: String(days), filter }} onApply={applyAiFilters} />
       </div>
       <div className="acard overflow-hidden p-0">
         <table className="atable atable-cards atable-v3">

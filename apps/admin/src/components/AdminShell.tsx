@@ -167,7 +167,7 @@ function DensityToggle({ density, onChange, collapsed }: { density: Density; onC
   }
   return (
     <div className="flex items-center gap-1 px-2 pb-1.5" role="group" aria-label="ঘনত্ব বাছাই">
-      <span className="text-[11px] text-slate-500">ঘনত্ব:</span>
+      <span className="text-[11px] text-slate-400">ঘনত্ব:</span>
       {(["comfortable", "compact"] as const).map((d) => (
         <button
           key={d}
@@ -190,7 +190,7 @@ function Brand({ collapsed }: { collapsed: boolean }) {
       {!collapsed ? (
         <div className="min-w-0">
           <div className="truncate text-[15px] font-bold tracking-tight">Qosprey Admin</div>
-          <div className="text-[11px] text-slate-500">SaaS Operator Console</div>
+          <div className="text-[11px] text-slate-400">SaaS Operator Console</div>
         </div>
       ) : null}
     </div>
@@ -350,7 +350,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white"><NavIcon name="shield" size={16} /></span>
         <div className="min-w-0">
           <div className="truncate text-sm font-bold">Qosprey Admin</div>
-          <div className="truncate text-[11px] text-slate-500">{adminEmail}</div>
+          <div className="truncate text-[11px] text-slate-400">{adminEmail}</div>
         </div>
         <button className="abtn-secondary ml-auto !px-2.5" aria-label="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /></button>
       </div>
@@ -365,7 +365,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
               <button aria-label="মেনু বন্ধ করুন" className="abtn-secondary mt-4 !px-2.5" onClick={() => setDrawer(false)}>✕</button>
             </div>
             <NavContent collapsed={false} {...navProps} onNavigate={() => setDrawer(false)} />
-            <div className="border-t border-slate-800 p-3 text-xs text-slate-500">
+            <div className="border-t border-slate-800 p-3 text-xs text-slate-400">
               <div className="truncate px-2 pb-1">{adminEmail}</div>
               <DensityToggle density={density} onChange={changeDensity} collapsed={false} />
               <button className="anav w-full" onClick={logout}><NavIcon name="logout" size={16} /> লগ আউট</button>
@@ -380,7 +380,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           <Brand collapsed={collapsed} />
           <NavContent collapsed={collapsed} {...navProps} />
           <div className="border-t border-slate-800 p-3">
-            {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-500">{adminEmail}</div> : null}
+            {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-400">{adminEmail}</div> : null}
             <DensityToggle density={density} onChange={changeDensity} collapsed={collapsed} />
             <div className={`flex ${collapsed ? "flex-col gap-1" : "items-center gap-1"}`}>
               <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="Sidebar ছোট/বড় করুন" onClick={toggleCollapsed}>

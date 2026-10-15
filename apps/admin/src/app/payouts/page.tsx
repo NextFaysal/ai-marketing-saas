@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ConfirmModal, EmptyState, ErrorState, PageHead, toast } from "@/components/ui";
+import { ConfirmModal, EmptyState, ErrorState, PageHead, SavedViewsBar, toast, useLastFilters } from "@/components/ui";
 import { API_URL, apiFetch, formatMinorStr, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -97,6 +97,10 @@ export default function PayoutsPage() {
     setLoading(false);
   }, [status]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: the status select is this page's one real filter —
+  // it gains saved views and last-used persistence (the apply is
+  // the same single-filter shape for both).
+  useLastFilters("payouts", { status }, (s) => setStatus(s.status ?? ""));
   React.useEffect(() => {
     // Four-eyes threshold from the existing platform-config read.
     apiFetch<PlatformConfigView>("/admin/platform-config")
@@ -182,6 +186,9 @@ export default function PayoutsPage() {
           <select className="ainput w-full sm:!w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s === "" ? "সব status" : STATUS_LABEL[s]}</option>)}
           </select>
+        </div>
+        <div className="rounded-xl border border-slate-800">
+          <SavedViewsBar page="payouts" current={{ status }} onApply={(s) => setStatus(s.status ?? "")} />
         </div>
         <p className="text-xs text-slate-400">
           Approve করার সময় সার্ভার বর্তমান উপলব্ধ ব্যালেন্স আবার যাচাই করে। Mark-paid-ই একমাত্র ধাপ যেখানে

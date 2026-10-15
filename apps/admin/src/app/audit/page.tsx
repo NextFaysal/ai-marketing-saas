@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DetailDrawer, EmptyState, ErrorState, FilterBar, PageHead, SavedViewsBar } from "@/components/ui";
+import { DetailDrawer, EmptyState, ErrorState, FilterBar, PageHead, SavedViewsBar, useLastFilters } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -49,6 +49,13 @@ export default function AuditPage() {
     finally { setLoading(false); }
   }, [buildQuery]);
   React.useEffect(() => { load(); }, [load]);
+  // ADNX15: one apply function for saved views AND last-used
+  // filter persistence (restored on mount, stored on change).
+  const applyFilters = (s: Record<string, string>) => {
+    setPrefix(s.prefix ?? "admin."); setOrganizationId(s.organizationId ?? ""); setUserId(s.userId ?? "");
+    setEntityType(s.entityType ?? ""); setDateFrom(s.dateFrom ?? ""); setDateTo(s.dateTo ?? ""); setTake(s.take ?? "100");
+  };
+  useLastFilters("audit", { prefix, organizationId, userId, entityType, dateFrom, dateTo, take }, applyFilters);
   async function exportCsv() {
     const token = getAdminToken();
     const res = await fetch(`${API_URL}/admin/audit/export.csv?${buildQuery(true)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -97,10 +104,7 @@ export default function AuditPage() {
           <SavedViewsBar
             page="audit"
             current={{ prefix, organizationId, userId, entityType, dateFrom, dateTo, take }}
-            onApply={(s) => {
-              setPrefix(s.prefix ?? "admin."); setOrganizationId(s.organizationId ?? ""); setUserId(s.userId ?? "");
-              setEntityType(s.entityType ?? ""); setDateFrom(s.dateFrom ?? ""); setDateTo(s.dateTo ?? ""); setTake(s.take ?? "100");
-            }}
+            onApply={applyFilters}
           />
         </div>
         <table className="atable atable-cards atable-v3">

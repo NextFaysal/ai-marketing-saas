@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState, PageHead, SavedViewsBar, toast } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, SavedViewsBar, toast, useLastFilters } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -35,6 +35,10 @@ export default function TicketsPage() {
     finally { setLoading(false); }
   }, [filter]);
   useEffect(() => { load(); }, [load]);
+  // ADNX15: last-used filter persistence for the status filter
+  // (restored on mount, stored on change — the saved-views apply
+  // below is the same one-filter shape).
+  useLastFilters("tickets", { filter }, (s) => setFilter(s.filter ?? ""));
   useEffect(() => {
     apiFetch<{ admins: Admin[] }>("/admin/security").then((s) => setAdmins(s.admins ?? [])).catch(() => undefined);
   }, []);
