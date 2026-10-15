@@ -144,7 +144,14 @@ describe("TD6 cors — Prisma lookup adapter (EC8 condition)", () => {
   }) {
     return {
       organization: {
-        findFirst: async ({ where }: any) => rows.orgs.find((o) => o.customDomain === where.customDomain) ?? null,
+        // TD9: the lookup now queries { customDomain: { in: variants } };
+        // the fake honours both that shape and a plain equality.
+        findFirst: async ({ where }: any) => {
+          const cond = where.customDomain;
+          const candidates =
+            cond && typeof cond === "object" && Array.isArray(cond.in) ? cond.in : [cond];
+          return rows.orgs.find((o) => candidates.includes(o.customDomain)) ?? null;
+        },
       },
       storefrontSetting: {
         findUnique: async ({ where }: any) =>
@@ -171,5 +178,26 @@ describe("TD6 cors — Prisma lookup adapter (EC8 condition)", () => {
     await expect(lookup("unverified.com")).resolves.toBe(false); // verifiedAt missing
     await expect(lookup("no-setting.com")).resolves.toBe(false); // no setting row at all
     await expect(lookup("absent.com")).resolves.toBe(false); // no org with that domain
+  });
+
+  it("TD9: stored apex form allows the www origin, and stored www allows the apex origin", async () => {
+    const lookup = prismaVerifiedCustomDomainLookup(
+      fakePrisma({
+        orgs: [
+          { id: "o-apex", customDomain: "apex-shop.com" },
+          { id: "o-www", customDomain: "www.www-shop.com" },
+        ],
+        settings: [
+          { organizationId: "o-apex", domainVerifiedAt: new Date() },
+          { organizationId: "o-www", domainVerifiedAt: new Date() },
+        ],
+      }),
+    );
+    // Stored apex → www origin is allowed.
+    await expect(lookup("www.apex-shop.com")).resolves.toBe(true);
+    await expect(lookup("apex-shop.com")).resolves.toBe(true);
+    // Stored www → apex origin is allowed.
+    await expect(lookup("www-shop.com")).resolves.toBe(true);
+    await expect(lookup("www.www-shop.com")).resolves.toBe(true);
   });
 });

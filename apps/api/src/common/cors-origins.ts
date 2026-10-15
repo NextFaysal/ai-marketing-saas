@@ -1,4 +1,5 @@
 import { PLATFORM_APEX_DOMAIN, SLUG_FORMAT_REGEX } from "@repo/contracts";
+import { customDomainVariants } from "./custom-domain";
 
 /**
  * TD6 — API CORS origin decision (pure matcher + injectable
@@ -24,8 +25,9 @@ import { PLATFORM_APEX_DOMAIN, SLUG_FORMAT_REGEX } from "@repo/contracts";
  * 4. http only for localhost / 127.0.0.1 dev origins. An http
  *    platform origin (http://app.qosprey.com) is refused.
  * 5. Anything else must be a VERIFIED merchant custom domain:
- *    Organization.customDomain equals the origin's host AND the
- *    org's StorefrontSetting.domainVerifiedAt is set — exactly the
+ *    Organization.customDomain equals the origin's host OR its
+ *    www/apex variant (TD9 shared rule) AND the org's
+ *    StorefrontSetting.domainVerifiedAt is set — exactly the
  *    EC8 byDomain condition. Results are cached in memory for 60 s.
  *    A lookup ERROR fails closed for that origin only; it never
  *    throws into the CORS callback (boot/request flow survives).
@@ -124,6 +126,9 @@ export function createCorsOriginChecker(deps: CorsOriginDeps = {}) {
  * The production lookup against Prisma: same condition as EC8's
  * public byDomain — an Organization whose customDomain equals the
  * host AND whose StorefrontSetting has domainVerifiedAt set.
+ * TD9: the match is www/apex variant-aware (the shared rule in
+ * custom-domain.ts) — a shop stored as the apex form also allows
+ * its www origin and vice versa, exactly as byDomain resolves.
  * Prisma is passed as a structural seam so tests can fake it and
  * main.ts can hand in the app's own PrismaService (no second pool).
  */
@@ -132,7 +137,9 @@ export function prismaVerifiedCustomDomainLookup(prisma: {
   storefrontSetting: { findUnique: (args: any) => Promise<any> };
 }): (host: string) => Promise<boolean> {
   return async (host: string) => {
-    const org = await prisma.organization.findFirst({ where: { customDomain: host } });
+    const org = await prisma.organization.findFirst({
+      where: { customDomain: { in: customDomainVariants(host) } },
+    });
     if (!org) return false;
     const setting = await prisma.storefrontSetting.findUnique({ where: { organizationId: org.id } });
     return !!setting?.domainVerifiedAt;
