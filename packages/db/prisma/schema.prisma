@@ -91,6 +91,8 @@ model Organization {
   integrations   Integration[]
   tenantAppConfigs TenantAppConfig[]
   orgLlmConfig   OrgLlmConfig?
+  orgStockConfig OrgStockConfig?
+  socialCoachDigests SocialCoachDigest[]
   tenantPaymentGateways TenantPaymentGateway[]
   tenantPaymentTransactions TenantPaymentTransaction[]
   platformPaymentEnablements PlatformPaymentEnablement[]
@@ -5960,6 +5962,11 @@ model MediaAsset {
   // organization: importing the same URL again returns the existing
   // asset instead of fetching it a second time. Null otherwise.
   sourceUrl      String?
+  // SN5: for a stock-imported asset, the photographer's credit
+  // line (e.g. "Photo by Jane Doe on Pexels") — shown on the
+  // library tile and copied onto derived assets so the credit is
+  // never silently dropped. Null for non-stock assets.
+  attribution    String?
   // SU3: library organization — an optional folder (deleting the
   // folder leaves the asset folderless, never deletes it) + free
   // tags for filtering.
@@ -6021,6 +6028,49 @@ model SocialHashtagSet {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  @@index([organizationId])
+}
+
+// SN5: the tenant's OWN stock-media (Pexels) API key — one per
+// organization, stored EXACTLY like OrgLlmConfig (CC8): the key
+// itself lives only inside the sealed JSON ({ apiKey }, AES-GCM
+// via integrations/crypto). Saved ONLY after a real Pexels call
+// verified it (status "verified"); the plaintext key is never
+// returned by any API — status endpoints expose configured +
+// last-4 only.
+model OrgStockConfig {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  provider        String       @default("pexels") // pexels
+  encryptedData   String // sealed JSON: { apiKey }
+  status          String       @default("configured") // verified | configured
+  lastVerifiedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// SN9: one AI performance-coach digest per organization per
+// week (weekStart = the week's Monday "YYYY-MM-DD" in the org
+// timezone). payload is the deterministic compute result PLUS
+// the final summary text — every number in it came from the
+// org's own SU7 analytics; the job is idempotent on
+// (organizationId, weekStart), so a week can never produce two
+// digests or two notification rounds.
+model SocialCoachDigest {
+  id              String       @id @default(uuid())
+  organizationId  String
+  weekStart       String       @db.VarChar(10)
+  payload         Json
+  narrationSource String // llm | deterministic
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, weekStart])
   @@index([organizationId])
 }
 // ==========================================
