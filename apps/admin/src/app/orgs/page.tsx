@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DataTable, FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, PageHead, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, toast, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -13,7 +13,6 @@ export default function OrgsPage() {
   const [rows, setRows] = React.useState<OrgRow[]>([]);
   const [q, setQ] = React.useState("");
   const [selected, setSelected] = React.useState<string[]>([]);
-  const [bulkMsg, setBulkMsg] = React.useState("");
   // ADX6: status/plan filters are CLIENT-side over the rows the
   // existing API already returned — GET /admin/orgs accepts only
   // q/page/take (verified in admin.controller.ts), so no new
@@ -40,9 +39,9 @@ export default function OrgsPage() {
     if (!reason) return;
     try {
       const out = await apiFetch<{ succeeded: number; total: number }>(`/admin/orgs/bulk-status`, { method: "POST", body: JSON.stringify({ organizationIds: selected, status, reason }) });
-      setBulkMsg(`${out.succeeded}/${out.total} টি Org ${status} হয়েছে।`);
+      toast(`${out.succeeded}/${out.total} টি Org ${status} হয়েছে।`);
       setSelected([]); await load();
-    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "Bulk action ব্যর্থ"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "Bulk action ব্যর্থ", "error"); }
   };
 
   const onSort = (key: string) => {
@@ -63,7 +62,7 @@ export default function OrgsPage() {
 
   return (
     <AdminShell title="🏢 Organizations">
-      {bulkMsg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{bulkMsg}</p> : null}
+      <PageHead sub="সব Tenant Organization — অবস্থা, Plan, সদস্য ও Order এক তালিকায়।" />
       {selected.length > 0 ? (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm">
           <b>{selected.length}টি বাছাই হয়েছে</b> — Bulk (শুধু SUPER):
@@ -75,7 +74,7 @@ export default function OrgsPage() {
       ) : null}
       {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
       <div className="acard overflow-hidden p-0">
-        <FilterBar collapsible>
+        <FilterBar collapsible activeCount={(q ? 1 : 0) + (statusFilter ? 1 : 0) + (planFilter ? 1 : 0)}>
           <input className="ainput max-w-sm" placeholder="নাম বা slug দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
           <select className="ainput" aria-label="অবস্থা দিয়ে ছাঁকুন" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -86,8 +85,19 @@ export default function OrgsPage() {
             <option value="">সব Plan</option>
             {planOptions.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
-          <span className="text-xs text-slate-500">{sorted.length}টি দেখাচ্ছে</span>
+          <span className="text-xs text-slate-400">{sorted.length}টি দেখাচ্ছে</span>
         </FilterBar>
+        {/* ADNX8: active-filter chips — visible even while the
+            mobile FilterBar is collapsed; each chip clears only
+            its own filter (same state setters as the bar). */}
+        {(q || statusFilter || planFilter) ? (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 px-4 py-2">
+            {q ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">খোঁজ: {q}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="খোঁজ মুছুন" onClick={() => setQ("")}>✕</button></span> : null}
+            {statusFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">অবস্থা: {statusFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="অবস্থা ফিল্টার মুছুন" onClick={() => setStatusFilter("")}>✕</button></span> : null}
+            {planFilter ? <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 py-0.5 pl-2.5 pr-1 text-xs text-slate-200">Plan: {planFilter}<button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-300" aria-label="Plan ফিল্টার মুছুন" onClick={() => setPlanFilter("")}>✕</button></span> : null}
+            <button type="button" className="text-xs font-medium text-indigo-300 hover:text-indigo-200" onClick={() => { setQ(""); setStatusFilter(""); setPlanFilter(""); }}>সব ফিল্টার মুছুন</button>
+          </div>
+        ) : null}
         {/* ADX14: saved views over this page's existing filter state */}
         <div className="border-b border-slate-800">
           <SavedViewsBar
@@ -109,7 +119,7 @@ export default function OrgsPage() {
           <tbody>{sorted.map((o) => (
             <tr key={o.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
               <td className="atd"><input type="checkbox" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td>
-              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-500">{o.slug} · {o.country}</div></td>
+              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-400">{o.slug} · {o.country}</div></td>
               <td data-label="Plan" className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
               <td data-label="সদস্য" className="atd">{o.memberCount}</td>
               <td data-label="Order" className="atd">{o.orderCount}</td>
@@ -137,7 +147,7 @@ export default function OrgsPage() {
             <div><span className="text-slate-400">সদস্য:</span> {quick.memberCount}জন · <span className="text-slate-400">Order:</span> {quick.orderCount}টি</div>
             <div><span className="text-slate-400">তৈরি:</span> {fmtDateTime(quick.createdAt, "date")}</div>
             {quick.subscription?.status === "PAST_DUE" ? <p className="aerror">এই Org-এর Subscription PAST_DUE — Billing ঝুঁকিতে আছে।</p> : null}
-            <p className="pt-1 text-xs text-slate-500">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
+            <p className="pt-1 text-xs text-slate-400">এটি তালিকার সারির সারসংক্ষেপ — সব তথ্য ও অ্যাকশন সম্পূর্ণ বিবরণ পেজে।</p>
           </div>
         ) : null}
       </DetailDrawer>

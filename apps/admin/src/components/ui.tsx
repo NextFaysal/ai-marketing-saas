@@ -7,10 +7,11 @@
 import React from "react";
 
 // ---------------------------------------------------------------- PageHead
-export function PageHead({ title, sub, children }: { title?: string; sub?: string; children?: React.ReactNode }) {
+export function PageHead({ title, sub, breadcrumb, children }: { title?: string; sub?: string; breadcrumb?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="apage-head">
       <div className="apage-head-main">
+        {breadcrumb ?? null}
         {title ? <div className="apage-head-title">{title}</div> : null}
         {sub ? <div className="apage-head-sub">{sub}</div> : null}
       </div>
@@ -27,7 +28,7 @@ export function PageHead({ title, sub, children }: { title?: string; sub?: strin
  * out exactly as before via `sm:contents`. Default (no prop) is the
  * original always-visible bar — existing usages are unchanged.
  */
-export function FilterBar({ children, className = "", collapsible = false }: { children: React.ReactNode; className?: string; collapsible?: boolean }) {
+export function FilterBar({ children, className = "", collapsible = false, activeCount = 0 }: { children: React.ReactNode; className?: string; collapsible?: boolean; activeCount?: number }) {
   const [open, setOpen] = React.useState(false);
   if (!collapsible) return <div className={`afilter ${className}`}>{children}</div>;
   return (
@@ -38,7 +39,7 @@ export function FilterBar({ children, className = "", collapsible = false }: { c
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        🔎 ফিল্টার {open ? "▲" : "▼"}
+        🔎 ফিল্টার {activeCount > 0 ? <span className="abadge-count">{activeCount}</span> : null} {open ? "▲" : "▼"}
       </button>
       <div className={`${open ? "flex" : "hidden"} flex-col gap-2 sm:contents`}>{children}</div>
     </div>

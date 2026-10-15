@@ -3,7 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonDialog } from "@/components/AdminShell";
 import Breadcrumb from "@/components/Breadcrumb";
-import { EmptyState, ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, Tabs, askConfirm, askInput, toast } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -64,21 +64,31 @@ export default function OrgDetailPage() {
     if (!r) return;
     try {
       await apiFetch(`/admin/orgs/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason: r }) });
-      setMsg(`${label} সম্পন্ন হয়েছে।`);
+      toast(`${label} সম্পন্ন হয়েছে।`);
       await load();
-    } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+    } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
   }
   if (!data) return <AdminShell title="🏢 Organization">{loadFailed ? <ErrorState message="Organization লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="space-y-4" aria-hidden="true"><div className="askel-card" /><div className="askel-table" /></div>}</AdminShell>;
   return (
     <AdminShell title={`🏢 ${data.name}`}>
-      <Breadcrumb className="mb-4" items={[{ label: "Organizations", href: "/orgs" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />
-      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
-
-      {/* ADX6: sticky header — status + primary actions always visible */}
-      <div className="sticky top-0 z-20 mb-4 flex flex-wrap items-center gap-2 rounded-b-2xl bg-slate-950/90 py-2.5 backdrop-blur">
+      {/* ADNX8: ONE detail pattern — PageHead carries the
+          breadcrumb + status badges; the banner below now only
+          ever shows the permanent-deletion certificate (long,
+          persistent information a 6s toast cannot carry). */}
+      <PageHead
+        breadcrumb={<Breadcrumb items={[{ label: "Organizations", href: "/orgs" }, { label: data.name?.trim() ? data.name : `${id.slice(0, 8)}…` }]} />}
+        sub={`${data.slug} · ${data.country} · ${data.currency}`}
+      >
         <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span>
         {data.subscription ? <span className="abadge-indigo">{data.subscription.plan} · {data.subscription.status}</span> : null}
-        <div className="ml-auto flex flex-wrap gap-2">
+      </PageHead>
+      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+
+      {/* ADNX8: unified detail action bar — sticky at the top on
+          lg, a fixed bottom bar just above the NB1 quick bar on
+          mobile (spacer at the page end keeps content clear). */}
+      <div className="max-lg:fixed max-lg:inset-x-0 max-lg:bottom-[calc(64px+env(safe-area-inset-bottom))] max-lg:z-30 max-lg:border-t max-lg:border-slate-800 max-lg:bg-slate-950/95 max-lg:px-4 max-lg:py-2.5 lg:sticky lg:top-0 lg:z-20 lg:mb-4 lg:rounded-b-2xl lg:bg-slate-950/90 lg:py-2.5 lg:backdrop-blur">
+        <div className="flex flex-wrap gap-2 lg:justify-end">
           {data.status === "ACTIVE" ? <button className="abtn-secondary" onClick={() => setStatus("SUSPENDED", "Suspend Organization")}>⏸ Suspend (সদস্যদের লগইন বন্ধ)</button> : null}
           {data.status !== "ACTIVE" ? <button className="abtn" onClick={() => setStatus("ACTIVE", "Reactivate Organization")}>✅ আবার সক্রিয় করুন</button> : null}
           {data.status !== "DELETED" ? <button className="abtn-danger" onClick={() => setStatus("DELETED", "Soft-Delete Organization")}>🗑 Soft-Delete</button> : null}
@@ -95,19 +105,19 @@ export default function OrgDetailPage() {
             <div><span className="text-slate-400">Subscription:</span> {data.subscription ? `${data.subscription.plan} · ${data.subscription.status}${data.subscription.currentPeriodEnd ? ` · মেয়াদ শেষ ${fmtDateTime(data.subscription.currentPeriodEnd, "date")}` : ""}` : "কোনো Subscription রেকর্ড নেই"}</div>
             <div className="grid grid-cols-4 gap-2 pt-2 text-center">
               {([[ "পণ্য", data.counts.products], ["অর্ডার", data.counts.orders], ["কথোপকথন", data.counts.conversations], ["ক্যাম্পেইন", data.counts.campaigns]] as const).map(([label, v]) => (
-                <div key={label} className="rounded-lg bg-slate-800 p-2"><div className="text-lg font-bold">{v}</div><div className="text-xs text-slate-500">{label}</div></div>
+                <div key={label} className="rounded-lg bg-slate-800 p-2"><div className="text-lg font-bold">{v}</div><div className="text-xs text-slate-400">{label}</div></div>
               ))}
             </div>
             <div className="pt-2 font-medium">সদস্যবৃন্দ</div>
-            {data.members.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.user?.name ?? "?"} <span className="text-slate-500">{m.user?.email}</span> — <b>{m.role}</b>{m.user?.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{m.user?.status}</span> : null}</div>)}
+            {data.members.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.user?.name ?? "?"} <span className="text-slate-400">{m.user?.email}</span> — <b>{m.role}</b>{m.user?.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{m.user?.status}</span> : null}</div>)}
             {data.members.length === 0 ? <EmptyState title="কোনো সদস্য নেই।" sub="এই Organization-এ এখনো কোনো সদস্য যোগ হয়নি।" /> : null}
             <div className="pt-2 font-medium">Integrations (শুধু অবস্থা — গোপন তথ্য কখনো দেখানো হয় না)</div>
             {data.integrations.map((i) => <div key={i.id} className="rounded-lg bg-slate-800 px-3 py-2">{i.provider} — {i.status}</div>)}
-            {data.integrations.length === 0 ? <p className="text-slate-500">কোনো Integration নেই।</p> : null}
+            {data.integrations.length === 0 ? <p className="text-slate-400">কোনো Integration নেই।</p> : null}
           </div>
           <div className="acard space-y-3">
             <div className="font-semibold">অ্যাকশন (কারণসহ Audit হবে)</div>
-            <p className="text-xs text-slate-500">প্রধান অ্যাকশনগুলো (Suspend / Reactivate / Soft-Delete) এখন উপরের sticky header-এ সবসময় দৃশ্যমান। Suspend করলে Tenant এর সব সদস্যের প্রবেশ বন্ধ থাকবে, কিন্তু কোনো ডেটা মুছবে না।</p>
+            <p className="text-xs text-slate-400">প্রধান অ্যাকশনগুলো (Suspend / Reactivate / Soft-Delete) এখন sticky header / মোবাইলে নিচের action bar-এ সবসময় দৃশ্যমান। Suspend করলে Tenant এর সব সদস্যের প্রবেশ বন্ধ থাকবে, কিন্তু কোনো ডেটা মুছবে না।</p>
             <div className="border-t border-red-900/50 pt-3">
               <div className="font-semibold text-red-300">☠ Danger Zone — Data Export ও স্থায়ী Deletion</div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -121,24 +131,24 @@ export default function OrgDetailPage() {
                     a.download = `org-export-${data.slug}.json`;
                     a.click();
                     URL.revokeObjectURL(a.href);
-                    setMsg("Export ডাউনলোড হয়েছে (Audit এ রেকর্ড আছে)। Credential কখনোই Export এ থাকে না।");
-                  } catch (e) { setMsg(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+                    toast("Export ডাউনলোড হয়েছে (Audit এ রেকর্ড আছে)। Credential কখনোই Export এ থাকে না।");
+                  } catch (e) { toast(e instanceof Error ? e.message : "Export ব্যর্থ", "error"); }
                 }}>⬇ সম্পূর্ণ Data Export (JSON)</button>
                 {data.status === "DELETED" ? (
                   <button className="abtn-danger" onClick={async () => {
                     const typed = await askInput({ title: "স্থায়ীভাবে মুছুন", description: `স্থায়ীভাবে মুছতে Org এর নাম হুবহু লিখুন: "${data.name}" — এটি আর ফেরানো যাবে না। আগে Export নিয়ে রাখুন।`, inputLabel: "Org এর নাম", confirmLabel: "এগিয়ে যান", danger: true });
-                    if (typed !== data.name) { setMsg("নাম মেলেনি — স্থায়ী Deletion বাতিল।"); return; }
+                    if (typed !== data.name) { toast("নাম মেলেনি — স্থায়ী Deletion বাতিল।", "error"); return; }
                     const reason = await askInput({ title: "স্থায়ী Deletion এর কারণ (Audit Certificate এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "স্থায়ীভাবে মুছুন", danger: true });
                     if (!reason) return;
                     try {
                       const out = await apiFetch<any>(`/admin/orgs/${id}/delete-permanent`, { method: "POST", body: JSON.stringify({ confirmName: typed, reason }) });
                       setMsg(`স্থায়ীভাবে মোছা হয়েছে। Certificate: ${Object.entries(out.certificate).map(([k, v]) => `${k}:${v}`).join(", ")}`);
                       setTimeout(() => { window.location.href = "/orgs"; }, 3500);
-                    } catch (e) { setMsg(e instanceof Error ? e.message : "Deletion ব্যর্থ"); }
+                    } catch (e) { toast(e instanceof Error ? e.message : "Deletion ব্যর্থ", "error"); }
                   }}>☠ স্থায়ীভাবে মুছুন (শুধু SUPER)</button>
                 ) : null}
               </div>
-              <p className="mt-1 text-xs text-slate-500">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
+              <p className="mt-1 text-xs text-slate-400">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
             </div>
           </div>
         </div>
@@ -163,9 +173,9 @@ export default function OrgDetailPage() {
                 const end = (document.getElementById("sub-end") as HTMLInputElement).value;
                 try {
                   await apiFetch(`/admin/orgs/${id}/subscription`, { method: "PATCH", body: JSON.stringify({ plan, status, currentPeriodEnd: end || null, reason }) });
-                  setMsg("Subscription আপডেট হয়েছে। Plan বদলালে Limit সঙ্গে সঙ্গে কার্যকর হয়।");
+                  toast("Subscription আপডেট হয়েছে। Plan বদলালে Limit সঙ্গে সঙ্গে কার্যকর হয়।");
                   await load();
-                } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+                } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
               }}>💳 Subscription সেভ</button>
             </div>
           </div>
@@ -180,11 +190,11 @@ export default function OrgDetailPage() {
               const num = (v: string) => (v.trim() === "" ? null : Number(v));
               try {
                 await apiFetch(`/admin/orgs/${id}/limits`, { method: "PATCH", body: JSON.stringify({ aiDailyLimitOverride: num(limits.aiDailyLimitOverride), broadcastCapOverride: num(limits.broadcastCapOverride), seatLimit: num(limits.seatLimit) }) });
-                setMsg("Limit আপডেট হয়েছে (Audit এ সংরক্ষিত)।");
+                toast("Limit আপডেট হয়েছে (Audit এ সংরক্ষিত)।");
                 await load();
-              } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+              } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ হয়েছে", "error"); }
             }}>Limit সেভ করুন</button>
-            <p className="text-xs text-slate-500">ক্রম: Override → Plan (FREE/PRO/AGENCY) → System default।</p>
+            <p className="text-xs text-slate-400">ক্রম: Override → Plan (FREE/PRO/AGENCY) → System default।</p>
           </div>
           <div className="acard space-y-2">
             <div className="font-semibold">🚩 Feature Flags</div>
@@ -200,7 +210,7 @@ export default function OrgDetailPage() {
               );
             })}
             {flags.knownFlags.length === 0 ? <EmptyState title="কোনো Feature Flag নেই।" sub="এই Org-এর জন্য কোনো Flag সংজ্ঞায়িত নেই।" /> : null}
-            <p className="text-xs text-slate-500">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
+            <p className="text-xs text-slate-400">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
           </div>
         </div>
       ) : null}
@@ -224,7 +234,7 @@ export default function OrgDetailPage() {
                       try {
                         const out: any = await apiFetch(`/admin/orgs/${id}/support-view/conversations/${c.id}/messages`, { method: "POST", body: JSON.stringify({ reason }) });
                         setConvMessages(out.messages);
-                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
+                      } catch (e) { toast(e instanceof Error ? e.message : "ব্যর্থ", "error"); }
                     }}>দেখুন</button>
                   </div>
                 ))}
@@ -232,7 +242,7 @@ export default function OrgDetailPage() {
                 {convMessages.length > 0 ? (
                   <div className="max-h-56 space-y-1 overflow-auto rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
                     <div className="text-xs text-amber-300">⚠ এই Content Access Audit Log এ রেকর্ড হয়েছে।</div>
-                    {convMessages.map((m, i) => <div key={i} className="text-sm"><span className="text-slate-500">{m.direction}:</span> {m.body ?? "—"}</div>)}
+                    {convMessages.map((m, i) => <div key={i} className="text-sm"><span className="text-slate-400">{m.direction}:</span> {m.body ?? "—"}</div>)}
                   </div>
                 ) : null}
               </>
@@ -249,13 +259,14 @@ export default function OrgDetailPage() {
             <div className="mb-2 font-medium">Admin নোট</div>
             <div className="flex gap-2">
               <input className="ainput" placeholder="অভ্যন্তরীণ নোট লিখুন…" value={note} onChange={(e) => setNote(e.target.value)} />
-              <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
+              <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; try { await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); toast("নোট যোগ হয়েছে।"); await load(); } catch (e) { toast(e instanceof Error ? e.message : "নোট যোগ ব্যর্থ হয়েছে", "error"); } }}>যোগ</button>
             </div>
-            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
+            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-400">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
             {notes.length === 0 ? <EmptyState title="কোনো নোট নেই।" sub="উপরে প্রথম অভ্যন্তরীণ নোট যোগ করুন।" /> : null}
           </div>
         </div>
       ) : null}
+      <div className="h-16 lg:hidden" aria-hidden="true" />
     </AdminShell>
   );
 }
@@ -277,7 +288,7 @@ function ViewAsCard({ orgId }: { orgId: string }) {
   return (
     <div className="acard mt-4">
       <div className="mb-2 font-semibold">👁 View-As (Tenant ওয়ার্কস্পেস দেখুন)</div>
-      <p className="text-sm text-slate-500">৩০ মিনিটের সেশন, Org এর OWNER হিসেবে ঢুকবেন। Read-only ই ডিফল্ট; Write মোড শুধু SUPER Admin দের জন্য — দুটোই কারণসহ Audit হয়।</p>
+      <p className="text-sm text-slate-400">৩০ মিনিটের সেশন, Org এর OWNER হিসেবে ঢুকবেন। Read-only ই ডিফল্ট; Write মোড শুধু SUPER Admin দের জন্য — দুটোই কারণসহ Audit হয়।</p>
       {err ? <p className="mt-2 text-sm text-red-400">{err}</p> : null}
       <div className="mt-3 flex gap-2">
         <button className="abtn abtn-primary" disabled={busy} onClick={() => start("read")}>👁 Read-only View-As</button>
@@ -305,8 +316,8 @@ function OrgHistory({ orgId }: { orgId: string }) {
               <li key={i} className="relative pb-3.5 last:pb-0">
                 <span className="absolute -left-[25px] top-0 flex h-4 w-4 items-center justify-center text-[10px]">{icon(e.kind)}</span>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-sm">{e.title}{e.detail ? <span className="ml-1.5 text-slate-500">{e.detail}</span> : null}</span>
-                  <span className="text-xs text-slate-500">{fmtDateTime(e.at)}</span>
+                  <span className="text-sm">{e.title}{e.detail ? <span className="ml-1.5 text-slate-400">{e.detail}</span> : null}</span>
+                  <span className="text-xs text-slate-400">{fmtDateTime(e.at)}</span>
                 </div>
               </li>
             ))}
