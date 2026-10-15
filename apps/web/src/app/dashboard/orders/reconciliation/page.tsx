@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -82,8 +82,9 @@ export default function CourierReconciliationPage() {
   const [disputeNotes, setDisputeNotes] = useState("");
   const [disputeBusy, setDisputeBusy] = useState(false);
 
+  const orgId = typeof window !== "undefined" ? getOrganizationId() ?? "" : "";
+
   const loadData = useCallback(async () => {
-    const orgId = getOrganizationId();
     if (!orgId) return;
     setLoading(true);
     setError(null);
@@ -99,14 +100,13 @@ export default function CourierReconciliationPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
   async function openBatchDetail(batchId: string) {
-    const orgId = getOrganizationId();
     if (!orgId) return;
     setDetailLoading(true);
     try {
@@ -121,7 +121,6 @@ export default function CourierReconciliationPage() {
   }
 
   async function loadClaimSheet(batchId: string) {
-    const orgId = getOrganizationId();
     if (!orgId) return;
     try {
       const sheet = await apiFetch<any>(`/organizations/${orgId}/courier/reconciliation/batches/${batchId}/claim-sheet`);
@@ -132,9 +131,7 @@ export default function CourierReconciliationPage() {
   }
 
   async function handleDisputeSave() {
-    if (!disputeItem) return;
-    const orgId = getOrganizationId();
-    if (!orgId) return;
+    if (!disputeItem || !orgId) return;
     setDisputeBusy(true);
     try {
       await apiFetch(`/organizations/${orgId}/courier/reconciliation/items/${disputeItem.id}/dispute`, {
@@ -158,7 +155,6 @@ export default function CourierReconciliationPage() {
 
   async function handleUploadSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const orgId = getOrganizationId();
     if (!orgId) return;
     if (!referenceNo.trim()) {
       alert("অনুগ্রহ করে স্টেটমেন্ট রেফারেন্স বা ইনভয়েস নম্বর দিন।");
@@ -172,7 +168,6 @@ export default function CourierReconciliationPage() {
     setUploadBusy(true);
     setError(null);
     try {
-      // Parse CSV rows: trackingCode, courierCollectedMinor, courierFeeMinor, netPaidMinor
       const lines = rawCsvText
         .split("\n")
         .map((l) => l.trim())
@@ -180,7 +175,6 @@ export default function CourierReconciliationPage() {
 
       const items: any[] = [];
       for (const line of lines) {
-        // Skip header if contains 'tracking'
         if (line.toLowerCase().includes("tracking")) continue;
 
         const parts = line.split(",").map((p) => p.trim());
@@ -229,7 +223,22 @@ export default function CourierReconciliationPage() {
     }
   }
 
-  // Calculate high-level aggregates
+  // Handle file drop/upload
+  const handleFileUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      if (text) {
+        setRawCsvText(text);
+        if (!referenceNo) {
+          setReferenceNo(file.name.replace(/\.[^/.]+$/, ""));
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Aggregates
   const totalCollectedAll = batches.reduce((sum, b) => sum + (b.totalCollectedMinor || 0), 0);
   const totalFeesAll = batches.reduce((sum, b) => sum + (b.totalFeeMinor || 0), 0);
   const totalNetAll = batches.reduce((sum, b) => sum + (b.netDisbursedMinor || 0), 0);
@@ -237,234 +246,267 @@ export default function CourierReconciliationPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      {/* Top Header & Breadcrumbs */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard/orders" className="text-xs text-brand-600 hover:underline">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
+            <Link href="/dashboard/orders" className="text-indigo-600 hover:underline">
               ← অর্ডার তালিকা
             </Link>
             <span className="text-slate-300">/</span>
-            <span className="text-xs font-semibold text-slate-500">কুরিয়ার ক্যাশ রিকনসিলিয়েশন</span>
+            <span className="text-slate-700">কুরিয়ার ক্যাশ রিকনসিলিয়েশন</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-            কুরিয়ার ক্যাশ রিকনসিলিয়েশন ও মিসিং পেমেন্ট ফাইন্ডার
-          </h1>
-          <p className="text-xs text-slate-500">
-            Steadfast, Pathao ও RedX-এর পে-আউট স্টেটমেন্ট অডিট করুন। কম টাকা দেওয়া বা হারিয়ে যাওয়া ডেলিভারির টাকা ক্লেইম করুন।
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              💰 কুরিয়ার ক্যাশ রিকনসিলিয়েশন ও মিসিং পেমেন্ট
+            </h1>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Steadfast, Pathao ও RedX-এর পে-আউট স্টেটমেন্ট অডিট করুন। কম টাকা দেওয়া বা হারিয়ে যাওয়া পার্সেলের টাকা ক্লেইম করুন।
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => void loadData()}
-            className="btn-ghost btn-sm text-xs font-semibold"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95"
           >
-            🔄 রিফ্রেশ
+            <span>🔄</span> রিফ্রেশ
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab("upload")}
-            className="btn-primary btn-sm text-xs font-bold"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
           >
-            + নতুন স্টেটমেন্ট আপলোড
+            <span>+</span> স্টেটমেন্ট আপলোড
           </button>
         </div>
       </div>
 
+      {/* Notices */}
       {notice && (
-        <div className="flex items-center justify-between rounded-xl bg-emerald-50 p-4 text-xs font-medium text-emerald-800 border border-emerald-200">
+        <div className="flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-xs font-semibold text-emerald-800">
           <span>{notice}</span>
-          <button onClick={() => setNotice(null)} className="text-emerald-600 hover:text-emerald-900 font-bold">✕</button>
+          <button type="button" onClick={() => setNotice(null)} className="text-emerald-600 hover:text-emerald-900 font-bold">
+            ✕
+          </button>
         </div>
       )}
 
       {error && (
-        <div className="flex items-center justify-between rounded-xl bg-rose-50 p-4 text-xs font-medium text-rose-800 border border-rose-200">
+        <div className="flex items-center justify-between rounded-2xl bg-rose-50 border border-rose-200 p-4 text-xs font-semibold text-rose-800">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-rose-600 hover:text-rose-900 font-bold">✕</button>
+          <button type="button" onClick={() => setError(null)} className="text-rose-600 hover:text-rose-900 font-bold">
+            ✕
+          </button>
         </div>
       )}
 
       {/* KPI Stats Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="card p-4">
-          <p className="text-xs font-medium text-slate-500">মোট সংগৃহীত COD</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">
-            {formatMinor(totalCollectedAll)}
-          </p>
-          <p className="text-[11px] text-slate-400">সকল আপলোডকৃত স্টেটমেন্ট থেকে</p>
-        </div>
-
-        <div className="card p-4">
-          <p className="text-xs font-medium text-slate-500">কুরিয়ার ডেলিভারি ফি কর্তন</p>
-          <p className="mt-1 text-2xl font-bold text-slate-600">
-            {formatMinor(totalFeesAll)}
-          </p>
-          <p className="text-[11px] text-slate-400">নেট পেয়েছেন: {formatMinor(totalNetAll)}</p>
-        </div>
-
-        <div className="card p-4 border-amber-200 bg-amber-50/20">
-          <p className="text-xs font-medium text-amber-800">অডিটকৃত অমিল পার্সেল</p>
-          <p className="mt-1 text-2xl font-bold text-amber-900">
-            {totalDiscrepanciesCount} টি
-          </p>
-          <p className="text-[11px] text-amber-700">কম টাকা বা ফি নিয়ে আপত্তি</p>
-        </div>
-
-        <div className="card p-4 border-rose-200 bg-rose-50/40">
+      <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-rose-800">🚨 ডেলিভার্ড কিন্তু অদত্ত টাকা</p>
-            <span className="animate-pulse rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] font-black text-white">ALERT</span>
+            <span className="text-xs font-semibold text-slate-500">মোট সংগৃহীত COD</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 text-sm">
+              💵
+            </span>
           </div>
-          <p className="mt-1 text-2xl font-bold text-rose-900">
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {formatMinor(totalCollectedAll)}
+          </div>
+          <p className="mt-0.5 text-[11px] text-slate-400">আপলোডকৃত স্টেটমেন্ট থেকে</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500">কুরিয়ার ফি কর্তন</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 text-sm">
+              🏷️
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-slate-600">
+            {formatMinor(totalFeesAll)}
+          </div>
+          <p className="mt-0.5 text-[11px] text-emerald-700 font-medium">নেট ডিপোজিট: {formatMinor(totalNetAll)}</p>
+        </div>
+
+        <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-amber-800">অডিটকৃত অমিল পার্সেল</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-800 text-sm">
+              ⚠️
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-amber-900">
+            {totalDiscrepanciesCount} টি
+          </div>
+          <p className="mt-0.5 text-[11px] text-amber-700 font-medium">কম টাকা বা ভুল ফি আপত্তি</p>
+        </div>
+
+        <div className="rounded-2xl border border-rose-200/80 bg-rose-50/60 p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-rose-800">🚨 ডেলিভার্ড কিন্তু অদত্ত টাকা</span>
+            <span className="animate-pulse rounded-full bg-rose-500 px-1.5 py-0.2 text-[9px] font-black text-white">
+              ALERT
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-rose-900">
             {missingData ? formatMinor(missingData.totalMissingAmountMinor) : "৳০.০০"}
-          </p>
-          <p className="text-[11px] text-rose-700">
+          </div>
+          <p className="mt-0.5 text-[11px] text-rose-700 font-semibold">
             {missingData ? missingData.totalMissingParcels : 0}টি পার্সেল ৭+ দিন পার হলেও টাকা আসেনি!
           </p>
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-slate-200">
-        <nav className="flex space-x-6 text-sm">
-          <button
-            onClick={() => setActiveTab("batches")}
-            className={`pb-3 font-semibold transition-colors border-b-2 ${
-              activeTab === "batches"
-                ? "border-brand-600 text-brand-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            📄 পে-আউট ব্যাচ অডিট ইতিহাস ({batches.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("missing")}
-            className={`pb-3 font-semibold transition-colors border-b-2 flex items-center gap-1.5 ${
-              activeTab === "missing"
-                ? "border-rose-600 text-rose-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            <span>🚨 মিসিং ক্যাশ ফাইন্ডার</span>
-            {missingData && missingData.totalMissingParcels > 0 && (
-              <span className="rounded-full bg-rose-600 px-1.5 py-0.2 text-[10px] font-bold text-white">
-                {missingData.totalMissingParcels}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab("upload")}
-            className={`pb-3 font-semibold transition-colors border-b-2 ${
-              activeTab === "upload"
-                ? "border-brand-600 text-brand-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            ⬆️ নতুন ইনভয়েস/স্টেটমেন্ট আপলোড
-          </button>
-        </nav>
+      {/* Segmented Tabs */}
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setActiveTab("batches")}
+          className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition ${
+            activeTab === "batches"
+              ? "bg-slate-900 text-white shadow-sm"
+              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          }`}
+        >
+          <span>📄 পে-আউট ব্যাচ অডিট ইতিহাস ({batches.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("missing")}
+          className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition ${
+            activeTab === "missing"
+              ? "bg-rose-700 text-white shadow-sm"
+              : "text-rose-700 hover:bg-rose-50"
+          }`}
+        >
+          <span>🚨 মিসিং ক্যাশ ফাইন্ডার</span>
+          {missingData && missingData.totalMissingParcels > 0 && (
+            <span className="rounded-full bg-rose-900 px-2 py-0.2 text-[10px] font-bold text-white">
+              {missingData.totalMissingParcels}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("upload")}
+          className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition ${
+            activeTab === "upload"
+              ? "bg-indigo-600 text-white shadow-sm"
+              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          }`}
+        >
+          <span>⬆️ নতুন স্টেটমেন্ট আপলোড</span>
+        </button>
       </div>
 
-      {/* Tab 1: Disbursement Batches */}
+      {/* TAB 1: BATCHES */}
       {activeTab === "batches" && (
         <div className="space-y-4">
           {batches.length === 0 ? (
-            <div className="card p-12 text-center">
+            <div className="rounded-3xl border border-slate-200/80 bg-white p-12 text-center shadow-sm">
               <span className="text-4xl">🧾</span>
               <h3 className="mt-3 text-base font-bold text-slate-800">কোনো রিকনসিলিয়েশন স্টেটমেন্ট নেই</h3>
               <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-                Steadfast বা Pathao থেকে পাওয়া সাপ্তাহিক/পাক্ষিক পেমেন্ট এক্সেল বা CSV আপলোড করে স্বয়ংক্রিয়ভাবে টাকা মিলিয়ে নিন।
+                Steadfast বা Pathao থেকে পাওয়া সাপ্তাহিক পেমেন্ট এক্সেল বা CSV আপলোড করে স্বয়ংক্রিয়ভাবে টাকা মিলিয়ে নিন।
               </p>
               <button
+                type="button"
                 onClick={() => setActiveTab("upload")}
-                className="btn-primary btn-sm mt-4 text-xs font-bold"
+                className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
               >
                 + প্রথম স্টেটমেন্ট আপলোড করুন
               </button>
             </div>
           ) : (
-            <div className="overflow-hidden card">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
-                  <tr>
-                    <th className="py-3 px-4">রেফারেন্স / ইনভয়েস</th>
-                    <th className="py-3 px-4">কুরিয়ার</th>
-                    <th className="py-3 px-4">মোট অর্ডার</th>
-                    <th className="py-3 px-4">সংগৃহীত COD</th>
-                    <th className="py-3 px-4">কর্তন ফি</th>
-                    <th className="py-3 px-4">নেট ডিপোজিট</th>
-                    <th className="py-3 px-4">স্ট্যাটাস</th>
-                    <th className="py-3 px-4 text-right">অ্যাকশন</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {batches.map((b) => (
-                    <tr key={b.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-800">
-                        {b.referenceNo}
-                        <p className="text-[10px] text-slate-400 font-sans">
-                          {new Date(b.createdAt).toLocaleDateString("bn-BD")}
-                        </p>
-                      </td>
-                      <td className="py-3 px-4 uppercase font-semibold text-slate-700">
-                        {b.provider}
-                      </td>
-                      <td className="py-3 px-4 font-medium">{b.totalOrders}টি</td>
-                      <td className="py-3 px-4 font-semibold text-slate-900">
-                        {formatMinor(b.totalCollectedMinor)}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500">
-                        {formatMinor(b.totalFeeMinor)}
-                      </td>
-                      <td className="py-3 px-4 font-bold text-emerald-700">
-                        {formatMinor(b.netDisbursedMinor)}
-                      </td>
-                      <td className="py-3 px-4">
-                        {b.discrepancyCount > 0 ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                            ⚠️ {b.discrepancyCount} অমিল
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                            ✓ শতভাগ মিলেছে
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => void openBatchDetail(b.id)}
-                          className="btn-ghost btn-sm text-xs font-semibold text-brand-600 hover:text-brand-800"
-                        >
-                          বিস্তারিত ও অডিট →
-                        </button>
-                      </td>
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-4">রেফারেন্স / ইনভয়েস</th>
+                      <th className="py-3 px-4">কুরিয়ার</th>
+                      <th className="py-3 px-4">মোট অর্ডার</th>
+                      <th className="py-3 px-4">সংগৃহীত COD</th>
+                      <th className="py-3 px-4">কর্তন ফি</th>
+                      <th className="py-3 px-4">নেট ডিপোজিট</th>
+                      <th className="py-3 px-4">স্ট্যাটাস</th>
+                      <th className="py-3 px-4 text-right">অ্যাকশন</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {batches.map((b) => (
+                      <tr key={b.id} className="transition hover:bg-slate-50/70">
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                          {b.referenceNo}
+                          <p className="text-[10px] text-slate-400 font-sans font-normal">
+                            {new Date(b.createdAt).toLocaleString("bn-BD")}
+                          </p>
+                        </td>
+                        <td className="py-3.5 px-4 uppercase font-bold text-slate-700 text-[11px]">
+                          {b.provider}
+                        </td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-800">{b.totalOrders}টি</td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-900">
+                          {formatMinor(b.totalCollectedMinor)}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500 font-medium">
+                          {formatMinor(b.totalFeeMinor)}
+                        </td>
+                        <td className="py-3.5 px-4 font-bold text-emerald-700">
+                          {formatMinor(b.netDisbursedMinor)}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {b.discrepancyCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                              ⚠️ {b.discrepancyCount} অমিল
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                              ✓ শতভাগ মিলেছে
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => void openBatchDetail(b.id)}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+                          >
+                            বিস্তারিত অডিট →
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Tab 2: Missing Money Alert */}
+      {/* TAB 2: MISSING MONEY FINDER */}
       {activeTab === "missing" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 space-y-2">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-5 space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-xl">🚨</span>
               <h3 className="text-sm font-bold text-rose-900">
                 ডেলিভারি হওয়া কিন্তু অদত্ত টাকা সতর্কতা (Missing Money Finder)
               </h3>
             </div>
-            <p className="text-xs text-rose-800 max-w-3xl leading-relaxed">
-              এই পার্সেলগুলো কুরিয়ার দ্বারা সফলভাবে ডেলিভার্ড হয়েছে ৭ দিনেরও বেশি সময় আগে, কিন্তু কুরিয়ারের পাঠানো কোনো পে-আউট স্টেটমেন্টেই এই টাকা ক্রেডিট করা হয়নি। কুরিয়ার ম্যানেজারকে অবিলম্বে ট্র্যাকিং কোডগুলো পাঠিয়ে ক্লেইম করুন।
+            <p className="text-xs text-rose-800 leading-relaxed">
+              এই পার্সেলগুলো কুরিয়ার দ্বারা সফলভাবে ডেলিভার্ড হয়েছে ৭ দিনেরও বেশি সময় আগে, কিন্তু কুরিয়ারের কোনো পে-আউট স্টেটমেন্টেই এই টাকা জমা দেওয়া হয়নি। কুরিয়ার ম্যানেজারকে অবিলম্বে ট্র্যাকিং কোডগুলো পাঠিয়ে ক্লেইম করুন।
             </p>
           </div>
 
           {!missingData || missingData.parcels.length === 0 ? (
-            <div className="card p-12 text-center">
+            <div className="rounded-3xl border border-slate-200/80 bg-white p-12 text-center shadow-sm">
               <span className="text-4xl">🎉</span>
               <h3 className="mt-3 text-base font-bold text-slate-800">কোনো মিসিং পেমেন্ট নেই!</h3>
               <p className="mt-1 text-xs text-slate-500">
@@ -472,80 +514,83 @@ export default function CourierReconciliationPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-hidden card">
-              <div className="border-b bg-slate-50 px-4 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+              <div className="border-b bg-slate-50/75 px-4 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
                 <span>মিসিং পার্সেল তালিকা ({missingData.parcels.length}টি)</span>
                 <span className="font-bold text-rose-700">
                   মোট অপরিশোধিত: {formatMinor(missingData.totalMissingAmountMinor)}
                 </span>
               </div>
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
-                  <tr>
-                    <th className="py-3 px-4">ট্র্যাকিং কোড</th>
-                    <th className="py-3 px-4">কুরিয়ার</th>
-                    <th className="py-3 px-4">গ্রাহকের নাম ও ফোন</th>
-                    <th className="py-3 px-4">প্রত্যাশিত COD</th>
-                    <th className="py-3 px-4">ডেলিভারির তারিখ</th>
-                    <th className="py-3 px-4">বিলম্বিত দিন</th>
-                    <th className="py-3 px-4 text-right">অ্যাকশন</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {missingData.parcels.map((p) => (
-                    <tr key={p.id} className="hover:bg-rose-50/20 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                        {p.trackingCode}
-                      </td>
-                      <td className="py-3 px-4 uppercase font-semibold text-slate-600">
-                        {p.provider}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="font-medium text-slate-800">{p.recipientName}</span>
-                        <p className="text-[10px] text-slate-400 font-mono">{p.recipientPhone}</p>
-                      </td>
-                      <td className="py-3 px-4 font-bold text-rose-700">
-                        {formatMinor(p.codAmountMinor)}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500">
-                        {new Date(p.deliveredAt).toLocaleDateString("bn-BD")}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-                          {p.daysOverdue} দিন বাকি
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(
-                              `Courier: ${p.provider}\nTracking: ${p.trackingCode}\nCOD Amount: ৳${p.codAmountMinor / 100}\nDelivered: ${new Date(p.deliveredAt).toLocaleDateString()}`
-                            );
-                            setNotice(`ট্র্যাকিং ${p.trackingCode}-এর ক্লেইম বিবরণী ক্লিপবোর্ডে কপি হয়েছে।`);
-                          }}
-                          className="btn-ghost btn-sm text-xs font-semibold text-rose-700 hover:bg-rose-100"
-                        >
-                          📋 ক্লেইম টেক্সট কপি
-                        </button>
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50/75 border-b border-slate-200 text-slate-500 font-semibold">
+                    <tr>
+                      <th className="py-3 px-4">ট্র্যাকিং কোড</th>
+                      <th className="py-3 px-4">কুরিয়ার</th>
+                      <th className="py-3 px-4">গ্রাহকের নাম ও ফোন</th>
+                      <th className="py-3 px-4">প্রত্যাশিত COD</th>
+                      <th className="py-3 px-4">ডেলিভারির তারিখ</th>
+                      <th className="py-3 px-4">বিলম্বিত দিন</th>
+                      <th className="py-3 px-4 text-right">অ্যাকশন</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {missingData.parcels.map((p) => (
+                      <tr key={p.id} className="transition hover:bg-rose-50/20">
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                          {p.trackingCode}
+                        </td>
+                        <td className="py-3.5 px-4 uppercase font-bold text-slate-600 text-[11px]">
+                          {p.provider}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="font-semibold text-slate-800">{p.recipientName}</span>
+                          <p className="text-[10px] text-slate-400 font-mono">{p.recipientPhone}</p>
+                        </td>
+                        <td className="py-3.5 px-4 font-bold text-rose-700">
+                          {formatMinor(p.codAmountMinor)}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500">
+                          {new Date(p.deliveredAt).toLocaleDateString("bn-BD")}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                            {p.daysOverdue} দিন বাকি
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                `Courier: ${p.provider}\nTracking: ${p.trackingCode}\nCOD Amount: ৳${p.codAmountMinor / 100}\nDelivered: ${new Date(p.deliveredAt).toLocaleDateString()}`
+                              );
+                              setNotice(`ট্র্যাকিং ${p.trackingCode}-এর ক্লেইম টেক্সট ক্লিপবোর্ডে কপি হয়েছে।`);
+                            }}
+                            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 active:scale-95"
+                          >
+                            📋 ক্লেইম কপি
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Tab 3: Upload Statement */}
+      {/* TAB 3: UPLOAD STATEMENT */}
       {activeTab === "upload" && (
-        <div className="card p-6 space-y-6 max-w-3xl">
+        <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-6 max-w-3xl">
           <div>
             <h3 className="text-base font-bold text-slate-900">
               কুরিয়ার পে-আউট স্টেটমেন্ট আপলোড ও স্বয়ংক্রিয় অডিট
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              কুরিয়ার পোর্টাল (Steadfast, Pathao, RedX) থেকে ডাউনলোড করা CSV ফাইলের টেক্সট পেস্ট করুন অথবা ম্যানুয়ালি লাইন যুক্ত করুন।
+              কুরিয়ার পোর্টাল থেকে ডাউনলোড করা CSV ফাইল ড্রপ করুন অথবা টেক্সট পেস্ট করে অডিট চালান।
             </p>
           </div>
 
@@ -554,7 +599,7 @@ export default function CourierReconciliationPage() {
               <div>
                 <label className="block text-xs font-semibold text-slate-700">কুরিয়ার নির্বাচন করুন</label>
                 <select
-                  className="input mt-1 w-full text-xs"
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-indigo-500"
                   value={uploadProvider}
                   onChange={(e) => setUploadProvider(e.target.value)}
                 >
@@ -573,17 +618,48 @@ export default function CourierReconciliationPage() {
                   type="text"
                   required
                   placeholder="যেমন: INV-2026-OCT-15 বা Bank TR091"
-                  className="input mt-1 w-full text-xs"
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={referenceNo}
                   onChange={(e) => setReferenceNo(e.target.value)}
                 />
               </div>
             </div>
 
+            {/* Drag & drop file zone */}
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const f = e.dataTransfer.files?.[0];
+                if (f) handleFileUpload(f);
+              }}
+              className="rounded-2xl border-2 border-dashed border-slate-200 p-6 text-center hover:border-indigo-400 bg-slate-50/50 transition cursor-pointer"
+            >
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                id="csv-file-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFileUpload(f);
+                }}
+              />
+              <label htmlFor="csv-file-input" className="cursor-pointer block space-y-1">
+                <span className="text-2xl">📁</span>
+                <div className="text-xs font-bold text-slate-700">
+                  CSV ফাইল ড্রপ করুন বা ব্রাউজ করুন
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Steadfast বা Pathao পেমেন্ট স্টেটমেন্ট CSV ফাইল সিলেক্ট করুন
+                </div>
+              </label>
+            </div>
+
             <div>
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">
-                  CSV ডাটা পেস্ট করুন <span className="text-red-500">*</span>
+                  CSV ডাটা টেক্সট <span className="text-red-500">*</span>
                 </label>
                 <button
                   type="button"
@@ -591,23 +667,20 @@ export default function CourierReconciliationPage() {
                     setReferenceNo(`ST-PAYOUT-${new Date().toISOString().slice(0, 10)}`);
                     setRawCsvText(
                       `tracking_code,collected_bdt,courier_fee_bdt,net_bdt\n` +
-                      `ST-TEST-001,1500,120,1380\n` +
-                      `ST-TEST-002,1200,100,1100\n` +
-                      `ST-TEST-999,850,80,770`
+                        `ST-TEST-001,1500,120,1380\n` +
+                        `ST-TEST-002,1200,100,1100\n` +
+                        `ST-TEST-999,850,80,770`
                     );
                   }}
-                  className="text-xs font-medium text-brand-600 hover:underline"
+                  className="text-xs font-medium text-indigo-600 hover:underline"
                 >
                   📝 ডেমো ডাটা লোড করুন
                 </button>
               </div>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                ফরম্যাট: <code>tracking_code,collected_amount,courier_fee,net_paid</code> (প্রতি লাইনে একটি পার্সেল)
-              </p>
               <textarea
-                rows={8}
+                rows={6}
                 required
-                className="input mt-2 w-full font-mono text-xs"
+                className="mt-1.5 w-full rounded-2xl border border-slate-200 p-3 font-mono text-xs focus:ring-2 focus:ring-indigo-500"
                 placeholder="ST-1001,1500,120,1380&#10;ST-1002,2200,150,2050"
                 value={rawCsvText}
                 onChange={(e) => setRawCsvText(e.target.value)}
@@ -618,14 +691,14 @@ export default function CourierReconciliationPage() {
               <button
                 type="button"
                 onClick={() => setActiveTab("batches")}
-                className="btn-ghost btn-sm text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
                 বাতিল
               </button>
               <button
                 type="submit"
                 disabled={uploadBusy}
-                className="btn-primary btn-sm text-xs font-bold"
+                className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
               >
                 {uploadBusy ? "অডিট হচ্ছে..." : "🔍 স্টেটমেন্ট অডিট ও রিকনসিল করুন"}
               </button>
@@ -636,39 +709,44 @@ export default function CourierReconciliationPage() {
 
       {/* Batch Detail Modal */}
       {selectedBatch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-4xl flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="border-b bg-slate-50 px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs animate-fade">
+          <div className="max-h-[88vh] w-full max-w-4xl flex flex-col rounded-3xl bg-white shadow-2xl overflow-hidden animate-rise">
+            {/* Header */}
+            <div className="border-b border-slate-100 bg-slate-50/80 px-6 py-4 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-bold text-sm text-slate-900">{selectedBatch.referenceNo}</span>
-                  <span className="uppercase text-[11px] font-bold text-slate-500">({selectedBatch.provider})</span>
+                  <span className="uppercase text-[10px] font-bold text-slate-500 rounded bg-slate-200 px-1.5 py-0.2">
+                    {selectedBatch.provider}
+                  </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  মোট অর্ডার: {selectedBatch.totalOrders}টি | মিলেছে: {selectedBatch.matchedCount}টি | অমিল: {selectedBatch.discrepancyCount}টি
+                <p className="text-xs text-slate-500 mt-1">
+                  মোট অর্ডার: {selectedBatch.totalOrders}টি | মিলেছে: {selectedBatch.matchedCount}টি | অমিল:{" "}
+                  {selectedBatch.discrepancyCount}টি
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => void loadClaimSheet(selectedBatch.id)}
-                  className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                  className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
                 >
                   📋 ক্লেইম শিট জেনারেট
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSelectedBatch(null)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 font-bold"
+                  className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                 >
                   ✕
                 </button>
               </div>
             </div>
 
-            {/* Claim Sheet Preview if loaded */}
+            {/* Claim Sheet Preview */}
             {claimSheet && (
-              <div className="bg-amber-50 border-b border-amber-200 p-4 space-y-2">
+              <div className="bg-amber-50/80 border-b border-amber-200 p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-amber-900">
                     কুরিয়ার সাপোর্ট ক্লেইম রিপোর্ট ({claimSheet.totalDiscrepancies}টি আপত্তি রেকর্ড)
@@ -680,7 +758,7 @@ export default function CourierReconciliationPage() {
                 <textarea
                   readOnly
                   rows={4}
-                  className="w-full rounded-lg border border-amber-300 bg-white p-2 font-mono text-[11px] text-slate-700"
+                  className="w-full rounded-xl border border-amber-300 bg-white p-2.5 font-mono text-[11px] text-slate-700"
                   value={
                     `Subject: Disbursement Shortfall Claim - Batch ${claimSheet.referenceNo}\n` +
                     `Courier: ${claimSheet.provider}\n` +
@@ -697,7 +775,7 @@ export default function CourierReconciliationPage() {
               </div>
             )}
 
-            {/* Modal Body - Items Table */}
+            {/* Items Table */}
             <div className="flex-1 overflow-y-auto p-6">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 border-b text-slate-500 font-semibold sticky top-0">
@@ -714,19 +792,15 @@ export default function CourierReconciliationPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {selectedBatch.items?.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">
-                        {item.trackingCode}
-                      </td>
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{item.trackingCode}</td>
                       <td className="py-2.5 px-3 font-semibold text-slate-700">
                         {formatMinor(item.systemCodMinor)}
                       </td>
                       <td className="py-2.5 px-3 font-semibold text-slate-900">
                         {formatMinor(item.courierCollectedMinor)}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-500">
-                        {formatMinor(item.courierFeeMinor)}
-                      </td>
+                      <td className="py-2.5 px-3 text-slate-500">{formatMinor(item.courierFeeMinor)}</td>
                       <td className="py-2.5 px-3 font-bold">
                         {item.discrepancyMinor > 0 ? (
                           <span className="text-rose-700">-{formatMinor(item.discrepancyMinor)}</span>
@@ -740,30 +814,29 @@ export default function CourierReconciliationPage() {
                             item.status === "MATCHED"
                               ? "bg-emerald-100 text-emerald-800"
                               : item.status === "UNDERPAID"
-                              ? "bg-rose-100 text-rose-800"
-                              : "bg-amber-100 text-amber-800"
+                                ? "bg-rose-100 text-rose-800"
+                                : "bg-amber-100 text-amber-800"
                           }`}
                         >
                           {item.status === "MATCHED"
                             ? "✓ MATCHED"
                             : item.status === "UNDERPAID"
-                            ? "⚠️ কম টাকা"
-                            : item.status}
+                              ? "⚠️ কম টাকা"
+                              : item.status}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3">
-                        <span className="text-[10px] font-bold text-slate-600">
-                          {item.disputeStatus}
-                        </span>
+                      <td className="py-2.5 px-3 font-bold text-slate-600 text-[10px]">
+                        {item.disputeStatus}
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <button
+                          type="button"
                           onClick={() => {
                             setDisputeItem(item);
                             setDisputeStatus(item.disputeStatus || "OPEN");
                             setDisputeNotes(item.notes || "");
                           }}
-                          className="btn-ghost btn-sm text-[11px] font-semibold text-brand-600"
+                          className="font-semibold text-indigo-600 hover:underline"
                         >
                           আপত্তি / নোট →
                         </button>
@@ -779,20 +852,18 @@ export default function CourierReconciliationPage() {
 
       {/* Dispute Modal */}
       {disputeItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-            <h3 className="font-bold text-slate-900 text-sm">
-              কুরিয়ার আপত্তি ও ডিসপিউট ট্র্যাকিং
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs animate-fade">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4 animate-rise">
+            <h3 className="font-bold text-slate-900 text-sm">কুরিয়ার আপত্তি ও ডিসপিউট ট্র্যাকিং</h3>
             <p className="text-xs text-slate-500">
               ট্র্যাকিং কোড: <strong className="font-mono text-slate-800">{disputeItem.trackingCode}</strong>
             </p>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700">ডিসপিউট স্ট্যাটাস</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">ডিসপিউট স্ট্যাটাস</label>
                 <select
-                  className="input mt-1 w-full text-xs"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={disputeStatus}
                   onChange={(e) => setDisputeStatus(e.target.value)}
                 >
@@ -804,22 +875,22 @@ export default function CourierReconciliationPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700">নোট বা টিকিট নম্বর</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">নোট বা টিকিট নম্বর</label>
                 <textarea
                   rows={3}
-                  className="input mt-1 w-full text-xs"
-                  placeholder="যেমন: Steadfast ticket #8741 - ম্যানেজার বলেছেন আগামী রবিবারে এডজাস্ট করবেন"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:ring-2 focus:ring-indigo-500"
+                  placeholder="যেমন: Steadfast ticket #8741 - ম্যানেজার বলেছেন রবিবারে এডজাস্ট হবে..."
                   value={disputeNotes}
                   onChange={(e) => setDisputeNotes(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setDisputeItem(null)}
-                className="btn-ghost btn-sm text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
                 বাতিল
               </button>
@@ -827,7 +898,7 @@ export default function CourierReconciliationPage() {
                 type="button"
                 disabled={disputeBusy}
                 onClick={() => void handleDisputeSave()}
-                className="btn-primary btn-sm text-xs font-bold"
+                className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 {disputeBusy ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
               </button>
