@@ -8,6 +8,7 @@ import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../s
 import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, effectiveAccess, findUnknownAreas, normalizeOverrides } from "../common/permission-catalog";
+import { slugAvailability } from "../common/slug-availability";
 import { isValidTimezone, isValidWindows } from "../inbox/working-hours";
 import { parseAiSchedule } from "../inbox/ai-schedule";
 import { EmailProvider } from "../messaging/email.provider";
@@ -27,9 +28,24 @@ export class OrganizationsService {
     @Optional() private readonly storageRegistry?: StorageRegistryService,
   ) {}
 
+  /** TD1/TD2: the live availability check behind
+   * GET /organizations/slug-available — the same decision create()
+   * enforces, so the onboarding picker can never promise a name
+   * the server would then refuse. */
+  async checkSlugAvailability(rawSlug: unknown) {
+    return slugAvailability(this.prisma as any, rawSlug);
+  }
+
   async create(userId: string, dto: CreateOrganizationDto, ip?: string) {
-    const slugTaken = await (this.prisma as any).organization.findUnique({ where: { slug: dto.slug } });
-    if (slugTaken) throw new ConflictException("This slug is already taken");
+    // TD1: server-side slug governance — format + reserved names
+    // (code lists + SUPER-added platform-setting extras) refuse
+    // with the Bengali reason; "taken" keeps its long-standing
+    // Conflict behaviour and message.
+    const availability = await slugAvailability(this.prisma as any, dto.slug);
+    if (!availability.available) {
+      if (availability.reason === "taken") throw new ConflictException("This slug is already taken");
+      throw new BadRequestException(availability.message);
+    }
     const org = await (this.prisma as any).$transaction(async (tx: any) => {
       const created = await tx.organization.create({
         data: {
