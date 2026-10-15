@@ -61,13 +61,14 @@ export class MetaPublishClient {
     return `/${id}/${edge}`;
   }
 
-  async createCampaign(adAccountExternalId: string, input: { name: string; objective: string; dailyBudgetMinor?: string }): Promise<{ id: string }> {
+  async createCampaign(adAccountExternalId: string, input: { name: string; objective: string; dailyBudgetMinor?: string; lifetimeBudgetMinor?: string }): Promise<{ id: string }> {
     const res = await this.post<any>(this.accountPath(adAccountExternalId, "campaigns"), {
       name: input.name, objective: input.objective,
       status: "PAUSED", special_ad_categories: "[]",
       // Campaign-level budget (Advantage Campaign Budget): when set,
       // ad sets in this campaign must NOT carry their own budgets.
       ...(input.dailyBudgetMinor ? { daily_budget: input.dailyBudgetMinor } : {}),
+      ...(input.lifetimeBudgetMinor ? { lifetime_budget: input.lifetimeBudgetMinor } : {}),
     });
     if (!res?.id) throw new MetaPublishError(200, "Meta returned no campaign id; creation is NOT confirmed");
     return { id: String(res.id) };
@@ -77,14 +78,25 @@ export class MetaPublishClient {
     name: string; campaignId: string; dailyBudgetMinor?: string; lifetimeBudgetMinor?: string;
     billingEvent: string; optimizationGoal: string; targeting: Record<string, unknown>;
     promotedObject?: Record<string, unknown>; startTime?: string; endTime?: string;
+    // CN2: bidding (Meta field names per the Ad Set
+    // reference: bid_strategy enum, bid_amount in minor
+    // units, bid_constraints.roas_average_floor).
+    bidStrategy?: string; bidAmountMinor?: string; bidConstraints?: Record<string, unknown>;
+    // CN4: lead ad sets with an Instant Form carry
+    // destination_type ON_AD (Meta's lead ads guide).
+    destinationType?: string;
   }): Promise<{ id: string }> {
     const params: Record<string, string> = {
       name: input.name, campaign_id: input.campaignId,
       billing_event: input.billingEvent, optimization_goal: input.optimizationGoal,
       targeting: JSON.stringify(input.targeting), status: "PAUSED",
     };
+    if (input.destinationType) params.destination_type = input.destinationType;
     if (input.dailyBudgetMinor) params.daily_budget = input.dailyBudgetMinor;
     if (input.lifetimeBudgetMinor) params.lifetime_budget = input.lifetimeBudgetMinor;
+    if (input.bidStrategy) params.bid_strategy = input.bidStrategy;
+    if (input.bidAmountMinor) params.bid_amount = input.bidAmountMinor;
+    if (input.bidConstraints) params.bid_constraints = JSON.stringify(input.bidConstraints);
     if (input.promotedObject) params.promoted_object = JSON.stringify(input.promotedObject);
     if (input.startTime) params.start_time = input.startTime;
     if (input.endTime) params.end_time = input.endTime;
@@ -93,15 +105,210 @@ export class MetaPublishClient {
     return { id: String(res.id) };
   }
 
+  /** Frontier CN13 (NB6): the CTWA page_welcome_message
+   *  (Meta's Click-to-WhatsApp guide: a VISUAL_EDITOR v2
+   *  block on the creative's link_data). Two documented
+   *  shapes only: ice_breakers (greeting text + up to 3
+   *  ice-breaker titles) when ice breakers are present —
+   *  the prefill message is NOT part of that documented
+   *  shape and is not sent with it — otherwise
+   *  autofill_message (greeting text + the pre-filled
+   *  message the customer's WhatsApp opens with). Returns
+   *  undefined when nothing was authored. */
+  static buildPageWelcomeMessage(welcome?: { greetingText?: string; prefillMessage?: string; iceBreakers?: string[] } | null): Record<string, unknown> | undefined {
+    if (!welcome) return undefined;
+    const greeting = welcome.greetingText?.trim() || undefined;
+    const prefill = welcome.prefillMessage?.trim() || undefined;
+    const ice = (welcome.iceBreakers ?? []).map((t) => String(t).trim()).filter(Boolean).slice(0, 3);
+    if (!greeting && !prefill && !ice.length) return undefined;
+    if (ice.length) {
+      return {
+        type: "VISUAL_EDITOR", version: 2, landing_screen_type: "welcome_message", media_type: "text",
+        text_format: { customer_action_type: "ice_breakers", message: { ...(greeting ? { text: greeting } : {}), ice_breakers: ice.map((title) => ({ title })) } },
+      };
+    }
+    return {
+      type: "VISUAL_EDITOR", version: 2, landing_screen_type: "welcome_message", media_type: "text",
+      text_format: { customer_action_type: "autofill_message", message: { ...(greeting ? { text: greeting } : {}), ...(prefill ? { autofill_message: { content: prefill } } : {}) } },
+    };
+  }
+
+  /** CN13: read a WhatsApp phone-number node back from
+   *  Meta (display digits + verified name) with the
+   *  number's own messaging token. Used at ad-set save
+   *  time so the stored whatsapp_phone_number is Meta's
+   *  own read-back of the CONNECTED number — never typed
+   *  in, never guessed. Callers treat a failure as "digits
+   *  unknown" (the field is optional in promoted_object). */
+  async getWhatsAppPhoneNumber(phoneNumberId: string): Promise<{ displayPhoneNumber?: string; verifiedName?: string }> {
+    const body: any = await this.get(`/${phoneNumberId}`, { fields: "display_phone_number,verified_name" });
+    return {
+      displayPhoneNumber: body?.display_phone_number ? String(body.display_phone_number) : undefined,
+      verifiedName: body?.verified_name ? String(body.verified_name) : undefined,
+    };
+  }
+
+  /** CN4: create an Instant Form on a Page
+   *  (POST /{pageId}/leadgen_forms — Meta's Lead Ads guide).
+   *  The payload is built by CampaignsService
+   *  (buildLeadFormPayload). Counts as created ONLY with
+   *  Meta's returned form id. */
+  async createLeadForm(pageId: string, payload: Record<string, string>): Promise<{ id: string }> {
+    const res = await this.post<any>(`/${pageId}/leadgen_forms`, payload);
+    if (!res?.id) throw new MetaPublishError(200, "Meta returned no lead form id; creation is NOT confirmed");
+    return { id: String(res.id) };
+  }
+
+  /** CN5: stored enhancement toggles -> Meta's
+   *  degrees_of_freedom_spec. Only explicitly-set features
+   *  are sent (unset = Meta default, never an invented
+   *  OPT_OUT). Per Meta's Advantage creative docs (v22+),
+   *  enrollment is per feature via creative_features_spec,
+   *  each { enroll_status: OPT_IN | OPT_OUT }. */
+  static enhancementsToDof(enhancements?: Record<string, boolean> | null): Record<string, unknown> | undefined {
+    const entries = Object.entries(enhancements ?? {}).filter(([, v]) => typeof v === "boolean");
+    if (!entries.length) return undefined;
+    const spec: Record<string, unknown> = {};
+    for (const [k, v] of entries) spec[k] = { enroll_status: v ? "OPT_IN" : "OPT_OUT" };
+    return { creative_features_spec: spec };
+  }
+
+  /** CN5: the asset-feed creative (Meta's documented
+   *  asset_feed_spec). Used when an ad carries MULTIPLE
+   *  text options (Meta rotates combinations —
+   *  optimization_type DEGREES_OF_FREEDOM) and/or
+   *  PLACEMENT asset overrides (labelled assets +
+   *  asset_customization_rules, optimization_type
+   *  PLACEMENT, with a final empty-spec fallback rule to
+   *  the base asset, the documented pattern). Returns null
+   *  when neither applies so the caller keeps the legacy
+   *  object_story_spec paths byte-identical. */
+  static buildAssetFeedCreative(input: {
+    pageId: string; linkUrl: string; callToAction: string;
+    primaryText: string; headline?: string; description?: string;
+    imageUrl?: string; imageHash?: string; videoId?: string;
+    textOptions?: { primaryTexts: string[]; headlines: string[]; descriptions: string[] } | null;
+    placementMedia?: { feed?: { imageHash?: string; imageUrl?: string; videoId?: string }; vertical?: { imageHash?: string; imageUrl?: string; videoId?: string } } | null;
+  }): Record<string, unknown> | null {
+    const opts = input.textOptions ?? null;
+    const multiText = !!opts && (opts.primaryTexts.length > 1 || opts.headlines.length > 1 || opts.descriptions.length > 1);
+    const pm = input.placementMedia ?? null;
+    const hasPlacement = !!(pm && (pm.feed || pm.vertical));
+    if (!multiText && !hasPlacement) return null;
+    const isVideo = !!input.videoId;
+    const label = { base: "cn5_base", feed: "cn5_feed", vertical: "cn5_vertical" };
+    const mediaEntry = (m: { imageHash?: string; imageUrl?: string; videoId?: string }, lbl: string) => isVideo
+      ? { video_id: m.videoId, adlabels: [{ name: lbl }] }
+      : { ...(m.imageHash ? { hash: m.imageHash } : { url: m.imageUrl }), adlabels: [{ name: lbl }] };
+    const media: Record<string, unknown>[] = [mediaEntry(input, label.base)];
+    if (pm?.feed) media.push(mediaEntry(pm.feed, label.feed));
+    if (pm?.vertical) media.push(mediaEntry(pm.vertical, label.vertical));
+    const feed: Record<string, unknown> = {
+      bodies: (opts?.primaryTexts?.length ? opts.primaryTexts : [input.primaryText]).map((text) => ({ text })),
+      link_urls: [{ website_url: input.linkUrl }],
+      call_to_action_types: [input.callToAction],
+      ad_formats: [isVideo ? "SINGLE_VIDEO" : "SINGLE_IMAGE"],
+    };
+    const titles = opts?.headlines?.length ? opts.headlines : (input.headline ? [input.headline] : []);
+    if (titles.length) feed.titles = titles.map((text) => ({ text }));
+    const descriptions = opts?.descriptions?.length ? opts.descriptions : (input.description ? [input.description] : []);
+    if (descriptions.length) feed.descriptions = descriptions.map((text) => ({ text }));
+    if (isVideo) feed.videos = media; else feed.images = media;
+    if (hasPlacement) {
+      const rules: Record<string, unknown>[] = [];
+      const labelKey = isVideo ? "video_label" : "image_label";
+      if (pm?.feed) rules.push({
+        customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["feed"], instagram_positions: ["stream"] },
+        [labelKey]: { name: label.feed },
+      });
+      if (pm?.vertical) rules.push({
+        customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["story"], instagram_positions: ["story", "reels"] },
+        [labelKey]: { name: label.vertical },
+      });
+      // Fallback: every other placement keeps the base asset.
+      rules.push({ customization_spec: {}, [labelKey]: { name: label.base } });
+      feed.asset_customization_rules = rules;
+      feed.optimization_type = "PLACEMENT";
+    } else {
+      feed.optimization_type = "DEGREES_OF_FREEDOM";
+    }
+    return { page_id: input.pageId, asset_feed_spec: feed };
+  }
+
   async createAd(adAccountExternalId: string, input: {
     name: string; adSetId: string; pageId: string;
     linkUrl: string; primaryText: string; headline?: string; description?: string;
     imageUrl?: string; imageHash?: string; callToAction: string;
     videoId?: string;
     carouselCards?: { title: string; description?: string; linkUrl: string; imageUrl?: string; imageHash?: string }[];
+    // NB2 (CN4): a lead-form creative — link_data points at
+    // https://fb.me/ and the call-to-action value carries
+    // lead_gen_form_id (Meta's lead ads guide).
+    leadGenFormId?: string;
+    // NB2 (CN3): a catalog ad creative — object_story_spec
+    // template_data with product template tags; Meta fills
+    // name/link/image from the product set's items.
+    catalogTemplate?: boolean;
+    // NB3 (CN5): multiple text options, per-placement media
+    // (already resolved to Meta ids) and Advantage creative
+    // enhancement toggles. Asset-feed carries the first two;
+    // catalog/lead creatives never receive them (the
+    // service warns in readiness and logs at publish).
+    textOptions?: { primaryTexts: string[]; headlines: string[]; descriptions: string[] } | null;
+    placementMedia?: { feed?: { imageHash?: string; imageUrl?: string; videoId?: string }; vertical?: { imageHash?: string; imageUrl?: string; videoId?: string } } | null;
+    enhancements?: Record<string, boolean> | null;
+    // Frontier CN13 (NB6): a Click-to-WhatsApp creative
+    // (Meta's CTWA guide): link_data whose link is
+    // https://api.whatsapp.com/send and whose CTA is
+    // WHATSAPP_MESSAGE with app_destination WHATSAPP,
+    // plus the optional page_welcome_message. Takes
+    // precedence over every other creative shape — a
+    // WhatsApp destination defines the ad; text options /
+    // placement assets do not ride it (the service warns
+    // in readiness and logs the fallback at publish).
+    whatsApp?: { welcome?: { greetingText?: string; prefillMessage?: string; iceBreakers?: string[] } | null } | null;
   }): Promise<{ id: string }> {
     let creative: Record<string, unknown>;
-    if (input.videoId) {
+    const dof = MetaPublishClient.enhancementsToDof(input.enhancements);
+    const assetFeed = (!input.whatsApp && !input.catalogTemplate && !input.leadGenFormId && !(input.carouselCards && input.carouselCards.length >= 2))
+      ? MetaPublishClient.buildAssetFeedCreative(input)
+      : null;
+    if (input.whatsApp) {
+      const welcome = MetaPublishClient.buildPageWelcomeMessage(input.whatsApp.welcome);
+      creative = {
+        page_id: input.pageId,
+        link_data: {
+          link: "https://api.whatsapp.com/send", message: input.primaryText,
+          ...(input.headline ? { name: input.headline } : {}),
+          ...(input.description ? { description: input.description } : {}),
+          ...(input.imageHash ? { image_hash: input.imageHash } : input.imageUrl ? { image_url: input.imageUrl } : {}),
+          call_to_action: { type: "WHATSAPP_MESSAGE", value: { app_destination: "WHATSAPP" } },
+          ...(welcome ? { page_welcome_message: welcome } : {}),
+        },
+      };
+    } else if (assetFeed) {
+      creative = { ...assetFeed, ...(dof ? { degrees_of_freedom_spec: dof } : {}) };
+    } else if (input.catalogTemplate) {
+      creative = {
+        page_id: input.pageId,
+        template_data: {
+          message: input.primaryText,
+          name: input.headline ?? "{{product.name}}",
+          description: input.description ?? "{{product.description}}",
+          link: "{{product.url}}",
+          call_to_action: { type: input.callToAction },
+        },
+      };
+    } else if (input.leadGenFormId) {
+      const linkData: Record<string, unknown> = {
+        link: "https://fb.me/", message: input.primaryText,
+        ...(input.headline ? { name: input.headline } : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.imageHash ? { image_hash: input.imageHash } : input.imageUrl ? { image_url: input.imageUrl } : {}),
+        call_to_action: { type: input.callToAction, value: { lead_gen_form_id: input.leadGenFormId } },
+      };
+      creative = { page_id: input.pageId, link_data: linkData };
+    } else if (input.videoId) {
       creative = {
         page_id: input.pageId,
         video_data: {
@@ -136,6 +343,13 @@ export class MetaPublishClient {
         call_to_action: { type: input.callToAction, value: { link: input.linkUrl } },
       };
       creative = { page_id: input.pageId, link_data: linkData };
+    }
+    // CN5: enhancement toggles ride the legacy single-image /
+    // video / carousel creatives too. Catalog template and
+    // lead-form creatives never receive them (readiness says
+    // so, publish logs it) — never a silent claim otherwise.
+    if (!assetFeed && dof && !input.catalogTemplate && !input.leadGenFormId) {
+      creative = { ...creative, degrees_of_freedom_spec: dof };
     }
     const res = await this.post<any>(this.accountPath(adAccountExternalId, "ads"), {
       name: input.name, adset_id: input.adSetId, status: "PAUSED",
@@ -177,6 +391,18 @@ export class MetaPublishClient {
     await this.post(`/${adSetId}`, params);
   }
 
+  /** Campaign Builder Next CN1: Meta targeting search
+   * (the ad account's targetingsearch edge). Returns
+   * Meta's raw rows — callers decide what a match means;
+   * an error here is a real error, never an empty list
+   * dressed up as "no results". */
+  async targetingSearch(adAccountExternalId: string, input: { type: string; query: string }): Promise<any[]> {
+    const body = await this.get<any>(this.accountPath(adAccountExternalId, "targetingsearch"), {
+      type: input.type, q: input.query, limit: "25",
+    });
+    return Array.isArray(body?.data) ? body.data : [];
+  }
+
   /** Campaign Builder CB2: Meta's delivery estimate for a
    * targeting spec. This is Meta's own modelled range —
    * callers must label it an estimate, never a promise. */
@@ -192,5 +418,61 @@ export class MetaPublishClient {
       upperBound: typeof first?.users_upper_bound === "number" ? first.users_upper_bound : undefined,
       raw: first ?? body,
     };
+  }
+
+  /** Campaign Builder Frontier CN15: the Meta business that
+   * owns this ad account. Ad Studies are created on the
+   * BUSINESS node (POST /{business_id}/ad_studies), not on
+   * the ad account — the documented create path in Meta's
+   * Ad Study reference. Returns null when Meta's account
+   * node carries no business; callers refuse honestly
+   * rather than guess a business id. */
+  async getAdAccountBusinessId(adAccountExternalId: string): Promise<string | null> {
+    const id = adAccountExternalId.startsWith("act_") ? adAccountExternalId : `act_${adAccountExternalId}`;
+    const body = await this.get<any>(`/${id}`, { fields: "business{id}" });
+    const businessId = body?.business?.id;
+    return businessId ? String(businessId) : null;
+  }
+
+  /** CN15: create a Meta Experiment (Ad Study) of type
+   * SPLIT_TEST on the business node — cells carry
+   * treatment_percentage + the campaigns they test, and
+   * objectives carry the success metric (the documented
+   * shape: Ad Study guide + Graph API Reference for
+   * Business/ad_studies). A creation counts ONLY when Meta
+   * returns the study id; Meta's refusal propagates
+   * verbatim as a MetaPublishError. Creating a study does
+   * not create, publish or activate any campaign. */
+  async createAdStudy(businessId: string, input: {
+    name: string; description?: string;
+    startTimeSec: number; endTimeSec: number;
+    cells: unknown[]; objectives: unknown[];
+  }): Promise<{ id: string; raw: unknown }> {
+    const res = await this.post<any>(`/${businessId}/ad_studies`, {
+      name: input.name,
+      ...(input.description ? { description: input.description } : {}),
+      type: "SPLIT_TEST",
+      start_time: String(input.startTimeSec),
+      end_time: String(input.endTimeSec),
+      cells: JSON.stringify(input.cells),
+      objectives: JSON.stringify(input.objectives),
+    });
+    if (!res?.id) throw new MetaPublishError(200, "Meta returned no study id; experiment creation is NOT confirmed");
+    return { id: String(res.id), raw: res };
+  }
+
+  /** CN15: read a study back — the study node plus its
+   * cells edge, returned VERBATIM (Meta's own fields,
+   * including any winner/confidence data Meta chooses to
+   * return; this codebase never computes significance).
+   * A Meta refusal propagates verbatim. */
+  async getAdStudy(studyId: string): Promise<{ study: unknown; cells: unknown[] }> {
+    const study = await this.get<any>(`/${studyId}`, {
+      fields: "id,name,description,type,start_time,end_time,cooldown_start_time,observation_end_time,results_first_available_date,creation_time,updated_time",
+    });
+    const cellsBody = await this.get<any>(`/${studyId}/cells`, {
+      fields: "id,name,treatment_percentage,adsets,campaigns,ads,adaccounts",
+    }).catch(() => null);
+    return { study, cells: Array.isArray(cellsBody?.data) ? cellsBody.data : [] };
   }
 }

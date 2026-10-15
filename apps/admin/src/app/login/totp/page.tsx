@@ -31,11 +31,11 @@ export default function TotpPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
+    <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
       <form onSubmit={submit} className="acard w-full max-w-sm space-y-4">
         <div className="text-center">
           <div className="text-3xl">🔐</div>
-          <h1 className="mt-1 text-xl font-bold">Two-Factor যাচাই</h1>
+          <h1 className="mt-1 text-xl font-bold sm:text-2xl">Two-Factor যাচাই</h1>
           <p className="text-sm text-slate-400">Authenticator অ্যাপের ৬ সংখ্যার কোডটি দিন। কোড ৫ মিনিটের মধ্যে দিতে হবে।</p>
         </div>
         {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}

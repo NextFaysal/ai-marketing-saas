@@ -4,6 +4,7 @@ import { AuditService } from "../audit/audit.service";
 import { SocialService } from "./social.service";
 import { SocialPublishService } from "./social-publish.service";
 import { MetaSocialPublisher, SocialPostInsights, isTokenDeadError } from "./meta-publisher";
+import { PdfCanvas, buildPdf } from "../courier/pdf";
 
 /**
  * SP7 — Published-post insights + performance summary.
@@ -69,6 +70,58 @@ export function engagementScore(insights: unknown): number | null {
   return any ? total : null;
 }
 
+/**
+ * SU4: hashtags in one caption — Unicode-aware (# followed by
+ * letters/numbers/underscore, so Bengali hashtags count too),
+ * lowercased and deduped PER POST: the same tag twice in one
+ * caption is still one post using that tag.
+ */
+export function extractHashtags(caption: unknown): string[] {
+  if (typeof caption !== "string" || !caption) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of caption.matchAll(/#([\p{L}\p{N}_]+)/gu)) {
+    const tag = m[1].toLowerCase();
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+/**
+ * SU4: the org's OWN hashtag performance — for each hashtag, how
+ * many of the org's published posts used it and how those posts
+ * scored (engagementScore, the SP7 discipline). Posts whose
+ * insights carry no usable engagement fields are excluded
+ * entirely; nothing here comes from outside data, so with no
+ * scored posts the honest answer is an empty list.
+ */
+export function aggregateHashtagPerformance(
+  posts: { caption?: unknown; insights?: unknown }[],
+): { tag: string; posts: number; totalEngagement: number; avgEngagement: number }[] {
+  const byTag = new Map<string, { posts: number; totalEngagement: number }>();
+  for (const post of posts ?? []) {
+    const score = engagementScore(post?.insights);
+    if (score === null) continue;
+    for (const tag of extractHashtags(post?.caption)) {
+      const entry = byTag.get(tag) ?? { posts: 0, totalEngagement: 0 };
+      entry.posts++;
+      entry.totalEngagement += score;
+      byTag.set(tag, entry);
+    }
+  }
+  return [...byTag.entries()]
+    .map(([tag, e]) => ({
+      tag: `#${tag}`,
+      posts: e.posts,
+      totalEngagement: e.totalEngagement,
+      avgEngagement: Math.round((e.totalEngagement / e.posts) * 100) / 100,
+    }))
+    .sort((a, b) => b.totalEngagement - a.totalEngagement)
+    .slice(0, 50);
+}
+
 const WEEKDAY_INDEX: Record<string, number> = {
   Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
 };
@@ -123,6 +176,114 @@ export function computeBestTime(
   }
   if (!best) return null;
   return { weekday: best.weekday, hour: best.hour, score: best.score, postsConsidered: scored.length };
+}
+
+/** SU7: calendar day ("YYYY-MM-DD") of an instant in a timezone,
+ * via Intl parts (no date library in this codebase). */
+export function dayInTimeZone(at: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(at);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** SU7: step a "YYYY-MM-DD" day string by whole days (UTC math
+ * on the parsed parts — the string itself is tz-free). */
+export function shiftDay(day: string, delta: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const at = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1) + delta * 86_400_000);
+  const mm = String(at.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(at.getUTCDate()).padStart(2, "0");
+  return `${at.getUTCFullYear()}-${mm}-${dd}`;
+}
+
+/** SU7: one monthly-report row (see monthlyReport). Metrics carry
+ * null for a metric the platform never returned — exports render
+ * that as an EMPTY cell, never 0. */
+export interface MonthlyReportRow {
+  date: string;
+  platform: string;
+  accountName: string;
+  captionExcerpt: string;
+  status: string;
+  metrics: Record<string, number | null>;
+  engagement: number | null;
+  linkClicks: number;
+}
+
+function csvCell(value: unknown): string {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * SU7 — monthly report CSV (pure): BOM (Excel reads Bengali
+ * captions correctly), a header naming every metric, then one
+ * line per row. An absent metric is an EMPTY cell — a 0 here
+ * would claim the platform reported zero, which it did not.
+ */
+export function buildMonthlyReportCsv(rows: MonthlyReportRow[], month: string): string {
+  const header = ["date", "platform", "account", "caption", "status", ...INSIGHT_METRIC_KEYS, "engagement", "linkClicks"];
+  const lines = [header.join(",")];
+  for (const row of rows ?? []) {
+    lines.push([
+      row.date, row.platform, row.accountName, row.captionExcerpt, row.status,
+      ...INSIGHT_METRIC_KEYS.map((k) => row.metrics?.[k] ?? null),
+      row.engagement, row.linkClicks,
+    ].map(csvCell).join(","));
+  }
+  return `﻿${lines.join("\r\n")}\r\n`;
+}
+
+/**
+ * SU7 — monthly report PDF (pure): a real PDF via the courier
+ * module's PdfCanvas/buildPdf (no new dependency). English
+ * header; the table carries date / platform / account / status /
+ * engagement / clicks plus a totals row summed ONLY over present
+ * values.
+ *
+ * The caption is deliberately NOT in the PDF: PdfCanvas uses
+ * WinAnsi Type1 fonts, so a Bengali caption would render as "?"
+ * characters — a broken-looking report is worse than a narrower
+ * one. The CSV carries the full caption text.
+ */
+export function buildMonthlyReportPdf(rows: MonthlyReportRow[], month: string): Buffer {
+  const list = rows ?? [];
+  const pageRows = list.slice(0, 45);
+  const c = new PdfCanvas();
+  const W = 595, H = 842;
+  c.text(48, H - 56, 16, `Monthly Social Report — ${month}`, true);
+  c.text(48, H - 74, 9, "Numbers are exactly as the platforms returned them; a missing metric stays blank, never zero.");
+  c.line(48, H - 84, W - 48);
+  let y = H - 104;
+  c.text(48, y, 9, "Date", true);
+  c.text(140, y, 9, "Platform", true);
+  c.text(220, y, 9, "Account", true);
+  c.text(360, y, 9, "Status", true);
+  c.text(440, y, 9, "Engagement", true);
+  c.text(510, y, 9, "Clicks", true);
+  y -= 6; c.line(48, y, W - 48); y -= 16;
+  for (const row of pageRows) {
+    c.text(48, y, 9, String(row.date ?? "").slice(0, 10));
+    c.text(140, y, 9, row.platform ?? "");
+    c.text(220, y, 9, String(row.accountName ?? "").slice(0, 24));
+    c.text(360, y, 9, row.status ?? "");
+    c.text(440, y, 9, row.engagement === null || row.engagement === undefined ? "" : String(row.engagement));
+    c.text(510, y, 9, String(row.linkClicks ?? 0));
+    y -= 14;
+  }
+  if (list.length > pageRows.length) {
+    y -= 4;
+    c.text(48, y, 9, `... and ${list.length - pageRows.length} more posts (see the CSV export for the full list)`);
+    y -= 14;
+  }
+  y -= 6; c.line(48, y, W - 48); y -= 18;
+  const totalEngagement = list.reduce((sum, r) => sum + (typeof r.engagement === "number" ? r.engagement : 0), 0);
+  const engagementBasis = list.filter((r) => typeof r.engagement === "number").length;
+  const totalClicks = list.reduce((sum, r) => sum + (r.linkClicks ?? 0), 0);
+  c.text(48, y, 10, `Totals: engagement ${totalEngagement} (from ${engagementBasis} scored posts), link clicks ${totalClicks}, posts ${list.length}`, true);
+  return buildPdf([{ width: W, height: H, content: c.build() }]);
 }
 
 @Injectable()
@@ -288,5 +449,318 @@ export class SocialInsightsService {
       timeZone,
     );
     return { postsWithInsights: posts.length, totals, bestTime };
+  }
+
+  /**
+   * SU4: hashtag advice grounded in the org's own published
+   * posts only (SU7's aggregation, surfaced early for SU4).
+   * postsConsidered counts only posts that HAVE an engagement
+   * score — the basis the tag numbers stand on.
+   */
+  async hashtagPerformance(organizationId: string) {
+    const rows = await (this.prisma as any).socialPost.findMany({
+      where: { organizationId, status: "published" }, take: 500,
+    }).catch(() => []);
+    const posts = Array.isArray(rows) ? rows : [];
+    const tags = aggregateHashtagPerformance(
+      posts.map((p: any) => ({ caption: p.caption, insights: p.insights })),
+    );
+    const postsConsidered = posts.filter((p: any) => engagementScore(p.insights) !== null).length;
+    return { tags, postsConsidered };
+  }
+
+  // ---------- SU7: analytics v2 ----------
+
+  /** The org's timezone (getInsightsSummary's pattern). */
+  private async orgTimeZone(organizationId: string): Promise<string> {
+    const org = await (this.prisma as any).organization?.findFirst?.({
+      where: { id: organizationId },
+    }).catch(() => null);
+    return org?.timezone || "Asia/Dhaka";
+  }
+
+  private async publishedPostsWithInsights(organizationId: string): Promise<any[]> {
+    const rows = await (this.prisma as any).socialPost.findMany({
+      where: { organizationId, status: "published" }, take: 500,
+    }).catch(() => []);
+    return (Array.isArray(rows) ? rows : [])
+      .filter((p: any) => p.insights && typeof p.insights === "object");
+  }
+
+  /** Metric totals over a post set — the summary's basis
+   * discipline, shared by summary / timeseries / accounts. */
+  private metricTotals(posts: any[]): Record<string, { total: number; posts: number }> {
+    const totals: Record<string, { total: number; posts: number }> = {};
+    for (const key of INSIGHT_METRIC_KEYS) {
+      let total = 0;
+      let basis = 0;
+      for (const post of posts) {
+        const v = (post.insights as Record<string, unknown>)?.[key];
+        if (typeof v === "number" && Number.isFinite(v)) {
+          total += v;
+          basis++;
+        }
+      }
+      if (basis > 0) totals[key] = { total, posts: basis };
+    }
+    return totals;
+  }
+
+  /**
+   * SU7 — daily time series over the last `days` calendar days
+   * (org timezone, today included): per day, metric totals over
+   * the posts PUBLISHED that day which carry each metric (each
+   * metric carries its own basis), plus the engagement total and
+   * how many posts were scored. A day with no scored posts is a
+   * structural zero (metrics {}, engagement 0/0) — no post
+   * existed, which is a fact, not an estimate.
+   */
+  async timeseries(organizationId: string, daysInput?: number) {
+    const daysRaw = daysInput === undefined || daysInput === null || Number.isNaN(Number(daysInput))
+      ? 30 : Math.floor(Number(daysInput));
+    const days = Math.min(90, Math.max(1, daysRaw));
+    const timeZone = await this.orgTimeZone(organizationId);
+    const posts = await this.publishedPostsWithInsights(organizationId);
+    const today = dayInTimeZone(new Date(), timeZone);
+    const byDay = new Map<string, any[]>();
+    for (const post of posts) {
+      if (!post.publishedAt) continue;
+      const day = dayInTimeZone(new Date(post.publishedAt), timeZone);
+      const list = byDay.get(day) ?? [];
+      list.push(post);
+      byDay.set(day, list);
+    }
+    const series: { day: string; metrics: Record<string, { total: number; posts: number }>; engagement: { total: number; posts: number } }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const day = shiftDay(today, -i);
+      const dayPosts = byDay.get(day) ?? [];
+      let engTotal = 0;
+      let engPosts = 0;
+      for (const post of dayPosts) {
+        const score = engagementScore(post.insights);
+        if (score !== null) { engTotal += score; engPosts++; }
+      }
+      series.push({
+        day,
+        metrics: this.metricTotals(dayPosts),
+        engagement: { total: engTotal, posts: engPosts },
+      });
+    }
+    return { days, timeZone, series };
+  }
+
+  /**
+   * SU7 — content-type analysis from the org's OWN published
+   * posts' mediaRefs: video (any video ref) / carousel (>1 ref)
+   * / photo (exactly 1 image) / text (none). engagementTotal and
+   * engagementAvg are null when NO post of that type has a
+   * score — an average over missing data is never invented.
+   */
+  async contentTypes(organizationId: string) {
+    const rows = await (this.prisma as any).socialPost.findMany({
+      where: { organizationId, status: "published" }, take: 500,
+    }).catch(() => []);
+    const posts = Array.isArray(rows) ? rows : [];
+    const buckets = new Map<string, { posts: number; withInsights: number; scored: number; engagementTotal: number }>();
+    for (const type of ["video", "carousel", "photo", "text"]) {
+      buckets.set(type, { posts: 0, withInsights: 0, scored: 0, engagementTotal: 0 });
+    }
+    for (const post of posts) {
+      const refs = Array.isArray(post.mediaRefs) ? post.mediaRefs : [];
+      const type = refs.some((r: any) => r?.kind === "video")
+        ? "video"
+        : refs.length > 1 ? "carousel"
+        : refs.length === 1 ? "photo"
+        : "text";
+      const bucket = buckets.get(type)!;
+      bucket.posts++;
+      if (post.insights && typeof post.insights === "object") bucket.withInsights++;
+      const score = engagementScore(post.insights);
+      if (score !== null) { bucket.scored++; bucket.engagementTotal += score; }
+    }
+    return {
+      types: [...buckets.entries()].map(([type, b]) => ({
+        type,
+        posts: b.posts,
+        withInsights: b.withInsights,
+        engagementTotal: b.scored > 0 ? b.engagementTotal : null,
+        engagementAvg: b.scored > 0 ? Math.round((b.engagementTotal / b.scored) * 100) / 100 : null,
+      })),
+    };
+  }
+
+  /**
+   * SU7 — per-account comparison: for every account of the org,
+   * its published-with-insights posts, per-metric totals (with
+   * basis, the summary discipline) and engagement total/basis.
+   */
+  async accountsComparison(organizationId: string) {
+    const accounts = await (this.prisma as any).socialAccount.findMany({
+      where: { organizationId }, orderBy: { createdAt: "asc" },
+    }).catch(() => []);
+    const posts = await this.publishedPostsWithInsights(organizationId);
+    const byAccount = new Map<string, any[]>();
+    for (const post of posts) {
+      const list = byAccount.get(post.socialAccountId) ?? [];
+      list.push(post);
+      byAccount.set(post.socialAccountId, list);
+    }
+    return {
+      accounts: (Array.isArray(accounts) ? accounts : []).map((account: any) => {
+        const own = byAccount.get(account.id) ?? [];
+        let engTotal = 0;
+        let engPosts = 0;
+        for (const post of own) {
+          const score = engagementScore(post.insights);
+          if (score !== null) { engTotal += score; engPosts++; }
+        }
+        return {
+          accountId: account.id,
+          platform: account.platform,
+          name: account.name,
+          postsWithInsights: own.length,
+          totals: this.metricTotals(own),
+          engagement: { total: engTotal, posts: engPosts },
+        };
+      }),
+    };
+  }
+
+  /**
+   * SU7 — daily follower snapshot for the org's connected
+   * Meta Page / Instagram accounts. The token comes through the
+   * publish service's seam (resolveAccountToken — the same
+   * sealed-credential path as publishing); the count comes from
+   * Graph exactly (publisher.getFollowerCount). A null count
+   * (Graph omitted the field) SKIPS that account — no row, no
+   * invented number. Failure-isolated per account; a dead token
+   * marks the account like the publish path does. One audit row
+   * records the counts (system actor for the automation job).
+   */
+  async snapshotFollowers(organizationId: string, actorId = "system") {
+    const timeZone = await this.orgTimeZone(organizationId);
+    const day = dayInTimeZone(new Date(), timeZone);
+    const accounts = await (this.prisma as any).socialAccount.findMany({
+      where: { organizationId, status: "connected", platform: { in: ["meta_page", "instagram"] } },
+    }).catch(() => []);
+    const list = Array.isArray(accounts) ? accounts : [];
+    const results: { accountId: string; status: "snapshotted" | "skipped" | "failed"; followers?: number; error?: string }[] = [];
+    let snapshotted = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const account of list) {
+      try {
+        const { accessToken } = await this.publish.resolveAccountToken(organizationId, account.id);
+        const followers = await this.publisher.getFollowerCount(accessToken, account.platform, account.externalId);
+        if (followers === null) {
+          skipped++;
+          results.push({ accountId: account.id, status: "skipped" });
+          continue;
+        }
+        await (this.prisma as any).socialAccountFollowerSnapshot.upsert({
+          where: { socialAccountId_day: { socialAccountId: account.id, day } },
+          create: { organizationId, socialAccountId: account.id, day, followers },
+          update: { followers },
+        });
+        snapshotted++;
+        results.push({ accountId: account.id, status: "snapshotted", followers });
+      } catch (e) {
+        failed++;
+        const message = e instanceof Error ? e.message : String(e);
+        if (isTokenDeadError(e)) {
+          await this.publish.markAccountTokenDead(account.id, message).catch(() => undefined);
+        }
+        results.push({ accountId: account.id, status: "failed", error: message });
+      }
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "social.follower_snapshot",
+      entityType: "Organization", entityId: organizationId,
+      metadata: { day, checked: list.length, snapshotted, skipped, failed },
+    }).catch(() => undefined);
+    return { checked: list.length, snapshotted, skipped, failed, results };
+  }
+
+  /**
+   * SU7 — follower history per account: stored snapshots only,
+   * day ascending. An account with no snapshot yet returns an
+   * EMPTY array — the chart shows a gap, not a fabricated line.
+   */
+  async followers(organizationId: string) {
+    const accounts = await (this.prisma as any).socialAccount.findMany({
+      where: { organizationId }, orderBy: { createdAt: "asc" },
+    }).catch(() => []);
+    const snapshots = await (this.prisma as any).socialAccountFollowerSnapshot?.findMany?.({
+      where: { organizationId }, orderBy: { day: "asc" },
+    }).catch(() => []) ?? [];
+    const byAccount = new Map<string, { day: string; followers: number }[]>();
+    for (const snap of Array.isArray(snapshots) ? snapshots : []) {
+      const list = byAccount.get(snap.socialAccountId) ?? [];
+      list.push({ day: snap.day, followers: snap.followers });
+      byAccount.set(snap.socialAccountId, list);
+    }
+    return {
+      accounts: (Array.isArray(accounts) ? accounts : []).map((account: any) => ({
+        accountId: account.id,
+        platform: account.platform,
+        name: account.name,
+        snapshots: byAccount.get(account.id) ?? [],
+      })),
+    };
+  }
+
+  /**
+   * SU7 — monthly report rows: posts whose publishedAt falls in
+   * the month (org tz), plus posts never published whose
+   * createdAt does. Month defaults to the current org-tz month;
+   * a malformed month is a Bengali 400. Metrics are the stored
+   * insights verbatim (absent → null); linkClicks is the real
+   * SocialLinkClick count for the post.
+   */
+  async monthlyReport(organizationId: string, monthInput?: string): Promise<{ month: string; timeZone: string; rows: MonthlyReportRow[] }> {
+    const timeZone = await this.orgTimeZone(organizationId);
+    let month = typeof monthInput === "string" ? monthInput.trim() : "";
+    if (!month) month = dayInTimeZone(new Date(), timeZone).slice(0, 7);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw new BadRequestException("মাসের ফরম্যাট সঠিক নয় — YYYY-MM আকারে দিন (যেমন 2026-10)।");
+    }
+    const all = await (this.prisma as any).socialPost.findMany({
+      where: { organizationId }, take: 1000,
+    }).catch(() => []);
+    const rows: MonthlyReportRow[] = [];
+    const accounts = await (this.prisma as any).socialAccount.findMany({
+      where: { organizationId },
+    }).catch(() => []);
+    const accountById = new Map<string, any>((Array.isArray(accounts) ? accounts : []).map((a: any) => [a.id as string, a]));
+    for (const post of Array.isArray(all) ? all : []) {
+      // Inclusion: publishedAt in the month, or (never
+      // published) createdAt in the month.
+      const stamp = post.publishedAt ?? post.createdAt;
+      if (!stamp) continue;
+      if (dayInTimeZone(new Date(stamp), timeZone).slice(0, 7) !== month) continue;
+      const account = accountById.get(post.socialAccountId);
+      const metrics: Record<string, number | null> = {};
+      for (const key of INSIGHT_METRIC_KEYS) {
+        const v = post.insights && typeof post.insights === "object"
+          ? (post.insights as Record<string, unknown>)[key] : undefined;
+        metrics[key] = typeof v === "number" && Number.isFinite(v) ? v : null;
+      }
+      const linkClicks = await (this.prisma as any).socialLinkClick?.count?.({
+        where: { socialPostId: post.id },
+      }).catch(() => 0) ?? 0;
+      const caption = String(post.caption ?? "");
+      rows.push({
+        date: new Date(stamp).toISOString(),
+        platform: account?.platform ?? "",
+        accountName: account?.name ?? "",
+        captionExcerpt: caption.length > 80 ? caption.slice(0, 80) : caption,
+        status: post.status,
+        metrics,
+        engagement: engagementScore(post.insights),
+        linkClicks: typeof linkClicks === "number" ? linkClicks : 0,
+      });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+    return { month, timeZone, rows };
   }
 }

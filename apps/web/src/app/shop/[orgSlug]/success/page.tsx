@@ -6,6 +6,7 @@ import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { lastOrderKey, type CheckoutResult } from "@/lib/storefront-cart";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { payOnlineAvailable, payOptionLabel, type PayOption } from "@/lib/connections";
 
 function money(minor: string): string {
   try {
@@ -25,6 +26,14 @@ function SuccessInner() {
   const [locale, setLocale] = useState<ShopLocale>("bn");
   const [trackingEnabled, setTrackingEnabled] = useState(true);
   const t = shopT(locale);
+  // CC19: buyer "Pay online" — options come from the shop's
+  // PUBLIC payment-options answer, which lists an option only
+  // when it would really work (enabled own LIVE gateway, or a
+  // tenant-enabled platform provider the platform offers).
+  const [payOptions, setPayOptions] = useState<PayOption[]>([]);
+  const [payBusy, setPayBusy] = useState("");
+  const [payError, setPayError] = useState("");
+  const paymentVerifying = search.get("payment") === "verifying";
 
   useEffect(() => {
     try {
@@ -46,6 +55,41 @@ function SuccessInner() {
       } catch { /* defaults: bn, tracking link shown */ }
     })();
   }, [orgSlug]);
+
+  useEffect(() => {
+    if (!order?.orderId) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/public/tenant-payments/${encodeURIComponent(orgSlug)}/payment-options`);
+        if (!res.ok) return;
+        const json = await res.json();
+        setPayOptions(Array.isArray(json?.options) ? json.options : []);
+      } catch { /* no options — the button simply never appears */ }
+    })();
+  }, [orgSlug, order?.orderId]);
+
+  async function payOnline(option: PayOption) {
+    if (!order?.orderId || !order?.orderNumber) return;
+    setPayBusy(`${option.provider}:${option.source}`);
+    setPayError("");
+    try {
+      const res = await fetch(`${API_URL}/public/tenant-payments/initiate/${encodeURIComponent(orgSlug)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.orderId, orderNumber: order.orderNumber, provider: option.provider, source: option.source }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message ?? "এই মুহূর্তে অনলাইন পেমেন্ট শুরু করা যাচ্ছে না।");
+      const url = json?.redirectUrl ?? json?.bkashURL;
+      if (!url) throw new Error("গেটওয়ে কোনো পেমেন্ট লিংক দেয়নি — পেমেন্ট শুরু হয়নি।");
+      window.location.href = url;
+    } catch (e) {
+      // Honest refusal, verbatim from the server — never a fake
+      // "payment successful" state.
+      setPayError(e instanceof Error ? e.message : "পেমেন্ট শুরু করা যায়নি");
+      setPayBusy("");
+    }
+  }
 
   const orderNumber = order?.orderNumber ?? orderFromQuery;
 
@@ -137,6 +181,34 @@ function SuccessInner() {
         {loaded && order?.yourReferralCode ? (
           <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-sm font-bold text-indigo-900">
             🎁 {t.success.yourReferralCodePrefix}<span className="font-mono">{order.yourReferralCode}</span>{t.success.yourReferralCodeSuffix}
+          </div>
+        ) : null}
+
+        {paymentVerifying ? (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left text-xs leading-relaxed text-sky-900">
+            <p className="font-bold">আপনার পেমেন্ট যাচাই করা হচ্ছে…</p>
+            <p>গেটওয়ে থেকে ফিরে এসেছেন — পেমেন্ট সফল ধরা হবে শুধু গেটওয়ের সার্ভার-যাচাই (IPN) পৌঁছালে। যাচাই সম্পন্ন হলে অর্ডারের অবস্থা ট্র্যাকিং পেজে হালনাগাদ দেখা যাবে। ফিরে আসা মানেই পেমেন্ট সফল নয়।</p>
+          </div>
+        ) : null}
+
+        {loaded && order?.orderId && payOnlineAvailable(payOptions) ? (
+          <div className="space-y-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-left">
+            <p className="text-sm font-bold text-slate-800">💳 এখনই অনলাইনে পেমেন্ট করুন</p>
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              নিচের যেকোনো মাধ্যমে অর্ডারের টাকা এখনই পরিশোধ করতে পারেন। পেমেন্ট সম্পন্ন ধরা হবে গেটওয়ের সার্ভার-যাচাইয়ের পরেই।
+            </p>
+            {payError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{payError}</p> : null}
+            {payOptions.map((option) => (
+              <button
+                key={`${option.provider}:${option.source}`}
+                type="button"
+                disabled={payBusy !== ""}
+                onClick={() => void payOnline(option)}
+                className="block w-full rounded-xl bg-emerald-600 py-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {payBusy === `${option.provider}:${option.source}` ? "গেটওয়েতে নিয়ে যাওয়া হচ্ছে…" : `${payOptionLabel(option)} দিয়ে পেমেন্ট করুন`}
+              </button>
+            ))}
           </div>
         ) : null}
 

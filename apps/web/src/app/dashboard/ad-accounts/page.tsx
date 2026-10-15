@@ -30,9 +30,9 @@ export default function AdAccountsPage() {
   const [capiForm, setCapiForm] = useState({ pixelId: "", accessToken: "", testEventCode: "", purchaseTrigger: "placed", enabled: true, sendLeadEvents: true });
   const [capiEvents, setCapiEvents] = useState<{ id: string; eventName: string; sourceType: string; eventId: string; status: string; eventsReceived?: number | null; error?: string | null; createdAt: string }[]>([]);
   const [pubs, setPubs] = useState<{ id: string; platform: string; name: string; status: string; externalCampaignId?: string | null; error?: string | null; createdAt: string }[]>([]);
-  const [ocSettings, setOcSettings] = useState<{ platform: string; conversionAction?: string | null; pixelCode?: string | null; trigger: string; enabled: boolean }[]>([]);
+  const [ocSettings, setOcSettings] = useState<{ platform: string; conversionAction?: string | null; pixelCode?: string | null; datasetId?: string | null; leadFeedbackEnabled?: boolean; trigger: string; enabled: boolean }[]>([]);
   const [ocLogs, setOcLogs] = useState<{ id: string; platform: string; eventId: string; status: string; detail?: string | null; createdAt: string }[]>([]);
-  const [ocForm, setOcForm] = useState({ googleAccount: "", googleAction: "", tiktokAccount: "", tiktokPixel: "", trigger: "cod_confirmed" });
+  const [ocForm, setOcForm] = useState({ googleAccount: "", googleAction: "", tiktokAccount: "", tiktokPixel: "", metaAccount: "", metaDataset: "", metaLeadFeedback: true, trigger: "cod_confirmed" });
   const [gForm, setGForm] = useState({ name: "", dailyBudget: "500", countries: "BD", headlines: "", descriptions: "", finalUrl: "" });
   const [gKeywords, setGKeywords] = useState("");
   const [gNegatives, setGNegatives] = useState("");
@@ -43,6 +43,8 @@ export default function AdAccountsPage() {
   const [form, setForm] = useState({ platform: "meta", name: "", externalId: "", currency: "BDT" });
   const [manual, setManual] = useState<Record<string, { date: string; spend: string }>>({});
   const [metaToken, setMetaToken] = useState("");
+  // CC28: which Meta app the pasted token belongs to.
+  const [metaAppSource, setMetaAppSource] = useState<"platform" | "own">("platform");
   // AD5 picker: accounts discovered under the pasted token (step 1)
   // and the user's checkbox selection (step 2).
   const [metaDiscovered, setMetaDiscovered] = useState<DiscoveredMetaAccount[] | null>(null);
@@ -136,7 +138,7 @@ export default function AdAccountsPage() {
     setBusy("meta-connect"); setError("");
     try {
       const res = await apiFetch<{ connectedAccounts: AdAccount[] }>(`/organizations/${orgId}/integrations/meta/connect`, {
-        method: "POST", body: JSON.stringify({ accessToken: metaToken, adAccountExternalIds: ids }),
+        method: "POST", body: JSON.stringify({ accessToken: metaToken, adAccountExternalIds: ids, appSource: metaAppSource }),
       });
       setMetaToken("");
       setMetaDiscovered(null);
@@ -546,8 +548,8 @@ export default function AdAccountsPage() {
       )}
 
       <div className="card space-y-3 p-5">
-        <div className="font-semibold">🔁 Server Conversions — Google Offline ও TikTok Events (Phase L)</div>
-        <p className="text-sm text-slate-500">COD অর্ডার সম্পূর্ণ হলে সেই তথ্য Google/TikTok এ ফেরত যায় — Tracker এর ধরা gclid/ttclid দিয়েই মিলিয়ে। Click ID না থাকলে পাঠানো হয় না (লগে skipped দেখাবে)। Trigger: {ocSettings.map((s) => `${s.platform}=${s.trigger}${s.enabled ? "" : " (বন্ধ)"}`).join(", ") || "এখনো সেট করা হয়নি"}।</p>
+        <div className="font-semibold">🔁 Server Conversions — Google Offline, TikTok Events ও Meta Dataset (Phase L + CN14)</div>
+        <p className="text-sm text-slate-500">অর্ডারের ফলাফল প্ল্যাটফর্মে ফেরত যায়, যাতে বিজ্ঞাপনের Optimization আসল বিক্রি শেখে। Google/TikTok: Tracker এর ধরা gclid/ttclid দিয়ে মিলিয়ে — Click ID না থাকলে পাঠানো হয় না (লগে skipped দেখাবে)। Meta (CN14): Dataset (Pixel) এ Conversions API দিয়ে, ক্রেতার Hash করা Email/Phone দিয়ে মিলিয়ে; Tracker আগেই একই Purchase একই Dataset এ পাঠিয়ে থাকলে Double পাঠানো হয় না (একই event_id — লগে skipped দেখাবে)। Trigger: {ocSettings.map((s) => `${s.platform}=${s.trigger}${s.enabled ? "" : " (বন্ধ)"}`).join(", ") || "এখনো সেট করা হয়নি"}।</p>
         <div className="grid gap-2 md:grid-cols-2">
           <div className="space-y-2 rounded-xl bg-slate-50 p-3">
             <div className="text-sm font-medium">Google Ads</div>
@@ -573,6 +575,22 @@ export default function AdAccountsPage() {
               try { await apiFetch(`/organizations/${orgId}/offline-conversions/settings/tiktok`, { method: "PUT", body: JSON.stringify({ adAccountId: ocForm.tiktokAccount, pixelCode: ocForm.tiktokPixel, trigger: ocForm.trigger, enabled: true }) }); setNotice("TikTok Events সেটিং সেভ হয়েছে।"); await load(); } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
             }}>সেভ করুন</button>
           </div>
+          <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+            <div className="text-sm font-medium">Meta Dataset — Offline Conversions (CN14)</div>
+            <select className="input" value={ocForm.metaAccount} onChange={(e) => setOcForm({ ...ocForm, metaAccount: e.target.value })}>
+              <option value="">Meta Account বেছে নিন</option>
+              {accounts.filter((a) => a.platform === "meta").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <input className="input" placeholder="Dataset (Pixel) ID — Events Manager > Data Sources থেকে" value={ocForm.metaDataset} onChange={(e) => setOcForm({ ...ocForm, metaDataset: e.target.value })} />
+            <label className="flex items-start gap-2 text-xs text-slate-600">
+              <input type="checkbox" className="mt-0.5" checked={ocForm.metaLeadFeedback} onChange={(e) => setOcForm({ ...ocForm, metaLeadFeedback: e.target.checked })} />
+              <span>Lead Quality Feedback পাঠান — CRM এ Lead <b>Qualified</b> বা <b>Won</b> হলে সেই ফলাফল Meta কে জানানো হবে (শুধু Meta Lead Ads থেকে আসা Lead এর জন্য; প্রতিটি পাঠানো নিচের লগে থাকে)।{ocSettings.find((s) => s.platform === "meta") ? ` বর্তমান সেটিং: Dataset ${ocSettings.find((s) => s.platform === "meta")?.datasetId ?? "—"}, Lead Feedback ${ocSettings.find((s) => s.platform === "meta")?.leadFeedbackEnabled ? "চালু" : "বন্ধ"}।` : ""}</span>
+            </label>
+            <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
+              const orgId = getOrganizationId(); if (!orgId || !ocForm.metaAccount || !ocForm.metaDataset) { setError("Meta Account ও Dataset ID দিন"); return; }
+              try { await apiFetch(`/organizations/${orgId}/offline-conversions/settings/meta`, { method: "PUT", body: JSON.stringify({ adAccountId: ocForm.metaAccount, datasetId: ocForm.metaDataset, leadFeedbackEnabled: ocForm.metaLeadFeedback, trigger: ocForm.trigger, enabled: true }) }); setNotice("Meta Offline Conversion সেটিং সেভ হয়েছে।"); await load(); } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+            }}>সেভ করুন</button>
+          </div>
         </div>
         <label className="block text-sm">কখন পাঠানো হবে
           <select className="input mt-1 w-56" value={ocForm.trigger} onChange={(e) => setOcForm({ ...ocForm, trigger: e.target.value })}>
@@ -588,6 +606,9 @@ export default function AdAccountsPage() {
           <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
             const orgId = getOrganizationId(); if (!orgId) { setError("Organization নেই"); return; } try { const res = await apiFetch<{ examined: number; sent: number; skipped: number; failed: number }>(`/organizations/${orgId}/offline-conversions/upload-recent`, { method: "POST", body: JSON.stringify({ platform: "tiktok", days: 30 }) }); setNotice(`TikTok Backfill: ${res.examined}টি অর্ডারের মধ্যে পাঠানো ${res.sent}, skipped ${res.skipped}, failed ${res.failed}।`); await load(); } catch (e) { setError(e instanceof Error ? e.message : "Backfill ব্যর্থ"); }
           }}>⬆ TikTok এ গত ৩০ দিনের অর্ডার পাঠান</button>
+          <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
+            const orgId = getOrganizationId(); if (!orgId) { setError("Organization নেই"); return; } try { const res = await apiFetch<{ examined: number; sent: number; skipped: number; failed: number }>(`/organizations/${orgId}/offline-conversions/upload-recent`, { method: "POST", body: JSON.stringify({ platform: "meta", days: 30 }) }); setNotice(`Meta Backfill: ${res.examined}টি অর্ডারের মধ্যে পাঠানো ${res.sent}, skipped ${res.skipped}, failed ${res.failed}।`); await load(); } catch (e) { setError(e instanceof Error ? e.message : "Backfill ব্যর্থ"); }
+          }}>⬆ Meta Dataset এ গত ৩০ দিনের অর্ডার পাঠান</button>
         </div>
         {ocLogs.length > 0 && (
           <ul className="space-y-1 text-xs text-slate-500">
@@ -791,6 +812,12 @@ export default function AdAccountsPage() {
         </p>
         <label className="block text-sm">Access Token
           <input className={inputCls} type="password" value={metaToken} onChange={(e) => { setMetaToken(e.target.value); setMetaDiscovered(null); setMetaSelected({}); }} required placeholder="EAA..." />
+        </label>
+        <label className="block text-sm">এই Tokenটি কোন অ্যাপের?
+          <select className={inputCls} value={metaAppSource} onChange={(e) => setMetaAppSource(e.target.value as "platform" | "own")}>
+            <option value="platform">প্ল্যাটফর্মের Meta অ্যাপের Token</option>
+            <option value="own">আমার নিজের Meta অ্যাপের Token (Connect Center-এ আগে সেভ করা)</option>
+          </select>
         </label>
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
           {busy === "meta-discover" ? "যাচাই হচ্ছে..." : "🔍 অ্যাকাউন্ট খুঁজুন"}

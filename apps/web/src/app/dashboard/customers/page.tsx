@@ -7,10 +7,14 @@ import {
   CustomFieldsEditor, buildCustomFieldsPayload, customFieldsToRaw, fetchCustomFieldDefs,
   type CustomFieldDef,
 } from "@/components/custom-fields";
+import { minorToTaka, takaToMinor } from "@/lib/orders-on1";
+import { agingRows, isOverLimit, type CustomerKhata } from "@/lib/orders-on7";
 
 interface CustomerRow {
   id: string; name?: string | null; phone?: string | null; email?: string | null;
   source: string; createdAt: string; orderCount: number; totalSpentMinor: string;
+  // ON7: list rows now carry the open due + credit limit.
+  dueMinor?: string; creditLimitMinor?: string | null;
 }
 interface Detail {
   customer: {
@@ -43,6 +47,14 @@ export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [stores, setStores] = useState<{ id: string; name: string; platform?: string; syncMode?: string }[]>([]);
   const [q, setQ] = useState("");
+  // ON7: due-only filter + the খাতা (ledger) section state.
+  const [hasDue, setHasDue] = useState(false);
+  const [khata, setKhata] = useState<CustomerKhata | null>(null);
+  const [khataError, setKhataError] = useState("");
+  const [creditTaka, setCreditTaka] = useState("");
+  const [creditBusy, setCreditBusy] = useState(false);
+  const [creditNotice, setCreditNotice] = useState("");
+  const [creditError, setCreditError] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   // CX12b: the open customer's reviews for the 360 view.
   const [custReviews, setCustReviews] = useState<{ id: string; orderId: string; rating: number | null; comment: string | null; status: string; receivedAt: string | null; orderNumber: string | null }[]>([]);
@@ -63,11 +75,54 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
     setLoading(true);
     try {
-      setRows(await apiFetch<CustomerRow[]>(`/organizations/${orgId}/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`));
+      const params = new URLSearchParams();
+      if (q) params.set("q", q);
+      if (hasDue) params.set("hasDue", "true");
+      const qs = params.toString();
+      setRows(await apiFetch<CustomerRow[]>(`/organizations/${orgId}/customers${qs ? `?${qs}` : ""}`));
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setLoading(false); }
-  }, [q]);
+  }, [q, hasDue]);
+
+  /** ON7: load the customer's খাতা (ledger) — open orders with
+   * paid/due split, aging buckets and the credit limit. A failed
+   * load says so; it never renders as "no dues". */
+  const loadKhata = useCallback(async (customerId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const k = await apiFetch<CustomerKhata>(`/organizations/${orgId}/customers/${customerId}/khata`);
+      setKhata(k); setKhataError("");
+      setCreditTaka(k.creditLimitMinor ? minorToTaka(k.creditLimitMinor) : "");
+    } catch (e) {
+      setKhata(null);
+      setKhataError(e instanceof Error ? e.message : "খাতা লোড ব্যর্থ");
+    }
+  }, []);
+
+  /** ON7: save the credit limit via the existing customer PATCH
+   * (taka input -> minor string; an empty input clears the
+   * limit to null). The server's reply is shown verbatim. */
+  async function saveCreditLimit() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    const raw = creditTaka.trim();
+    let creditLimitMinor: string | null = null;
+    if (raw) {
+      const m = takaToMinor(raw);
+      if (m === null) { setCreditError("ক্রেডিট সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।"); return; }
+      creditLimitMinor = m;
+    }
+    setCreditBusy(true); setCreditError(""); setCreditNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}`, {
+        method: "PATCH", body: JSON.stringify({ creditLimitMinor }),
+      });
+      setCreditNotice(creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।");
+      await loadKhata(detail.customer.id);
+      await load();
+    } catch (e) { setCreditError(e instanceof Error ? e.message : "ক্রেডিট সীমা সংরক্ষণ ব্যর্থ"); }
+    finally { setCreditBusy(false); }
+  }
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetchCustomFieldDefs("customer").then(setCustDefs).catch(() => undefined); }, []);
   useEffect(() => {
@@ -105,6 +160,8 @@ export default function CustomersPage() {
 
   async function open(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
+    setKhata(null); setKhataError(""); setCreditNotice(""); setCreditError("");
+    void loadKhata(id);
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
       setDetail(d); setMergeTarget("");
@@ -185,8 +242,12 @@ export default function CustomersPage() {
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p> : null}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
+          শুধু বকেয়া আছে
+        </label>
         <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
@@ -200,6 +261,14 @@ export default function CustomersPage() {
                 <span className="text-sm font-semibold">{money(c.totalSpentMinor)}</span>
               </div>
               <div className="mt-0.5 text-xs text-slate-400">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
+              {/* ON7: বকেয়া (open due) on the list row — "—" when nothing is due. */}
+              <div className="mt-0.5 text-xs">
+                <span className="text-slate-400">বকেয়া: </span>
+                {(() => { let due = 0n; try { due = BigInt(c.dueMinor ?? "0"); } catch { due = 0n; } return due > 0n
+                  ? <span className="font-bold text-red-600">{money(c.dueMinor)}</span>
+                  : <span className="text-slate-400">—</span>; })()}
+                {c.creditLimitMinor ? <span className="ml-2 text-slate-400">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
+              </div>
             </button>
           ))}
         </div>
@@ -352,6 +421,91 @@ export default function CustomersPage() {
                   ))}
                 </div>
               ) : null}
+              {/* ON7: খাতা — the customer's ledger: total due,
+                  aging buckets, credit limit and the open
+                  orders behind the numbers. */}
+              <div className="card space-y-3">
+                <h3 className="font-semibold">📒 খাতা (বকেয়ার হিসাব)</h3>
+                {khataError ? (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{khataError}</p>
+                ) : !khata ? (
+                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div>
+                        <div className="text-2xl font-black text-red-600">{money(khata.totalDueMinor)}</div>
+                        <div className="text-xs text-slate-400">মোট বকেয়া</div>
+                      </div>
+                      {isOverLimit(khata) ? (
+                        <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white">⚠️ ক্রেডিট সীমা ছাড়িয়ে গেছে</span>
+                      ) : null}
+                      {khata.availableCreditMinor != null ? (
+                        <div className="text-sm">
+                          <span className="text-slate-500">ব্যবহারযোগ্য ক্রেডিট: </span>
+                          <b className={isOverLimit(khata) ? "text-red-600" : "text-emerald-700"}>{money(khata.availableCreditMinor)}</b>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {agingRows(khata).map((r) => (
+                        <div key={r.key} className="rounded-lg bg-slate-50 px-3 py-2 text-center">
+                          <div className="text-sm font-bold">{money(r.amountMinor)}</div>
+                          <div className="text-[11px] text-slate-500">{r.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-2 border-t pt-3">
+                      <label className="block text-sm font-medium">ক্রেডিট সীমা (৳) — খালি রাখলে সীমা থাকবে না
+                        <span className="mt-1 flex flex-wrap items-center gap-2">
+                          <input className="input w-44" inputMode="decimal" placeholder="যেমন: 5000" value={creditTaka} onChange={(e) => setCreditTaka(e.target.value)} />
+                          <button type="button" className="btn-primary btn-sm" disabled={creditBusy} onClick={() => void saveCreditLimit()}>
+                            {creditBusy ? "সংরক্ষণ হচ্ছে…" : "সীমা সংরক্ষণ করুন"}
+                          </button>
+                          <span className="text-xs text-slate-400">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
+                        </span>
+                      </label>
+                      {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
+                      {creditNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{creditNotice}</p> : null}
+                    </div>
+                    {khata.orders.length === 0 ? (
+                      <p className="text-sm text-slate-400">এই কাস্টমারের কোনো অর্ডার খাতায় নেই।</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="border-b text-xs text-slate-500">
+                              <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
+                              <th className="py-1.5 pr-2 font-semibold">তারিখ</th>
+                              <th className="py-1.5 pr-2 font-semibold">মোট</th>
+                              <th className="py-1.5 pr-2 font-semibold">পরিশোধিত</th>
+                              <th className="py-1.5 pr-2 font-semibold">বকেয়া</th>
+                              <th className="py-1.5 font-semibold">স্ট্যাটাস</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {khata.orders.map((o) => (
+                              <tr key={o.id} className="border-b last:border-0">
+                                <td className="py-1.5 pr-2 font-medium">#{o.number ?? o.id.slice(0, 8)}</td>
+                                <td className="py-1.5 pr-2">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</td>
+                                <td className="py-1.5 pr-2">{money(o.totalMinor)}</td>
+                                <td className="py-1.5 pr-2">{money(o.paidMinor)}</td>
+                                <td className="py-1.5 pr-2">{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
+                                  ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
+                                  : <span className="text-slate-400">—</span>; })()}</td>
+                                <td className="py-1.5"><span className="badge-slate">{o.status}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {khata.ordersTruncated ? (
+                      <p className="text-xs text-amber-700">আরও অর্ডার আছে — খাতায় শুধু সাম্প্রতিকগুলো দেখানো হচ্ছে; মোট বকেয়া সব অর্ডার মিলিয়েই হিসাব করা।</p>
+                    ) : null}
+                  </>
+                )}
+              </div>
               <div className="card">
                 <h3 className="mb-2 font-semibold">অর্ডারসমূহ</h3>
                 {detail.orders.length === 0 ? <p className="text-sm text-slate-400">কোনো অর্ডার নেই</p> : detail.orders.map((o) => (

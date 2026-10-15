@@ -1,11 +1,11 @@
-import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
 import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
-import { WalletService } from "../connections/wallet.service";
+import { WalletService, buildStatementCsv, buildStatementPdf, statementRange } from "../connections/wallet.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
 
 class StatusDto {
@@ -68,6 +68,11 @@ class LimitsDto {
   @IsOptional() seatLimit?: number | null;
 }
 class RetryDto { @IsIn(["scheduled_job", "sync_job"]) kind!: string; @IsString() id!: string; }
+class QueueActionDto {
+  @IsString() @MinLength(3) reason!: string;
+  @IsOptional() @IsArray() jobIds?: string[];
+  @IsOptional() @IsInt() limit?: number;
+}
 class ContentAccessDto { @IsString() @MinLength(3) reason!: string; }
 class LlmConfigDto {
   @IsOptional() @IsString() provider?: string;
@@ -146,6 +151,13 @@ class WalletConfigDto {
   @IsOptional() @IsBoolean() clear?: boolean;
 }
 class GoogleAppConfigDto {
+  @IsOptional() @IsString() clientId?: string;
+  @IsOptional() @IsString() clientSecret?: string;
+  @IsOptional() @IsString() redirectUri?: string;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+class LinkedinAppConfigDto {
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
   @IsOptional() @IsString() redirectUri?: string;
@@ -238,6 +250,9 @@ export class AdminController {
 
   @Get("health") health() { return this.admin.health(); }
   @Get("overview") overview() { return this.admin.overview(); }
+  // ADX3: sidebar badge / Attention Bell counts — read-only, every
+  // field honestly sourced or omitted (see AdminService.navCounts).
+  @Get("nav-counts") navCounts() { return this.admin.navCounts(); }
 
   @Get("users") users(@Query("q") q?: string, @Query("page") page?: string, @Query("take") take?: string) {
     return this.admin.listUsers(q, Number(page ?? 1) || 1, Math.min(100, Number(take ?? 25) || 25));
@@ -297,6 +312,8 @@ export class AdminController {
   updateTiktokConfig(@Req() req: any, @Body() dto: TiktokAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "tiktok", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/google") @AdminTier("SUPER")
   updateGoogleConfig(@Req() req: any, @Body() dto: GoogleAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "google", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/linkedin") @AdminTier("SUPER")
+  updateLinkedinConfig(@Req() req: any, @Body() dto: LinkedinAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "linkedin", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/wallet") @AdminTier("SUPER")
   updateWalletConfig(@Req() req: any, @Body() dto: WalletConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "wallet", dto as unknown as Record<string, unknown>, req.ip); }
 
@@ -314,6 +331,20 @@ export class AdminController {
   markPayoutPaid(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutMarkPaidDto) { return this.walletSvc().adminMarkPaid(req.adminUser, id, dto.payoutRef); }
   @Post("wallets/:organizationId/adjust") @AdminTier("SUPER", "FINANCE")
   adjustWallet(@Req() req: any, @Param("organizationId") organizationId: string, @Body() dto: WalletAdjustDto) { return this.walletSvc().adminAdjustWallet(req.adminUser, organizationId, dto); }
+  // CC19: per-org wallet statement export from the real ledger
+  // (same builder as the tenant export; read-only, no credits).
+  @Get("wallets/:organizationId/statement.csv") @AdminTier("SUPER", "FINANCE") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=wallet-statement.csv")
+  async walletStatementCsv(@Param("organizationId") organizationId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    const statement = await this.walletSvc().getStatement(organizationId, statementRange(from, to));
+    return buildStatementCsv(statement);
+  }
+  @Get("wallets/:organizationId/statement.pdf") @AdminTier("SUPER", "FINANCE")
+  async walletStatementPdf(@Param("organizationId") organizationId: string, @Res() res: any, @Query("from") from?: string, @Query("to") to?: string) {
+    const statement = await this.walletSvc().getStatement(organizationId, statementRange(from, to));
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "attachment; filename=\"wallet-statement.pdf\"");
+    return res.send(buildStatementPdf(statement));
+  }
   @Post("platform-config/test-llm") @AdminTier("SUPER")
   testLlm() { return this.admin.testLlm(); }
   @Post("platform-config/test-image") @AdminTier("SUPER")
@@ -331,6 +362,8 @@ export class AdminController {
   testBkash() { return this.admin.testBkash(); }
   @Post("platform-config/test-tiktok") @AdminTier("SUPER")
   testTiktok() { return this.admin.testTiktok(); }
+  @Post("platform-config/test-linkedin") @AdminTier("SUPER")
+  testLinkedin() { return this.admin.testLinkedin(); }
   @Post("platform-config/test-google") @AdminTier("SUPER")
   testGoogle() { return this.admin.testGoogle(); }
   @Patch("settings") @AdminTier("SUPER")
@@ -339,6 +372,13 @@ export class AdminController {
   @Patch("settings/plan-limits") @AdminTier("SUPER")
   updatePlanLimits(@Req() req: any, @Body() body: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }>) {
     return this.admin.updateSettings(req.adminUser, { planLimits: body }, req.ip);
+  }
+
+  // AB3 / AN14(a): remove ONE tier's stored plan-limits entry so
+  // that tier falls back to the pure code defaults.
+  @Post("settings/plan-limits/:tier/clear") @AdminTier("SUPER")
+  clearPlanLimits(@Req() req: any, @Param("tier") tier: string, @Body() dto: ReasonDto) {
+    return this.admin.clearPlanLimits(req.adminUser, tier, dto.reason, req.ip);
   }
 
   // AA7: plan-scoped feature-flag defaults (sparse flag -> tier -> boolean).
@@ -386,6 +426,9 @@ export class AdminController {
 
   @Get("health/integrations") healthIntegrations() { return this.admin.healthIntegrations(); }
   @Get("health/jobs") healthJobs() { return this.admin.healthJobs(); }
+  // AN15: cross-org connection-health board (CC22 definitions;
+  // read-only, tier pattern matches the other health GET routes).
+  @Get("health/connections") healthConnections() { return this.admin.healthConnections(); }
   @Post("health/retry") @AdminTier("SUPER", "SUPPORT")
   async retry(@Req() req: any, @Body() dto: RetryDto) {
     if (dto.kind === "scheduled_job") {
@@ -492,12 +535,45 @@ export class AdminController {
   @Get("system/version") systemVersion() { return this.admin.systemVersion(); }
   @Get("system/env-check") systemEnvCheck() { return this.admin.systemEnvCheck(); }
   @Get("system/queues") systemQueues() { return this.admin.systemQueues(); }
+  // AB3 / AN12: queue operator actions (pause/resume/capped
+  // failed-retry). No drain/obliterate/delete by design.
+  @Post("system/queues/:queue/pause") @AdminTier("SUPER")
+  queuePause(@Req() req: any, @Param("queue") queue: string, @Body() dto: QueueActionDto) {
+    return this.admin.queuePause(req.adminUser, queue, dto.reason, req.ip);
+  }
+  @Post("system/queues/:queue/resume") @AdminTier("SUPER")
+  queueResume(@Req() req: any, @Param("queue") queue: string, @Body() dto: QueueActionDto) {
+    return this.admin.queueResume(req.adminUser, queue, dto.reason, req.ip);
+  }
+  @Post("system/queues/:queue/retry-failed") @AdminTier("SUPER")
+  queueRetryFailed(@Req() req: any, @Param("queue") queue: string, @Body() dto: QueueActionDto) {
+    return this.admin.queueRetryFailed(req.adminUser, queue, { jobIds: dto.jobIds, limit: dto.limit, reason: dto.reason }, req.ip);
+  }
   @Get("system/webhooks") systemWebhooks(@Query("provider") provider?: string, @Query("organizationId") organizationId?: string, @Query("hasError") hasError?: string, @Query("take") take?: string) {
     return this.admin.systemWebhooks({ provider, organizationId, hasError: hasError === "true" || hasError === "1" ? true : undefined, take: take ? Number(take) : undefined });
   }
   @Get("system/webhooks/:id") systemWebhookEvent(@Param("id") id: string) { return this.admin.systemWebhookEvent(id); }
   @Get("system/social-board") socialBoard() { return this.admin.socialBoard(); }
   @Get("system/ads-board") adsBoard() { return this.admin.adsBoard(); }
+  // AB3 / AN13: operator retry from the boards — every action
+  // delegates to the tenant side's own service method (see
+  // AdminService AN13 notes). Tier matches health/retry.
+  @Post("system/social-board/posts/:postId/retry") @AdminTier("SUPER", "SUPPORT")
+  socialOpsRetryPost(@Req() req: any, @Param("postId") postId: string, @Body() dto: ReasonDto) {
+    return this.admin.socialOpsRetryPost(req.adminUser, postId, dto.reason, req.ip);
+  }
+  @Post("system/social-board/posts/:postId/recover-stuck") @AdminTier("SUPER", "SUPPORT")
+  socialOpsRecoverStuck(@Req() req: any, @Param("postId") postId: string, @Body() dto: ReasonDto) {
+    return this.admin.socialOpsRecoverStuck(req.adminUser, postId, dto.reason, req.ip);
+  }
+  @Post("system/social-board/accounts/:accountId/recheck") @AdminTier("SUPER", "SUPPORT")
+  socialOpsRecheckAccount(@Req() req: any, @Param("accountId") accountId: string, @Body() dto: ReasonDto) {
+    return this.admin.socialOpsRecheckAccount(req.adminUser, accountId, dto.reason, req.ip);
+  }
+  @Post("system/ads-board/accounts/:accountId/retry-sync") @AdminTier("SUPER", "SUPPORT")
+  socialOpsRetryAdSync(@Req() req: any, @Param("accountId") accountId: string, @Body() dto: ReasonDto) {
+    return this.admin.socialOpsRetryAdSync(req.adminUser, accountId, dto.reason, req.ip);
+  }
   @Get("system/inbox-health") systemInboxHealth() { return this.admin.inboxHealth(); }
   @Get("system/dlq") systemDlq() { return this.admin.listDlq(); }
   @Post("system/dlq/:dlqId/replay") @AdminTier("SUPER", "SUPPORT")

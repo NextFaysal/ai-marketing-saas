@@ -2,7 +2,9 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState, Tabs } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Campaign { id: string; subject: string; audience: string; recipients: number; sent: number; failed: number; createdAt: string }
 interface Changelog { id: string; version: string | null; title: string; body: string; published: boolean; publishedAt: string | null; createdAt: string }
@@ -64,8 +66,18 @@ export default function GrowthPage() {
   const [campBonus, setCampBonus] = React.useState("");
   const [campMax, setCampMax] = React.useState("");
   const [campExpires, setCampExpires] = React.useState("");
+  // ADX11: existing sections regrouped into tabs. NOTE: there is
+  // no Announcements section on this page (announcements live in
+  // Settings — the ADX9 📣 section), so no tab was invented for it;
+  // Referral Program and Feedback get their own tabs instead.
+  const [tab, setTab] = React.useState("campaigns");
 
+  // ADX12: loadDone separates "still loading" from "board load
+  // failed" for the two null-gated boards (Referrals, Feedback) —
+  // before, a failed fetch showed "লোড হচ্ছে…" forever there.
+  const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadDone(false);
     setCampaigns(await apiFetch<Campaign[]>("/admin/campaigns").catch(() => []));
     setEntries(await apiFetch<Changelog[]>("/admin/changelog").catch(() => []));
     const rb = await apiFetch<ReferralBoard>("/admin/referrals").catch(() => null);
@@ -81,6 +93,7 @@ export default function GrowthPage() {
     }
     setRefCampaigns(await apiFetch<RefCampaign[]>("/admin/referrals/campaigns").catch(() => []));
     setFeedback(await apiFetch<FeedbackBoard>("/admin/feedback").catch(() => null));
+    setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -89,7 +102,20 @@ export default function GrowthPage() {
   return (
     <AdminShell title="📈 Growth Ops">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur">
+        <Tabs
+          tabs={[
+            { id: "campaigns", label: "✉️ Campaigns" },
+            { id: "referrals", label: "🎁 Referrals" },
+            { id: "changelog", label: "📰 Changelog" },
+            { id: "feedback", label: "💬 Feedback / NPS", badge: feedback?.summary.count ?? undefined },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+      </div>
+      {tab === "campaigns" ? (
+        <div className="atab-panel grid items-start gap-4 lg:grid-cols-2">
         <div className="acard space-y-3">
           <div className="font-semibold">✉️ Tenant Email Campaign</div>
           <p className="text-xs text-slate-500">আসল Email Provider দিয়ে পাঠানো হয় — প্রতিটি Org এর OWNER/ADMIN দের কাছে। Provider সেট না থাকলে Campaign শুরুই হবে না। সর্বোচ্চ 500 জন/Campaign।</p>
@@ -111,44 +137,59 @@ export default function GrowthPage() {
           <ul className="space-y-1.5">
             {campaigns.slice(0, 5).map((c) => (
               <li key={c.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                <b>{c.subject}</b> · {c.audience} · পাঠানো {c.sent}/{c.recipients} (ব্যর্থ {c.failed}) · {new Date(c.createdAt).toLocaleString("bn-BD")}
+                <b>{c.subject}</b> · {c.audience} · পাঠানো {c.sent}/{c.recipients} (ব্যর্থ {c.failed}) · {fmtDateTime(c.createdAt)}
               </li>
             ))}
           </ul>
+          <p className="text-xs text-slate-500">পাঠানো Campaign সম্পাদনা বা মোছা যায় না — প্রতিটি Campaign-ই পাঠানোর পরের ইতিহাস (কে পেয়েছে, কত সফল/ব্যর্থ) হিসেবে সংরক্ষিত থাকে, ইতিহাস বদলানো হয় না। Draft Campaign বলে কিছু এই সিস্টেমে নেই — "Campaign পাঠান" চাপলেই তা সরাসরি পাঠানো হয়।</p>
         </div>
 
         <div className="acard space-y-3">
-          <div className="font-semibold">📰 Changelog Manager</div>
-          <p className="text-xs text-slate-500">প্রকাশিত Entry গুলো Tenant দের "আপডেটসমূহ" পেজে ও Public Changelog এ দেখায়।</p>
-          <div className="flex gap-2">
-            <input className="ainput max-w-[120px]" placeholder="Version" value={clVersion} onChange={(e) => setClVersion(e.target.value)} />
-            <input className="ainput flex-1" placeholder="শিরোনাম" value={clTitle} onChange={(e) => setClTitle(e.target.value)} />
+          <div className="font-semibold">🏷️ Referral Campaigns</div>
+          <p className="text-xs text-slate-500">ক্যাম্পেইন কোডে সাইন আপ করলে নতুন Org নিজেই ক্রেডিট পায় (কোডের শর্ত সাইন আপের মুহূর্তে লক হয়ে যায়)। QOS- দিয়ে শুরু হওয়া কোড ব্যবহার করা যাবে না — ওটা User কোডের জন্য।</p>
+          <div className="grid grid-cols-2 gap-2">
+            <input className="ainput" placeholder="কোড (যেমন EID2026)" value={campCode} onChange={(e) => setCampCode(e.target.value)} />
+            <input className="ainput" placeholder="লেবেল" value={campLabel} onChange={(e) => setCampLabel(e.target.value)} />
+            <input className="ainput" type="number" min={0} placeholder="Flat রিওয়ার্ড (টাকা)" value={campReward} onChange={(e) => setCampReward(e.target.value)} />
+            <input className="ainput" type="number" min={0} placeholder="Welcome (টাকা)" value={campBonus} onChange={(e) => setCampBonus(e.target.value)} />
+            <input className="ainput" type="number" min={1} placeholder="সর্বোচ্চ ব্যবহার" value={campMax} onChange={(e) => setCampMax(e.target.value)} />
+            <input className="ainput" type="date" value={campExpires} onChange={(e) => setCampExpires(e.target.value)} />
           </div>
-          <textarea className="ainput" rows={3} placeholder="কী নতুন এলো…" value={clBody} onChange={(e) => setClBody(e.target.value)} />
           <button className="abtn" onClick={async () => {
-            if (!clTitle.trim() || !clBody.trim()) return;
+            if (!campCode.trim() || !campLabel.trim()) return;
             try {
-              await apiFetch("/admin/changelog", { method: "POST", body: JSON.stringify({ version: clVersion || undefined, title: clTitle, body: clBody, published: true }) });
-              setClTitle(""); setClBody(""); setClVersion(""); setMsg("Changelog প্রকাশ হয়েছে।"); await load();
-            } catch (e) { setMsg(e instanceof Error ? e.message : "হয়নি"); }
-          }}>প্রকাশ করুন</button>
+              await apiFetch("/admin/referrals/campaigns", {
+                method: "POST",
+                body: JSON.stringify({
+                  code: campCode, label: campLabel,
+                  rewardMinor: campReward ? minor(campReward) : undefined,
+                  refereeBonusMinor: campBonus ? minor(campBonus) : undefined,
+                  maxUses: campMax ? Math.round(Number(campMax)) : undefined,
+                  expiresAt: campExpires ? new Date(campExpires).toISOString() : undefined,
+                }),
+              });
+              setCampCode(""); setCampLabel(""); setCampReward(""); setCampBonus(""); setCampMax(""); setCampExpires("");
+              setMsg("Campaign তৈরি হয়েছে।"); await load();
+            } catch (e) { setMsg(e instanceof Error ? e.message : "তৈরি হয়নি"); }
+          }}>Campaign তৈরি</button>
           <ul className="space-y-1.5">
-            {entries.slice(0, 6).map((e) => (
-              <li key={e.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                <span><b>{e.title}</b>{e.version ? ` · ${e.version}` : ""} · {e.published ? "✅ প্রকাশিত" : "খসড়া"}</span>
-                <span className="flex shrink-0 gap-1">
-                  <button className="abtn-secondary !px-2 !py-0.5" onClick={async () => { await apiFetch(`/admin/changelog/${e.id}`, { method: "PATCH", body: JSON.stringify({ published: !e.published }) }); await load(); }}>{e.published ? "লুকান" : "প্রকাশ"}</button>
-                  <button className="abtn-danger !px-2 !py-0.5" onClick={async () => { if (confirm("মুছে ফেলবেন?")) { await apiFetch(`/admin/changelog/${e.id}`, { method: "DELETE" }); await load(); } }}>মুছুন</button>
-                </span>
+            {refCampaigns.map((c) => (
+              <li key={c.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
+                <span><b>{c.code}</b> · {c.label} · {c.live ? "🟢 live" : "⚪ বন্ধ/শেষ"} · ব্যবহার {c.usedCount}{c.maxUses ? `/${c.maxUses}` : ""}
+                  <span className="block text-slate-400">রিওয়ার্ড {c.rewardMinor ? taka(Number(c.rewardMinor)) : "—"} · Welcome {c.refereeBonusMinor ? taka(Number(c.refereeBonusMinor)) : "—"}{c.expiresAt ? ` · মেয়াদ ${fmtDateTime(c.expiresAt, "date")}` : ""}</span></span>
+                <button className="abtn-secondary !px-2 !py-0.5 shrink-0" onClick={async () => { await apiFetch(`/admin/referrals/campaigns/${c.id}`, { method: "PATCH", body: JSON.stringify({ active: !c.active }) }); await load(); }}>{c.active ? "বন্ধ করুন" : "চালু করুন"}</button>
               </li>
             ))}
+            {refCampaigns.length === 0 ? <li className="text-xs text-slate-500">এখনো কোনো Campaign নেই।</li> : null}
           </ul>
         </div>
-      </div>
-
+        </div>
+      ) : null}
+      {tab === "referrals" ? (
+        <div className="atab-panel">
       <div className="acard mt-4 space-y-4">
         <div className="font-semibold">🎁 Referral Program — Advanced</div>
-        {!referrals ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!referrals ? (loadDone ? <ErrorState message="Referral Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>) : (
           <>
             <div className="grid grid-cols-2 gap-2 text-center lg:grid-cols-5">
               <div className="rounded-xl bg-slate-800 p-3"><div className="text-xl font-bold">{referrals.totals.signups}</div><div className="text-xs text-slate-400">রেফারেলে সাইনআপ</div></div>
@@ -253,7 +294,7 @@ export default function GrowthPage() {
                 <ul className="space-y-1.5">
                   {referrals.recent.slice(0, 6).map((r) => (
                     <li key={r.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                      {r.referrerEmail ?? "🏷️ ক্যাম্পেইন"} → {r.referredEmail ?? "?"} · {r.status === "rewarded" ? `✅ ${taka(r.rewardMinor ?? 0)}` : r.status === "clawed_back" ? "↩️ ফেরত" : "⏳ pending"} · {new Date(r.createdAt).toLocaleDateString("bn-BD")}
+                      {r.referrerEmail ?? "🏷️ ক্যাম্পেইন"} → {r.referredEmail ?? "?"} · {r.status === "rewarded" ? `✅ ${taka(r.rewardMinor ?? 0)}` : r.status === "clawed_back" ? "↩️ ফেরত" : "⏳ pending"} · {fmtDateTime(r.createdAt, "date")}
                     </li>
                   ))}
                 </ul>
@@ -262,51 +303,44 @@ export default function GrowthPage() {
           </>
         )}
       </div>
-
-      <div className="grid gap-4 lg:grid-cols-2 mt-4">
+        </div>
+      ) : null}
+      {tab === "changelog" ? (
+        <div className="atab-panel">
         <div className="acard space-y-3">
-          <div className="font-semibold">🏷️ Referral Campaigns</div>
-          <p className="text-xs text-slate-500">ক্যাম্পেইন কোডে সাইন আপ করলে নতুন Org নিজেই ক্রেডিট পায় (কোডের শর্ত সাইন আপের মুহূর্তে লক হয়ে যায়)। QOS- দিয়ে শুরু হওয়া কোড ব্যবহার করা যাবে না — ওটা User কোডের জন্য।</p>
-          <div className="grid grid-cols-2 gap-2">
-            <input className="ainput" placeholder="কোড (যেমন EID2026)" value={campCode} onChange={(e) => setCampCode(e.target.value)} />
-            <input className="ainput" placeholder="লেবেল" value={campLabel} onChange={(e) => setCampLabel(e.target.value)} />
-            <input className="ainput" type="number" min={0} placeholder="Flat রিওয়ার্ড (টাকা)" value={campReward} onChange={(e) => setCampReward(e.target.value)} />
-            <input className="ainput" type="number" min={0} placeholder="Welcome (টাকা)" value={campBonus} onChange={(e) => setCampBonus(e.target.value)} />
-            <input className="ainput" type="number" min={1} placeholder="সর্বোচ্চ ব্যবহার" value={campMax} onChange={(e) => setCampMax(e.target.value)} />
-            <input className="ainput" type="date" value={campExpires} onChange={(e) => setCampExpires(e.target.value)} />
+          <div className="font-semibold">📰 Changelog Manager</div>
+          <p className="text-xs text-slate-500">প্রকাশিত Entry গুলো Tenant দের "আপডেটসমূহ" পেজে ও Public Changelog এ দেখায়।</p>
+          <div className="flex gap-2">
+            <input className="ainput max-w-[120px]" placeholder="Version" value={clVersion} onChange={(e) => setClVersion(e.target.value)} />
+            <input className="ainput flex-1" placeholder="শিরোনাম" value={clTitle} onChange={(e) => setClTitle(e.target.value)} />
           </div>
+          <textarea className="ainput" rows={3} placeholder="কী নতুন এলো…" value={clBody} onChange={(e) => setClBody(e.target.value)} />
           <button className="abtn" onClick={async () => {
-            if (!campCode.trim() || !campLabel.trim()) return;
+            if (!clTitle.trim() || !clBody.trim()) return;
             try {
-              await apiFetch("/admin/referrals/campaigns", {
-                method: "POST",
-                body: JSON.stringify({
-                  code: campCode, label: campLabel,
-                  rewardMinor: campReward ? minor(campReward) : undefined,
-                  refereeBonusMinor: campBonus ? minor(campBonus) : undefined,
-                  maxUses: campMax ? Math.round(Number(campMax)) : undefined,
-                  expiresAt: campExpires ? new Date(campExpires).toISOString() : undefined,
-                }),
-              });
-              setCampCode(""); setCampLabel(""); setCampReward(""); setCampBonus(""); setCampMax(""); setCampExpires("");
-              setMsg("Campaign তৈরি হয়েছে।"); await load();
-            } catch (e) { setMsg(e instanceof Error ? e.message : "তৈরি হয়নি"); }
-          }}>Campaign তৈরি</button>
+              await apiFetch("/admin/changelog", { method: "POST", body: JSON.stringify({ version: clVersion || undefined, title: clTitle, body: clBody, published: true }) });
+              setClTitle(""); setClBody(""); setClVersion(""); setMsg("Changelog প্রকাশ হয়েছে।"); await load();
+            } catch (e) { setMsg(e instanceof Error ? e.message : "হয়নি"); }
+          }}>প্রকাশ করুন</button>
           <ul className="space-y-1.5">
-            {refCampaigns.map((c) => (
-              <li key={c.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                <span><b>{c.code}</b> · {c.label} · {c.live ? "🟢 live" : "⚪ বন্ধ/শেষ"} · ব্যবহার {c.usedCount}{c.maxUses ? `/${c.maxUses}` : ""}
-                  <span className="block text-slate-400">রিওয়ার্ড {c.rewardMinor ? taka(Number(c.rewardMinor)) : "—"} · Welcome {c.refereeBonusMinor ? taka(Number(c.refereeBonusMinor)) : "—"}{c.expiresAt ? ` · মেয়াদ ${new Date(c.expiresAt).toLocaleDateString("bn-BD")}` : ""}</span></span>
-                <button className="abtn-secondary !px-2 !py-0.5 shrink-0" onClick={async () => { await apiFetch(`/admin/referrals/campaigns/${c.id}`, { method: "PATCH", body: JSON.stringify({ active: !c.active }) }); await load(); }}>{c.active ? "বন্ধ করুন" : "চালু করুন"}</button>
+            {entries.slice(0, 6).map((e) => (
+              <li key={e.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
+                <span><b>{e.title}</b>{e.version ? ` · ${e.version}` : ""} · {e.published ? "✅ প্রকাশিত" : "খসড়া"}</span>
+                <span className="flex shrink-0 gap-1">
+                  <button className="abtn-secondary !px-2 !py-0.5" onClick={async () => { await apiFetch(`/admin/changelog/${e.id}`, { method: "PATCH", body: JSON.stringify({ published: !e.published }) }); await load(); }}>{e.published ? "লুকান" : "প্রকাশ"}</button>
+                  <button className="abtn-danger !px-2 !py-0.5" onClick={async () => { if (confirm("মুছে ফেলবেন?")) { await apiFetch(`/admin/changelog/${e.id}`, { method: "DELETE" }); await load(); } }}>মুছুন</button>
+                </span>
               </li>
             ))}
-            {refCampaigns.length === 0 ? <li className="text-xs text-slate-500">এখনো কোনো Campaign নেই।</li> : null}
           </ul>
         </div>
-
+        </div>
+      ) : null}
+      {tab === "feedback" ? (
+        <div className="atab-panel">
         <div className="acard space-y-3">
           <div className="font-semibold">💬 Feedback / NPS</div>
-          {!feedback ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!feedback ? (loadDone ? <ErrorState message="Feedback Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>) : (
             <>
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-xl bg-slate-800 p-3"><div className="text-xl font-bold">{feedback.summary.nps ?? "—"}</div><div className="text-xs text-slate-400">NPS Score</div></div>
@@ -317,7 +351,7 @@ export default function GrowthPage() {
               <ul className="space-y-1.5">
                 {feedback.recent.slice(0, 8).map((f) => (
                   <li key={f.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                    <b>{f.score}/10</b> · {f.organizationName ?? f.id} · {new Date(f.createdAt).toLocaleDateString("bn-BD")}
+                    <b>{f.score}/10</b> · {f.organizationName ?? f.id} · {fmtDateTime(f.createdAt, "date")}
                     {f.comment ? <span className="block text-slate-400">“{f.comment}”</span> : null}
                   </li>
                 ))}
@@ -326,7 +360,8 @@ export default function GrowthPage() {
             </>
           )}
         </div>
-      </div>
+        </div>
+      ) : null}
     </AdminShell>
   );
 }

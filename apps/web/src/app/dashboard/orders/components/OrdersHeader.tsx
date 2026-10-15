@@ -9,6 +9,12 @@ interface OrdersHeaderProps {
   onOpenLabelScanner: () => void;
   onOpenCourierHub: () => void;
   onDownloadExport: () => void;
+  onOpenAutomation?: () => void;
+  onOpenAnalytics?: () => void;
+  onOpenPrint?: () => void;
+  onOpenTeam?: () => void;
+  onOpenFraud?: () => void;
+  onOpenNotif?: () => void;
 }
 
 export function OrdersHeader({
@@ -19,6 +25,12 @@ export function OrdersHeader({
   onOpenLabelScanner,
   onOpenCourierHub,
   onDownloadExport,
+  onOpenAutomation,
+  onOpenAnalytics,
+  onOpenPrint,
+  onOpenTeam,
+  onOpenFraud,
+  onOpenNotif,
 }: OrdersHeaderProps) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -73,6 +85,60 @@ export function OrdersHeader({
 
       {/* Main Top Action Buttons */}
       <div className="flex flex-wrap items-center gap-2">
+        {onOpenAutomation && (
+          <button
+            type="button"
+            onClick={onOpenAutomation}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>🤖</span> অটোমেশন
+          </button>
+        )}
+        {onOpenAnalytics && (
+          <button
+            type="button"
+            onClick={onOpenAnalytics}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>📊</span> অ্যানালিটিক্স
+          </button>
+        )}
+        {onOpenPrint && (
+          <button
+            type="button"
+            onClick={onOpenPrint}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>🖨️</span> প্রিন্ট সেন্টার
+          </button>
+        )}
+        {onOpenTeam && (
+          <button
+            type="button"
+            onClick={onOpenTeam}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>👥</span> টিম
+          </button>
+        )}
+        {onOpenFraud && (
+          <button
+            type="button"
+            onClick={onOpenFraud}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>🛡️</span> ফ্রড শিল্ড
+          </button>
+        )}
+        {onOpenNotif && (
+          <button
+            type="button"
+            onClick={onOpenNotif}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
+          >
+            <span>🔔</span> নোটিফিকেশন
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenLabelScanner}

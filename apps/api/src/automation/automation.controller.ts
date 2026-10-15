@@ -1,3 +1,4 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AutomationService } from "./automation.service";
 import { InventoryAdGuardService } from "./inventory-ad-guard.service";
 import { PredictiveReplenishmentService } from "./predictive-replenishment.service";

@@ -957,8 +957,7 @@ export default function InboxPage() {
       setNotes(await apiFetch<Note[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/notes`).catch(() => []));
       setVerifications(await apiFetch<PaymentVerification[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/payment-verifications`).catch(() => []));
       setMobileChat(true);
-      setMobileTab("chat");
-// IN1a: a search jump highlights + scrolls to the message —
+      // IN1a: a search jump highlights + scrolls to the message —
       // but only when it is inside the loaded newest-100 window;
       // otherwise the agent is told plainly (no fake jump).
       if (focusMessageId) {
@@ -974,7 +973,7 @@ export default function InboxPage() {
       } else {
         setHighlightMsgId(null);
       }
-
+      setMobileTab("chat");
       if (conv.unreadCount > 0) {
         await apiFetch(`/organizations/${orgId}/inbox/conversations/${conv.id}/read`, { method: "POST" });
         loadConversations();
@@ -1128,6 +1127,59 @@ export default function InboxPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
 
+  async function snoozeWith(body: { minutes: number } | { until: string } | null) {
+    if (!body) { setError("Snooze-এর সময় ঠিকমতো দিন — কমপক্ষে ৫ মিনিট বা ভবিষ্যতের একটি সময়।"); return; }
+    setShowSnoozeMenu(false); setShowMoreMenu(false);
+    await conversationAction("snooze", body);
+    setNotice("😴 কথোপকথনটি Snooze করা হয়েছে — সময় হলে তালিকায় আবার দেখা যাবে।");
+  }
+
+  // CX5: action-bar segment renderers (snooze / timer menus).
+  const cx5Btn = "rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium transition hover:bg-slate-200";
+  const cx5Menu = "absolute left-0 top-full z-20 mt-1 flex w-64 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg";
+  const cx5MenuItem = "rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 disabled:opacity-50";
+  const timerRemaining = active?.assignmentKind === "timed" && active?.assignedUntil
+    ? Math.max(0, Math.ceil((new Date(active.assignedUntil).getTime() - handoverTick) / 60000)) : null;
+  const renderAssignSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.assignedUserId ?? ""}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label="Assign করুন">
+      <option value="">👤 কেউ নয়</option>
+      {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
+    </select>
+  );
+  const renderLeadSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.pipelineStage ?? "new"}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ pipelineStage: e.target.value }); }} title="Pipeline Stage" aria-label="Lead Stage">
+      <option value="new">🎯 🆕 New Lead</option><option value="talking">🎯 💬 Talking</option>
+      <option value="ordered">🎯 🛒 Ordered</option><option value="delivered">🎯 ✅ Delivered</option><option value="repeat">🎯 🔁 Repeat</option>
+    </select>
+  );
+
+
+  const renderSnoozeControls = () => (
+    <>
+      {SNOOZE_PRESETS.map((p) => (
+        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} পরে</button>
+      ))}
+      <span className="mt-1 flex items-center gap-1 border-t border-slate-100 pt-1.5">
+        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label="কাস্টম Snooze সময়" />
+        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>Snooze করুন</button>
+      </span>
+      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">Snooze AI বন্ধ করে না — কথোপকথন শুধু তালিকা থেকে সরে থাকে।</span>
+    </>
+  );
+  const renderTimerControls = () => (
+    <>
+      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">⏱️ আরও {timerRemaining} মিনিট বাকি (timed)</span> : null}
+      {([15, 30, 60, 120, 240] as const).map((n) => (
+        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{n} মিনিটের জন্য আমার কাছে</button>
+      ))}
+      {timerRemaining !== null ? (
+        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>টাইমার বাতিল</button>
+      ) : null}
+    </>
+  );
+
   async function shareTracking() {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
     setBusy("track");
@@ -1186,60 +1238,6 @@ export default function InboxPage() {
       void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" });
     }
   }
-
-async function snoozeWith(body: { minutes: number } | { until: string } | null) {
-    if (!body) { setError("Snooze-এর সময় ঠিকমতো দিন — কমপক্ষে ৫ মিনিট বা ভবিষ্যতের একটি সময়।"); return; }
-    setShowSnoozeMenu(false); setShowMoreMenu(false);
-    await conversationAction("snooze", body);
-    setNotice("😴 কথোপকথনটি Snooze করা হয়েছে — সময় হলে তালিকায় আবার দেখা যাবে।");
-  }
-
-  // CX5: action-bar segment renderers (snooze / timer menus).
-  const cx5Btn = "rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium transition hover:bg-slate-200";
-  const cx5Menu = "absolute left-0 top-full z-20 mt-1 flex w-64 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg";
-  const cx5MenuItem = "rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 disabled:opacity-50";
-  const timerRemaining = active?.assignmentKind === "timed" && active?.assignedUntil
-    ? Math.max(0, Math.ceil((new Date(active.assignedUntil).getTime() - handoverTick) / 60000)) : null;
-  const renderAssignSelect = () => (
-    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.assignedUserId ?? ""}
-      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label="Assign করুন">
-      <option value="">👤 কেউ নয়</option>
-      {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
-    </select>
-  );
-  const renderLeadSelect = () => (
-    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.pipelineStage ?? "new"}
-      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ pipelineStage: e.target.value }); }} title="Pipeline Stage" aria-label="Lead Stage">
-      <option value="new">🎯 🆕 New Lead</option><option value="talking">🎯 💬 Talking</option>
-      <option value="ordered">🎯 🛒 Ordered</option><option value="delivered">🎯 ✅ Delivered</option><option value="repeat">🎯 🔁 Repeat</option>
-    </select>
-  );
-
-
-  const renderSnoozeControls = () => (
-    <>
-      {SNOOZE_PRESETS.map((p) => (
-        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} পরে</button>
-      ))}
-      <span className="mt-1 flex items-center gap-1 border-t border-slate-100 pt-1.5">
-        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label="কাস্টম Snooze সময়" />
-        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>Snooze করুন</button>
-      </span>
-      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">Snooze AI বন্ধ করে না — কথোপকথন শুধু তালিকা থেকে সরে থাকে।</span>
-    </>
-  );
-  const renderTimerControls = () => (
-    <>
-      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">⏱️ আরও {timerRemaining} মিনিট বাকি (timed)</span> : null}
-      {([15, 30, 60, 120, 240] as const).map((n) => (
-        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{n} মিনিটের জন্য আমার কাছে</button>
-      ))}
-      {timerRemaining !== null ? (
-        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>টাইমার বাতিল</button>
-      ) : null}
-    </>
-  );
-
 
   async function connect(e: React.FormEvent) {
     e.preventDefault();
@@ -2426,50 +2424,7 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
               )}
             </button>
           </div>
-
-          {/* Expandable Advanced Filters & Bulk Tools */}
-          {filterExpanded ? (
-            <div className="shrink-0 space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2 text-xs animate-in fade-in">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-slate-500">অ্যাসাইনি:</span>
-                  <select
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-2xs focus:ring-0 cursor-pointer"
-                    value={filters.assignee}
-                    onChange={(e) => onFilter({ assignee: e.target.value })}
-                  >
-                    <option value="">সকল সদস্য</option>
-                    <option value="me">আমারগুলো</option>
-                    <option value="unassigned">অনির্ধারিত</option>
-                  </select>
-                </div>
-                <button
-                  className={`rounded-lg px-2 py-1 text-xs font-semibold transition ${
-                    filters.spamOnly ? "bg-rose-100 text-rose-700 font-bold" : "text-slate-600 hover:bg-slate-200"
-                  }`}
-                  onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
-                >
-                  🚫 স্প্যাম
-                </button>
-                <button
-                  className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
-                    selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                  onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
-                >
-                  ☑️ বাল্ক
-                </button>
-              </div>
-              <input
-                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
-                placeholder="🏷️ Tag দিয়ে খুঁজুন (যেমন vip, repeat)..."
-                value={filters.tag}
-                onChange={(e) => onFilter({ tag: e.target.value })}
-              />
-            </div>
-          ) : null}
-
-<input
+          <input
             className="rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none"
             placeholder="🏷️ Tag দিয়ে ফিল্টার (যেমন vip, repeat)..."
             value={filters.tag}
@@ -2585,6 +2540,47 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
             ) : null}
           </div>
 
+          {/* Expandable Advanced Filters & Bulk Tools */}
+          {filterExpanded ? (
+            <div className="shrink-0 space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2 text-xs animate-in fade-in">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-slate-500">অ্যাসাইনি:</span>
+                  <select
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-2xs focus:ring-0 cursor-pointer"
+                    value={filters.assignee}
+                    onChange={(e) => onFilter({ assignee: e.target.value })}
+                  >
+                    <option value="">সকল সদস্য</option>
+                    <option value="me">আমারগুলো</option>
+                    <option value="unassigned">অনির্ধারিত</option>
+                  </select>
+                </div>
+                <button
+                  className={`rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                    filters.spamOnly ? "bg-rose-100 text-rose-700 font-bold" : "text-slate-600 hover:bg-slate-200"
+                  }`}
+                  onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
+                >
+                  🚫 স্প্যাম
+                </button>
+                <button
+                  className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
+                    selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                  onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
+                >
+                  ☑️ বাল্ক
+                </button>
+              </div>
+              <input
+                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+                placeholder="🏷️ Tag দিয়ে খুঁজুন (যেমন vip, repeat)..."
+                value={filters.tag}
+                onChange={(e) => onFilter({ tag: e.target.value })}
+              />
+            </div>
+          ) : null}
           {selectedIds.size > 0 ? (
             <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
               <div className="flex items-center justify-between gap-2">
@@ -3130,9 +3126,22 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
                     </span>
                   ) : null}
                 </span>
+
+                <button
+                  className="flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 font-semibold text-sky-700 hover:bg-sky-100 transition disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
+                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}
+                >
+                  <span>🚚</span> <span>ট্র্যাকিং</span>
+                </button>
               </div>
 
-              {/* IN3: the last macro run's per-step report */}
+              {/* IN3: the last macro run's per-step report — exactly
+                  which steps happened, where a failed run stopped. */}
               {macroResult && macroResult.conversationId === active.id ? (
                 <div className={`shrink-0 rounded-xl p-2.5 text-xs ring-1 ${macroResult.success ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-red-50 text-red-800 ring-red-200"}`}>
                   <div className="flex items-center justify-between gap-2">
@@ -3149,6 +3158,111 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
                 {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
+              </div>
+
+              {/* U5 quick actions + outcome controls (CX5: the
+                  pipeline-stage select moved UP into the action
+                  bar as 🎯 Lead — it is not duplicated here). */}
+              <div className="toolbar-v2 text-xs">
+                <button className="rounded-lg bg-sky-50 px-2.5 py-1.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200/70 transition hover:bg-sky-100" disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
+                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}
+                >
+                  <span>🚚</span> <span>ট্র্যাকিং</span>
+                </button>
+
+                <button
+                  className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    const order = context?.orders?.[0];
+                    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
+                    setBusy("courier");
+                    try {
+                      const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
+                      const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
+                      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
+                      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
+                      if (!address) return;
+                      const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
+                      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
+                      await refreshActive();
+                    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}
+                >
+                  <span>📦</span> <span>কুরিয়ার বুকিং</span>
+                </button>
+
+                <button
+                  className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-700 hover:bg-amber-100 transition disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
+                    setBusy("refund");
+                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)"); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+                  }}
+                >
+                  <span>💸</span> <span>রিফান্ড</span>
+                </button>
+
+                <button
+                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId) return;
+                    try {
+                      const token = localStorage.getItem("accessToken");
+                      const base = (window as any).location.origin;
+                      const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+                      if (!res.ok) throw new Error("Export ব্যর্থ");
+                      const blob = await res.blob();
+                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
+                    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+                  }}
+                >
+                  <span>⬇️</span> <span>CSV</span>
+                </button>
+
+                <button
+                  className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 font-semibold text-red-600 hover:bg-red-100 transition disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={() => { if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}
+                >
+                  <span>🚫</span> <span>Spam</span>
+                </button>
+
+                {active.status !== "closed" ? (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <select
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
+                      value={closeOutcome}
+                      onChange={(e) => setCloseOutcome(e.target.value)}
+                      title="বন্ধ করার ফলাফল (Outcome)"
+                    >
+                      <option value="sale">🛒 Sale হয়েছে</option>
+                      <option value="no_sale_price">💰 No-sale: দাম</option>
+                      <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
+                      <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
+                      <option value="support_resolved">🛠️ Support সমাধান</option>
+                      <option value="spam">🚫 Spam</option>
+                      <option value="other">• অন্যান্য</option>
+                    </select>
+                    <button
+                      className="rounded-lg bg-slate-900 px-3 py-1 font-semibold text-white shadow-xs hover:bg-slate-800 transition"
+                      onClick={() => patchConversation({ status: "closed", outcome: closeOutcome })}
+                    >
+                      ✓ ক্লোজ
+                    </button>
+                  </div>
+                ) : active.outcome ? (
+                  <span className="ml-auto font-medium text-slate-500">ফলাফল: {active.outcome}</span>
+                ) : null}
               </div>
 
               {mobileTab === "customer" ? (
@@ -3376,8 +3490,6 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
                   <p className="mt-1 whitespace-pre-wrap text-sm">{d.content}</p>
                 </div>
               ))}
-
-              </div>
 
               </div>
 
@@ -3776,12 +3888,11 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? "পাঠাচ্ছি..." : "ছবি পাঠান"}</button>
                 </div>
               ) : null}
-                  </>
-                )}
-              </div>
-          ) : (
-            <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>
-          )}
+            </div>
+                </>
+              )}
+            </div>
+          ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
         </div>
 
         {/* ---- Customer context + controls + notes ----
@@ -3794,7 +3905,381 @@ async function snoozeWith(body: { minutes: number } | { until: string } | null) 
             onClick={(e) => { if (e.target === e.currentTarget) setCtxOpen(false); }}
           >
             <div className="h-full w-[340px] max-w-[94vw] space-y-4 overflow-y-auto bg-[#f6f7fb] p-3 shadow-2xl xl:h-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:bg-transparent xl:p-0 xl:shadow-none">
-              {renderCustomerContent(ctxOpen)}
+              <div className="flex items-center justify-between xl:hidden">
+                <span className="text-sm font-bold">গ্রাহক ও নিয়ন্ত্রণ</span>
+                <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>✕ বন্ধ করুন</button>
+              </div>
+            <div className="card space-y-4 p-4 shadow-sm border border-slate-200/80">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">👤 কাস্টমার প্রোফাইল</span>
+                {context?.lead ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200/60">Lead: {context.lead.stage}</span> : null}
+              </div>
+
+              {context?.customer ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <ContactAvatar name={context.customer.name ?? active.contactName} channel={active.channel} size="lg" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-900 truncate">{context.customer.name ?? active.contactName ?? "—"}</div>
+                      <div className="text-xs text-slate-500 flex flex-col gap-0.5 mt-0.5">
+                        {context.customer.phone || active.contactPhone ? (
+                          <a href={`tel:${context.customer.phone ?? active.contactPhone}`} className="text-indigo-600 hover:underline">
+                            📞 {context.customer.phone ?? active.contactPhone}
+                          </a>
+                        ) : null}
+                        {context.customer.email ? <span className="truncate">✉️ {context.customer.email}</span> : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  {context.lifetime ? (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
+                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">মোট অর্ডার</div>
+                        <div className="mt-1 text-lg font-black text-slate-900">{context.lifetime.orderCount}টি</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
+                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">Lifetime স্পেন্ড</div>
+                        <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-xl bg-slate-50 p-3 text-center text-xs text-slate-500">
+                  কোনো Customer রেকর্ডের সাথে যুক্ত নয়{context?.lead ? "" : " (নতুন কন্ট্যাক্ট হলে Lead তৈরি হয়েছে)"}।
+                </div>
+              )}
+
+              {context?.lead && !context?.customer ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="badge-brand">Lead: {context.lead.stage}</span>
+                  <span className="badge-slate">{context.lead.source}</span>
+                  {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor)}</span> : null}
+                  {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
+                </div>
+              ) : null}
+              {context?.orders?.length ? (
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
+                  <div className="space-y-1.5">
+                    {context.orders.map((o) => (
+                      <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
+                          <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
+                        </div>
+                        {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
+                        {o.isCod ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
+                              : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">✓ COD কনফার্মড</span>
+                              : o.codConfirmationStatus === "declined" ? <span className="badge-red">✗ গ্রাহক বাতিল করেছে</span>
+                              : ["pending", "on-hold", "processing"].includes(o.status) ? (
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? "পাঠাচ্ছি..." : "COD কনফার্ম পাঠান"}</button>
+                              ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {/* IN2: identity — সব চ্যানেলে একই গ্রাহক। মিল শুধু
+                  আসল identifier-এ (ফোনের শেষ ১০ ডিজিট / ইমেইল);
+                  শুধু Messenger PSID দিয়ে কাউকে মেলানো হয় না। */}
+              {context?.identity ? (
+                <div className="space-y-2">
+                  {context.identity.duplicates.length ? (
+                    <div className="rounded-xl bg-amber-50 p-2.5 ring-1 ring-amber-200">
+                      <div className="text-xs font-semibold text-amber-800">⚠️ সম্ভাব্য একই গ্রাহক</div>
+                      <p className="mt-0.5 text-[11px] text-amber-700">ফোন/ইমেইল মিলে অন্য রেকর্ড পাওয়া গেছে। নিশ্চিত হলেই মার্জ করুন — মার্জে কিছু মোছে না এবং পরে আনমার্জ করা যায়।</p>
+                      <div className="mt-2 space-y-1.5">
+                        {context.identity.duplicates.map((d, i) => (
+                          <div key={`${d.customerId ?? d.conversationId ?? i}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/70 px-2 py-1.5 text-xs ring-1 ring-amber-100">
+                            <span className="min-w-0">
+                              <span className="font-semibold">{d.customerName ?? d.contactName ?? "নাম নেই"}</span>
+                              <span className="text-slate-500"> · {d.matchReasons.includes("phone") ? "ফোন মিলেছে" : ""}{d.matchReasons.includes("phone") && d.matchReasons.includes("email") ? " + " : ""}{d.matchReasons.includes("email") ? "ইমেইল মিলেছে" : ""}{d.channel ? ` · ${d.channel}` : ""}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</span>
+                            </span>
+                            <span className="flex shrink-0 gap-1.5">
+                              {d.conversationId ? (
+                                <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" onClick={() => void openConversation({ id: d.conversationId } as Conversation)}>থ্রেড দেখুন</button>
+                              ) : null}
+                              {d.customerId && context.identity?.customerId && d.customerId !== context.identity.customerId ? (
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void mergeDuplicate(d.customerId!, d.customerName ?? d.contactName ?? "গ্রাহক")}>এখানে মার্জ করুন</button>
+                              ) : null}
+                              {d.customerId && !context.identity?.customerId ? (
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void linkToCustomer(d.customerId!, d.customerName ?? d.contactName ?? "গ্রাহক")}>এই Customer-এ যুক্ত করুন</button>
+                              ) : null}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {context.identity.linkedConversations.length ? (
+                    <div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">এই গ্রাহকের অন্য চ্যানেল</div>
+                      <div className="space-y-1">
+                        {context.identity.linkedConversations.map((c) => (
+                          <button key={c.id} className="flex w-full items-center justify-between rounded-xl bg-slate-50 px-2 py-1.5 text-left text-xs ring-1 ring-inset ring-slate-200/50 transition hover:bg-slate-100"
+                            onClick={() => void openConversation({ id: c.id } as Conversation)}>
+                            <span className="flex min-w-0 items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? c.contactName ?? "—"}</span></span>
+                            <span className="shrink-0 text-slate-400">{c.status}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {context.identity.merges.length ? (
+                    <div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">মার্জ করা রেকর্ড</div>
+                      <div className="space-y-1">
+                        {context.identity.merges.map((m) => (
+                          <div key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
+                            <span>{m.sourceName ?? "নাম নেই"}{m.sourcePhone ? ` · ${m.sourcePhone}` : ""} <span className="text-slate-400">({m.ordersMoved} অর্ডার, {m.conversationsMoved} কথোপকথন এসেছে)</span></span>
+                            <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void unmergeCustomer(m.sourceCustomerId, m.sourceName ?? "গ্রাহক")}>আনমার্জ</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            {profile ? (
+              <div className="card space-y-3 p-4">
+                <div className="section-title">🎯 Command Profile</div>
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  <span className="badge-indigo">Stage: {profile.conversation.pipelineStage}</span>
+                  {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
+                  {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
+                  {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
+                </div>
+                {profile.conversations?.length > 1 ? (
+                  <div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
+                    <div className="space-y-1">
+                      {profile.conversations.map((c: any) => (
+                        <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
+                          onClick={() => { if (c.id !== active.id) void openConversation({ id: c.id } as Conversation); }}>
+                          <span className="flex items-center gap-1.5"><ChannelChip channel={c.channel} /> <span className="truncate">{c.lastMessagePreview ?? "—"}</span></span>
+                          <span className="shrink-0 text-slate-400">{c.status}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {profile.payments?.verifications?.length ? (
+                  <div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
+                    {profile.payments.verifications.map((v: any) => (
+                      <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
+                        {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Quick Action Tiles (Matching Demo 3 & 4) */}
+            <div className="card p-4 space-y-3">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+                  onClick={() => setOrderOpen((v) => !v)}
+                >
+                  <span className="text-base">📄</span>
+                  <span>ইনভয়েস পাঠান</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
+                  onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
+                >
+                  <span className="text-base">📋</span>
+                  <span>টাস্ক তৈরি</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-amber-400 hover:bg-amber-50/50 hover:text-amber-800 transition"
+                  onClick={() => { setComposerMode("note"); focusComposer(); }}
+                >
+                  <span className="text-base">📝</span>
+                  <span>নোট যোগ করুন</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-emerald-400 hover:bg-emerald-50/50 hover:text-emerald-800 transition"
+                  onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
+                >
+                  <span className="text-base">✓</span>
+                  <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* AI Conversation Summary Card (Matching Demo 3 & 4) */}
+            <div className="card p-4 space-y-2 border-indigo-100 bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
+                  <span>AI কনভারসেশন সামারি</span>
+                </div>
+                <button
+                  className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
+                  disabled={busy !== ""}
+                  onClick={summarize}
+                >
+                  {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
+                </button>
+              </div>
+
+              {active.summaryText ? (
+                <div className="rounded-xl bg-white/90 p-3 text-xs leading-relaxed text-slate-700 shadow-2xs ring-1 ring-slate-100 whitespace-pre-line">
+                  {active.summaryText}
+                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
+                    <span>{active.summaryProvider ?? "AI Engine"}</span>
+                    <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
+                  গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
+                </div>
+              )}
+            </div>
+
+            <div className="card space-y-3 p-4">
+              <div className="section-title">দায়িত্ব ও Tag</div>
+              {active.spamFlag ? (
+                <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+                  <div className="text-xs font-semibold text-amber-800">🚫 Spam সন্দেহভাজন</div>
+                  <p className="mt-0.5 text-xs text-amber-700">{active.spamReason ?? ""}</p>
+                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>Spam নয়, ঠিক আছে</button>
+                </div>
+              ) : null}
+              {/* IN10a: block — আমাদের সিস্টেমের ব্লক, প্ল্যাটফর্মের নয়। */}
+              {active.blockedAt ? (
+                <div className="rounded-xl bg-red-50 p-3 ring-1 ring-red-200">
+                  <div className="text-xs font-semibold text-red-800">⛔ এই গ্রাহক ব্লক করা — শুধু আমাদের সিস্টেমে</div>
+                  <p className="mt-0.5 text-xs text-red-700">
+                    {active.blockReason ? `কারণ: ${active.blockReason} · ` : ""}ভবিষ্যৎ মেসেজ Spam কিউতে যাচ্ছে; Bot/AI এই থ্রেডে চলছে না। প্ল্যাটফর্মে (Messenger/WhatsApp) গ্রাহক ব্লক হননি।
+                  </p>
+                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => void setBlocked(false)}>{busy === "block" ? "হচ্ছে..." : "ব্লক তুলুন"}</button>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+                  <div className="text-xs font-semibold text-slate-700">⛔ গ্রাহক ব্লক (শুধু আমাদের সিস্টেমে)</div>
+                  <p className="mt-0.5 text-[11px] text-slate-500">ব্লক করলে ভবিষ্যৎ মেসেজ Spam কিউতে যাবে এবং Bot/AI চলবে না — প্ল্যাটফর্মে কোনো ব্লক হবে না। আপনি নিজে উত্তর দিতে পারবেন।</p>
+                  <div className="mt-2 flex gap-1.5">
+                    <input className="input !py-1.5 text-xs" placeholder="কারণ (ঐচ্ছিক)" value={blockReason} onChange={(e) => setBlockReason(e.target.value)} maxLength={300} />
+                    <button className="btn-danger btn-sm shrink-0" disabled={busy !== ""} onClick={() => void setBlocked(true)}>{busy === "block" ? "হচ্ছে..." : "ব্লক করুন"}</button>
+                  </div>
+                </div>
+              )}
+              {botSession?.status === "active" ? (
+                <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
+                  <div className="text-xs font-semibold text-indigo-800">🤖 অর্ডার Bot চলছে — ধাপ: {botSession.state}</div>
+                  <p className="mt-0.5 text-xs text-indigo-600">গ্রাহক নিজে "এজেন্ট" লিখলে বা আপনি উত্তর দিলেই বট থেমে যাবে।</p>
+                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
+                    const orgId = getOrganizationId(); if (!orgId || !active) return;
+                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice("বট থামানো হয়েছে।"); await refreshActive(); }
+                    catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+                  }}>বট থামান</button>
+                </div>
+              ) : null}
+              {active.csatRating ? (
+                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
+              ) : null}
+              {/* IN7b/c: AI next-action card — proposal only.
+                  Nothing runs or is applied without a click;
+                  rejecting/ignoring changes nothing (the endpoint
+                  persisted nothing). */}
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">🤖 AI-এর পরের পদক্ষেপ</span>
+                  <button className="text-xs font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={loadNextAction}>{busy === "next-action" ? "ভাবছে..." : nextAction ? "আবার দেখুন" : "প্রস্তাব দেখুন"}</button>
+                </div>
+                {nextAction?.proposal ? (
+                  <div className="ctx-subcard space-y-1.5 text-xs text-slate-600">
+                    <div className="font-semibold text-slate-800">{NEXT_ACTION_ICONS[nextAction.proposal.action]} {nextAction.proposal.label}</div>
+                    {nextAction.proposal.reason ? <p>{nextAction.proposal.reason}</p> : null}
+                    {(nextAction.proposal.tags.length > 0 || nextAction.proposal.pipelineStage) ? (
+                      <p className="text-slate-500">
+                        প্রস্তাবিত{nextAction.proposal.tags.length ? ` Tag: ${nextAction.proposal.tags.join(", ")}` : ""}{nextAction.proposal.pipelineStage ? ` · Stage: ${nextAction.proposal.pipelineStage}` : ""}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {isRunnableAction(nextAction.proposal.action) ? (
+                        <button className="btn-primary !px-2.5 !py-1 !text-xs" disabled={busy !== ""} onClick={() => void runNextAction()}>{nextAction.proposal.label}</button>
+                      ) : (
+                        <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-500">কিছু করার নেই — গ্রাহকের উত্তরের অপেক্ষা</span>
+                      )}
+                      {proposalAcceptPatch(nextAction.proposal, active.tags ?? []) ? (
+                        <button className="btn-secondary !px-2.5 !py-1 !text-xs" disabled={busy !== ""} onClick={() => void acceptNextActionProposal()}>Tag/Stage গ্রহণ করুন</button>
+                      ) : null}
+                      <button className="rounded-lg px-2 py-1 font-medium text-slate-400 hover:text-slate-600" onClick={() => setNextAction(null)}>প্রত্যাখ্যান</button>
+                    </div>
+                  </div>
+                ) : nextAction ? (
+                  <p className="text-xs text-slate-400">{nextAction.reason ?? "কোনো প্রস্তাব তৈরি হয়নি।"}</p>
+                ) : (
+                  <p className="text-xs text-slate-400">Thread খুলে AI-এর প্রস্তাবিত পরের পদক্ষেপ দেখুন — কিছুই নিজে থেকে চলবে না।</p>
+                )}
+              </div>
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
+                  <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
+                </div>
+                {orderOpen ? (
+                  <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
+                    {orderItems.map((it, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
+                          {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency)}</option>)}
+                        </select>
+                        <input className="input !w-14 !py-1.5 !text-xs" type="number" min={1} max={99} value={it.quantity} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, quantity: Number(e.target.value) || 1 } : x))} />
+                        <button className="text-slate-400 hover:text-red-500" onClick={() => setOrderItems(orderItems.filter((_, j) => j !== idx))}>✕</button>
+                      </div>
+                    ))}
+                    <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
+                    <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
+                    <div className="flex items-end gap-2">
+                      <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
+                      <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
+                    </div>
+                    <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? "তৈরি হচ্ছে..." : "Order তৈরি করুন"}</button>
+                    <p className="text-[10px] text-slate-400">দাম ক্যাটালগ থেকেই হিসাব হয়। WooCommerce যুক্ত থাকলে অর্ডারটি স্টোরেও পাঠানোর চেষ্টা করা হয়, ফলাফল জানিয়ে দেওয়া হয়।</p>
+                  </div>
+                ) : null}
+              </div>
+              <label className="block text-sm">Assignee
+                <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
+                  <option value="">কেউ নয়</option>
+                  {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
+                </select>
+              </label>
+              <div>
+                <div className="mb-1 flex flex-wrap gap-1">
+                  {(active.tags ?? []).map((t) => (
+                    <span key={t} className="badge-brand">{t}<button className="ml-1 font-bold" onClick={() => patchConversation({ tags: (active.tags ?? []).filter((x) => x !== t) })}>×</button></span>
+                  ))}
+                  {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Tag নেই</span> : null}
+                </div>
+                <div className="flex gap-1.5">
+                  <input className="input flex-1" placeholder="নতুন Tag লিখে Enter" value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && tagInput.trim()) { patchConversation({ tags: [...(active.tags ?? []), tagInput.trim()] }); setTagInput(""); } }} />
+                </div>
+              </div>
+            </div>
+
             </div>
           </div>
         ) : null}

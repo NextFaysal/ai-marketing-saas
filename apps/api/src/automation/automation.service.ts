@@ -17,6 +17,8 @@ import { ProactiveService } from "../ai/proactive.service";
 import { LeadsService } from "../crm/leads.service";
 import { PaymentsService } from "../payments/payments.service";
 import { SocialPublishService } from "../social/social-publish.service";
+import { SocialQueueService } from "../social/social-queue.service";
+import { SocialInsightsService } from "../social/social-insights.service";
 import { SocialCommentsService } from "../inbox/social-comments.service";
 import { CourierService } from "../courier/courier.service";
 import { ReviewsService } from "../orders/reviews.service";
@@ -31,6 +33,11 @@ import { CatalogPushService } from "../commerce/catalog-push.service";
 import { SubscriptionsService } from "../subscriptions/subscriptions.service";
 import { RetentionService } from "../storefront/retention.service";
 import { InstallmentsService } from "../installments/installments.service";
+import { ConnectionMonitorService } from "../connections/connection-monitor.service";
+import { WalletService } from "../connections/wallet.service";
+import { FulfillmentExcellenceService } from "../fulfillment/fulfillment-excellence.service";
+import { OrderAutomationService } from "../order-automation/order-automation.service";
+import { OrderAnalyticsService } from "../orders/order-analytics.service";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
@@ -50,6 +57,29 @@ export const JOB_TYPES = [
   // EC31: installment due reminders (due_soon / overdue SMS,
   // exactly once per item per state).
   "installment_due_sweep",
+  // SU2: evergreen social post recycle sweep.
+  "social_evergreen_sweep",
+  // SU7: daily follower-count snapshot sweep.
+  "social_follower_snapshot",
+  // CC12 (Connect Center Advanced): per-org connection health
+  // monitoring sweep — state-change alerts for broken/expiring
+  // connections (see ConnectionMonitorService).
+  "connection_health_sweep",
+  // CC26 (Connect Center Next): per-org wallet payout schedule
+  // sweep — creates a pending payout REQUEST on the scheduled
+  // day when the available balance meets the threshold; never
+  // approves or pays (see WalletService.runPayoutSweep).
+  "wallet_payout_sweep",
+  // ON6: stuck-parcel escalation sweep (FulfillmentSetting's
+  // stuckDays threshold; exactly once per shipment+status).
+  "stuck_parcel_sweep",
+  // ON8: orders automation time triggers (parcel_stuck_hours +
+  // due_overdue_days rules; exactly once via the
+  // OrderAutomationLog unique on ruleId+orderId+triggerKey).
+  "order_automation_sweep",
+  // ON9: daily owner order digest (yesterday's figures by email;
+  // SMS only when a real owner phone is on record).
+  "owner_order_digest",
 ] as const;
 
 
@@ -106,6 +136,10 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।" },
   { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
     descriptionBn: "প্রতি ৫ মিনিটে: শিডিউল করা Social পোস্টগুলোর সময় হয়ে গেলে সেগুলো Facebook Page / Instagram-এ প্রকাশ হবে। প্রকাশ ব্যর্থ হলে ব্যবধান রেখে আবার চেষ্টা হবে (সর্বোচ্চ ৩ বার), তারপর পোস্টটি Failed হবে ও Owner/Admin নোটিফিকেশন পাবেন।" },
+  { key: "social_evergreen_sweep", name: "Social Evergreen Sweep (টেমপ্লেট)", type: "social_evergreen_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: Evergreen চিহ্নিত Published পোস্টগুলোর মধ্যে যেগুলোর ন্যূনতম ব্যবধান (Gap) পেরিয়ে গেছে, সেগুলোর একটি করে নতুন Draft কপি তৈরি হবে — নিজে থেকে কিছুই Publish হবে না; Draftটি যাচাই করে মানুষ শিডিউল বা প্রকাশ করবেন। সর্বোচ্চ চক্রের সীমা পেরিয়ে গেলে আর কপি তৈরি হবে না।" },
+  { key: "social_follower_snapshot", name: "Social Follower Snapshot (টেমপ্লেট)", type: "social_follower_snapshot", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: সংযুক্ত Facebook Page ও Instagram অ্যাকাউন্টের Follower সংখ্যা Platform যা দেয় তা-ই Snapshot হিসেবে রাখা হবে — Platform সংখ্যা না দিলে ওই দিনের Snapshot হবে না, কোনো সংখ্যা বানানো হবে না।" },
   { key: "inbox_autoreply_sweep", name: "Inbox Auto-Reply Sweep (টেমপ্লেট)", type: "inbox_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
     descriptionBn: "প্রতি ১ মিনিটে: Inbox সেটিংসে উত্তরের আগে অপেক্ষা (AI Reply Delay) চালু থাকলে, সময় হয়ে যাওয়া অপেক্ষমাণ AI উত্তরগুলো পাঠানো হবে — পরপর আসা মেসেজ জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = সেটিংসের অপেক্ষা + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)।" },
   { key: "comment_autoreply_sweep", name: "Comment Auto-Reply Sweep (টেমপ্লেট)", type: "comment_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
@@ -130,8 +164,18 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ৬০ মিনিটে: উইশলিস্টে থাকা পণ্যের দাম যোগ করার সময়ের দামের (বা সর্বশেষ জানানো দামের) চেয়ে কমে গেলে গ্রাহককে SMS-এ জানানো হবে — একই দামে একবারই, আরও কমলে আবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
   { key: "installment_due_sweep", name: "Installment Due Reminders (টেমপ্লেট)", type: "installment_due_sweep", targetKind: "org", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: সক্রিয় কিস্তি প্ল্যানের মেয়াদ আসন্ন (আজ থেকে ২ দিনের মধ্যে) বা পার হয়ে যাওয়া অপaid কিস্তির জন্য গ্রাহককে SMS-এ একবার করে মনে করিয়ে দেওয়া হবে — প্রতিটি কিস্তির প্রতিটি অবস্থায় ঠিক একবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
+  { key: "stuck_parcel_sweep", name: "আটকে থাকা পার্সেল এসকেলেশন (টেমপ্লেট)", type: "stuck_parcel_sweep", targetKind: "org", intervalMinutes: 360,
+    descriptionBn: "প্রতি ৬ ঘণ্টায় (৩৬০ মিনিটে): পথে থাকা যেসব পার্সেল Fulfillment সেটিংসের stuckDays সীমার বেশি সময় ধরে একই স্ট্যাটাসে আটকে আছে, সেগুলোর জন্য Owner/Admin স্টাফ জরুরি নোটিফিকেশন পাবেন এবং গ্রাহককে ON5 ইঞ্জিনে জানানো হবে — প্রতিটি শিপমেন্টের প্রতিটি স্ট্যাটাসে ঠিক একবার; স্ট্যাটাস বদলালে নতুন স্ট্যাটাসের জন্য আবার এসকেলেশন হতে পারে।" },
+  { key: "owner_order_digest", name: "মালিকের দৈনিক অর্ডার ডাইজেস্ট (টেমপ্লেট)", type: "owner_order_digest", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: গতকালের অর্ডার সারাংশ (অর্ডার, বিক্রি, আদায়, বকেয়া, আটকে থাকা পার্সেল, SLA ভঙ্গ) দোকানের মালিকদের (OWNER) ইমেইলে পাঠানো হবে। মালিকের ফোন নম্বর রেকর্ডে থাকলেই কেবল SMS যাবে — নম্বর না থাকলে SMS পাঠানো হয়েছে বলে দেখানো হবে না। প্রতিটি পাঠানোর ফল Audit Log-এ থাকবে।" },
+  { key: "order_automation_sweep", name: "অর্ডার অটোমেশন যাচাই (টেমপ্লেট)", type: "order_automation_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার অটোমেশন স্টুডিওর সময়ভিত্তিক নিয়মগুলো যাচাই হবে — নির্দিষ্ট ঘণ্টার বেশি একই কুরিয়ার স্ট্যাটাসে আটকে থাকা পার্সেল (parcel_stuck_hours) এবং ডেলিভারি হওয়া অর্ডারের নির্দিষ্ট দিনের বেশি পুরনো বকেয়া (due_overdue_days)। প্রতিটি নিয়ম প্রতিটি অর্ডারে প্রতিটি অবস্থায় ঠিক একবারই চলবে; সব কাজের বিবরণ নিয়মের লগে থাকবে।" },
   { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
     descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।" },
+  { key: "connection_health_sweep", name: "Connection Health Sweep (টেমপ্লেট)", type: "connection_health_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সব কানেকশনের অবস্থা যাচাই হবে — কোনো কানেকশন বিচ্ছিন্ন/ত্রুটিপূর্ণ হলে, টোকেনের মেয়াদ শেষের দিকে গেলে (৭/৩/১ দিন), পরপর sync ব্যর্থ হলে বা webhook-এ সমস্যা ধরা পড়লে Organization-এর Owner/Admin-রা In-app ও ইমেইল সতর্কতা পাবেন। একই সমস্যার জন্য বারবার সতর্কতা যাবে না — অবস্থা বদলালেই কেবল যাবে; আবার ঠিক হলেও একবার জানানো হবে। এই Job চালু না থাকলে কানেকশন পর্যবেক্ষণ হবে না।" },
+  { key: "wallet_payout_sweep", name: "Wallet Payout Sweep (টেমপ্লেট)", type: "wallet_payout_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতি দিনে একবার: Connect Center-এ Wallet Payout Schedule চালু থাকলে এবং আজই নির্ধারিত দিন (সাপ্তাহিক/মাসিক) হলে, উপলব্ধ ব্যালেন্স নির্ধারিত সীমার সমান বা বেশি হলে পুরো উপলব্ধ পরিমাণের একটি pending Payout অনুরোধ নিজে থেকে তৈরি হবে। এই Job কখনো approve করে না বা টাকা পাঠায় না — অনুমোদন ও mark-paid আগের মতোই অ্যাডমিনের হাতে। একই দিনে দ্বিতীয়বার চললেও নতুন অনুরোধ তৈরি হবে না।" },
   { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
     descriptionBn: "প্রতি ৫ মিনিটে: প্রথম উত্তরের অপেক্ষায় থাকা কথোপকথনের SLA যাচাই হবে (সীমা = Inbox সেটিংসের স্তরভিত্তিক নিয়ম: VIP → Channel অনুযায়ী → সাধারণ)। সীমার ৭৫% পেরোলে দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পাবেন; Breach-এর পর সেটিংসের Escalation বিলম্ব পেরোলে Team Lead জরুরি সতর্কতা পাবেন (সেটিংসে বন্ধ করা যায়); Auto-Reassign সেটিংসে চালু থাকলেই কেবল কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে। প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় এবং Audit-এ লেখা থাকে।" },
 ];
@@ -210,6 +254,39 @@ export class AutomationService implements OnModuleInit {
     // imports AuditModule + StorefrontModule only, and nothing
     // in it imports AutomationModule, so this adds no cycle.
     @Optional() private readonly installments?: InstallmentsService,
+    // INT6 union tail order: the ON tail comes FIRST (positions
+    // 28-30 exactly as on the orders-next line) because the ON8 DI
+    // spec constructs AutomationService positionally with the ON8
+    // engine as argument 29 (orderAutomation). The INT5 tail
+    // (SU/CC sweeps) follows at 31-34: no SU/CC spec constructs
+    // with tail arguments positionally (they test the underlying
+    // services directly), and Nest injects by type, so production
+    // wiring is unaffected by the order.
+    // ON6: stuck-parcel sweep — FulfillmentModule is imported by
+    // AutomationModule for this; nothing in FulfillmentModule's
+    // chain imports AutomationModule back, so this adds no cycle.
+    @Optional() private readonly fulfillmentExcellence?: FulfillmentExcellenceService,
+    // ON8: orders automation sweep — OrderAutomationModule
+    // imports OrdersModule + OrderNotificationsModule only and
+    // nothing in its chain imports AutomationModule back, so
+    // this adds no cycle.
+    @Optional() private readonly orderAutomation?: OrderAutomationService,
+    // ON9: owner digest — OrderAnalyticsService is exported by
+    // OrdersModule (already imported by AutomationModule), so
+    // this adds no cycle.
+    @Optional() private readonly orderAnalytics?: OrderAnalyticsService,
+    // SU2: evergreen sweep — SocialModule exports SocialQueueService
+    // and AutomationModule already imports SocialModule.
+    @Optional() private readonly socialQueue?: SocialQueueService,
+    // SU7: follower snapshot sweep — SocialModule exports
+    // SocialInsightsService.
+    @Optional() private readonly socialInsights?: SocialInsightsService,
+    // CC12: connection health sweep — ConnectionsModule imports
+    // IntegrationsModule only; nothing in it imports
+    // AutomationModule, so this adds no cycle.
+    @Optional() private readonly connectionMonitor?: ConnectionMonitorService,
+    // CC26: wallet payout sweep — same module, same reasoning.
+    @Optional() private readonly wallet?: WalletService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -616,13 +693,18 @@ export class AutomationService implements OnModuleInit {
     const orgId: string = job.organizationId;
     const actor: string = job.createdById;
     switch (job.type) {
-      case "woo_products": return this.integrations.syncProducts(orgId, actor, job.targetId);
-      case "woo_orders": return this.integrations.syncOrders(orgId, actor, job.targetId);
-      case "shopify_products": return this.shopify.syncProducts(orgId, actor, job.targetId);
-      case "shopify_orders": return this.shopify.syncOrders(orgId, actor, job.targetId);
-      case "woo_customers": return this.integrations.syncCustomers(orgId, actor, job.targetId);
-      case "woo_reviews": return this.integrations.syncReviews(orgId, actor, job.targetId);
-      case "shopify_customers": return this.shopify.syncCustomers(orgId, actor, job.targetId);
+      // CC30: store syncs dispatched from a schedule carry
+      // { scheduled: true } so the per-connection cadence
+      // (Integration.syncIntervalMinutes) can gate them; the
+      // skip marker becomes this job's run result. Manual
+      // triggers never pass the flag and ignore the cadence.
+      case "woo_products": return this.integrations.syncProducts(orgId, actor, job.targetId, { scheduled: true });
+      case "woo_orders": return this.integrations.syncOrders(orgId, actor, job.targetId, { scheduled: true });
+      case "shopify_products": return this.shopify.syncProducts(orgId, actor, job.targetId, { scheduled: true });
+      case "shopify_orders": return this.shopify.syncOrders(orgId, actor, job.targetId, { scheduled: true });
+      case "woo_customers": return this.integrations.syncCustomers(orgId, actor, job.targetId, { scheduled: true });
+      case "woo_reviews": return this.integrations.syncReviews(orgId, actor, job.targetId, { scheduled: true });
+      case "shopify_customers": return this.shopify.syncCustomers(orgId, actor, job.targetId, { scheduled: true });
       // AD5: scheduled insights syncs go through the job entry
       // point so a sync-disabled account is SKIPPED (the skip
       // marker becomes the run result) instead of failing the job.
@@ -664,6 +746,14 @@ export class AutomationService implements OnModuleInit {
         if (!this.socialPublish) throw new BadRequestException("Social publish service is not available in this deployment");
         return this.socialPublish.runDuePublishes(orgId);
       }
+      case "social_evergreen_sweep": {
+        if (!this.socialQueue) throw new BadRequestException("Social queue service is not available in this deployment");
+        return this.socialQueue.runEvergreenSweep(orgId);
+      }
+      case "social_follower_snapshot": {
+        if (!this.socialInsights) throw new BadRequestException("Social insights service is not available in this deployment");
+        return this.socialInsights.snapshotFollowers(orgId);
+      }
       case "inbox_autoreply_sweep": {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
         return this.inbox.runDueAutoReplies(orgId);
@@ -700,6 +790,14 @@ export class AutomationService implements OnModuleInit {
         if (!this.messaging) throw new BadRequestException("Messaging service is not available in this deployment");
         return this.messaging.runDueBroadcasts(orgId);
       }
+      case "connection_health_sweep": {
+        if (!this.connectionMonitor) throw new BadRequestException("Connection monitor is not available in this deployment");
+        return this.connectionMonitor.runSweep(orgId);
+      }
+      case "wallet_payout_sweep": {
+        if (!this.wallet) throw new BadRequestException("Wallet service is not available in this deployment");
+        return this.wallet.runPayoutSweep(orgId);
+      }
       case "auto_renew": {
         if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");
         return this.payments.chargeAutoRenew(orgId);
@@ -726,6 +824,9 @@ export class AutomationService implements OnModuleInit {
       case "commerce_subscription_sweep": return this.commerceSubscriptions ? this.commerceSubscriptions.runDueForOrg(orgId) : { skipped: "commerce subscriptions unavailable" };
       case "wishlist_price_alert_sweep": return this.retention ? this.retention.runWishlistPriceAlerts(orgId) : { skipped: "retention service unavailable" };
       case "installment_due_sweep": return this.installments ? this.installments.runDueRemindersForOrg(orgId) : { skipped: "installments unavailable" };
+      case "stuck_parcel_sweep": return this.fulfillmentExcellence ? this.fulfillmentExcellence.runStuckParcelSweep(orgId) : { skipped: "fulfillment excellence unavailable" };
+      case "order_automation_sweep": return this.orderAutomation ? this.orderAutomation.runAutomationSweep(orgId) : { skipped: "order automation unavailable" };
+      case "owner_order_digest": return this.orderAnalytics ? this.orderAnalytics.runOwnerDigestJob(orgId) : { skipped: "order analytics unavailable" };
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);

@@ -2,6 +2,14 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { codBoardRows, coverageLabel, marginTone, type CodBoard, type ProfitReport } from "@/lib/orders-on7";
+import { formatMinor } from "@repo/contracts";
+
+/** Minor-string display (bad input passes through raw). */
+const fmtM = (minor?: string | null): string => {
+  if (minor == null) return "—";
+  try { return formatMinor(BigInt(minor)); } catch { return minor; }
+};
 
 // EC23 — কর ও হিসাব: org TaxSetting (আইনি নাম / TIN / BIN / ডিফল্ট
 // VAT হার) + accounting CSV exports (বিক্রয় রেজিস্টার / কর সারাংশ /
@@ -55,6 +63,68 @@ export default function AccountingPage() {
   const [downloading, setDownloading] = useState(false);
   const [exportError, setExportError] = useState("");
   const [exportMsg, setExportMsg] = useState("");
+
+  // ON7: COD board + profit report (orders reports endpoints).
+  const [codBoard, setCodBoard] = useState<CodBoard | null>(null);
+  const [codError, setCodError] = useState("");
+  const [profitReport, setProfitReport] = useState<ProfitReport | null>(null);
+  const [profitFrom, setProfitFrom] = useState(isoDaysAgo(29));
+  const [profitTo, setProfitTo] = useState(isoDaysAgo(0));
+  const [profitBusy, setProfitBusy] = useState(false);
+  const [profitError, setProfitError] = useState("");
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [csvMsg, setCsvMsg] = useState("");
+  const [csvError, setCsvError] = useState("");
+
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<CodBoard>(`/organizations/${orgId}/orders/reports/cod-board`)
+      .then((b) => { setCodBoard(b); setCodError(""); })
+      .catch((e) => { setCodBoard(null); setCodError(e instanceof Error ? e.message : "COD বোর্ড লোড ব্যর্থ"); });
+  }, []);
+
+  const loadProfit = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!profitFrom || !profitTo) { setProfitError("শুরু ও শেষের তারিখ দুটোই দিন"); return; }
+    setProfitBusy(true); setProfitError("");
+    try {
+      const r = await apiFetch<ProfitReport>(
+        `/organizations/${orgId}/orders/reports/profit?from=${encodeURIComponent(profitFrom)}&to=${encodeURIComponent(profitTo)}`,
+      );
+      setProfitReport(r);
+    } catch (e) { setProfitError(e instanceof Error ? e.message : "লাভের রিপোর্ট লোড ব্যর্থ"); }
+    finally { setProfitBusy(false); }
+  }, [profitFrom, profitTo]);
+  useEffect(() => { void loadProfit(); }, [loadProfit]);
+
+  /** Profit CSV — same raw-fetch + blob pattern as the
+   * accounting exports above. */
+  async function downloadProfitCsv() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setCsvError(""); setCsvMsg("");
+    if (!profitFrom || !profitTo) { setCsvError("শুরু ও শেষের তারিখ দুটোই দিন"); return; }
+    setCsvBusy(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/organizations/${orgId}/orders/reports/profit.csv?from=${encodeURIComponent(profitFrom)}&to=${encodeURIComponent(profitTo)}`,
+        { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? `ডাউনলোড ব্যর্থ (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `profit-report-${profitFrom}-${profitTo}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setCsvMsg("✅ লাভের রিপোর্ট (CSV) ডাউনলোড হয়েছে");
+    } catch (err) {
+      setCsvError(err instanceof Error ? err.message : "ডাউনলোড ব্যর্থ হয়েছে");
+    } finally { setCsvBusy(false); }
+  }
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -215,6 +285,138 @@ export default function AccountingPage() {
         <button type="button" className="btn-primary" onClick={download} disabled={downloading}>
           {downloading ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড করুন"}
         </button>
+      </div>
+
+      {/* ON7: COD board — courier-এর কাছে আটকে থাকা টাকার
+          হিসাব, provider অনুযায়ী। এটি শুধু বর্তমান অবস্থা;
+          কোন টাকা কবে হাতে আসবে তার কোনো প্রতিশ্রুতি নয়। */}
+      <div className="card space-y-4 p-5">
+        <h2 className="font-semibold">🚚 COD বোর্ড</h2>
+        <p className="text-xs text-slate-500">
+          courier-এর কাছে আটকে থাকা টাকার বর্তমান হিসাব — কোন টাকা পথে আছে, কোনটা ডেলিভারি হয়ে গেলেও
+          এখনো courier-এর কাছ থেকে হাতে আসেনি, আর গত ৭ দিনে কত এসেছে।
+        </p>
+        {codError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{codError}</p> : null}
+        {!codBoard && !codError ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+        {codBoard ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-slate-500">
+                  <th className="py-2 pr-2 font-semibold">কুরিয়ার</th>
+                  <th className="py-2 pr-2 font-semibold">পথে আছে</th>
+                  <th className="py-2 pr-2 font-semibold">ডেলিভারি হয়েছে, টাকা আসেনি</th>
+                  <th className="py-2 pr-2 font-semibold">গত ৭ দিনে এসেছে</th>
+                  <th className="py-2 font-semibold">মোট বকেয়া</th>
+                </tr>
+              </thead>
+              <tbody>
+                {codBoardRows(codBoard).map((r) => (
+                  <tr key={r.key} className={r.kind === "total" ? "border-t-2 bg-slate-50 font-semibold" : "border-b last:border-0"}>
+                    <td className="py-2 pr-2">
+                      {r.provider}
+                      {r.kind === "unassigned" ? (
+                        <span className="block text-xs font-normal text-slate-500">এখনো courier-এ যায়নি — অর্ডারের বকেয়া {fmtM(r.outstandingMinor)} ({r.unassignedOrders}টি)</span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 pr-2">{r.kind === "unassigned" ? "—" : fmtM(r.inTransitCodMinor)}</td>
+                    <td className="py-2 pr-2">{r.kind === "unassigned" ? "—" : fmtM(r.deliveredUncollectedMinor)}</td>
+                    <td className="py-2 pr-2">{r.kind === "unassigned" ? "—" : fmtM(r.collectedLast7dMinor)}</td>
+                    <td className="py-2">{fmtM(r.outstandingMinor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      {/* ON7: profit report — revenue vs product cost per
+          product. A null cost is "খরচ জানা নেই", never 0. */}
+      <div className="card space-y-4 p-5">
+        <h2 className="font-semibold">📈 লাভের রিপোর্ট</h2>
+        <p className="text-xs text-slate-500">নির্বাচিত সময়ের বিক্রিতে পণ্যের খরচ বাদ দিয়ে লাভের হিসাব। যেসব পণ্যের খরচ জানা নেই, সেগুলো আলাদা করে বলা হয়েছে — অনুমান করা হয়নি।</p>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div>
+            <label className={labelCls}>শুরুর তারিখ</label>
+            <input className={inputCls} type="date" value={profitFrom} onChange={(e) => setProfitFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>শেষের তারিখ</label>
+            <input className={inputCls} type="date" value={profitTo} onChange={(e) => setProfitTo(e.target.value)} />
+          </div>
+          <div className="flex items-end gap-2 md:col-span-2">
+            <button type="button" className="btn-primary" disabled={profitBusy} onClick={() => void loadProfit()}>
+              {profitBusy ? "লোড হচ্ছে…" : "রিপোর্ট দেখুন"}
+            </button>
+            <button type="button" className="btn-secondary" disabled={csvBusy} onClick={() => void downloadProfitCsv()}>
+              {csvBusy ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড"}
+            </button>
+          </div>
+        </div>
+        {csvMsg ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{csvMsg}</p> : null}
+        {csvError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{csvError}</p> : null}
+        {profitError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{profitError}</p> : null}
+        {profitBusy && !profitReport ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+        {profitReport ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <div className="text-xs text-slate-500">আয় ({profitReport.totals.orders}টি অর্ডার)</div>
+                <div className="text-lg font-bold">{fmtM(profitReport.totals.revenueMinor)}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <div className="text-xs text-slate-500">পণ্যের খরচ (জানা অংশ)</div>
+                <div className="text-lg font-bold">{fmtM(profitReport.totals.productCostMinor)}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <div className="text-xs text-slate-500">মোট লাভ (গ্রস মার্জিন)</div>
+                <div className={`text-lg font-bold ${marginTone(profitReport.totals.grossMarginMinor) === "negative" ? "text-rose-600" : "text-emerald-700"}`}>{fmtM(profitReport.totals.grossMarginMinor)}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 px-3 py-2">
+                <div className="text-xs text-slate-500">খরচ জানা নেই এমন অর্ডার</div>
+                <div className="text-lg font-bold text-amber-700">{profitReport.totals.uncostedOrders}টি</div>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">{coverageLabel(profitReport.totals.costCoveragePercent)} — খরচ-জানা আয়ের পরিমাণ {fmtM(profitReport.totals.costedRevenueMinor)}।</p>
+            {profitReport.perProductBasis ? <p className="text-xs text-slate-400">{profitReport.perProductBasis}</p> : null}
+            {profitReport.truncated ? (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">তালিকাটি সীমিত — সব পণ্য দেখানো হয়নি; মোট হিসাব সব অর্ডার মিলিয়েই করা।</p>
+            ) : null}
+            {profitReport.perProduct.length === 0 ? (
+              <p className="text-sm text-slate-400">এই সময়ে কোনো বিক্রি নেই।</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs text-slate-500">
+                      <th className="py-2 pr-2 font-semibold">পণ্য</th>
+                      <th className="py-2 pr-2 font-semibold">পরিমাণ</th>
+                      <th className="py-2 pr-2 font-semibold">আয়</th>
+                      <th className="py-2 pr-2 font-semibold">খরচ</th>
+                      <th className="py-2 font-semibold">লাভ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profitReport.perProduct.map((p) => (
+                      <tr key={p.productId} className="border-b last:border-0">
+                        <td className="py-2 pr-2 font-medium">{p.name}{p.sku ? <span className="ml-2 text-xs font-normal text-slate-400">SKU: {p.sku}</span> : null}</td>
+                        <td className="py-2 pr-2">{p.quantity}</td>
+                        <td className="py-2 pr-2">{fmtM(p.revenueMinor)}</td>
+                        <td className="py-2 pr-2">{p.costMinor != null ? fmtM(p.costMinor) : <span className="font-semibold text-amber-700">খরচ জানা নেই</span>}</td>
+                        <td className="py-2">
+                          {p.marginMinor != null ? (
+                            <span className={`rounded px-2 py-0.5 font-bold ${marginTone(p.marginMinor) === "negative" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>{fmtM(p.marginMinor)}</span>
+                          ) : <span className="text-slate-400">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

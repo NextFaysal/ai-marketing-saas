@@ -131,7 +131,11 @@ describe("CC3 Meta app config (verify-before-save)", () => {
 
   it("refuses an unknown platform and missing fields", async () => {
     const { svc } = buildService(okMeta);
-    await expect(svc.putAppConfig("org-1", "owner-1", "google", { appId: "x", appSecret: "y" })).rejects.toThrow(/platform/);
+    // CC28 note: "google" was this test's unknown-platform
+    // example in CC3 — CC28 makes google (and linkedin) real
+    // TenantAppConfig platforms, so the unknown example is now
+    // a platform that is still unsupported.
+    await expect(svc.putAppConfig("org-1", "owner-1", "snapchat", { appId: "x", appSecret: "y" })).rejects.toThrow(/platform/);
     await expect(svc.putAppConfig("org-1", "owner-1", "meta", { appId: "", appSecret: "y" })).rejects.toThrow();
     await expect(svc.putAppConfig("org-1", "owner-1", "meta", { appId: "x", appSecret: " " })).rejects.toThrow();
   });
@@ -180,7 +184,10 @@ describe("CC3 delete + overview own-app flags", () => {
     expect(social.accounts.find((a) => a.id === "tt-own")).toMatchObject({ appSource: "own", ownAppConfigMissing: false });
 
     const out = await svc.deleteAppConfig("org-1", "owner-1", "meta");
-    expect(out).toEqual({ platform: "meta", deleted: true });
+    // CC23 extended this response: the spec's actor has no
+    // TOTP enrolment, so the delete proceeds WITH the honest
+    // stepUpUnavailable marker (see cc23-security.spec.ts).
+    expect(out).toEqual({ platform: "meta", deleted: true, stepUpUnavailable: true });
     expect(auditLogs[auditLogs.length - 1]).toMatchObject({ action: "tenant_app_config.deleted" });
 
     overview = await svc.getOverview("org-1");

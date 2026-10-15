@@ -62,6 +62,61 @@ export function normalizeOverrides(raw: unknown): PermissionOverrides {
   return { grants, denies };
 }
 
+/**
+ * CC17 (Connect Center Advanced): sanitize a member's stored
+ * CONNECTION deny-list (Membership.deniedConnections) — a JSON
+ * array of connection target ids (Integration / SocialAccount
+ * row ids) the member may not USE. Kept apart from
+ * PermissionOverrides above: those are strictly permission-area
+ * keys, these are row ids. Strings only, deduped, capped.
+ */
+export function normalizeDeniedConnections(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 64);
+  return [...new Set(ids.map((v) => v.trim()))].slice(0, 500);
+}
+
+/**
+ * Is this member denied the use of this connection target?
+ * M72 semantics: the OWNER is never restricted, and a user with
+ * no membership row is not decided here (callers keep their
+ * existing behaviour for non-members/system actors).
+ */
+export function isConnectionDenied(
+  membership: { role?: string | null; deniedConnections?: unknown } | null | undefined,
+  targetId: string | null | undefined,
+): boolean {
+  if (!membership || !targetId) return false;
+  if (membership.role === "OWNER") return false;
+  return normalizeDeniedConnections(membership.deniedConnections).includes(targetId);
+}
+
+/**
+ * CC27 (Connect Center Next): the async form of the deny check
+ * for send/publish/sync paths that do not already hold a
+ * membership row — reads the actor's ACTIVE membership
+ * defensively (the codebase's safeFindMany discipline: a failed
+ * lookup means "no deny-list to enforce", never a crash that
+ * takes the path down) and applies isConnectionDenied. Returns
+ * true ONLY on a positive recorded denial. A null/blank actor or
+ * target is never a denial — paths whose actor is not recorded
+ * stay ungated BY DESIGN and are listed as such in
+ * docs/connect-center-b12-acceptance.md.
+ */
+export async function isMemberConnectionDenied(
+  prisma: any,
+  organizationId: string,
+  userId: string | null | undefined,
+  targetId: string | null | undefined,
+): Promise<boolean> {
+  if (!userId || !targetId) return false;
+  const membership = await prisma?.membership?.findFirst?.({
+    where: { organizationId, userId, status: "ACTIVE" },
+  }).catch(() => null);
+  if (!membership) return false;
+  return isConnectionDenied(membership, targetId);
+}
+
 /** Reject unknown area keys in a write payload (strict). */
 export function findUnknownAreas(raw: { grants?: unknown; denies?: unknown }): string[] {
   const bad: string[] = [];

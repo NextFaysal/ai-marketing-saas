@@ -1,7 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { effectiveBkashConfig, effectiveSslcommerzConfig, effectiveWalletFeeBps } from "../common/platform-config";
+import { effectiveBkashConfig, effectivePayoutFourEyesThresholdMinor, effectiveSslcommerzConfig, effectiveWalletFeeBps } from "../common/platform-config";
+import { StepUpService, stepUpMarker } from "./step-up.service";
+import { buildPdf, moneyText, PdfCanvas } from "../courier/pdf";
+import { dhakaDayKey, dhakaDayStartUtc } from "../crm/lead-followups";
 
 /**
  * CC10 — Platform Payment + Wallet.
@@ -54,10 +57,15 @@ function parseMinor(value: unknown, field = "amountMinor"): bigint {
 
 @Injectable()
 export class WalletService {
+  private readonly stepUp: StepUpService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    @Optional() stepUpService?: StepUpService,
+  ) {
+    this.stepUp = stepUpService ?? new StepUpService(prisma as any);
+  }
 
   /** Run `fn` inside a Prisma transaction when the client
    * supports it (production); spec fakes without $transaction
@@ -170,6 +178,51 @@ export class WalletService {
     };
   }
 
+  // ---------- CC19: wallet statement (read + export only) ----------
+
+  /**
+   * The statement for a period, computed FROM THE LEDGER: the
+   * opening balance is the balanceAfterMinor of the last ledger
+   * row BEFORE the period (0 when none — the ledger starts at
+   * zero by construction), the entries are the period's rows in
+   * order, and the closing balance is the last entry's
+   * balanceAfterMinor (or the opening when the period is
+   * empty). Nothing is recomputed from anywhere else: if the
+   * ledger chain says it, the statement says it.
+   * Range: `from` inclusive, `to` EXCLUSIVE (the controllers
+   * pass a date-only `to` as the following midnight).
+   */
+  async getStatement(organizationId: string, range: { from?: Date | null; to?: Date | null } = {}) {
+    const p: any = this.prisma as any;
+    let account: any = null;
+    try { account = await p.walletAccount.findUnique({ where: { organizationId } }); } catch { account = null; }
+    let rows: any[] = [];
+    try {
+      rows = await p.walletTransaction.findMany({
+        where: { organizationId }, orderBy: { createdAt: "asc" }, take: 10000,
+      });
+    } catch { rows = []; }
+    const from = range.from ?? new Date(0);
+    const to = range.to ?? new Date();
+    let opening = 0n;
+    const entries: any[] = [];
+    for (const row of rows ?? []) {
+      const at = row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt);
+      if (at < from) { opening = BigInt(row.balanceAfterMinor); continue; }
+      if (at >= to) break;
+      entries.push(row);
+    }
+    const closing = entries.length ? BigInt(entries[entries.length - 1].balanceAfterMinor) : opening;
+    return {
+      organizationId,
+      currency: account?.currency ?? "BDT",
+      from, to,
+      openingMinor: opening.toString(),
+      closingMinor: closing.toString(),
+      entries: entries.map((r: any) => this.ledgerView(r)),
+    };
+  }
+
   async getWallet(organizationId: string) {
     const p: any = this.prisma as any;
     let account: any = null;
@@ -271,10 +324,32 @@ export class WalletService {
       id: row.id, organizationId: row.organizationId,
       ...(orgName !== undefined ? { organizationName: orgName } : {}),
       amountMinor: String(row.amountMinor), method: row.method, destination: row.destination ?? null,
+      // CC26: the saved destination this request was made
+      // against (details themselves are the snapshot in
+      // `destination`) + whether the payout sweep created it.
+      destinationId: row.destinationId ?? null,
+      createdBySystem: row.createdBySystem === true,
       status: row.status, adminNote: row.adminNote ?? null, payoutRef: row.payoutRef ?? null,
       requestedById: row.requestedById, decidedById: row.decidedById ?? null,
+      approvedById: row.approvedById ?? null,
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
+  }
+
+  /** The per-method destination-details contract, shared by
+   * free-form payout requests (CC10) and saved destinations
+   * (CC26): bKash needs a number; bank needs account number +
+   * bank name. */
+  private assertDestinationDetails(method: string, destination: any): void {
+    if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
+      throw new BadRequestException("Payout গন্তব্যের তথ্য প্রয়োজন।");
+    }
+    if (method === "bkash" && !String(destination.number ?? "").trim()) {
+      throw new BadRequestException("bKash payout-এর জন্য নম্বর প্রয়োজন।");
+    }
+    if (method === "bank" && (!String(destination.accountNumber ?? "").trim() || !String(destination.bankName ?? "").trim())) {
+      throw new BadRequestException("Bank payout-এর জন্য অ্যাকাউন্ট নম্বর ও ব্যাংকের নাম প্রয়োজন।");
+    }
   }
 
   async listPayoutRequests(organizationId: string) {
@@ -287,20 +362,33 @@ export class WalletService {
     return { requests: (rows ?? []).map((r: any) => this.payoutView(r)) };
   }
 
-  async createPayoutRequest(organizationId: string, actorId: string, dto: { amountMinor?: unknown; method?: string; destination?: any }) {
+  async createPayoutRequest(organizationId: string, actorId: string, dto: { amountMinor?: unknown; method?: string; destination?: any; destinationId?: string | null; totpCode?: string | null }) {
+    // CC23: asking money OUT of the wallet is a sensitive
+    // action — TOTP step-up runs before any validation or row
+    // creation (a refused check creates nothing).
+    const stepUp = await this.stepUp.check(actorId, dto?.totpCode);
     const amount = parseMinor(dto?.amountMinor);
     if (amount <= 0n) throw new BadRequestException("Payout-এর পরিমাণ শূন্যের বেশি হতে হবে।");
-    const method = String(dto?.method ?? "").trim().toLowerCase();
-    if (method !== "bkash" && method !== "bank") throw new BadRequestException("Payout method হতে হবে bkash অথবা bank।");
-    const destination = dto?.destination;
-    if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
-      throw new BadRequestException("Payout গন্তব্যের তথ্য প্রয়োজন।");
-    }
-    if (method === "bkash" && !String(destination.number ?? "").trim()) {
-      throw new BadRequestException("bKash payout-এর জন্য নম্বর প্রয়োজন।");
-    }
-    if (method === "bank" && (!String(destination.accountNumber ?? "").trim() || !String(destination.bankName ?? "").trim())) {
-      throw new BadRequestException("Bank payout-এর জন্য অ্যাকাউন্ট নম্বর ও ব্যাংকের নাম প্রয়োজন।");
+    // CC26: a saved destination supplies the method + details
+    // (snapshotted onto the request — later edits to the
+    // destination never rewrite this request); without one the
+    // CC10 free-form contract applies unchanged.
+    let method: string;
+    let destination: any;
+    let destinationId: string | null = null;
+    if (dto?.destinationId) {
+      const dest = await (this.prisma as any).payoutDestination.findFirst({
+        where: { id: String(dto.destinationId), organizationId },
+      }).catch(() => null);
+      if (!dest) throw new NotFoundException("Payout destination not found");
+      method = String(dest.method);
+      destination = dest.details;
+      destinationId = dest.id;
+    } else {
+      method = String(dto?.method ?? "").trim().toLowerCase();
+      if (method !== "bkash" && method !== "bank") throw new BadRequestException("Payout method হতে হবে bkash অথবা bank।");
+      destination = dto?.destination;
+      this.assertDestinationDetails(method, destination);
     }
     const created = await this.tx(async (client) => {
       const wallet = await this.getOrCreateWallet(client, organizationId);
@@ -310,15 +398,15 @@ export class WalletService {
         throw new BadRequestException(`উপলব্ধ ব্যালেন্সের বেশি payout চাওয়া যাবে না — ব্যালেন্স ${balance}, আটকে থাকা (pending/approved) ${held}, উপলব্ধ ${balance - held}।`);
       }
       return client.payoutRequest.create({
-        data: { organizationId, walletId: wallet.id, amountMinor: amount, method, destination, status: "pending", requestedById: actorId },
+        data: { organizationId, walletId: wallet.id, amountMinor: amount, method, destination, destinationId, status: "pending", requestedById: actorId },
       });
     });
     await this.audit.log({
       organizationId, userId: actorId, action: "wallet.payout_requested",
       entityType: "PayoutRequest", entityId: created.id,
-      metadata: { amountMinor: amount.toString(), method },
+      metadata: { amountMinor: amount.toString(), method, stepUp },
     });
-    return this.payoutView(created);
+    return { ...this.payoutView(created), ...stepUpMarker(stepUp) };
   }
 
   async cancelPayoutRequest(organizationId: string, actorId: string, requestId: string) {
@@ -333,6 +421,277 @@ export class WalletService {
       entityType: "PayoutRequest", entityId: row.id, metadata: { amountMinor: String(row.amountMinor) },
     });
     return this.payoutView(updated);
+  }
+
+  // ---------- CC26: payout destinations ----------
+
+  /** Mask an account identifier beyond its last 4 characters
+   * for list views. The full value stays on the row (payouts
+   * need it) and on the tenant's own edit form read; lists —
+   * the shoulder-surfing surface — show only the tail. */
+  private maskIdentifier(value: unknown): string {
+    const s = String(value ?? "");
+    if (!s) return "";
+    if (s.length <= 4) return "••••";
+    return `${"•".repeat(Math.min(8, s.length - 4))}${s.slice(-4)}`;
+  }
+
+  private destinationView(row: any, mask = true) {
+    const details = (row.details && typeof row.details === "object") ? { ...row.details } : {};
+    if (mask) {
+      if (details.number !== undefined) details.number = this.maskIdentifier(details.number);
+      if (details.accountNumber !== undefined) details.accountNumber = this.maskIdentifier(details.accountNumber);
+    }
+    return {
+      id: row.id, label: row.label, method: row.method, details,
+      isDefault: row.isDefault === true, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  async listDestinations(organizationId: string) {
+    let rows: any[] = [];
+    try {
+      rows = await (this.prisma as any).payoutDestination.findMany({
+        where: { organizationId }, orderBy: { createdAt: "asc" }, take: 50,
+      });
+    } catch { rows = []; }
+    return { destinations: (rows ?? []).map((r: any) => this.destinationView(r)) };
+  }
+
+  /** One destination, UNMASKED — for the owner's own edit form.
+   * Tenant-scoped like every read here; never cross-org. */
+  async getDestination(organizationId: string, destinationId: string) {
+    const row = await (this.prisma as any).payoutDestination.findFirst({
+      where: { id: destinationId, organizationId },
+    }).catch(() => null);
+    if (!row) throw new NotFoundException("Payout destination not found");
+    return this.destinationView(row, false);
+  }
+
+  async createDestination(organizationId: string, actorId: string, dto: { label?: string; method?: string; details?: any; isDefault?: boolean }) {
+    const label = String(dto?.label ?? "").trim();
+    if (!label) throw new BadRequestException("Destination-এর একটি নাম (label) প্রয়োজন।");
+    const method = String(dto?.method ?? "").trim().toLowerCase();
+    if (method !== "bkash" && method !== "bank") throw new BadRequestException("Destination method হতে হবে bkash অথবা bank।");
+    this.assertDestinationDetails(method, dto?.details);
+    const created = await this.tx(async (client) => {
+      const existing = await client.payoutDestination.findMany({ where: { organizationId } });
+      const makeDefault = dto?.isDefault === true || (existing ?? []).length === 0;
+      if (makeDefault) {
+        for (const other of existing ?? []) {
+          if (other.isDefault) await client.payoutDestination.update({ where: { id: other.id }, data: { isDefault: false } });
+        }
+      }
+      return client.payoutDestination.create({
+        data: { organizationId, label, method, details: dto.details, isDefault: makeDefault },
+      });
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "wallet.destination_created",
+      entityType: "PayoutDestination", entityId: created.id,
+      metadata: { method, isDefault: created.isDefault === true },
+    });
+    return this.destinationView(created, false);
+  }
+
+  async updateDestination(organizationId: string, actorId: string, destinationId: string, dto: { label?: string; details?: any; isDefault?: boolean }) {
+    const p: any = this.prisma as any;
+    const row = await p.payoutDestination.findFirst({ where: { id: destinationId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("Payout destination not found");
+    const data: Record<string, unknown> = {};
+    if (dto?.label !== undefined) {
+      const label = String(dto.label).trim();
+      if (!label) throw new BadRequestException("Destination-এর একটি নাম (label) প্রয়োজন।");
+      data.label = label;
+    }
+    if (dto?.details !== undefined) {
+      this.assertDestinationDetails(String(row.method), dto.details);
+      data.details = dto.details;
+    }
+    const updated = await this.tx(async (client) => {
+      if (dto?.isDefault === true && !row.isDefault) {
+        const others = await client.payoutDestination.findMany({ where: { organizationId, isDefault: true } });
+        for (const other of others ?? []) {
+          if (other.id !== row.id) await client.payoutDestination.update({ where: { id: other.id }, data: { isDefault: false } });
+        }
+        data.isDefault = true;
+      } else if (dto?.isDefault === false) {
+        // Explicitly un-defaulting is allowed: the org then
+        // has NO default until one is chosen (the sweep falls
+        // back to a schedule-named destination only).
+        data.isDefault = false;
+      }
+      return client.payoutDestination.update({ where: { id: row.id }, data });
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "wallet.destination_updated",
+      entityType: "PayoutDestination", entityId: row.id,
+      metadata: { fields: Object.keys(data) },
+    });
+    return this.destinationView(updated, false);
+  }
+
+  async deleteDestination(organizationId: string, actorId: string, destinationId: string) {
+    const p: any = this.prisma as any;
+    const row = await p.payoutDestination.findFirst({ where: { id: destinationId, organizationId } }).catch(() => null);
+    if (!row) throw new NotFoundException("Payout destination not found");
+    await this.tx(async (client) => {
+      await client.payoutDestination.delete({ where: { id: row.id } });
+      // A schedule pointing at a deleted destination falls
+      // back to "org default" rather than dangling.
+      const schedule = await client.payoutSchedule.findUnique({ where: { organizationId } }).catch(() => null);
+      if (schedule && schedule.destinationId === row.id) {
+        await client.payoutSchedule.update({ where: { id: schedule.id }, data: { destinationId: null } });
+      }
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "wallet.destination_deleted",
+      entityType: "PayoutDestination", entityId: row.id, metadata: { method: row.method },
+    });
+    return { id: row.id, deleted: true };
+  }
+
+  // ---------- CC26: payout schedule + the sweep ----------
+
+  private scheduleView(row: any) {
+    return {
+      id: row.id, enabled: row.enabled === true, cadence: row.cadence,
+      dayOfWeek: row.dayOfWeek ?? null, dayOfMonth: row.dayOfMonth ?? null,
+      thresholdMinor: String(row.thresholdMinor ?? 0), destinationId: row.destinationId ?? null,
+      createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSchedule(organizationId: string) {
+    let row: any = null;
+    try { row = await (this.prisma as any).payoutSchedule.findUnique({ where: { organizationId } }); } catch { row = null; }
+    return { schedule: row ? this.scheduleView(row) : null };
+  }
+
+  async putSchedule(organizationId: string, actorId: string, dto: {
+    enabled?: boolean; cadence?: string; dayOfWeek?: number | null; dayOfMonth?: number | null;
+    thresholdMinor?: unknown; destinationId?: string | null;
+  }) {
+    const cadence = String(dto?.cadence ?? "").trim().toLowerCase();
+    if (cadence !== "weekly" && cadence !== "monthly") throw new BadRequestException("Schedule cadence হতে হবে weekly অথবা monthly।");
+    let dayOfWeek: number | null = null;
+    let dayOfMonth: number | null = null;
+    if (cadence === "weekly") {
+      dayOfWeek = Number(dto?.dayOfWeek);
+      if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+        throw new BadRequestException("Weekly schedule-এর জন্য dayOfWeek (0=রবিবার .. 6=শনিবার) প্রয়োজন।");
+      }
+    } else {
+      dayOfMonth = Number(dto?.dayOfMonth);
+      if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 28) {
+        throw new BadRequestException("Monthly schedule-এর জন্য dayOfMonth (1..28) প্রয়োজন।");
+      }
+    }
+    const threshold = parseMinor(dto?.thresholdMinor ?? "0", "thresholdMinor");
+    if (threshold < 0n) throw new BadRequestException("thresholdMinor ঋণাত্মক হতে পারবে না।");
+    let destinationId: string | null = null;
+    if (dto?.destinationId) {
+      const dest = await (this.prisma as any).payoutDestination.findFirst({
+        where: { id: String(dto.destinationId), organizationId },
+      }).catch(() => null);
+      if (!dest) throw new NotFoundException("Payout destination not found");
+      destinationId = dest.id;
+    }
+    const data = {
+      enabled: dto?.enabled === true, cadence, dayOfWeek, dayOfMonth,
+      thresholdMinor: threshold, destinationId,
+    };
+    const p: any = this.prisma as any;
+    const existing = await p.payoutSchedule.findUnique({ where: { organizationId } }).catch(() => null);
+    const row = existing
+      ? await p.payoutSchedule.update({ where: { id: existing.id }, data })
+      : await p.payoutSchedule.create({ data: { organizationId, ...data } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "wallet.payout_schedule_saved",
+      entityType: "PayoutSchedule", entityId: row.id,
+      metadata: { enabled: data.enabled, cadence, thresholdMinor: threshold.toString() },
+    });
+    return this.scheduleView(row);
+  }
+
+  /**
+   * The wallet_payout_sweep job body (CC26). On the org's
+   * scheduled Asia/Dhaka day, when the AVAILABLE balance
+   * (balance − pending/approved holds, the CC10 formula) is at
+   * or above the schedule threshold, it creates ONE pending
+   * PayoutRequest for the FULL available balance against the
+   * schedule's (or the org's default) destination.
+   *
+   * The sweep NEVER approves or pays — the request joins the
+   * ordinary human chain (admin approve → mark-paid). One slot
+   * creates at most one request: a second run inside the same
+   * Dhaka day finds the system request it already made and
+   * stops. Every skip is a returned reason, never a silent
+   * nothing — and a skipped sweep creates no rows.
+   */
+  async runPayoutSweep(organizationId: string, now: Date = new Date()) {
+    const p: any = this.prisma as any;
+    const schedule = await p.payoutSchedule.findUnique({ where: { organizationId } }).catch(() => null);
+    if (!schedule) return { skipped: true, reason: "no_schedule" };
+    if (schedule.enabled !== true) return { skipped: true, reason: "schedule_disabled" };
+
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Dhaka", weekday: "short", day: "numeric",
+    }).formatToParts(now);
+    const weekdayName = parts.find((x) => x.type === "weekday")?.value ?? "";
+    const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekdayName);
+    const dayOfMonth = Number(parts.find((x) => x.type === "day")?.value ?? 0);
+    const isSlotDay = schedule.cadence === "weekly"
+      ? dayOfWeek === Number(schedule.dayOfWeek)
+      : dayOfMonth === Number(schedule.dayOfMonth);
+    if (!isSlotDay) return { skipped: true, reason: "not_scheduled_day", cadence: schedule.cadence };
+
+    const slotStart = dhakaDayStartUtc(now).getTime();
+    const prior = await p.payoutRequest.findMany({
+      where: { organizationId, createdBySystem: true },
+    }).catch(() => []);
+    const already = (prior ?? []).find((r: any) => {
+      const at = new Date(r.createdAt).getTime();
+      return at >= slotStart && at < slotStart + 24 * 3600 * 1000;
+    });
+    if (already) return { skipped: true, reason: "already_created_for_slot", requestId: already.id };
+
+    const destinations = await p.payoutDestination.findMany({ where: { organizationId } }).catch(() => []);
+    const destination = (destinations ?? []).find((d: any) => d.id === schedule.destinationId)
+      ?? (destinations ?? []).find((d: any) => d.isDefault === true)
+      ?? null;
+    if (!destination) return { skipped: true, reason: "no_destination" };
+
+    const created = await this.tx(async (client) => {
+      const wallet = await this.getOrCreateWallet(client, organizationId);
+      const balance = BigInt(wallet.balanceMinor);
+      const held = await this.heldMinor(client, organizationId);
+      const available = balance - held;
+      if (available <= 0n || available < BigInt(schedule.thresholdMinor)) return null;
+      return client.payoutRequest.create({
+        data: {
+          organizationId, walletId: wallet.id, amountMinor: available,
+          method: String(destination.method), destination: destination.details,
+          destinationId: destination.id, status: "pending",
+          requestedById: "system", createdBySystem: true,
+        },
+      });
+    });
+    if (!created) {
+      const wallet = await p.walletAccount.findUnique({ where: { organizationId } }).catch(() => null);
+      const balance = wallet ? BigInt(wallet.balanceMinor) : 0n;
+      const held = await this.heldMinor(p, organizationId).catch(() => 0n);
+      return { skipped: true, reason: "below_threshold", availableMinor: (balance - held).toString(), thresholdMinor: String(schedule.thresholdMinor) };
+    }
+    await this.audit.log({
+      organizationId, userId: "system", action: "wallet.payout_auto_requested",
+      entityType: "PayoutRequest", entityId: created.id,
+      metadata: {
+        scheduleId: schedule.id, cadence: schedule.cadence, slotDay: dhakaDayKey(now),
+        amountMinor: String(created.amountMinor), destinationId: destination.id,
+      },
+    });
+    return { created: true, requestId: created.id, amountMinor: String(created.amountMinor), destinationId: destination.id };
   }
 
   // ---------- admin: decisions, mark-paid, adjustment ----------
@@ -370,7 +729,10 @@ export class WalletService {
         }
         return client.payoutRequest.update({
           where: { id: row.id },
-          data: { status: "approved", decidedById: admin.id, adminNote: String(note ?? "").trim() || row.adminNote || null },
+          // CC23: approvedById is persisted SEPARATELY from
+          // decidedById (which later decisions overwrite) —
+          // the four-eyes mark-paid check reads this column.
+          data: { status: "approved", decidedById: admin.id, approvedById: admin.id, adminNote: String(note ?? "").trim() || row.adminNote || null },
         });
       }
       if (row.status !== "pending" && row.status !== "approved") {
@@ -394,6 +756,25 @@ export class WalletService {
   async adminMarkPaid(admin: { id: string }, requestId: string, payoutRef?: string) {
     const ref = String(payoutRef ?? "").trim();
     if (!ref) throw new BadRequestException("Mark-paid করতে হলে আসল payout-এর reference (payoutRef) আবশ্যক।");
+    // CC23 four-eyes: when the operator has set
+    // walletConfig.payoutFourEyesThresholdMinor and this
+    // payout is at/above it, the admin who APPROVED the
+    // request may not also mark it paid — a second admin must
+    // complete it. The rule reads the approver recorded at
+    // approve time (approvedById); rows with no recorded
+    // approver (approved before CC23) cannot be checked and
+    // are not blocked. Feature off (threshold unset/null) =
+    // no change to the CC10 behaviour.
+    const fourEyesThreshold = effectivePayoutFourEyesThresholdMinor();
+    if (fourEyesThreshold !== null) {
+      const peek = await (this.prisma as any).payoutRequest.findFirst({ where: { id: requestId } }).catch(() => null);
+      if (peek && peek.approvedById && String(peek.approvedById) === String(admin.id)
+        && BigInt(peek.amountMinor) >= BigInt(fourEyesThreshold)) {
+        throw new BadRequestException(
+          `চার-চোখের নিয়ম (four-eyes): এই payout-এর পরিমাণ (${String(peek.amountMinor)} minor) নির্ধারিত সীমা ${fourEyesThreshold} minor বা তার বেশি, এবং অনুরোধটি আপনিই approve করেছেন — অন্য একজন admin-কে দিয়ে mark-paid করাতে হবে।`,
+        );
+      }
+    }
     const result = await this.tx(async (client) => {
       const row = await client.payoutRequest.findFirst({ where: { id: requestId } });
       if (!row) throw new NotFoundException("Payout request not found");
@@ -468,4 +849,106 @@ export class WalletService {
     });
     return this.ledgerView(entry);
   }
+}
+
+/** Parse the statement query range: `from`/`to` as ISO or
+ * date-only (YYYY-MM-DD). A date-only `to` means "that whole
+ * day", so it becomes the FOLLOWING midnight (the service range
+ * is end-exclusive). Unparseable values degrade to unbounded. */
+export function statementRange(fromRaw?: string | null, toRaw?: string | null): { from: Date | null; to: Date | null } {
+  const parse = (raw?: string | null, endOfDay = false): Date | null => {
+    const v = String(raw ?? "").trim();
+    if (!v) return null;
+    const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00.000Z` : v);
+    if (Number.isNaN(d.getTime())) return null;
+    if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(v)) d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+  };
+  return { from: parse(fromRaw), to: parse(toRaw, true) };
+}
+
+function csvCell(value: unknown): string {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** The CSV statement — lossless: full notes, exact minor-unit
+ * amounts, and the ledger's own balance chain. No credentials
+ * exist in ledger rows, so nothing needs redacting here. */
+export function buildStatementCsv(statement: {
+  organizationId: string; currency: string; from: Date; to: Date;
+  openingMinor: string; closingMinor: string; entries: any[];
+}): string {
+  const lines: string[] = [
+    "Wallet Statement",
+    `Organization,${csvCell(statement.organizationId)}`,
+    `Currency,${csvCell(statement.currency)}`,
+    `Period From,${statement.from.toISOString()}`,
+    `Period To (exclusive),${statement.to.toISOString()}`,
+    `Opening Balance (minor),${statement.openingMinor}`,
+    "",
+    ["Date", "Type", "Amount (minor)", "Balance After (minor)", "Reference Type", "Reference Id", "Note"].join(","),
+  ];
+  for (const e of statement.entries) {
+    lines.push([
+      csvCell(new Date(e.createdAt).toISOString()),
+      csvCell(e.type),
+      csvCell(e.amountMinor),
+      csvCell(e.balanceAfterMinor),
+      csvCell(e.refType ?? ""),
+      csvCell(e.refId ?? ""),
+      csvCell(e.note ?? ""),
+    ].join(","));
+  }
+  lines.push("", `Closing Balance (minor),${statement.closingMinor}`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * The PDF statement, composed with the codebase's dependency-
+ * free PDF writer (courier/pdf.ts). Its Type1 fonts are
+ * WinAnsi-only, so the PDF carries the ASCII-safe columns
+ * (date / type / amounts / reference) and states on its face
+ * that full notes live in the CSV export — a Bengali note is
+ * never mangled into "?" and presented as the real text.
+ */
+export function buildStatementPdf(statement: {
+  organizationId: string; currency: string; from: Date; to: Date;
+  openingMinor: string; closingMinor: string; entries: any[];
+}): Buffer {
+  const header = (page: PdfCanvas, pageNo: number) => {
+    page.text(48, 800, 16, "Wallet Statement", true);
+    page.text(48, 782, 9, `Organization: ${statement.organizationId}`);
+    page.text(48, 770, 9, `Period: ${statement.from.toISOString()} to ${statement.to.toISOString()} (exclusive)`);
+    page.text(48, 758, 9, `Opening balance: ${moneyText(statement.openingMinor, statement.currency)}   Closing balance: ${moneyText(statement.closingMinor, statement.currency)}`);
+    page.text(48, 746, 8, "Full entry notes are in the CSV statement export.");
+    page.text(48, 730, 9, "Date                     Type                    Amount            Balance After        Reference", true);
+    page.text(520, 800, 8, `Page ${pageNo}`);
+  };
+  const pages: { width: number; height: number; content: string }[] = [];
+  const perPage = 42;
+  const chunks: any[][] = [];
+  for (let i = 0; i < Math.max(1, statement.entries.length); i += perPage) {
+    chunks.push(statement.entries.slice(i, i + perPage));
+  }
+  chunks.forEach((chunk, idx) => {
+    const canvas = new PdfCanvas();
+    header(canvas, idx + 1);
+    let y = 714;
+    if (chunk.length === 0) {
+      canvas.text(48, y, 9, "No ledger entries in this period.");
+    }
+    for (const e of chunk) {
+      const date = new Date(e.createdAt).toISOString().slice(0, 19).replace("T", " ");
+      const ref = e.refId ? String(e.refId).slice(0, 18) : "-";
+      canvas.text(48, y, 8, date);
+      canvas.text(150, y, 8, String(e.type).slice(0, 22));
+      canvas.text(280, y, 8, moneyText(e.amountMinor, statement.currency));
+      canvas.text(380, y, 8, moneyText(e.balanceAfterMinor, statement.currency));
+      canvas.text(480, y, 8, ref);
+      y -= 14;
+    }
+    pages.push({ width: 595, height: 842, content: canvas.build() });
+  });
+  return buildPdf(pages);
 }

@@ -1,9 +1,21 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+
+/** ON11: POST /orders/parse-address suggestion shape. */
+interface AddressSuggestion {
+  district: string | null;
+  thana: string | null;
+  confidence: string;
+  matchedTerms?: string[];
+}
+interface CreateWarning {
+  key: string;
+  label: string;
+}
 
 interface ImportResult {
   id: string;
@@ -31,6 +43,14 @@ export default function ManualOrderPage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
+  // ON11: address -> district suggestion
+  const [addrSuggestion, setAddrSuggestion] = useState<AddressSuggestion | null>(null);
+  const [confirmedDistrict, setConfirmedDistrict] = useState("");
+  const [parseBusy, setParseBusy] = useState(false);
+  const lastParsedRef = useRef("");
+  const [createWarnings, setCreateWarnings] = useState<CreateWarning[]>([]);
+  const [createAddrSuggestion, setCreateAddrSuggestion] = useState<AddressSuggestion | null>(null);
+
   const [result, setResult] = useState<ImportResult | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
@@ -38,6 +58,26 @@ export default function ManualOrderPage() {
   const takaToMinor = (v: string) => Math.round((Number(v) || 0) * 100);
   const subtotal = lines.reduce((a, l) => a + (Number(l.unitPrice) || 0) * (l.quantity || 0), 0);
   const total = Math.max(0, subtotal + (Number(shipping) || 0) - (Number(discount) || 0));
+
+  async function parseAddress() {
+    const raw = customer.address.trim();
+    if (raw.length < 4 || raw === lastParsedRef.current) return;
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    lastParsedRef.current = raw;
+    setParseBusy(true);
+    try {
+      const out = await apiFetch<AddressSuggestion>(`/organizations/${orgId}/orders/parse-address`, {
+        method: "POST",
+        body: JSON.stringify({ address: raw }),
+      });
+      setAddrSuggestion(out?.district ? out : null);
+    } catch {
+      setAddrSuggestion(null);
+    } finally {
+      setParseBusy(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +89,8 @@ export default function ManualOrderPage() {
     setBusy(true);
     setError("");
     setNotice("");
+    setCreateWarnings([]);
+    setCreateAddrSuggestion(null);
     try {
       const out = await apiFetch<any>(`/organizations/${orgId}/orders`, {
         method: "POST",
@@ -57,6 +99,7 @@ export default function ManualOrderPage() {
           customerName: customer.name.trim() || undefined,
           customerEmail: customer.email.trim() || undefined,
           address: customer.address.trim() || undefined,
+          district: confirmedDistrict || undefined,
           externalRef: customer.externalRef.trim() || undefined,
           items: lines
             .filter((l) => l.name.trim())
@@ -76,7 +119,16 @@ export default function ManualOrderPage() {
           ? "একই রেফারেন্সের অর্ডার আপডেট হয়েছে (ডুপ্লিকেট হয়নি)।"
           : `অর্ডার সফলভাবে তৈরি হয়েছে — মোট ৳${(Number(out.totalMinor) / 100).toLocaleString("en-IN")}। এটি এখন অর্ডার তালিকা ও অটোমেশনে দেখা যাবে।`
       );
+      if (Array.isArray(out.warnings) && out.warnings.length > 0) {
+        setCreateWarnings(out.warnings);
+      }
+      if (out.addressSuggestion?.district) {
+        setCreateAddrSuggestion(out.addressSuggestion);
+      }
       setCustomer({ phone: "", name: "", email: "", address: "", externalRef: "" });
+      setConfirmedDistrict("");
+      setAddrSuggestion(null);
+      lastParsedRef.current = "";
       setLines([{ name: "", sku: "", quantity: 1, unitPrice: "" }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "অর্ডার তৈরি ব্যর্থ");
@@ -123,7 +175,7 @@ export default function ManualOrderPage() {
           📝 নতুন ম্যানুয়াল অর্ডার ও CSV ইমপোর্ট
         </h1>
         <p className="mt-1 text-xs text-slate-500 max-w-2xl">
-          ফোনে বা শোরুম কাউন্টারে নেওয়া অর্ডার সরাসরি এখানে তুলুন। এগুলো স্বয়ংক্রিয়ভাবে স্টক ম্যানেজমেন্ট, কুরিয়ার বুকিং ও COD রিস্ক অ্যানালাইসিসে গণনা হবে।
+          ফোনে বা কাউন্টারে নেওয়া অর্ডার সরাসরি এখানে তুলুন। এগুলো স্বয়ংক্রিয়ভাবে স্টক ম্যানেজমেন্ট, কুরিয়ার বুকিং ও COD রিস্ক রিপোর্টে গণনা হবে।
         </p>
       </div>
 
@@ -139,6 +191,24 @@ export default function ManualOrderPage() {
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-semibold text-rose-800">
           {error}
+        </div>
+      )}
+
+      {createWarnings.length > 0 && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-1">
+          <p className="text-xs font-bold text-amber-800">⚠️ অর্ডার তৈরি হয়েছে, তবে যাচাই করে দেখুন:</p>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-800">
+            {createWarnings.map((w) => (
+              <li key={w.key}>{w.label}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {createAddrSuggestion?.district && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
+          ঠিকানা থেকে সম্ভাব্য জেলা: <b>{createAddrSuggestion.district}</b>
+          {createAddrSuggestion.thana ? ` · থানা: ${createAddrSuggestion.thana}` : ""}
         </div>
       )}
 
@@ -215,8 +285,64 @@ export default function ManualOrderPage() {
                   placeholder="বাসা, রোড, থানা, জেলা..."
                   className="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={customer.address}
-                  onChange={(e) => setCustomer({ ...customer, address: e.target.value })}
+                  onChange={(e) => {
+                    setCustomer({ ...customer, address: e.target.value });
+                    if (confirmedDistrict) setConfirmedDistrict("");
+                    setAddrSuggestion(null);
+                  }}
+                  onBlur={() => void parseAddress()}
                 />
+
+                {/* District parser pill */}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={parseBusy || customer.address.trim().length < 4}
+                    onClick={() => {
+                      lastParsedRef.current = "";
+                      void parseAddress();
+                    }}
+                    className="text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-50"
+                  >
+                    {parseBusy ? "জেলা খোঁজা হচ্ছে…" : "🔍 জেলা খুঁজুন"}
+                  </button>
+
+                  {confirmedDistrict ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                      জেলা: {confirmedDistrict} ✓
+                      <button
+                        type="button"
+                        className="text-emerald-600 hover:text-rose-600"
+                        title="নিশ্চিত জেলা সরান"
+                        onClick={() => setConfirmedDistrict("")}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ) : addrSuggestion?.district ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                      জেলা: {addrSuggestion.district}?{addrSuggestion.thana ? ` · থানা: ${addrSuggestion.thana}` : ""}
+                      <button
+                        type="button"
+                        className="rounded-full bg-amber-600 px-2 py-0.5 text-white hover:bg-amber-700 text-[10px]"
+                        onClick={() => {
+                          setConfirmedDistrict(addrSuggestion.district!);
+                          setAddrSuggestion(null);
+                        }}
+                      >
+                        নিশ্চিত করুন
+                      </button>
+                      <button
+                        type="button"
+                        className="text-amber-700 hover:text-rose-600"
+                        title="সাজেশন এড়িয়ে যান"
+                        onClick={() => setAddrSuggestion(null)}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>

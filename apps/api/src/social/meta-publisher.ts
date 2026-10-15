@@ -307,6 +307,80 @@ export class MetaSocialPublisher {
   }
 
   /**
+   * SU1 — post the first comment on an already-published post.
+   * Meta Page: POST /{postId}/comments; Instagram: POST
+   * /{mediaId}/comments. Meta's errors propagate verbatim; a
+   * response without an id is an honest plain Error (the comment
+   * is never claimed posted without the platform's id).
+   */
+  async postFirstComment(
+    token: string, platform: string, platformPostId: string, message: string,
+  ): Promise<{ commentId: string }> {
+    const res = await graphPost(token, `/${platformPostId}/comments`, { message }, this.fetchFn);
+    const id = res?.id;
+    if (!id) throw new Error("Meta প্রথম কমেন্টে কোনো id ফেরত দেয়নি");
+    return { commentId: String(id) };
+  }
+
+  /**
+   * SU7 — follower count exactly as Graph reports it: Page →
+   * fan_count, Instagram → followers_count. A field Graph omits
+   * (or returns non-numeric) is null — the caller SKIPS the
+   * snapshot for that day rather than storing an invented number.
+   * Graph errors propagate verbatim (graphGet discipline).
+   */
+  async getFollowerCount(token: string, platform: string, externalId: string): Promise<number | null> {
+    if (platform === "instagram") {
+      const res = await graphGet(token, `/${externalId}`, { fields: "followers_count" }, this.fetchFn);
+      return typeof res?.followers_count === "number" ? res.followers_count : null;
+    }
+    const res = await graphGet(token, `/${externalId}`, { fields: "fan_count" }, this.fetchFn);
+    return typeof res?.fan_count === "number" ? res.fan_count : null;
+  }
+
+  /**
+   * SU8 — Facebook Page PHOTO STORY, Meta's documented flow:
+   * upload the photo unpublished (the same step publishToPage's
+   * carousel path uses), then POST /{page-id}/photo_stories with
+   * that photo_id. Meta answers { success, post_id }; anything
+   * short of success === true WITH a post_id is an honest plain
+   * Error — a story is never claimed without the platform's id.
+   */
+  async publishPhotoStory(
+    token: string,
+    pageId: string,
+    input: { imageUrl: string },
+  ): Promise<{ platformPostId: string }> {
+    const up = await graphPost(token, `/${pageId}/photos`, {
+      url: input.imageUrl,
+      published: "false",
+    }, this.fetchFn);
+    const photoId = up?.id;
+    if (!photoId) throw new Error("Meta Story-র ছবি আপলোডে কোনো id ফেরত দেয়নি");
+    const res = await graphPost(token, `/${pageId}/photo_stories`, {
+      photo_id: String(photoId),
+    }, this.fetchFn);
+    if (res?.success !== true || !res?.post_id) {
+      throw new Error("Meta Story প্রকাশে success/post_id ফেরত দেয়নি");
+    }
+    return { platformPostId: String(res.post_id) };
+  }
+
+  /**
+   * SU10 — account identity check: GET /{externalId}?fields=id,name
+   * — the lightest Graph call that proves the token still works
+   * for THIS account. Graph's errors propagate verbatim (graphGet
+   * discipline); a response without an id is an honest plain
+   * Error — a health check is never claimed passed on an empty
+   * answer.
+   */
+  async getAccountIdentity(token: string, externalId: string): Promise<{ id: string; name: string | null }> {
+    const res = await graphGet(token, `/${externalId}`, { fields: "id,name" }, this.fetchFn);
+    if (!res?.id) throw new Error("Meta অ্যাকাউন্টের তথ্য যাচাইয়ে কোনো id ফেরত দেয়নি");
+    return { id: String(res.id), name: typeof res.name === "string" ? res.name : null };
+  }
+
+  /**
    * SP7 — read a published Page post's engagement off the post
    * OBJECT (reactions/comments summary counts + shares count),
    * exactly the fields Graph offers there. A field Graph omits

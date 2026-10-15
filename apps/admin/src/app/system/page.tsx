@@ -2,7 +2,9 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState, Tabs } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Version {
   appVersion: string; gitSha: string | null; nodeVersion: string; environment: string;
@@ -75,6 +77,11 @@ export default function SystemPage() {
   const [whProvider, setWhProvider] = React.useState("");
   const [whErrorsOnly, setWhErrorsOnly] = React.useState(false);
   const [whDetail, setWhDetail] = React.useState<WebhookEventDetail | null>(null);
+  // ADX8: the page's cards regrouped into tabs (content unchanged).
+  // "logs" is a declared sixth tab — the Activity Log card exists on
+  // the page today and needs a home; the plan's five tabs cover the
+  // other ten cards exactly.
+  const [tab, setTab] = React.useState("deploy");
 
   async function loadWebhooks(provider = whProvider, errorsOnly = whErrorsOnly) {
     const params = new URLSearchParams();
@@ -88,7 +95,12 @@ export default function SystemPage() {
     setWhDetail(detail);
   }
 
+  // ADX12: loadDone separates "still loading" from "load failed"
+  // for every null-gated card below — before, a failed fetch left
+  // its card on "লোড হচ্ছে…" forever.
+  const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadDone(false);
     setEnvCheck(await apiFetch<EnvCheck>("/admin/system/env-check").catch(() => null));
     setVersion(await apiFetch<Version>("/admin/system/version").catch(() => null));
     setQueues(await apiFetch<Queues>("/admin/system/queues").catch(() => null));
@@ -100,24 +112,73 @@ export default function SystemPage() {
     setBackup(bk);
     if (bk?.info) { setBkLocation(bk.info.location); setBkNote(bk.info.note); setBkAt(bk.info.lastBackupAt ? String(bk.info.lastBackupAt).slice(0, 16) : ""); }
     await loadWebhooks("", false);
+    setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
   React.useEffect(() => {
     apiFetch<LogRow[]>(`/admin/system/logs?take=60${logQ ? `&q=${encodeURIComponent(logQ)}` : ""}`).then(setLogs).catch(() => setLogs([]));
   }, [logQ]);
 
+  // AB3 / AN12: queue operator actions — reason বাধ্যতামূলক (Audit-এ
+  // থাকে), API-র ফলাফল হুবহু দেখানো হয়। Drain/Delete জাতীয় কোনো
+  // ধ্বংসাত্মক action এখানে নেই।
+  async function queueAction(queue: string, action: "pause" | "resume" | "retry-failed") {
+    const reason = window.prompt(`${queue} queue — ${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`);
+    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    try {
+      const out = await apiFetch<any>(`/admin/system/queues/${queue}/${action}`, { method: "POST", body: JSON.stringify({ reason }) });
+      if (out.available === false) {
+        setMsg(`⚠ ${queue}: action করা যায়নি — ${out.reason ?? out.error ?? "queue উপলব্ধ নয়"}`);
+      } else if (action === "retry-failed") {
+        const fails = (out.results ?? []).filter((r: any) => !r.retried).map((r: any) => `#${r.id}: ${r.error}`).join("; ");
+        setMsg(`✅ ${queue}: ${out.requested}টি ব্যর্থ Job-এর মধ্যে ${out.retried}টি আবার queue-তে গেছে (Failed ছিল ${out.failedBefore} → এখন ${out.failedAfter})।${fails ? ` হয়নি: ${fails}` : ""}`);
+      } else {
+        setMsg(`✅ ${queue}: ${action === "pause" ? "Pause করা হয়েছে" : "Resume করা হয়েছে"} (Paused: ${out.paused ? "হ্যাঁ" : "না"})।`);
+      }
+      await load();
+    } catch (e) {
+      setMsg(`❌ ${queue}: ${e instanceof Error ? e.message : "action ব্যর্থ হয়েছে"}`);
+    }
+  }
+
+  // ADX12: per-card pending slot (loading vs failed + retry).
+  const pending = (label: string) => loadDone
+    ? <ErrorState message={`${label} লোড হয়নি — আবার চেষ্টা করুন।`} onRetry={load} />
+    : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>;
+
   return (
     <AdminShell title="🖥 System & Reliability">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      {/* ADX8: the AA1 deploy-readiness banner moved to page level —
+          identical text/logic as inside the env card before, now
+          visible regardless of the active tab (it already was the
+          first thing on the page; tabbing must not hide it). */}
+      {envCheck ? (
+        envCheck.summary.requiredMissing > 0 ? (
+          <p className="mb-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">⚠️ {envCheck.summary.requiredMissing}টি বাধ্যতামূলক জিনিস বাকি — deploy/redeploy-এর আগে Dokploy-এর Environment ট্যাবে বসান।</p>
+        ) : (
+          <p className="mb-3 rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">✅ সব বাধ্যতামূলক env API প্রসেসে আছে ({envCheck.summary.requiredPresent}/{envCheck.summary.requiredTotal})।</p>
+        )
+      ) : null}
+      <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur">
+        <Tabs
+          tabs={[
+            { id: "deploy", label: "🚀 Deploy Readiness" },
+            { id: "queues", label: "📬 Queues", badge: dlq?.pending ?? undefined },
+            { id: "errors", label: "🔥 Errors", badge: errors?.totalErrors ?? undefined },
+            { id: "backup", label: "💾 Backup" },
+            { id: "webhooks", label: "🪝 Webhooks" },
+            { id: "logs", label: "📜 Activity Log" },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+      </div>
+      {tab === "deploy" ? (<>
       <div className="acard mb-4 space-y-2">
         <div className="font-semibold">🚀 Deploy প্রস্তুতি <span className="text-xs font-normal text-slate-500">(শুধু আছে/নেই — কোনো মান কখনো দেখানো হয় না)</span></div>
-        {!envCheck ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!envCheck ? pending("Deploy Readiness") : (
           <div className="space-y-2">
-            {envCheck.summary.requiredMissing > 0 ? (
-              <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">⚠️ {envCheck.summary.requiredMissing}টি বাধ্যতামূলক জিনিস বাকি — deploy/redeploy-এর আগে Dokploy-এর Environment ট্যাবে বসান।</p>
-            ) : (
-              <p className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">✅ সব বাধ্যতামূলক env API প্রসেসে আছে ({envCheck.summary.requiredPresent}/{envCheck.summary.requiredTotal})।</p>
-            )}
             <div className="space-y-1">
               {envCheck.apiEnv.map((e) => (
                 <div key={e.name} className="flex flex-wrap items-baseline gap-2 text-sm">
@@ -149,23 +210,24 @@ export default function SystemPage() {
           </div>
         )}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="acard space-y-2">
+      <div className="acard space-y-2">
           <div className="font-semibold">🚀 Version ও Deploy</div>
-          {!version ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!version ? pending("Version তথ্য") : (
             <div className="space-y-1 text-sm">
               <div>Version: <b>{version.appVersion}</b> · Git: <b>{version.gitSha ? version.gitSha.slice(0, 10) : "সেট নেই (GIT_SHA env)"}</b></div>
               <div>Node: {version.nodeVersion} · পরিবেশ: {version.environment}</div>
-              <div>চালু আছে: {fmtUptime(version.uptimeSeconds)} (Boot {new Date(version.bootTime).toLocaleString("bn-BD")})</div>
+              <div>চালু আছে: {fmtUptime(version.uptimeSeconds)} (Boot {fmtDateTime(version.bootTime)})</div>
               <div>Database: {version.database.reachable ? <span className="abadge-green">পৌঁছানো যাচ্ছে · {version.database.latencyMs}ms</span> : <span className="abadge-red">পৌঁছানো যাচ্ছে না</span>}</div>
               <div>Migration প্রয়োগ হয়েছে: <b>{version.migrations ? version.migrations.applied : "—"}</b>{version.migrations?.latest ? ` · সর্বশেষ ${version.migrations.latest}` : ""}</div>
               <p className="text-xs text-slate-500">Dokploy তে GIT_SHA / APP_VERSION env দিলে এখানে Deploy এর পরিচয় দেখাবে। Migration সংখ্যা আসে সরাসরি Database থেকে।</p>
             </div>
           )}
         </div>
+      </>) : null}
+      {tab === "queues" ? (<>
         <div className="acard space-y-2">
           <div className="font-semibold">📬 Queue Monitor</div>
-          {!queues ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!queues ? pending("Queue তথ্য") : (
             <div className="space-y-1.5 text-sm">
               <div>Scheduled Job: মোট {queues.scheduledJobs.total} · চালু {queues.scheduledJobs.enabled} · <b>এখন Due {queues.scheduledJobs.dueNow}</b></div>
               {queues.scheduledJobs.recentlyFailed.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.name} ({j.type}) — {j.lastError}</div>)}
@@ -185,7 +247,7 @@ export default function SystemPage() {
                     </div>
                     <div>Redis: {queues.worker.health?.redis === "ok" ? <span className="text-emerald-500">ঠিক আছে</span> : <span className="text-red-400">সমস্যা ({queues.worker.health?.redis ?? "?"})</span>}
                       {" "}· Job Secret: {queues.worker.health?.secretConfigured ? "সেট আছে" : <span className="text-red-400">সেট নেই — Job চলবে না</span>}</div>
-                    <div className="text-xs text-slate-400">Queue: {(queues.worker.health?.queues ?? []).join(", ") || "—"} · যাচাই {new Date(queues.worker.checkedAt).toLocaleTimeString("bn-BD")}</div>
+                    <div className="text-xs text-slate-400">Queue: {(queues.worker.health?.queues ?? []).join(", ") || "—"} · যাচাই {fmtDateTime(queues.worker.checkedAt, "time")}</div>
                   </div>
                 ) : (
                   <div className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
@@ -196,29 +258,36 @@ export default function SystemPage() {
                 {queues.bullmq ? (
                   queues.bullmq.available ? (
                     <table className="atable mt-2">
-                      <thead><tr><th className="ath">BullMQ Queue</th><th className="ath">Waiting</th><th className="ath">Active</th><th className="ath">Delayed</th><th className="ath">Failed</th><th className="ath">Completed</th></tr></thead>
+                      <thead><tr><th className="ath">BullMQ Queue</th><th className="ath">Waiting</th><th className="ath">Active</th><th className="ath">Delayed</th><th className="ath">Failed</th><th className="ath">Completed</th><th className="ath">Action (AB3)</th></tr></thead>
                       <tbody>{queues.bullmq.queues.map((q) => (
                         <tr key={q.name} className="border-t border-slate-800">
                           <td className="atd font-medium">{q.name}</td><td className="atd">{q.waiting}</td><td className="atd">{q.active}</td><td className="atd">{q.delayed}</td>
                           <td className="atd">{q.failed > 0 ? <span className="text-red-400 font-semibold">{q.failed}</span> : q.failed}</td><td className="atd">{q.completed}</td>
+                          <td className="atd">
+                            <div className="flex flex-wrap gap-1.5">
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => queueAction(q.name, "pause")}>Pause</button>
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => queueAction(q.name, "resume")}>Resume</button>
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" disabled={q.failed === 0} onClick={() => queueAction(q.name, "retry-failed")}>ব্যর্থ আবার চেষ্টা</button>
+                            </div>
+                          </td>
                         </tr>
                       ))}</tbody>
                     </table>
                   ) : <p className="mt-1 text-xs text-slate-500">BullMQ count পাওয়া যাচ্ছে না: {queues.bullmq.reason ?? queues.bullmq.error ?? ""}</p>
                 ) : null}
+                {queues.bullmq?.available ? <p className="mt-1 text-xs text-slate-500">Queue action (Pause/Resume/Retry) শুধু SUPER Admin-এর জন্য, প্রতিটিতে কারণ বাধ্যতামূলক ও Audit-এ থাকে। Queue খালি করা (drain) বা Job মোছার কোনো action ইচ্ছা করেই রাখা হয়নি।</p> : null}
               </div>
             </div>
           )}
         </div>
-      </div>
 
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">💬 Inbox Health (Unified Inbox U6)</div>
-        {!inboxHealth ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!inboxHealth ? pending("Inbox Health") : (
           <div className="space-y-1.5 text-sm">
             <div>ব্যর্থ Send (২৪ ঘণ্টা): <b>{inboxHealth.failedSends24h}</b> · Webhook Error (২৪ ঘণ্টা): <b>{inboxHealth.webhookErrors24h}</b></div>
             {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — {f.error ?? ""}</div>)}
-            <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${new Date(inboxHealth.oldestUnassignedAt).toLocaleString("bn-BD")}` : ""}</div>
+            <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${fmtDateTime(inboxHealth.oldestUnassignedAt)}` : ""}</div>
             <div>সংরক্ষিত মিডিয়া (Pipeline): <b>{inboxHealth.mediaStoredTotal}</b>টি ফাইল</div>
             <div className="text-xs text-slate-400">{inboxHealth.realtime}</div>
             <div className="flex flex-wrap gap-1.5 pt-1">
@@ -233,14 +302,14 @@ export default function SystemPage() {
 
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">☠️ Dead-Letter Queue (M57) {dlq ? `— মুলতুবি ${dlq.pending}টি` : ""}</div>
-        {!dlq ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : dlq.entries.length === 0 ? (
+        {!dlq ? pending("DLQ তথ্য") : dlq.entries.length === 0 ? (
           <p className="text-sm text-slate-500">কোনো Dead-letter Job নেই — সব নির্ধারিত Job সফল বা Retry তে আছে।</p>
         ) : (
           <div className="space-y-1.5">
             {dlq.entries.map((e: any) => (
               <div key={e.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
                 <span className="font-semibold">{e.jobType ?? "job"}</span>
-                <span className="text-slate-400">{e.createdAt ? new Date(e.createdAt).toLocaleString("bn-BD") : ""} · {e.attempts} বার চেষ্টা</span>
+                <span className="text-slate-400">{e.createdAt ? fmtDateTime(e.createdAt) : ""} · {e.attempts} বার চেষ্টা</span>
                 <span className="min-w-0 flex-1 truncate" title={e.error}>{e.error}</span>
                 {e.replayedAt ? <span className="text-emerald-500">↻ Replay হয়েছে</span> : (
                   <button className="rounded bg-white/10 px-2 py-0.5 font-semibold hover:bg-white/20" onClick={async () => {
@@ -254,7 +323,8 @@ export default function SystemPage() {
         )}
         <p className="mt-2 text-[11px] text-slate-500">Worker ৩ বার ব্যর্থ হলে Job এখানে আসে। Replay করলে আবার Queue তে (বা Inline) চলবে।</p>
       </div>
-
+      </>) : null}
+      {tab === "webhooks" ? (<>
       <div className="acard mt-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="font-semibold">🪝 Webhook Events</span>
@@ -271,7 +341,7 @@ export default function SystemPage() {
                 <span className="font-medium">{w.provider}</span>
                 <span className="text-slate-400">{w.topic ?? "—"}</span>
                 {w.organizationId ? <a className="text-indigo-300 hover:underline" href={`/orgs/${w.organizationId}`} onClick={(e) => e.stopPropagation()}>{w.organizationName ?? w.organizationId}</a> : <span className="text-slate-500">—</span>}
-                <span className="text-xs text-slate-500">{new Date(w.receivedAt).toLocaleString("bn-BD")}</span>
+                <span className="text-xs text-slate-500">{fmtDateTime(w.receivedAt)}</span>
                 {w.error ? <span className="text-xs text-red-400">{w.error}</span> : null}
               </button>
             ))}
@@ -288,26 +358,28 @@ export default function SystemPage() {
           </div>
         ) : null}
       </div>
-
+      </>) : null}
+      {tab === "errors" ? (<>
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">🔥 Error Summary (শেষ {errors?.windowHours ?? 24} ঘণ্টা) — মোট {errors?.totalErrors ?? "…"}</div>
-        {!errors ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!errors ? pending("Error Summary") : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {errors.sources.map((s) => (
               <div key={s.source} className="rounded-xl border border-slate-800 p-3">
                 <div className="flex items-center justify-between"><b className="text-sm">{s.source}</b><span className={s.count > 0 ? "abadge-red" : "abadge-green"}>{s.count}</span></div>
-                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{new Date(e.at).toLocaleString("bn-BD")}</span></div>)}
+                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{fmtDateTime(e.at)}</span></div>)}
                 {s.count === 0 ? <p className="mt-1 text-xs text-slate-500">কোনো Error নেই।</p> : null}
               </div>
             ))}
           </div>
         )}
       </div>
-
-      <div className="grid gap-4 lg:grid-cols-2 mt-4">
+      </>) : null}
+      {tab === "backup" ? (<>
+      <div className="grid gap-4 lg:grid-cols-2">
         <div className="acard">
           <div className="mb-2 font-semibold">🗄 Database Growth <span className="text-xs font-normal text-slate-500">({growth?.source ?? "…"})</span></div>
-          {!growth ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!growth ? pending("Database Growth") : (
             <table className="atable">
               <thead><tr><th className="ath">Table</th><th className="ath">আনুমানিক Row</th><th className="ath">আকার</th></tr></thead>
               <tbody>{growth.tables.slice(0, 15).map((t) => (
@@ -322,7 +394,7 @@ export default function SystemPage() {
           <p className="text-xs text-slate-500">আসল Backup হয় অ্যাপের বাইরে (Dokploy/Postgres)। অ্যাপ যেটা যাচাই করতে পারে তা হলো ডেটার বর্তমান Integrity — নিচের Manifest টি লাইভ Row Count থেকে তৈরি। বাইরের Backup এর তথ্য Operator রেকর্ড করেন।</p>
           {backup?.manifest ? (
             <div className="rounded-xl bg-slate-800 px-3 py-2 text-sm">
-              ✅ সর্বশেষ যাচাই {new Date(backup.manifest.at).toLocaleString("bn-BD")} — মোট <b>{backup.manifest.totalRows.toLocaleString()}</b> Row, {Object.keys(backup.manifest.tables).length} টি Core Table · যাচাই করেছেন {backup.manifest.verifiedBy}
+              ✅ সর্বশেষ যাচাই {fmtDateTime(backup.manifest.at)} — মোট <b>{backup.manifest.totalRows.toLocaleString()}</b> Row, {Object.keys(backup.manifest.tables).length} টি Core Table · যাচাই করেছেন {backup.manifest.verifiedBy}
             </div>
           ) : <p className="text-sm text-slate-500">এখনো কোনো Integrity যাচাই হয়নি।</p>}
           <button className="abtn" onClick={async () => {
@@ -338,12 +410,13 @@ export default function SystemPage() {
               try { await apiFetch("/admin/system/backup-info", { method: "PATCH", body: JSON.stringify({ lastBackupAt: bkAt ? new Date(bkAt).toISOString() : null, location: bkLocation, note: bkNote }) }); setMsg("Backup তথ্য সেভ হয়েছে।"); await load(); }
               catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
             }}>রেকর্ড সেভ করুন</button>
-            {backup?.info ? <p className="text-xs text-slate-500">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? new Date(backup.info.lastBackupAt).toLocaleString("bn-BD") : "—"} · {backup.info.location}</p> : null}
+            {backup?.info ? <p className="text-xs text-slate-500">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? fmtDateTime(backup.info.lastBackupAt) : "—"} · {backup.info.location}</p> : null}
           </div>
         </div>
       </div>
-
-      <div className="acard mt-4">
+      </>) : null}
+      {tab === "logs" ? (<>
+      <div className="acard">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="font-semibold">📜 Activity Log (Audit Trail)</span>
           <input className="ainput max-w-xs" placeholder="Action দিয়ে খুঁজুন — যেমন payment" value={logQ} onChange={(e) => setLogQ(e.target.value)} />
@@ -352,11 +425,12 @@ export default function SystemPage() {
         <table className="atable">
           <thead><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Org</th><th className="ath">IP</th></tr></thead>
           <tbody>{logs.map((l, i) => (
-            <tr key={i} className="border-t border-slate-800"><td className="atd text-slate-400">{new Date(l.at).toLocaleString("bn-BD")}</td><td className="atd font-medium">{l.action}</td><td className="atd">{l.entityType ?? "—"}</td><td className="atd">{l.organizationId ? l.organizationId.slice(0, 8) + "…" : "platform"}</td><td className="atd">{(l as any).ip ?? "—"}</td></tr>
+            <tr key={i} className="border-t border-slate-800"><td className="atd text-slate-400">{fmtDateTime(l.at)}</td><td className="atd font-medium">{l.action}</td><td className="atd">{l.entityType ?? "—"}</td><td className="atd">{l.organizationId ? l.organizationId.slice(0, 8) + "…" : "platform"}</td><td className="atd">{(l as any).ip ?? "—"}</td></tr>
           ))}</tbody>
         </table>
         {logs.length === 0 ? <p className="p-3 text-sm text-slate-500">কোনো Log নেই।</p> : null}
       </div>
+      </>) : null}
     </AdminShell>
   );
 }

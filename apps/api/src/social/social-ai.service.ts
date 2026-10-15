@@ -1,9 +1,30 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { estimateTokens } from "../ai/llm/llm.types";
 import { policyFindingsForText } from "../campaigns/policy-check";
 import { formatMinor } from "@repo/contracts";
+import { SocialService } from "./social.service";
+import { SocialImportService } from "./social-import.service";
+
+/**
+ * SU4: numbers in a text, normalized for the grounding guard
+ * (the inbox extractNumbers discipline: Bengali digits -> Latin,
+ * thousands separators stripped, canonical Number() form so
+ * "১,৫০০" and "1500.00" both become "1500").
+ */
+export function extractSocialNumbers(text: string): string[] {
+  const normalized = String(text ?? "")
+    .replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString())
+    .replace(/,/g, "");
+  return (normalized.match(/\d+(?:\.\d+)?/g) ?? []).map((n) => String(Number(n)));
+}
+
+/** The numbers in `text` that are NOT in the allowed set. */
+export function ungroundedNumbers(text: string, allowed: Set<string>): string[] {
+  return extractSocialNumbers(text).filter((n) => !allowed.has(n));
+}
 
 /**
  * Deterministic hashtag suggestions — pure and exported for tests.
@@ -57,12 +78,29 @@ export function suggestSocialHashtags(input: {
  */
 @Injectable()
 export class SocialAiService {
+  private readonly social?: SocialService;
+  private readonly importer?: SocialImportService;
+  private readonly audit?: AuditService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmFactory,
-  ) {}
+    // SU4: materialize needs the ONE post-creation path and the
+    // PP3 importer. Both are @Optional so the many existing specs
+    // that construct this service with (prisma, llm) keep working
+    // unchanged — without them materialize refuses honestly.
+    // (social.service / social-import.service never import this
+    // service, so there is no import cycle.)
+    @Optional() social?: SocialService,
+    @Optional() importer?: SocialImportService,
+    @Optional() audit?: AuditService,
+  ) {
+    this.social = social;
+    this.importer = importer;
+    this.audit = audit;
+  }
 
-  private async checkDailyLimit(organizationId: string) {
+  private async checkDailyLimit(organizationId: string, feature = "social_copy") {
     const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (ks.aiDisabledOrgIds.includes(organizationId)) {
@@ -73,7 +111,7 @@ export class SocialAiService {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
     const used = await (this.prisma as any).aIUsageRecord.count({
-      where: { organizationId, feature: "social_copy", createdAt: { gte: startOfDay } },
+      where: { organizationId, feature, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
       throw new HttpException(
@@ -280,6 +318,388 @@ export class SocialAiService {
       }),
       hashtags,
       ...(notice ? { notice } : {}),
+    };
+  }
+
+  // ---------- SU4: monthly content plan + Reel/Short script ----------
+  //
+  // Both features are REAL-LLM ONLY: a month of planning or a
+  // script from the dev template would be fabrication dressed as
+  // AI, so a non-real provider refuses (no plan row, no usage
+  // row) — unlike generateCopy, whose dev templates are honestly
+  // labelled per-variant. Usage discipline otherwise mirrors
+  // SP3: kill switch + daily cap FIRST (per feature), and the
+  // AIUsageRecord is written after provider success, before
+  // parsing.
+
+  private serializeContentPlan(row: any) {
+    if (!row) return row;
+    return {
+      id: row.id, month: row.month,
+      pillars: Array.isArray(row.pillars) ? row.pillars : [],
+      items: Array.isArray(row.items) ? row.items : [],
+      status: row.status, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  private async loadBusinessProfile(organizationId: string): Promise<any> {
+    return (this.prisma as any).businessProfile
+      ?.findUnique({ where: { organizationId } })
+      .catch(() => null);
+  }
+
+  private productFactLines(product: any): string[] {
+    const lines: string[] = [`Product (id: ${product.id}): ${product.name}`];
+    try {
+      lines.push(`Price: ${formatMinor(BigInt(product.priceMinor), product.currency)}`);
+      if (product.compareAtMinor !== null && product.compareAtMinor !== undefined) {
+        lines.push(`Compare-at price: ${formatMinor(BigInt(product.compareAtMinor), product.currency)}`);
+      }
+    } catch { /* a malformed price simply contributes no price fact */ }
+    if (product.category) lines.push(`Category: ${product.category}`);
+    if (product.stockQuantity !== null && product.stockQuantity !== undefined) {
+      lines.push(`Stock quantity: ${product.stockQuantity}`);
+    }
+    return lines;
+  }
+
+  private businessFactLines(businessProfile: any): string[] {
+    const lines: string[] = [];
+    if (businessProfile?.brandVoice) lines.push(`Brand voice: ${businessProfile.brandVoice}`);
+    if (businessProfile?.industry) lines.push(`Business industry: ${businessProfile.industry}`);
+    if (businessProfile?.description) lines.push(`About the business: ${businessProfile.description}`);
+    if (businessProfile?.uniqueSellingPoints) lines.push(`Unique selling points: ${businessProfile.uniqueSellingPoints}`);
+    return lines;
+  }
+
+  async generateContentPlan(
+    organizationId: string,
+    userId: string,
+    dto: { month: string; pillars?: string[]; focus?: string },
+  ) {
+    // Enforcement FIRST (before any load), per-feature cap.
+    await this.checkDailyLimit(organizationId, "social_content_plan");
+
+    const month = typeof dto.month === "string" ? dto.month.trim() : "";
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw new BadRequestException("মাস সঠিক YYYY-MM আকারে দিন (যেমন 2026-11)।");
+    }
+    const focus = dto.focus?.trim() ? dto.focus.trim() : undefined;
+
+    const productRows = await (this.prisma as any).product.findMany({
+      where: { organizationId, status: "ACTIVE" }, orderBy: { createdAt: "desc" }, take: 20,
+    }).catch(() => []);
+    const products: any[] = Array.isArray(productRows) ? productRows : [];
+    const businessProfile = await this.loadBusinessProfile(organizationId);
+
+    if (products.length === 0 && !focus) {
+      throw new BadRequestException("কোনো সক্রিয় Product নেই — আগে Product যোগ করুন অথবা একটা Focus লিখুন।");
+    }
+
+    const requested = (Array.isArray(dto.pillars) ? dto.pillars : [])
+      .map((p) => (typeof p === "string" ? p.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 6);
+    const pillars = requested.length > 0
+      ? requested
+      : ["product_showcase", "offer", "customer_review", "tips"];
+
+    const facts: string[] = [];
+    for (const product of products) facts.push(...this.productFactLines(product));
+    facts.push(...this.businessFactLines(businessProfile));
+    if (focus) facts.push(`Focus: ${focus}`);
+    facts.push(`Month: ${month}`);
+    facts.push(`Content pillars: ${pillars.join(", ")}`);
+    const factsText = facts.join("\n");
+
+    // Grounding set for the caption number guard: every number
+    // that appears in the facts, PLUS the calendar days 1–31 —
+    // a plan caption legitimately says things like "৫ তারিখে"
+    // (on the 5th) or "Day 12 of the plan", so bare day-of-month
+    // numbers are plan structure, not invented facts.
+    const allowedNumbers = new Set<string>(extractSocialNumbers(factsText));
+    for (let d = 1; d <= 31; d++) allowedNumbers.add(String(d));
+
+    const provider = await providerForOrg(this.llm, organizationId);
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Content Plan বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে মাসের plan বানানো হবে না।");
+    }
+
+    const systemPrompt = [
+      "You are the AI Content Planner for a business's social media.",
+      "Use ONLY the given facts. Never invent prices, discounts, stock, delivery promises, features or results.",
+      "If no price is among the facts, do not mention any price.",
+      "Write every caption in Bengali (Bangla script).",
+      `Plan the month ${month}: return at most 20 items spread across the month.`,
+      "Each item's pillar must be one of the given content pillars; productId must be one of the given product ids, or null when the item is not about a specific product.",
+      'Return ONLY JSON {"items":[{"day":number,"pillar":string,"productId":string|null,"caption":string,"mediaIdea":string}]}.',
+      "day is the day of the month (1-28). caption is a ready-to-post draft caption. mediaIdea is a short note on what photo/video to use.",
+    ].join("\n");
+
+    let result: any;
+    try {
+      result = await provider.complete(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: factsText },
+        ],
+        { jsonMode: true, maxTokens: 3000 },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? String(e));
+    }
+
+    // Usage AFTER provider success, BEFORE parsing (SP3 discipline).
+    await (this.prisma as any).aIUsageRecord.create({
+      data: {
+        organizationId, userId, feature: "social_content_plan",
+        provider: provider.name, model: result.model,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        estimated: result.tokensEstimated,
+      },
+    });
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const rawItems: any[] = Array.isArray(parsed?.items) ? parsed.items : [];
+    const productById = new Map<string, any>(products.map((p: any) => [p.id as string, p]));
+    const items: any[] = [];
+    let droppedItems = 0;
+    for (const raw of rawItems) {
+      if (items.length >= 20) break;
+      const day = Number(raw?.day);
+      const caption = typeof raw?.caption === "string" ? raw.caption.trim() : "";
+      if (!Number.isInteger(day) || day < 1 || day > 31 || !caption) {
+        droppedItems++;
+        continue;
+      }
+      // Number guard: a caption may only carry numbers from the
+      // facts (prices, stock) or calendar structure (see above).
+      // An invented price drops the whole item — never edited in.
+      if (ungroundedNumbers(caption, allowedNumbers).length > 0) {
+        droppedItems++;
+        continue;
+      }
+      const pillar = typeof raw?.pillar === "string" && raw.pillar.trim() ? raw.pillar.trim() : pillars[0];
+      const product = typeof raw?.productId === "string" ? productById.get(raw.productId) : undefined;
+      items.push({
+        day,
+        pillar,
+        productId: product ? product.id : null,
+        productName: product ? product.name : null,
+        caption,
+        mediaIdea: typeof raw?.mediaIdea === "string" ? raw.mediaIdea.trim() : "",
+      });
+    }
+    items.sort((a, b) => a.day - b.day);
+
+    if (items.length === 0) {
+      // The usage row above stands (the provider did the work) —
+      // the same accounting as SP3's zero-variants path.
+      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য plan item দেয়নি — আবার চেষ্টা করুন।");
+    }
+
+    const plan = await (this.prisma as any).socialContentPlan.create({
+      data: { organizationId, month, pillars, items, status: "generated", createdById: userId },
+    });
+    await this.audit?.log({
+      organizationId, userId, action: "social.content_plan_created",
+      entityType: "SocialContentPlan", entityId: plan.id,
+      metadata: { month, itemCount: items.length, droppedItems },
+    });
+    return { plan: this.serializeContentPlan(plan), provider: provider.name, droppedItems };
+  }
+
+  async listContentPlans(organizationId: string) {
+    const rows = await (this.prisma as any).socialContentPlan.findMany({
+      where: { organizationId }, orderBy: { createdAt: "desc" },
+    });
+    return (Array.isArray(rows) ? rows : []).map((r: any) => this.serializeContentPlan(r));
+  }
+
+  async getContentPlan(organizationId: string, planId: string) {
+    const row = await (this.prisma as any).socialContentPlan.findFirst({
+      where: { id: planId, organizationId },
+    });
+    if (!row) throw new NotFoundException("Content plan not found in this organization");
+    return this.serializeContentPlan(row);
+  }
+
+  /**
+   * Turn chosen plan items into real DRAFT posts through the ONE
+   * post-creation path (SocialService.createPost — approval rule
+   * and media validation apply exactly as in the composer). An
+   * item with a product that has an imageUrl gets that image
+   * imported (PP3) and attached; without one the draft is
+   * text-only. Per-item outcomes — one bad item never stops the
+   * rest, and an already-materialized item is skipped, so
+   * re-running materialize is safe.
+   */
+  async materializePlan(
+    organizationId: string,
+    userId: string,
+    planId: string,
+    dto: { itemIndexes: number[]; socialAccountId: string },
+  ) {
+    if (!this.social || !this.importer) {
+      throw new BadRequestException("Materialize এই deployment-এ উপলব্ধ নয় — পরে আবার চেষ্টা করুন।");
+    }
+    const planRow = await (this.prisma as any).socialContentPlan.findFirst({
+      where: { id: planId, organizationId },
+    });
+    if (!planRow) throw new NotFoundException("Content plan not found in this organization");
+    const items: any[] = (Array.isArray(planRow.items) ? planRow.items : []).map((i: any) => ({ ...i }));
+
+    const results: { index: number; status: "created" | "skipped" | "failed"; postId?: string; error?: string }[] = [];
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
+    const indexes = Array.isArray(dto.itemIndexes) ? dto.itemIndexes : [];
+    for (const index of indexes) {
+      const item = Number.isInteger(index) && index >= 0 && index < items.length ? items[index] : null;
+      if (!item) {
+        failed++;
+        results.push({ index, status: "failed", error: "item পাওয়া যায়নি" });
+        continue;
+      }
+      if (item.materializedPostId) {
+        skipped++;
+        results.push({ index, status: "skipped", postId: item.materializedPostId, error: "ইতিমধ্যে draft তৈরি হয়েছে" });
+        continue;
+      }
+      try {
+        const mediaRefs: { assetId: string; kind: string }[] = [];
+        if (item.productId) {
+          const product = await (this.prisma as any).product.findFirst({
+            where: { id: item.productId, organizationId },
+          });
+          if (!product) throw new Error("Product পাওয়া যায়নি");
+          if (typeof product.imageUrl === "string" && product.imageUrl.trim()) {
+            const asset = await this.importer.importForProduct(organizationId, userId, product.id);
+            mediaRefs.push({ assetId: asset.id, kind: "image" });
+          }
+        }
+        const post = await this.social.createPost(organizationId, userId, {
+          socialAccountId: dto.socialAccountId,
+          caption: item.caption,
+          mediaRefs,
+        });
+        item.materializedPostId = post.id;
+        created++;
+        results.push({ index, status: "created", postId: post.id });
+      } catch (e) {
+        failed++;
+        results.push({ index, status: "failed", error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    let plan = planRow;
+    if (created > 0) {
+      const materializedCount = items.filter((i: any) => i.materializedPostId).length;
+      const status = materializedCount >= items.length
+        ? "materialized"
+        : materializedCount > 0
+          ? "partially_materialized"
+          : planRow.status;
+      plan = await (this.prisma as any).socialContentPlan.update({
+        where: { id: planRow.id }, data: { items, status },
+      });
+    }
+    await this.audit?.log({
+      organizationId, userId, action: "social.content_plan_materialized",
+      entityType: "SocialContentPlan", entityId: planRow.id,
+      metadata: { created, skipped, failed },
+    });
+    return { results, plan: this.serializeContentPlan(plan) };
+  }
+
+  /**
+   * Reel/Short script draft — RETURNED ONLY. No SocialPost, no
+   * MediaAsset, nothing is saved: the human reads the script,
+   * shoots the video, and composes the post themselves. (The
+   * caption number guard is therefore not applied here — the
+   * prompt prohibition stands, and a human reviews the draft
+   * before anything can be published from it.)
+   */
+  async generateScript(
+    organizationId: string,
+    userId: string,
+    dto: { productId?: string; topic: string; language?: string },
+  ) {
+    await this.checkDailyLimit(organizationId, "social_script");
+
+    const topic = dto.topic?.trim() ? dto.topic.trim() : "";
+    if (!topic) throw new BadRequestException("একটা বিষয় (Topic) লিখুন।");
+    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+
+    let product: any = null;
+    if (dto.productId) {
+      product = await (this.prisma as any).product.findFirst({
+        where: { id: dto.productId, organizationId },
+      });
+      if (!product) throw new NotFoundException("Product not found in this organization");
+    }
+    const businessProfile = await this.loadBusinessProfile(organizationId);
+
+    const facts: string[] = [];
+    if (product) facts.push(...this.productFactLines(product));
+    facts.push(...this.businessFactLines(businessProfile));
+    facts.push(`Topic: ${topic}`);
+    const factsText = facts.join("\n");
+
+    const provider = await providerForOrg(this.llm, organizationId);
+    if (!provider.isRealLlm) {
+      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Script বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে script বানানো হবে না।");
+    }
+
+    const systemPrompt = [
+      "You write short-form video (Reel/Short) scripts for a business.",
+      "Use ONLY the given facts. Never invent prices, discounts, stock, delivery promises, features or results.",
+      "If no price is among the facts, do not mention any price.",
+      language === "bn" ? "Write in Bengali (Bangla script)." : "Write in English.",
+      'Return ONLY JSON {"hook":string,"onScreenText":string[],"shotList":string[],"captionDraft":string}.',
+      "hook is the spoken/opening line (first 3 seconds). onScreenText lists the text overlays in order. shotList lists the shots in order. captionDraft is the post caption to publish with the video.",
+    ].join("\n");
+
+    let result: any;
+    try {
+      result = await provider.complete(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: factsText },
+        ],
+        { jsonMode: true, maxTokens: 1600 },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? String(e));
+    }
+
+    await (this.prisma as any).aIUsageRecord.create({
+      data: {
+        organizationId, userId, feature: "social_script",
+        provider: provider.name, model: result.model,
+        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        estimated: result.tokensEstimated,
+      },
+    });
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(result.text); } catch { parsed = null; }
+    const hook = typeof parsed?.hook === "string" ? parsed.hook.trim() : "";
+    if (!hook) {
+      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য script দেয়নি — আবার চেষ্টা করুন।");
+    }
+    const stringList = (value: unknown): string[] =>
+      (Array.isArray(value) ? value : [])
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean);
+    return {
+      hook,
+      onScreenText: stringList(parsed?.onScreenText),
+      shotList: stringList(parsed?.shotList),
+      captionDraft: typeof parsed?.captionDraft === "string" ? parsed.captionDraft.trim() : "",
+      provider: provider.name,
+      isRealLlm: true as const,
     };
   }
 }

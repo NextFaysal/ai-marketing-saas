@@ -18,9 +18,74 @@ export class AudiencesService {
     });
   }
 
+  /** Campaign Builder Next CN6: the first-party sources the
+   *  builder's Audience Studio can turn into a Meta custom
+   *  audience through THIS service (never a second system).
+   *  buyers / recent_purchasers read real Order rows;
+   *  product_viewers read the first-party tracker's
+   *  product_view events joined to identified Visitors;
+   *  cart_abandoners read EC10's AbandonedStoreCheckout
+   *  (status "open"). A source with no reachable contacts
+   *  yields an empty list and createCustom refuses honestly. */
+  static readonly STUDIO_SOURCES = ["buyers", "recent_purchasers", "product_viewers", "cart_abandoners"] as const;
+  static readonly RECENT_PURCHASER_WINDOWS = ["30", "60", "90"] as const;
+  /** Revenue-bearing order statuses are EXCLUDED for buyer
+   *  sources (the DailyMetricAggregate discipline: cancelled /
+   *  refunded / failed orders never made a buyer). */
+  private static readonly NON_BUYER_STATUSES = ["cancelled", "refunded", "failed"];
+
+  private async buyerCustomerIds(organizationId: string, windowDays?: number): Promise<string[]> {
+    const rows = await (this.prisma as any).order.findMany({
+      where: { organizationId }, take: 50000,
+      select: { customerId: true, status: true, isPractice: true, placedAt: true, createdAt: true },
+    }).catch(() => []);
+    const since = windowDays ? Date.now() - windowDays * 86_400_000 : null;
+    const ids = new Set<string>();
+    for (const r of rows ?? []) {
+      if (!r.customerId) continue;
+      if (r.isPractice) continue;
+      if (AudiencesService.NON_BUYER_STATUSES.includes(String(r.status ?? "").toLowerCase())) continue;
+      if (since != null) {
+        const t = new Date(r.placedAt ?? r.createdAt ?? 0).getTime();
+        if (!(t >= since)) continue;
+      }
+      ids.add(r.customerId);
+    }
+    return [...ids].slice(0, MAX_CONTACTS);
+  }
+
   private async contactsFor(organizationId: string, source: string, segment?: string): Promise<[string, string][]> {
     let people: { email?: string | null; phone?: string | null }[] = [];
-    if (source === "customers") {
+    if (source === "buyers" || source === "recent_purchasers") {
+      let windowDays: number | undefined;
+      if (source === "recent_purchasers") {
+        if (!segment || !(AudiencesService.RECENT_PURCHASER_WINDOWS as readonly string[]).includes(segment)) {
+          throw new BadRequestException(`recent_purchasers needs a window of ${AudiencesService.RECENT_PURCHASER_WINDOWS.join(", ")} days (segment)`);
+        }
+        windowDays = Number(segment);
+      }
+      const ids = await this.buyerCustomerIds(organizationId, windowDays);
+      if (ids.length) {
+        people = await (this.prisma as any).customer.findMany({
+          where: { id: { in: ids } }, select: { email: true, phone: true },
+        });
+      }
+    } else if (source === "product_viewers") {
+      const events = await (this.prisma as any).trackingEvent.findMany({
+        where: { organizationId, type: "product_view" }, take: 50000, select: { visitorId: true },
+      }).catch(() => []);
+      const visitorIds = [...new Set((events ?? []).map((e: any) => e.visitorId).filter(Boolean))].slice(0, MAX_CONTACTS) as string[];
+      if (visitorIds.length) {
+        people = await (this.prisma as any).visitor.findMany({
+          where: { id: { in: visitorIds } }, select: { email: true, phone: true },
+        });
+      }
+    } else if (source === "cart_abandoners") {
+      people = await (this.prisma as any).abandonedStoreCheckout.findMany({
+        where: { organizationId, status: "open" }, take: MAX_CONTACTS,
+        select: { email: true, phone: true },
+      }).catch(() => []);
+    } else if (source === "customers") {
       people = await (this.prisma as any).customer.findMany({
         where: { organizationId, mergedIntoId: null }, take: MAX_CONTACTS,
         select: { email: true, phone: true },
@@ -42,7 +107,7 @@ export class AudiencesService {
         });
       }
     } else {
-      throw new BadRequestException("source must be customers, leads or rfm_segment");
+      throw new BadRequestException("source must be customers, leads, rfm_segment, buyers, recent_purchasers, product_viewers or cart_abandoners");
     }
     const pairs: [string, string][] = [];
     for (const p of people) {
@@ -204,6 +269,45 @@ export class AudiencesService {
       },
     });
     return (this.prisma as any).audienceRecord.findUnique({ where: { id: record.id } });
+  }
+
+  /** CN6: the Audience Studio source catalogue. Counts are
+   *  REAL gathered-contact counts (the same pairs createCustom
+   *  would upload, hashed-pair count), never estimates. A source
+   *  whose data cannot be gathered reports available:false with
+   *  the reason — the studio shows that instead of a fake count.
+   *  RFM rows come from computeRfm (real orders) and are counted
+   *  per segment over customers carrying an email or phone. */
+  async sourceCatalog(organizationId: string) {
+    const out: { key: string; source: string; segment?: string; label: string; available: boolean; reason?: string; contactCount: number | null }[] = [];
+    const probe = async (key: string, source: string, segment: string | undefined, label: string) => {
+      try {
+        const pairs = await this.contactsFor(organizationId, source, segment);
+        out.push({ key, source, ...(segment ? { segment } : {}), label, available: pairs.length > 0, ...(pairs.length ? {} : { reason: "এই Source-এ Email/Phone-সহ কোনো Contact পাওয়া যায়নি" }), contactCount: pairs.length });
+      } catch (e) {
+        out.push({ key, source, ...(segment ? { segment } : {}), label, available: false, reason: e instanceof Error ? e.message.slice(0, 160) : "source unavailable", contactCount: null });
+      }
+    };
+    await probe("buyers", "buyers", undefined, "ক্রেতা (Buyers — অন্তত একটি সফল Order আছে)");
+    for (const w of AudiencesService.RECENT_PURCHASER_WINDOWS) {
+      await probe(`recent_purchasers_${w}`, "recent_purchasers", w, `সাম্প্রতিক ক্রেতা (শেষ ${w} দিনে কিনেছেন)`);
+    }
+    await probe("product_viewers", "product_viewers", undefined, "Product Viewer (ট্র্যাকারে Product দেখেছেন, Email/Phone চেনা)");
+    await probe("cart_abandoners", "cart_abandoners", undefined, "Cart Abandoner (EC10 — খোলা Abandoned Checkout)");
+    await probe("customers", "customers", undefined, "সব Customer");
+    await probe("leads", "leads", undefined, "সব Lead");
+    try {
+      const rows = await computeRfm(this.prisma, organizationId);
+      for (const seg of RFM_SEGMENTS) {
+        const n = rows.filter((r) => r.segment === seg && (r.email || r.phone)).length;
+        out.push({ key: `rfm_${seg}`, source: "rfm_segment", segment: seg, label: `RFM Segment: ${seg}`, available: n > 0, ...(n ? {} : { reason: "এই Segment-এ Email/Phone-সহ কোনো Customer নেই" }), contactCount: n });
+      }
+    } catch (e) {
+      for (const seg of RFM_SEGMENTS) {
+        out.push({ key: `rfm_${seg}`, source: "rfm_segment", segment: seg, label: `RFM Segment: ${seg}`, available: false, reason: e instanceof Error ? e.message.slice(0, 160) : "RFM unavailable", contactCount: null });
+      }
+    }
+    return out;
   }
 
   // ---------- Saved audiences ----------

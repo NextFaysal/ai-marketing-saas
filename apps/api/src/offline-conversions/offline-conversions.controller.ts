@@ -9,15 +9,19 @@ class SaveSettingDto {
   @IsString() adAccountId!: string;
   @IsOptional() @IsString() @MaxLength(100) conversionAction?: string;
   @IsOptional() @IsString() @MaxLength(100) pixelCode?: string;
+  // CN14 (NB6): meta rows carry the dataset (pixel) id and
+  // the lead-feedback opt-in.
+  @IsOptional() @IsString() @MaxLength(100) datasetId?: string;
+  @IsOptional() @IsBoolean() leadFeedbackEnabled?: boolean;
   @IsOptional() @IsIn(["placed", "cod_confirmed", "delivered"]) trigger?: string;
   @IsOptional() @IsBoolean() enabled?: boolean;
 }
 class UploadDto {
   @IsString() orderId!: string;
-  @IsIn(["google", "tiktok"]) platform!: "google" | "tiktok";
+  @IsIn(["google", "tiktok", "meta"]) platform!: "google" | "tiktok" | "meta";
 }
 class RecentDto {
-  @IsIn(["google", "tiktok"]) platform!: "google" | "tiktok";
+  @IsIn(["google", "tiktok", "meta"]) platform!: "google" | "tiktok" | "meta";
   @IsOptional() @IsNumber() days?: number;
 }
 

@@ -11,7 +11,7 @@ import { referralConfig, maybeRewardReferral } from "../common/referral";
 import {
   seal, unseal, refreshPlatformConfig, getPlatformConfigSync,
   effectiveLlmConfig, effectiveImageConfig,
-  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig,
+  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig,
   sslcommerzBase, bkashBase, socialOAuthRedirectUri,
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
@@ -24,6 +24,9 @@ import { SmsProvider, normalizeBdPhone } from "../messaging/sms.provider";
 import { AuditService } from "../audit/audit.service";
 import { issueAdminToken } from "../common/admin-token";
 import { computeAdAccountHealth } from "../ads/ad-health";
+import { SocialHealthService } from "../social/social-health.service";
+import { SocialPublishService } from "../social/social-publish.service";
+import { AdsService } from "../ads/ads.service";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -34,6 +37,14 @@ export class AdminService {
     private readonly audit: AuditService,
     // Milestone 38: view-as token signing (AuthModule's JwtModule).
     @Optional() private readonly jwt?: JwtService,
+    // AB3 (AN13): operator retry delegations. Optional so older
+    // spec constructions keep compiling; AdminModule wires the
+    // real services via SocialModule / AdsModule imports. When a
+    // service is absent the AN13 actions refuse honestly instead
+    // of fabricating a retry.
+    @Optional() private readonly socialHealth?: SocialHealthService,
+    @Optional() private readonly socialPublish?: SocialPublishService,
+    @Optional() private readonly ads?: AdsService,
   ) {}
 
   /** Milestone 57: dead-letter queue visibility (replay is
@@ -60,6 +71,51 @@ export class AdminService {
     return { api: "ok", db, time: new Date().toISOString() };
   }
 
+  /**
+   * ADX3 (Admin UX DB1): the ONLY new endpoint of the ADX package —
+   * the counts behind the sidebar badges and the Attention Bell.
+   * Honesty contract (docs/admin-ux-architecture.md §4–§5): every
+   * field is counted from real rows, and a field that cannot be
+   * sourced is OMITTED from the response — never zero-filled, never
+   * estimated. The client renders nothing for an absent field.
+   */
+  async navCounts(now = new Date()) {
+    const out: Record<string, number> = {};
+    const since24h = new Date(now.getTime() - 86400000);
+    const [payouts, tickets, failed, alerts, overdue] = await Promise.allSettled([
+      // PayoutRequest.status: pending | approved | paid | rejected | cancelled
+      (this.prisma as any).payoutRequest.count({ where: { status: "pending" } }),
+      // SupportTicket.status: open | pending | resolved | closed —
+      // both non-terminal states need an operator (an admin reply
+      // moves open → pending; the tenant can re-open a pending one).
+      (this.prisma as any).supportTicket.count({ where: { status: { in: ["open", "pending"] } } }),
+      // Failed jobs — the same definition as overview() (FAILED
+      // sync jobs in 24h + automation runs in "error" in 24h).
+      // Both use `startedAt`: overview() originally filtered
+      // SyncJob by `updatedAt`, a field the model does not have,
+      // which silently zeroed its count; DB2 FIX-0 corrected
+      // overview() to this same field. All-or-nothing: a partial
+      // sum would UNDERSTATE failures, so either query failing
+      // omits the whole field.
+      Promise.all([
+        (this.prisma as any).syncJob.count({ where: { status: "FAILED", startedAt: { gte: since24h } } }),
+        (this.prisma as any).automationRun.count({ where: { status: "error", createdAt: { gte: since24h } } }),
+      ]).then(([s, a]) => s + a),
+      // Alerts are computed, not stored — reuse alertsBoard() so the
+      // badge can never disagree with the Alerts page.
+      this.alertsBoard().then((a) => a.length),
+      // Overdue = exactly the list the Billing page shows; reuse
+      // billingSummary() instead of re-implementing its definition.
+      this.billingSummary().then((b) => b.overdue.length),
+    ]);
+    if (payouts.status === "fulfilled") out.pendingPayouts = payouts.value;
+    if (tickets.status === "fulfilled") out.openTickets = tickets.value;
+    if (failed.status === "fulfilled") out.failedJobs24h = failed.value;
+    if (alerts.status === "fulfilled") out.activeAlerts = alerts.value;
+    if (overdue.status === "fulfilled") out.overdueSubscriptions = overdue.value;
+    return out;
+  }
+
   async overview() {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -84,7 +140,12 @@ export class AdminService {
     let aiCalls = 0, aiTokens = 0;
     for (const r of ai as any[]) { aiCalls++; aiTokens += Number(r.inputTokens ?? 0) + Number(r.outputTokens ?? 0); }
     const [failedSync, failedRuns] = await Promise.all([
-      (this.prisma as any).syncJob.count({ where: { status: "FAILED", updatedAt: { gte: since24h } } }).catch(() => 0),
+      // DB2 FIX-0: the SyncJob model has no `updatedAt` field (schema:
+      // startedAt/completedAt only). Filtering by it made Prisma throw
+      // and the .catch(() => 0) below silently zeroed the live
+      // failed-sync count. `startedAt` is the field navCounts() and
+      // every other failed-sync query in this service already use.
+      (this.prisma as any).syncJob.count({ where: { status: "FAILED", startedAt: { gte: since24h } } }).catch(() => 0),
       (this.prisma as any).automationRun.count({ where: { status: "error", createdAt: { gte: since24h } } }).catch(() => 0),
     ]);
     const recentAdminActions = await (this.prisma as any).auditLog.findMany({
@@ -405,6 +466,50 @@ export class AdminService {
     return this.getSettings();
   }
 
+  // ---------------- Admin Next AB3 / AN14(a): Plan limits clear-to-default ----
+  // AA4 made plan limits editable but offered no way back: the
+  // stored sparse map could only grow. This removes ONE tier's
+  // entry from the stored planLimits map, so planLimits()
+  // resolution for that tier falls back to the pure
+  // DEFAULT_PLAN_LIMITS — other tiers' entries are untouched.
+  // A tier with no stored entry is already on defaults: the
+  // action reports cleared:false honestly and mutates nothing.
+
+  async clearPlanLimits(actor: any, tier: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    if (!(PLAN_TIERS as readonly string[]).includes(tier)) {
+      throw new BadRequestException(`Unknown plan tier "${tier}" (known: ${PLAN_TIERS.join(", ")})`);
+    }
+    const storedRaw = await platformSetting(this.prisma as any, "planLimits");
+    const stored: Record<string, unknown> = storedRaw && typeof storedRaw === "object" && !Array.isArray(storedRaw)
+      ? { ...(storedRaw as Record<string, unknown>) }
+      : {};
+    const before = stored[tier] ?? null;
+    if (before === null) {
+      await this.logAdmin(actor, "plan_limits_clear_noop", "SystemSetting", "planLimits", { tier, reason: why, cleared: false }, ip);
+      return {
+        tier, cleared: false,
+        note: "এই প্ল্যানে কোনো Setting entry নেই — ইতিমধ্যে Code Default-ই কার্যকর আছে।",
+        planLimits: await planLimits(this.prisma as any),
+        planLimitsStored: Object.keys(stored).length ? stored : null,
+      };
+    }
+    delete stored[tier];
+    await (this.prisma as any).systemSetting.upsert({
+      where: { key: "planLimits" },
+      create: { key: "planLimits", value: stored as any, updatedById: actor.id },
+      update: { value: stored as any, updatedById: actor.id },
+    });
+    await this.logAdmin(actor, "plan_limits_cleared", "SystemSetting", "planLimits", {
+      tier, reason: why, cleared: true, before, after: null,
+    }, ip);
+    return {
+      tier, cleared: true,
+      planLimits: await planLimits(this.prisma as any),
+      planLimitsStored: Object.keys(stored).length ? stored : null,
+    };
+  }
+
   /** Milestone 41: the valid announcement audiences. */
   static readonly ANNOUNCEMENT_AUDIENCES = ["all", "trialing", "past_due", ...PLAN_TIERS.map((t) => `plan_${t}`)];
 
@@ -714,6 +819,145 @@ export class AdminService {
     };
   }
 
+  // ---------------- Admin Next AB3 / AN13: Social/Ads operator retry ----
+  // Every action below delegates to the SAME service method the
+  // tenant side already uses — no parallel admin logic, no
+  // invented provider calls:
+  //  - failed social post   -> SocialHealthService.retryPost
+  //    (the tenant's POST posts/:id/retry path; its status gate
+  //    and publish path apply unchanged, errors verbatim)
+  //  - stuck publishing post -> SocialPublishService.runDuePublishes
+  //    (the org sweep the social_publish_due job runs every
+  //    5 min; its stale-claim recovery is the ONLY recovery
+  //    path that exists — it recovers every stale claim of the
+  //    org and publishes its due posts, not just this one)
+  //  - error social account -> SocialHealthService.checkAccountHealth
+  //    (the tenant's health re-check; real provider probe)
+  //  - broken ad account    -> AdsService.sync{Meta,Google,TikTok}Insights
+  //    (the tenant card's per-account Sync button, {} window;
+  //    its deny gate sees a non-member actor and does not deny,
+  //    its syncDisabled refusal propagates verbatim)
+  // Board categories with NO real retry path stay view-only:
+  // sent_to_creator stale posts wait on a human creator — there
+  // is nothing to retry. Disconnect/reconnect is NOT offered:
+  // it needs the tenant's own OAuth.
+  // Delegation failures are audited as attempts and then
+  // rethrown verbatim — never converted into a success.
+
+  private requireOpsService(svc: unknown, label: string) {
+    if (!svc) {
+      throw new BadRequestException(`${label} এই deployment-এ উপলব্ধ নয় (service wired নয়) — কোনো retry করা হয়নি।`);
+    }
+  }
+
+  async socialOpsRetryPost(actor: any, postId: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    this.requireOpsService(this.socialHealth, "Social retry service");
+    const p = this.prisma as any;
+    const post = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
+    if (!post) throw new NotFoundException("Social post not found");
+    const before = { status: post.status };
+    try {
+      const result = await this.socialHealth!.retryPost(post.organizationId, actor.id, postId);
+      const fresh = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
+      await this.logAdmin(actor, "social_ops_retry_post", "SocialPost", postId, {
+        organizationId: post.organizationId, reason: why, outcome: "delegated",
+        before, after: { status: fresh?.status ?? null },
+      }, ip);
+      return { retried: true, kind: "failed_post", organizationId: post.organizationId, result };
+    } catch (e) {
+      await this.logAdmin(actor, "social_ops_retry_post", "SocialPost", postId, {
+        organizationId: post.organizationId, reason: why, outcome: "failed", before,
+        error: AdminService.errText(e),
+      }, ip).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  async socialOpsRecoverStuck(actor: any, postId: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    this.requireOpsService(this.socialPublish, "Social publish service");
+    const p = this.prisma as any;
+    const post = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
+    if (!post) throw new NotFoundException("Social post not found");
+    if (post.status !== "publishing") {
+      throw new BadRequestException(`এই পোস্টটি Publishing অবস্থায় নেই (এখন: "${post.status}") — stuck recovery শুধু Publishing-এ আটকে থাকা পোস্টের জন্য।`);
+    }
+    const before = { status: post.status };
+    try {
+      const sweep = await this.socialPublish!.runDuePublishes(post.organizationId);
+      const fresh = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
+      await this.logAdmin(actor, "social_ops_recover_stuck", "SocialPost", postId, {
+        organizationId: post.organizationId, reason: why, outcome: "delegated",
+        before, after: { status: fresh?.status ?? null }, sweep,
+      }, ip);
+      return {
+        retried: true, kind: "stuck_publishing", organizationId: post.organizationId,
+        note: "এটি ওই Org-এর publish sweep চালিয়েছে — stale claim recovery-সহ Org-এর সব due post প্রসেস হয়েছে, শুধু এই পোস্টটি নয়।",
+        sweep, postStatusAfter: fresh?.status ?? null,
+      };
+    } catch (e) {
+      await this.logAdmin(actor, "social_ops_recover_stuck", "SocialPost", postId, {
+        organizationId: post.organizationId, reason: why, outcome: "failed", before,
+        error: AdminService.errText(e),
+      }, ip).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  async socialOpsRecheckAccount(actor: any, accountId: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    this.requireOpsService(this.socialHealth, "Social health service");
+    const p = this.prisma as any;
+    const account = await p.socialAccount.findUnique({ where: { id: accountId } }).catch(() => null);
+    if (!account) throw new NotFoundException("Social account not found");
+    const before = { status: account.status };
+    try {
+      const result = await this.socialHealth!.checkAccountHealth(account.organizationId, actor.id, accountId);
+      await this.logAdmin(actor, "social_ops_recheck_account", "SocialAccount", accountId, {
+        organizationId: account.organizationId, reason: why, outcome: "delegated",
+        before, after: { status: (result as any)?.status ?? null, ok: (result as any)?.ok ?? null },
+      }, ip);
+      return { retried: true, kind: "account_recheck", organizationId: account.organizationId, result };
+    } catch (e) {
+      await this.logAdmin(actor, "social_ops_recheck_account", "SocialAccount", accountId, {
+        organizationId: account.organizationId, reason: why, outcome: "failed", before,
+        error: AdminService.errText(e),
+      }, ip).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  async socialOpsRetryAdSync(actor: any, accountId: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    this.requireOpsService(this.ads, "Ads sync service");
+    const p = this.prisma as any;
+    const account = await p.adAccount.findUnique({ where: { id: accountId } }).catch(() => null);
+    if (!account) throw new NotFoundException("Ad account not found");
+    const platform = String(account.platform ?? "");
+    if (!["meta", "google", "tiktok"].includes(platform)) {
+      throw new BadRequestException(`এই Platform-এর (${platform || "অজানা"}) কোনো insights sync পথ নেই — Sync retry করা যাবে না।`);
+    }
+    const before = { platform, updatedAt: account.updatedAt ?? null };
+    try {
+      const result = platform === "meta"
+        ? await this.ads!.syncMetaInsights(account.organizationId, actor.id, accountId, {})
+        : platform === "google"
+          ? await this.ads!.syncGoogleInsights(account.organizationId, actor.id, accountId, {})
+          : await this.ads!.syncTikTokInsights(account.organizationId, actor.id, accountId, {});
+      await this.logAdmin(actor, "social_ops_retry_ad_sync", "AdAccount", accountId, {
+        organizationId: account.organizationId, reason: why, outcome: "delegated", platform, before,
+      }, ip);
+      return { retried: true, kind: "ad_sync", organizationId: account.organizationId, platform, result };
+    } catch (e) {
+      await this.logAdmin(actor, "social_ops_retry_ad_sync", "AdAccount", accountId, {
+        organizationId: account.organizationId, reason: why, outcome: "failed", platform, before,
+        error: AdminService.errText(e),
+      }, ip).catch(() => undefined);
+      throw e;
+    }
+  }
+
   async healthJobs() {
     const since24h = new Date(Date.now() - 86400000);
     const [failedSync, errorRuns, scheduled] = await Promise.all([
@@ -722,6 +966,130 @@ export class AdminService {
       (this.prisma as any).scheduledJob.findMany({ orderBy: { nextRunAt: "asc" }, take: 100 }).catch(() => []),
     ]);
     return { failedSyncJobs: failedSync, errorRuns24h: errorRuns, scheduledJobs: scheduled };
+  }
+
+  // ---------------- Admin Next AN15: Platform Connection-Health Board ----------------
+  // Cross-org operator board built ONLY from real
+  // ConnectionHealthCheck rows (the CC11 Doctor's recorded runs)
+  // plus the connection target rows they reference (Integration /
+  // SocialAccount / AdAccount — the same universe the Doctor
+  // records against via the Connect Center overview).
+  //
+  // Health math is CC22's (ConnectionAnalyticsService), NOT a
+  // second definition: a run's outcome is its stored `overall`
+  // ("pass" = ok, "fail" = failed, "partial" = degraded);
+  // degraded counts in the denominator, never the numerator;
+  // uptimePct = pass / total runs over the 30-day window, one
+  // decimal; ZERO checks => uptimePct null (no data is neither
+  // 0% nor 100%). The ONLY addition beyond CC22 is the board
+  // status used for worst-first ordering: broken = latest run
+  // failed; at_risk = latest run partial OR the target row's own
+  // tokenExpiresAt is inside CC12's 7-day expiry buckets (the
+  // monitor's dayBucket thresholds, <=7/<=3/<=1 days, expired
+  // included); ok = latest run passed with no expiry risk;
+  // no_data = never checked. Target rows are read through
+  // field-selects that never touch credential material (the
+  // Integration credential relation / any secret column is
+  // never selected, and check-row `steps` are never copied
+  // into the payload).
+  async healthConnections(now = new Date()) {
+    const p = this.prisma as any;
+    const DAY = 86400000;
+    const since30 = new Date(now.getTime() - 30 * DAY);
+    const [integrations, socials, ads, checks] = await Promise.all([
+      p.integration.findMany({ take: 1000, select: { id: true, organizationId: true, provider: true, status: true, tokenExpiresAt: true } }).catch(() => []),
+      p.socialAccount.findMany({ take: 1000, select: { id: true, organizationId: true, platform: true, name: true, status: true } }).catch(() => []),
+      p.adAccount.findMany({ take: 1000, select: { id: true, organizationId: true, platform: true, name: true, status: true } }).catch(() => []),
+      p.connectionHealthCheck.findMany({ orderBy: { createdAt: "desc" }, take: 5000 }).catch(() => []),
+    ]);
+
+    // Universe from the target rows (CC11 identity:
+    // targetType = overview source, targetId = row id).
+    const targets = new Map<string, any>();
+    const addTarget = (t: any) => targets.set(`${t.organizationId}:${t.targetType}:${t.targetId}`, t);
+    for (const r of integrations as any[]) addTarget({ organizationId: r.organizationId, targetType: "integration", targetId: r.id, provider: r.provider ?? null, category: null, displayName: null, targetStatus: r.status ?? null, tokenExpiresAt: r.tokenExpiresAt ?? null });
+    for (const r of socials as any[]) addTarget({ organizationId: r.organizationId, targetType: "social_account", targetId: r.id, provider: r.platform ?? null, category: "social", displayName: r.name ?? null, targetStatus: r.status ?? null, tokenExpiresAt: null });
+    for (const r of ads as any[]) addTarget({ organizationId: r.organizationId, targetType: "ad_account", targetId: r.id, provider: r.platform ?? null, category: "ads", displayName: r.name ?? null, targetStatus: r.status ?? null, tokenExpiresAt: null });
+
+    // Recorded runs per target, newest first. A target that has
+    // check rows but whose backing row is gone (deleted
+    // connection) still appears — its identity comes from the
+    // check rows' own snapshots, marked targetStatus "missing".
+    const runsByTarget = new Map<string, any[]>();
+    for (const row of checks as any[]) {
+      const key = `${row.organizationId}:${row.targetType}:${row.targetId}`;
+      const list = runsByTarget.get(key) ?? [];
+      list.push(row);
+      runsByTarget.set(key, list);
+      if (!targets.has(key)) {
+        addTarget({ organizationId: row.organizationId, targetType: row.targetType, targetId: row.targetId, provider: row.provider ?? null, category: row.category ?? null, displayName: row.displayName ?? null, targetStatus: "missing", tokenExpiresAt: null });
+      }
+    }
+
+    const orgIds = [...new Set([...targets.values()].map((t) => t.organizationId))];
+    const orgs = orgIds.length ? await p.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }).catch(() => []) : [];
+    const nameOf = (id: string) => (orgs as any[]).find((o) => o.id === id)?.name ?? id;
+
+    const connections: any[] = [];
+    for (const t of targets.values()) {
+      const runs = runsByTarget.get(`${t.organizationId}:${t.targetType}:${t.targetId}`) ?? [];
+      const windowRuns = runs.filter((r) => new Date(r.createdAt).getTime() >= since30.getTime());
+      let passed = 0, failed = 0, degraded = 0, lastFailureAt: string | null = null;
+      for (const run of windowRuns) {
+        const overall = String(run.overall ?? "");
+        if (overall === "pass") passed++;
+        else if (overall === "fail") { failed++; if (!lastFailureAt) lastFailureAt = new Date(run.createdAt).toISOString(); }
+        else if (overall === "partial") degraded++;
+      }
+      const checksCount = windowRuns.length;
+      const latest = runs[0] ?? null;
+      const latestStatus = latest ? String(latest.overall ?? "") : null;
+      // CC12 expiry buckets (monitor dayBucket thresholds).
+      let tokenDaysLeft: number | null = null;
+      let expiryBucket: string | null = null;
+      if (t.tokenExpiresAt) {
+        tokenDaysLeft = Math.floor((new Date(t.tokenExpiresAt).getTime() - now.getTime()) / DAY);
+        if (tokenDaysLeft <= 1) expiryBucket = "expiring_1";
+        else if (tokenDaysLeft <= 3) expiryBucket = "expiring_3";
+        else if (tokenDaysLeft <= 7) expiryBucket = "expiring_7";
+      }
+      let boardStatus: string;
+      if (!latest) boardStatus = "no_data";
+      else if (latestStatus === "fail") boardStatus = "broken";
+      else if (latestStatus === "partial" || expiryBucket) boardStatus = "at_risk";
+      else boardStatus = "ok";
+      connections.push({
+        organizationId: t.organizationId,
+        organizationName: nameOf(t.organizationId),
+        targetType: t.targetType, targetId: t.targetId,
+        provider: t.provider, category: t.category, displayName: t.displayName,
+        targetStatus: t.targetStatus,
+        checks: checksCount, passed, failed, degraded,
+        uptimePct: checksCount > 0 ? Math.round((passed / checksCount) * 1000) / 10 : null,
+        latestStatus,
+        lastCheckedAt: latest ? new Date(latest.createdAt).toISOString() : null,
+        lastFailureAt,
+        tokenExpiresAt: t.tokenExpiresAt ? new Date(t.tokenExpiresAt).toISOString() : null,
+        tokenDaysLeft, expiryBucket,
+        boardStatus,
+      });
+    }
+
+    const rank: Record<string, number> = { broken: 0, at_risk: 1, ok: 2, no_data: 3 };
+    connections.sort((a, b) =>
+      (rank[a.boardStatus] - rank[b.boardStatus])
+      || (b.failed - a.failed)
+      || (String(b.lastCheckedAt ?? "").localeCompare(String(a.lastCheckedAt ?? "")))
+      || String(a.organizationName).localeCompare(String(b.organizationName)));
+
+    const summary = { total: connections.length, broken: 0, atRisk: 0, ok: 0, noData: 0 };
+    for (const c of connections) {
+      if (c.boardStatus === "broken") summary.broken++;
+      else if (c.boardStatus === "at_risk") summary.atRisk++;
+      else if (c.boardStatus === "ok") summary.ok++;
+      else summary.noData++;
+    }
+    return { generatedAt: now.toISOString(), windowDays: 30, summary, connections };
   }
 
   async usageBoard() {
@@ -1319,13 +1687,13 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
-      this.rawConfigRow("walletConfig"),
+      this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"),
     ]);
     return {
       llm: {
@@ -1390,11 +1758,23 @@ export class AdminService {
         redirectUri: gg?.redirectUri ?? (process.env.GOOGLE_REDIRECT_URI || null),
         secretConfigured: Boolean(gg?.clientSecretEncrypted || process.env.GOOGLE_CLIENT_SECRET),
       },
+      linkedinApp: {
+        source: li?.clientId ? "admin" : (process.env.LINKEDIN_CLIENT_ID ? "env" : "none"),
+        clientId: li?.clientId ?? (process.env.LINKEDIN_CLIENT_ID || null),
+        redirectUri: li?.redirectUri ?? (process.env.LINKEDIN_REDIRECT_URI || null),
+        secretConfigured: Boolean(li?.clientSecretEncrypted || process.env.LINKEDIN_CLIENT_SECRET),
+      },
       wallet: {
         // CC10: the platform fee on platform-gateway payments.
         // Unset ⇒ 0 — a fee is never invented.
         source: wal ? "admin" : "none",
         feeBps: wal && Number.isInteger(Number(wal.feeBps)) ? Number(wal.feeBps) : 0,
+        // CC23: four-eyes payout threshold (minor units).
+        // Null ⇒ the feature is off.
+        payoutFourEyesThresholdMinor: wal && wal.payoutFourEyesThresholdMinor !== null && wal.payoutFourEyesThresholdMinor !== undefined
+          && Number.isInteger(Number(wal.payoutFourEyesThresholdMinor)) && Number(wal.payoutFourEyesThresholdMinor) >= 0
+          ? Number(wal.payoutFourEyesThresholdMinor)
+          : null,
       },
       note: "Boot secrets (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY) stay in the server environment by design — the encryption key cannot be stored inside what it encrypts.",
     };
@@ -1406,7 +1786,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -1440,6 +1820,10 @@ export class AdminService {
       if (patch.audited !== undefined) setField("audited", patch.audited === true);
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "google") {
+      setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
+      setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "linkedin") {
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
@@ -1484,6 +1868,17 @@ export class AdminService {
         const feeBps = Number(patch.feeBps);
         if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new BadRequestException("feeBps must be an integer 0-10000 (basis points)");
         setField("feeBps", feeBps);
+      }
+      // CC23: four-eyes payout threshold, minor units. null
+      // CLEARS it (feature off); an integer ≥ 0 sets it.
+      if (patch.payoutFourEyesThresholdMinor !== undefined) {
+        if (patch.payoutFourEyesThresholdMinor === null) {
+          setField("payoutFourEyesThresholdMinor", null);
+        } else {
+          const threshold = Number(patch.payoutFourEyesThresholdMinor);
+          if (!Number.isInteger(threshold) || threshold < 0) throw new BadRequestException("payoutFourEyesThresholdMinor must be a non-negative integer (minor units) or null");
+          setField("payoutFourEyesThresholdMinor", threshold);
+        }
       }
     } else if (area === "image") {
       if (patch.provider !== undefined) {
@@ -1900,6 +2295,58 @@ export class AdminService {
     const cfg = effectiveGoogleAppConfig();
     if (!cfg) return { ok: false, latencyMs: 0, detail: "Google App configure করা নেই — Client ID ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
     const probe = await this.probeGoogleApp(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  /** CC20: LinkedIn client-auth probe — the Google pattern: a
+   * refresh_token grant with a deliberately bogus token. If
+   * LinkedIn rejects the CLIENT (invalid_client) the credentials
+   * are wrong; any token-level refusal means the client itself
+   * authenticated. Proves client recognition only — NOT the
+   * Community Management API approval LinkedIn gates posting
+   * behind, and never runs on save. */
+  private async probeLinkedinApp(cfg: { clientId: string; clientSecret: string }) {
+    const started = Date.now();
+    try {
+      const res = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: (() => {
+          const form = new URLSearchParams();
+          form.set("client_id", cfg.clientId);
+          form.set("client_secret", cfg.clientSecret);
+          form.set("refresh_token", "admin-verify-invalid-token");
+          form.set("grant_type", "refresh_token");
+          return form.toString();
+        })(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      const errStr = typeof json?.error === "string" ? json.error : "";
+      const errDesc = String(json?.error_description ?? "");
+      if (errStr === "invalid_client") {
+        return this.probeFail(started, errDesc || "LinkedIn client authentication ব্যর্থ (invalid_client) — Client ID/Secret প্রত্যাখ্যান করা হয়েছে।");
+      }
+      if (json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "LinkedIn access token দিয়েছে — Client ID/Secret সঠিক।" };
+      }
+      if (errStr) {
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: `LinkedIn client credential গৃহীত হয়েছে — dummy refresh token প্রত্যাখ্যান করা হয়েছে (প্রত্যাশিত; token-টি আসল নয়)। প্রমাণের সীমা: Client ID/Secret LinkedIn চিনেছে — Community Management API অনুমোদন বা Redirect URI নিবন্ধন এটি প্রমাণ করে না। LinkedIn-এর উত্তর: ${errStr}${errDesc ? ` — ${errDesc}` : ""}`,
+        };
+      }
+      return this.probeFail(started, `LinkedIn-এর উত্তর বোঝা যায়নি (HTTP ${res.status}) — credential যাচাই করা গেল না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  async testLinkedin() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveLinkedinAppConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "LinkedIn App configure করা নেই — Client ID ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeLinkedinApp(cfg);
     return { ...probe, source: cfg.source };
   }
 
@@ -2807,7 +3254,7 @@ export class AdminService {
     const areaLabels: [string, string][] = [
       ["llm", "AI / LLM"], ["metaApp", "Meta App"], ["smtp", "Email (SMTP)"], ["sms", "SMS"],
       ["sslcommerz", "SSLCommerz"], ["bkash", "bKash"], ["image", "AI Image"],
-      ["tiktokApp", "TikTok App"], ["googleApp", "Google App"],
+      ["tiktokApp", "TikTok App"], ["googleApp", "Google App"], ["linkedinApp", "LinkedIn App"],
     ];
     const platformConfig = areaLabels.map(([area, label]) => ({
       area,
@@ -3001,6 +3448,167 @@ export class AdminService {
     } catch (e) {
       return { available: false, error: AdminService.errText(e), queues: [] as any[] };
     }
+  }
+
+  // ---------------- Admin Next AB3 / AN12: Queue operator actions ----
+  // AA2 made the queues board read-only; AN12 adds the operator
+  // actions on the SAME Queue handles (bullQueue above) — pause,
+  // resume, and a capped retry of failed jobs via the real
+  // BullMQ job.retry(). There is deliberately NO drain, NO
+  // obliterate and NO job deletion here (destructive; out of
+  // scope for this package). When Redis is not configured the
+  // actions return the same honest unavailable result as
+  // bullmqCounts — never a fabricated success — and change
+  // nothing. Every operational outcome (performed or
+  // unavailable) is audited with before/after; validation
+  // refusals (missing reason, unknown queue) throw before any
+  // audit, matching the existing admin patterns.
+
+  static readonly QUEUE_NAMES = ["scheduled-jobs", "webhook"] as const;
+  static readonly QUEUE_RETRY_CAP = 50;
+
+  private requireQueueName(name: string): string {
+    if (!(AdminService.QUEUE_NAMES as readonly string[]).includes(name)) {
+      throw new BadRequestException(`Unknown queue "${name}" — এই সিস্টেমে queue আছে: ${AdminService.QUEUE_NAMES.join(", ")}`);
+    }
+    return name;
+  }
+
+  /** Runs fn against the named queue with a hard timeout.
+   * { ok:false } carries the verbatim error — callers turn it
+   * into the honest unavailable result, never a success. */
+  private async withQueue<T>(name: string, fn: (q: any) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+    try {
+      const q = await this.bullQueue(name);
+      const value = await Promise.race([
+        fn(q),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Redis-এ queue action ৫ সেকেন্ডের মধ্যে শেষ হয়নি")), 5000)),
+      ]);
+      return { ok: true, value };
+    } catch (e) {
+      return { ok: false, error: AdminService.errText(e) };
+    }
+  }
+
+  private queueUnavailable(name: string, action: string, error?: string) {
+    return {
+      available: false as const,
+      queue: name,
+      action,
+      ...(error
+        ? { error }
+        : { reason: "REDIS_URL সেট নেই — queue dispatch বন্ধ আছে; job গুলো API-র ভেতরেই (inline) চলে, BullMQ-তে কোনো queue নেই যেটি pause/resume/retry করা যাবে।" }),
+    };
+  }
+
+  async queuePause(actor: any, name: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    const queue = this.requireQueueName(name);
+    if (!process.env.REDIS_URL) {
+      const out = this.queueUnavailable(queue, "pause");
+      await this.logAdmin(actor, "queue_pause_unavailable", "BullQueue", queue, { queue, reason: why, available: false }, ip);
+      return out;
+    }
+    const r = await this.withQueue(queue, async (q) => {
+      const before = Boolean(await q.isPaused());
+      await q.pause();
+      const after = Boolean(await q.isPaused());
+      return { before, after };
+    });
+    if (!r.ok) {
+      const out = this.queueUnavailable(queue, "pause", r.error);
+      await this.logAdmin(actor, "queue_pause_unavailable", "BullQueue", queue, { queue, reason: why, available: false, error: r.error }, ip);
+      return out;
+    }
+    await this.logAdmin(actor, "queue_paused", "BullQueue", queue,
+      { queue, reason: why, before: { paused: r.value.before }, after: { paused: r.value.after } }, ip);
+    return { available: true as const, queue, action: "pause", paused: r.value.after };
+  }
+
+  async queueResume(actor: any, name: string, reason?: string, ip?: string) {
+    const why = this.requireReason(reason);
+    const queue = this.requireQueueName(name);
+    if (!process.env.REDIS_URL) {
+      const out = this.queueUnavailable(queue, "resume");
+      await this.logAdmin(actor, "queue_resume_unavailable", "BullQueue", queue, { queue, reason: why, available: false }, ip);
+      return out;
+    }
+    const r = await this.withQueue(queue, async (q) => {
+      const before = Boolean(await q.isPaused());
+      await q.resume();
+      const after = Boolean(await q.isPaused());
+      return { before, after };
+    });
+    if (!r.ok) {
+      const out = this.queueUnavailable(queue, "resume", r.error);
+      await this.logAdmin(actor, "queue_resume_unavailable", "BullQueue", queue, { queue, reason: why, available: false, error: r.error }, ip);
+      return out;
+    }
+    await this.logAdmin(actor, "queue_resumed", "BullQueue", queue,
+      { queue, reason: why, before: { paused: r.value.before }, after: { paused: r.value.after } }, ip);
+    return { available: true as const, queue, action: "resume", paused: r.value.after };
+  }
+
+  async queueRetryFailed(actor: any, name: string, opts: { jobIds?: string[]; limit?: number; reason?: string }, ip?: string) {
+    const why = this.requireReason(opts?.reason);
+    const queue = this.requireQueueName(name);
+    const cap = Math.min(
+      Math.max(1, Math.floor(typeof opts?.limit === "number" && Number.isFinite(opts.limit) ? opts.limit : 20)),
+      AdminService.QUEUE_RETRY_CAP,
+    );
+    const requestedIds = Array.isArray(opts?.jobIds) ? [...new Set(opts.jobIds.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()))] : [];
+    if (!process.env.REDIS_URL) {
+      const out = this.queueUnavailable(queue, "retry-failed");
+      await this.logAdmin(actor, "queue_retry_unavailable", "BullQueue", queue, { queue, reason: why, available: false }, ip);
+      return out;
+    }
+    const r = await this.withQueue(queue, async (q) => {
+      const countsBefore = await q.getJobCounts("failed").catch(() => ({} as any));
+      const failedBefore = Number(countsBefore?.failed ?? 0);
+      const jobs: any[] = [];
+      if (requestedIds.length > 0) {
+        for (const id of requestedIds.slice(0, cap)) {
+          const job = await q.getJob(id).catch(() => null);
+          jobs.push(job ?? { id, __missing: true });
+        }
+      } else {
+        const failed = await q.getFailed(0, cap - 1);
+        for (const job of (Array.isArray(failed) ? failed : [])) jobs.push(job);
+      }
+      const results: { id: string; retried: boolean; error?: string }[] = [];
+      for (const job of jobs) {
+        const id = String(job?.id ?? "");
+        if (!id) continue;
+        if (job.__missing) { results.push({ id, retried: false, error: "এই ID-র কোনো job পাওয়া যায়নি" }); continue; }
+        try {
+          const state = typeof job.getState === "function" ? await job.getState() : "failed";
+          if (state !== "failed") { results.push({ id, retried: false, error: `job টি failed অবস্থায় নেই (এখন: ${state})` }); continue; }
+          await job.retry();
+          results.push({ id, retried: true });
+        } catch (e) {
+          results.push({ id, retried: false, error: AdminService.errText(e) });
+        }
+      }
+      const countsAfter = await q.getJobCounts("failed").catch(() => ({} as any));
+      return { failedBefore, failedAfter: Number(countsAfter?.failed ?? 0), results };
+    });
+    if (!r.ok) {
+      const out = this.queueUnavailable(queue, "retry-failed", r.error);
+      await this.logAdmin(actor, "queue_retry_unavailable", "BullQueue", queue, { queue, reason: why, available: false, error: r.error }, ip);
+      return out;
+    }
+    const retriedCount = r.value.results.filter((x) => x.retried).length;
+    await this.logAdmin(actor, "queue_retry_failed", "BullQueue", queue, {
+      queue, reason: why,
+      before: { failed: r.value.failedBefore }, after: { failed: r.value.failedAfter },
+      requested: r.value.results.length, retried: retriedCount,
+      jobIds: requestedIds.length > 0 ? requestedIds.slice(0, cap) : undefined,
+    }, ip);
+    return {
+      available: true as const, queue, action: "retry-failed",
+      failedBefore: r.value.failedBefore, failedAfter: r.value.failedAfter,
+      requested: r.value.results.length, retried: retriedCount, results: r.value.results,
+    };
   }
 
   /** One raw probe of the worker health URL. Deliberately

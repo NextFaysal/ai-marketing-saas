@@ -238,6 +238,9 @@ export class ReviewsService {
       if (!rating) return false;
       await this.p().orderReview.update({ where: { id: row.id }, data: { rating, status: "received", source: "chat", receivedAt: new Date() } });
       await this.audit?.log({ organizationId, userId: "system", action: "review.received", entityType: "OrderReview", entityId: row.id, metadata: { orderId: row.orderId, rating, via: "chat" } }).catch(() => undefined);
+      // SU5: a received rating may become a social DRAFT
+      // (milestone / 5-star) when the org enabled the trigger.
+      this.events?.emit?.("social_draft.review_received", { organizationId, reviewId: row.id, orderId: row.orderId, rating });
       return true;
     }
     if (row.comment == null && row.receivedAt && Date.now() - new Date(row.receivedAt).getTime() <= REVIEW_COMMENT_WINDOW_MS) {
@@ -305,6 +308,8 @@ export class ReviewsService {
       data: { rating, comment, status: "received", source: "link", receivedAt: new Date() },
     });
     await this.audit?.log({ organizationId: row.organizationId, userId: "system", action: "review.received", entityType: "OrderReview", entityId: row.id, metadata: { orderId: row.orderId, rating, via: "link" } }).catch(() => undefined);
+    // SU5: same producer hook as the chat path.
+    this.events?.emit?.("social_draft.review_received", { organizationId: row.organizationId, reviewId: row.id, orderId: row.orderId, rating });
     return { ok: true, rating: updated.rating, status: updated.status };
   }
 }

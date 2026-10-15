@@ -12,6 +12,7 @@ import { ListingsService } from "./commerce/listings.service";
 import { normalizeWooProduct, normalizeWooVariation, normalizeWooOrder, NormalizedOrder, NormalizedProduct } from "./woocommerce/normalize";
 import { normalizeWooCustomer, upsertSyncedCustomer } from "./customer-sync";
 import { ShopifyGraphQLClient } from "./shopify/shopify-graphql.client";
+import { cadenceSkip } from "./sync-cadence";
 
 function stripReviewHtml(html: unknown): string | null {
   if (typeof html !== "string") return null;
@@ -377,9 +378,35 @@ export class IntegrationsService {
     return new WooClient(integration.store.url, secrets);
   }
 
+  /**
+   * CC18: the sync-pause gate shared by every sync entry point
+   * in this service. A paused integration's sync does not run:
+   * the skip is RECORDED as a completed SyncJob whose error
+   * field carries the "sync_paused" reason (so the per-
+   * connection sync history shows it), and the caller gets the
+   * AD5-style skip marker as its result. The manual HTTP
+   * triggers additionally refuse up-front in the controller
+   * with a clear message; scheduled jobs land here and skip
+   * quietly-but-logged. Returns null when not paused.
+   */
+  private async pausedSkip(integration: any, kind: string): Promise<any | null> {
+    if (!integration || integration.syncPaused !== true) return null;
+    const job = await (this.prisma as any).syncJob.create({
+      data: {
+        integrationId: integration.id, kind, status: "COMPLETED",
+        fetched: 0, created: 0, updated: 0, skipped: 0,
+        error: "sync_paused", completedAt: new Date(),
+      },
+    });
+    return { skipped: true, reason: "sync_paused", jobId: job.id, job };
+  }
+
   // ---------- Product sync ----------
-  async syncProducts(organizationId: string, actorId: string, integrationId: string) {
+  async syncProducts(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "products");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "products"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "products", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     try {
@@ -498,8 +525,11 @@ export class IntegrationsService {
   }
 
   // ---------- Order sync ----------
-  async syncOrders(organizationId: string, actorId: string, integrationId: string) {
+  async syncOrders(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "orders");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "orders"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "orders", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     try {
@@ -671,6 +701,13 @@ export class IntegrationsService {
         } catch (e) { this.logger.warn(`inventory restore failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
       }
     }
+    if (result === "created") {
+      // ON4: fraud assessment hook — emitted UNCONDITIONALLY on
+      // creation (NOT inside the 24h order.created guard below:
+      // a backfilled old order still deserves a risk stamp, and
+      // FraudShieldService.assessOrder never throws).
+      try { this.events?.emit("order.ingested", { organizationId, context: { orderId, source } }); } catch { /* isolated */ }
+    }
     if (o.status === "completed" && this.events) {
       this.events.emit("order.delivered", { organizationId, context: { orderId } });
     }
@@ -692,8 +729,11 @@ export class IntegrationsService {
   }
 
   // ---------- EC6: Customer sync ----------
-  async syncCustomers(organizationId: string, actorId: string, integrationId: string) {
+  async syncCustomers(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "customers");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "customers"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "customers", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     const errors: string[] = [];
@@ -761,8 +801,11 @@ export class IntegrationsService {
     return "created";
   }
 
-  async syncReviews(organizationId: string, actorId: string, integrationId: string) {
+  async syncReviews(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "reviews");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "reviews"); if (cadence) return cadence; }
     if (integration.provider === "shopify") return this.syncShopifyReviews(organizationId, actorId, integration);
     if (integration.provider !== "woocommerce") {
       throw new BadRequestException("Review sync is only available for WooCommerce/Shopify integrations");

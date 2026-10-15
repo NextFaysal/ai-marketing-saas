@@ -32,6 +32,39 @@ import { CourierHubModal } from "./components/CourierHubModal";
 import { LabelScannerModal } from "./components/LabelScannerModal";
 import { DuplicatesModal } from "./components/DuplicatesModal";
 import { RiskModal } from "./components/RiskModal";
+import { minorToTaka, takaToMinor } from "@/lib/orders-on1";
+import {
+  NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS, TEMPLATE_VARIABLE_HELP,
+  notificationChannelLabel, notificationEventLabel,
+} from "@/lib/orders-on5";
+import { type MemberRow } from "./on2-detail";
+import { OrderAutomationPanel } from "./on8-automation";
+import { OrderAnalyticsPanel } from "./on9-analytics";
+import { OrderPrintPanel } from "./on10-print";
+import { OrderTeamPanel } from "./on12-team";
+
+interface FraudSettings {
+  enabled: boolean;
+  autoHoldEnabled: boolean;
+  autoHoldBand: string;
+  highValueMinor: string;
+  burstCount: number;
+  burstWindowHours: number;
+}
+interface BlockedPhoneRow {
+  id: string;
+  phone: string;
+  phoneKey: string;
+  reason: string | null;
+  createdAt: string;
+}
+interface NotifEventConfig {
+  enabled: boolean;
+  channels: string[];
+  templates: Record<string, string | null>;
+}
+type NotifConfig = Record<string, NotifEventConfig>;
+
 
 export default function OrdersPage() {
   const [items, setItems] = useState<Order[]>([]);
@@ -141,6 +174,31 @@ export default function OrdersPage() {
   // Modals & Drawer State
   const [isCourierHubOpen, setIsCourierHubOpen] = useState(false);
   const [riskDetail, setRiskDetail] = useState<(RiskDetail & { orderLabel: string }) | null>(null);
+
+  // ON Modals & Panels state
+  const [automationPanelOpen, setAutomationPanelOpen] = useState(false);
+  const [analyticsPanelOpen, setAnalyticsPanelOpen] = useState(false);
+  const [printPanelOpen, setPrintPanelOpen] = useState(false);
+  const [teamPanelOpen, setTeamPanelOpen] = useState(false);
+  const [members, setMembers] = useState<MemberRow[]>([]);
+
+  // Fraud Shield panel state
+  const [fraudPanelOpen, setFraudPanelOpen] = useState(false);
+  const [fraudSettings, setFraudSettings] = useState<FraudSettings | null>(null);
+  const [fraudHighTaka, setFraudHighTaka] = useState("");
+  const [blockedPhones, setBlockedPhones] = useState<BlockedPhoneRow[]>([]);
+  const [blockForm, setBlockForm] = useState({ phone: "", reason: "" });
+  const [fraudPanelBusy, setFraudPanelBusy] = useState("");
+  const [fraudPanelNotice, setFraudPanelNotice] = useState("");
+  const [fraudPanelError, setFraudPanelError] = useState("");
+
+  // Notification settings panel state
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [notifConfig, setNotifConfig] = useState<NotifConfig | null>(null);
+  const [notifPanelBusy, setNotifPanelBusy] = useState("");
+  const [notifPanelNotice, setNotifPanelNotice] = useState("");
+  const [notifPanelError, setNotifPanelError] = useState("");
+
   const [actOrder, setActOrder] = useState<Order | null>(null);
   const [drawerTab, setDrawerTab] = useState<"overview" | "courier" | "payment" | "store" | "rider">("overview");
 
@@ -231,6 +289,158 @@ export default function OrdersPage() {
   useEffect(() => {
     void loadDuplicates();
   }, [loadDuplicates]);
+
+  // Load Members
+  useEffect(() => {
+    if (!orgId) return;
+    apiFetch<MemberRow[]>('/organizations/' + orgId + '/members').then(setMembers).catch(() => undefined);
+  }, [orgId]);
+
+  // Fraud Shield Handlers
+  async function loadFraudPanel() {
+    if (!orgId) return;
+    setFraudPanelError("");
+    try {
+      const [s, blocked] = await Promise.all([
+        apiFetch<FraudSettings>('/organizations/' + orgId + '/orders/fraud-settings'),
+        apiFetch<BlockedPhoneRow[]>('/organizations/' + orgId + '/orders/blocked-phones'),
+      ]);
+      setFraudSettings(s);
+      setFraudHighTaka(s?.highValueMinor ? minorToTaka(s.highValueMinor) : "");
+      setBlockedPhones(blocked ?? []);
+    } catch (e) {
+      setFraudPanelError(e instanceof Error ? e.message : "জালিয়াতি সুরক্ষার তথ্য লোড ব্যর্থ");
+    }
+  }
+
+  function openFraudPanel() {
+    setFraudPanelOpen(true);
+    setFraudPanelNotice("");
+    setFraudPanelError("");
+    void loadFraudPanel();
+  }
+
+  async function saveFraudSettings() {
+    if (!orgId || !fraudSettings) return;
+    const highMinor = fraudHighTaka.trim() ? takaToMinor(fraudHighTaka) : "0";
+    if (highMinor === null) {
+      setFraudPanelError("বড় অর্ডারের সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।");
+      return;
+    }
+    setFraudPanelBusy("save");
+    setFraudPanelNotice("");
+    setFraudPanelError("");
+    try {
+      const updated = await apiFetch<FraudSettings>('/organizations/' + orgId + '/orders/fraud-settings', {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: fraudSettings.enabled,
+          autoHoldEnabled: fraudSettings.autoHoldEnabled,
+          autoHoldBand: fraudSettings.autoHoldBand,
+          highValueMinor: highMinor,
+          burstCount: Number(fraudSettings.burstCount) || 0,
+          burstWindowHours: Number(fraudSettings.burstWindowHours) || 0,
+        }),
+      });
+      setFraudSettings(updated);
+      setFraudHighTaka(updated?.highValueMinor ? minorToTaka(updated.highValueMinor) : "");
+      setFraudPanelNotice("জালিয়াতি সুরক্ষার সেটিংস সংরক্ষণ হয়েছে।");
+    } catch (e) {
+      setFraudPanelError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ ব্যর্থ");
+    } finally {
+      setFraudPanelBusy("");
+    }
+  }
+
+  async function addBlockedPhone() {
+    if (!orgId || !blockForm.phone.trim()) return;
+    setFraudPanelBusy("block-add");
+    setFraudPanelNotice("");
+    setFraudPanelError("");
+    try {
+      await apiFetch('/organizations/' + orgId + '/orders/blocked-phones', {
+        method: "POST",
+        body: JSON.stringify({
+          phone: blockForm.phone.trim(),
+          ...(blockForm.reason.trim() ? { reason: blockForm.reason.trim() } : {}),
+        }),
+      });
+      setBlockForm({ phone: "", reason: "" });
+      setFraudPanelNotice("নম্বরটি ব্লক তালিকায় যোগ হয়েছে।");
+      setBlockedPhones(await apiFetch<BlockedPhoneRow[]>('/organizations/' + orgId + '/orders/blocked-phones'));
+    } catch (e) {
+      setFraudPanelError(e instanceof Error ? e.message : "নম্বর ব্লক করা ব্যর্থ");
+    } finally {
+      setFraudPanelBusy("");
+    }
+  }
+
+  async function deleteBlockedPhone(row: BlockedPhoneRow) {
+    if (!orgId) return;
+    if (!window.confirm(row.phone + ' নম্বরটি ব্লক তালিকা থেকে সরাবেন?')) return;
+    setFraudPanelBusy('block-del-' + row.id);
+    setFraudPanelNotice("");
+    setFraudPanelError("");
+    try {
+      await apiFetch('/organizations/' + orgId + '/orders/blocked-phones/' + row.id, { method: "DELETE" });
+      setBlockedPhones((prev) => prev.filter((x) => x.id !== row.id));
+      setFraudPanelNotice("নম্বরটি ব্লক তালিকা থেকে সরানো হয়েছে।");
+    } catch (e) {
+      setFraudPanelError(e instanceof Error ? e.message : "নম্বর সরানো ব্যর্থ");
+    } finally {
+      setFraudPanelBusy("");
+    }
+  }
+
+  // Notification Settings Handlers
+  async function loadNotifPanel() {
+    if (!orgId) return;
+    setNotifPanelError("");
+    try {
+      const cfg = await apiFetch<NotifConfig>('/organizations/' + orgId + '/orders/notification-settings');
+      setNotifConfig(cfg);
+    } catch (e) {
+      setNotifPanelError(e instanceof Error ? e.message : "বিজ্ঞপ্তি সেটিংস লোড ব্যর্থ");
+    }
+  }
+
+  function openNotifPanel() {
+    setNotifPanelOpen(true);
+    setNotifPanelNotice("");
+    setNotifPanelError("");
+    void loadNotifPanel();
+  }
+
+  function toggleNotifChannel(eventKey: string, channel: string) {
+    setNotifConfig((prev) => {
+      if (!prev?.[eventKey]) return prev;
+      const has = prev[eventKey].channels.includes(channel);
+      const next = new Set(prev[eventKey].channels);
+      if (has) next.delete(channel);
+      else next.add(channel);
+      const channels = NOTIFICATION_CHANNELS.filter((c) => next.has(c));
+      return { ...prev, [eventKey]: { ...prev[eventKey], channels } };
+    });
+  }
+
+  async function saveNotifSettings() {
+    if (!orgId || !notifConfig) return;
+    setNotifPanelBusy("save");
+    setNotifPanelNotice("");
+    setNotifPanelError("");
+    try {
+      const updated = await apiFetch<NotifConfig>('/organizations/' + orgId + '/orders/notification-settings', {
+        method: "PUT",
+        body: JSON.stringify(notifConfig),
+      });
+      setNotifConfig(updated);
+      setNotifPanelNotice("বিজ্ঞপ্তি সেটিংস সংরক্ষণ হয়েছে।");
+    } catch (e) {
+      setNotifPanelError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ ব্যর্থ");
+    } finally {
+      setNotifPanelBusy("");
+    }
+  }
 
   // Merge group
   async function mergeGroup(primaryOrderId: string, duplicateOrderIds: string[]) {
@@ -1202,6 +1412,12 @@ export default function OrdersPage() {
         onOpenLabelScanner={() => setIsLabelScannerOpen(true)}
         onOpenCourierHub={() => setIsCourierHubOpen(true)}
         onDownloadExport={downloadExport}
+        onOpenAutomation={() => setAutomationPanelOpen(true)}
+        onOpenAnalytics={() => setAnalyticsPanelOpen(true)}
+        onOpenPrint={() => setPrintPanelOpen(true)}
+        onOpenTeam={() => setTeamPanelOpen(true)}
+        onOpenFraud={openFraudPanel}
+        onOpenNotif={openNotifPanel}
       />
 
       {/* 2. KPI Metrics Bar */}
@@ -1509,6 +1725,183 @@ export default function OrdersPage() {
 
       {/* 10. Risk Modal */}
       <RiskModal riskDetail={riskDetail} onClose={() => setRiskDetail(null)} />
+
+      {/* 11. ON Panels & Modals */}
+      {analyticsPanelOpen && (
+        <OrderAnalyticsPanel onClose={() => setAnalyticsPanelOpen(false)} />
+      )}
+
+      {printPanelOpen && (
+        <OrderPrintPanel initialOrderIds={selected} onClose={() => setPrintPanelOpen(false)} />
+      )}
+
+      {teamPanelOpen && (
+        <OrderTeamPanel
+          onClose={() => setTeamPanelOpen(false)}
+          onViewAssignee={(userId) => {
+            setSearchQuery(userId);
+            setTeamPanelOpen(false);
+          }}
+        />
+      )}
+
+      {automationPanelOpen && (
+        <OrderAutomationPanel
+          members={members}
+          statusOptions={["pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed"]}
+          onClose={() => setAutomationPanelOpen(false)}
+        />
+      )}
+
+      {fraudPanelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="জালিয়াতি সুরক্ষা">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">🛡️ জালিয়াতি সুরক্ষা</h2>
+              <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100" onClick={() => setFraudPanelOpen(false)}>বন্ধ করুন</button>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">প্রতিটি নতুন অর্ডারে জালিয়াতি ঝুঁকি যাচাই হয়। সেটিংস বদলালে পরের যাচাই থেকে তা কার্যকর হবে — আগের স্কোর নিজে থেকে বদলায় না, চাইলে অর্ডারের চিপ থেকে আবার যাচাই করুন।</p>
+            {fraudPanelError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{fraudPanelError}</p> : null}
+            {fraudPanelNotice ? <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{fraudPanelNotice}</p> : null}
+            {!fraudSettings ? (
+              <p className="mt-4 text-sm text-slate-400">{fraudPanelError ? "সেটিংস লোড হয়নি — আবার খুলে চেষ্টা করুন।" : "লোড হচ্ছে…"}</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" checked={fraudSettings.enabled} onChange={(e) => setFraudSettings({ ...fraudSettings, enabled: e.target.checked })} />
+                  জালিয়াতি যাচাই সক্রিয়
+                </label>
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" checked={fraudSettings.autoHoldEnabled} onChange={(e) => setFraudSettings({ ...fraudSettings, autoHoldEnabled: e.target.checked })} />
+                  স্বয়ংক্রিয় আটকানো
+                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">কোন ঝুঁকি থেকে স্বয়ংক্রিয় আটকাবে
+                    <select className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-xs" value={fraudSettings.autoHoldBand} onChange={(e) => setFraudSettings({ ...fraudSettings, autoHoldBand: e.target.value })}>
+                      <option value="medium">মাঝারি ঝুঁকি থেকে</option>
+                      <option value="high">শুধু উচ্চ ঝুঁকি</option>
+                    </select>
+                  </label>
+                  <label className="text-sm">বড় অর্ডারের সীমা (৳)
+                    <input className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-xs" inputMode="decimal" placeholder="যেমন: 5000" value={fraudHighTaka} onChange={(e) => setFraudHighTaka(e.target.value)} />
+                  </label>
+                  <label className="text-sm">বার্স্ট: কয়টি অর্ডার হলে সন্দেহজনক
+                    <input className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-xs" type="number" min={0} value={fraudSettings.burstCount} onChange={(e) => setFraudSettings({ ...fraudSettings, burstCount: Number(e.target.value) })} />
+                  </label>
+                  <label className="text-sm">বার্স্ট সময়সীমা (ঘণ্টা)
+                    <input className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-xs" type="number" min={0} value={fraudSettings.burstWindowHours} onChange={(e) => setFraudSettings({ ...fraudSettings, burstWindowHours: Number(e.target.value) })} />
+                  </label>
+                </div>
+                <button type="button" className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void saveFraudSettings()}>
+                  {fraudPanelBusy === "save" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
+                </button>
+              </div>
+            )}
+            <div className="mt-6 space-y-3 border-t pt-4">
+              <h3 className="font-semibold text-sm">🚫 ব্লক করা ফোন নম্বর</h3>
+              <p className="text-xs text-slate-500">ব্লক করা নম্বর থেকে অর্ডার এলে ঝুঁকি যাচাইয়ে তা ধরা পড়বে। নম্বরটি যেভাবে লিখবেন সেভাবেই সংরক্ষণ হবে।</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs">ফোন নম্বর
+                  <input className="mt-1 block w-44 rounded-xl border border-slate-200 p-2 text-xs" placeholder="01XXXXXXXXX" value={blockForm.phone} onChange={(e) => setBlockForm({ ...blockForm, phone: e.target.value })} />
+                </label>
+                <label className="text-xs">কারণ (ঐচ্ছিক)
+                  <input className="mt-1 block w-52 rounded-xl border border-slate-200 p-2 text-xs" placeholder="যেমন: বারবার ভুয়া অর্ডার" value={blockForm.reason} onChange={(e) => setBlockForm({ ...blockForm, reason: e.target.value })} />
+                </label>
+                <button type="button" className="rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50" disabled={fraudPanelBusy !== "" || !blockForm.phone.trim()} onClick={() => void addBlockedPhone()}>
+                  {fraudPanelBusy === "block-add" ? "যোগ হচ্ছে…" : "ব্লক করুন"}
+                </button>
+              </div>
+              {blockedPhones.length === 0 ? (
+                <p className="text-xs text-slate-400">কোনো নম্বর ব্লক করা নেই।</p>
+              ) : (
+                <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {blockedPhones.map((b) => (
+                    <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                      <span>
+                        <span className="font-mono font-medium">{b.phone}</span>
+                        {b.reason ? <span className="ml-2 text-slate-500">{b.reason}</span> : null}
+                        <span className="block text-[10px] text-slate-400">ব্লক করা হয়েছে: {new Date(b.createdAt).toLocaleString("bn-BD")}</span>
+                      </span>
+                      <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50" disabled={fraudPanelBusy !== ""} onClick={() => void deleteBlockedPhone(b)}>
+                        {fraudPanelBusy === ('block-del-' + b.id) ? "সরানো হচ্ছে…" : "সরিয়ে দিন"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notifPanelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="বিজ্ঞপ্তি সেটিংস">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">🔔 বিজ্ঞপ্তি সেটিংস</h2>
+              <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100" onClick={() => setNotifPanelOpen(false)}>বন্ধ করুন</button>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              অর্ডারের প্রতিটি ধাপে গ্রাহককে কোন চ্যানেলে বার্তা যাবে তা এখানে ঠিক করুন। চ্যানেলগুলো দেখানো ক্রমেই চেষ্টা করা হয় (SMS → WhatsApp → Email) — আগের চ্যানেল ব্যর্থ হলে পরেরটি চেষ্টা হবে। টেমপ্লেট খালি রাখলে ডিফল্ট বার্তা ব্যবহার হবে।
+            </p>
+            <p className="mt-2 text-xs text-slate-500">ব্যবহারযোগ্য ভেরিয়েবল: <span className="font-mono">{TEMPLATE_VARIABLE_HELP}</span></p>
+            {notifPanelError ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{notifPanelError}</p> : null}
+            {notifPanelNotice ? <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notifPanelNotice}</p> : null}
+            {!notifConfig ? (
+              <p className="mt-4 text-sm text-slate-400">{notifPanelError ? "সেটিংস লোড হয়নি — আবার খুলে চেষ্টা করুন।" : "লোড হচ্ছে…"}</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {NOTIFICATION_EVENTS.map((eventKey) => {
+                  const ev = notifConfig[eventKey];
+                  if (!ev) return null;
+                  return (
+                    <div key={eventKey} className="space-y-2 rounded-xl border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 text-xs font-semibold">
+                          <input type="checkbox" checked={ev.enabled}
+                            onChange={(e) => setNotifConfig({ ...notifConfig, [eventKey]: { ...ev, enabled: e.target.checked } })} />
+                          {notificationEventLabel(eventKey)}
+                        </label>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {NOTIFICATION_CHANNELS.map((ch) => {
+                            const on = ev.channels.includes(ch);
+                            return (
+                              <button key={ch} type="button" aria-pressed={on}
+                                className={"rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 " + (on ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-500 ring-slate-200")}
+                                onClick={() => toggleNotifChannel(eventKey, ch)}>
+                                {notificationChannelLabel(ch)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <details>
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-600">টেমপ্লেট সম্পাদনা</summary>
+                        <div className="mt-2 space-y-2">
+                          {NOTIFICATION_CHANNELS.map((ch) => (
+                            <label key={ch} className="block text-xs font-medium text-slate-600">{notificationChannelLabel(ch)} টেমপ্লেট
+                              <textarea className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-xs" rows={2} placeholder="ডিফল্ট বার্তা ব্যবহার হবে"
+                                value={ev.templates[ch] ?? ""}
+                                onChange={(e) => setNotifConfig({
+                                  ...notifConfig,
+                                  [eventKey]: { ...ev, templates: { ...ev.templates, [ch]: e.target.value === "" ? null : e.target.value } },
+                                })} />
+                            </label>
+                          ))}
+                          <p className="text-[11px] text-slate-400">ভেরিয়েবল: <span className="font-mono">{TEMPLATE_VARIABLE_HELP}</span> — এর বাইরের ভেরিয়েবল দিলে সংরক্ষণে সার্ভারের ত্রুটি দেখাবে।</p>
+                        </div>
+                      </details>
+                    </div>
+                  );
+                })}
+                <button type="button" className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50" disabled={notifPanelBusy !== ""} onClick={() => void saveNotifSettings()}>
+                  {notifPanelBusy === "save" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

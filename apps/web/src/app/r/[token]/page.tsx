@@ -18,7 +18,20 @@ interface Report {
   ads?: { spendMinor: string; impressions: number; clicks: number; platformConversions: number; mer: number | null; platformRoas: number | null; topCampaigns: { name: string; spendMinor: string; conversions: number; cpaMinor: string | null }[] };
   customers?: { newInRange: number; withOrders: number; segments: Record<string, number> };
   operations?: { ordersByStatus: Record<string, number>; topProducts: { name: string; quantity: number; totalMinor: string }[] };
+  // Frontier NB8 / CN18: campaign kind — an allowlisted
+  // payload (totals / per-ad-set / breakdowns / pacing).
+  plan?: { name: string; objective: string };
+  published?: boolean;
+  perAdSet?: { name: string; spendMinor: string; impressions: number; clicks: number; conversions: number }[];
+  breakdowns?: Record<string, { hasData: boolean; rows: { key: string; spendMinor: string; impressions: number; clicks: number; conversions: number; ctrPercent: number | null; cpaMinor: string | null }[] }>;
+  pacing?: { status: string; budgetMode: string | null; currency: string | null; spentMinor: string; expectedMinor: string | null; varianceMinor: string | null; daysElapsed: number | null; daysTotal: number | null; label: string } | null;
   note: string;
+}
+
+interface CampaignTotals {
+  spendMinor: string; impressions: number; clicks: number; conversions: number; reach: number;
+  ctrPercent: number | null; cpmMinor: string | null; cpaMinor: string | null;
+  firstPartyRevenueMinor: string; firstPartyOrders: number; roas: number | null;
 }
 
 export default function PublicReportPage() {
@@ -94,7 +107,59 @@ export default function PublicReportPage() {
         ) : null}
         <p className="text-xs text-slate-400">{report.note}</p>
       </>) : null}
-      {report && report.kind !== "executive" ? (<>
+      {report?.kind === "campaign" ? (() => {
+        const ct = report.totals as unknown as CampaignTotals | null;
+        return (<>
+          <p className="text-sm text-slate-500">Campaign: <b>{report.plan?.name}</b> · Objective: {report.plan?.objective}</p>
+          {!report.published || !ct ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">এই Campaign-এর কোনো সিঙ্ক হওয়া Performance Data এখনো নেই।</p> : (<>
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                ["Ad Spend", money(ct.spendMinor)],
+                ["Impressions", ct.impressions.toLocaleString()],
+                ["Clicks", ct.clicks.toLocaleString()],
+                ["CTR", ct.ctrPercent === null ? "—" : `${ct.ctrPercent}%`],
+                ["Conversions (Platform)", String(ct.conversions)],
+                ["CPA", ct.cpaMinor === null ? "—" : money(ct.cpaMinor)],
+                ["নিজস্ব অর্ডার (Associated)", String(ct.firstPartyOrders)],
+                ["Revenue (Associated)", money(ct.firstPartyRevenueMinor)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border bg-white p-4">
+                  <div className="text-xs text-slate-400">{label}</div>
+                  <div className="mt-1 text-lg font-bold" style={accent ? { color: accent } : undefined}>{value}</div>
+                </div>
+              ))}
+            </section>
+            {report.perAdSet && report.perAdSet.length ? (
+              <section className="overflow-hidden rounded-xl border bg-white">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Ad Set</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Impressions</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">Conv.</th></tr></thead>
+                  <tbody>{report.perAdSet.map((s, i) => (
+                    <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{s.name}</td><td className="px-4 py-3">{money(s.spendMinor)}</td><td className="px-4 py-3">{s.impressions.toLocaleString()}</td><td className="px-4 py-3">{s.clicks.toLocaleString()}</td><td className="px-4 py-3">{s.conversions}</td></tr>
+                  ))}</tbody>
+                </table>
+              </section>
+            ) : null}
+            {report.breakdowns ? Object.entries(report.breakdowns).map(([dim, d]) => (
+              <section key={dim}>
+                <h2 className="mb-2 text-sm font-bold capitalize text-slate-700">{dim.replace("_", " / ")}</h2>
+                {d.hasData ? (
+                  <div className="overflow-hidden rounded-xl border bg-white">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Segment</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">CTR</th><th className="px-4 py-3">Conv.</th><th className="px-4 py-3">CPA</th></tr></thead>
+                      <tbody>{d.rows.map((r, i) => (
+                        <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{r.key}</td><td className="px-4 py-3">{money(r.spendMinor)}</td><td className="px-4 py-3">{r.clicks.toLocaleString()}</td><td className="px-4 py-3">{r.ctrPercent === null ? "—" : `${r.ctrPercent}%`}</td><td className="px-4 py-3">{r.conversions}</td><td className="px-4 py-3">{r.cpaMinor === null ? "—" : money(r.cpaMinor)}</td></tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                ) : <p className="text-xs text-slate-400">এই ভাগে কোনো Data নেই।</p>}
+              </section>
+            )) : null}
+            {report.pacing ? <p className="text-xs text-slate-500">Pacing ({report.pacing.label}): অবস্থা {report.pacing.status} · খরচ হয়েছে {money(report.pacing.spentMinor)}{report.pacing.expectedMinor ? ` · এই সময়ে প্রত্যাশিত ${money(report.pacing.expectedMinor)}` : ""}{report.pacing.daysElapsed !== null ? ` · দিন ${report.pacing.daysElapsed}${report.pacing.daysTotal ? `/${report.pacing.daysTotal}` : ""}` : ""}</p> : null}
+          </>)}
+          <p className="text-xs text-slate-400">{report.note}</p>
+        </>);
+      })() : null}
+      {report && report.kind !== "executive" && report.kind !== "campaign" ? (<>
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ["Revenue", money(report.totals.revenueMinor)],

@@ -1,7 +1,9 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { EmptyState, ErrorState } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface AdminRow {
   id: string; name: string | null; email: string; tier: string; status: string;
@@ -16,14 +18,21 @@ interface AdminRow {
 export default function AdminsPage() {
   const [admins, setAdmins] = React.useState<AdminRow[]>([]);
   const [error, setError] = React.useState("");
-  React.useEffect(() => {
-    apiFetch<{ admins: AdminRow[] }>("/admin/security/admins")
-      .then((o) => setAdmins(o.admins ?? []))
-      .catch((e) => setError(e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে"));
+  // ADX12: loading + retry — before, the roster flashed its empty
+  // state while loading and an error had no way back.
+  const [loading, setLoading] = React.useState(true);
+  const load = React.useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const o = await apiFetch<{ admins: AdminRow[] }>("/admin/security/admins");
+      setAdmins(o.admins ?? []);
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ হয়েছে"); }
+    finally { setLoading(false); }
   }, []);
+  React.useEffect(() => { load(); }, [load]);
 
   const superWithoutTotp = admins.filter((a) => a.tier === "SUPER" && !a.totpEnrolled && a.status === "ACTIVE");
-  const fmt = (v: string | null) => (v ? new Date(v).toLocaleString("bn-BD") : "—");
+  const fmt = (v: string | null) => (v ? fmtDateTime(v) : "—");
 
   return (
     <AdminShell title="🧑‍💼 Admins (রোস্টার)">
@@ -36,9 +45,11 @@ export default function AdminsPage() {
           ⚠ {superWithoutTotp.length} জন সক্রিয় SUPER Admin-এর TOTP সেট করা নেই: {superWithoutTotp.map((a) => a.email).join(", ")} — তাঁরা Console-এ কোনো পরিবর্তন করতে পারবেন না যতক্ষণ না Security পেজ থেকে TOTP চালু করেন।
         </p>
       ) : null}
-      {error ? <p className="mb-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-200">{error}</p> : null}
+      {error ? <div className="mb-3"><ErrorState message={error} onRetry={load} /></div> : null}
+      {/* ADX12: the roster is plain text/badges, so it opts into the
+          mobile card form (.atable-cards + data-label per cell). */}
       <div className="acard overflow-hidden p-0">
-        <table className="atable">
+        <table className="atable atable-cards">
           <thead className="bg-slate-900"><tr>
             <th className="ath">নাম</th><th className="ath">Email</th><th className="ath">Tier</th><th className="ath">Status</th>
             <th className="ath">TOTP</th><th className="ath">সর্বশেষ Login</th><th className="ath">Admin হয়েছেন</th>
@@ -47,22 +58,23 @@ export default function AdminsPage() {
             const danger = a.tier === "SUPER" && !a.totpEnrolled && a.status === "ACTIVE";
             return (
               <tr key={a.id} className={`border-t border-slate-800 ${danger ? "bg-red-500/5" : ""}`}>
-                <td className="atd"><a className="text-indigo-300 hover:underline" href={`/users/${a.id}`}>{a.name ?? "—"}</a></td>
-                <td className="atd">{a.email}</td>
-                <td className="atd"><span className={a.tier === "SUPER" ? "abadge-red" : "abadge-amber"}>{a.tier}</span></td>
-                <td className="atd">{a.status === "ACTIVE" ? <span className="abadge-green">ACTIVE</span> : <span className="abadge-amber">{a.status}</span>}</td>
-                <td className="atd">
+                <td className="atd" data-label="নাম"><a className="text-indigo-300 hover:underline" href={`/users/${a.id}`}>{a.name ?? "—"}</a></td>
+                <td className="atd break-all sm:break-normal" data-label="Email">{a.email}</td>
+                <td className="atd" data-label="Tier"><span className={a.tier === "SUPER" ? "abadge-red" : "abadge-amber"}>{a.tier}</span></td>
+                <td className="atd" data-label="Status">{a.status === "ACTIVE" ? <span className="abadge-green">ACTIVE</span> : <span className="abadge-amber">{a.status}</span>}</td>
+                <td className="atd" data-label="TOTP">
                   {a.totpEnrolled
                     ? <span className="abadge-green">Enrolled</span>
                     : <span className={danger ? "abadge-red" : "abadge-amber"}>সেট করা নেই{danger ? " — SUPER, পরিবর্তন বন্ধ" : ""}</span>}
                 </td>
-                <td className="atd">{fmt(a.lastLoginAt)}</td>
-                <td className="atd">{fmt(a.createdAt)}</td>
+                <td className="atd" data-label="সর্বশেষ Login">{fmt(a.lastLoginAt)}</td>
+                <td className="atd" data-label="Admin হয়েছেন">{fmt(a.createdAt)}</td>
               </tr>
             );
           })}</tbody>
         </table>
-        {admins.length === 0 && !error ? <p className="p-4 text-sm text-slate-500">কোনো Admin পাওয়া যায়নি।</p> : null}
+        {loading && admins.length === 0 ? <div className="askel-table m-4" /> : null}
+        {admins.length === 0 && !error && !loading ? <div className="p-4"><EmptyState title="কোনো Admin পাওয়া যায়নি।" /></div> : null}
       </div>
     </AdminShell>
   );

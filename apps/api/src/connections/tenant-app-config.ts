@@ -24,7 +24,10 @@ export interface TenantAppCreds {
 export async function resolveTenantAppConfig(
   prisma: any,
   organizationId: string,
-  platform: "meta" | "tiktok",
+  // CC28: google + linkedin own-app configs resolve through the
+  // same shared reader (their rows are written by the same
+  // verify-before-save surface, putAppConfig).
+  platform: "meta" | "tiktok" | "google" | "linkedin",
 ): Promise<TenantAppCreds | null> {
   try {
     const row = await prisma.tenantAppConfig?.findFirst?.({ where: { organizationId, platform } });

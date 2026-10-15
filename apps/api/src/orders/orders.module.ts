@@ -15,6 +15,19 @@ import { PackingScanController } from "./packing-scan.controller";
 import { PackingScanService } from "./packing-scan.service";
 import { ProductReviewsService } from "./product-reviews.service";
 import { ProductReviewsController, PublicProductReviewsController } from "./product-reviews.controller";
+import { OrderInsightsService } from "./order-insights.service";
+import { FraudModule } from "../fraud/fraud.module";
+import { FraudShieldService } from "./fraud-shield.service";
+import { OrderSurgeryService } from "./order-surgery.service";
+import { OrderProfitService } from "./order-profit.service";
+import { OrderProfitController } from "./order-profit.controller";
+import { OrderAnalyticsService } from "./order-analytics.service";
+import { OrderAnalyticsController } from "./order-analytics.controller";
+import { PrintCenterService } from "./print-center.service";
+import { PrintCenterController } from "./print-center.controller";
+import { OrderTeamPerformanceService } from "./order-team-performance.service";
+import { OrderTeamPerformanceController } from "./order-team-performance.controller";
+import { StorefrontModule } from "../storefront/storefront.module";
 
 // Milestone 65: manual orders enter via the integrations upsert.
 // Sales & Data S2: InventoryModule supplies the stock-restore
@@ -28,6 +41,21 @@ import { ProductReviewsController, PublicProductReviewsController } from "./prod
 // CX8 (owner series): PackingScanController/Service for parcel
 // packing verification. EC5/EC9: CommerceModule supplies the
 // fulfillment/RMA services OrdersService composes.
-@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule], controllers: [OrdersController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController], providers: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService], exports: [OrdersService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService] })
+// ON3: StorefrontModule supplies StorefrontService for the
+// surgery delivery recalc — cycle-free (the Storefront chain
+// never reaches OrdersModule).
+// ON9: OrderAnalyticsController is registered FIRST so its
+// literal "analytics"/"digest" segments win over OrdersController's
+// ":orderId" route. OrderAnalyticsService is exported for the
+// AutomationModule owner_order_digest job (OrdersModule is
+// already imported there — no cycle).
+// ON10: PrintCenterController is registered ahead of both for
+// the same reason (literal "print-jobs"/"print-template").
+// PrintCenterService is exported for the FulfillmentModule ON1
+// bulk reroute (FulfillmentModule already imports OrdersModule).
+// ON12: OrderTeamPerformanceController likewise precedes
+// OrdersController (literal "team-performance"); its service is
+// read-only over existing rows (no schema change).
+@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule, FraudModule, StorefrontModule], controllers: [PrintCenterController, OrderAnalyticsController, OrderTeamPerformanceController, OrdersController, OrderProfitController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController], providers: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, FraudShieldService, OrderSurgeryService, OrderProfitService, OrderAnalyticsService, PrintCenterService, OrderTeamPerformanceService], exports: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, FraudShieldService, OrderSurgeryService, OrderAnalyticsService, PrintCenterService] })
 export class OrdersModule {}
 

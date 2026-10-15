@@ -97,6 +97,11 @@ model Organization {
   walletAccount  WalletAccount?
   walletTransactions WalletTransaction[]
   payoutRequests PayoutRequest[]
+  paymentRefunds PaymentRefund[]
+  settlementImports SettlementImport[]
+  payoutDestinations PayoutDestination[]
+  payoutSchedule PayoutSchedule?
+  paymentLinks   PaymentLink[]
   storeListings  StoreListing[]
   syncOutbox     SyncOutbox[]
   syncConflicts  SyncConflict[]
@@ -106,6 +111,9 @@ model Organization {
   storeLocations StoreLocation[]
   bundleItems    BundleItem[]
   fulfillments   Fulfillment[]
+  fulfillmentSetting FulfillmentSetting?
+  pickWaves      PickWave[]
+  deliveryAttempts DeliveryAttempt[]
   returnRequests ReturnRequest[]
   customerStoreIdentities CustomerStoreIdentity[]
   storeDiscounts          StoreDiscount[]
@@ -140,7 +148,14 @@ model Organization {
   touchpoints    Touchpoint[]
   adAccounts     AdAccount[]
   socialAccounts SocialAccount[]
+  socialAccountFollowerSnapshots SocialAccountFollowerSnapshot[]
   socialPosts    SocialPost[]
+  socialPostNotes SocialPostNote[]
+  socialPostVersions SocialPostVersion[]
+  socialPostGroups SocialPostGroup[]
+  socialPostingSlots SocialPostingSlot[]
+  mediaFolders   MediaFolder[]
+  socialContentPlans SocialContentPlan[]
   mediaAssets    MediaAsset[]
   dailyAdMetrics DailyAdMetric[]
   dailyAggregates DailyMetricAggregate[]
@@ -157,6 +172,7 @@ model Organization {
   competitors    Competitor[]
   competitorInsights CompetitorInsight[]
   campaignPlans  CampaignPlan[]
+  leadForms      LeadForm[]
   messageTemplates MessageTemplate[]
   broadcasts     Broadcast[]
   messagingSavedAudiences MessagingSavedAudience[]
@@ -171,6 +187,16 @@ model Organization {
   // SP7: when true, social posts by non-OWNER/ADMIN members need
   // OWNER/ADMIN approval before they can be scheduled/published.
   socialRequireApproval Boolean @default(false)
+  // SU9: when true, approval gains a second step — a first
+  // OWNER/ADMIN approval moves a post to "manager_approved" and
+  // only a second OWNER/ADMIN approval makes it "approved".
+  // Default false = the SP7 one-step flow exactly.
+  socialApprovalTwoStep Boolean @default(false)
+  // SU6: last-click association window (days) for social post
+  // link clicks → orders. Association only, never attribution.
+  socialLinkWindowDays Int       @default(7)
+  socialAutoDraftConfig SocialAutoDraftConfig?
+  socialLinkClicks SocialLinkClick[]
   // CX12a: Practice Mode — while true, the org can rehearse the
   // full AI reply + order flow on practice conversations/orders;
   // nothing practice-flagged ever reaches a real customer (the
@@ -190,6 +216,18 @@ model Membership {
   // permission-area keys (see common/permission-catalog.ts).
   // Null = no overrides. Never applies to the OWNER.
   permissionOverrides Json?
+  // CC17 (Connect Center Advanced): per-member CONNECTION
+  // deny-list — a JSON array of connection target ids
+  // (Integration / SocialAccount row ids) this member may not
+  // USE (send/post through), managed by OWNER/ADMIN from the
+  // Connect Center member matrix. Kept apart from
+  // permissionOverrides because normalizeOverrides() there is
+  // strictly permission-area keys. Null = no restriction.
+  // Never applies to the OWNER (same M72 semantics).
+  // CC27 (Connect Center Next): AdAccount row ids are deniable
+  // targets too — the matrix lists them and the ads/campaigns
+  // send-side paths enforce them (see B12 acceptance).
+  deniedConnections Json?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -345,10 +383,7 @@ model Product {
   bumpTitle      String?       // e.g. "লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
   bumpPriceMinor BigInt?       // e.g. 19000 (190 BDT)
   bumpImageUrl   String?
-  // Feature 6: Predictive Replenishment & Auto Re-order
-  replenishmentDays         Int?      // Estimated consumption cycle in days (e.g. 30, 45, 60)
-  replenishmentReminderText String?   // Personalized SMS/WhatsApp template or offer
-// EC3: physical dimensions, barcode and SEO enrichment for
+  // EC3: physical dimensions, barcode and SEO enrichment for
   // catalog write-back. All additive + nullable; the legacy
   // `category String?` display field above stays untouched —
   // `categoryId`/`categoryRef` is the structured taxonomy link.
@@ -386,7 +421,9 @@ model Product {
   // EC24d: wholesale price tiers [{ minQty, priceMinor }] —
   // server-validated, ascending unique minQty.
   wholesaleTiers      Json?
-
+  // Feature 6: Predictive Replenishment & Auto Re-order
+  replenishmentDays         Int?      // Estimated consumption cycle in days (e.g. 30, 45, 60)
+  replenishmentReminderText String?   // Personalized SMS/WhatsApp template or offer
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -439,34 +476,6 @@ model ProductCost {
   product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, effectiveFrom])
-}
-
-// Feature 6: Predictive Replenishment & Auto Re-order Cycle
-// Anticipates when a customer's consumable product is about to run out
-// and triggers personalized reorder reminders before they buy from competitors.
-model PredictiveReplenishment {
-  id                String    @id @default(uuid())
-  organizationId    String
-  customerId        String?
-  customerName      String
-  customerPhone     String
-  orderId           String    // Original purchase order
-  productId         String?
-  productName       String
-  deliveredAt       DateTime
-  replenishmentDays Int
-  predictedDate     DateTime  // deliveredAt + replenishmentDays
-  status            String    @default("PENDING") // PENDING | DUE | REMINDED | REORDERED | EXPIRED
-  lastRemindedAt    DateTime?
-  reorderOrderId    String?   // Order placed from this reminder
-  discountCode      String?
-  notes             String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  @@index([organizationId, status])
-  @@index([organizationId, predictedDate])
-  @@index([organizationId, customerPhone])
 }
 
 // EC3: additional product gallery images. The legacy single
@@ -530,7 +539,34 @@ model ProductTagAssignment {
 
   @@unique([productId, tagId])
   @@index([tagId])
+}
 
+// Feature 6: Predictive Replenishment & Auto Re-order Cycle
+// Anticipates when a customer's consumable product is about to run out
+// and triggers personalized reorder reminders before they buy from competitors.
+model PredictiveReplenishment {
+  id                String    @id @default(uuid())
+  organizationId    String
+  customerId        String?
+  customerName      String
+  customerPhone     String
+  orderId           String    // Original purchase order
+  productId         String?
+  productName       String
+  deliveredAt       DateTime
+  replenishmentDays Int
+  predictedDate     DateTime  // deliveredAt + replenishmentDays
+  status            String    @default("PENDING") // PENDING | DUE | REMINDED | REORDERED | EXPIRED
+  lastRemindedAt    DateTime?
+  reorderOrderId    String?   // Order placed from this reminder
+  discountCode      String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, predictedDate])
+  @@index([organizationId, customerPhone])
 }
 
 model BusinessPolicy {
@@ -692,6 +728,47 @@ model Integration {
   // TenantAppConfig). Webhook verification and OAuth token refresh
   // resolve their app secret from the matching source.
   appSource      String            @default("platform")
+  // CC14/CC15 (Connect Center Advanced): the provider's OWN health
+  // report for this connection, fetched live from the provider
+  // (WhatsApp phone-number quality/limit + WABA review status;
+  // Meta Page asset completeness) and stored VERBATIM — a field
+  // the provider did not return stays absent from the snapshot,
+  // never 0 and never estimated. providerHealthAt moves ONLY on
+  // a successful fetch; a failed fetch sets providerHealthError
+  // and leaves the old snapshot + timestamp untouched, so stale
+  // values can never masquerade as fresh.
+  providerHealth    Json?
+  providerHealthAt  DateTime?
+  providerHealthError String?
+  // CC17 (Connect Center Advanced): tenant-chosen display label
+  // (AD6 semantics: free text, trimmed, ≤60 chars service-side;
+  // null/empty = fall back to the provider name) and a free-text
+  // group name (brand/branch grouping in the Connect Center —
+  // deliberately NOT a separate Group entity; grouping is a
+  // display concern over a string the tenant controls).
+  label             String?
+  groupName         String?
+  // CC18: tenant-paused sync for THIS connection. The sync
+  // entry points (manual triggers + scheduled store/channel
+  // jobs) skip a paused integration and record the skip; ad
+  // accounts keep their own AD5 syncDisabled flag instead.
+  syncPaused        Boolean           @default(false)
+  // CC21 (Connect Center Next): tenant opt-out for the
+  // monitoring sweep's AUTO-HEALING (today: commerce webhook
+  // re-registration through the CC16/EC2 registrars). Default
+  // true = healing allowed; false = the sweep detects and
+  // alerts exactly as before but never attempts a repair on
+  // this connection. Detection itself is never disabled.
+  autoHealEnabled   Boolean           @default(true)
+  // CC30 (Connect Center Next): per-connection sync cadence for
+  // SCHEDULED store syncs — the minimum minutes between two
+  // scheduled syncs of the same kind for THIS connection. Null =
+  // no cadence (today's behaviour: every scheduled job run
+  // syncs). Manual sync triggers ignore the cadence entirely (a
+  // human asking now means now); CC18's syncPaused still wins
+  // over the cadence. Enforced in the scheduled path only — see
+  // integrations/sync-cadence.ts.
+  syncIntervalMinutes Int?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -742,7 +819,7 @@ model IntegrationCredential {
 model TenantAppConfig {
   id              String       @id @default(uuid())
   organizationId  String
-  platform        String // meta | tiktok
+  platform        String // meta | tiktok | google | linkedin (CC28: google + linkedin own-app configs)
   appId           String // Meta app id | TikTok client key
   encryptedSecret String // sealed JSON: { appSecret }
   status          String       @default("configured") // verified | configured
@@ -801,6 +878,16 @@ model TenantPaymentGateway {
   id              String       @id @default(uuid())
   organizationId  String
   provider        String // sslcommerz | bkash | nagad (rocket is manual-number only — BusinessProfile path, never an API gateway here)
+  // CC19: which credential set this row is — "live" (production;
+  // the only set real checkout/IPN flows may resolve) or
+  // "sandbox" (the gateway's test environment; used by the
+  // Doctor's checks and the clearly-labelled test initiation,
+  // whose transactions can NEVER pay a real order). Pre-CC19
+  // rows are "live"; a row whose sealed creds carry sandbox=true
+  // from the CC9 form keeps working as live-with-sandbox-creds
+  // exactly as before (the creds-level flag still picks the
+  // gateway host) — the column governs row SELECTION.
+  environment     String       @default("live") // live | sandbox
   encryptedData   String // sealed JSON credentials (shape per provider)
   status          String       @default("configured") // verified | configured
   isEnabled       Boolean      @default(true)
@@ -811,7 +898,7 @@ model TenantPaymentGateway {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   transactions    TenantPaymentTransaction[]
 
-  @@unique([organizationId, provider])
+  @@unique([organizationId, provider, environment])
   @@index([organizationId])
 }
 
@@ -833,16 +920,34 @@ model TenantPaymentTransaction {
   // lands in the platform account and the net amount is credited
   // to the tenant's Wallet — see WalletAccount).
   source          String       @default("own") // own | platform
+  // CC19: the gateway environment that carried this transaction.
+  // "sandbox" rows come only from the labelled test initiation
+  // against a sandbox credential set; the verified-confirmation
+  // paths refuse to transition any real order (or credit any
+  // wallet) for a sandbox transaction.
+  environment     String       @default("live") // live | sandbox
   amountMinor     BigInt
   currency        String       @default("BDT")
   status          String       @default("initiated") // initiated | verified_paid | failed | cancelled
   providerTxnId   String? // SSLCommerz tran_id (ours) | bKash paymentID
   valId           String? // SSLCommerz validation id, kept as evidence
   ipnPayload      Json? // the verified gateway payload (evidence)
+  // CC23 (Connect Center Next): append-only record of REJECTED
+  // gateway notifications against this transaction —
+  // [{ kind: "signature_invalid" | "amount_mismatch", at, detail }]
+  // — written by the IPN/callback paths when a notification
+  // fails the signature check or the gateway-confirmed amount
+  // does not match this transaction. Verified payloads keep
+  // living in ipnPayload; this list exists so the CC23 anomaly
+  // counter has real recorded events to count (before CC23 a
+  // rejected IPN left no trace at all). Capped at the last 50
+  // entries by the writer; never contains credential material.
+  ipnEvents       Json?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   gateway         TenantPaymentGateway? @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  refunds         PaymentRefund[]
 
   @@index([organizationId, orderId])
   @@index([providerTxnId])
@@ -897,7 +1002,7 @@ model WalletTransaction {
   id                String       @id @default(uuid())
   organizationId    String
   walletId          String
-  type              String // payment_credit | fee_debit | payout_debit | adjustment
+  type              String // payment_credit | fee_debit | payout_debit | refund_debit | adjustment
   amountMinor       BigInt // signed
   balanceAfterMinor BigInt
   refType           String? // e.g. tenant_payment_transaction | payout_request
@@ -934,6 +1039,25 @@ model PayoutRequest {
   payoutRef      String? // reference the admin records when actually paying out
   requestedById  String
   decidedById    String? // admin who approved/rejected/marked paid
+  // CC23 (Connect Center Next): the admin who APPROVED this
+  // request, recorded at approve time (decidedById is
+  // overwritten by later decisions, so four-eyes needs its own
+  // column). Null on rows never approved — including every
+  // pre-CC23 row, for which four-eyes cannot apply (no approver
+  // was ever recorded).
+  approvedById   String?
+  // CC26 (Connect Center Next): when the request was made
+  // against a saved PayoutDestination, its id; the destination
+  // DETAILS are still snapshotted into `destination` at request
+  // time (editing the destination later never rewrites an
+  // existing request). Null on free-form requests — including
+  // every pre-CC26 row.
+  destinationId  String?
+  // CC26: true when the wallet_payout_sweep job created this
+  // request from the org's PayoutSchedule. System requests are
+  // ordinary pending requests — a human admin still approves
+  // and marks them paid; the sweep never moves money.
+  createdBySystem Boolean     @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -941,6 +1065,302 @@ model PayoutRequest {
 
   @@index([organizationId, status])
   @@index([status, createdAt])
+}
+
+// CC24 (Connect Center Next): one refund against ONE verified
+// gateway payment (TenantPaymentTransaction), through the SAME
+// gateway that carried the payment — the tenant's own (source
+// "own", money returns from the tenant's merchant account) or
+// the platform's (source "platform", money returns from the
+// platform account and the tenant's Wallet is debited back).
+// Money discipline mirrors CC9: INITIATION IS NEVER PROOF. The
+// row is created "initiated"; a gateway acceptance moves it to
+// "processing" with the gateway's refund reference; ONLY a
+// gateway status query confirming success moves it to
+// "refunded" (verifiedAt stamped, exactly once) — and only then
+// do the order's refundedMinor and (for platform source) the
+// Wallet refund_debit move, in the same database transaction.
+// gatewayStatusRaw keeps the gateway's latest raw answer
+// verbatim as evidence. The cumulative of verified + in-flight
+// (initiated|processing) refunds for one transaction may never
+// exceed the transaction's paid amount (enforced in the service
+// inside a transaction).
+model PaymentRefund {
+  id                       String    @id @default(uuid())
+  organizationId           String
+  tenantPaymentTransactionId String
+  orderId                  String
+  provider                 String // sslcommerz | bkash (nagad has no wired refund API — initiation refuses)
+  source                   String    @default("own") // own | platform
+  environment              String    @default("live") // live only in v1 — sandbox test payments are never refunded
+  amountMinor              BigInt
+  currency                 String    @default("BDT")
+  status                   String    @default("initiated") // initiated | processing | refunded | failed
+  gatewayRefundRef         String? // SSLCommerz refund_ref_id | bKash refundTrxID
+  gatewayStatusRaw         Json? // the gateway's latest raw response, verbatim
+  reason                   String?
+  requestedById            String
+  verifiedAt               DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transaction              TenantPaymentTransaction @relation(fields: [tenantPaymentTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([tenantPaymentTransactionId, status])
+  @@index([organizationId, orderId])
+}
+
+// CC25 (Connect Center Next): one settlement-file import used to
+// reconcile gateway money against the system's verified payment
+// records. v1 source of truth is a CSV the merchant downloads
+// from the gateway (neither gateway exposes a wired bulk
+// settlement API in this codebase — nothing is fetched or
+// fabricated). Matching happens once, at import time, against
+// TenantPaymentTransaction rows in status verified_paid.
+model SettlementImport {
+  id             String    @id @default(uuid())
+  organizationId String
+  provider       String // sslcommerz | bkash
+  source         String    @default("own") // own | platform
+  periodLabel    String // tenant-entered period description (e.g. "October 2026")
+  periodFrom     DateTime? // optional machine range for the missing-in-report comparison
+  periodTo       DateTime?
+  fileName       String
+  rowCount       Int       @default(0) // data rows stored (parsed)
+  skippedCount   Int       @default(0) // data rows that could not be parsed into ref + amount
+  matchedCount   Int       @default(0) // rows whose matchState is "matched"
+  createdById    String
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows           SettlementRow[]
+
+  @@index([organizationId, createdAt])
+}
+
+// CC25: one parsed settlement-file row and its match verdict
+// against the system's records. matchState: matched (ref found,
+// amount equal) | amount_mismatch (ref found, amount differs) |
+// missing_in_system (ref unknown to the system) | duplicate
+// (the same ref appeared earlier in the SAME file).
+// matchedTransactionId is the TenantPaymentTransaction the ref
+// resolved to (set for matched + amount_mismatch).
+model SettlementRow {
+  id                   String   @id @default(uuid())
+  importId             String
+  externalRef          String // tran_id (sslcommerz) | trxID/paymentID (bkash), as written in the file
+  amountMinor          BigInt
+  currency             String   @default("BDT")
+  rawStatus            String? // the file's own status text, verbatim
+  matchState           String // matched | amount_mismatch | missing_in_system | duplicate
+  matchedTransactionId String?
+  createdAt            DateTime @default(now())
+  import               SettlementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId, matchState])
+  @@index([externalRef])
+}
+
+// CC26 (Connect Center Next): a saved payout destination for a
+// tenant's wallet. `details` holds the tenant-entered payout
+// identifiers (bKash number / bank account fields) — tenant
+// business data, stored as entered; list views mask account
+// identifiers beyond the last 4 characters. Exactly one
+// destination per org may be isDefault (enforced in the
+// service); payout requests snapshot the details at request
+// time, so editing a destination never rewrites history.
+model PayoutDestination {
+  id             String   @id @default(uuid())
+  organizationId String
+  label          String
+  method         String // bkash | bank
+  details        Json
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isDefault])
+}
+
+// CC26: the org's automatic payout-request schedule. The
+// wallet_payout_sweep job reads this row at its slot; when the
+// available wallet balance is at or above thresholdMinor it
+// creates ONE pending PayoutRequest (createdBySystem) for the
+// org's chosen (or default) destination. The sweep NEVER
+// approves or pays — money still leaves only through the human
+// admin approve + mark-paid chain (CC10). One schedule per org.
+model PayoutSchedule {
+  id             String   @id @default(uuid())
+  organizationId String   @unique
+  enabled        Boolean  @default(false)
+  cadence        String   @default("weekly") // weekly | monthly
+  dayOfWeek      Int? // 0=Sunday .. 6=Saturday (Asia/Dhaka day), for weekly
+  dayOfMonth     Int? // 1..28, for monthly
+  thresholdMinor BigInt   @default(0)
+  destinationId  String? // null = the org's default destination
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// CC26: a shareable payment link for ONE order. The plaintext
+// token exists ONLY in the creation response (and the buyer's
+// URL); the row stores its SHA-256 hash. Links are LIVE-only —
+// a link always resolves production credentials, so sandbox
+// links are refused at creation. A link becomes "used" when
+// its payment reaches verified_paid through the exact same
+// IPN/callback verification chain as every other payment
+// (wired inside TenantPaymentsService.markVerifiedPaid) —
+// initiation alone never marks it used and never pays the
+// order. Status: active | used | expired | revoked (expired is
+// also computed from expiresAt on read).
+model PaymentLink {
+  id             String    @id @default(uuid())
+  organizationId String
+  orderId        String
+  tokenHash      String    @unique // sha256 hex of the bearer token
+  provider       String // sslcommerz | bkash
+  source         String    @default("own") // own | platform
+  environment    String    @default("live") // live — pinned; see class doc
+  expiresAt      DateTime
+  status         String    @default("active") // active | used | expired | revoked
+  createdById    String
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, status])
+}
+
+// CC11 (Connect Center Advanced): one Connection Doctor run over
+// ONE connection target. A target is described generically
+// (targetType + targetId) because the Connect Center aggregates
+// rows from many tables, not only Integration: targetType mirrors
+// the overview account `source` (integration | social_account |
+// ad_account | store | sender_config | org_llm_config |
+// tenant_payment_gateway | platform_payment_enablement |
+// business_profile). steps is the verbatim per-step record:
+// [{ key, label, status: "pass" | "fail" | "not_checkable",
+//    message }] — a step reports ONLY what a real provider call
+// returned (the provider's own message where available); a kind
+// with no real check is "not_checkable", never a guessed pass.
+// overall: fail (any real step failed) | pass (every step was
+// checkable and passed) | partial (anything else).
+// runById is null for CC12 sweep runs.
+model ConnectionHealthCheck {
+  id             String   @id @default(uuid())
+  organizationId String
+  targetType     String
+  targetId       String
+  integrationId  String? // the backing Integration row, when the target has one
+  provider       String?
+  category       String?
+  displayName    String?
+  runById        String?
+  trigger        String   @default("manual") // manual | sweep
+  overall        String // pass | fail | partial
+  steps          Json
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, targetType, targetId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// CC12: per-target alert bookkeeping for the connection health
+// sweep. `state`/`stateHash` are the last observed FIELD-derived
+// state (disconnected | error | sync_failing | webhook_error |
+// expiring_7 | expiring_3 | expiring_1 | doctor_fail | ok);
+// alerts fire only on state CHANGES, so the same broken state
+// never alerts twice. `doctorState` is the last sweep-doctor
+// outcome (pass | fail) as its own mini state machine: a doctor
+// recovery alert fires only when a later doctor run actually
+// passes. snoozedUntil freezes the target: while snoozed the
+// sweep neither updates the state nor notifies.
+model ConnectionAlertState {
+  id             String    @id @default(uuid())
+  organizationId String
+  targetKey      String // "<targetType>:<targetId>"
+  targetType     String
+  targetId       String
+  provider       String?
+  category       String?
+  displayName    String?
+  state          String    @default("ok")
+  stateHash      String    @default("")
+  doctorState    String? // pass | fail | null (no sweep doctor run yet)
+  snoozedUntil   DateTime?
+  lastAlertAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([organizationId, targetKey])
+  @@index([organizationId])
+}
+
+// CC12: one delivered connection alert — the in-app record the
+// Connect Center header/overview badge counts (unread = readAt
+// null). Email delivery is counted honestly: emailSentCount is
+// the number of OWNER/ADMIN recipients for whom EmailProvider
+// returned a real message id; emailError keeps the last send
+// failure verbatim. Creating this row never depends on email
+// succeeding.
+model ConnectionAlert {
+  id             String    @id @default(uuid())
+  organizationId String
+  targetKey      String
+  targetType     String
+  targetId       String
+  provider       String?
+  category       String?
+  displayName    String?
+  kind           String // broke | expiring | recovered
+  state          String // the state that triggered the alert
+  title          String
+  body           String?
+  emailSentCount Int       @default(0)
+  emailError     String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, readAt, createdAt])
+  @@index([organizationId, targetKey, createdAt])
+}
+
+// CC12: per-org connection-alert preferences. categories null =
+// every category alerts. doctorEnabled opts the sweep into also
+// running the CC11 doctor for Integration-backed targets at most
+// once per doctorIntervalHours (the doctor makes real provider
+// calls, so the default is OFF and the cadence conservative).
+model ConnectionAlertPreference {
+  id                  String   @id @default(uuid())
+  organizationId      String   @unique
+  emailEnabled        Boolean  @default(true)
+  categories          Json?
+  doctorEnabled       Boolean  @default(false)
+  doctorIntervalHours Int      @default(24)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+// CC20: one dismissed Smart Setup Assistant finding for one user.
+// The finding itself is recomputed from real rows on every read
+// (connections/setup-assistant.service.ts) — this row is the ONLY
+// persisted assistant state: which finding key which user of the
+// org dismissed. If the underlying facts change, the finding stops
+// firing on its own; a dismissal only ever suppresses a finding
+// that still fires.
+model SetupFindingDismissal {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  findingKey     String
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, userId, findingKey])
+  @@index([organizationId, userId])
 }
 
 // EC12: one WooCommerce wc-auth (1-click connect) attempt.
@@ -1180,6 +1600,9 @@ model Customer {
   // EC24d: staff-set wholesale flag — wholesale tier pricing
   // applies only to identified customers carrying this flag.
   isWholesale    Boolean      @default(false)
+  // ON7: staff-set credit limit for this customer (minor units);
+  // null = no credit limit configured for this customer.
+  creditLimitMinor BigInt?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1388,17 +1811,44 @@ model Order {
   // Excluded from order lists / stats / analytics by default and
   // refused by courier booking; deleted by practice cleanup.
   isPractice      Boolean @default(false)
+  // ON1: staff tags (JSON array of strings, replace semantics via
+  // OrdersService.setTags) + assignee (scalar user id, no FK —
+  // same style as landingPageId; validated against ACTIVE org
+  // membership at assign time).
+  tags            Json?
+  assigneeId      String?
+  // ON4 (Fraud Shield v2): persisted order-level risk assessment,
+  // stamped at creation by a failure-isolated hook (and recomputed
+  // on staff demand via POST orders/:id/reassess). riskReasons is
+  // [{ key, label, points }] — every score explains itself; a null
+  // riskBand means "not assessed yet", never "low". This is a
+  // SEPARATE, persisted layer on top of the M50 compute-on-read
+  // phone-history risk (RiskService) — M50 stays untouched.
+  riskScore       Int?
+  riskBand        String? // low | medium | high
+  riskReasons     Json?
+  riskAssessedAt  DateTime?
+  // ON4: staff review hold. While true the order is excluded from
+  // the ready_to_pack queue and courier booking refuses it unless
+  // a staff caller passes the explicit override (audited).
+  reviewHold       Boolean   @default(false)
+  reviewHoldReason String?
+  reviewHeldAt     DateTime?
+  // ON4: COD phone-call worklist bookkeeping. codLastCallOutcome
+  // vocabulary: confirmed | rejected | unreachable |
+  // callback_requested (confirmed/rejected also map onto the
+  // existing codConfirmationStatus verdict path — confirmed /
+  // declined — so there is ONE confirmation state, not two).
+  codCallAttempts   Int       @default(0)
+  codLastCallAt     DateTime?
+  codLastCallOutcome String?
   // Unified Inbox U3: delivery address captured in chat (bot v2 /
   // chat orders); previously it lived only in an internal note.
   address         String?
   // Sales & Data S2: merchant-only internal note on the order
   // (staff context; never sent to the customer or any platform).
   internalNote   String?
-  // Feature 5: Team Performance & Staff Attribution
-  agentId        String?      // Staff/Agent who handled, placed, or confirmed the order
-  confirmedAt    DateTime?    // When the order was confirmed with customer
-  commissionMinor BigInt      @default(0) // Commission earned on delivered order
-// EC13: landing-page attribution — set only by the landing
+  // EC13: landing-page attribution — set only by the landing
   // order endpoint (source "landing"); null for every other path.
   landingPageId   String?
   landingVariantId String?
@@ -1426,7 +1876,10 @@ model Order {
   // charge (weight-slab replacement), null when the zone flat
   // charge (or a pickup fee / free shipping) applied.
   shippingRateRuleId  String?
-
+  // Feature 5: Team Performance & Staff Attribution
+  agentId        String?      // Staff/Agent who handled, placed, or confirmed the order
+  confirmedAt    DateTime?    // When the order was confirmed with customer
+  commissionMinor BigInt      @default(0) // Commission earned on delivered order
   currency       String       @default("BDT")
   subtotalMinor  BigInt       @default(0)
   shippingMinor  BigInt       @default(0)
@@ -1474,6 +1927,18 @@ model Order {
   // blocks on a gift.
   giftPromotionId String?
   giftSkipped     Boolean @default(false)
+  // ON3 (Order Surgery): split / merge lineage + the coupon code
+  // actually applied at checkout. splitFromId = the parent order
+  // this order was split out of; mergedIntoId = the survivor
+  // order this order was merged into (a merged order is terminal:
+  // it can never be revived — see OrdersService.updateOrder).
+  // couponCode is stamped ONLY when a coupon truly applied
+  // (PromotionsService.stampOrder) or by a surgery re-evaluation,
+  // so item edits can re-validate the SAME code instead of
+  // silently keeping an unverifiable discount.
+  splitFromId     String?
+  mergedIntoId    String?
+  couponCode      String?
   // EC29: gift wrap fee (a FEE like delivery — outside discounts
   // and outside the tax base) + the customer's gift message
   // (printed on the packing slip).
@@ -1495,19 +1960,332 @@ model Order {
   packingScans   PackingScanLog[]
   fulfillments   Fulfillment[]
   returnRequests ReturnRequest[]
+  orderComments  OrderComment[]
+  orderNotificationLogs OrderNotificationLog[]
+  pickWaveOrders PickWaveOrder[]
+  deliveryAttempts DeliveryAttempt[]
 
   @@unique([organizationId, source, externalId])
   @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status])
   @@index([organizationId, placedAt])
-  @@index([organizationId, agentId])
-@@index([organizationId, affiliatePartnerId])
+  @@index([organizationId, affiliatePartnerId])
   // EC34: POS "today's sales" strip queries org + source +
   // createdAt together.
   @@index([organizationId, source, createdAt])
   @@index([organizationId, landingPageId])
   @@index([organizationId, deliverySlotId, deliveryDate])
+  // ON1: assignee queue / "my orders" filtering.
+  @@index([organizationId, assigneeId])
+  // ON4: fraud-band list filtering + review-hold queue.
+  @@index([organizationId, riskBand])
+  @@index([organizationId, reviewHold])
+  // ON3: split children / merged-away orders by lineage.
+  @@index([organizationId, splitFromId])
+  @@index([organizationId, mergedIntoId])
+  @@index([organizationId, agentId])
+}
 
+// ON2: a staff member's saved Orders list configuration (queue +
+// list-v2 filters). Private to its owner (userId); filters are
+// validated against the list-v2 whitelist at write time.
+model OrderSavedView {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  name           String
+  queue          String?
+  filters        Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, userId])
+}
+
+// ON2: staff-only internal comment thread on an order. NEVER
+// exposed on any public/customer surface (storefront tracking
+// payloads are built elsewhere and never read this model).
+model OrderComment {
+  id             String   @id @default(uuid())
+  organizationId String
+  orderId        String
+  authorId       String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId, createdAt])
+}
+
+// ON4 (Fraud Shield v2): per-org fraud settings — ONE row per org,
+// created lazily with these defaults on first read/write. `enabled`
+// gates SCORING only (default true); `autoHoldEnabled` separately
+// gates automatic review holds (default FALSE — holds are a staff
+// decision until the merchant turns automation on). highValueMinor
+// is the "large order" threshold for the high-value-new-customer
+// signal; burstCount/burstWindowHours drive the duplicate-burst
+// signal. Scalar-id style like the EC-era tables: services resolve
+// the row org-first; no Organization relation.
+model FraudShieldSetting {
+  id               String   @id @default(uuid())
+  organizationId   String   @unique
+  enabled          Boolean  @default(true)
+  autoHoldEnabled  Boolean  @default(false)
+  autoHoldBand     String   @default("high") // medium | high
+  highValueMinor   BigInt   @default(500000)
+  burstCount       Int      @default(3)
+  burstWindowHours Int      @default(24)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ON5 (Transactional Notification Engine): per-org notification
+// settings — ONE row per org, created lazily. `config` is the
+// full per-event JSON shape defined in
+// apps/api/src/order-notifications/order-notifications.ts
+// ({ [event]: { enabled, channels, templates } }); services merge
+// it over DEFAULT_CONFIG on read, so a partial stored config is
+// always safe. Scalar-id style like FraudShieldSetting: no
+// Organization relation.
+model OrderNotificationSetting {
+  id             String   @id @default(uuid())
+  organizationId String   @unique
+  config         Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ON5: one row per notification attempt / skip decision for an
+// order+event. status vocabulary: sent | skipped_setting_off |
+// skipped_no_channel | covered_existing | failed_error |
+// failed_no_channel. The (organizationId, orderId, event, status)
+// index backs the dedupe check ("already sent for this event").
+// Order relation mirrors OrderComment; organizationId stays a
+// scalar (org resolved in services, like OrderComment).
+model OrderNotificationLog {
+  id                String   @id @default(uuid())
+  organizationId    String
+  orderId           String
+  event             String
+  channel           String
+  status            String
+  providerMessageId String?
+  error             String?
+  createdAt         DateTime @default(now())
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, orderId, event, status])
+}
+
+
+// ON8 (Orders Automation Studio): a merchant's no-code
+// if/then rule over ORDER operations. This is a DEDICATED
+// engine — the WorkflowsService step vocabulary is
+// lead/conversation-scoped (add_tag validates target ∈
+// {lead, conversation}, assign is assign_conversation) and
+// it has no order-hold / order-assign / order-tag steps and
+// no parcel-stuck / due-overdue time triggers, so the full
+// ON8 vocabulary cannot be expressed there without forking
+// shared step semantics. This engine owns ORDER-operation
+// rules ONLY; generic workflow notifications stay with
+// WorkflowsService. Scalar-id style like FraudShieldSetting:
+// services resolve rows org-first; no Organization relation.
+//   trigger vocabulary: order_created | status_changed |
+//     parcel_stuck_hours | due_overdue_days
+//   triggerConfig Json?: { toStatus } for status_changed,
+//     { hours } for parcel_stuck_hours, { days } for
+//     due_overdue_days, null for order_created.
+//   conditions Json?: the ON8 condition object (ALL must
+//     pass; absent = pass) — see order-automation.ts.
+//   actions Json: ordered array of action objects, each
+//     executed in isolation. HARD BOUNDARY: no action may
+//     alter order totals, payment state or status (hold /
+//     assign / tags are operational, not money/status).
+//   presetKey: the ON8 preset this rule was installed from
+//     (null for hand-built rules); uniqueness per org is
+//     enforced in OrderAutomationService.installPreset with
+//     a lookup (Prisma cannot express a partial unique).
+model OrderAutomationRule {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  enabled        Boolean  @default(false)
+  trigger        String
+  triggerConfig  Json?
+  conditions     Json?
+  actions        Json
+  presetKey      String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  logs           OrderAutomationLog[]
+
+  @@index([organizationId, enabled, trigger])
+}
+
+// ON8: one row per (rule, order, triggerKey) firing — the
+// @@unique is the exactly-once guard: the engine RESERVES
+// this row before running any action, so a duplicate event
+// delivery hits the unique constraint and skips silently,
+// while a genuine re-entry (a status transition at a
+// different time, a different stuck shipment/status, a
+// different due-days bucket) carries a different triggerKey
+// and may fire again. actionsResult is the per-action
+// [{ type, ok, detail? }] outcome list, filled in after the
+// actions run. Rule relation mirrors OrderNotificationLog's
+// Order relation; organizationId/orderId stay scalars.
+model OrderAutomationLog {
+  id            String              @id @default(uuid())
+  organizationId String
+  ruleId        String
+  orderId       String
+  triggerKey    String
+  actionsResult Json
+  createdAt     DateTime            @default(now())
+  rule          OrderAutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, orderId, triggerKey])
+  @@index([organizationId, ruleId, createdAt])
+  @@index([organizationId, orderId, createdAt])
+}
+
+// ON10 (Print & Document Center): one row per bulk print job
+// (invoices / labels / packing slips / delivery challans over
+// 1–100 orders). The PDF itself is streamed to the caller and
+// NOT stored — this row is the job's honest record: which
+// orders were requested (orderIds Json, string[]), which ones
+// could not be printed (failedOrderIds Json, string[] — e.g. a
+// label for an order with no courier shipment), and whether
+// generation succeeded at all (status done | failed + the
+// Bengali error). Scalar organizationId like OrderAutomationRule.
+model PrintJob {
+  id             String   @id @default(uuid())
+  organizationId String
+  type           String // invoices | labels | packing_slips | challans
+  orderIds       Json
+  orderCount     Int
+  failedOrderIds Json?
+  status         String // done | failed
+  error          String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+// ON10: per-org print template customization — ONE row per org,
+// lazy-upserted from the Print Center (no row = the pre-ON10
+// default documents). Applied to invoices / challans / packing
+// slips generated through print jobs; the legacy direct courier
+// PDF endpoints keep the default behaviour. logoUrl is stored
+// + validated (http(s)) but the dependency-free PDF toolkit
+// cannot embed raster images, so it does not render yet —
+// footerText / termsText / invoiceNote are the rendered fields.
+model PrintTemplateSetting {
+  id             String   @id @default(uuid())
+  organizationId String   @unique
+  logoUrl        String?
+  footerText     String?
+  termsText      String?
+  invoiceNote    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ON6 (Fulfillment Excellence): per-org fulfilment SLA
+// thresholds — ONE row per org, created lazily (no row = the
+// in-code defaults 24h / 24h / 5 days). The two pack stages are
+// hours; the stuck-parcel threshold is days.
+model FulfillmentSetting {
+  id                  String       @id @default(uuid())
+  organizationId      String       @unique
+  confirmToPackHours  Int          @default(24)
+  packToHandoverHours Int          @default(24)
+  stuckDays           Int          @default(5)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// ON6: a batch of orders staff pick together. status:
+// open | closed. Orders join through PickWaveOrder rows.
+model PickWave {
+  id             String          @id @default(uuid())
+  organizationId String
+  status         String          @default("open") // open | closed
+  note           String?
+  createdById    String
+  createdAt      DateTime        @default(now())
+  closedAt       DateTime?
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orders         PickWaveOrder[]
+
+  @@index([organizationId, status, createdAt])
+}
+
+// ON6: one order inside one pick wave. pickedAt/pickedById are
+// stamped when the order's remaining items have been packed
+// through the wave (or were already fully covered).
+model PickWaveOrder {
+  id         String    @id @default(uuid())
+  waveId     String
+  orderId    String
+  pickedAt   DateTime?
+  pickedById String?
+  createdAt  DateTime  @default(now())
+  wave       PickWave  @relation(fields: [waveId], references: [id], onDelete: Cascade)
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([waveId, orderId])
+  @@index([waveId])
+  @@index([orderId])
+}
+
+// ON6: one recorded delivery attempt against a shipment.
+// outcome: customer_unavailable | refused | address_issue |
+// rescheduled | other. rescheduleDate is a "YYYY-MM-DD" string
+// (required when outcome = rescheduled), matching the codebase's
+// other calendar-day strings.
+model DeliveryAttempt {
+  id             String          @id @default(uuid())
+  organizationId String
+  shipmentId     String
+  orderId        String
+  attemptedAt    DateTime        @default(now())
+  outcome        String
+  note           String?
+  rescheduleDate String?
+  recordedById   String
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  shipment       CourierShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, orderId])
+  @@index([organizationId, shipmentId])
+}
+
+// ON4: org phone blocklist. `phone` is the canonical form produced
+// by ON11 normalizeBdPhone (+8801XXXXXXXXX); `phoneKey` is the
+// last-10-digits comparison key (same convention as risk-score's
+// phoneKey) so a number stored in any local format still matches.
+// Enforcement: the three native checkouts refuse; external-store
+// orders are created, assessed and force-held instead of dropped;
+// staff manual/chat creation warns and holds (never silently
+// blocks staff).
+model BlockedPhone {
+  id             String   @id @default(uuid())
+  organizationId String
+  phone          String
+  phoneKey       String
+  reason         String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, phoneKey])
+  @@index([organizationId, phoneKey])
 }
 
 model OrderItem {
@@ -1835,6 +2613,17 @@ model AdAccount {
   // AD6: tenant-chosen display label (free text; trimmed and capped
   // at 60 chars service-side). NULL/empty = show the platform name.
   label             String?
+  // CC17: free-text group name (brand/branch) — same display
+  // grouping as Integration/SocialAccount (see Integration.label).
+  groupName         String?
+  // CC15: Meta's own account-completeness report for this ad
+  // account (payment-method-on-file BOOLEAN — never card data) —
+  // same verbatim-snapshot discipline as
+  // Integration.providerHealth; when Meta gives no answer the
+  // field stays absent (unknown), never false-by-default.
+  providerHealth    Json?
+  providerHealthAt  DateTime?
+  providerHealthError String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -2570,6 +3359,13 @@ model CampaignPlan {
   createdById    String
   approvedById   String?
   approvedAt     DateTime?
+  // Campaign Builder Next CN11: two-step approval chain.
+  // When the org's CampaignApprovalSetting.twoStepApproval
+  // is on, the FIRST approver is recorded here and the plan
+  // stays pending_approval until a DIFFERENT approver
+  // completes the approval (approvedById = the second).
+  firstApproverId String?
+  firstApprovedAt DateTime?
   rejectionReason String?
   publishedAt    DateTime?
   createdAt      DateTime @default(now())
@@ -2597,6 +3393,22 @@ model CampaignPlan {
   // APPROVED plan may carry this; the launch scan
   // publishes it (PAUSED, as always) at this time.
   publishAt DateTime?
+  // Campaign Builder Next CN2: TRUE campaign budget for
+  // every plan. budgetMode "abo" = budgets live on the ad
+  // sets (the pre-CN2 behaviour); "cbo" = the campaign
+  // budgets below go on the Meta campaign and ad sets
+  // carry none. Advantage+ implies CBO at publish (as it
+  // did before, via the first ad set's daily budget when
+  // no explicit campaign budget is set).
+  budgetMode                   String  @default("abo")
+  campaignDailyBudgetMinor     BigInt?
+  campaignLifetimeBudgetMinor  BigInt?
+  // Campaign Builder Frontier CN16 (NB7): set ONLY on a
+  // plan a recurring series generated — the series row id
+  // and the occurrence date the instance belongs to. The
+  // template plan and hand-made clones keep both null.
+  seriesId             String?
+  seriesInstanceDate   DateTime?
 }
 
 // Campaign Builder CB4: discussion on a plan
@@ -2612,6 +3424,89 @@ model CampaignPlanComment {
   @@index([planId, createdAt])
 }
 
+// Campaign Builder Next CN11: an immutable snapshot of a
+// plan's definition (the same definitionOf shape frozen at
+// submit). kind "submit" rows are written by
+// submitForApproval alongside submissionSnapshot; kind
+// "manual" rows are explicit snapshots. A version can be
+// diffed against the live definition and restored into a
+// NEW draft plan — restoring never edits the source plan.
+model CampaignPlanVersion {
+  id             String   @id @default(uuid())
+  organizationId String
+  planId         String
+  kind           String // submit | manual
+  definition     Json
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  @@index([planId, createdAt])
+}
+
+// Campaign Builder Next CN11: per-org approval governance.
+// Absent row = the default (twoStepApproval false, the
+// pre-CN11 single-approval behaviour).
+model CampaignApprovalSetting {
+  id              String   @id @default(uuid())
+  organizationId  String   @unique
+  twoStepApproval Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Campaign Builder Next CN11: a user's saved Campaign Hub
+// filter state (opaque Json — the hub owns its shape).
+// Views are personal: list/delete are scoped to the owner.
+model CampaignSavedView {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  name           String
+  filters        Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, userId])
+}
+
+// Campaign Builder Next CN4 (NB2): a Meta Lead Ads Instant
+// Form, modelled locally first. status becomes "created"
+// ONLY when Meta's POST /{pageId}/leadgen_forms returned a
+// form id (stored in externalFormId); a Meta refusal is kept
+// verbatim in error with status "failed" — never hidden.
+// fieldMapping maps a question key to a CRM lead target:
+// "name" | "email" | "phone" | "notes" | "custom:<fieldKey>"
+// (a CustomFieldDef with entity "lead"); the Inbox leadgen
+// ingest applies it when a lead arrives for externalFormId.
+model LeadForm {
+  id               String   @id @default(uuid())
+  organizationId   String
+  pageId           String // Meta Page id that owns the form
+  name             String
+  locale           String   @default("EN_US")
+  introHeadline    String?
+  introDescription String?
+  questions        Json // [{ key, type, label?, options?: [{ key, value }] }]
+  privacyPolicyUrl String
+  privacyLinkText  String?
+  thankYouTitle    String?
+  thankYouBody     String?
+  thankYouButtonText String?
+  followUpActionUrl String?
+  higherIntent     Boolean  @default(false)
+  fieldMapping     Json?
+  externalFormId   String?
+  status           String   @default("local") // local | created | failed
+  error            String?
+  createdById       String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, externalFormId])
+}
+
 model CampaignAdSet {
   id             String   @id @default(uuid())
   planId         String
@@ -2623,6 +3518,35 @@ model CampaignAdSet {
   optimizationGoal String // LINK_CLICKS | OFFSITE_CONVERSIONS | LEAD_GENERATION | REACH
   pageId         String?
   pixelId        String?
+  // Campaign Builder Next CN3 (NB2): the chosen conversion
+  // event for pixel optimization (Meta custom_event_type,
+  // e.g. PURCHASE | ADD_TO_CART | LEAD). Null = the legacy
+  // default (PURCHASE for OFFSITE_CONVERSIONS/VALUE).
+  conversionEvent String?
+  // CN3: REAL catalog ads — local CatalogRecord / ProductSet
+  // record ids; publish resolves the set's Meta externalSetId
+  // and sends it as promoted_object.product_set_id. Both or
+  // neither (validated in the service).
+  catalogRecordId String?
+  productSetId    String?
+  // CN4 (NB2): the LeadForm record attached to a lead ad set.
+  leadFormId      String?
+  // Frontier CN13 (NB6): Click-to-WhatsApp destination.
+  // destinationType "WHATSAPP" = a REAL CTWA ad set (Meta
+  // destination_type WHATSAPP; promoted_object { page_id,
+  // whatsapp_phone_number? }). The number is bound to one of
+  // the org's CONNECTED WhatsApp Integrations — never a
+  // free-typed number: whatsappIntegrationId is that
+  // Integration row, whatsappPhoneNumberId its
+  // phone_number_id (the integration's externalAccountId),
+  // whatsappPhoneNumber the display digits when Meta
+  // read-back resolved them at save time (null = publish
+  // omits Meta's OPTIONAL whatsapp_phone_number field and
+  // Meta uses the Page-linked number; readiness warns).
+  destinationType       String?
+  whatsappIntegrationId String?
+  whatsappPhoneNumberId String?
+  whatsappPhoneNumber   String?
   targeting      Json // { countries: string[], ageMin?, ageMax?, genders?: number[] }
   startTime      DateTime?
   endTime        DateTime?
@@ -2636,6 +3560,24 @@ model CampaignAdSet {
   daypart              Json?
   daypartTz            String?
   daypartState         String?
+  // Campaign Builder Next CN2: per-ad-set bidding.
+  // bidStrategy: lowest_cost | bid_cap | cost_cap |
+  // roas_goal (null = lowest_cost, Meta's default).
+  // Amounts are minor units; roasAverageFloor is Meta's
+  // raw integer (ROAS x 10000, e.g. 20000 = 2.0).
+  bidStrategy       String?
+  bidAmountMinor    BigInt?
+  costGoalMinor     BigInt?
+  roasAverageFloor  Int?
+  // Campaign Builder Frontier CN16 (NB7): the full-funnel
+  // wizard tags each generated ad set with its layer
+  // (prospecting | retargeting | retention). funnelIncomplete
+  // carries the reason when the layer's inputs were missing
+  // (e.g. no buyer contacts for a retention audience) — the
+  // ad set still exists, readiness reports it as an error,
+  // and nothing was fabricated to fill the gap.
+  funnelLayer       String?
+  funnelIncomplete  String?
 }
 
 model CampaignAd {
@@ -2655,6 +3597,27 @@ model CampaignAd {
   videoAssetId   String?
   carouselCards  Json? // [{ title, description?, linkUrl, imageUrl?, imageAssetId? }]
   imageUrl       String?
+  // Campaign Builder Next CN5: creative v2. textOptions =
+  // { primaryTexts[], headlines[], descriptions[] } — index 0
+  // ALWAYS mirrors the legacy primaryText/headline/description
+  // columns (the service syncs them), so every pre-CN5 flow
+  // (publish fallback, A/B, creative health, previews) reads
+  // the first option byte-compatibly. placementAssets =
+  // { feed?: MediaRef, vertical?: MediaRef } with MediaRef =
+  // { imageAssetId?, videoAssetId?, imageUrl? } (Stories/Reels
+  // share the vertical group). creativeEnhancements =
+  // { <metaFeatureKey>: boolean } — only explicitly-set
+  // Advantage creative features are stored/sent.
+  textOptions    Json?
+  placementAssets Json?
+  creativeEnhancements Json?
+  // Frontier CN13 (NB6): this ad's CTWA welcome experience
+  // (Meta page_welcome_message on the creative):
+  // { greetingText?, prefillMessage?, iceBreakers?: string[] }.
+  // Sent ONLY when the parent ad set is a WHATSAPP
+  // destination set; ignored (and flagged in readiness)
+  // everywhere else.
+  whatsappWelcome Json?
   createdByAi    Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -2680,6 +3643,70 @@ model CampaignPublishLog {
   plan           CampaignPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([planId, createdAt])
+}
+
+// Campaign Builder Frontier CN15 (NB7): a Meta Experiments
+// (Ad Study) link between two variant plans of one abGroup.
+// The spike CONFIRMED the documented path (POST
+// /{business_id}/ad_studies, type SPLIT_TEST, cells with
+// treatment_percentage + campaigns, objectives of type
+// CONVERSIONS) — see docs/campaign-builder-nb7-acceptance.md.
+// createResponse / lastReadback store Meta's payloads
+// VERBATIM; the platform never computes significance or a
+// winner of its own. A row exists ONLY when Meta confirmed
+// the study id — a refused create leaves no row.
+model CampaignExperiment {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  groupId        String // the abGroupId both variant plans share
+  planAId        String
+  planBId        String
+  splitA         Int // treatment_percentage for plan A's cell (10..90); B gets 100 - splitA
+  metricEvent    String // the CN3 conversion event the study objective measures (e.g. PURCHASE)
+  startTime      DateTime
+  endTime        DateTime
+  metaBusinessId String?
+  metaStudyId    String?
+  createResponse Json?
+  lastReadback   Json?
+  lastReadbackAt DateTime?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, groupId])
+  @@index([organizationId, planAId])
+}
+
+// Campaign Builder Frontier CN16 (NB7): a recurring series
+// over one template plan. The sweep materializes the NEXT
+// occurrence as a DRAFT clone (full-field copy) leadDays
+// before its date — exactly ONE pending instance at a time
+// (pendingPlanId), occurrence dates computed FROM the
+// anchor (weekly/monthly) or the explicit dates list, so
+// the chain never drifts. Instances go through the full
+// approval flow; a series never publishes anything itself.
+model CampaignPlanSeries {
+  id              String   @id @default(uuid())
+  organizationId  String
+  sourcePlanId    String // the template plan each instance clones
+  name            String
+  cadence         String // weekly | monthly | dates
+  interval        Int      @default(1)
+  anchorDate      DateTime? // occurrence 0 (weekly/monthly)
+  dates           Json? // ISO date strings (cadence = dates)
+  leadDays        Int      @default(3)
+  nextIndex       Int      @default(0)
+  pendingPlanId   String? // the one generated instance still sitting in draft
+  status          String   @default("active") // active | paused | ended
+  lastGeneratedAt DateTime?
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, sourcePlanId])
 }
 
 // ---------- Milestone 10: scheduling + automation ----------
@@ -3225,6 +4252,14 @@ model InboxSetting {
   slaEscalateAfterMinutes Int     @default(30)
   slaLeadAlertEnabled    Boolean  @default(true)
   slaAutoReassignEnabled Boolean  @default(false)
+  // CC27 (Connect Center Next): the member who last saved these
+  // settings — the autopilot's CONFIGURING actor. Recorded on
+  // every updateSettings save (null on rows that predate CC27 or
+  // were never saved through the API). The CC27 deny gate for
+  // AI/system sends reads it when a conversation has no assignee;
+  // a null actor means "not recorded" and the gate honestly does
+  // not apply (see docs/connect-center-b12-acceptance.md).
+  updatedById            String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
@@ -3277,6 +4312,13 @@ model CourierShipment {
   id                 String   @id @default(uuid())
   organizationId     String
   orderId            String
+  // CC29 (Connect Center Next): the courier ACCOUNT (Integration
+  // row) this shipment was booked under — with multi-account
+  // keying, status sync must use THIS account's credentials, not
+  // whichever account is the provider default today. Null on
+  // pre-CC29 shipments: sync falls back to the provider's
+  // resolved default account.
+  integrationId      String?
   provider           String // steadfast (Pathao/RedX slot into the same shape)
   consignmentId      String?
   trackingCode       String?
@@ -3303,84 +4345,18 @@ model CourierShipment {
   // courier at booking time (null = staff chose explicitly, or no
   // rule matched). Recorded so the choice stays explainable.
   courierRuleId      String?
+  // ON6: stuck-parcel escalation stamps — escalatedAt /
+  // escalatedForStatus together mean "staff have been escalated
+  // for THIS status"; a later status change re-arms the sweep.
+  escalatedAt        DateTime?
+  escalatedForStatus String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  deliveryAttempts   DeliveryAttempt[]
 
   @@index([organizationId, orderId])
   @@index([organizationId, status])
-}
-
-// NDR (Non-Delivery Report) incident for parcels where a delivery attempt failed,
-// was rescheduled, or customer was unreachable. Intercepts returns early.
-model CourierNdrIncident {
-  id               String    @id @default(uuid())
-  organizationId   String
-  shipmentId       String
-  orderId          String
-  provider         String    // steadfast | pathao | redx
-  trackingCode     String
-  reason           String    @default("customer_unreachable") // customer_unreachable | address_issue | customer_rescheduled | delivery_delayed | other
-  status           String    @default("OPEN") // OPEN | CUSTOMER_CONTACTED | RESCHEDULED | RESOLVED | RETURNED
-  customerFeedback String?   // CONFIRMED_TOMORROW | CHANGE_ADDRESS | CANCEL_ORDER | NOT_REACHABLE
-  rescheduleDate   DateTime?
-  notes            String?
-  lastContactedAt  DateTime?
-  actionTaken      String?
-  resolvedAt       DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  @@index([organizationId, status])
-  @@index([organizationId, shipmentId])
-  @@index([organizationId, orderId])
-}
-
-// COD Reconciliation & Disbursement Tracking (Steadfast / Pathao / RedX)
-// Matches merchant bank disbursements against courier delivery records,
-// catches underpayments, overcharged courier fees, and missing COD money.
-model CourierDisbursementBatch {
-  id                  String                    @id @default(uuid())
-  organizationId      String
-  provider            String                    // steadfast | pathao | redx | generic
-  referenceNo         String                    // Invoice / payout statement reference
-  totalOrders         Int                       @default(0)
-  totalCollectedMinor BigInt                    @default(0) // COD collected by courier
-  totalFeeMinor       BigInt                    @default(0) // Delivery fees deducted
-  netDisbursedMinor   BigInt                    @default(0) // Net amount credited to merchant
-  matchedCount        Int                       @default(0)
-  discrepancyCount    Int                       @default(0)
-  unmatchedCount      Int                       @default(0)
-  status              String                    @default("PROCESSED") // PROCESSED | RECONCILED
-  uploadedBy          String?
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime                  @updatedAt
-  items               CourierDisbursementItem[]
-
-  @@index([organizationId, createdAt])
-  @@index([organizationId, provider])
-}
-
-model CourierDisbursementItem {
-  id                    String                   @id @default(uuid())
-  batchId               String
-  organizationId        String
-  trackingCode          String
-  orderId               String?
-  consignmentId         String?
-  systemCodMinor        BigInt                   @default(0)
-  courierCollectedMinor BigInt                   @default(0)
-  courierFeeMinor       BigInt                   @default(0)
-  netPaidMinor          BigInt                   @default(0)
-  status                String                   // MATCHED | UNDERPAID | OVERCHARGED_FEE | UNKNOWN_TRACKING
-  discrepancyMinor      BigInt                   @default(0)
-  disputeStatus         String                   @default("NONE") // NONE | OPEN | CLAIMED | RESOLVED
-  notes                 String?
-  createdAt             DateTime                 @default(now())
-  batch                 CourierDisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-
-  @@index([batchId])
-  @@index([organizationId, trackingCode])
-  @@index([organizationId, status])
+  @@index([organizationId, integrationId])
 }
 
 // EC26: one courier COD settlement-sheet import. The merchant's
@@ -3499,6 +4475,79 @@ model OrderReview {
 
   @@index([organizationId, status])
   @@index([organizationId, conversationId])
+}
+
+// NDR (Non-Delivery Report) incident for parcels where a delivery attempt failed,
+// was rescheduled, or customer was unreachable. Intercepts returns early.
+model CourierNdrIncident {
+  id               String    @id @default(uuid())
+  organizationId   String
+  shipmentId       String
+  orderId          String
+  provider         String    // steadfast | pathao | redx
+  trackingCode     String
+  reason           String    @default("customer_unreachable") // customer_unreachable | address_issue | customer_rescheduled | delivery_delayed | other
+  status           String    @default("OPEN") // OPEN | CUSTOMER_CONTACTED | RESCHEDULED | RESOLVED | RETURNED
+  customerFeedback String?   // CONFIRMED_TOMORROW | CHANGE_ADDRESS | CANCEL_ORDER | NOT_REACHABLE
+  rescheduleDate   DateTime?
+  notes            String?
+  lastContactedAt  DateTime?
+  actionTaken      String?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, shipmentId])
+  @@index([organizationId, orderId])
+}
+
+// COD Reconciliation & Disbursement Tracking (Steadfast / Pathao / RedX)
+// Matches merchant bank disbursements against courier delivery records,
+// catches underpayments, overcharged courier fees, and missing COD money.
+model CourierDisbursementBatch {
+  id                  String                    @id @default(uuid())
+  organizationId      String
+  provider            String                    // steadfast | pathao | redx | generic
+  referenceNo         String                    // Invoice / payout statement reference
+  totalOrders         Int                       @default(0)
+  totalCollectedMinor BigInt                    @default(0) // COD collected by courier
+  totalFeeMinor       BigInt                    @default(0) // Delivery fees deducted
+  netDisbursedMinor   BigInt                    @default(0) // Net amount credited to merchant
+  matchedCount        Int                       @default(0)
+  discrepancyCount    Int                       @default(0)
+  unmatchedCount      Int                       @default(0)
+  status              String                    @default("PROCESSED") // PROCESSED | RECONCILED
+  uploadedBy          String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  items               CourierDisbursementItem[]
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, provider])
+}
+
+model CourierDisbursementItem {
+  id                    String                   @id @default(uuid())
+  batchId               String
+  organizationId        String
+  trackingCode          String
+  orderId               String?
+  consignmentId         String?
+  systemCodMinor        BigInt                   @default(0)
+  courierCollectedMinor BigInt                   @default(0)
+  courierFeeMinor       BigInt                   @default(0)
+  netPaidMinor          BigInt                   @default(0)
+  status                String                   // MATCHED | UNDERPAID | OVERCHARGED_FEE | UNKNOWN_TRACKING
+  discrepancyMinor      BigInt                   @default(0)
+  disputeStatus         String                   @default("NONE") // NONE | OPEN | CLAIMED | RESOLVED
+  notes                 String?
+  createdAt             DateTime                 @default(now())
+  batch                 CourierDisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([organizationId, trackingCode])
+  @@index([organizationId, status])
 }
 
 
@@ -3961,6 +5010,44 @@ model PlatformPublication {
   @@index([organizationId, platform])
 }
 
+// Campaign Builder Next CN9: a CB6 cross-platform draft as a
+// manageable object. `fields` is the mapped platform payload
+// (the platform's real field set for this flow) as stored on
+// OUR side — editable, readiness-checked and re-creatable
+// through PublishingService. status: mapped (stored, not yet
+// created) | created (platform confirmed a PAUSED draft) |
+// blocked (readiness failed; fields ARE the export package) |
+// failed (platform call attempted and refused). The external
+// draft itself is never edited in place: re-publish creates a
+// new PAUSED draft (no update/delete path exists platform-side
+// in this codebase) and that is stated wherever it surfaces.
+model CrossPlatformDraft {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  planId             String
+  platform           String // google | tiktok
+  // Frontier NB8 / CN17: the draft's type within its
+  // platform. null = the legacy CN9 behaviour (google →
+  // Search RSA, tiktok → the stored fields). "pmax" = a
+  // Google Performance Max draft (fields carry the PMax
+  // asset-group shape the PublishingService skeleton
+  // accepts). TikTok objective choice lives in `fields`
+  // (objectiveType) — the draft path only.
+  kind               String?
+  targetAdAccountId  String
+  fields             Json
+  status             String   @default("mapped")
+  unmapped           Json?
+  publicationId      String?
+  externalCampaignId String?
+  lastError          String?
+  createdById        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([organizationId, planId])
+}
+
 // Public, read-only, expiring report link for clients (Phase I).
 // Shows spend/revenue/orders/platform metrics — never costs or profit.
 /// Reports Advanced RP2: a tenant-built report definition.
@@ -4008,7 +5095,12 @@ model ReportShare {
   // RP6: overview (default, M20 behaviour) | executive
   // (RP6 summary — the public rendering still strips
   // costs and profit for both kinds).
+  // Frontier NB8 / CN18: kind "campaign" = a single
+  // campaign plan's performance report (CB5 totals +
+  // CN7 breakdowns + CN2 pacing, allowlisted fields
+  // only); planId names the plan and days is the window.
   kind           String   @default("overview")
+  planId         String?
   days           Int      @default(30)
   expiresAt      DateTime
   createdById    String
@@ -4039,10 +5131,16 @@ model ProductSet {
 model OfflineConversionSetting {
   id               String   @id @default(cuid())
   organizationId   String
-  platform         String // google | tiktok
+  platform         String // google | tiktok | meta (CN14, NB6)
   adAccountId      String
   conversionAction String? // google: conversion action id
   pixelCode        String? // tiktok: Events API pixel code
+  datasetId        String? // meta (CN14): dataset (pixel) id receiving the events
+  // CN14 (NB6): on a meta row, also send CRM stage outcomes
+  // (qualified / won) for Meta lead-ads leads back to the
+  // dataset (Meta's Conversion Leads payload). Default off —
+  // nothing is sent to Meta about leads until the org opts in.
+  leadFeedbackEnabled Boolean @default(false)
   trigger          String   @default("cod_confirmed") // placed | cod_confirmed | delivered
   enabled          Boolean  @default(true)
   createdAt        DateTime @default(now())
@@ -4494,14 +5592,83 @@ model SocialAccount {
   // or "own" (the tenant's TenantAppConfig app). Token refresh for
   // TikTok resolves credentials from the matching source.
   appSource      String       @default("platform")
+  // SU10 (added in the SU9 migration, Batch 5's shared one): when
+  // the account health check last ran; null = never checked.
+  healthCheckedAt DateTime?
+  // CC15: Meta's own asset-completeness report for this Page
+  // (linked Instagram / Pixel / Catalog, exactly as Graph
+  // answers) — same verbatim-snapshot discipline as
+  // Integration.providerHealth; absent answer = field absent.
+  providerHealth    Json?
+  providerHealthAt  DateTime?
+  providerHealthError String?
+  // CC17: tenant-chosen display label (AD6 semantics) + free-text
+  // group name — see Integration.label/groupName.
+  label             String?
+  groupName         String?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts          SocialPost[]
+  postingSlots   SocialPostingSlot[]
+  autoDraftConfigs SocialAutoDraftConfig[]
+  followerSnapshots SocialAccountFollowerSnapshot[]
+
+  @@unique([organizationId, platform, externalId])
+  @@index([organizationId])
+}
+
+// SU7: one follower-count snapshot per account per day (org tz
+// "YYYY-MM-DD"), taken ONLY from what Graph actually returns
+// (Page fan_count / IG followers_count). A day the platform did
+// not answer stays ABSENT — growth charts show a gap, never an
+// invented number.
+model SocialAccountFollowerSnapshot {
+  id              String        @id @default(uuid())
+  organizationId  String
+  socialAccountId String
+  day             String        @db.VarChar(10)
+  followers       Int
+  createdAt       DateTime      @default(now())
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([socialAccountId, day])
+  @@index([organizationId])
+}
+
+// SU1: a post group binds per-platform variants of one piece of
+// content; each variant stays its own SocialPost row.
+model SocialPostGroup {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
   createdById    String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   posts          SocialPost[]
 
-  @@unique([organizationId, platform, externalId])
   @@index([organizationId])
+}
+
+// SU2: per-account posting slot (weekday + local "HH:MM" time in
+// the organization's timezone) used by Add-to-Queue.
+model SocialPostingSlot {
+  id              String        @id @default(uuid())
+  organizationId  String
+  socialAccountId String
+  weekday         Int
+  time            String
+  enabled         Boolean       @default(true)
+  createdById     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, socialAccountId])
 }
 
 model SocialPost {
@@ -4542,14 +5709,132 @@ model SocialPost {
   submittedById    String?
   reviewedById     String?
   reviewNote       String?
+  // SU1: post group (per-platform variants) + first comment.
+  postGroupId      String?
+  firstCommentText String?
+  firstCommentStatus String?
+  firstCommentError String?
+  firstCommentId   String?
+  // SU2: recurring series + evergreen recycle config.
+  seriesId         String?
+  recurrenceFrequency String?
+  recurrenceInterval Int?
+  isEvergreen      Boolean       @default(false)
+  evergreenMinGapDays Int?
+  evergreenMaxCycles Int?
+  evergreenCyclesUsed Int        @default(0)
+  evergreenLastRecycledAt DateTime?
+  // SU5: commerce auto-draft provenance (null for human posts).
+  // autoDraftRef is the per-kind idempotency key (product id,
+  // promotion id, "<productId>:bist:<day>", "milestone:<total>"
+  // or "review:<reviewId>").
+  autoDraftKind   String?
+  autoDraftRef    String?
+  // SU8: YouTube-specific metadata (title override / tags /
+  // category / Shorts marker), a cover/thumbnail asset, and the
+  // FB Page photo-story flag. All optional; null/false = the
+  // pre-SU8 behaviour exactly.
+  youtubeTitle     String?
+  youtubeTags      Json?
+  youtubeCategoryId String?
+  youtubeIsShort   Boolean       @default(false)
+  coverAssetId     String?
+  isStory          Boolean       @default(false)
+  // SU6: unguessable tracked-link token (public redirect route);
+  // null until the post is scheduled / published with a link.
+  linkToken       String?       @unique
+  linkClicks      SocialLinkClick[]
+  // SU9: team member this draft is assigned to (a plain user id,
+  // like createdById — membership is validated in the service at
+  // assign time); null = unassigned.
+  assignedUserId  String?
+  notes           SocialPostNote[]
+  versions        SocialPostVersion[]
   createdById     String
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  socialPostGroup SocialPostGroup? @relation(fields: [postGroupId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
   @@index([socialAccountId])
+  @@index([organizationId, seriesId])
+}
+
+// SU9: an internal team note on a post. Notes are collaboration
+// only — they NEVER travel to any platform or publish path.
+model SocialPostNote {
+  id             String       @id @default(uuid())
+  organizationId String
+  socialPostId   String
+  authorId       String
+  body           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialPost     SocialPost   @relation(fields: [socialPostId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, socialPostId])
+}
+
+// SU9: one content version of a post. snapshot is exactly
+// { caption, linkUrl, mediaRefs, firstCommentText } — the post
+// row's values at the moment the version was recorded (create,
+// a content-changing edit, or a restore). versionNo is unique
+// per post and only ever grows.
+model SocialPostVersion {
+  id             String       @id @default(uuid())
+  organizationId String
+  socialPostId   String
+  versionNo      Int
+  snapshot       Json
+  changedById    String
+  kind           String // create | edit | restore
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialPost     SocialPost   @relation(fields: [socialPostId], references: [id], onDelete: Cascade)
+
+  @@unique([socialPostId, versionNo])
+  @@index([organizationId, socialPostId])
+}
+
+// SU5: per-org commerce auto-draft settings — one row per org.
+// Absence of a row means every trigger is OFF (all toggles
+// default false); drafts are created only for enabled kinds,
+// capped per Dhaka day, and never published automatically.
+model SocialAutoDraftConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  newProductEnabled Boolean   @default(false)
+  saleEnabled    Boolean       @default(false)
+  backInStockEnabled Boolean  @default(false)
+  reviewMilestoneEnabled Boolean @default(false)
+  maxDraftsPerDay Int          @default(3)
+  // Preferred target account; null = the org's first connected
+  // meta_page account. SetNull if the account row is deleted.
+  socialAccountId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount  SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
+// SU6: one recorded human click on a post's tracked link (bot /
+// link-preview fetches are never recorded — see SocialLinkService).
+model SocialLinkClick {
+  id             String     @id @default(uuid())
+  organizationId String
+  socialPostId   String
+  clickedAt      DateTime   @default(now())
+  userAgent      String?    @db.VarChar(300)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialPost     SocialPost @relation(fields: [socialPostId], references: [id], onDelete: Cascade)
+
+  @@index([socialPostId, clickedAt])
+  @@index([organizationId])
 }
 
 // SP8/SP9: OAuth handshake state for operator-app platforms
@@ -4609,12 +5894,53 @@ model MediaAsset {
   // organization: importing the same URL again returns the existing
   // asset instead of fetching it a second time. Null otherwise.
   sourceUrl      String?
+  // SU3: library organization — an optional folder (deleting the
+  // folder leaves the asset folderless, never deletes it) + free
+  // tags for filtering.
+  folderId       String?
+  folder         MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags           Json         @default("[]")
   createdById    String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+  @@index([organizationId, folderId])
+}
+
+// SU3: a named folder inside one organization's Media Library.
+model MediaFolder {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  mediaAssets    MediaAsset[]
+
+  @@index([organizationId])
+}
+
+// SU4: one month's AI-generated content plan (draft schedule of
+// post ideas). items is a JSON array of
+// { day, pillar, productId, productName, caption, mediaIdea,
+//   materializedPostId? } — materializing an item creates a real
+// draft SocialPost through SocialService and stamps its id here.
+model SocialContentPlan {
+  id             String       @id @default(uuid())
+  organizationId String
+  month          String
+  pillars        Json         @default("[]")
+  items          Json         @default("[]")
+  status         String       @default("generated")
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, month])
 }
 
 // SP3: tenant-saved hashtag sets for social captions. No generic
@@ -4698,6 +6024,13 @@ model SocialReplySetting {
   urgentAlertTelegramEnabled Boolean @default(false)
   telegramChatId     String?
   telegramBotToken   String?
+  // CC27 (Connect Center Next): the member who last saved these
+  // settings — the comment autopilot's CONFIGURING actor. Null on
+  // default-created rows (getSettings mints defaults with no
+  // human actor) and on rows predating CC27: in both cases no
+  // actor is recorded and the CC27 deny gate for AI comment
+  // replies honestly does not apply.
+  updatedById        String?
   cannedSnippets     Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

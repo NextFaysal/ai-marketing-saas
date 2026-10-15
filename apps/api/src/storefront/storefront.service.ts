@@ -19,6 +19,7 @@ import { phoneKeyLoose, type PromotionLine } from "../commerce/promotions";
 import { isSoldOrder, rankBoughtTogether } from "./ec27-discovery";
 import { DeliveryPricingService, cartWeightOf } from "./delivery-pricing.service";
 import { AffiliatesService } from "../affiliates/affiliates.service";
+import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { hashShopSecret } from "./shop-auth.util";
 import { StorefrontDnsResolver, StorefrontRoutingFetcher } from "./storefront-dns";
 import { assertPreorderLimit, preorderInfo, selectWholesaleTier } from "../commerce/ec24";
@@ -115,6 +116,9 @@ export class StorefrontService {
     // same discipline; without it a presented affiliate code is
     // simply not stamped (the stamp itself never throws).
     @Optional() private readonly affiliates?: AffiliatesService,
+    // ON4: checkout blocklist refusal. LAST param + Optional,
+    // same discipline; absent keeps checkout exactly as before.
+    @Optional() private readonly blockedPhones?: BlockedPhoneService,
   ) {}
 
   private t(name: string): any {
@@ -1484,6 +1488,8 @@ export class StorefrontService {
     const externalId = `native-${randomUUID()}`;
     const externalNumber = `ORD-${Date.now().toString().slice(-6)}-${randomBytes(2).toString("hex").toUpperCase()}`;
     const cleanPhone = dto.phone.trim();
+    // ON4: blocklist refusal — generic message, never reveals the blocklist.
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(org.id, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
     await this.integrations.upsertOrder(
       org.id,
       null,

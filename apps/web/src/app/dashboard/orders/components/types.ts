@@ -92,7 +92,16 @@ export interface Order {
   customer?: { firstName?: string | null; lastName?: string | null; phone?: string | null; email?: string | null } | null;
   items?: OrderItem[];
   risk?: { band: string; score: number | null } | null;
+  riskBand?: string | null;
+  riskScore?: number | null;
   duplicate?: { isDuplicate: boolean; count: number };
+  assigneeId?: string | null;
+  tags?: string[] | null;
+  codCallOutcome?: string | null;
+  codCallAttempts?: number;
+  codCallNote?: string | null;
+  deliveryChargeMinor?: string;
+  currency?: string;
 }
 
 // EC5: GET commerce/orders/:orderId/push-state

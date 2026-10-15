@@ -8,6 +8,13 @@ import { ErasureService } from "./erasure.service";
 
 const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(" ") || c.name || null;
 
+/** ON7 খাতা: statuses whose due is NOT open (never collected). */
+const OPEN_DUE_EXCLUDED = ["cancelled", "refunded", "returned", "failed"];
+
+function bigOrZero(v: unknown): bigint {
+  try { return BigInt(v as any); } catch { return 0n; }
+}
+
 /**
  * Customer 360: one record per real person. Lists exclude merged
  * records; detail aggregates orders, conversations and shipments from
@@ -34,21 +41,120 @@ export class CustomersService {
     return svc.eraseCustomer(organizationId, actorId, customerId);
   }
 
-  async list(organizationId: string, q?: string) {
-    return this.rowsWithStats(organizationId, q, 100);
+  async list(organizationId: string, q?: string, options?: { hasDue?: boolean }) {
+    return this.rowsWithStats(organizationId, q, 100, options);
+  }
+
+  /** ON7: APPROVED PaymentVerification sums per order — ONE
+   * groupBy for the whole id set (the OrdersService pattern at
+   * orders.service.ts approvedSumsByOrder), with a findMany
+   * fallback for partial deployments / fakes without groupBy. */
+  private async approvedSumsByOrder(organizationId: string, orderIds: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>();
+    if (!orderIds.length) return out;
+    const table = (this.prisma as any).paymentVerification;
+    if (!table) return out;
+    try {
+      if (table.groupBy) {
+        const rows = await table.groupBy({
+          by: ["orderId"],
+          where: { organizationId, status: "approved", orderId: { in: orderIds } },
+          _sum: { amountMinor: true },
+        });
+        for (const r of rows ?? []) {
+          if (r?.orderId == null) continue;
+          out.set(String(r.orderId), bigOrZero(r._sum?.amountMinor ?? 0));
+        }
+        return out;
+      }
+    } catch { /* fall through to the findMany path */ }
+    try {
+      if (table.findMany) {
+        const rows = (await table.findMany({ where: { organizationId, status: "approved" } }).catch(() => [])) ?? [];
+        const wanted = new Set(orderIds.map(String));
+        for (const r of rows) {
+          if (r?.orderId == null || !wanted.has(String(r.orderId)) || r.amountMinor == null) continue;
+          out.set(String(r.orderId), (out.get(String(r.orderId)) ?? 0n) + bigOrZero(r.amountMinor));
+        }
+      }
+    } catch { /* advisory math only */ }
+    return out;
+  }
+
+  /** EC19 due of ONE order: total − min(total, approved paid). */
+  private dueOfOrder(order: any, sums: Map<string, bigint>): bigint {
+    const total = bigOrZero(order.totalMinor ?? 0);
+    const paidRaw = sums.get(String(order.id)) ?? 0n;
+    const paid = paidRaw > total ? total : paidRaw;
+    const due = total - paid;
+    return due > 0n ? due : 0n;
+  }
+
+  /** ON7: open-due totals per customer for a set of customers —
+   * TWO bulk queries total (open orders of those customers + one
+   * grouped approved-PV sum), never per-customer queries. */
+  private async dueMinorByCustomer(organizationId: string, customerIds: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>(customerIds.map((id) => [String(id), 0n]));
+    if (!customerIds.length) return out;
+    const orders: any[] = ((await (this.prisma as any).order.findMany({
+      where: {
+        organizationId, customerId: { in: customerIds }, isPractice: false,
+        status: { notIn: OPEN_DUE_EXCLUDED },
+      },
+    }).catch(() => [])) ?? []);
+    if (!orders.length) return out;
+    const sums = await this.approvedSumsByOrder(organizationId, orders.map((o: any) => String(o.id)));
+    for (const o of orders) {
+      const key = String(o.customerId);
+      out.set(key, (out.get(key) ?? 0n) + this.dueOfOrder(o, sums));
+    }
+    return out;
+  }
+
+  /** ON7 hasDue filter: the org's due>0 customer id set, computed
+   * with the same two-query pattern (all open orders of the org +
+   * ONE grouped approved-PV sum — the OB1 due_collection
+   * approach), so list() can intersect BEFORE slicing its page.
+   * The existing list is unpaginated-bounded (500 customers
+   * fetched, 100 returned), so filtering inside that window is
+   * the documented approach here. */
+  private async dueCustomerIds(organizationId: string): Promise<Set<string>> {
+    const dueByCustomer = await this.dueMinorByCustomerAll(organizationId);
+    return new Set([...dueByCustomer.entries()].filter(([, v]) => v > 0n).map(([k]) => k));
+  }
+
+  private async dueMinorByCustomerAll(organizationId: string): Promise<Map<string, bigint>> {
+    const orders: any[] = ((await (this.prisma as any).order.findMany({
+      where: { organizationId, isPractice: false, status: { notIn: OPEN_DUE_EXCLUDED } }, take: 5000,
+    }).catch(() => [])) ?? []);
+    const out = new Map<string, bigint>();
+    if (!orders.length) return out;
+    const sums = await this.approvedSumsByOrder(organizationId, orders.map((o: any) => String(o.id)));
+    for (const o of orders) {
+      if (o.customerId == null) continue;
+      const key = String(o.customerId);
+      out.set(key, (out.get(key) ?? 0n) + this.dueOfOrder(o, sums));
+    }
+    return out;
   }
 
   /** The list computation, shared verbatim by list() (first 100)
    * and the C3 CSV export (the full fetched window of 500). */
-  private async rowsWithStats(organizationId: string, q: string | undefined, limit: number) {
+  private async rowsWithStats(organizationId: string, q: string | undefined, limit: number, options?: { hasDue?: boolean }) {
     const rows = await (this.prisma as any).customer.findMany({
       where: { organizationId, mergedIntoId: null }, orderBy: { createdAt: "desc" }, take: 500,
     });
     const needle = q?.trim().toLowerCase();
-    const filtered = needle
+    let filtered = needle
       ? rows.filter((c: any) => [customerName(c), c.phone, c.email].filter(Boolean).some((v: string) => v.toLowerCase().includes(needle)))
       : rows;
-    const withStats = await Promise.all(filtered.slice(0, limit).map(async (c: any) => {
+    // ON7: hasDue filters BEFORE the page slice below.
+    if (options?.hasDue) {
+      const dueIds = await this.dueCustomerIds(organizationId);
+      filtered = filtered.filter((c: any) => dueIds.has(String(c.id)));
+    }
+    const page = filtered.slice(0, limit);
+    const withStats = await Promise.all(page.map(async (c: any) => {
       const orders = await (this.prisma as any).order.findMany({
         where: { organizationId, customerId: c.id, status: { not: "cancelled" } }, take: 200,
       });
@@ -63,7 +169,14 @@ export class CustomersService {
         totalSpentMinor: String(orders.reduce((s: bigint, o: any) => s + BigInt(o.totalMinor), 0n)),
       };
     }));
-    return withStats;
+    // ON7 (additive): per-row due for the PAGE's customers (bulk,
+    // two queries) + the credit limit, serialized as string|null.
+    const dueByCustomer = await this.dueMinorByCustomer(organizationId, page.map((c: any) => String(c.id))).catch(() => new Map<string, bigint>());
+    return withStats.map((row: any, i: number) => ({
+      ...row,
+      dueMinor: String(dueByCustomer.get(String(row.id)) ?? 0n),
+      creditLimitMinor: page[i]?.creditLimitMinor != null ? String(page[i].creditLimitMinor) : null,
+    }));
   }
 
   /**
@@ -110,6 +223,8 @@ export class CustomersService {
     customFields?: Record<string, unknown> | null;
     /** EC24d: staff-set wholesale flag. */
     isWholesale?: boolean;
+    /** ON7: credit limit in minor units. String = set, null = clear. */
+    creditLimitMinor?: string | null;
   }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
     if (!customer) throw new NotFoundException("Customer not found in this organization");
@@ -119,6 +234,17 @@ export class CustomersService {
     if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
     if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
     if (dto.isWholesale !== undefined) data.isWholesale = !!dto.isWholesale;
+    if (dto.creditLimitMinor !== undefined) {
+      if (dto.creditLimitMinor === null) {
+        data.creditLimitMinor = null;
+      } else {
+        const raw = String(dto.creditLimitMinor).trim();
+        if (!/^\d+$/.test(raw)) {
+          throw new BadRequestException("ক্রেডিট লিমিট সঠিক নয় — creditLimitMinor অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে, অথবা লিমিট মুছতে null দিন।");
+        }
+        data.creditLimitMinor = BigInt(raw);
+      }
+    }
     if (dto.customFields !== undefined) {
       if (dto.customFields === null) data.customFields = null;
       else if (this.customFields) {
@@ -135,6 +261,92 @@ export class CustomersService {
       metadata: { fields: Object.keys(data) },
     });
     return this.detail(organizationId, customerId);
+  }
+
+  /**
+   * ON7 — Customer খাতা (ledger): the customer's orders (newest
+   * first, page of 100) with EC19 per-order paid/due, the total
+   * OPEN due over ALL of the customer's orders (bounded scan of
+   * 1000, honestly flagged when truncated), its aging buckets,
+   * and the credit-limit view (limit / over-limit / available
+   * credit — available may go negative; the true signed value is
+   * returned, never floored).
+   */
+  async getKhata(organizationId: string, customerId: string) {
+    const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
+    if (!customer) throw new NotFoundException("এই সংগঠনে কাস্টমার পাওয়া যায়নি।");
+    const effective = (o: any) => new Date(o.placedAt ?? o.createdAt ?? 0).getTime();
+
+    // Page: newest first by effective date (placedAt, createdAt
+    // fallback). Fetch 101 so the truncation flag is exact.
+    const pageRaw: any[] = ((await (this.prisma as any).order.findMany({
+      where: { organizationId, customerId, isPractice: false },
+      orderBy: { placedAt: "desc" }, take: 101,
+    }).catch(() => [])) ?? []);
+    const sortedPage = [...pageRaw].sort((a: any, b: any) => effective(b) - effective(a));
+    const ordersTruncated = sortedPage.length > 100;
+    const page = sortedPage.slice(0, 100);
+
+    // Total due: ALL open orders of the customer (not just the
+    // page), bounded at 1000 with an honest truncation flag.
+    const openRaw: any[] = ((await (this.prisma as any).order.findMany({
+      where: {
+        organizationId, customerId, isPractice: false,
+        status: { notIn: OPEN_DUE_EXCLUDED },
+      },
+      take: 1001,
+    }).catch(() => [])) ?? []);
+    const duesTruncated = openRaw.length > 1000;
+    const openOrders = openRaw.slice(0, 1000);
+
+    // ONE grouped approved-PV sum covering page + open scan.
+    const allIds = [...new Set([...page, ...openOrders].map((o: any) => String(o.id)))];
+    const sums = await this.approvedSumsByOrder(organizationId, allIds);
+
+    const orders = page.map((o: any) => {
+      const total = bigOrZero(o.totalMinor ?? 0);
+      const paidRaw = sums.get(String(o.id)) ?? 0n;
+      const paid = paidRaw > total ? total : paidRaw;
+      return {
+        id: String(o.id),
+        number: o.externalNumber ?? o.externalId ?? String(o.id),
+        placedAt: o.placedAt ?? o.createdAt ?? null,
+        status: o.status, source: o.source,
+        totalMinor: String(total),
+        paidMinor: String(paid),
+        dueMinor: String(total - paid),
+      };
+    });
+
+    let totalDue = 0n;
+    const aging = { d0_7: 0n, d8_15: 0n, d16_30: 0n, d30plus: 0n };
+    const now = Date.now();
+    for (const o of openOrders) {
+      const due = this.dueOfOrder(o, sums);
+      if (due <= 0n) continue;
+      totalDue += due;
+      const ageDays = Math.max(0, Math.floor((now - effective(o)) / 86400000));
+      if (ageDays <= 7) aging.d0_7 += due;
+      else if (ageDays <= 15) aging.d8_15 += due;
+      else if (ageDays <= 30) aging.d16_30 += due;
+      else aging.d30plus += due;
+    }
+
+    const limit: bigint | null = customer.creditLimitMinor != null ? bigOrZero(customer.creditLimitMinor) : null;
+    return {
+      customerId: String(customer.id),
+      orders,
+      ordersTruncated,
+      duesTruncated,
+      totalDueMinor: String(totalDue),
+      aging: {
+        d0_7: String(aging.d0_7), d8_15: String(aging.d8_15),
+        d16_30: String(aging.d16_30), d30plus: String(aging.d30plus),
+      },
+      creditLimitMinor: limit != null ? String(limit) : null,
+      overLimit: limit != null && totalDue > limit,
+      availableCreditMinor: limit != null ? String(limit - totalDue) : null,
+    };
   }
 
   async detail(organizationId: string, customerId: string) {
@@ -186,7 +398,11 @@ export class CustomersService {
       risk,
       courierRecord,
       storeIdentities,
-      customer: { ...customer, name: customerName(customer) },
+      customer: {
+        ...customer, name: customerName(customer),
+        // ON7: BigInt serialized as string|null (additive field).
+        creditLimitMinor: customer.creditLimitMinor != null ? String(customer.creditLimitMinor) : null,
+      },
       orders: orders.map((o: any) => ({
         ...o,
         totalMinor: String(o.totalMinor), subtotalMinor: String(o.subtotalMinor ?? o.totalMinor),

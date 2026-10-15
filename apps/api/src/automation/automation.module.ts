@@ -22,9 +22,12 @@ import { CommerceModule } from "../commerce/commerce.module";
 import { SubscriptionsModule } from "../subscriptions/subscriptions.module";
 import { StorefrontModule } from "../storefront/storefront.module";
 import { InstallmentsModule } from "../installments/installments.module";
+import { ConnectionsModule } from "../connections/connections.module";
+import { FulfillmentModule } from "../fulfillment/fulfillment.module";
+import { OrderAutomationModule } from "../order-automation/order-automation.module";
 
 @Module({
-  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule, SubscriptionsModule, StorefrontModule, InstallmentsModule],
+  imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule, OrdersModule, CommerceModule, SubscriptionsModule, StorefrontModule, InstallmentsModule, ConnectionsModule, FulfillmentModule, OrderAutomationModule],
   controllers: [AutomationController, InternalJobsController],
   providers: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],
   exports: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],

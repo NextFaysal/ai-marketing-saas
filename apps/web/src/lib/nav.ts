@@ -1,7 +1,7 @@
 export interface NavItem {
   label: string;
   href: string;
-  icon?: string;
+  icon: string;
   badge?: string;
   ready: boolean;
   phase?: string;
@@ -9,7 +9,7 @@ export interface NavItem {
 
 // Main navigation from the product spec. `ready` items exist in this milestone;
 // the rest are visibly planned and disabled, never fake-functional.
-export const NAV_ITEMS = [
+export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: "📊", ready: true },
   { label: "এজেন্সি পোর্টফোলিও", href: "/dashboard/portfolio", icon: "🏢", ready: true },
   { label: "AI Assistant", href: "/dashboard/ai", icon: "🤖", ready: true },
@@ -31,7 +31,7 @@ export const NAV_ITEMS = [
   { label: "Profit Intelligence", href: "/dashboard/profit", icon: "💎", ready: true },
   { label: "Competitor Analysis", href: "/dashboard/competitors", icon: "🔭", ready: true },
   { label: "Inbox", href: "/dashboard/inbox", icon: "💬", ready: true },
-  { label: "AI Instructions", href: "/dashboard/ai-instructions", icon: "🤖", ready: true },
+  { label: "AI Instructions", href: "/dashboard/ai-instructions", icon: "⚙️", ready: true },
   { label: "Social Comments AI", href: "/dashboard/comments", icon: "💬", ready: true },
   { label: "Leads & CRM", href: "/dashboard/leads", icon: "🧲", ready: true },
   { label: "Customers 360", href: "/dashboard/customers", icon: "👤", ready: true },

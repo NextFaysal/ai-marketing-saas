@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@repo/db";
+import {
+  QUEUE_KEYS, QUEUE_LABELS, STUCK_DAYS, TRANSIT_STATUSES, SHIPMENT_TERMINAL_STATUSES,
+  OPEN_RETURN_STATUSES, isQueueKey, dhakaTodayString, type QueueKey,
+} from "./order-queues";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
@@ -9,15 +14,13 @@ import { InventoryService } from "../inventory/inventory.service";
 import { OrderPushService } from "../commerce/order-push.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import type {
-  AdvanceVerificationDto,
-  CreateManualOrderDto,
-  UpdateOrderDto,
-  MergeOrdersDto,
-  AssignAgentDto,
-  BulkAssignAgentDto,
-  StaffScoreboardQueryDto,
-} from "./orders.dto";
+import type { AdvanceVerificationDto, AssignAgentDto, BulkAssignAgentDto, CreateManualOrderDto, MergeDuplicateOrdersDto, StaffScoreboardQueryDto, UpdateOrderDto } from "./orders.dto";
+import { parseBdAddress } from "./bd-address";
+import { computeIntakeWarnings } from "./intake-warnings";
+import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+// ON6: the SLA helper is PURE (no Nest/Prisma imports), so
+// importing it from fulfillment/ creates no module cycle.
+import { computeSlaStage, SLA_DEFAULTS } from "../fulfillment/sla";
 import { phoneKey } from "./risk-score";
 
 function pubOrder(o: any) {
@@ -55,6 +58,9 @@ const ORDER_TRANSITIONS: Record<string, string[]> = {
   returned: [],
 };
 
+/** ON1: the only filter keys a saved view may carry (list-v2 whitelist). */
+export const LIST_V2_FILTER_KEYS = ["status", "isCod", "queue", "dateFrom", "dateTo", "district", "provider", "source", "paymentState", "minTotal", "maxTotal", "assigneeId", "tag", "search", "sort", "pageSize", "riskBand"];
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -75,6 +81,10 @@ export class OrdersService {
     // (same discipline as the S2 hooks; every call is wrapped so a
     // store problem can never break the local order flow).
     @Optional() private readonly orderPush?: OrderPushService,
+    // ON4/ON11: blocklist reads for intake warnings. Appended
+    // LAST + @Optional (FraudModule is imported by OrdersModule);
+    // absent leaves warnings without the blocked check.
+    @Optional() private readonly blockedPhones?: BlockedPhoneService,
   ) {}
 
   /**
@@ -122,7 +132,14 @@ export class OrdersService {
         firstName: dto.customerName?.trim() || phone,
         email: dto.customerEmail,
         phone,
-        address: dto.address ? { address_1: dto.address } : undefined,
+        // ON11: district joins address_1 only when provided —
+        // the stored shape otherwise stays exactly as before.
+        address: dto.address || dto.district
+          ? {
+              ...(dto.address ? { address_1: dto.address } : {}),
+              ...(dto.district ? { district: dto.district } : {}),
+            }
+          : undefined,
       },
       items,
     }, "manual");
@@ -136,7 +153,24 @@ export class OrdersService {
       metadata: { externalId, result, totalMinor: (total > 0n ? total : 0n).toString() },
     }).catch(() => undefined);
     if (!order) throw new NotFoundException("Order was recorded but could not be reloaded");
-    return { ...pubOrder(order), upsertResult: result };
+    // ON11: intake warnings ride the response (never blocking —
+    // a warnings failure ships an empty list, creation stands).
+    let intakeWarnings: any[] = [];
+    let addressSuggestion: any = null;
+    try {
+      const custAddr = (order as any).customer?.address;
+      const intake = await computeIntakeWarnings(this.prisma, this.blockedPhones, organizationId, {
+        phone: (order as any).customer?.phone ?? phone,
+        name: dto.customerName?.trim()
+          || [(order as any).customer?.firstName, (order as any).customer?.lastName].filter(Boolean).join(" ")
+          || null,
+        addressText: dto.address ?? (order as any).address ?? null,
+        customerDistrict: dto.district ?? (custAddr && typeof custAddr === "object" ? custAddr.district ?? null : null),
+      });
+      intakeWarnings = intake.warnings;
+      addressSuggestion = intake.addressSuggestion;
+    } catch { /* warnings are advisory only */ }
+    return { ...pubOrder(order), upsertResult: result, warnings: intakeWarnings, addressSuggestion };
   }
 
   // ---------- Sales & Data S2: order actions (PATCH) ----------
@@ -173,6 +207,18 @@ export class OrdersService {
     }
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
     if (!order) throw new NotFoundException("Order not found in this organization");
+    // ON3: a merged-away order is terminal. Its verifications
+    // (and goods) now live on the survivor, so reviving it or
+    // recording a refund against it would corrupt the
+    // survivor's due math. Note/address edits stay allowed.
+    if ((order as any).mergedIntoId) {
+      if (dto.status !== undefined && dto.status !== order.status) {
+        throw new BadRequestException("এই অর্ডারটি অন্য অর্ডারে মার্জ হয়ে গেছে — এটি আর চালু করা যাবে না");
+      }
+      if (dto.refund !== undefined && dto.refund !== null) {
+        throw new BadRequestException("এই অর্ডারটি অন্য অর্ডারে মার্জ হয়ে গেছে — এতে refund করা যাবে না");
+      }
+    }
     const from: string = order.status;
 
     // --- Refund: validate fully before any write. ---
@@ -481,46 +527,10 @@ export class OrdersService {
     try { this.events?.emit(event, { organizationId, context }); } catch { /* fire-and-forget */ }
   }
 
-  async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number; includePractice?: boolean }) {
-    const page = Math.max(1, q.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
-    const where: any = {
-      organizationId,
-      // CX12a: practice orders are excluded by default; only an
-      // explicit includePractice (the "প্র্যাক্টিস অর্ডার দেখান"
-      // filter) surfaces them.
-      ...(q.includePractice ? {} : { isPractice: false }),
-      ...(q.status ? { status: q.status } : {}),
-      ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
-    };
-    const [total, items] = await Promise.all([
-      (this.prisma as any).order.count({ where }),
-      (this.prisma as any).order.findMany({
-        where, orderBy: { placedAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize,
-        include: { customer: true, items: true },
-      }),
-    ]);
-    const mapped = items.map(pubOrder);
-    // Feature 2: In-memory duplicate tagging for the current batch
-    const phoneGroups = new Map<string, string[]>();
-    for (const item of items) {
-      const p = phoneKey(item.customer?.phone);
-      if (p) {
-        const ids = phoneGroups.get(p) ?? [];
-        ids.push(item.id);
-        phoneGroups.set(p, ids);
-      }
-    }
-    for (const item of mapped) {
-      const p = phoneKey(item.customer?.phone);
-      if (p && (phoneGroups.get(p)?.length ?? 0) > 1) {
-        (item as any).duplicate = {
-          isDuplicate: true,
-          count: phoneGroups.get(p)!.length,
-          duplicateOrderIds: phoneGroups.get(p)!.filter((id) => id !== item.id),
-        };
-      }
-    }
+  /** Shared list-page enrichment (EC18 slot, EC30 pickup point,
+   * M50 risk, ON1 batch advance/due + tags/assignee). Failure-
+   * isolated per block: a broken enrichment never fails the list. */
+  private async enrichListRows(organizationId: string, items: any[], mapped: any[]) {
     // EC18: attach the chosen delivery slot per row (one batched
     // fetch for the page). Failure-isolated: rows ship with a null
     // slot rather than failing the listing.
@@ -568,6 +578,26 @@ export class OrdersService {
     } catch {
       for (const item of mapped) (item as any).pickupPoint = null;
     }
+    // Feature 2: In-memory duplicate tagging for the current batch
+    const phoneGroups = new Map<string, string[]>();
+    for (const item of items) {
+      const p = phoneKey(item.customer?.phone);
+      if (p) {
+        const ids = phoneGroups.get(p) ?? [];
+        ids.push(item.id);
+        phoneGroups.set(p, ids);
+      }
+    }
+    for (const item of mapped) {
+      const p = phoneKey(item.customer?.phone);
+      if (p && (phoneGroups.get(p)?.length ?? 0) > 1) {
+        (item as any).duplicate = {
+          isDuplicate: true,
+          count: phoneGroups.get(p)!.length,
+          duplicateOrderIds: phoneGroups.get(p)!.filter((id) => id !== item.id),
+        };
+      }
+    }
     // M50: light risk summary per row (band + score). Enrichment must
     // never break the listing — on any failure rows ship without it.
     if (this.risk) {
@@ -579,7 +609,635 @@ export class OrdersService {
         }
       } catch { /* risk is advisory only */ }
     }
+    // ON1: batch advance/due for the page (ONE groupBy, never
+    // N+1) + tags/assignee surfaced from the new columns.
+    try {
+      const sums = await this.approvedSumsByOrder(organizationId, items.map((o: any) => String(o.id)));
+      items.forEach((o: any, idx: number) => {
+        const total = BigInt(o.totalMinor ?? 0);
+        const paidRaw = sums.get(String(o.id)) ?? 0n;
+        const paid = paidRaw > total ? total : paidRaw;
+        (mapped[idx] as any).advancePaidMinor = paid.toString();
+        (mapped[idx] as any).amountDueMinor = (total - paid).toString();
+        (mapped[idx] as any).tags = Array.isArray(o.tags) ? o.tags : (o.tags ?? null);
+        (mapped[idx] as any).assigneeId = o.assigneeId ?? null;
+      });
+    } catch {
+      items.forEach((o: any, idx: number) => {
+        (mapped[idx] as any).advancePaidMinor = "0";
+        (mapped[idx] as any).amountDueMinor = BigInt(o.totalMinor ?? 0).toString();
+        (mapped[idx] as any).tags = Array.isArray(o.tags) ? o.tags : (o.tags ?? null);
+        (mapped[idx] as any).assigneeId = o.assigneeId ?? null;
+      });
+    }
+  }
+
+  async list(organizationId: string, q: {
+    status?: string; isCod?: boolean; page?: number; pageSize?: number; includePractice?: boolean;
+    // ON1 list v2 (all optional; absent = legacy behaviour/shape):
+    queue?: string; dateFrom?: string; dateTo?: string; district?: string; provider?: string;
+    source?: string; paymentState?: string; minTotal?: string; maxTotal?: string;
+    assigneeId?: string; tag?: string; search?: string; sort?: string; riskBand?: string;
+  }) {
+    // ON1: any v2 param routes to the v2 path; legacy calls are
+    // byte-for-byte the old behaviour below.
+    const hasV2 = [q.queue, q.dateFrom, q.dateTo, q.district, q.provider, q.source, q.paymentState,
+      q.minTotal, q.maxTotal, q.assigneeId, q.tag, q.search, q.sort, q.riskBand]
+      .some((v) => v !== undefined && v !== null && v !== "");
+    if (hasV2) return this.listV2(organizationId, q);
+    const page = Math.max(1, q.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
+    const where: any = {
+      organizationId,
+      // CX12a: practice orders are excluded by default; only an
+      // explicit includePractice (the "প্র্যাক্টিস অর্ডার দেখান"
+      // filter) surfaces them.
+      ...(q.includePractice ? {} : { isPractice: false }),
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
+    };
+    const [total, items] = await Promise.all([
+      (this.prisma as any).order.count({ where }),
+      (this.prisma as any).order.findMany({
+        where, orderBy: { placedAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize,
+        include: { customer: true, items: true },
+      }),
+    ]);
+    const mapped = items.map(pubOrder);
+    await this.enrichListRows(organizationId, items, mapped);
     return { total, page, pageSize, items: mapped };
+  }
+
+  // ---------- ON1: Command Center v2 ----------
+
+  /** Sum of APPROVED PaymentVerification amounts per order, ONE
+   * groupBy for the whole id set (never N+1). A missing delegate
+   * (partial deployment / fake) degrades to an empty map. */
+  private async approvedSumsByOrder(organizationId: string, orderIds: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>();
+    if (orderIds.length === 0) return out;
+    try {
+      const table = (this.prisma as any).paymentVerification;
+      if (!table?.groupBy) return out;
+      const rows = await table.groupBy({
+        by: ["orderId"],
+        where: { organizationId, status: "approved", orderId: { in: orderIds } },
+        _sum: { amountMinor: true },
+      });
+      for (const r of rows ?? []) {
+        if (r?.orderId == null) continue;
+        try { out.set(String(r.orderId), BigInt(r._sum?.amountMinor ?? 0)); } catch { /* unparseable counts 0 */ }
+      }
+    } catch { /* advisory math only */ }
+    return out;
+  }
+
+  /** S3 day parsing, shared shape: a "YYYY-MM-DD" string read as
+   * an Asia/Dhaka calendar day (returns that day's start instant). */
+  private parseDhakaDay(value: string, label: string): Date {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+    }
+    const [y, m, d] = value.split("-").map(Number);
+    const probe = new Date(Date.UTC(y, m - 1, d));
+    if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+      throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+    }
+    return dhakaDayStartUtc(new Date(`${value}T12:00:00.000Z`));
+  }
+
+  /**
+   * ON1 queues: resolve a queue key to its order ids (placedAt
+   * desc). This is the SINGLE code path behind both the counts
+   * endpoint and the queue-filtered list.
+   *
+   * Cost note (honest): the simple queues are one indexed query.
+   * ready_to_pack / in_transit_stuck / returns_open first load
+   * the org's candidate orders for the relevant statuses, then
+   * resolve shipments / fulfillments / returns in bulk and do
+   * the set logic in JS — bounded by the org's open-order volume,
+   * not by total history. due_collection is ONE grouped raw SQL
+   * query (orders LEFT JOIN grouped approved sums).
+   */
+  async resolveQueueOrderIds(organizationId: string, queueKey: string): Promise<string[]> {
+    if (!isQueueKey(queueKey)) {
+      throw new BadRequestException(`অজানা কিউ "${queueKey}" — সঠিক কিউ: ${QUEUE_KEYS.join(", ")}`);
+    }
+    const key = queueKey as QueueKey;
+    const orderTable = (this.prisma as any).order;
+    const byPlacedDesc = (a: any, b: any) =>
+      new Date(b.placedAt ?? b.createdAt ?? 0).getTime() - new Date(a.placedAt ?? a.createdAt ?? 0).getTime();
+    const idsOf = (rows: any[]) => [...rows].sort(byPlacedDesc).map((r: any) => String(r.id));
+
+    if (key === "due_collection") {
+      // ONE grouped raw SQL query: orders whose total exceeds the
+      // sum of their APPROVED PaymentVerification amounts.
+      const rows: any[] = await (this.prisma as any).$queryRaw(Prisma.sql`
+        SELECT o."id" AS "id", o."placedAt" AS "placedAt", o."createdAt" AS "createdAt"
+        FROM "Order" o
+        LEFT JOIN (
+          SELECT "orderId", SUM("amountMinor") AS paid
+          FROM "PaymentVerification"
+          WHERE "organizationId" = ${organizationId} AND "status" = 'approved' AND "amountMinor" IS NOT NULL
+          GROUP BY "orderId"
+        ) pv ON pv."orderId" = o."id"
+        WHERE o."organizationId" = ${organizationId}
+          AND o."isPractice" = false
+          AND o."status" IN ('completed', 'delivered')
+          AND o."totalMinor" > COALESCE(pv.paid, 0)
+        ORDER BY o."placedAt" DESC NULLS LAST
+      `);
+      return (rows ?? []).map((r: any) => String(r.id));
+    }
+
+    if (key === "all") {
+      const rows = await orderTable.findMany({ where: { organizationId, isPractice: false } });
+      return idsOf(rows ?? []);
+    }
+    if (key === "all_open") {
+      const rows = await orderTable.findMany({
+        where: { organizationId, isPractice: false, status: { notIn: ["completed", "cancelled", "refunded", "failed", "returned"] } },
+      });
+      return idsOf(rows ?? []);
+    }
+    if (key === "needs_confirmation") {
+      const rows = await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false, isCod: true, codConfirmationStatus: "awaiting",
+          status: { in: ["pending", "on-hold", "processing"] },
+        },
+      });
+      return idsOf(rows ?? []);
+    }
+    if (key === "deliveries_today") {
+      // Only the slot/date signal exists: the order vocabulary has
+      // NO out-for-delivery status, so deliveryDate == today
+      // (Asia/Dhaka string equality) is the whole predicate.
+      const rows = await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false, deliveryDate: dhakaTodayString(),
+          status: { notIn: ["cancelled", "failed", "refunded", "returned"] },
+        },
+      });
+      return idsOf(rows ?? []);
+    }
+    if (key === "ready_to_pack") {
+      const candidates: any[] = (await orderTable.findMany({
+        where: { organizationId, isPractice: false, status: { in: ["processing", "on-hold"] } },
+        include: { items: true },
+      })) ?? [];
+      // ON4: review-held orders are NOT ready to pack (fake rows
+      // may lack the field — undefined passes, only true excludes).
+      const open = candidates.filter((o: any) => o.codConfirmationStatus !== "awaiting" && o.reviewHold !== true);
+      if (open.length === 0) return [];
+      const ids = open.map((o: any) => String(o.id));
+      // Active shipment = a CourierShipment NOT in a terminal status.
+      const shipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+        where: { organizationId, orderId: { in: ids } },
+      }).catch(() => [])) ?? []);
+      const hasActiveShipment = new Set(
+        shipments.filter((s: any) => !(SHIPMENT_TERMINAL_STATUSES as readonly string[]).includes(s.status)).map((s: any) => String(s.orderId)),
+      );
+      const fulfillments: any[] = ((await (this.prisma as any).fulfillment?.findMany({
+        where: { organizationId, orderId: { in: ids } },
+      }).catch(() => [])) ?? []);
+      // Coverage rule: across the order's NON-cancelled
+      // fulfillments, sum the committed (packing) quantity per
+      // orderItemId; covered iff EVERY order item's summed
+      // quantity >= its ordered quantity. No fulfillments => not
+      // covered => the order stays in the queue.
+      const packedByOrder = new Map<string, Map<string, number>>();
+      for (const f of fulfillments) {
+        if (f.status === "cancelled") continue;
+        const perItem = packedByOrder.get(String(f.orderId)) ?? new Map<string, number>();
+        for (const line of (f.items ?? []) as any[]) {
+          perItem.set(String(line.orderItemId), (perItem.get(String(line.orderItemId)) ?? 0) + (line.quantity ?? 0));
+        }
+        packedByOrder.set(String(f.orderId), perItem);
+      }
+      const ready = open.filter((o: any) => {
+        if (hasActiveShipment.has(String(o.id))) return false;
+        const perItem = packedByOrder.get(String(o.id));
+        if (!perItem) return true;
+        const items = o.items ?? [];
+        if (items.length === 0) return true;
+        return !items.every((i: any) => (perItem.get(String(i.id)) ?? 0) >= (i.quantity ?? 0));
+      });
+      return idsOf(ready);
+    }
+    if (key === "in_transit_stuck") {
+      const cutoff = new Date(Date.now() - STUCK_DAYS * 24 * 3600 * 1000);
+      const shipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+        where: { organizationId },
+      }).catch(() => [])) ?? []);
+      const stuckOrderIds = new Set(
+        shipments
+          .filter((s: any) => (TRANSIT_STATUSES as readonly string[]).includes(s.status) && s.updatedAt && new Date(s.updatedAt).getTime() < cutoff.getTime())
+          .map((s: any) => String(s.orderId)),
+      );
+      if (stuckOrderIds.size === 0) return [];
+      const rows = await orderTable.findMany({
+        where: { organizationId, isPractice: false, id: { in: [...stuckOrderIds] } },
+      });
+      return idsOf(rows ?? []);
+    }
+    if (key === "review_hold") {
+      const rows = await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false, reviewHold: true,
+          status: { notIn: ["completed", "delivered", "cancelled", "refunded", "failed", "returned"] },
+        },
+      });
+      return idsOf(rows ?? []);
+    }
+    if (key === "incomplete_intake") {
+      const rows: any[] = (await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false,
+          status: { notIn: ["completed", "delivered", "cancelled", "refunded", "failed", "returned"] },
+        },
+        include: { customer: true },
+      })) ?? [];
+      const custAddressText = (c: any): string => {
+        const a = c?.address;
+        if (!a) return "";
+        if (typeof a === "string") return a;
+        return String(a.address_1 ?? a.address1 ?? "");
+      };
+      const custDistrict = (c: any): string | null => {
+        const a = c?.address;
+        if (a && typeof a === "object" && a.district) return String(a.district);
+        return null;
+      };
+      const incomplete = rows.filter((o: any) => {
+        const customer = o.customer ?? null;
+        const phoneMissing = !String(customer?.phone ?? "").trim();
+        const orderAddr = String(o.address ?? "").trim();
+        const custAddr = custAddressText(customer).trim();
+        const addressMissing = !orderAddr && !custAddr;
+        const addressText = orderAddr || custAddr;
+        const districtMissing = !custDistrict(customer) && parseBdAddress(addressText).district === null;
+        return phoneMissing || addressMissing || districtMissing;
+      });
+      return idsOf(incomplete);
+    }
+    if (key === "sla_breach") {
+      // ON6 load shape (bounded, documented): the org's OPEN
+      // orders (non-practice, status outside the sla.ts done
+      // set) in ONE query, their fulfilments + shipments in ONE
+      // bulk query each, and the org's FulfillmentSetting in
+      // ONE read — then the PURE computeSlaStage decides per
+      // order in JS. Bounded by the org's open-order volume,
+      // exactly like ready_to_pack above; counts and the list
+      // share this path, so they cannot drift.
+      const candidates: any[] = (await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false,
+          status: { notIn: ["cancelled", "refunded", "failed", "returned", "delivered", "completed"] },
+        },
+      })) ?? [];
+      if (candidates.length === 0) return [];
+      const candidateIds = candidates.map((o: any) => String(o.id));
+      const fulfillments: any[] = ((await (this.prisma as any).fulfillment?.findMany({
+        where: { organizationId, orderId: { in: candidateIds } },
+      }).catch(() => [])) ?? []);
+      const shipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+        where: { organizationId, orderId: { in: candidateIds } },
+      }).catch(() => [])) ?? []);
+      let setting: any = { ...SLA_DEFAULTS };
+      try {
+        const settingTable = (this.prisma as any).fulfillmentSetting;
+        const row = settingTable?.findFirst
+          ? await settingTable.findFirst({ where: { organizationId } }).catch(() => null)
+          : null;
+        if (row) setting = row;
+      } catch { /* in-code defaults */ }
+      const byOrder = (rows: any[]) => {
+        const map = new Map<string, any[]>();
+        for (const r of rows) {
+          const list = map.get(String(r.orderId)) ?? [];
+          list.push(r);
+          map.set(String(r.orderId), list);
+        }
+        return map;
+      };
+      const fulfillmentsByOrder = byOrder(fulfillments);
+      const shipmentsByOrder = byOrder(shipments);
+      const now = new Date();
+      const breached = candidates.filter((o: any) =>
+        computeSlaStage(o, fulfillmentsByOrder.get(String(o.id)) ?? [], shipmentsByOrder.get(String(o.id)) ?? [], setting, now).breached);
+      return idsOf(breached);
+    }
+    // returns_open
+    const returns: any[] = ((await (this.prisma as any).returnRequest?.findMany({
+      where: { organizationId },
+    }).catch(() => [])) ?? []);
+    const openReturnOrderIds = new Set(
+      returns.filter((r: any) => (OPEN_RETURN_STATUSES as readonly string[]).includes(r.status)).map((r: any) => String(r.orderId)),
+    );
+    if (openReturnOrderIds.size === 0) return [];
+    const rows = await orderTable.findMany({
+      where: { organizationId, isPractice: false, id: { in: [...openReturnOrderIds] } },
+    });
+    return idsOf(rows ?? []);
+  }
+
+  /** ON1: queue counts — shares resolveQueueOrderIds with the list. */
+  async queueCounts(organizationId: string) {
+    const out: { key: QueueKey; label: string; count: number }[] = [];
+    for (const key of QUEUE_KEYS) {
+      const ids = await this.resolveQueueOrderIds(organizationId, key);
+      out.push({ key, label: QUEUE_LABELS[key], count: ids.length });
+    }
+    return out;
+  }
+
+  /**
+   * ON1 list v2. Semantics:
+   * - queue restricts to the resolveQueueOrderIds set first.
+   * - dateFrom/dateTo filter the effective order date
+   *   (placedAt ?? createdAt, S3 rule) as Asia/Dhaka days.
+   * - district: native checkout stores the district on
+   *   Customer.address Json as { address_1, district, note } —
+   *   match that district (case-insensitive equality) OR the
+   *   order's own address string containing the value
+   *   (case-insensitive).
+   * - provider: orders with >= 1 CourierShipment of that provider.
+   * - paymentState (approved sums via ONE groupBy):
+   *   paid = approvedSum >= totalMinor (a 0-total order is paid);
+   *   partial = 0 < approvedSum < totalMinor;
+   *   due = approvedSum == 0 AND totalMinor > 0.
+   * - tag: the order's tags Json array contains the tag.
+   * - search: externalNumber / externalId contains, or customer
+   *   firstName / lastName / phone contains (all case-insensitive),
+   *   AND-combined with every other filter.
+   * Candidate rows are loaded once (org-scoped, base filters in
+   * the query) and the v2 predicates applied in JS — the same
+   * honest-cost shape as the queues.
+   */
+  private async listV2(organizationId: string, q: {
+    status?: string; isCod?: boolean; page?: number; pageSize?: number; includePractice?: boolean;
+    queue?: string; dateFrom?: string; dateTo?: string; district?: string; provider?: string;
+    source?: string; paymentState?: string; minTotal?: string; maxTotal?: string;
+    assigneeId?: string; tag?: string; search?: string; sort?: string; riskBand?: string;
+  }) {
+    const page = Math.max(1, q.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
+    const sort = q.sort ?? "placedAt_desc";
+    if (!["placedAt_desc", "placedAt_asc", "total_desc", "total_asc"].includes(sort)) {
+      throw new BadRequestException(`অজানা sort "${sort}" — সঠিক sort: placedAt_desc, placedAt_asc, total_desc, total_asc`);
+    }
+    if (q.paymentState && !["paid", "partial", "due"].includes(q.paymentState)) {
+      throw new BadRequestException(`অজানা paymentState "${q.paymentState}" — সঠিক মান: paid, partial, due`);
+    }
+    if (q.riskBand && !["low", "medium", "high"].includes(q.riskBand)) {
+      throw new BadRequestException(`অজানা riskBand "${q.riskBand}" — সঠিক মান: low, medium, high`);
+    }
+    let minTotal: bigint | null = null;
+    let maxTotal: bigint | null = null;
+    try { if (q.minTotal) minTotal = BigInt(q.minTotal); } catch { throw new BadRequestException("minTotal সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
+    try { if (q.maxTotal) maxTotal = BigInt(q.maxTotal); } catch { throw new BadRequestException("maxTotal সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
+    let start: Date | undefined;
+    let endExclusive: Date | undefined;
+    if (q.dateFrom) start = this.parseDhakaDay(q.dateFrom, "dateFrom");
+    if (q.dateTo) endExclusive = new Date(this.parseDhakaDay(q.dateTo, "dateTo").getTime() + 24 * 3600 * 1000);
+    if (q.dateFrom && q.dateTo && q.dateFrom > q.dateTo) {
+      throw new BadRequestException("dateFrom তারিখ dateTo তারিখের পরে হতে পারবে না");
+    }
+
+    let queueSet: Set<string> | null = null;
+    if (q.queue) queueSet = new Set(await this.resolveQueueOrderIds(organizationId, q.queue));
+
+    const where: any = {
+      organizationId,
+      ...(q.includePractice ? {} : { isPractice: false }),
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
+      ...(q.source ? { source: q.source } : {}),
+      ...(q.assigneeId ? { assigneeId: q.assigneeId } : {}),
+      // ON4: riskBand is a real column — filter in the base where.
+      ...(q.riskBand ? { riskBand: q.riskBand } : {}),
+    };
+    let rows: any[] = ((await (this.prisma as any).order.findMany({
+      where, include: { customer: true, items: true },
+    })) ?? []);
+
+    if (queueSet) rows = rows.filter((o: any) => queueSet!.has(String(o.id)));
+    if (start || endExclusive) {
+      rows = rows.filter((o: any) => {
+        const eff = o.placedAt ?? o.createdAt;
+        if (!eff) return false;
+        const t = new Date(eff).getTime();
+        if (start && t < start.getTime()) return false;
+        if (endExclusive && t >= endExclusive.getTime()) return false;
+        return true;
+      });
+    }
+    if (q.tag) {
+      rows = rows.filter((o: any) => Array.isArray(o.tags) && o.tags.map((t: any) => String(t)).includes(q.tag!));
+    }
+    if (q.district) {
+      const needle = q.district.toLowerCase();
+      rows = rows.filter((o: any) => {
+        const custDistrict = o.customer?.address?.district;
+        if (custDistrict && String(custDistrict).toLowerCase() === needle) return true;
+        return typeof o.address === "string" && o.address.toLowerCase().includes(needle);
+      });
+    }
+    if (q.search) {
+      const needle = q.search.toLowerCase();
+      rows = rows.filter((o: any) => {
+        const c = o.customer ?? {};
+        return [o.externalNumber, o.externalId, c.firstName, c.lastName, c.phone]
+          .some((v: any) => v != null && String(v).toLowerCase().includes(needle));
+      });
+    }
+    if (minTotal !== null) rows = rows.filter((o: any) => BigInt(o.totalMinor ?? 0) >= minTotal!);
+    if (maxTotal !== null) rows = rows.filter((o: any) => BigInt(o.totalMinor ?? 0) <= maxTotal!);
+    if (q.provider) {
+      const shipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+        where: { organizationId },
+      }).catch(() => [])) ?? []);
+      const withProvider = new Set(shipments.filter((s: any) => s.provider === q.provider).map((s: any) => String(s.orderId)));
+      rows = rows.filter((o: any) => withProvider.has(String(o.id)));
+    }
+    if (q.paymentState) {
+      const sums = await this.approvedSumsByOrder(organizationId, rows.map((o: any) => String(o.id)));
+      rows = rows.filter((o: any) => {
+        const total = BigInt(o.totalMinor ?? 0);
+        const paid = sums.get(String(o.id)) ?? 0n;
+        if (q.paymentState === "paid") return paid >= total;
+        if (q.paymentState === "partial") return paid > 0n && paid < total;
+        return paid === 0n && total > 0n; // due
+      });
+    }
+
+    const effTime = (o: any) => new Date(o.placedAt ?? o.createdAt ?? 0).getTime();
+    rows.sort((a: any, b: any) => {
+      if (sort === "placedAt_asc") return effTime(a) - effTime(b);
+      if (sort === "total_desc") return BigInt(b.totalMinor ?? 0) > BigInt(a.totalMinor ?? 0) ? 1 : BigInt(b.totalMinor ?? 0) < BigInt(a.totalMinor ?? 0) ? -1 : 0;
+      if (sort === "total_asc") return BigInt(a.totalMinor ?? 0) > BigInt(b.totalMinor ?? 0) ? 1 : BigInt(a.totalMinor ?? 0) < BigInt(b.totalMinor ?? 0) ? -1 : 0;
+      return effTime(b) - effTime(a); // placedAt_desc
+    });
+
+    const total = rows.length;
+    const items = rows.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+    const mapped = items.map(pubOrder);
+    await this.enrichListRows(organizationId, items, mapped);
+    return { total, page, pageSize, items: mapped };
+  }
+
+  /** ON1 tag validation (shared by the tags endpoint + bulk):
+   * an array of at most 10 tags, each trimmed 1..30 chars, deduped. */
+  validateTags(input: unknown): string[] {
+    if (!Array.isArray(input)) throw new BadRequestException("tags একটি তালিকা (array) হতে হবে");
+    if (input.length > 10) throw new BadRequestException("সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে");
+    const out: string[] = [];
+    for (const raw of input) {
+      const tag = String(raw ?? "").trim();
+      if (tag.length < 1 || tag.length > 30) {
+        throw new BadRequestException("প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে");
+      }
+      if (!out.includes(tag)) out.push(tag);
+    }
+    return out;
+  }
+
+  /** ON1: replace an order's tags (org-scoped; foreign id = 404). */
+  async setTags(organizationId: string, actorId: string, orderId: string, input: unknown) {
+    const tags = this.validateTags(input);
+    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+    await (this.prisma as any).order.update({ where: { id: order.id }, data: { tags } });
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.tags_updated",
+      entityType: "Order", entityId: orderId, metadata: { count: tags.length },
+    }).catch(() => undefined);
+    return this.getOne(organizationId, orderId);
+  }
+
+  /** ON1: assign / unassign an order. A non-null assignee must be
+   * an ACTIVE member of the org. */
+  async assignOrder(organizationId: string, actorId: string, orderId: string, assigneeId: string | null) {
+    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (assigneeId !== null && assigneeId !== undefined) {
+      await this.assertActiveMember(organizationId, assigneeId);
+    }
+    await (this.prisma as any).order.update({
+      where: { id: order.id }, data: { assigneeId: assigneeId ?? null },
+    });
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.assigned",
+      entityType: "Order", entityId: orderId, metadata: { assigneeId: assigneeId ?? null },
+    }).catch(() => undefined);
+    return this.getOne(organizationId, orderId);
+  }
+
+  /** Shared ACTIVE-membership check (assign + bulk assign). */
+  async assertActiveMember(organizationId: string, userId: string): Promise<void> {
+    const member = await (this.prisma as any).membership?.findFirst({
+      where: { userId, organizationId, status: "ACTIVE" },
+    }).catch(() => null);
+    if (!member) {
+      throw new BadRequestException("দায়িত্বপ্রাপ্ত ব্যক্তি এই প্রতিষ্ঠানের সক্রিয় সদস্য নন");
+    }
+  }
+
+  // ---------- ON1: saved views ----------
+
+  async listSavedViews(organizationId: string, userId: string) {
+    const table = (this.prisma as any).orderSavedView;
+    if (!table?.findMany) return [];
+    const rows = await table.findMany({ where: { organizationId, userId } });
+    return [...(rows ?? [])].sort((a: any, b: any) =>
+      new Date(b.updatedAt ?? b.createdAt ?? 0).getTime() - new Date(a.updatedAt ?? a.createdAt ?? 0).getTime());
+  }
+
+  async createSavedView(organizationId: string, userId: string, dto: { name?: string; queue?: string | null; filters?: unknown }) {
+    const name = String(dto?.name ?? "").trim();
+    if (name.length < 1 || name.length > 80) {
+      throw new BadRequestException("ভিউয়ের নাম ১–৮০ অক্ষরের হতে হবে");
+    }
+    const filters = dto?.filters ?? {};
+    if (typeof filters !== "object" || filters === null || Array.isArray(filters)) {
+      throw new BadRequestException("filters একটি object হতে হবে");
+    }
+    for (const key of Object.keys(filters as Record<string, unknown>)) {
+      if (!LIST_V2_FILTER_KEYS.includes(key)) {
+        throw new BadRequestException(`অজানা filter "${key}" — সঠিক filter: ${LIST_V2_FILTER_KEYS.join(", ")}`);
+      }
+    }
+    if (dto?.queue != null && !isQueueKey(dto.queue)) {
+      throw new BadRequestException(`অজানা কিউ "${dto.queue}" — সঠিক কিউ: ${QUEUE_KEYS.join(", ")}`);
+    }
+    const table = (this.prisma as any).orderSavedView;
+    if (!table?.create) throw new BadRequestException("Saved views are not available in this deployment");
+    const row = await table.create({
+      data: { organizationId, userId, name, queue: dto?.queue ?? null, filters },
+    });
+    await this.audit?.log({
+      organizationId, userId, action: "orders.saved_view_created",
+      entityType: "OrderSavedView", entityId: row.id, metadata: { name },
+    }).catch(() => undefined);
+    return row;
+  }
+
+  async deleteSavedView(organizationId: string, userId: string, viewId: string) {
+    const table = (this.prisma as any).orderSavedView;
+    const row = table?.findFirst
+      ? await table.findFirst({ where: { id: viewId, organizationId, userId } }).catch(() => null)
+      : null;
+    if (!row) throw new NotFoundException("Saved view not found");
+    await table.delete({ where: { id: row.id } });
+    await this.audit?.log({
+      organizationId, userId, action: "orders.saved_view_deleted",
+      entityType: "OrderSavedView", entityId: viewId, metadata: {},
+    }).catch(() => undefined);
+    return { deleted: true, id: viewId };
+  }
+
+  // ---------- ON1: live feed ----------
+
+  /** Orders created OR updated after `since` (max 50), newest
+   * activity first. changeKind is "created" when the creation
+   * itself is after `since`, else "updated". Practice excluded. */
+  async feed(organizationId: string, sinceRaw?: string) {
+    const since = sinceRaw ? new Date(sinceRaw) : null;
+    if (!since || Number.isNaN(since.getTime())) {
+      throw new BadRequestException("since একটি সঠিক ISO তারিখ-সময় হতে হবে");
+    }
+    const rows: any[] = ((await (this.prisma as any).order.findMany({
+      where: { organizationId, isPractice: false },
+      include: { customer: true },
+    })) ?? []);
+    const t = since.getTime();
+    return rows
+      .filter((o: any) => {
+        const c = o.createdAt ? new Date(o.createdAt).getTime() : 0;
+        const u = o.updatedAt ? new Date(o.updatedAt).getTime() : 0;
+        return c > t || u > t;
+      })
+      .map((o: any) => {
+        const c = o.createdAt ? new Date(o.createdAt).getTime() : 0;
+        const u = o.updatedAt ? new Date(o.updatedAt).getTime() : 0;
+        return { o, activity: Math.max(c, u), created: c > t };
+      })
+      .sort((a: any, b: any) => b.activity - a.activity)
+      .slice(0, 50)
+      .map(({ o, created }: any) => ({
+        id: o.id,
+        externalNumber: o.externalNumber ?? null,
+        source: o.source ?? null,
+        status: o.status,
+        isCod: o.isCod ?? false,
+        totalMinor: BigInt(o.totalMinor ?? 0).toString(),
+        placedAt: o.placedAt ?? null,
+        createdAt: o.createdAt ?? null,
+        updatedAt: o.updatedAt ?? null,
+        changeKind: created ? "created" : "updated",
+        customerName: [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || null,
+      }));
   }
 
   // ---------- Sales & Data S3: orders CSV export ----------
@@ -788,7 +1446,7 @@ export class OrdersService {
    * Feature 2: Merge duplicate orders into one primary order.
    * Cancels duplicate orders with clear audit reason, aggregates items, updates total.
    */
-  async mergeOrders(organizationId: string, userId: string, dto: MergeOrdersDto) {
+  async mergeOrders(organizationId: string, userId: string, dto: MergeDuplicateOrdersDto) {
     const primary = await (this.prisma as any).order.findFirst({
       where: { id: dto.primaryOrderId, organizationId },
       include: { items: true, customer: true },

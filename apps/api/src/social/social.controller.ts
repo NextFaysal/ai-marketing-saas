@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { SocialService, type MediaFileStream } from "./social.service";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -8,10 +8,16 @@ import { SocialPublishService } from "./social-publish.service";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialImportService } from "./social-import.service";
 import { SocialInsightsService } from "./social-insights.service";
+import { SocialQueueService } from "./social-queue.service";
+import { SocialMediaLibraryService } from "./social-media-library.service";
+import { SocialCommerceDraftService } from "./social-commerce-draft.service";
+import { SocialLinkService } from "./social-link.service";
+import { SocialHealthService } from "./social-health.service";
 import {
-  CreateHashtagSetDto, CreateSocialPostDto, CreateTemplateImageDto, GenerateAiImageDto, GenerateSocialCopyDto, ImportSocialMediaDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
-  RejectSocialPostDto, ScheduleSocialPostDto, SelectYouTubeChannelDto, UpdateHashtagSetDto, UpdateSocialPostDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
+  BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
+  AssignSocialPostDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
+import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -47,6 +53,11 @@ export class SocialController {
     private readonly oauth: SocialOAuthService,
     private readonly raster: SocialRasterService,
     private readonly importer: SocialImportService,
+    private readonly queue: SocialQueueService,
+    private readonly library: SocialMediaLibraryService,
+    private readonly commerceDrafts: SocialCommerceDraftService,
+    private readonly links: SocialLinkService,
+    private readonly health: SocialHealthService,
   ) {}
 
   // Picker step 1: verify + list Pages. Stores nothing.
@@ -74,9 +85,11 @@ export class SocialController {
   // SP9: YouTube OAuth connect — same shape. With MORE THAN ONE
   // channel the callback parks the authorization in a pick state;
   // these two endpoints show the choices and finish the connect.
+  // CC28: ?appSource=own connects through the tenant's OWN Google
+  // app (YouTube rides the Google OAuth client).
   @Get("accounts/youtube/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
-  youtubeConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
-    return this.oauth.youtubeConnectUrl(orgId, user.userId);
+  youtubeConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.youtubeConnectUrl(orgId, user.userId, appSource);
   }
 
   @Get("accounts/youtube/pick-info")
@@ -89,10 +102,35 @@ export class SocialController {
     return this.oauth.selectYouTubeChannel(orgId, user.userId, dto);
   }
 
+  // CC20: LinkedIn Page OAuth connect. CC28: ?appSource=own
+  // connects through the tenant's OWN LinkedIn app (Connect
+  // Center → নিজের অ্যাপ → LinkedIn). With MORE THAN ONE admin'd
+  // Page the callback parks the authorization in a pick state;
+  // these endpoints show the choices and finish the connect.
+  @Get("accounts/linkedin/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  linkedinConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.linkedinConnectUrl(orgId, user.userId, appSource);
+  }
+
+  @Get("accounts/linkedin/pick-info")
+  linkedinPickInfo(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("state") state: string) {
+    return this.oauth.getLinkedInPickInfo(orgId, user.userId, state ?? "");
+  }
+
+  @Post("accounts/linkedin/select-organization") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  linkedinSelectOrganization(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SelectLinkedInOrganizationDto) {
+    return this.oauth.selectLinkedInOrganization(orgId, user.userId, dto);
+  }
+
   // SP8/SP9: what the UI may honestly claim about the OAuth
   // platforms (configured? TikTok audited?) — booleans only.
   @Get("platform-modes")
   platformModes() { return this.oauth.getPlatformModes(); }
+
+  // SU10: account health list — the literal "health" segment is
+  // declared with (and before) the bare accounts routes.
+  @Get("accounts/health")
+  listAccountHealth(@Param("organizationId") orgId: string) { return this.health.listAccountHealth(orgId); }
 
   @Get("accounts")
   listAccounts(@Param("organizationId") orgId: string) { return this.social.listAccounts(orgId); }
@@ -100,6 +138,13 @@ export class SocialController {
   @Post("accounts/:id/disconnect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   disconnectAccount(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.social.disconnectAccount(orgId, user.userId, id);
+  }
+
+  // SU10: on-demand health check for ONE account (same
+  // OWNER/ADMIN gate as disconnect).
+  @Post("accounts/:id/check-health") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  checkAccountHealth(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.health.checkAccountHealth(orgId, user.userId, id);
   }
 
   // SP4 image routes are declared BEFORE the media/:id routes so
@@ -155,8 +200,66 @@ export class SocialController {
   @Get("media/limits")
   mediaLimits() { return this.social.mediaLimits(); }
 
+  // SU3: media library — the literal "folders" / "bulk" segments
+  // are declared BEFORE every media/:id route below so they are
+  // never captured as an asset id.
+  @Get("media/folders")
+  listMediaFolders(@Param("organizationId") orgId: string) { return this.library.listFolders(orgId); }
+
+  @Post("media/folders") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createMediaFolder(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateMediaFolderDto) {
+    return this.library.createFolder(orgId, user.userId, dto);
+  }
+
+  @Patch("media/folders/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateMediaFolder(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateMediaFolderDto) {
+    return this.library.updateFolder(orgId, user.userId, id, dto);
+  }
+
+  @Delete("media/folders/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  deleteMediaFolder(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.library.deleteFolder(orgId, user.userId, id);
+  }
+
+  @Post("media/bulk") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  bulkMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkMediaDto) {
+    return this.library.bulkMedia(orgId, user.userId, dto);
+  }
+
+  // SU3: GET media now goes through the library service (folder /
+  // tag / name filters); SocialService.listMedia stays for its
+  // other callers.
   @Get("media")
-  listMedia(@Param("organizationId") orgId: string) { return this.social.listMedia(orgId); }
+  listMedia(
+    @Param("organizationId") orgId: string,
+    @Query("folderId") folderId?: string,
+    @Query("tag") tag?: string,
+    @Query("q") q?: string,
+  ) { return this.library.listMedia(orgId, { folderId, tag, q }); }
+
+  @Patch("media/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateMediaAssetDto) {
+    return this.library.updateMedia(orgId, user.userId, id, dto);
+  }
+
+  @Get("media/:id/usage")
+  mediaUsage(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.library.getUsage(orgId, id);
+  }
+
+  // SU3: aspect-ratio edit — a NEW derived asset; the source is
+  // never modified.
+  @Post("media/:id/edit") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  editMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: EditMediaAssetDto) {
+    return this.library.editAsset(orgId, user.userId, id, dto);
+  }
+
+  // SU3: video cover frame — derived image asset (honest 400
+  // when the host has no ffmpeg).
+  @Post("media/:id/cover") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  coverMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CoverMediaDto) {
+    return this.library.coverFromVideo(orgId, user.userId, id, dto.atSeconds);
+  }
 
   @Get("media/:id/file")
   async mediaFile(
@@ -194,6 +297,33 @@ export class SocialController {
     return this.socialAi.generateCopy(orgId, user.userId, dto);
   }
 
+  // SU4: monthly AI content plan + Reel/Short script (both
+  // literal segments under posts, beside ai-copy).
+  @Post("posts/ai-content-plan") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateContentPlan(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateContentPlanDto) {
+    return this.socialAi.generateContentPlan(orgId, user.userId, dto);
+  }
+
+  @Post("posts/ai-script") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateScript(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateSocialScriptDto) {
+    return this.socialAi.generateScript(orgId, user.userId, dto);
+  }
+
+  // SU4: saved content plans — "content-plans" is its own first
+  // segment, so it never collides with posts/:id.
+  @Get("content-plans")
+  listContentPlans(@Param("organizationId") orgId: string) { return this.socialAi.listContentPlans(orgId); }
+
+  @Get("content-plans/:id")
+  getContentPlan(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.socialAi.getContentPlan(orgId, id);
+  }
+
+  @Post("content-plans/:id/materialize") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  materializeContentPlan(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: MaterializeContentPlanDto) {
+    return this.socialAi.materializePlan(orgId, user.userId, id, dto);
+  }
+
   @Get("hashtag-sets")
   listHashtagSets(@Param("organizationId") orgId: string) { return this.social.listHashtagSets(orgId); }
 
@@ -223,8 +353,60 @@ export class SocialController {
     return this.social.updateSocialSettings(orgId, user.userId, dto);
   }
 
+  // SU5: commerce auto-draft settings — "auto-draft-settings"
+  // is a literal first segment like "settings", so it never
+  // collides with posts/:id. No config row reads as all-off
+  // defaults (the service does not write on read).
+  @Get("auto-draft-settings")
+  getAutoDraftSettings(@Param("organizationId") orgId: string) { return this.commerceDrafts.getSettings(orgId); }
+
+  @Patch("auto-draft-settings") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  updateAutoDraftSettings(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: UpdateAutoDraftSettingsDto) {
+    return this.commerceDrafts.updateSettings(orgId, user.userId, dto);
+  }
+
   @Get("insights/summary")
   insightsSummary(@Param("organizationId") orgId: string) { return this.insights.getInsightsSummary(orgId); }
+
+  // SU4: hashtag performance from the org's own published posts.
+  @Get("insights/hashtags")
+  insightsHashtags(@Param("organizationId") orgId: string) { return this.insights.hashtagPerformance(orgId); }
+
+  // SU7: analytics v2 — daily time series, per-account
+  // comparison, content-type analysis, follower history.
+  @Get("insights/timeseries")
+  insightsTimeseries(@Param("organizationId") orgId: string, @Query("days") days?: string) {
+    return this.insights.timeseries(orgId, days === undefined ? undefined : Number(days));
+  }
+
+  @Get("insights/content-types")
+  insightsContentTypes(@Param("organizationId") orgId: string) { return this.insights.contentTypes(orgId); }
+
+  @Get("insights/accounts")
+  insightsAccounts(@Param("organizationId") orgId: string) { return this.insights.accountsComparison(orgId); }
+
+  @Get("insights/followers")
+  insightsFollowers(@Param("organizationId") orgId: string) { return this.insights.followers(orgId); }
+
+  // SU7: monthly report exports (@Res pattern, reports
+  // controller convention). Declared here with the other literal
+  // "insights/..." segments. A malformed month is the service's
+  // Bengali 400.
+  @Get("insights/report.csv")
+  async insightsReportCsv(@Param("organizationId") orgId: string, @Query("month") month: string | undefined, @Res() res: Response) {
+    const report = await this.insights.monthlyReport(orgId, month);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="social-report-${report.month}.csv"`);
+    res.send(buildMonthlyReportCsv(report.rows, report.month));
+  }
+
+  @Get("insights/report.pdf")
+  async insightsReportPdf(@Param("organizationId") orgId: string, @Query("month") month: string | undefined, @Res() res: Response) {
+    const report = await this.insights.monthlyReport(orgId, month);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="social-report-${report.month}.pdf"`);
+    res.send(buildMonthlyReportPdf(report.rows, report.month));
+  }
 
   // SP7: bulk insights refresh — declared BEFORE "posts/:id/..."
   // so the literal "refresh-insights" segment is never read as an
@@ -234,19 +416,148 @@ export class SocialController {
     return this.insights.refreshAllInsights(orgId, user.userId);
   }
 
+  // SU1: post groups — "groups" is its own first segment and
+  // "posts/group" a literal under posts, so neither collides
+  // with posts/:id.
+  @Post("posts/group") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createPostGroup(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSocialPostGroupDto) {
+    return this.social.createPostGroup(orgId, user.userId, dto);
+  }
+
+  @Get("groups")
+  listGroups(@Param("organizationId") orgId: string) { return this.social.listGroups(orgId); }
+
+  @Get("groups/:id")
+  getGroup(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.social.getGroup(orgId, id);
+  }
+
+  // SU2: posting slots — literal "posting-slots" segment.
+  @Get("posting-slots")
+  listSlots(@Param("organizationId") orgId: string) { return this.queue.listSlots(orgId); }
+
+  @Post("posting-slots") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createSlot(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSocialPostingSlotDto) {
+    return this.queue.createSlot(orgId, user.userId, dto);
+  }
+
+  @Patch("posting-slots/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateSlot(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateSocialPostingSlotDto) {
+    return this.queue.updateSlot(orgId, user.userId, id, dto);
+  }
+
+  @Delete("posting-slots/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  deleteSlot(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.queue.deleteSlot(orgId, user.userId, id);
+  }
+
   @Post("posts") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createPost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSocialPostDto) {
     return this.social.createPost(orgId, user.userId, dto);
   }
 
   @Get("posts")
-  listPosts(@Param("organizationId") orgId: string, @Query("status") status?: string, @Query("accountId") accountId?: string) {
-    return this.social.listPosts(orgId, { status, accountId });
+  listPosts(
+    @Param("organizationId") orgId: string,
+    @Query("status") status?: string,
+    @Query("accountId") accountId?: string,
+    @Query("assignedUserId") assignedUserId?: string,
+    @Query("q") q?: string,
+    // SU11: cursor pagination is opt-in — the service receives
+    // cursor/limit keys ONLY when a param was actually given
+    // ("" = first page), so every existing caller keeps the
+    // exact legacy bare-array response.
+    @Query("cursor") cursor?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.social.listPosts(orgId, {
+      status, accountId, assignedUserId, q,
+      ...(cursor !== undefined || limit !== undefined
+        ? { cursor: cursor === "" || cursor === undefined ? null : cursor, limit: limit === undefined ? undefined : Number(limit) }
+        : {}),
+    });
   }
+
+  // SU11: bulk actions — the literal "bulk" segment MUST stay
+  // before posts/:id, or it would be captured as an id.
+  @Post("posts/bulk") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  bulkPosts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkSocialPostsDto) {
+    return this.social.bulkPosts(orgId, user.userId, dto);
+  }
+
+  // SU11: CSV bulk draft import — raw text body (the file's text
+  // IS the payload, whatever the content-type), read off the
+  // request stream like media/upload-file does. Also before
+  // posts/:id for the same literal-segment reason.
+  @Post("posts/import-csv") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  async importPostsCsv(@Req() req: Request, @CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of req as AsyncIterable<Buffer | Uint8Array>) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > 5_000_000) {
+        (req as unknown as { destroy?: () => void }).destroy?.();
+        throw new BadRequestException("CSV ফাইলটি অনেক বড় — সর্বোচ্চ ৫ MB-এর মধ্যে রাখুন।");
+      }
+      chunks.push(buf);
+    }
+    return this.social.importPostsCsv(orgId, user.userId, Buffer.concat(chunks).toString("utf8"));
+  }
+
+  // SU10: failure center — the literal "failures" segment MUST
+  // stay before posts/:id, or it would be captured as an id.
+  @Get("posts/failures")
+  listPostFailures(@Param("organizationId") orgId: string) { return this.health.listPostFailures(orgId); }
 
   @Get("posts/:id")
   getPost(@Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.social.getPost(orgId, id);
+  }
+
+  // SU6: per-post tracked-link stats (clicks + associated
+  // orders/revenue, labelled association — never attribution).
+  @Get("posts/:id/link-stats")
+  linkStats(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.links.getLinkStats(orgId, id);
+  }
+
+  // SU9: collaboration — internal notes (team-only, never sent
+  // to a platform), version history + restore, the merged
+  // activity timeline, and assignment.
+  @Get("posts/:id/notes")
+  listPostNotes(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.social.listPostNotes(orgId, id);
+  }
+
+  @Post("posts/:id/notes") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createPostNote(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateSocialPostNoteDto) {
+    return this.social.createPostNote(orgId, user.userId, id, dto);
+  }
+
+  @Delete("posts/:id/notes/:noteId") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  deletePostNote(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Param("noteId") noteId: string) {
+    return this.social.deletePostNote(orgId, user.userId, id, noteId);
+  }
+
+  @Get("posts/:id/versions")
+  listPostVersions(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.social.listPostVersions(orgId, id);
+  }
+
+  @Post("posts/:id/versions/:versionId/restore") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  restorePostVersion(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Param("versionId") versionId: string) {
+    return this.social.restorePostVersion(orgId, user.userId, id, versionId);
+  }
+
+  @Get("posts/:id/timeline")
+  postTimeline(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.social.getPostTimeline(orgId, id);
+  }
+
+  @Post("posts/:id/assign") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  assignPost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: AssignSocialPostDto) {
+    return this.social.assignPost(orgId, user.userId, id, dto?.assignedUserId ?? null);
   }
 
   @Patch("posts/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
@@ -275,6 +586,43 @@ export class SocialController {
   @Post("posts/:id/publish-now") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   publishNow(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.publish.publishNow(orgId, user.userId, id);
+  }
+
+  // SU10: explicit human retry of a failed post — the health
+  // service resets an exhausted attempt budget (audited), then
+  // delegates to the same publishNow path above.
+  @Post("posts/:id/retry") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  retryPost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.health.retryPost(orgId, user.userId, id);
+  }
+
+  // SU1: clone any post into a fresh draft.
+  @Post("posts/:id/clone") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  clonePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.social.clonePost(orgId, user.userId, id);
+  }
+
+  // SU8: cross-post derive — fresh drafts for the target
+  // accounts; incompatible targets come back as warnings.
+  @Post("posts/:id/derive") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  derivePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: DeriveSocialPostDto) {
+    return this.social.derivePost(orgId, user.userId, id, dto.accountIds);
+  }
+
+  // SU2: queue actions.
+  @Post("posts/:id/add-to-queue") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  addToQueue(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.queue.addToQueue(orgId, user.userId, id);
+  }
+
+  @Post("posts/:id/schedule-best-time") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  scheduleBestTime(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.queue.scheduleBestTime(orgId, user.userId, id);
+  }
+
+  @Post("posts/:id/evergreen") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  setEvergreen(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateEvergreenDto) {
+    return this.queue.setEvergreen(orgId, user.userId, id, dto);
   }
 
   // SP7: insights refresh for one published post + the approval
@@ -326,6 +674,31 @@ export class PublicMediaController {
 }
 
 /**
+ * SU6 — PUBLIC tracked social link redirect. The token is the
+ * credential (unguessable, minted only for a scheduled/published
+ * post's link). Every hit 302s to the post's linkUrl with UTM
+ * applied; human clicks are recorded, bot / link-preview fetches
+ * are redirected WITHOUT a click row. An unknown token, or a post
+ * whose linkUrl is gone, is an honest 404.
+ */
+@Controller("public/social")
+export class PublicSocialLinkController {
+  constructor(private readonly links: SocialLinkService) {}
+
+  @Public()
+  @Get("r/:token")
+  async redirect(
+    @Param("token") token: string,
+    @Headers("user-agent") userAgent: string | undefined,
+    @Res() res: Response,
+  ) {
+    const result = await this.links.recordClick(token, userAgent ?? null);
+    if (!result || !result.url) throw new NotFoundException("Link not found");
+    return res.redirect(302, result.url);
+  }
+}
+
+/**
  * SP8/SP9: PUBLIC OAuth callbacks for the operator-app platforms.
  * No auth guard can apply (the browser arrives from TikTok /
  * Google) — security lives in the signed-out state row instead:
@@ -361,6 +734,21 @@ export class SocialOAuthCallbackController {
     @Res() res: Response,
   ) {
     const url = await this.oauth.handleYouTubeCallback({ code, state, error });
+    return res.redirect(302, url);
+  }
+
+  // CC20: LinkedIn callbacks land on the CONNECT CENTER (where
+  // the connect started), with linkedin_connected / linkedin_error
+  // / linkedin_pick params.
+  @Public()
+  @Get("linkedin/callback")
+  async linkedinCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const url = await this.oauth.handleLinkedInCallback({ code, state, error });
     return res.redirect(302, url);
   }
 }

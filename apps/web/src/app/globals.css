@@ -379,6 +379,77 @@
   .table-wrap .comp-sticky-col { position: sticky; left: 0; z-index: 1; background: #ffffff; box-shadow: 1px 0 0 rgba(226, 232, 240, 0.9); }
   .table-wrap thead .comp-sticky-col { z-index: 2; background: #f8fafc; }
 
+  /* ---------- Social Posts Design v2 primitives (SD1, additive) ---------- */
+  /* Every brand colour below derives from --brand-from/--brand-to (via
+     color-mix / the shared --brand-soft/--brand-ring vars), so a tenant's
+     white-label colour flows into the Social Posts page exactly like the
+     Inbox/Competitors surfaces. Platform dot colours are the platforms'
+     own identity colours (identity, not decoration). */
+
+  /* Power header: card surface with a soft brand wash from the top. */
+  .soc-header { @apply card relative overflow-hidden p-5; background-image: linear-gradient(180deg, var(--brand-soft), #ffffff 74%); }
+
+  /* Sticky tab rail: one row under the 60px dashboard topbar, horizontal
+     scroll-snap on small screens (never wraps), ≥44px touch targets. */
+  .soc-tab-rail { @apply sticky z-30 flex gap-1.5 overflow-x-auto rounded-2xl bg-white/85 p-1.5 shadow-sm ring-1 ring-slate-200/70 backdrop-blur; top: 68px; scroll-snap-type: x proximity; scrollbar-width: none; }
+  .soc-tab-rail::-webkit-scrollbar { display: none; }
+  .soc-tab-btn { @apply inline-flex min-h-[44px] shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 text-[13px] font-bold text-slate-600 transition duration-150 hover:text-slate-900 active:scale-[0.97]; }
+  .soc-tab-btn:not(.soc-tab-btn-active):hover { background: var(--brand-soft); }
+  .soc-tab-btn:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--brand-ring); }
+  .soc-tab-btn-active { @apply text-white shadow-sm hover:text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Composer step card + numbered step badge (guided flow, SD3). */
+  .soc-section-card { @apply card space-y-4 p-5; }
+  .soc-step-num { @apply flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-full text-[13px] font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Platform identity: avatar (account picture or initials) + colour dot. */
+  .soc-avatar { @apply relative flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-[12px] font-bold text-white shadow-sm; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+  .soc-avatar-img { @apply h-full w-full rounded-full object-cover; }
+  .soc-dot { @apply inline-block h-2.5 w-2.5 shrink-0 rounded-full shadow-sm ring-2 ring-white; }
+  .soc-dot-on-avatar { @apply absolute -bottom-0.5 -right-0.5; }
+  .soc-dot-meta_page { background: #1877f2; }
+  .soc-dot-instagram { background: #d62976; }
+  .soc-dot-tiktok { background: #0f172a; }
+  .soc-dot-youtube { background: #dc2626; }
+
+  /* Skeleton block (same shimmer discipline as .skeleton). */
+  .soc-skeleton { @apply relative overflow-hidden rounded-xl bg-slate-200/70; }
+  .soc-skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.55) 50%, transparent 80%); animation: skel-wave 1.4s infinite; }
+
+  /* Designed empty state (icon tile + message + next-step action). */
+  .soc-empty { @apply flex flex-col items-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-8 text-center; }
+  .soc-empty-icon { @apply flex h-11 w-11 select-none items-center justify-center rounded-2xl text-xl; background: var(--brand-soft); }
+
+  /* Mobile sticky action bar (composer): sits directly above the fixed
+     h-16 MobileBottomNav, desktop hides it (in-card actions remain). */
+  .soc-action-bar { @apply fixed inset-x-0 bottom-16 z-40 border-t border-slate-200 bg-white/95 px-4 py-2.5 backdrop-blur lg:hidden; padding-bottom: calc(0.625rem + env(safe-area-inset-bottom)); }
+
+  /* Dropzone (composer media step): dashed resting state, brand ring
+     while a drag hovers. */
+  .soc-dropzone { @apply rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50 p-3 transition duration-150; }
+  .soc-dropzone-active { border-color: var(--brand-from); background: var(--brand-soft); box-shadow: 0 0 0 4px var(--brand-ring); }
+
+  /* Active filter/folder chip (Library rail, SD5): the same brand
+     gradient as the tab rail's active state. */
+  .soc-chip-active { @apply text-white shadow-sm hover:text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+
+  /* Calendar (SD4): today's cell — a brand ring + soft wash instead of
+     the old hard-coded indigo highlight. */
+  .soc-cal-today { border-color: var(--brand-from); background: var(--brand-soft); box-shadow: 0 0 0 1px var(--brand-ring); }
+
+  /* Bulk-selected post card (SD4): a brand ring so the selection
+     state reads at a glance. */
+  .soc-selected { border-color: transparent; box-shadow: 0 0 0 2px var(--brand-ring); }
+
+  /* Large account avatar (Settings account cards, SD7): the same
+     brand gradient + platform dot as .soc-avatar, one step larger. */
+  .soc-avatar-lg { @apply h-11 w-11 text-sm; }
+
+  /* Compact empty state (SD7/SD8): for sub-sections and expanders
+     where the full .soc-empty block would be oversized — the same
+     dashed surface, one line tall. */
+  .soc-empty-sm { @apply flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-3 py-3 text-center; }
+
   /* ---------- Unified Inbox Modern UI Primitives ---------- */
   .inbox-glass {
     backdrop-filter: blur(12px);
@@ -575,3 +646,63 @@
 .ai-composer-shell { border-radius: 24px; background: #ffffff; padding: 10px; box-shadow: var(--shadow-pop); border: 1px solid rgba(226, 232, 240, 0.8); }
 .ai-tag-chip { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 7px; font-size: 10px; font-weight: 700; background: var(--brand-soft); color: var(--brand-from); }
 @keyframes ai-caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+
+/* ---------- Campaign Builder Next CN10 primitives (.cbx-*, additive) ---------- */
+/* Colours derive ONLY from the brand tokens (--brand-from/--brand-to/
+   --brand-soft/--brand-ring) plus white/ink neutrals via color-mix, so
+   white-label flows here exactly like .comp-* / .ctx-*. */
+.cbx-step-rail { position: sticky; top: 8px; z-index: 30; display: flex; gap: 6px; overflow-x: auto; border-radius: 16px; background: rgba(255,255,255,0.88); padding: 6px; box-shadow: var(--shadow-card-v2); border: 1px solid rgba(226,232,240,0.8); backdrop-filter: blur(6px); scrollbar-width: none; scroll-snap-type: x proximity; }
+.cbx-step-rail::-webkit-scrollbar { display: none; }
+.cbx-step-btn { display: inline-flex; min-height: 44px; flex: 1 0 auto; scroll-snap-align: start; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; border-radius: 12px; padding: 10px 14px; font-size: 13px; font-weight: 700; color: var(--ink-body); transition: all .15s ease; }
+.cbx-step-btn:hover { background: var(--brand-soft); color: var(--ink-strong); }
+.cbx-step-btn:active { transform: scale(0.98); }
+.cbx-step-btn-active { color: #fff; box-shadow: 0 6px 16px -6px var(--brand-ring); background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+.cbx-step-btn-active:hover { color: #fff; background: var(--brand-soft); background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+.cbx-step-num { display: inline-flex; height: 22px; width: 22px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 9999px; font-size: 11px; font-weight: 800; background: var(--brand-soft); color: var(--brand-from); }
+.cbx-step-btn-active .cbx-step-num { background: rgba(255,255,255,0.22); color: #fff; }
+/* ONE status pill mapping for plan statuses, shared by builder + hub.
+   Tone is carried by the dot + ring weight, never by invented data. */
+.cbx-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 3px 10px; font-size: 11px; font-weight: 700; background: var(--brand-soft); color: var(--ink-body); border: 1px solid var(--brand-ring); }
+.cbx-pill::before { content: ""; height: 7px; width: 7px; flex-shrink: 0; border-radius: 9999px; background: color-mix(in srgb, var(--brand-from) 45%, #94a3b8); }
+.cbx-pill-draft { border-color: rgba(148,163,184,0.55); background: #f1f5f9; }
+.cbx-pill-pending_approval { background: color-mix(in srgb, var(--brand-from) 13%, #fff7ed); }
+.cbx-pill-pending_approval::before { background: #d97706; }
+.cbx-pill-approved::before { background: #0284c7; }
+.cbx-pill-published { background: color-mix(in srgb, var(--brand-to) 10%, #ecfdf5); }
+.cbx-pill-published::before { background: #059669; }
+.cbx-pill-publishing::before { background: var(--brand-from); }
+.cbx-pill-rejected, .cbx-pill-publish_failed { background: #fef2f2; border-color: rgba(220,38,38,0.35); }
+.cbx-pill-rejected::before, .cbx-pill-publish_failed::before { background: #dc2626; }
+/* Sticky preview + readiness rail shell (desktop right rail). */
+.cbx-rail { border-radius: 20px; background: #fff; border: 1px solid rgba(226,232,240,0.85); box-shadow: var(--shadow-card-v2); padding: 14px; }
+@media (min-width: 1024px) { .cbx-rail { position: sticky; top: 76px; max-height: calc(100dvh - 92px); overflow-y: auto; } }
+.cbx-rail-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); }
+/* Skeleton blocks for surfaces that already carry a loading state. */
+.cbx-skel { position: relative; overflow: hidden; border-radius: 12px; background: color-mix(in srgb, var(--brand-from) 7%, #e2e8f0); min-height: 14px; }
+.cbx-skel::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 50%, transparent 80%); animation: skel-wave 1.4s infinite; }
+/* Designed empty state (calendar month, versions, saved views). */
+.cbx-empty { border-radius: 16px; border: 1.5px dashed var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 75%); padding: 20px 16px; text-align: center; }
+.cbx-empty-title { font-size: 14px; font-weight: 700; color: var(--ink-strong); }
+.cbx-empty-text { margin-top: 4px; font-size: 12px; color: var(--ink-muted); }
+/* Mobile action bar: real handlers only; hidden from lg up. */
+.cbx-mobile-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; display: flex; gap: 8px; align-items: center; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: rgba(255,255,255,0.94); border-top: 1px solid rgba(226,232,240,0.9); box-shadow: 0 -8px 24px -12px rgba(15,23,42,0.25); backdrop-filter: blur(8px); }
+.cbx-mobile-bar > * { min-height: 44px; }
+@media (min-width: 1024px) { .cbx-mobile-bar { display: none; } }
+/* Resolved @mention highlight inside a rendered comment body. */
+.cbx-mention { border-radius: 6px; padding: 0 4px; font-weight: 700; background: var(--brand-soft); color: var(--brand-from); box-shadow: inset 0 0 0 1px var(--brand-ring); }
+/* Launch calendar (hub): plan-level dates only. */
+.cbx-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cbx-cal-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); text-align: center; padding: 4px 0; }
+.cbx-cal-cell { min-height: 64px; border-radius: 12px; border: 1px solid rgba(226,232,240,0.8); background: #fff; padding: 5px 6px; overflow: hidden; }
+.cbx-cal-cell-out { opacity: 0.45; background: #f8fafc; }
+.cbx-cal-cell-today { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 80%); }
+.cbx-cal-day { font-size: 11px; font-weight: 700; color: var(--ink-muted); }
+.cbx-cal-item { display: block; margin-top: 3px; border-radius: 7px; padding: 2px 5px; font-size: 11px; font-weight: 600; line-height: 1.35; background: var(--brand-soft); color: var(--ink-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbx-cal-item:hover { background: var(--brand-soft-strong); }
+/* Saved-view chip (hub rail). */
+.cbx-view-chip { display: inline-flex; min-height: 36px; align-items: center; gap: 6px; border-radius: 9999px; padding: 6px 8px 6px 12px; font-size: 12px; font-weight: 700; color: var(--ink-body); background: #fff; border: 1px solid var(--brand-ring); transition: all .15s ease; }
+.cbx-view-chip:hover { background: var(--brand-soft); }
+.cbx-view-chip-del { display: inline-flex; min-height: 24px; min-width: 24px; align-items: center; justify-content: center; border-radius: 9999px; font-size: 11px; color: var(--ink-muted); }
+.cbx-view-chip-del:hover { background: rgba(220,38,38,0.1); color: #dc2626; }
+/* Bulk action bar (hub). */
+.cbx-bulk-bar { position: sticky; bottom: 12px; z-index: 40; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-radius: 16px; padding: 10px 14px; color: #fff; box-shadow: var(--shadow-pop); background-image: linear-gradient(120deg, color-mix(in srgb, var(--brand-from) 72%, #0f172a), color-mix(in srgb, var(--brand-to) 62%, #0f172a)); }
