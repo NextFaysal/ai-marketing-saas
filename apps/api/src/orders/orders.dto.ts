@@ -1,6 +1,6 @@
 import { Type } from "class-transformer";
 import {
-  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches,
+  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches,
   Max, MaxLength, Min, ValidateNested,
 } from "class-validator";
 
@@ -66,3 +66,52 @@ export class UpdateOrderDto {
   @IsOptional() @ValidateNested() @Type(() => OrderRefundDto) refund?: OrderRefundDto;
   @IsOptional() @IsString() @MaxLength(2000) internalNote?: string | null;
 }
+
+/** Feature 2: Cross-Channel Duplicate Order Blocker & Merge Engine */
+export class MergeOrdersDto {
+  @IsString()
+  primaryOrderId!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  duplicateOrderIds!: string[];
+
+  @IsOptional()
+  @IsString()
+  mergeReason?: string;
+}
+
+/** Feature 5: Team Performance & Staff Sales Attribution */
+export class AssignAgentDto {
+  @IsString()
+  agentId!: string;
+
+  @IsOptional()
+  @IsNumber()
+  commissionMinor?: number;
+}
+
+export class BulkAssignAgentDto {
+  @IsArray()
+  @IsString({ each: true })
+  orderIds!: string[];
+
+  @IsString()
+  agentId!: string;
+}
+
+export class StaffScoreboardQueryDto {
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  to?: string;
+
+  @IsOptional()
+  @IsNumber()
+  commissionPerDeliveryBdt?: number;
+}
+
+

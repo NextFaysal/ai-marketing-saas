@@ -8,7 +8,8 @@ import { EventsService } from "../common/events.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import type { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
+import type { CreateManualOrderDto, UpdateOrderDto, MergeOrdersDto, AssignAgentDto, BulkAssignAgentDto, StaffScoreboardQueryDto } from "./orders.dto";
+import { phoneKey } from "./risk-score";
 
 function pubOrder(o: any) {
   return {
@@ -282,6 +283,26 @@ export class OrdersService {
       }),
     ]);
     const mapped = items.map(pubOrder);
+    // Feature 2: In-memory duplicate tagging for the current batch
+    const phoneGroups = new Map<string, string[]>();
+    for (const item of items) {
+      const p = phoneKey(item.customer?.phone);
+      if (p) {
+        const ids = phoneGroups.get(p) ?? [];
+        ids.push(item.id);
+        phoneGroups.set(p, ids);
+      }
+    }
+    for (const item of mapped) {
+      const p = phoneKey(item.customer?.phone);
+      if (p && (phoneGroups.get(p)?.length ?? 0) > 1) {
+        (item as any).duplicate = {
+          isDuplicate: true,
+          count: phoneGroups.get(p)!.length,
+          duplicateOrderIds: phoneGroups.get(p)!.filter((id) => id !== item.id),
+        };
+      }
+    }
     // M50: light risk summary per row (band + score). Enrichment must
     // never break the listing — on any failure rows ship without it.
     if (this.risk) {
@@ -413,6 +434,406 @@ export class OrdersService {
       codSharePercent: totalOrders > 0 ? Math.round((codCount / totalOrders) * 10000) / 100 : 0,
       deliveredRevenueMinor: delivered?.totalMinor ?? "0",
       byStatus,
+    };
+  }
+
+  /**
+   * Feature 2: Find duplicate or conflicting orders placed by the same customer/phone
+   * within recent active window across all sales channels.
+   */
+  async findDuplicates(organizationId: string) {
+    const orders = await (this.prisma as any).order.findMany({
+      where: {
+        organizationId,
+        status: { notIn: ["cancelled", "refunded"] },
+      },
+      orderBy: { placedAt: "desc" },
+      take: 200,
+      include: {
+        customer: true,
+        items: true,
+      },
+    });
+
+    const groupsMap = new Map<string, any[]>();
+    for (const o of orders) {
+      const phone = phoneKey(o.customer?.phone);
+      if (!phone) continue;
+      const list = groupsMap.get(phone) ?? [];
+      list.push(o);
+      groupsMap.set(phone, list);
+    }
+
+    const duplicates: any[] = [];
+    for (const [phone, ords] of groupsMap.entries()) {
+      if (ords.length > 1) {
+        const sorted = ords.sort(
+          (a, b) =>
+            new Date(b.placedAt ?? b.createdAt).getTime() -
+            new Date(a.placedAt ?? a.createdAt).getTime(),
+        );
+        duplicates.push({
+          phoneKey: phone,
+          customerName:
+            [sorted[0]?.customer?.firstName, sorted[0]?.customer?.lastName].filter(Boolean).join(" ") ||
+            "Customer",
+          count: sorted.length,
+          orders: sorted.map((o) => ({
+            id: o.id,
+            externalNumber: o.externalNumber,
+            totalAmountMinor: o.totalAmountMinor.toString(),
+            status: o.status,
+            placedAt: o.placedAt ?? o.createdAt,
+            items: o.items.map((it: any) => ({
+              id: it.id,
+              name: it.name,
+              quantity: it.quantity,
+              totalMinor: it.totalMinor.toString(),
+            })),
+          })),
+        });
+      }
+    }
+
+    return {
+      totalGroups: duplicates.length,
+      totalDuplicateOrders: duplicates.reduce((acc, g) => acc + g.count, 0),
+      groups: duplicates,
+    };
+  }
+
+  /**
+   * Feature 2: Merge duplicate orders into one primary order.
+   * Cancels duplicate orders with clear audit reason, aggregates items, updates total.
+   */
+  async mergeOrders(organizationId: string, userId: string, dto: MergeOrdersDto) {
+    const primary = await (this.prisma as any).order.findFirst({
+      where: { id: dto.primaryOrderId, organizationId },
+      include: { items: true, customer: true },
+    });
+    if (!primary) throw new NotFoundException("Primary order not found");
+
+    const duplicates = await (this.prisma as any).order.findMany({
+      where: {
+        id: { in: dto.duplicateOrderIds },
+        organizationId,
+      },
+      include: { items: true },
+    });
+
+    if (duplicates.length === 0) {
+      throw new BadRequestException("No valid duplicate orders found to merge");
+    }
+
+    let additionalAmountMinor = 0n;
+    const mergedOrderNumbers: string[] = [];
+
+    for (const dup of duplicates) {
+      if (dup.id === primary.id) continue;
+      mergedOrderNumbers.push(dup.externalNumber || dup.id.slice(0, 8));
+
+      // Append items to primary
+      for (const item of dup.items) {
+        await (this.prisma as any).orderItem.create({
+          data: {
+            orderId: primary.id,
+            productId: item.productId,
+            name: item.name,
+            sku: item.sku,
+            quantity: item.quantity,
+            priceMinor: item.priceMinor,
+            totalMinor: item.totalMinor,
+          },
+        });
+        additionalAmountMinor += BigInt(item.totalMinor);
+      }
+
+      // Mark duplicate as cancelled
+      await (this.prisma as any).order.update({
+        where: { id: dup.id },
+        data: {
+          status: "cancelled",
+          internalNote: `[MERGED] Merged into Order #${primary.externalNumber || primary.id} on ${new Date().toISOString()}${dto.mergeReason ? ` - Note: ${dto.mergeReason}` : ""}`,
+        },
+      });
+    }
+
+    // Update primary order total
+    const newTotalMinor = BigInt(primary.totalMinor) + additionalAmountMinor;
+    const updatedPrimary = await (this.prisma as any).order.update({
+      where: { id: primary.id },
+      data: {
+        totalMinor: newTotalMinor,
+        internalNote: `${primary.internalNote || ""}\n[MERGE_NOTE] Merged with duplicate orders: ${mergedOrderNumbers.join(", ")}`.trim(),
+      },
+      include: { items: true, customer: true },
+    });
+
+    await this.audit?.log({
+      organizationId,
+      userId,
+      action: "orders.merged",
+      entityType: "Order",
+      entityId: primary.id,
+      metadata: {
+        primaryOrderId: primary.id,
+        mergedOrderIds: dto.duplicateOrderIds,
+        mergedCount: duplicates.length,
+      },
+    });
+
+    return {
+      success: true,
+      message: `সফলভাবে ${duplicates.length}টি ডুপ্লিকেট অর্ডার #${primary.externalNumber || primary.id}-এ মার্জ করা হয়েছে।`,
+      primaryOrder: pubOrder(updatedPrimary),
+      mergedCount: duplicates.length,
+    };
+  }
+
+  /**
+   * Feature 5: Assign an agent/staff to an order with optional custom commission.
+   */
+  async assignAgent(
+    organizationId: string,
+    orderId: string,
+    agentId: string,
+    commissionMinor?: number,
+  ) {
+    const order = await (this.prisma as any).order.findFirst({
+      where: { id: orderId, organizationId },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const updated = await (this.prisma as any).order.update({
+      where: { id: orderId },
+      data: {
+        agentId,
+        confirmedAt: new Date(),
+        commissionMinor:
+          commissionMinor !== undefined ? BigInt(commissionMinor) : order.commissionMinor,
+      },
+    });
+
+    return pubOrder(updated);
+  }
+
+  /**
+   * Bulk assign multiple orders to an agent.
+   */
+  async bulkAssignAgent(
+    organizationId: string,
+    orderIds: string[],
+    agentId: string,
+  ) {
+    if (!orderIds || orderIds.length === 0) {
+      throw new BadRequestException("No order IDs provided");
+    }
+
+    const result = await (this.prisma as any).order.updateMany({
+      where: {
+        organizationId,
+        id: { in: orderIds },
+      },
+      data: {
+        agentId,
+        confirmedAt: new Date(),
+      },
+    });
+
+    return {
+      success: true,
+      updatedCount: result.count,
+    };
+  }
+
+  /**
+   * Feature 5: Get Team Performance & Sales Attribution Scoreboard.
+   * Compares staff performance by delivered orders, delivery rate %, return rate %,
+   * total revenue generated, and earned commission.
+   */
+  async getStaffScoreboard(
+    organizationId: string,
+    query?: StaffScoreboardQueryDto,
+  ) {
+    const whereClause: any = { organizationId };
+
+    if (query?.from || query?.to) {
+      whereClause.placedAt = {};
+      if (query.from) whereClause.placedAt.gte = new Date(query.from);
+      if (query.to) whereClause.placedAt.lte = new Date(query.to);
+    }
+
+    // 1. Fetch all active memberships with their user details
+    const memberships = await (this.prisma as any).membership.findMany({
+      where: { organizationId, status: "ACTIVE" },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    const membersMap = new Map<string, any>();
+    for (const m of memberships) {
+      if (m.user) {
+        membersMap.set(m.userId, {
+          userId: m.userId,
+          name: m.user.name || "Unknown",
+          email: m.user.email,
+          role: m.role,
+        });
+      }
+    }
+
+    // 2. Fetch orders within criteria
+    const orders = await (this.prisma as any).order.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        agentId: true,
+        status: true,
+        totalMinor: true,
+        commissionMinor: true,
+        confirmedAt: true,
+      },
+    });
+
+    const defaultCommissionBdt = query?.commissionPerDeliveryBdt ?? 50;
+
+    const agentStats = new Map<
+      string,
+      {
+        agentId: string;
+        name: string;
+        email: string;
+        role: string;
+        totalOrders: number;
+        confirmedOrders: number;
+        deliveredOrders: number;
+        returnedOrders: number;
+        inFlightOrders: number;
+        deliveredRevenueMinor: bigint;
+        totalCommissionMinor: bigint;
+      }
+    >();
+
+    // Seed all active organization members
+    for (const [userId, mem] of membersMap.entries()) {
+      agentStats.set(userId, {
+        agentId: userId,
+        name: mem.name,
+        email: mem.email,
+        role: mem.role,
+        totalOrders: 0,
+        confirmedOrders: 0,
+        deliveredOrders: 0,
+        returnedOrders: 0,
+        inFlightOrders: 0,
+        deliveredRevenueMinor: 0n,
+        totalCommissionMinor: 0n,
+      });
+    }
+
+    // Seed unassigned bucket
+    const UNASSIGNED_KEY = "unassigned";
+    agentStats.set(UNASSIGNED_KEY, {
+      agentId: UNASSIGNED_KEY,
+      name: "অনির্ধারিত / আনঅ্যাসাইনড (Unassigned)",
+      email: "-",
+      role: "-",
+      totalOrders: 0,
+      confirmedOrders: 0,
+      deliveredOrders: 0,
+      returnedOrders: 0,
+      inFlightOrders: 0,
+      deliveredRevenueMinor: 0n,
+      totalCommissionMinor: 0n,
+    });
+
+    for (const order of orders) {
+      const key =
+        order.agentId && agentStats.has(order.agentId)
+          ? order.agentId
+          : order.agentId || UNASSIGNED_KEY;
+
+      if (!agentStats.has(key)) {
+        agentStats.set(key, {
+          agentId: key,
+          name: `সাবেক এজেন্ট (${key.slice(0, 8)})`,
+          email: "-",
+          role: "STAFF",
+          totalOrders: 0,
+          confirmedOrders: 0,
+          deliveredOrders: 0,
+          returnedOrders: 0,
+          inFlightOrders: 0,
+          deliveredRevenueMinor: 0n,
+          totalCommissionMinor: 0n,
+        });
+      }
+
+      const stat = agentStats.get(key)!;
+      stat.totalOrders++;
+
+      if (order.confirmedAt) {
+        stat.confirmedOrders++;
+      }
+
+      const st = (order.status || "").toLowerCase();
+      const totMinor = BigInt(order.totalMinor || 0);
+
+      if (st === "completed" || st === "delivered") {
+        stat.deliveredOrders++;
+        stat.deliveredRevenueMinor += totMinor;
+        const comm =
+          order.commissionMinor && order.commissionMinor > 0n
+            ? BigInt(order.commissionMinor)
+            : BigInt(defaultCommissionBdt * 100);
+        stat.totalCommissionMinor += comm;
+      } else if (
+        st === "returned" ||
+        st === "refunded" ||
+        st === "failed" ||
+        st === "cancelled"
+      ) {
+        stat.returnedOrders++;
+      } else {
+        stat.inFlightOrders++;
+      }
+    }
+
+    const leaderboard = Array.from(agentStats.values())
+      .filter((s) => s.totalOrders > 0 || s.agentId !== UNASSIGNED_KEY)
+      .map((s) => {
+        const finished = s.deliveredOrders + s.returnedOrders;
+        const deliveryRate =
+          finished > 0 ? (s.deliveredOrders / finished) * 100 : 0;
+        const returnRate =
+          finished > 0 ? (s.returnedOrders / finished) * 100 : 0;
+        return {
+          agentId: s.agentId,
+          name: s.name,
+          email: s.email,
+          role: s.role,
+          totalOrders: s.totalOrders,
+          confirmedOrders: s.confirmedOrders,
+          deliveredOrders: s.deliveredOrders,
+          returnedOrders: s.returnedOrders,
+          inFlightOrders: s.inFlightOrders,
+          deliveredRevenueMinor: s.deliveredRevenueMinor.toString(),
+          deliveredRevenueBdt: Number(s.deliveredRevenueMinor) / 100,
+          deliveryRatePercent: Math.round(deliveryRate * 10) / 10,
+          returnRatePercent: Math.round(returnRate * 10) / 10,
+          totalCommissionMinor: s.totalCommissionMinor.toString(),
+          totalCommissionBdt: Number(s.totalCommissionMinor) / 100,
+        };
+      })
+      .sort((a, b) => b.deliveredRevenueBdt - a.deliveredRevenueBdt);
+
+    return {
+      totalAgents: leaderboard.filter((l) => l.agentId !== UNASSIGNED_KEY).length,
+      defaultCommissionPerDeliveryBdt: defaultCommissionBdt,
+      leaderboard,
     };
   }
 }

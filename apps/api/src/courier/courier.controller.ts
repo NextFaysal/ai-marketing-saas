@@ -1,7 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 import { CourierService } from "./courier.service";
+import { CourierNdrService } from "./courier-ndr.service";
+import { CourierReconciliationService } from "./courier-reconciliation.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
+import { RescheduleNdrDto, ResolveNdrDto, CustomerNdrActionDto } from "./courier-ndr.dto";
+import { UploadDisbursementDto, UpdateDisputeDto } from "./courier-reconciliation.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -10,7 +14,11 @@ import { RolesGuard } from "../common/roles.guard";
 @Controller("organizations/:organizationId/courier")
 @UseGuards(TenantGuard, RolesGuard)
 export class CourierController {
-  constructor(private readonly courier: CourierService) {}
+  constructor(
+    private readonly courier: CourierService,
+    private readonly ndr: CourierNdrService,
+    private readonly reconciliation: CourierReconciliationService,
+  ) {}
 
   @Get("connection")
   connection(@Param("organizationId") orgId: string, @Query("provider") provider?: string) {
@@ -112,16 +120,118 @@ export class CourierController {
   trackingLink(@Param("organizationId") orgId: string, @Param("shipmentId") id: string) {
     return this.courier.trackingLinkForShipment(orgId, id);
   }
+
+  /** Feature 1: NDR (Non-Delivery Report) Interceptor & Recovery Hub */
+  @Get("ndr")
+  listNdr(
+    @Param("organizationId") orgId: string,
+    @Query("status") status?: string,
+    @Query("provider") provider?: string,
+  ) {
+    return this.ndr.list(orgId, { status, provider });
+  }
+
+  @Post("ndr/:id/contact")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  contactNdr(
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+  ) {
+    return this.ndr.sendNdrCustomerAlert(orgId, { id, shipmentId: id });
+  }
+
+  @Post("ndr/:id/reschedule")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  rescheduleNdr(
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: RescheduleNdrDto,
+  ) {
+    return this.ndr.reschedule(orgId, id, dto);
+  }
+
+  @Post("ndr/:id/resolve")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  resolveNdr(
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: ResolveNdrDto,
+  ) {
+    return this.ndr.resolve(orgId, id, dto);
+  }
+
+  /** Feature 4: Courier COD Disbursement Reconciliation & Missing Cash Finder */
+  @Post("reconciliation/upload")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "ACCOUNTANT")
+  uploadDisbursement(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: UploadDisbursementDto,
+  ) {
+    return this.reconciliation.processDisbursementBatch(orgId, dto, user?.userId);
+  }
+
+  @Get("reconciliation/batches")
+  listBatches(@Param("organizationId") orgId: string) {
+    return this.reconciliation.listBatches(orgId);
+  }
+
+  @Get("reconciliation/batches/:batchId")
+  getBatchDetails(
+    @Param("organizationId") orgId: string,
+    @Param("batchId") batchId: string,
+  ) {
+    return this.reconciliation.getBatchDetails(orgId, batchId);
+  }
+
+  @Get("reconciliation/missing")
+  getMissingDisbursements(
+    @Param("organizationId") orgId: string,
+    @Query("days") days?: string,
+  ) {
+    const parsedDays = days ? parseInt(days, 10) : 7;
+    return this.reconciliation.getMissingDisbursements(orgId, isNaN(parsedDays) ? 7 : parsedDays);
+  }
+
+  @Post("reconciliation/items/:itemId/dispute")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "ACCOUNTANT", "SUPPORT_AGENT")
+  updateDispute(
+    @Param("organizationId") orgId: string,
+    @Param("itemId") itemId: string,
+    @Body() dto: UpdateDisputeDto,
+  ) {
+    return this.reconciliation.updateDispute(orgId, itemId, dto);
+  }
+
+  @Get("reconciliation/batches/:batchId/claim-sheet")
+  getClaimSheet(
+    @Param("organizationId") orgId: string,
+    @Param("batchId") batchId: string,
+  ) {
+    return this.reconciliation.exportClaimSheet(orgId, batchId);
+  }
 }
 
-/** CX6: public live-tracking page data — no auth; the unguessable
- * token on the shipment row is the only credential (ReportShare
- * pattern). Serves stored facts only; never recipient PII. */
+/** CX6 + NDR: public live-tracking page data and customer self-serve response. */
 @Controller("public/tracking")
 export class PublicTrackingController {
-  constructor(private readonly courier: CourierService) {}
+  constructor(
+    private readonly courier: CourierService,
+    private readonly ndr: CourierNdrService,
+  ) {}
 
   @Public()
   @Get(":token")
   view(@Param("token") token: string) { return this.courier.publicTracking(token); }
+
+  @Public()
+  @Post(":token/ndr-respond")
+  respondNdr(@Param("token") token: string, @Body() dto: CustomerNdrActionDto) {
+    return this.ndr.customerRespond(token, dto);
+  }
 }

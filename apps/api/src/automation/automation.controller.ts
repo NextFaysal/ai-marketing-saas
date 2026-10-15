@@ -1,6 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AutomationService } from "./automation.service";
+import { InventoryAdGuardService } from "./inventory-ad-guard.service";
+import { PredictiveReplenishmentService } from "./predictive-replenishment.service";
 import { CreateJobDto, UpdateJobDto, CreateRuleDto, UpdateRuleDto } from "./automation.dto";
+import { ConfigureProductCycleDto, SendReplenishmentReminderDto, MarkReorderedDto } from "./predictive-replenishment.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -11,7 +13,11 @@ const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 @Controller("organizations/:organizationId/automation")
 @UseGuards(TenantGuard, RolesGuard)
 export class AutomationController {
-  constructor(private readonly automation: AutomationService) {}
+  constructor(
+    private readonly automation: AutomationService,
+    private readonly adGuard: InventoryAdGuardService,
+    private readonly replenishment: PredictiveReplenishmentService,
+  ) {}
 
   @Post("jobs") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createJob(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateJobDto) {
@@ -71,5 +77,82 @@ export class AutomationController {
   @Post("job-templates/:key/install") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   installJobTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("key") key: string, @Body() dto: { targetId?: string; name?: string }) {
     return this.automation.installJobTemplate(orgId, user.userId, key, dto);
+  }
+
+  /** Feature 3: Inventory Stockout ↔ Meta Ad Auto-Pause Guardrail */
+  @Get("inventory-ad-guard")
+  listAdGuardLogs(@Param("organizationId") orgId: string) {
+    return this.adGuard.listLogs(orgId);
+  }
+
+  @Post("inventory-ad-guard/check")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  checkStockGuard(
+    @Param("organizationId") orgId: string,
+    @Body() dto: { productId: string; stock: number },
+  ) {
+    return this.adGuard.checkStockoutAndProtect(orgId, dto.productId, dto.stock);
+  }
+
+  @Post("inventory-ad-guard/:planId/resume")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  resumeGuardedCampaign(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("planId") planId: string,
+  ) {
+    return this.adGuard.resumeCampaign(orgId, user.userId, planId);
+  }
+
+  /** Feature 6: Predictive Replenishment & Auto Re-order */
+  @Get("replenishment")
+  listReplenishments(
+    @Param("organizationId") orgId: string,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+  ) {
+    return this.replenishment.listReplenishments(orgId, { status, search });
+  }
+
+  @Post("replenishment/scan")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  scanReplenishments(@Param("organizationId") orgId: string) {
+    return this.replenishment.generateReplenishmentPredictions(orgId);
+  }
+
+  @Post("replenishment/:id/remind")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  sendReplenishmentReminder(
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: SendReplenishmentReminderDto,
+  ) {
+    return this.replenishment.sendReminder(orgId, id, dto);
+  }
+
+  @Post("replenishment/:id/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  markReplenishmentReordered(
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: MarkReorderedDto,
+  ) {
+    return this.replenishment.markReordered(orgId, id, dto);
+  }
+
+  @Post("replenishment/products/:productId/cycle")
+  @UseGuards(RolesGuard)
+  @Roles(...WRITE_ROLES)
+  configureProductCycle(
+    @Param("organizationId") orgId: string,
+    @Param("productId") productId: string,
+    @Body() dto: ConfigureProductCycleDto,
+  ) {
+    return this.replenishment.configureProductCycle(orgId, productId, dto);
   }
 }

@@ -14,6 +14,7 @@ import { newTrackingToken, trackingLinkFor } from "./tracking-token";
 import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { buildCourierPerformance } from "./courier-performance";
+import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -61,6 +62,7 @@ export class CourierService {
     // wiring it into CourierModule adds no cycle.
     @Optional() private readonly sms?: SmsProvider,
     @Optional() private readonly email?: EmailProvider,
+    @Optional() private readonly ndr?: CourierNdrService,
   ) {}
 
   private providerOf(value?: string): Provider {
@@ -629,6 +631,12 @@ export class CourierService {
       } catch (e) { this.logger.warn(`shipment.status_changed emit failed for shipment ${shipment.id}: ${e instanceof Error ? e.message : "unknown"}`); }
     }
     if (changed) await this.notifyCustomer(organizationId, updated).catch(() => undefined);
+    // Courier NDR Interceptor: automatically intercept delivery failure / hold and initiate customer recovery
+    if (this.ndr && isNdrStatus(status)) {
+      await this.ndr.interceptNdr(organizationId, updated).catch((err) => {
+        this.logger.warn(`NDR intercept failed for shipment ${shipment.id}: ${err instanceof Error ? err.message : err}`);
+      });
+    }
     return this.serialize(updated);
   }
 

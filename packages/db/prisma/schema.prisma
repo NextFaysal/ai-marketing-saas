@@ -293,6 +293,9 @@ model Product {
   bumpTitle      String?       // e.g. "লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
   bumpPriceMinor BigInt?       // e.g. 19000 (190 BDT)
   bumpImageUrl   String?
+  // Feature 6: Predictive Replenishment & Auto Re-order
+  replenishmentDays         Int?      // Estimated consumption cycle in days (e.g. 30, 45, 60)
+  replenishmentReminderText String?   // Personalized SMS/WhatsApp template or offer
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -333,6 +336,34 @@ model ProductCost {
   product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, effectiveFrom])
+}
+
+// Feature 6: Predictive Replenishment & Auto Re-order Cycle
+// Anticipates when a customer's consumable product is about to run out
+// and triggers personalized reorder reminders before they buy from competitors.
+model PredictiveReplenishment {
+  id                String    @id @default(uuid())
+  organizationId    String
+  customerId        String?
+  customerName      String
+  customerPhone     String
+  orderId           String    // Original purchase order
+  productId         String?
+  productName       String
+  deliveredAt       DateTime
+  replenishmentDays Int
+  predictedDate     DateTime  // deliveredAt + replenishmentDays
+  status            String    @default("PENDING") // PENDING | DUE | REMINDED | REORDERED | EXPIRED
+  lastRemindedAt    DateTime?
+  reorderOrderId    String?   // Order placed from this reminder
+  discountCode      String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, predictedDate])
+  @@index([organizationId, customerPhone])
 }
 
 model BusinessPolicy {
@@ -548,6 +579,10 @@ model Order {
   // Sales & Data S2: merchant-only internal note on the order
   // (staff context; never sent to the customer or any platform).
   internalNote   String?
+  // Feature 5: Team Performance & Staff Attribution
+  agentId        String?      // Staff/Agent who handled, placed, or confirmed the order
+  confirmedAt    DateTime?    // When the order was confirmed with customer
+  commissionMinor BigInt      @default(0) // Commission earned on delivered order
   currency       String       @default("BDT")
   subtotalMinor  BigInt       @default(0)
   shippingMinor  BigInt       @default(0)
@@ -567,6 +602,7 @@ model Order {
   @@unique([organizationId, source, externalId])
   @@index([organizationId, status])
   @@index([organizationId, placedAt])
+  @@index([organizationId, agentId])
 }
 
 model OrderItem {
@@ -1759,6 +1795,80 @@ model CourierShipment {
   @@index([organizationId, status])
 }
 
+// NDR (Non-Delivery Report) incident for parcels where a delivery attempt failed,
+// was rescheduled, or customer was unreachable. Intercepts returns early.
+model CourierNdrIncident {
+  id               String    @id @default(uuid())
+  organizationId   String
+  shipmentId       String
+  orderId          String
+  provider         String    // steadfast | pathao | redx
+  trackingCode     String
+  reason           String    @default("customer_unreachable") // customer_unreachable | address_issue | customer_rescheduled | delivery_delayed | other
+  status           String    @default("OPEN") // OPEN | CUSTOMER_CONTACTED | RESCHEDULED | RESOLVED | RETURNED
+  customerFeedback String?   // CONFIRMED_TOMORROW | CHANGE_ADDRESS | CANCEL_ORDER | NOT_REACHABLE
+  rescheduleDate   DateTime?
+  notes            String?
+  lastContactedAt  DateTime?
+  actionTaken      String?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, shipmentId])
+  @@index([organizationId, orderId])
+}
+
+// COD Reconciliation & Disbursement Tracking (Steadfast / Pathao / RedX)
+// Matches merchant bank disbursements against courier delivery records,
+// catches underpayments, overcharged courier fees, and missing COD money.
+model CourierDisbursementBatch {
+  id                  String                    @id @default(uuid())
+  organizationId      String
+  provider            String                    // steadfast | pathao | redx | generic
+  referenceNo         String                    // Invoice / payout statement reference
+  totalOrders         Int                       @default(0)
+  totalCollectedMinor BigInt                    @default(0) // COD collected by courier
+  totalFeeMinor       BigInt                    @default(0) // Delivery fees deducted
+  netDisbursedMinor   BigInt                    @default(0) // Net amount credited to merchant
+  matchedCount        Int                       @default(0)
+  discrepancyCount    Int                       @default(0)
+  unmatchedCount      Int                       @default(0)
+  status              String                    @default("PROCESSED") // PROCESSED | RECONCILED
+  uploadedBy          String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  items               CourierDisbursementItem[]
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, provider])
+}
+
+model CourierDisbursementItem {
+  id                    String                   @id @default(uuid())
+  batchId               String
+  organizationId        String
+  trackingCode          String
+  orderId               String?
+  consignmentId         String?
+  systemCodMinor        BigInt                   @default(0)
+  courierCollectedMinor BigInt                   @default(0)
+  courierFeeMinor       BigInt                   @default(0)
+  netPaidMinor          BigInt                   @default(0)
+  status                String                   // MATCHED | UNDERPAID | OVERCHARGED_FEE | UNKNOWN_TRACKING
+  discrepancyMinor      BigInt                   @default(0)
+  disputeStatus         String                   @default("NONE") // NONE | OPEN | CLAIMED | RESOLVED
+  notes                 String?
+  createdAt             DateTime                 @default(now())
+  batch                 CourierDisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([organizationId, trackingCode])
+  @@index([organizationId, status])
+}
+
+
 // Result of an AI-vision check on a payment screenshot sent in chat.
 // An aid for the agent - it never marks an order paid by itself.
 model PaymentVerification {
@@ -1849,6 +1959,26 @@ model StockMovement {
   @@index([organizationId, productId, createdAt])
   @@index([orderId, reason])
 }
+
+// Feature 3: Stock-Linked Meta Ad Auto-Pause Guardrail
+model InventoryAdGuardLog {
+  id               String   @id @default(uuid())
+  organizationId   String
+  productId        String
+  productName      String
+  currentStock     Int
+  action           String   // AUTO_PAUSED | AUTO_RESUMED | ALERT_SENT
+  campaignPlanId   String?
+  campaignName     String?
+  adId             String?
+  adName           String?
+  details          String?
+  createdAt        DateTime @default(now())
+
+  @@index([organizationId, productId])
+  @@index([organizationId, createdAt])
+}
+
 
 // In-app agent notifications: assignments, @mentions, urgent chats.
 model AgentNotification {

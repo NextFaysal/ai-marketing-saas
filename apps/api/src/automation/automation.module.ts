@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { AutomationController } from "./automation.controller";
 import { AutomationService } from "./automation.service";
+import { InventoryAdGuardService } from "./inventory-ad-guard.service";
+import { PredictiveReplenishmentService } from "./predictive-replenishment.service";
 import { InternalJobsController } from "./internal-jobs.controller";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { AdsModule } from "../ads/ads.module";
@@ -19,7 +21,7 @@ import { CourierModule } from "../courier/courier.module";
 @Module({
   imports: [IntegrationsModule, AdsModule, AiModule, CompetitorsModule, CampaignsModule, MessagingModule, AudiencesModule, InboxModule, CrmModule, PaymentsModule, SocialModule, ReportSharesModule, CourierModule],
   controllers: [AutomationController, InternalJobsController],
-  providers: [AutomationService],
-  exports: [AutomationService],
+  providers: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],
+  exports: [AutomationService, InventoryAdGuardService, PredictiveReplenishmentService],
 })
 export class AutomationModule {}

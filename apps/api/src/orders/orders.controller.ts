@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { CreateManualOrderDto, UpdateOrderDto } from "./orders.dto";
+import { CreateManualOrderDto, UpdateOrderDto, MergeOrdersDto, AssignAgentDto, BulkAssignAgentDto, StaffScoreboardQueryDto } from "./orders.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -11,6 +11,33 @@ import { RolesGuard } from "../common/roles.guard";
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  /** Feature 5: Staff Performance & Sales Attribution Scoreboard */
+  @Get("scoreboard")
+  scoreboard(
+    @Param("organizationId") orgId: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("commission") commission?: string,
+  ) {
+    const commissionNum = commission ? parseFloat(commission) : undefined;
+    return this.orders.getStaffScoreboard(orgId, {
+      from,
+      to,
+      commissionPerDeliveryBdt: isNaN(commissionNum!) ? undefined : commissionNum,
+    });
+  }
+
+  /** Feature 5: Bulk assign orders to a staff agent */
+  @Post("bulk-assign")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  bulkAssign(
+    @Param("organizationId") orgId: string,
+    @Body() dto: BulkAssignAgentDto,
+  ) {
+    return this.orders.bulkAssignAgent(orgId, dto.orderIds, dto.agentId);
+  }
+
   /** Milestone 65: record a phone/counter order manually. */
   @Post() @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   createManual(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateManualOrderDto) {
@@ -19,6 +46,24 @@ export class OrdersController {
 
   @Get("stats")
   stats(@Param("organizationId") orgId: string) { return this.orders.stats(orgId); }
+
+  /** Feature 2: find duplicate orders placed by the same customer/phone. */
+  @Get("duplicates")
+  duplicates(@Param("organizationId") orgId: string) {
+    return this.orders.findDuplicates(orgId);
+  }
+
+  /** Feature 2: merge multiple duplicate orders into one primary order. */
+  @Post("merge")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  merge(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: MergeOrdersDto,
+  ) {
+    return this.orders.mergeOrders(orgId, user.userId, dto);
+  }
 
   @Get()
   list(@Param("organizationId") orgId: string, @Query() q: { status?: string; cod?: string; page?: string; pageSize?: string }) {
@@ -50,5 +95,17 @@ export class OrdersController {
   @Patch(":orderId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   update(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: UpdateOrderDto) {
     return this.orders.updateOrder(orgId, user.userId, id, dto);
+  }
+
+  /** Feature 5: Assign specific agent to an order */
+  @Patch(":orderId/assign")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  assign(
+    @Param("organizationId") orgId: string,
+    @Param("orderId") id: string,
+    @Body() dto: AssignAgentDto,
+  ) {
+    return this.orders.assignAgent(orgId, id, dto.agentId, dto.commissionMinor);
   }
 }

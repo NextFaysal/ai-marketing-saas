@@ -94,6 +94,40 @@ export default function OrdersPage() {
   const [perfDays, setPerfDays] = useState(30);
   const [perf, setPerf] = useState<CourierPerformance | null>(null);
 
+  // Feature 2: Duplicate order detection & 1-click merge
+  const [duplicateData, setDuplicateData] = useState<{ totalGroups: number; totalDuplicateOrders: number; groups: any[] } | null>(null);
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState("");
+
+  const loadDuplicates = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const d = await apiFetch<{ totalGroups: number; totalDuplicateOrders: number; groups: any[] }>(`/organizations/${orgId}/orders/duplicates`);
+      setDuplicateData(d);
+    } catch { setDuplicateData(null); }
+  }, []);
+
+  useEffect(() => {
+    void loadDuplicates();
+  }, [loadDuplicates]);
+
+  async function mergeGroup(primaryOrderId: string, duplicateOrderIds: string[]) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setMergeBusy(primaryOrderId);
+    try {
+      await apiFetch(`/organizations/${orgId}/orders/merge`, {
+        method: "POST",
+        body: JSON.stringify({ primaryOrderId, duplicateOrderIds, mergeReason: "Dashboard 1-click merge" }),
+      });
+      await loadDuplicates();
+      await load();
+    } catch (e: any) {
+      alert(e.message || "মার্জ করতে সমস্যা হয়েছে");
+    } finally {
+      setMergeBusy("");
+    }
+  }
+
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<CourierPerformance>(`/organizations/${orgId}/courier/performance?days=${perfDays}`)
@@ -377,7 +411,26 @@ export default function OrdersPage() {
       <div>
         <h1 className="page-title">Orders</h1>
         <p className="text-sm text-slate-500">মোট {total}টি অর্ডার (বর্তমান ফিল্টারে)। Delivered Revenue শুধুমাত্র completed অর্ডার থেকে হিসাব হয়।</p>
-        <a href="/dashboard/orders/manual" className="mt-2 inline-block text-sm font-semibold text-blue-600">+ ম্যানুয়াল অর্ডার / CSV ইমপোর্ট →</a>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <a href="/dashboard/orders/manual" className="text-sm font-semibold text-blue-600 hover:underline">+ ম্যানুয়াল অর্ডার / CSV ইমপোর্ট →</a>
+          <a href="/dashboard/orders/ndr" className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 border border-rose-200 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors">
+            🚨 NDR ও ঝুঁকিপূর্ণ পার্সেল রিকভারি →
+          </a>
+          <a href="/dashboard/orders/reconciliation" className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-colors">
+            💰 কুরিয়ার ক্যাশ রিকনসিলিয়েশন ও মিসিং পেমেন্ট →
+          </a>
+          <a href="/dashboard/team/performance" className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition-colors">
+            🏆 টিম সেলস স্কোরবোর্ড →
+          </a>
+          {duplicateData && duplicateData.totalDuplicateOrders > 0 ? (
+            <button
+              onClick={() => setShowDuplicatesModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-100 transition-colors"
+            >
+              ⚠️ ডুপ্লিকেট অর্ডার ({duplicateData.totalDuplicateOrders}টি শনাক্ত) →
+            </button>
+          ) : null}
+        </div>
       </div>
       {stats ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -581,7 +634,15 @@ export default function OrdersPage() {
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
                   <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
-                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button></td>
+                  <td className="px-4 py-3 font-medium">
+                    #{o.externalNumber ?? o.id.slice(0, 8)}
+                    {(o as any).duplicate?.isDuplicate ? (
+                      <span className="ml-1.5 inline-block rounded-md bg-amber-100 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-amber-800" title={`একই ফোন নম্বরে ${(o as any).duplicate.count}টি অর্ডার রয়েছে`}>
+                        ⚠️ ডুপ্লিকেট ({(o as any).duplicate.count})
+                      </span>
+                    ) : null}
+                    <button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
+                  </td>
                   <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-400">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
                   <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
@@ -728,6 +789,77 @@ export default function OrdersPage() {
           </table>
         </div>
         </>
+      )}
+      {showDuplicatesModal && duplicateData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl animate-rise max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  ⚠️ ডুপ্লিকেট অর্ডার শনাক্ত ও ১-ক্লিক মার্জ হাব
+                </h3>
+                <p className="text-xs text-slate-500">
+                  একই কাস্টমার কর্তৃক একাধিকবার সাবমিট করা অর্ডার মার্জ করুন, যাতে ডাবল পার্সেল ডেলিভারি ও রিটার্ন লস বন্ধ হয়।
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDuplicatesModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {duplicateData.groups.length === 0 ? (
+                <p className="p-4 text-center text-xs text-slate-500">কোনো সক্রিয় ডুপ্লিকেট অর্ডার নেই।</p>
+              ) : (
+                duplicateData.groups.map((group: any, idx: number) => {
+                  const primaryOrder = group.orders[0];
+                  const otherOrderIds = group.orders.slice(1).map((o: any) => o.id);
+
+                  return (
+                    <div key={idx} className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-slate-900 text-xs">{group.customerName}</span>
+                          <span className="ml-2 font-mono text-[11px] text-slate-500">📱 {group.phoneKey}</span>
+                          <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                            {group.count}টি অর্ডার
+                          </span>
+                        </div>
+                        <button
+                          disabled={mergeBusy === primaryOrder.id}
+                          onClick={() => void mergeGroup(primaryOrder.id, otherOrderIds)}
+                          className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 shadow-sm"
+                        >
+                          {mergeBusy === primaryOrder.id ? "মার্জ হচ্ছে..." : `সবগুলো #${primaryOrder.externalNumber ?? primaryOrder.id.slice(0, 8)}-এ মার্জ করুন`}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {group.orders.map((ord: any) => (
+                          <div key={ord.id} className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs">
+                            <div className="flex items-center justify-between font-semibold">
+                              <span>#{ord.externalNumber ?? ord.id.slice(0, 8)}</span>
+                              <span className="text-brand-600">{formatMinor(BigInt(ord.totalAmountMinor))}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">
+                              {new Date(ord.placedAt).toLocaleString("bn-BD")}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600 line-clamp-1">
+                              আইটেম: {ord.items.map((i: any) => `${i.name} ×${i.quantity}`).join(", ")}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

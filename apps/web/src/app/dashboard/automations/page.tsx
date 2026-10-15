@@ -106,7 +106,7 @@ interface JobTemplate {
   intervalMinutes: number;
 }
 
-type TabKey = "jobs" | "rules" | "presets" | "health" | "runs";
+type TabKey = "jobs" | "rules" | "presets" | "health" | "runs" | "stock-guard" | "replenishment";
 
 function intervalLabel(min: number): string {
   if (min % 10080 === 0) return min === 10080 ? "সপ্তাহে একবার" : `প্রতি ${min / 10080} সপ্তাহে`;
@@ -214,6 +214,112 @@ export default function AutomationsPage() {
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+
+  // Feature 3: Stock-Linked Meta Ad Guardrail
+  const [stockGuardLogs, setStockGuardLogs] = useState<any[]>([]);
+  const [resumeBusy, setResumeBusy] = useState<string>("");
+
+  const loadStockGuard = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const res = await apiFetch<{ totalProtectedCount: number; logs: any[] }>(`/organizations/${orgId}/automation/inventory-ad-guard`);
+      setStockGuardLogs(res.logs || []);
+    } catch { setStockGuardLogs([]); }
+  }, []);
+
+  useEffect(() => {
+    void loadStockGuard();
+  }, [loadStockGuard]);
+
+  async function handleResumeGuardedCampaign(planId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setResumeBusy(planId);
+    try {
+      await apiFetch(`/organizations/${orgId}/automation/inventory-ad-guard/${planId}/resume`, { method: "POST" });
+      await loadStockGuard();
+      setNotice("ক্যাম্পেইন সফলভাবে চালু করা হয়েছে!");
+    } catch (e: any) {
+      setError(e.message || "ক্যাম্পেইন চালু করতে ব্যর্থ");
+    } finally {
+      setResumeBusy("");
+    }
+  }
+
+  // Feature 6: Predictive Replenishment & Auto Re-order
+  const [replenishmentItems, setReplenishmentItems] = useState<any[]>([]);
+  const [replenishmentKpi, setReplenishmentKpi] = useState({
+    totalTracked: 0,
+    dueCount: 0,
+    remindedCount: 0,
+    reorderedCount: 0,
+    conversionRatePercent: 0,
+    estimatedRecoveredLtvBdt: 0,
+  });
+  const [replenishmentStatusFilter, setReplenishmentStatusFilter] = useState("");
+  const [replenishmentSearch, setReplenishmentSearch] = useState("");
+  const [scanBusy, setScanBusy] = useState(false);
+  const [remindBusy, setRemindBusy] = useState<string>("");
+
+  const loadReplenishment = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const q = new URLSearchParams();
+      if (replenishmentStatusFilter) q.set("status", replenishmentStatusFilter);
+      if (replenishmentSearch) q.set("search", replenishmentSearch);
+      const res = await apiFetch<any>(`/organizations/${orgId}/automation/replenishment?${q.toString()}`);
+      if (res) {
+        setReplenishmentItems(res.items || []);
+        if (res.kpi) setReplenishmentKpi(res.kpi);
+      }
+    } catch {
+      // ignore silently
+    }
+  }, [replenishmentStatusFilter, replenishmentSearch]);
+
+  useEffect(() => {
+    if (activeTab === "replenishment") {
+      void loadReplenishment();
+    }
+  }, [activeTab, loadReplenishment]);
+
+  async function handleScanReplenishments() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setScanBusy(true);
+    try {
+      const res = await apiFetch<any>(`/organizations/${orgId}/automation/replenishment/scan`, { method: "POST" });
+      setNotice(res?.message || "রিপ্লেনিশমেন্ট স্ক্যান সম্পন্ন!");
+      await loadReplenishment();
+    } catch (e: any) {
+      setError(e.message || "স্ক্যান ব্যর্থ হয়েছে");
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  async function handleSendReplenishmentReminder(id: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setRemindBusy(id);
+    try {
+      const res = await apiFetch<any>(`/organizations/${orgId}/automation/replenishment/${id}/remind`, { method: "POST" });
+      setNotice(res?.message || "রিমাইন্ডার পাঠানো হয়েছে!");
+      await loadReplenishment();
+    } catch (e: any) {
+      setError(e.message || "রিমাইন্ডার পাঠাতে ব্যর্থ");
+    } finally {
+      setRemindBusy("");
+    }
+  }
+
+  async function handleMarkReplenishmentReordered(id: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      await apiFetch<any>(`/organizations/${orgId}/automation/replenishment/${id}/reorder`, { method: "POST" });
+      setNotice("রি-অর্ডার সফলভাবে মার্ক করা হয়েছে!");
+      await loadReplenishment();
+    } catch (e: any) {
+      setError(e.message || "রি-অর্ডার আপডেট ব্যর্থ");
+    }
+  }
 
   // Feedback states
   const [error, setError] = useState("");
@@ -785,6 +891,42 @@ export default function AutomationsPage() {
             <span>📜</span>
             <span>এক্সিকিউশন লগস</span>
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 font-bold">{runs.length}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("stock-guard")}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 font-semibold transition ${
+              activeTab === "stock-guard"
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>🛡️</span>
+            <span>স্টক অ্যাড-গার্ডরেল</span>
+            {stockGuardLogs.length > 0 && (
+              <span className="rounded-full bg-rose-100 text-rose-700 px-2 py-0.5 text-xs font-bold">
+                {stockGuardLogs.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("replenishment")}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 font-semibold transition ${
+              activeTab === "replenishment"
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>🔄</span>
+            <span>প্রেডিক্টিভ রিপ্লেনিশমেন্ট</span>
+            {replenishmentKpi.dueCount > 0 && (
+              <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-xs font-bold animate-pulse">
+                {replenishmentKpi.dueCount}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -1835,6 +1977,309 @@ export default function AutomationsPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 6: INVENTORY STOCKOUT ↔ META AD GUARDRAIL                   */}
+      {/* ============================================================== */}
+      {activeTab === "stock-guard" && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-5 sm:p-6 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🛡️</span>
+              <h2 className="text-base font-bold text-slate-900">
+                স্টক-লিংকড মেটা অ্যাড গার্ডরেল (Inventory Stockout Auto-Pause)
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
+              গোডাউনে কোনো প্রোডাক্টের স্টক ০ (বা নির্ধারিত থ্রেশহোল্ড) এ নামলে সিস্টেম স্বয়ংক্রিয়ভাবে সংশ্লিষ্ট Meta Facebook Ad ক্যাম্পেইন Pause করে দেয়, যাতে কাস্টমাররা স্টকআউট প্রোডাক্টে ক্লিক করে আপনার অ্যাডের টাকা নষ্ট না করে। প্রোডাক্ট আবার রিস্টক হলে এক ক্লিকেই ক্যাম্পেইন পুনরায় চালু করা যায়।
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="card p-4">
+              <p className="text-xs font-medium text-slate-500">মোট সক্রিয় গার্ডরেল অ্যাকশন</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{stockGuardLogs.length}</p>
+              <p className="text-[11px] text-slate-400">স্টকআউট প্রতিরোধ রেকর্ড</p>
+            </div>
+            <div className="card p-4 border-rose-100 bg-rose-50/30">
+              <p className="text-xs font-medium text-rose-700">স্বয়ংক্রিয়ভাবে পজ করা ক্যাম্পেইন</p>
+              <p className="mt-1 text-2xl font-bold text-rose-800">
+                {stockGuardLogs.filter((l) => l.action === "AUTO_PAUSED").length}
+              </p>
+              <p className="text-[11px] text-rose-600">বাজেট অপচয় থেকে রক্ষা</p>
+            </div>
+            <div className="card p-4 border-emerald-100 bg-emerald-50/30">
+              <p className="text-xs font-medium text-emerald-700">রিস্টক অ্যালার্ট পাঠানো হয়েছে</p>
+              <p className="mt-1 text-2xl font-bold text-emerald-800">
+                {stockGuardLogs.filter((l) => l.action === "ALERT_SENT" || l.action === "AUTO_RESUMED").length}
+              </p>
+              <p className="text-[11px] text-emerald-600">চালুর জন্য প্রস্তুত</p>
+            </div>
+          </div>
+
+          <div className="overflow-hidden card">
+            <div className="border-b bg-slate-50 px-4 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
+              <span>গার্ডরেল অ্যাকশন লগ</span>
+              <button
+                onClick={() => void loadStockGuard()}
+                className="text-xs font-medium text-brand-600 hover:underline"
+              >
+                🔄 রিফ্রেশ করুন
+              </button>
+            </div>
+
+            {stockGuardLogs.length === 0 ? (
+              <div className="p-8 text-center">
+                <span className="text-3xl">🛡️</span>
+                <p className="mt-2 text-sm font-semibold text-slate-800">কোনো স্টকআউট ঝুঁকি নেই</p>
+                <p className="text-xs text-slate-500">বিজ্ঞাপিত সব প্রোডাক্ট পর্যাপ্ত স্টকে আছে।</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {stockGuardLogs.map((log: any) => (
+                  <div key={log.id} className="p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-slate-50 transition-colors">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          log.action === "AUTO_PAUSED"
+                            ? "bg-rose-100 text-rose-700"
+                            : log.action === "AUTO_RESUMED"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}>
+                          {log.action === "AUTO_PAUSED" ? "⏸️ AUTO PAUSED" : log.action === "AUTO_RESUMED" ? "▶️ AUTO RESUMED" : "🔔 RESTOCKED"}
+                        </span>
+                        <span className="font-bold text-slate-900 text-xs">{log.productName}</span>
+                        <span className="text-xs font-mono text-slate-400">স্টক: {log.currentStock}</span>
+                      </div>
+                      <p className="text-xs text-slate-600 font-mono">{log.details}</p>
+                      {log.campaignName && (
+                        <p className="text-[11px] text-slate-400">ক্যাম্পেইন: {log.campaignName}</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-slate-400">
+                        {new Date(log.createdAt).toLocaleString("bn-BD")}
+                      </span>
+                      {log.campaignPlanId && log.action === "AUTO_PAUSED" && (
+                        <button
+                          disabled={resumeBusy === log.campaignPlanId}
+                          onClick={() => void handleResumeGuardedCampaign(log.campaignPlanId)}
+                          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 shadow-sm"
+                        >
+                          {resumeBusy === log.campaignPlanId ? "চালু হচ্ছে..." : "▶️ Meta-তে অ্যাড চালু করুন"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 7: PREDICTIVE REPLENISHMENT & AUTO RE-ORDER                */}
+      {/* ============================================================== */}
+      {activeTab === "replenishment" && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 sm:p-6 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🔄</span>
+                  <h2 className="text-base font-bold text-slate-900">
+                    প্রেডিক্টিভ রিপিট-পারচেজ ও রি-অর্ডার ইঞ্জিন (Predictive Replenishment)
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-600 max-w-3xl leading-relaxed mt-1">
+                  স্কিনকেয়ার, গ্রোসারি, ঘি/তেল বা সাপ্লিমেন্টের মতো ব্যবহার্য পণ্যের গ্রাহকরা সাধারণত ২০-৪৫ দিন পর পর আবার কেনে। এই ইঞ্জিন ডেলিভারির তারিখ ও পণ্য চক্র বিশ্লেষণ করে গ্রাহকের পণ্য ফুরিয়ে আসার ঠিক ৩-৫ দিন আগে সময়মতো পারসোনালাইজড অফার পাঠায়।
+                </p>
+              </div>
+
+              <button
+                disabled={scanBusy}
+                onClick={() => void handleScanReplenishments()}
+                className="btn-primary btn-sm text-xs font-bold whitespace-nowrap"
+              >
+                {scanBusy ? "স্ক্যান হচ্ছে..." : "🔍 ডেলিভার্ড অর্ডার স্ক্যান করুন"}
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="card p-4">
+              <p className="text-xs font-medium text-slate-500">মোট ট্র্যাক করা সাইকেল</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{replenishmentKpi.totalTracked} টি</p>
+              <p className="text-[11px] text-slate-400">কনজিউমেবল পণ্য ক্রেতা</p>
+            </div>
+
+            <div className="card p-4 border-amber-100 bg-amber-50/30">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-amber-800">🚨 আগামী ৭ দিনে শেষ হবে</p>
+                {replenishmentKpi.dueCount > 0 && (
+                  <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[9px] font-bold text-white">DUE</span>
+                )}
+              </div>
+              <p className="mt-1 text-2xl font-bold text-amber-900">{replenishmentKpi.dueCount} জন</p>
+              <p className="text-[11px] text-amber-700">রিমাইন্ডার পাঠানোর এখনই সেরা সময়</p>
+            </div>
+
+            <div className="card p-4 border-emerald-100 bg-emerald-50/30">
+              <p className="text-xs font-medium text-emerald-800">রি-অর্ডার কনভার্সন রেট</p>
+              <p className="mt-1 text-2xl font-bold text-emerald-900">{replenishmentKpi.conversionRatePercent}%</p>
+              <p className="text-[11px] text-emerald-700">{replenishmentKpi.reorderedCount}টি সফল রিপিট পারচেজ</p>
+            </div>
+
+            <div className="card p-4">
+              <p className="text-xs font-medium text-slate-500">অর্জিত অতিরিক্ত LTV</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">৳{replenishmentKpi.estimatedRecoveredLtvBdt.toLocaleString("bn-BD")}</p>
+              <p className="text-[11px] text-slate-400">বিজ্ঞাপন খরচ ছাড়া বাড়তি সেলস</p>
+            </div>
+          </div>
+
+          {/* Filter & Search Bar */}
+          <div className="card p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="input !py-1 text-xs"
+                value={replenishmentStatusFilter}
+                onChange={(e) => setReplenishmentStatusFilter(e.target.value)}
+              >
+                <option value="">সব স্ট্যাটাস</option>
+                <option value="DUE">🚨 শেষ হওয়ার পথে (DUE)</option>
+                <option value="PENDING">চলমান সাইকেল (PENDING)</option>
+                <option value="REMINDED">রিমাইন্ডার পাঠানো হয়েছে (REMINDED)</option>
+                <option value="REORDERED">রি-অর্ডার সফল (REORDERED)</option>
+              </select>
+
+              <input
+                type="text"
+                placeholder="গ্রাহক, ফোন বা প্রোডাক্ট খুঁজুন..."
+                className="input !py-1 text-xs w-60"
+                value={replenishmentSearch}
+                onChange={(e) => setReplenishmentSearch(e.target.value)}
+              />
+            </div>
+
+            <button
+              onClick={() => void loadReplenishment()}
+              className="text-xs font-semibold text-brand-600 hover:underline"
+            >
+              🔄 তালিকা রিফ্রেশ
+            </button>
+          </div>
+
+          {/* Replenishments List Table */}
+          <div className="overflow-hidden card">
+            {replenishmentItems.length === 0 ? (
+              <div className="p-12 text-center">
+                <span className="text-4xl">🧴</span>
+                <p className="mt-2 text-sm font-semibold text-slate-800">কোনো রিপ্লেনিশমেন্ট রেকর্ড নেই</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                  কনজিউমেবল প্রোডাক্টের রিপ্লেনিশমেন্ট দিন সেট করে উপরের "ডেলিভার্ড অর্ডার স্ক্যান করুন" বাটনে চাপুন।
+                </p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
+                  <tr>
+                    <th className="py-3 px-4">গ্রাহক</th>
+                    <th className="py-3 px-4">প্রোডাক্ট ও সাইকেল</th>
+                    <th className="py-3 px-4">ডেলিভারির তারিখ</th>
+                    <th className="py-3 px-4">সম্ভাব্য শেষ হওয়ার তারিখ</th>
+                    <th className="py-3 px-4">স্ট্যাটাস</th>
+                    <th className="py-3 px-4 text-right">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {replenishmentItems.map((item: any) => {
+                    const isDue = item.status === "DUE" || item.daysUntilDue <= 3;
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-slate-900">{item.customerName}</span>
+                          <div className="text-[10px] text-slate-400 font-mono">{item.customerPhone}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-semibold text-slate-800">{item.productName}</span>
+                          <div className="text-[10px] text-slate-400">{item.replenishmentDays} দিনের সাইকেল</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-500">
+                          {new Date(item.deliveredAt).toLocaleDateString("bn-BD")}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`font-bold ${isDue ? "text-amber-800" : "text-slate-700"}`}>
+                            {new Date(item.predictedDate).toLocaleDateString("bn-BD")}
+                          </span>
+                          <div className="text-[10px]">
+                            {item.daysUntilDue > 0 ? (
+                              <span className={isDue ? "text-amber-700 font-bold" : "text-slate-400"}>
+                                আর {item.daysUntilDue} দিন বাকি
+                              </span>
+                            ) : (
+                              <span className="text-rose-600 font-bold">
+                                {Math.abs(item.daysUntilDue)} দিন আগে পার হয়েছে
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              item.status === "REORDERED"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : item.status === "REMINDED"
+                                ? "bg-blue-100 text-blue-800"
+                                : item.status === "DUE"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {item.status === "REORDERED"
+                              ? "✓ REORDERED"
+                              : item.status === "REMINDED"
+                              ? "🔔 REMINDED"
+                              : item.status === "DUE"
+                              ? "🚨 শেষ হওয়ার পথে"
+                              : "PENDING"}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {item.status !== "REORDERED" && (
+                              <button
+                                disabled={remindBusy === item.id}
+                                onClick={() => void handleSendReplenishmentReminder(item.id)}
+                                className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
+                              >
+                                {remindBusy === item.id ? "পাঠানো হচ্ছে..." : "📲 রিমাইন্ডার"}
+                              </button>
+                            )}
+                            {item.status !== "REORDERED" ? (
+                              <button
+                                onClick={() => void handleMarkReplenishmentReordered(item.id)}
+                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                              >
+                                ✓ রি-অর্ডার হয়েছে
+                              </button>
+                            ) : (
+                              <span className="text-xs font-bold text-emerald-700">✓ কনভার্ট হয়েছে</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
     </div>
