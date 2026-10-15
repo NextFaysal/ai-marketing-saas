@@ -230,6 +230,11 @@ export class UpdateAutoDraftSettingsDto {
   @IsOptional() @IsBoolean() saleEnabled?: boolean;
   @IsOptional() @IsBoolean() backInStockEnabled?: boolean;
   @IsOptional() @IsBoolean() reviewMilestoneEnabled?: boolean;
+  // SN8: syndication toggles + the RSS/Atom feed URL (null
+  // clears it; the http/https check ALSO lives in the service).
+  @IsOptional() @IsBoolean() rssEnabled?: boolean;
+  @IsOptional() @IsBoolean() youtubeEnabled?: boolean;
+  @IsOptional() @IsString() @MaxLength(2048) rssFeedUrl?: string | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(20) maxDraftsPerDay?: number;
   @IsOptional() @IsString() @MaxLength(200) socialAccountId?: string | null;
 }

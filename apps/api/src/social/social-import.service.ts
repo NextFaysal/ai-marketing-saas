@@ -364,6 +364,20 @@ export class SocialImportService {
     }
   }
 
+  /**
+   * SN8 — the guarded fetch as TEXT (RSS/Atom syndication reads
+   * a feed through exactly the same SSRF-guarded path as every
+   * other URL→bytes fetch in this codebase; there is no second
+   * fetch path). The bytes are decoded as UTF-8.
+   */
+  async fetchGuardedText(startUrl: string, maxBytes = 1_000_000): Promise<string> {
+    const bytes = await this.fetchGuardedBytes(
+      startUrl, maxBytes,
+      "ফাইলটি অনেক বড় — নির্ধারিত সীমার মধ্যে থাকা ফাইলই আনা যাবে।",
+    );
+    return bytes.toString("utf-8");
+  }
+
   private async fetchGuardedImage(startUrl: string): Promise<Buffer> {
     return this.fetchGuardedBytes(
       startUrl, SOCIAL_MEDIA_MAX_BYTES,
