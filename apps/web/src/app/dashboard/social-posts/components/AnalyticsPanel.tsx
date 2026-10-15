@@ -1,8 +1,8 @@
 "use client";
 import React from "react";
 import type { SocialPageCtx } from "./shared";
-import { PLATFORM_LABELS, AccountAvatar, PlatformDot } from "./shared";
-import { summaryMetricRows, weekdayNameBn, formatHourBn } from "@/lib/social-post-insights";
+import { PLATFORM_LABELS, AccountAvatar, PlatformDot, PostStatusPill } from "./shared";
+import { summaryMetricRows, weekdayNameBn, formatHourBn, insightMetricLabel } from "@/lib/social-post-insights";
 import { contentTypeLabel, followerGrowth, formatBnNumber, monthLabelBn } from "@/lib/social-analytics";
 import { coachSourceLabel } from "@/lib/social-stock-coach";
 
@@ -26,7 +26,7 @@ import { coachSourceLabel } from "@/lib/social-stock-coach";
  * (data labels on a chart, documented in the batch acceptance).
  */
 export function AnalyticsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, analyticsAccounts, analyticsBars, analyticsContentTypes, analyticsFollowers, analyticsHasTimeseriesData, analyticsTimeseries, busy, coach, downloadReport, followerHasGrowth, hasPublishedOrInsights, inputCls, insightsSummary, posts, refreshAllInsights, reportMonth, setReportMonth } = c;
+  const { accounts, analyticsAccounts, analyticsBars, analyticsContentTypes, analyticsFollowers, analyticsHasTimeseriesData, analyticsTimeseries, busy, captionTests, coach, downloadReport, followerHasGrowth, hasPublishedOrInsights, inputCls, insightsSummary, posts, refreshAllInsights, reportMonth, setReportMonth } = c;
   // SD6 tiles: pure sums over data this panel already receives.
   const publishedCount = posts.filter((p) => p.status === "published").length;
   const engagementTotal = analyticsBars.reduce((s, b) => s + b.engagementTotal, 0);
@@ -335,6 +335,64 @@ export function AnalyticsPanel({ c }: { c: SocialPageCtx }) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* SN10: Caption Test — a pair of posts with different
+          captions, shown side by side with the numbers exactly as
+          the platforms returned them. No winner is declared here:
+          both numbers are shown and the reader decides. */}
+      <div className="card space-y-3 p-5">
+        <div className="font-semibold">🧪 Caption Test (জোড়া পোস্ট তুলনা)</div>
+        {captionTests.length === 0 ? (
+          <div className="soc-empty">
+            <span className="soc-empty-icon">🧪</span>
+            <p className="text-sm text-slate-500">এখনো কোনো Caption Test নেই — Posts ট্যাবে কোনো Draft পোস্ট থেকে “Caption Test তৈরি করুন” দিয়ে জোড়া তৈরি করা যায়।</p>
+          </div>
+        ) : captionTests.map((t) => (
+          <div key={t.captionTestId} className="space-y-2 rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/50">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {t.posts.map((p) => (
+                <div key={p.id} className="space-y-1.5 rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/50">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {p.accountName ? <AccountAvatar name={p.accountName} platform={p.platform ?? ""} /> : null}
+                    <span className="font-medium">{p.accountName ?? "—"}</span>
+                    {p.platform ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                        <PlatformDot platform={p.platform} />
+                        {PLATFORM_LABELS[p.platform] ?? p.platform}
+                      </span>
+                    ) : null}
+                    <PostStatusPill status={p.status} />
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm text-slate-700">{p.caption || <span className="text-slate-400">(ক্যাপশন নেই)</span>}</p>
+                  {p.publishedAt ? (
+                    <p className="text-xs text-slate-500">প্রকাশিত: {new Date(p.publishedAt).toLocaleString("bn-BD")}</p>
+                  ) : null}
+                  {p.engagement !== null && p.engagement !== undefined ? (
+                    <p className="text-sm text-slate-700">
+                      Engagement: <span className="font-semibold">{formatBnNumber(p.engagement)}</span>
+                      {p.metricsPresent.length > 0 ? (
+                        <span className="text-xs text-slate-400"> ({p.metricsPresent.map((k) => insightMetricLabel(k)).join(", ")} থেকে)</span>
+                      ) : null}
+                    </p>
+                  ) : null}
+                  {p.linkClicks > 0 ? (
+                    <p className="text-sm text-slate-700">Link click: <span className="font-semibold">{formatBnNumber(p.linkClicks)}টি</span></p>
+                  ) : null}
+                  {p.platformUrl ? (
+                    <a href={p.platformUrl} target="_blank" rel="noreferrer" className="inline-block text-xs font-semibold text-indigo-600 hover:underline">প্রকাশিত পোস্ট দেখুন ↗</a>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {!t.bothPublished ? (
+              <p className="text-sm text-slate-500">দুটো পোস্টই প্রকাশিত হলে এখানে তুলনা দেখা যাবে।</p>
+            ) : null}
+            {t.closeCall === true ? (
+              <p className="text-sm text-slate-600">দুটির ফল কাছাকাছি — পার্থক্য সামান্য, সংখ্যা দুটোই উপরে দেওয়া আছে।</p>
+            ) : null}
+          </div>
+        ))}
       </div>
 
 </>

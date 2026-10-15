@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import type { SocialApprovalStatus, SocialInsightsSummary, Sp7SocialPost } from "@/lib/social-post-insights";
+import type { CaptionTestGroup, SocialApprovalStatus, SocialInsightsSummary, Sp7SocialPost } from "@/lib/social-post-insights";
 import type { RecurrenceFrequency, VariantOverride } from "@/lib/social-composer";
 import type { MediaAspect } from "@/lib/social-media-library";
 import type { SocialAccountsInsights, SocialContentTypes, SocialFollowers, SocialTimeseries } from "@/lib/social-analytics";
@@ -762,6 +762,11 @@ export interface SocialPageCtx {
   // SN9: performance coach.
   coach: CoachResponse | null;
   loadCoach: any;
+  // SN10: caption tests (pair list for Analytics + the create
+  // handler the Posts panel's draft action calls).
+  captionTests: CaptionTestGroup[];
+  createCaptionTest: any;
+  loadCaptionTests: any;
   // SN6: Telegram connect form (bot token + channel; the token
   // lives in page state only until the connect call returns —
   // it is never persisted client-side).

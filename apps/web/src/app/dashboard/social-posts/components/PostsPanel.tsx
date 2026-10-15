@@ -44,7 +44,7 @@ function PlatformChip({ platform }: { platform?: string | null }) {
   );
 }
 export function PostsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, submitApproval, doPublishNow, doCancelSchedule, doScheduleValue, reschedulePostToDay, requireApproval, repurposeScriptByPost, repurposeOutlineByPost, generateRepurposeScript, generateCarouselOutline, } = c;
+  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, submitApproval, doPublishNow, doCancelSchedule, doScheduleValue, reschedulePostToDay, requireApproval, repurposeScriptByPost, repurposeOutlineByPost, generateRepurposeScript, generateCarouselOutline, createCaptionTest, } = c;
   // SN2: which created share link was just copied (button feedback).
   const [copiedShareId, setCopiedShareId] = useState("");
   // SN3: board drag-over highlight, the schedule modal (post id +
@@ -280,6 +280,12 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   {renderSuBadges(p)}
+                  {/* SN10: a post already in a caption-test pair
+                      shows the pair badge instead of the create
+                      button in the draft actions below. */}
+                  {p.captionTestId ? (
+                    <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">🧪 Caption Test জোড়া</span>
+                  ) : null}
                   <span className="text-xs text-slate-400">{new Date(p.createdAt).toLocaleString("bn-BD")}</span>
                 </div>
                 {p.scheduledAt ? (
@@ -308,6 +314,14 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
                 <>
                   {renderSubmitApproval(p)}
                   <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => startEdit(p)}>সম্পাদনা</button>
+                  {/* SN10: pair this draft with a clone draft for
+                      a caption test (badge above replaces this
+                      button once the post is in a pair). */}
+                  {!p.captionTestId ? (
+                    <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => createCaptionTest(p)}>
+                      {busy === `caption-test-${p.id}` ? "তৈরি হচ্ছে..." : "🧪 Caption Test তৈরি করুন"}
+                    </button>
+                  ) : null}
                   <button className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deletePost(p)}>
                     {busy === `delete-${p.id}` ? "মুছছে..." : "মুছুন"}
                   </button>
