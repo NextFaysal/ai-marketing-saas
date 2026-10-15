@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { AppModule } from "./app.module";
+import { createCorsOriginChecker, prismaVerifiedCustomDomainLookup } from "./common/cors-origins";
 
 async function bootstrap() {
   // rawBody is required to verify WooCommerce webhook HMAC signatures.
@@ -10,7 +11,29 @@ async function bootstrap() {
   // (<=1.5 MB of image bytes, ~2 MB encoded) — the 100 kb framework
   // default would reject it. 3 MB keeps the ceiling tight.
   (app as any).useBodyParser("json", { limit: "3mb" });
-  app.enableCors({ origin: process.env.WEB_URL ?? "http://localhost:3000", credentials: true });
+  // TD6: CORS is an origin DECISION, not a single env string — the
+  // platform's own origins (app + every tenant shop subdomain), the
+  // configured env origins, and VERIFIED merchant custom domains.
+  // The checker borrows the app's own PrismaService (no second
+  // pool); if it cannot be resolved, custom-domain origins simply
+  // fail closed and everything else keeps working.
+  let corsLookup: ((host: string) => Promise<boolean>) | undefined;
+  try {
+    const { PrismaService } = await import("./prisma/prisma.service");
+    corsLookup = prismaVerifiedCustomDomainLookup(app.get(PrismaService) as any);
+  } catch (e) {
+    Logger.warn(
+      `CORS custom-domain lookup unavailable (${e instanceof Error ? e.message : "unknown"}); custom-domain origins will fail closed`,
+      "Bootstrap",
+    );
+  }
+  app.enableCors({
+    origin: createCorsOriginChecker({
+      exactOrigins: [process.env.WEB_URL ?? "http://localhost:3000", process.env.ADMIN_URL],
+      lookupVerifiedCustomDomain: corsLookup,
+    }),
+    credentials: true,
+  });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   const port = Number(process.env.API_PORT ?? 4000);
   await app.listen(port);
