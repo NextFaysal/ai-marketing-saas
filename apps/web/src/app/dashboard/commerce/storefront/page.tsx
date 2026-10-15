@@ -92,6 +92,8 @@ interface PickupPointRow {
 interface ProductOpt { id: string; name: string }
 interface VerifyTokenOut { domain: string; recordHost: string; recordType: string; recordValue: string; token: string }
 interface RoutingOut { routingActive: boolean; checkedUrl: string | null; status?: number; evidence?: string; reason?: string }
+// TD9: POST /storefront/domain/set contract (API worker, parallel build).
+interface SetDomainOut { domain: string | null; previousDomain: string | null; verificationReset: boolean }
 
 const KIND_LABEL: Record<string, string> = {
   inside_dhaka: "ঢাকার ভিতরে",
@@ -180,6 +182,8 @@ export default function StorefrontStaffPage() {
   const [domainError, setDomainError] = useState("");
   const [domainNotice, setDomainNotice] = useState("");
   const [routing, setRouting] = useState<RoutingOut | null>(null);
+  // TD9: step-1 domain input (prefilled from state on every load)
+  const [domainInput, setDomainInput] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -191,6 +195,7 @@ export default function StorefrontStaffPage() {
         apiFetch<{ items: ProductOpt[] }>(`/organizations/${orgId}/products?pageSize=100`).catch(() => ({ items: [] as ProductOpt[] })),
       ]);
       setState(s);
+      setDomainInput(s.domain.customDomain ?? "");
       setProducts(p.items ?? []);
       const st = s.setting;
       setShopEnabled(st.shopEnabled);
@@ -578,6 +583,48 @@ export default function StorefrontStaffPage() {
       const out = await apiFetch<RoutingOut>(`/organizations/${orgId}/storefront/domain/check-routing`, { method: "POST" });
       setRouting(out);
     } catch (e) { setDomainError(e instanceof Error ? e.message : "Routing পরীক্ষা ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // TD9: set/change the custom domain. Server rejections (bad format,
+  // platform domain, taken by another org) surface verbatim via
+  // domainError — no client-side domain rules of our own.
+  async function saveDomain() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const domain = domainInput.trim();
+    if (!domain) { setDomainError("আগে ডোমেইনটি লিখুন (যেমন: dhaka-fashion.com)।"); return; }
+    setBusy("domain-set"); setDomainError(""); setDomainNotice("");
+    try {
+      const out = await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
+        method: "POST",
+        body: JSON.stringify({ domain }),
+      });
+      if (out.verificationReset) {
+        setTokenOut(null);
+        setRouting(null);
+        setDomainNotice("ডোমেইন বদলানো হয়েছে — আগের যাচাই বাতিল হয়েছে, নতুন ডোমেইনের জন্য আবার TXT যাচাই করুন");
+      } else {
+        setDomainNotice(`ডোমেইন সেভ হয়েছে: ${out.domain ?? domain}`);
+      }
+      await load();
+    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function removeDomain() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm("কাস্টম ডোমেইনটি সরিয়ে ফেলবেন? এরপর দোকান শুধু আপনার সাবডোমেইন ঠিকানায় খুলবে।")) return;
+    setBusy("domain-remove"); setDomainError(""); setDomainNotice("");
+    try {
+      await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
+        method: "POST",
+        body: JSON.stringify({ domain: null }),
+      });
+      setTokenOut(null);
+      setRouting(null);
+      setDomainNotice("ডোমেইন সরিয়ে ফেলা হয়েছে — এখন সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।");
+      await load();
+    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সরানো ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
@@ -1062,84 +1109,229 @@ export default function StorefrontStaffPage() {
         </div>
       </section>
 
-      {/* Custom domain */}
-      <section className="card space-y-4 p-5">
-        <div className="font-semibold">কাস্টম ডোমেইন</div>
-
-        <div className="space-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${customDomain ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>১</span>
-            <span className="font-semibold">ডোমেইন দেওয়া হয়েছে</span>
-            {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— কোনো কাস্টম ডোমেইন সেট করা নেই</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${verified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>২</span>
-            <span className="font-semibold">DNS যাচাই</span>
-            {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${routing?.routingActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>৩</span>
-            <span className="font-semibold">Routing সক্রিয়</span>
-            {routing?.routingActive ? (
-              <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
-            ) : routing ? (
-              <span className="text-amber-700">সক্রিয় পাওয়া যায়নি: {routing.reason ?? routing.checkedUrl}</span>
-            ) : verified ? (
-              <span className="text-slate-500">Routing: প্ল্যাটফর্মে ডোমেইন পয়েন্ট + SSL সেটআপ বাকি থাকতে পারে — Check now দিয়ে যাচাই করুন</span>
-            ) : (
-              <span className="text-slate-500">আগে DNS যাচাই করুন</span>
-            )}
-          </div>
+      {/* TD9: নিজের ডোমেইন — one unified 5-step custom-domain flow */}
+      <section className="card space-y-5 p-5">
+        <div>
+          <div className="font-semibold">নিজের ডোমেইন</div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+            নিজের কেনা ডোমেইনেই দোকান চালান — ডোমেইন লেখা, TXT যাচাই, routing নির্দেশনা আর অবস্থা, সব ধাপ এই এক বিভাগেই।
+          </p>
         </div>
 
-        {!customDomain ? (
-          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            কাস্টম ডোমেইন ব্যবহার করতে আগে সংস্থার ব্র্যান্ডিং/সেটিংসে Custom Domain সেট করুন, তারপর এখানে এসে যাচাই করুন।{" "}
-            <Link href="/dashboard/settings" className="font-bold underline">Organization Settings →</Link>
-          </p>
-        ) : (
-          <>
-            {domainError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{domainError}</p> : null}
-            {domainNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{domainNotice}</p> : null}
+        {domainError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{domainError}</p> : null}
+        {domainNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{domainNotice}</p> : null}
 
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={issueToken} disabled={busy === "token"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                {busy === "token" ? "তৈরি হচ্ছে…" : "যাচাই টোকেন তৈরি করুন (TXT)"}
-              </button>
-              <button type="button" onClick={verifyDomain} disabled={busy === "verify"} className="btn-primary disabled:opacity-50">
-                {busy === "verify" ? "যাচাই হচ্ছে…" : "এখন যাচাই করুন"}
-              </button>
-              <button type="button" onClick={checkRouting} disabled={busy === "routing" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
-              </button>
-            </div>
-
-            {tokenOut ? (
-              <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-xs text-green-300">
-                <p className="font-sans font-bold text-white">DNS-এ এই TXT রেকর্ডটি যোগ করুন:</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-sans text-slate-300">Host:</span>
-                  <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+        {(() => {
+          const stepBadge = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700";
+          const statusMark = (ok: boolean) =>
+            `flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`;
+          const labels = customDomain ? customDomain.split(".").filter(Boolean) : [];
+          const isSubdomainStyle = labels.length > 2;
+          const hasToken = !!state.setting.hasDomainVerifyToken;
+          return (
+            <>
+              {/* ধাপ ১ — ডোমেইন লেখা ও সেভ */}
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>১</span>
+                  <span className="font-semibold">ধাপ ১ — ডোমেইন লেখা ও সেভ</span>
+                  {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— এখনো কোনো ডোমেইন সেট করা নেই</span>}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
-                  <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className="input min-w-64 flex-1 font-mono"
+                    value={domainInput}
+                    onChange={(e) => setDomainInput(e.target.value)}
+                    placeholder="dhaka-fashion.com"
+                    maxLength={253}
+                  />
+                  <button type="button" onClick={saveDomain} disabled={busy === "domain-set" || !domainInput.trim()} className="btn-primary disabled:opacity-50">
+                    {busy === "domain-set" ? "সেভ হচ্ছে…" : "ডোমেইন সেভ করুন"}
+                  </button>
                 </div>
-                <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                <p className="text-xs text-slate-500">শুধু ডোমেইনটি লিখুন — https:// বা কোনো পথ ছাড়া (যেমন: dhaka-fashion.com অথবা shop.dhaka-fashion.com)।</p>
               </div>
-            ) : domain.verifyHost ? (
-              <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
-            ) : null}
 
-            <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-              মনে রাখবেন: ডোমেইনটি এই প্ল্যাটফর্মের দিকে পয়েন্ট করা (DNS A/CNAME) এবং SSL সার্টিফিকেট সেটআপ (Dokploy/Traefik) একটি
-              প্ল্যাটফর্ম-স্তরের কাজ — এই অ্যাপ থেকে করা যায় না। DNS যাচাই সফল হলেও routing সক্রিয় হতে ওই সেটআপ লাগবে; উপরে
-              &ldquo;Routing Check now&rdquo; দিয়ে আসল অবস্থা যাচাই করুন — প্রমাণ ছাড়া routing সক্রিয় বলা হবে না।
-            </p>
-          </>
-        )}
+              {/* ধাপ ২ — TXT যাচাই */}
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>২</span>
+                  <span className="font-semibold">ধাপ ২ — TXT যাচাই</span>
+                  {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
+                </div>
+                {!customDomain ? (
+                  <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                    এই ধাপটি এখন নিষ্ক্রিয় — আগে ধাপ ১-এ ডোমেইন লিখে সেভ করুন, তারপর এখানে TXT টোকেন তৈরি করে ডোমেইনটির মালিকানা যাচাই করতে পারবেন।
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={issueToken} disabled={busy === "token"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+                        {busy === "token" ? "তৈরি হচ্ছে…" : "যাচাই টোকেন তৈরি করুন (TXT)"}
+                      </button>
+                      <button type="button" onClick={verifyDomain} disabled={busy === "verify"} className="btn-primary disabled:opacity-50">
+                        {busy === "verify" ? "যাচাই হচ্ছে…" : "এখন যাচাই করুন"}
+                      </button>
+                    </div>
+
+                    {tokenOut ? (
+                      <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-xs text-green-300">
+                        <p className="font-sans font-bold text-white">DNS-এ এই TXT রেকর্ডটি যোগ করুন:</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-sans text-slate-300">Host:</span>
+                          <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
+                          <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
+                          <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
+                          <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                        </div>
+                        <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                      </div>
+                    ) : domain.verifyHost ? (
+                      <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              {/* ধাপ ৩ — Routing নির্দেশনা */}
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>৩</span>
+                  <span className="font-semibold">ধাপ ৩ — Routing নির্দেশনা (DNS রেকর্ড)</span>
+                </div>
+                {!customDomain ? (
+                  <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                    আগে ধাপ ১-এ ডোমেইন সেভ করুন — তারপর সেই ডোমেইনের জন্য ঠিক কোন DNS রেকর্ড লাগবে, তা এখানে হিসাব করে দেখানো হবে।
+                  </p>
+                ) : (
+                  <>
+                    {isSubdomainStyle ? (
+                      <div className="space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">Type:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
+                          <span className="font-semibold">Host:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
+                          <button type="button" onClick={() => copyText(customDomain, "CNAME Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          <span className="font-semibold">Target:</span>
+                          <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
+                          <button type="button" onClick={() => copyText("app.qosprey.com", "CNAME Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        </div>
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          টীকা: registrar অনুযায়ী Host ঘরে পুরো ডোমেইনটি লিখতে হতে পারে, আবার কোনোটায় শুধু subdomain অংশটি
+                          (যেমন: {labels[0]}) লাগে — আপনার registrar-এর নিয়ম অনুযায়ী দিন।
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm">
+                        <div className="space-y-1.5">
+                          <p><b>(ক)</b> আপনার registrar-এ <b>CNAME flattening / ALIAS / ANAME</b> সুবিধা থাকলে apex ডোমেইনের জন্য সেটাই ব্যবহার করুন:</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">Type:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">ALIAS / ANAME</code>
+                            <span className="font-semibold">Host:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
+                            <span className="font-semibold">Target:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
+                            <button type="button" onClick={() => copyText("app.qosprey.com", "ALIAS Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 border-t border-slate-200 pt-3">
+                          <p><b>(খ)</b> সেই সুবিধা না থাকলে <b>A রেকর্ড</b> দিন:</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">Type:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">A</code>
+                            <span className="font-semibold">Host:</span>
+                            <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
+                            <span className="font-semibold">Value:</span>
+                            <span>সার্ভারের IP (Dokploy প্যানেলে app ডোমেইনের A রেকর্ডের মান)</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold">www রূপ — Type:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
+                        <span className="font-semibold">Host:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">www</code>
+                        <button type="button" onClick={() => copyText("www", "www Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        <span className="font-semibold">Target:</span>
+                        <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
+                        <button type="button" onClick={() => copyText(customDomain, "www Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                      </div>
+                      <p className="text-xs leading-relaxed text-slate-500">টীকা: যাচাই করা ডোমেইন ও তার www রূপ — দুটোতেই দোকান খুলবে।</p>
+                    </div>
+
+                    <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                      মনে রাখবেন: ডোমেইনটি এই প্ল্যাটফর্মের দিকে পয়েন্ট করা (DNS A/CNAME) এবং SSL সার্টিফিকেট সেটআপ (Dokploy/Traefik) একটি
+                      প্ল্যাটফর্ম-স্তরের কাজ — এই অ্যাপ থেকে করা যায় না। DNS যাচাই সফল হলেও routing সক্রিয় হতে ওই সেটআপ লাগবে; নিচের ধাপ ৪-এ
+                      &ldquo;Routing Check now&rdquo; দিয়ে আসল অবস্থা যাচাই করুন — প্রমাণ ছাড়া routing সক্রিয় বলা হবে না।
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* ধাপ ৪ — অবস্থা তালিকা */}
+              <div className="space-y-2 border-t pt-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className={stepBadge}>৪</span>
+                  <span className="font-semibold">ধাপ ৪ — অবস্থা</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(hasToken)}>{hasToken ? "✓" : "…"}</span>
+                  <span className="font-semibold">টোকেন দেওয়া হয়েছে</span>
+                  {hasToken ? <span className="text-emerald-700">হ্যাঁ — TXT যাচাই টোকেন সেট করা আছে</span> : <span className="text-slate-500">বাকি — ধাপ ২-এ টোকেন তৈরি করুন</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(verified)}>{verified ? "✓" : "…"}</span>
+                  <span className="font-semibold">যাচাই হয়েছে</span>
+                  {verified ? <span className="text-emerald-700">হ্যাঁ ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">বাকি — এখনো যাচাই হয়নি</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={statusMark(!!routing?.routingActive)}>{routing?.routingActive ? "✓" : "…"}</span>
+                  <span className="font-semibold">Routing ঠিক আছে</span>
+                  {routing?.routingActive ? (
+                    <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
+                  ) : routing ? (
+                    <span className="text-amber-700">সক্রিয় পাওয়া যায়নি: {routing.reason ?? routing.checkedUrl}</span>
+                  ) : (
+                    <span className="text-slate-500">এখনো পরীক্ষা করা হয়নি — অনুমান নয়, আসল diagnostic দেখতে Check now চাপুন</span>
+                  )}
+                  <button type="button" onClick={checkRouting} disabled={busy === "routing" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+                    {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={statusMark(false)}>…</span>
+                  <span className="font-semibold">SSL</span>
+                  <span className="text-slate-500">স্বয়ংক্রিয় SSL ব্যবস্থা অপেক্ষমাণ (TD10) — সার্ভার ধাপ ছাড়া HTTPS নিশ্চিত নয়</span>
+                </div>
+              </div>
+
+              {/* ধাপ ৫ — বদলানো/সরানো */}
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={stepBadge}>৫</span>
+                  <span className="font-semibold">ধাপ ৫ — ডোমেইন বদলানো বা সরানো</span>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  ডোমেইন বদলাতে চাইলে উপরের ধাপ ১-এর ঘরে নতুন ডোমেইন লিখে সেভ করুন — বদলালে আগের যাচাই রিসেট হয়ে যাবে,
+                  নতুন ডোমেইনের জন্য আবার TXT যাচাই করতে হবে। ডোমেইন সরিয়ে ফেললেও চিন্তা নেই — আপনার সাবডোমেইন ঠিকানা
+                  ({shopSubdomainHost(state.organization.slug)}) সবসময়ই থাকে, দোকান সেখানেই খুলবে।
+                </p>
+                <button type="button" onClick={removeDomain} disabled={busy === "domain-remove" || !customDomain} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold text-rose-600 disabled:opacity-50">
+                  {busy === "domain-remove" ? "সরানো হচ্ছে…" : "ডোমেইন সরিয়ে ফেলুন"}
+                </button>
+                {!customDomain ? <span className="ml-2 text-xs text-slate-400">কোনো ডোমেইন সেট করা নেই — সরানোর কিছু নেই।</span> : null}
+              </div>
+            </>
+          );
+        })()}
       </section>
     </div>
   );
