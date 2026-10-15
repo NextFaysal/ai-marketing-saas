@@ -150,6 +150,8 @@ model Organization {
   socialAccounts SocialAccount[]
   socialAccountFollowerSnapshots SocialAccountFollowerSnapshot[]
   socialPosts    SocialPost[]
+  socialPostShareLinks SocialPostShareLink[]
+  socialPostClientReviews SocialPostClientReview[]
   socialPostNotes SocialPostNote[]
   socialPostVersions SocialPostVersion[]
   socialPostGroups SocialPostGroup[]
@@ -187,6 +189,11 @@ model Organization {
   // SP7: when true, social posts by non-OWNER/ADMIN members need
   // OWNER/ADMIN approval before they can be scheduled/published.
   socialRequireApproval Boolean @default(false)
+  // SN2: when true, a post additionally needs CLIENT approval
+  // through a SocialPostShareLink before it can be published —
+  // an optional third step beside the internal approval above.
+  // Default false = client approval never gates publishing.
+  socialRequireClientApproval Boolean @default(false)
   // SU9: when true, approval gains a second step — a first
   // OWNER/ADMIN approval moves a post to "manager_approved" and
   // only a second OWNER/ADMIN approval makes it "approved".
@@ -5649,6 +5656,7 @@ model SocialPostGroup {
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   posts          SocialPost[]
+  shareLinks     SocialPostShareLink[]
 
   @@index([organizationId])
 }
@@ -5738,6 +5746,12 @@ model SocialPost {
   youtubeTags      Json?
   youtubeCategoryId String?
   youtubeIsShort   Boolean       @default(false)
+  // SN1: the channel playlist this video joins after a successful
+  // upload (playlistItems.insert). Null = no playlist step, the
+  // pre-SN1 behaviour exactly. A failed insert never unpublishes
+  // the video — the verbatim reason joins the publish note (the
+  // SU8 cover semantics).
+  youtubePlaylistId String?
   coverAssetId     String?
   isStory          Boolean       @default(false)
   // SU6: unguessable tracked-link token (public redirect route);
@@ -5750,6 +5764,8 @@ model SocialPost {
   assignedUserId  String?
   notes           SocialPostNote[]
   versions        SocialPostVersion[]
+  shareLinks      SocialPostShareLink[]
+  clientReviews   SocialPostClientReview[]
   createdById     String
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -5797,6 +5813,56 @@ model SocialPostVersion {
 
   @@unique([socialPostId, versionNo])
   @@index([organizationId, socialPostId])
+}
+
+// SN2: a client-approval share link — an unguessable token (the
+// SP1 public-media-token discipline: randomBytes base64url,
+// shown once at creation) that lets an agency client preview ONE
+// post (postId) or ONE variant group (groupId) without a login
+// and record an approve / request-changes decision. Exactly one
+// of postId / groupId is set. Expiry + revoke are honoured by the
+// public review path; a revoked or expired link answers 404.
+model SocialPostShareLink {
+  id             String       @id @default(uuid())
+  organizationId String
+  postId         String?
+  groupId        String?
+  token          String       @unique
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  post           SocialPost?  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  group          SocialPostGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  reviews        SocialPostClientReview[]
+
+  @@index([organizationId])
+  @@index([postId])
+  @@index([groupId])
+}
+
+// SN2: one client decision recorded through a share link. The
+// reviewer's name is what the client typed on the public page
+// (no account exists for them); decision is "approved" or
+// "changes_requested" (String, the SocialPost approvalStatus
+// convention). Reviews are append-only history — the latest one
+// is the client's current word on the post.
+model SocialPostClientReview {
+  id             String       @id @default(uuid())
+  organizationId String
+  postId         String
+  shareLinkId    String
+  reviewerName   String
+  decision       String // approved | changes_requested
+  comment        String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  post           SocialPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  shareLink      SocialPostShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, postId])
+  @@index([shareLinkId])
 }
 
 // SU5: per-org commerce auto-draft settings — one row per org.
