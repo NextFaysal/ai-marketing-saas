@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead } from "@/components/ui";
 import { useNavCounts, presentCounts } from "@/components/useNavCounts";
 import type { NavCounts } from "@/components/nav";
 import { apiFetch, formatMinorStr } from "@/lib/api";
@@ -74,6 +74,17 @@ export default function OverviewPage() {
   const [series, setSeries] = React.useState<Series | null>(null);
   const [storage, setStorage] = React.useState<StorageOverview | null>(null);
   const counts = useNavCounts();
+  // ADNX7: storage section collapse, persisted like every other
+  // shell preference (guarded storage — private mode degrades to
+  // the default, expanded, as before).
+  const [storageOpen, setStorageOpen] = React.useState(true);
+  React.useEffect(() => {
+    try { const v = localStorage.getItem("admin_overview_storage_open"); if (v !== null) setStorageOpen(v === "1"); } catch { /* ignore */ }
+  }, []);
+  const toggleStorage = () => setStorageOpen((o) => {
+    try { localStorage.setItem("admin_overview_storage_open", o ? "0" : "1"); } catch { /* ignore */ }
+    return !o;
+  });
   // ADX12: the load is a named callback so the error state can
   // offer a real retry (before, an overview failure was terminal
   // until a manual page reload).
@@ -106,7 +117,7 @@ export default function OverviewPage() {
   const cards = data ? [
     { icon: "🏢", label: "মোট Organization", value: String(data.organizations), sub: `নতুন (৩০ দিন): ${data.newOrganizations30d}` },
     { icon: "👤", label: "মোট User", value: String(data.users), sub: `নতুন (৩০ দিন): ${data.newUsers30d}` },
-    { icon: "🧾", label: "এই মাসের Order", value: String(data.monthOrders), sub: `আয় ${formatMinorStr(data.monthOrderRevenueMinor)} · সব Tenant${prevMonth ? ` · গত মাস: ${prevMonth.orders}টি Order, আয় ${formatMinorStr(prevMonth.orderRevenueMinor)}` : ""}` },
+    { icon: "🧾", label: "এই মাসের Order", value: String(data.monthOrders), sub: `আয় ${formatMinorStr(data.monthOrderRevenueMinor)} · সব Tenant`, cmp: prevMonth ? `গত মাস: ${prevMonth.orders}টি Order · আয় ${formatMinorStr(prevMonth.orderRevenueMinor)}` : undefined },
     { icon: "📣", label: "Ad Spend (Tracked)", value: formatMinorStr(data.monthAdSpendMinor), sub: "এই মাস · Campaign-level, সব Tenant" },
     { icon: "🤖", label: "AI ব্যবহার (এই মাস)", value: `${data.monthAiCalls} কল`, sub: `${data.monthAiTokens.toLocaleString()} টোকেন` },
     { icon: failedTotal > 0 ? "⚠️" : "✅", label: "ব্যর্থ Job (২৪ ঘণ্টা)", value: String(failedTotal), sub: `Sync ${data.failedSyncJobs24h} · Automation ${data.failedAutomationRuns24h}` },
@@ -116,22 +127,25 @@ export default function OverviewPage() {
 
   return (
     <AdminShell title="📊 Command Center">
+      {/* ADNX7: PageHead adoption (first adopter) — the shell owns
+          the h1, so PageHead carries the sub-line + the page's
+          status badges as its actions. */}
+      <PageHead sub="আজকের করণীয়, KPI ও সাম্প্রতিক কার্যকলাপ — সব এক পর্দায়।">
+        <span className={dbOk === null ? "abadge-slate" : dbOk ? "abadge-green" : "abadge-red"}>
+          {dbOk === null ? "Database: যাচাই হচ্ছে…" : dbOk ? "● Database সংযুক্ত" : "● Database সমস্যা"}
+        </span>
+        <span className="abadge-indigo">● API চলছে</span>
+        {data ? (
+          <span className={failedTotal > 0 ? "abadge-amber" : "abadge-green"}>
+            {failedTotal > 0 ? `⚠ ${failedTotal}টি ব্যর্থ Job (২৪ ঘণ্টা)` : "✓ কোনো ব্যর্থ Job নেই (২৪ ঘণ্টা)"}
+          </span>
+        ) : null}
+      </PageHead>
       {/* Hero strip */}
       <div className="acard mb-5 flex flex-wrap items-center gap-4 overflow-hidden !p-5">
         <div className="min-w-0">
           <div className="text-lg font-bold tracking-tight">প্ল্যাটফর্মের আজকের চিত্র</div>
           <div className="mt-0.5 text-sm text-slate-400">{today} · সব সংখ্যা আসল ডেটা থেকে — কোনো অনুমান নয়।</div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className={dbOk === null ? "abadge-slate" : dbOk ? "abadge-green" : "abadge-red"}>
-            {dbOk === null ? "Database: যাচাই হচ্ছে…" : dbOk ? "● Database সংযুক্ত" : "● Database সমস্যা"}
-          </span>
-          <span className="abadge-indigo">● API চলছে</span>
-          {data ? (
-            <span className={failedTotal > 0 ? "abadge-amber" : "abadge-green"}>
-              {failedTotal > 0 ? `⚠ ${failedTotal}টি ব্যর্থ Job (২৪ ঘণ্টা)` : "✓ কোনো ব্যর্থ Job নেই (২৪ ঘণ্টা)"}
-            </span>
-          ) : null}
         </div>
       </div>
 
@@ -142,15 +156,15 @@ export default function OverviewPage() {
       {todoPresent.length > 0 ? (
         <div className="mb-5">
           <div className="mb-2.5 text-sm font-semibold text-slate-300">আজকের করণীয়</div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-2 sm:overflow-visible sm:pb-0 xl:grid-cols-5">
             {todoPresent.map(([key, value]) => {
               const row = TODO_ROWS[key];
               const calm = value === 0;
               return (
-                <a key={key} href={row.href} className={`acard acard-hover block !p-4 ${calm ? "" : "border-red-500/40"}`}>
+                <a key={key} href={row.href} className={`acard acard-hover block min-w-[228px] snap-start !p-4 sm:min-w-0 ${calm ? "" : "border-red-500/40"}`}>
                   <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{row.label}</div>
                   <div className={`mt-1.5 text-[26px] font-bold leading-none tracking-tight ${calm ? "text-emerald-300" : "text-red-300"}`}>{value}</div>
-                  <div className="mt-1.5 text-xs text-slate-500">{calm ? "কিছু বাকি নেই" : row.hint} →</div>
+                  <div className="mt-1.5 text-xs text-slate-400">{calm ? "কিছু বাকি নেই" : row.hint} →</div>
                 </a>
               );
             })}
@@ -174,7 +188,8 @@ export default function OverviewPage() {
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{c.label}</div>
               </div>
               <div className="astat-value">{c.value}</div>
-              <div className="mt-1.5 text-xs text-slate-500">{c.sub}</div>
+              <div className="mt-1.5 text-xs text-slate-400">{c.sub}</div>
+              {"cmp" in c && c.cmp ? <div className="mt-1 text-xs font-medium text-slate-400">↔ {c.cmp}</div> : null}
             </div>
           ))}
         </div>
@@ -193,20 +208,22 @@ export default function OverviewPage() {
       {storage && storage.registryAvailable ? (
         <div className="acard mt-5">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="font-semibold">🗄️ মিডিয়া স্টোরেজ</div>
+            <button type="button" className="font-semibold" aria-expanded={storageOpen} onClick={toggleStorage}>🗄️ মিডিয়া স্টোরেজ {storageOpen ? "▲" : "▼"}</button>
             {storage.mode === "s3" ? (
               <span className="abadge-green">● Cloudflare R2 (Object Storage)</span>
             ) : (
               <span className="abadge-amber">● Local Disk — Redeploy-এ ঝুঁকি</span>
             )}
             {storage.truncated ? <span className="abadge-slate">আংশিক হিসাব (cap)</span> : null}
-            <span className="ml-auto text-xs text-slate-500">সূত্র: StoredFile রেজিস্ট্রি</span>
+            <span className="ml-auto text-xs text-slate-400">সূত্র: StoredFile রেজিস্ট্রি</span>
           </div>
+          {storageOpen ? (
+          <>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-slate-400">মোট ফাইল</div>
               <div className="mt-1 text-[22px] font-bold leading-none">{storage.totalObjects.toLocaleString()}</div>
-              <div className="mt-1.5 text-xs text-slate-500">মোট {formatBytes(storage.totalBytes)}</div>
+              <div className="mt-1.5 text-xs text-slate-400">মোট {formatBytes(storage.totalBytes)}</div>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Public / Private</div>
@@ -217,7 +234,7 @@ export default function OverviewPage() {
                     <span>{v.objects.toLocaleString()}টি · {formatBytes(v.bytes)}</span>
                   </div>
                 ))}
-                {storage.byVisibility.length === 0 ? <span className="text-slate-500">কোনো ফাইল নেই</span> : null}
+                {storage.byVisibility.length === 0 ? <span className="text-slate-400">কোনো ফাইল নেই</span> : null}
               </div>
             </div>
             <div>
@@ -229,14 +246,16 @@ export default function OverviewPage() {
                     <span className="shrink-0">{formatBytes(o.bytes)}</span>
                   </div>
                 ))}
-                {storage.topOrgs.length === 0 ? <span className="text-slate-500">কোনো ডেটা নেই</span> : null}
+                {storage.topOrgs.length === 0 ? <span className="text-slate-400">কোনো ডেটা নেই</span> : null}
               </div>
             </div>
           </div>
           {storage.trashedObjects > 0 ? (
-            <div className="mt-3 border-t border-slate-800 pt-2.5 text-xs text-slate-500">
+            <div className="mt-3 border-t border-slate-800 pt-2.5 text-xs text-slate-400">
               ট্র্যাশে {storage.trashedObjects.toLocaleString()}টি ফাইল ({formatBytes(storage.trashedBytes)}) — retention শেষ হলে Lifecycle Sweep আসলেই মুছবে।
             </div>
+          ) : null}
+          </>
           ) : null}
         </div>
       ) : null}
@@ -258,9 +277,9 @@ export default function OverviewPage() {
                     <span className="absolute -left-[23.5px] top-1.5 h-2 w-2 rounded-full bg-indigo-400 ring-4 ring-indigo-400/15" />
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-sm font-medium">{a.action}
-                        <span className="ml-1.5 font-normal text-slate-500">({a.entityType}{a.entityId ? ` · ${a.entityId.slice(0, 8)}…` : ""})</span>
+                        <span className="ml-1.5 font-normal text-slate-400">({a.entityType}{a.entityId ? ` · ${a.entityId.slice(0, 8)}…` : ""})</span>
                       </span>
-                      <span className="text-xs text-slate-500">{fmtDateTime(a.createdAt)}</span>
+                      <span className="text-xs text-slate-400">{fmtDateTime(a.createdAt)}</span>
                     </div>
                   </li>
                 ))}
@@ -283,15 +302,15 @@ export default function OverviewPage() {
           ) : null}
           <div className="acard">
             <div className="mb-3 font-semibold">দ্রুত কাজ</div>
-            <div className="grid gap-2">
+            <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
               {QUICK_ACTIONS.map((qa) => (
                 <a key={qa.href} href={qa.href} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-3.5 py-3 transition hover:border-indigo-500/50 hover:bg-slate-800/70">
                   <span className="text-lg">{qa.icon}</span>
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{qa.label}</span>
-                    <span className="block truncate text-xs text-slate-500">{qa.sub}</span>
+                    <span className="block truncate text-xs text-slate-400">{qa.sub}</span>
                   </span>
-                  <span className="ml-auto text-slate-500">→</span>
+                  <span className="ml-auto text-slate-400">→</span>
                 </a>
               ))}
             </div>
