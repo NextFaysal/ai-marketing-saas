@@ -38,7 +38,7 @@ function PlatformChip({ platform }: { platform?: string | null }) {
 const TOGGLE_CLS = "h-4 w-4 shrink-0 accent-[var(--brand-from)]";
 
 export function SettingsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, } = c;
+  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, } = c;
   return (
 <>
       {/* Accounts strip — SD7: section card */}
@@ -220,6 +220,14 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
           {busy === "approval-two-step" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
         </label>
         <p className="text-xs text-slate-500">চালু থাকলে অনুমোদন দুই ধাপে হয়: প্রথমে Manager ধাপের অনুমোদন, তারপর চূড়ান্ত অনুমোদন। বন্ধ থাকলে আগের এক-ধাপের নিয়মই থাকে।</p>
+        {/* SN2: optional third gate — the client's own sign-off via share link. */}
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" className={TOGGLE_CLS} checked={requireClientApproval} disabled={busy !== "" || !requireApprovalLoaded}
+            onChange={(e) => saveRequireClientApproval(e.target.checked)} />
+          <span>ক্লায়েন্ট অনুমোদন বাধ্যতামূলক (শেয়ার লিংক)</span>
+          {busy === "client-approval-requirement" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
+        </label>
+        <p className="text-xs text-slate-500">চালু থাকলে: শেয়ার লিংকে ক্লায়েন্টের সর্বশেষ সিদ্ধান্ত "অনুমোদিত" না হলে পোস্টটি publish/schedule হবে না — "ক্লায়েন্ট অনুমোদন বাকি" বলে আটকাবে। বন্ধ থাকলে ক্লায়েন্ট review শুধু রেকর্ড হিসেবে থাকে, কোনো gate নয়।</p>
       </div>
 
       {/* SU5: Commerce Auto-Draft settings — SD7: section card */}

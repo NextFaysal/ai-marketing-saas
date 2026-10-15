@@ -1,7 +1,8 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, POST_STATUS_META, MediaThumb, PostStatusPill, AccountAvatar, PlatformDot } from "./shared";
+import { SHARE_LINK_STATUS_META, shareLinkStatus } from "@/lib/social-posts-sn";
 import { orgDayKey } from "@/lib/social-calendar";
 import { weekdayLabelBn } from "@/lib/social-composer";
 import { EmptyState } from "@repo/ui";
@@ -39,7 +40,9 @@ function PlatformChip({ platform }: { platform?: string | null }) {
   );
 }
 export function PostsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, } = c;
+  const { accounts, approvePost, busy, calBuckets, calCells, calMonthTitle, caption, connectedAccounts, createPostingSlot, deletePost, deletePostingSlot, error, filterAccountId, filterQuery, filterStatus, filteredPosts, fmtInTz, inputCls, linkUrl, orgTz, pendingApprovalPosts, postingSlots, posts, queuePosts, rejectNotes, rejectOpenId, rejectPost, relativeLabel, renderApprovalBadge, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, renderSuBadges, renderSubmitApproval, selectedPost, setCalCursor, setFilterAccountId, setFilterQuery, setFilterStatus, setRejectNotes, setRejectOpenId, setSelectedPostId, setSlotAccountId, setSlotTime, setSlotWeekday, setViewMode, slotAccountId, slotTime, slotWeekday, startEdit, togglePostingSlot, viewMode, postsNextCursor, loadMorePosts, selectedPostIds, togglePostSelected, bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost, noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel, members, myUserId, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, } = c;
+  // SN2: which created share link was just copied (button feedback).
+  const [copiedShareId, setCopiedShareId] = useState("");
   return (
 <>
       {/* SU2: posting slots (queue) */}
@@ -347,6 +350,53 @@ export function PostsPanel({ c }: { c: SocialPageCtx }) {
                       <span className="text-slate-400">{new Date(entry.at).toLocaleString("bn-BD")}</span> · {entry.label}
                     </p>
                   ))}
+                </div>
+                {/* SN2: client approval share links */}
+                <div className="space-y-1.5">
+                  <div className="text-sm font-medium">🔗 ক্লায়েন্ট শেয়ার লিংক</div>
+                  <p className="text-xs text-slate-400">ক্লায়েন্ট লগইন ছাড়াই পোস্টের preview দেখে অনুমোদন দিতে বা পরিবর্তন চাইতে পারবেন; সিদ্ধান্ত Timeline-এ রেকর্ড হয়। পূর্ণ লিংক শুধু তৈরির মুহূর্তে একবার দেখা যায় — কপি করে রাখুন।</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => createShareLink(p)}>
+                      {busy === `share-create-${p.id}` ? "তৈরি হচ্ছে..." : "এই পোস্টের শেয়ার লিংক তৈরি করুন"}
+                    </button>
+                    {p.postGroupId ? (
+                      <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => createGroupShareLink(p)}>
+                        {busy === `share-group-${p.id}` ? "তৈরি হচ্ছে..." : "পুরো গ্রুপের শেয়ার লিংক তৈরি করুন"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {p.postGroupId ? <p className="text-xs text-slate-400">গ্রুপ লিংক নিচের তালিকায় আসে না — তৈরির মুহূর্তে দেখানো লিংকটিই সংরক্ষণ করুন।</p> : null}
+                  {shareCreatedByPost[p.id] ? (
+                    <div className="space-y-1 rounded-lg bg-emerald-50 px-3 py-2 text-sm">
+                      <div className="font-medium text-emerald-800">নতুন লিংক তৈরি হয়েছে:</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="min-w-0 flex-1 break-all rounded bg-white px-2 py-1 text-xs">{shareCreatedByPost[p.id].url}</code>
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => { void navigator.clipboard?.writeText(shareCreatedByPost[p.id].url); setCopiedShareId(shareCreatedByPost[p.id].id); }}>
+                          {copiedShareId === shareCreatedByPost[p.id].id ? "কপি হয়েছে ✓" : "কপি করুন"}
+                        </button>
+                      </div>
+                      {shareCreatedByPost[p.id].urlNote ? <p className="text-xs text-amber-700">{shareCreatedByPost[p.id].urlNote}</p> : null}
+                      <p className="text-xs text-slate-500">মেয়াদ শেষ: {new Date(shareCreatedByPost[p.id].expiresAt).toLocaleString("bn-BD")}</p>
+                    </div>
+                  ) : null}
+                  {(shareLinksByPost[p.id] ?? []).length === 0 ? (
+                    <p className="text-xs text-slate-400">এই পোস্টের জন্য এখনো কোনো শেয়ার লিংক তৈরি হয়নি।</p>
+                  ) : (shareLinksByPost[p.id] ?? []).map((l) => {
+                    const st = shareLinkStatus(l);
+                    const meta = SHARE_LINK_STATUS_META[st];
+                    return (
+                      <div key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                        <span className="font-mono text-xs text-slate-600">{l.tokenMasked}</span>
+                        <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${meta.pillCls}`}>{meta.label}</span>
+                        <span className="text-[11px] text-slate-400">মেয়াদ: {new Date(l.expiresAt).toLocaleString("bn-BD")}</span>
+                        {st === "active" ? (
+                          <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => revokeShareLink(p, l.id)}>
+                            {busy === `share-revoke-${l.id}` ? "বাতিল হচ্ছে..." : "বাতিল করুন"}
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
                 {/* SD4: tracked-link stats live in the expander too */}
                 {renderLinkStats(p)}
