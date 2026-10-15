@@ -215,6 +215,8 @@ function stubTikTokClient(overrides: Partial<Record<string, any>> = {}) {
     queryCreatorInfo: jest.fn(async () => ({ privacyLevelOptions: ["PUBLIC_TO_EVERYONE", "SELF_ONLY"] })),
     inboxInit: jest.fn(async () => "pub-1"),
     directInit: jest.fn(async () => "pub-2"),
+    // SN1: photo direct-post init joins the stubbed surface.
+    directPhotoInit: jest.fn(async () => "pub-photo-1"),
     fetchStatus: jest.fn(async () => ({ status: "SEND_TO_USER_INBOX" })),
     ...overrides,
   };
@@ -447,8 +449,13 @@ describe("SP8 TikTok publish dispatch", () => {
     const out = await publish.publishNow(ORG, ACTOR, post.id);
     expect(out.status).toBe("failed");
     expect(out.attempts).toBe(0);
-    expect(out.error).toContain("ঠিক একটি Video লাগবে");
+    // SN1: an image post is now a photo post behind the audit
+    // gate — this spec's app is unaudited, so the refusal is the
+    // gate message (still permanent, attempts untouched, and no
+    // TikTok call of either mode happens).
+    expect(out.error).toContain("ছবির পোস্ট শুধু Direct Post-এ হয়");
     expect(client.inboxInit).not.toHaveBeenCalled();
+    expect(client.directPhotoInit).not.toHaveBeenCalled();
   });
 
   it("two videos → permanent failure as well (exactly one)", async () => {
@@ -586,9 +593,11 @@ describe("SP8 schedule gate", () => {
     const social = new SocialService(db as any, mkAudit(db) as any);
     const imgPost = seedVideoPost(db, account.id, [{ assetId: "asset-img-1", kind: "image" }]);
     imgPost.id = "post-img";
+    // SN1: scheduling an image post is refused with the photo
+    // audit-gate message (this spec's app is unaudited).
     await expect(
       social.schedulePost(ORG, ACTOR, "post-img", { scheduledAt: new Date(Date.now() + 3600_000).toISOString() }),
-    ).rejects.toThrow("ঠিক একটি Video লাগবে");
+    ).rejects.toThrow("ছবির পোস্ট শুধু Direct Post-এ হয়");
     const vidPost = seedVideoPost(db, account.id);
     vidPost.id = "post-vid";
     const out = await social.schedulePost(ORG, ACTOR, "post-vid", { scheduledAt: new Date(Date.now() + 3600_000).toISOString() });

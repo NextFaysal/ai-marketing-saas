@@ -1,9 +1,9 @@
-import { ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { SocialService, videoOnlyViolation } from "./social.service";
-import { validateForPlatform } from "./social-preflight";
+import { validateForPlatform, TIKTOK_PHOTO_GATE_MSG } from "./social-preflight";
 import { addInterval } from "./social-queue-helpers";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -81,6 +81,10 @@ export class SocialPublishService {
   private readonly linkedinClient: LinkedInClient;
   private readonly raster: SocialRasterService;
   private readonly links?: SocialLinkService;
+  // SN1: raw clients for the steps the orchestrating publishers
+  // do not own (YouTube playlists/comments, TikTok photo init).
+  private readonly youtubeClient: YouTubeClient;
+  private readonly tiktokClient: TikTokClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -98,8 +102,15 @@ export class SocialPublishService {
     // SU6: tracked-link builder. LAST param + Optional so every
     // existing positional spec construction keeps working.
     @Optional() links?: SocialLinkService,
+    // SN1: raw YouTube/TikTok clients — appended AFTER links for
+    // the same positional-compat reason; specs inject stub-fetch
+    // clients here, production defaults to real instances.
+    @Optional() youtubeClient?: YouTubeClient,
+    @Optional() tiktokClient?: TikTokClient,
   ) {
     this.links = links;
+    this.youtubeClient = youtubeClient ?? new YouTubeClient();
+    this.tiktokClient = tiktokClient ?? new TikTokClient();
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -118,6 +129,26 @@ export class SocialPublishService {
     // CC20: LinkedIn UGC posting (specs inject a stub-fetch
     // client at this seam).
     this.linkedinClient = linkedinClient ?? new LinkedInClient();
+  }
+
+  /**
+   * SN1 — the playlists of a YouTube account's own channel, for
+   * the composer's playlist picker. A non-YouTube account is an
+   * honest Bengali 400 (the picker only asks for YouTube rows,
+   * but the route must not pretend otherwise). The token comes
+   * from the OAuth service's refresh-aware path, like publish.
+   */
+  async listYouTubePlaylists(organizationId: string, accountId: string): Promise<{ playlists: { id: string; title: string }[] }> {
+    const account = await (this.prisma as any).socialAccount.findFirst({
+      where: { id: accountId, organizationId },
+    });
+    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (account.platform !== "youtube") {
+      throw new BadRequestException("Playlist শুধু YouTube অ্যাকাউন্টের জন্য — এই অ্যাকাউন্টটি YouTube চ্যানেল নয়।");
+    }
+    const accessToken = await this.oauth.ensureAccessToken(organizationId, account);
+    const playlists = await this.youtubeClient.listPlaylists(accessToken);
+    return { playlists };
   }
 
   /** Public base URL of this API (payments.service convention). */
@@ -224,13 +255,22 @@ export class SocialPublishService {
 
     const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
 
+    // SN1: a TikTok post's pre-flight needs the audit gate (photo
+    // posts ride it) — resolved fresh here, the same read the
+    // TikTok dispatch below makes. Other platforms skip the read.
+    let tiktokAudited: boolean | undefined;
+    if (account.platform === "tiktok") {
+      await ensurePlatformConfig(prisma as any).catch(() => undefined);
+      tiktokAudited = effectiveTiktokAppConfig()?.audited === true;
+    }
+
     // SU1: full platform pre-flight, right after account
     // resolution and BEFORE any platform dispatch — content that
     // can never succeed fails permanently with the pre-flight
     // message (for OAuth platforms that is the same video-only
     // text the OAuth path itself used).
     const preflightViolation = validateForPlatform(
-      { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory === true }, account.platform ?? "",
+      { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory === true, tiktokAudited }, account.platform ?? "",
     );
     if (preflightViolation) throw new PermanentPublishError(preflightViolation);
 
@@ -410,7 +450,7 @@ export class SocialPublishService {
    * to hold Community Management API approval — LinkedIn's
    * gate, surfaced verbatim when it refuses.
    */
-  private async publishToLinkedIn(post: any, account: any): Promise<SocialPublishResult> {
+  private async publishToLinkedIn(post: any, account: any): Promise<SocialPublishResult & { accessToken?: string }> {
     const refs = Array.isArray(post.mediaRefs) ? post.mediaRefs : [];
     if (refs.length > 0) {
       throw new PermanentPublishError("LinkedIn-এ এই সংস্করণে শুধু টেক্সট ও লিংক পোস্ট হয় — ছবি/ভিডিও আপলোডের ধাপ তৈরি হয়নি। মিডিয়া ছাড়া পোস্টটি আবার প্রকাশ করুন।");
@@ -421,14 +461,61 @@ export class SocialPublishService {
       text: String(post.caption ?? ""),
       linkUrl: post.linkUrl ?? null,
     });
-    return { platformPostId, platformUrl: null, outcome: "published" };
+    // SN1: the fresh token rides along (internal only — never
+    // serialized or stored) so the first-comment step reuses THIS
+    // token instead of resolving a second one: for LinkedIn the
+    // sealed snapshot resolveAccountToken returns can be stale,
+    // while ensureAccessToken's is refresh-aware.
+    return { platformPostId, platformUrl: null, outcome: "published", accessToken };
   }
 
   private async publishToOAuthPlatform(post: any, account: any): Promise<SocialPublishResult> {
     const prisma = this.prisma as any;
     const violation = videoOnlyViolation(account.platform, post.mediaRefs);
     if (violation) throw new PermanentPublishError(violation);
-    const ref = (post.mediaRefs as { assetId: string; kind: string }[])[0];
+    const refs = (post.mediaRefs ?? []) as { assetId: string; kind: string }[];
+
+    // SN1: TikTok PHOTO post — image-only refs take the photo
+    // flow (every referenced asset, not just the first). The
+    // audit gate was already enforced by publishToPlatform's
+    // pre-flight before dispatch; it is re-read here for the
+    // publisher call, exactly like the video path reads it.
+    if (account.platform === "tiktok" && refs.length > 0 && refs.every((r) => r.kind === "image")) {
+      const photoAssets: any[] = [];
+      for (const ref of refs) {
+        const asset = await prisma.mediaAsset.findFirst({
+          where: { id: ref.assetId, organizationId: post.organizationId },
+        });
+        if (!asset) {
+          throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+        }
+        photoAssets.push(asset);
+      }
+      const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+      const photoUrls: string[] = [];
+      for (const asset of photoAssets) {
+        photoUrls.push(await this.publicUrlForAsset(post, asset));
+      }
+      await ensurePlatformConfig(prisma as any).catch(() => undefined);
+      const audited = effectiveTiktokAppConfig()?.audited === true;
+      if (!audited) {
+        // Unreachable through publishToPlatform (its pre-flight
+        // refuses first with the same message) — kept so a direct
+        // caller of this dispatch can never photo-post ungated.
+        throw new PermanentPublishError(TIKTOK_PHOTO_GATE_MSG);
+      }
+      const outcome = await this.tiktokPublisher.publishPhoto({
+        accessToken, photoUrls, caption: post.caption,
+      });
+      return {
+        platformPostId: outcome.publishId,
+        platformUrl: null,
+        outcome: "published",
+        publishNote: `TikTok-এ সরাসরি ছবির post হয়েছে (Privacy: ${outcome.privacyLevel} — TikTok Creator Info অনুযায়ী নির্ধারিত)।`,
+      };
+    }
+
+    const ref = refs[0];
     const asset = await prisma.mediaAsset.findFirst({
       where: { id: ref.assetId, organizationId: post.organizationId },
     });
@@ -533,6 +620,19 @@ export class SocialPublishService {
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           publishNote = `${baseNote} Cover (thumbnail) সেট করা যায়নি: ${msg}`;
+        }
+      }
+      // SN1: playlist — add the uploaded video to the chosen
+      // playlist (playlistItems.insert) AFTER the successful
+      // upload. The cover semantics apply verbatim: a failure
+      // NEVER unpublishes the video — the post stays published
+      // and the verbatim reason is appended to the publish note.
+      if (typeof post.youtubePlaylistId === "string" && post.youtubePlaylistId) {
+        try {
+          await this.youtubeClient.addToPlaylist(accessToken, post.youtubePlaylistId, outcome.videoId);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          publishNote = `${publishNote} Playlist-এ যোগ করা যায়নি: ${msg}`;
         }
       }
       return {
@@ -711,7 +811,10 @@ export class SocialPublishService {
       // extra reads/writes).
       if (!sentToCreator) {
         if (post.firstCommentText) {
-          await this.tryPostFirstComment(post, r.platformPostId).catch(() => undefined);
+          // SN1: LinkedIn's publish result carries its fresh
+          // token for the comment step (see publishToLinkedIn).
+          const publishToken = (r as { accessToken?: string }).accessToken;
+          await this.tryPostFirstComment(post, r.platformPostId, publishToken).catch(() => undefined);
         }
         if (post.recurrenceFrequency && post.seriesId && post.scheduledAt) {
           await this.finalizeRecurrence(post).catch(() => undefined);
@@ -746,15 +849,57 @@ export class SocialPublishService {
 
   /**
    * SU1 — post the first comment after a successful publish.
-   * Only Meta Page / Instagram support it here; TikTok/YouTube
-   * posts never reach this step's platform call. Failure is
-   * recorded verbatim on the post (firstCommentStatus "failed")
-   * and NEVER rethrown — the post stays published.
+   * Meta Page / Instagram go through MetaSocialPublisher; SN1
+   * extends the same step to YouTube (commentThreads.insert on
+   * the uploaded video) and LinkedIn (socialActions comments on
+   * the post URN). Failure is recorded verbatim on the post
+   * (firstCommentStatus "failed") and NEVER rethrown — the post
+   * stays published. TikTok has no comment step here.
+   *
+   * Token discipline per platform: Meta uses the sealed Page/IG
+   * token (resolveAccountToken, as SU1 always did); YouTube uses
+   * the OAuth service's refresh-aware token (its sealed snapshot
+   * can be stale — the publish path does the same); LinkedIn
+   * reuses the token its publish just refreshed (passed in by
+   * attemptPublish), falling back to the refresh-aware path when
+   * called without one.
    */
-  async tryPostFirstComment(post: any, platformPostId: string): Promise<void> {
+  async tryPostFirstComment(post: any, platformPostId: string, publishAccessToken?: string): Promise<void> {
     const prisma = this.prisma as any;
     try {
       const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
+      if (account.platform === "youtube") {
+        const freshToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+        const { commentId } = await this.youtubeClient.postComment(
+          freshToken, platformPostId, String(post.firstCommentText),
+        );
+        await prisma.socialPost.update({
+          where: { id: post.id },
+          data: { firstCommentStatus: "posted", firstCommentId: commentId, firstCommentError: null },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_posted",
+          entityType: "SocialPost", entityId: post.id, metadata: { firstCommentId: commentId },
+        }).catch(() => undefined);
+        return;
+      }
+      if (account.platform === "linkedin_page") {
+        const token = publishAccessToken ?? (await this.oauth.ensureAccessToken(post.organizationId, account));
+        const { commentId } = await this.linkedinClient.createComment(token, {
+          organizationId: String(account.externalId),
+          postUrn: platformPostId,
+          text: String(post.firstCommentText),
+        });
+        await prisma.socialPost.update({
+          where: { id: post.id },
+          data: { firstCommentStatus: "posted", firstCommentId: commentId, firstCommentError: null },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_posted",
+          entityType: "SocialPost", entityId: post.id, metadata: { firstCommentId: commentId },
+        }).catch(() => undefined);
+        return;
+      }
       if (account.platform !== "meta_page" && account.platform !== "instagram") return;
       const { commentId } = await this.publisher.postFirstComment(
         accessToken, account.platform, platformPostId, String(post.firstCommentText),
@@ -815,6 +960,8 @@ export class SocialPublishService {
           mediaRefs: Array.isArray(source.mediaRefs) ? source.mediaRefs : [],
           status: "scheduled", scheduledAt: nextAt,
           firstCommentText, firstCommentStatus: firstCommentText ? "pending" : null,
+          // SN1: the series keeps its chosen YouTube playlist.
+          youtubePlaylistId: source.youtubePlaylistId ?? null,
           seriesId: source.seriesId,
           recurrenceFrequency: source.recurrenceFrequency,
           recurrenceInterval: source.recurrenceInterval ?? null,

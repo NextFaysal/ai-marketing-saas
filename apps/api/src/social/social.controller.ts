@@ -147,6 +147,14 @@ export class SocialController {
     return this.health.checkAccountHealth(orgId, user.userId, id);
   }
 
+  // SN1: the account channel's YouTube playlists (composer
+  // picker). A non-YouTube account gets the service's honest
+  // Bengali 400.
+  @Get("accounts/:id/youtube/playlists")
+  listYouTubePlaylists(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.publish.listYouTubePlaylists(orgId, id);
+  }
+
   // SP4 image routes are declared BEFORE the media/:id routes so
   // "ai-image" / "template-image" / "image-status" are never
   // captured as an asset id. PP3's "media/import" follows the

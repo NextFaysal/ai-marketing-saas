@@ -56,6 +56,8 @@ export class CreateSocialPostDto {
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(100, { each: true }) youtubeTags?: string[] | null;
   @IsOptional() @IsString() @MaxLength(10) youtubeCategoryId?: string | null;
   @IsOptional() @IsBoolean() youtubeIsShort?: boolean;
+  // SN1: target YouTube playlist id (from the playlists endpoint).
+  @IsOptional() @IsString() @MaxLength(200) youtubePlaylistId?: string | null;
   @IsOptional() @IsString() coverAssetId?: string | null;
   @IsOptional() @IsBoolean() isStory?: boolean;
 }
@@ -73,6 +75,8 @@ export class UpdateSocialPostDto {
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(100, { each: true }) youtubeTags?: string[] | null;
   @IsOptional() @IsString() @MaxLength(10) youtubeCategoryId?: string | null;
   @IsOptional() @IsBoolean() youtubeIsShort?: boolean;
+  // SN1: target YouTube playlist id (null clears).
+  @IsOptional() @IsString() @MaxLength(200) youtubePlaylistId?: string | null;
   @IsOptional() @IsString() coverAssetId?: string | null;
   @IsOptional() @IsBoolean() isStory?: boolean;
 }

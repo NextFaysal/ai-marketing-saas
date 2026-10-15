@@ -15,18 +15,37 @@
  */
 export function videoOnlyViolation(platform: string, mediaRefs: { assetId: string; kind: string }[] | null | undefined): string | null {
   if (platform !== "tiktok" && platform !== "youtube") return null;
-  const label = platform === "tiktok" ? "TikTok" : "YouTube";
   const refs = Array.isArray(mediaRefs) ? mediaRefs : [];
+  // SN1: TikTok also takes PHOTO posts (image-only, one or more)
+  // — that path is gated on the operator's audit flag inside
+  // validateForPlatform; it is no longer a video-only violation.
+  // Mixed media is still impossible. YouTube stays video-only.
+  if (platform === "tiktok" && refs.length > 0 && refs.every((r) => r?.kind === "image")) {
+    return null;
+  }
+  const label = platform === "tiktok" ? "TikTok" : "YouTube";
   if (refs.length !== 1 || refs[0]?.kind !== "video") {
     return `${label}-এর পোস্টে ঠিক একটি Video লাগবে — ছবি বা একাধিক মিডিয়া দিয়ে ${label}-এ প্রকাশ করা যায় না। একটি Video বেছে নিন।`;
   }
   return null;
 }
 
+/**
+ * SN1 — TikTok PHOTO posts ride the direct-post AUDIT GATE (the
+ * platform config's `audited` flag — the same gate video direct
+ * posting uses). The Content Posting API has NO photo inbox
+ * flow, so while the gate is OFF a photo post can NEVER succeed:
+ * honest refusal here (pre-flight) instead of a doomed publish.
+ * `tiktokAudited` null/undefined = the caller did not resolve the
+ * gate (legacy callers) — treated as OFF (fail closed).
+ */
+export const TIKTOK_PHOTO_GATE_MSG =
+  "TikTok-এ ছবির পোস্ট শুধু Direct Post-এ হয়, আর Direct Post চালু হয় Platform Operator TikTok অ্যাপটির Audit সম্পন্ন ঘোষণা করলে। অ্যাপটি এখনো Audit-ঘোষিত নয় — ছবির পোস্ট TikTok-এর Inbox পথেও পাঠানো যায় না (ছবির জন্য কোনো Inbox Flow নেই), তাই এই পোস্টটি এখন প্রকাশ করা যাবে না। একটি Video পোস্ট করুন, অথবা Operator-এর Audit সম্পন্ন হওয়া পর্যন্ত অপেক্ষা করুন।";
+
 /** SU1: validate one post against its platform's rules. Returns
  * the Bengali violation message, or null when acceptable. */
 export function validateForPlatform(
-  input: { caption?: string | null; mediaRefs?: { assetId: string; kind: string }[] | null; isStory?: boolean | null },
+  input: { caption?: string | null; mediaRefs?: { assetId: string; kind: string }[] | null; isStory?: boolean | null; tiktokAudited?: boolean | null },
   platform: string,
 ): string | null {
   const caption = String(input?.caption ?? "");
@@ -41,6 +60,14 @@ export function validateForPlatform(
     if (refs.length !== 1 || refs[0]?.kind !== "image") {
       return "Facebook Page Story-তে ঠিক একটি ছবি লাগবে — একটি ছবি বেছে নিন।";
     }
+    return null;
+  }
+
+  // SN1: TikTok photo post (image-only media) — audit gate first:
+  // gate OFF refuses honestly; gate ON is acceptable as-is (the
+  // publish path runs the photo direct-post flow).
+  if (platform === "tiktok" && refs.length > 0 && refs.every((r) => r?.kind === "image")) {
+    if (input?.tiktokAudited !== true) return TIKTOK_PHOTO_GATE_MSG;
     return null;
   }
 

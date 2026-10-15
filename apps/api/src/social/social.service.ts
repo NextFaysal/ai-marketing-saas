@@ -24,6 +24,7 @@ import {
   ScheduleSocialPostDto, UpdateHashtagSetDto, UpdateSocialPostDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { validateForPlatform, videoOnlyViolation } from "./social-preflight";
+import { effectiveTiktokAppConfig } from "../common/platform-config";
 import { SocialLinkService } from "./social-link.service";
 import { clampSocialPostPageLimit, decodeSocialPostCursor, encodeSocialPostCursor, socialPostCursorWhere } from "./social-post-cursor";
 import { parseCsv } from "./social-csv";
@@ -228,6 +229,8 @@ export class SocialService {
       youtubeTags: Array.isArray(row.youtubeTags) ? row.youtubeTags : null,
       youtubeCategoryId: row.youtubeCategoryId ?? null,
       youtubeIsShort: row.youtubeIsShort ?? false,
+      // SN1: chosen YouTube playlist (null = none).
+      youtubePlaylistId: row.youtubePlaylistId ?? null,
       coverAssetId: row.coverAssetId ?? null,
       isStory: row.isStory ?? false,
       hasTrackedLink: !!row.linkToken,
@@ -975,6 +978,20 @@ export class SocialService {
     return (this.prisma as any).socialAccount.findFirst({ where: { id: accountId, organizationId } });
   }
 
+  /**
+   * SN1: the TikTok audit gate as the CURRENT platform-config
+   * snapshot sees it (the publish path re-resolves it fresh via
+   * ensurePlatformConfig — that read is authoritative). A lookup
+   * problem reads as OFF (fail closed: photo posts refuse).
+   */
+  private tiktokAuditedFlag(): boolean {
+    try {
+      return effectiveTiktokAppConfig()?.audited === true;
+    } catch {
+      return false;
+    }
+  }
+
   // SU1: validate/normalize the SU1/SU2 create-time fields.
   private normalizeFirstComment(value: string | null | undefined): string | null {
     const trimmed = typeof value === "string" ? value.trim() : "";
@@ -986,12 +1003,15 @@ export class SocialService {
   private su8CreateFields(dto: {
     youtubeTitle?: string | null; youtubeTags?: string[] | null; youtubeCategoryId?: string | null;
     youtubeIsShort?: boolean; coverAssetId?: string | null; isStory?: boolean;
+    youtubePlaylistId?: string | null;
   }): Record<string, unknown> {
     return {
       youtubeTitle: typeof dto.youtubeTitle === "string" && dto.youtubeTitle.trim() ? dto.youtubeTitle : null,
       youtubeTags: Array.isArray(dto.youtubeTags) ? dto.youtubeTags : null,
       youtubeCategoryId: typeof dto.youtubeCategoryId === "string" && dto.youtubeCategoryId ? dto.youtubeCategoryId : null,
       youtubeIsShort: dto.youtubeIsShort === true,
+      // SN1: chosen YouTube playlist (empty/absent = none).
+      youtubePlaylistId: typeof dto.youtubePlaylistId === "string" && dto.youtubePlaylistId ? dto.youtubePlaylistId : null,
       coverAssetId: typeof dto.coverAssetId === "string" && dto.coverAssetId ? dto.coverAssetId : null,
       isStory: dto.isStory === true,
     };
@@ -1218,6 +1238,7 @@ export class SocialService {
         youtubeTags: Array.isArray(source.youtubeTags) ? [...source.youtubeTags] : null,
         youtubeCategoryId: source.youtubeCategoryId ?? null,
         youtubeIsShort: source.youtubeIsShort ?? false,
+        youtubePlaylistId: source.youtubePlaylistId ?? null,
         coverAssetId: source.coverAssetId ?? null,
         isStory: source.isStory ?? false,
       },
@@ -1278,7 +1299,7 @@ export class SocialService {
         continue;
       }
       const violation = validateForPlatform(
-        { caption: source.caption, mediaRefs },
+        { caption: source.caption, mediaRefs, tiktokAudited: this.tiktokAuditedFlag() },
         account.platform ?? "",
       );
       if (violation) {
@@ -1299,6 +1320,7 @@ export class SocialService {
           youtubeTags: Array.isArray(source.youtubeTags) ? [...source.youtubeTags] : null,
           youtubeCategoryId: source.youtubeCategoryId ?? null,
           youtubeIsShort: source.youtubeIsShort ?? false,
+          youtubePlaylistId: source.youtubePlaylistId ?? null,
           coverAssetId: source.coverAssetId ?? null,
           isStory: false,
         },
@@ -1439,7 +1461,7 @@ export class SocialService {
       }
       const account = await this.accountSummary(organizationId, post.socialAccountId);
       const violation = validateForPlatform(
-        { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory ?? null },
+        { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory ?? null, tiktokAudited: this.tiktokAuditedFlag() },
         account?.platform ?? "",
       );
       if (violation) {
@@ -1595,6 +1617,7 @@ export class SocialService {
     if (dto.youtubeTags !== undefined) data.youtubeTags = Array.isArray(dto.youtubeTags) ? dto.youtubeTags : null;
     if (dto.youtubeCategoryId !== undefined) data.youtubeCategoryId = dto.youtubeCategoryId ? dto.youtubeCategoryId : null;
     if (dto.youtubeIsShort !== undefined) data.youtubeIsShort = dto.youtubeIsShort === true;
+    if (dto.youtubePlaylistId !== undefined) data.youtubePlaylistId = dto.youtubePlaylistId ? dto.youtubePlaylistId : null;
     if (dto.coverAssetId !== undefined) data.coverAssetId = dto.coverAssetId ? dto.coverAssetId : null;
     if (dto.isStory !== undefined) data.isStory = dto.isStory === true;
     // SU9: a version is recorded ONLY when a content field
@@ -1676,7 +1699,7 @@ export class SocialService {
     // video check, whose message validateForPlatform returns
     // verbatim for TikTok/YouTube).
     const mediaViolation = validateForPlatform(
-      { caption: post.caption, mediaRefs: post.mediaRefs }, schedAccount?.platform ?? "",
+      { caption: post.caption, mediaRefs: post.mediaRefs, tiktokAudited: this.tiktokAuditedFlag() }, schedAccount?.platform ?? "",
     );
     if (mediaViolation) throw new BadRequestException(mediaViolation);
     const when = new Date(dto.scheduledAt);

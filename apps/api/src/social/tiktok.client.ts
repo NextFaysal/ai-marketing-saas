@@ -44,6 +44,7 @@ const USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/?fields=open_id,
 const CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/";
 const INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
 const DIRECT_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+const CONTENT_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/content/init/";
 const STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/";
 
 /** Statuses TikTok documents for the status/fetch endpoint. */
@@ -190,6 +191,41 @@ export class TikTokClient {
     return String(publishId);
   }
 
+  /**
+   * SN1 — photo direct-post init (Content Posting API, photo
+   * mode): POST /post/publish/content/init/ with post_mode
+   * DIRECT_POST and media_type PHOTO; TikTok PULLS each image
+   * from its public URL (the SP1 mechanism, same as video).
+   * photo_cover_index 0 = the first image is the cover (the
+   * documented default posture). privacyLevel MUST come from
+   * queryCreatorInfo's options — the caller enforces that.
+   */
+  async directPhotoInit(accessToken: string, args: { title: string; description?: string; privacyLevel: string; photoUrls: string[]; disableComment?: boolean }): Promise<string> {
+    const res = await this.fetchFn(CONTENT_INIT_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json; charset=UTF-8" },
+      body: JSON.stringify({
+        post_info: {
+          title: args.title,
+          ...(args.description ? { description: args.description } : {}),
+          privacy_level: args.privacyLevel,
+          disable_comment: args.disableComment === true,
+        },
+        source_info: {
+          source: "PULL_FROM_URL",
+          photo_cover_index: 0,
+          photo_images: args.photoUrls,
+        },
+        post_mode: "DIRECT_POST",
+        media_type: "PHOTO",
+      }),
+    });
+    const body = await this.envelope(res);
+    const publishId = body?.data?.publish_id;
+    if (!publishId) throw new Error("TikTok photo post returned no publish_id");
+    return String(publishId);
+  }
+
   async fetchStatus(accessToken: string, publishId: string): Promise<{ status: string; failReason?: string }> {
     const res = await this.fetchFn(STATUS_URL, {
       method: "POST",
@@ -264,6 +300,35 @@ export class TikTokPublisher {
       : info.privacyLevelOptions[0];
     const publishId = await this.client.directInit(args.accessToken, {
       title: args.caption, privacyLevel, videoUrl: args.videoUrl,
+    });
+    await this.pollUntil(args.accessToken, publishId, TIKTOK_STATUS.PUBLISH_COMPLETE);
+    return { publishId, mode: "direct", privacyLevel };
+  }
+
+  /**
+   * SN1 — photo post. DIRECT ONLY, behind the SAME audit gate as
+   * video direct posting (the caller refuses before reaching here
+   * when the app is not audited — there is NO photo inbox flow in
+   * the Content Posting API, so an unaudited app cannot accept
+   * photos at all). Privacy comes ONLY from creator_info, exactly
+   * like the video path. Terminal semantics match direct video:
+   * poll to PUBLISH_COMPLETE; FAILED surfaces TikTok's verbatim
+   * fail_reason.
+   */
+  async publishPhoto(args: {
+    accessToken: string;
+    photoUrls: string[];
+    caption: string;
+  }): Promise<TikTokPublishOutcome> {
+    const info = await this.client.queryCreatorInfo(args.accessToken);
+    if (info.privacyLevelOptions.length === 0) {
+      throw new Error("TikTok creator_info কোনো privacy level ফেরত দেয়নি — direct post করা যাচ্ছে না।");
+    }
+    const privacyLevel = info.privacyLevelOptions.includes("PUBLIC_TO_EVERYONE")
+      ? "PUBLIC_TO_EVERYONE"
+      : info.privacyLevelOptions[0];
+    const publishId = await this.client.directPhotoInit(args.accessToken, {
+      title: args.caption, privacyLevel, photoUrls: args.photoUrls,
     });
     await this.pollUntil(args.accessToken, publishId, TIKTOK_STATUS.PUBLISH_COMPLETE);
     return { publishId, mode: "direct", privacyLevel };
