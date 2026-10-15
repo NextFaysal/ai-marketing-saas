@@ -4,6 +4,8 @@ import {
   Delete,
   Get,
   Headers,
+  Logger,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -37,6 +39,7 @@ import {
   PatchCartBundleDto,
   PatchCartLineDto,
   QuoteDto,
+  SetCustomDomainDto,
   RequestOtpDto,
   SHOP_SESSION_HEADER,
   TrackLookupDto,
@@ -66,6 +69,8 @@ function parseIntDef(v: unknown, def: number): number {
  */
 @Controller("public/shop")
 export class PublicShopController {
+  private readonly logger = new Logger(PublicShopController.name);
+
   constructor(
     private readonly storefront: StorefrontService,
     private readonly shopAccount: ShopAccountService,
@@ -76,6 +81,26 @@ export class PublicShopController {
   @Get("by-domain/:domain")
   byDomain(@Param("domain") domain: string) {
     return this.storefront.byDomain(domain);
+  }
+
+  /**
+   * TD10: the "ask" endpoint the web middleware's custom-domain
+   * path consults — is this host a VERIFIED shop domain (or its
+   * www/apex variant)? Allowed answers 200 { allowed: true };
+   * anything else is a plain 404 (logged here for diagnosis).
+   * NOTE: abuse of this probe is already capped by the global
+   * ThrottlerGuard registered as APP_GUARD in app.module.ts —
+   * no per-route limiter is added on purpose.
+   * Declared BEFORE `:orgSlug` (like by-domain above) so
+   * "domain-allowed" is never captured as an org slug.
+   */
+  @Public()
+  @Get("domain-allowed")
+  async domainAllowed(@Query("domain") domain?: string) {
+    const allowed = await this.storefront.domainAllowed(domain ?? "");
+    if (allowed) return { allowed: true };
+    this.logger.warn(`domain-allowed denied for domain="${domain ?? ""}"`);
+    throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
   }
 
   @Public()
@@ -588,6 +613,18 @@ export class StorefrontStaffController {
     @Param("pointId") pointId: string,
   ) {
     return this.deliveryPricing.deletePoint(orgId, user.userId, pointId);
+  }
+
+  /** TD9: set / change / remove the custom domain (resets
+   * verification on a real change — see setCustomDomain). */
+  @Post("domain/set")
+  @Roles(...ADMIN_ROLES)
+  setDomain(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: SetCustomDomainDto,
+  ) {
+    return this.storefront.setCustomDomain(orgId, user.userId, dto.domain ?? null);
   }
 
   @Post("domain/verify-token")
