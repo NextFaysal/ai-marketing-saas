@@ -193,6 +193,10 @@ class DeletePermanentDto {
   @IsString() @MinLength(1) confirmName!: string;
   @IsString() @MinLength(3) reason!: string;
 }
+class SlugTombstoneReleaseDto {
+  // TD11: the release reason ("note") — mandatory, audited.
+  @IsString() @MinLength(3) note!: string;
+}
 class BackupInfoDto {
   @IsOptional() @IsString() lastBackupAt?: string;
   @IsOptional() @IsString() location?: string;
@@ -532,6 +536,13 @@ export class AdminController {
   @Post("orgs/:id/delete-permanent") @AdminTier("SUPER")
   deletePermanent(@Req() req: any, @Param("id") id: string, @Body() dto: DeletePermanentDto) {
     return this.admin.deleteOrgPermanent(req.adminUser, id, dto.confirmName, dto.reason, req.ip);
+  }
+
+  // ---- TD11: slug tombstones (180-day slug cooldown) ----
+  @Get("slug-tombstones") slugTombstones() { return this.admin.listSlugTombstones(); }
+  @Post("slug-tombstones/:slug/release") @AdminTier("SUPER")
+  releaseSlugTombstone(@Req() req: any, @Param("slug") slug: string, @Body() dto: SlugTombstoneReleaseDto) {
+    return this.admin.releaseSlugTombstone(req.adminUser, slug, dto.note, req.ip);
   }
 
   // ---- Milestone 42 (Phase A6): reliability panel ----
