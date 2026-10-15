@@ -109,5 +109,20 @@ export function validateForPlatform(
     return null;
   }
 
+  if (platform === "telegram") {
+    // SN6: Telegram takes text alone, ONE photo/video, or a
+    // media group of 2–10 photo/video (Bot API sendMediaGroup's
+    // documented bounds). An 11th item can never succeed, so it
+    // is refused here rather than failing in the worker. The
+    // 4096-char message ceiling is NOT a refusal: the publish
+    // path chunks long text (and spills an over-long media
+    // caption into a follow-up message) — Telegram's own rules,
+    // handled there instead of blocking the composer.
+    if (refs.length > 10) {
+      return "Telegram-এ এক পোস্টে সর্বোচ্চ ১০টি মিডিয়া পাঠানো যায় (Media Group) — মিডিয়ার সংখ্যা ১০ বা তার কম করুন।";
+    }
+    return null;
+  }
+
   return null;
 }

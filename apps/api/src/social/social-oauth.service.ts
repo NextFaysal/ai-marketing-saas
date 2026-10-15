@@ -10,6 +10,7 @@ import { TikTokClient, type TikTokTokenSet, type TikTokAppCreds } from "./tiktok
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel, type GoogleAppCreds } from "./youtube.client";
 import { LinkedInClient, type LinkedinTokenSet, type LinkedinAppCreds } from "./linkedin.client";
+import { TelegramClient } from "./telegram.client";
 import { PermanentPublishError } from "./social-publish.service";
 
 /**
@@ -81,6 +82,7 @@ export class SocialOAuthService {
   private readonly tiktok: TikTokClient;
   private readonly youtube: YouTubeClient;
   private readonly linkedin: LinkedInClient;
+  private readonly telegram: TelegramClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -88,10 +90,16 @@ export class SocialOAuthService {
     @Optional() tiktokClient?: TikTokClient,
     @Optional() youtubeClient?: YouTubeClient,
     @Optional() linkedinClient?: LinkedInClient,
+    // SN6: Telegram is not OAuth, but its connect lives here so
+    // it can reuse persistOAuthAccount's one persistence path.
+    // Appended LAST — existing positional spec constructions
+    // (prisma, audit, tiktok, youtube, linkedin) are untouched.
+    @Optional() telegramClient?: TelegramClient,
   ) {
     this.tiktok = tiktokClient ?? new TikTokClient();
     this.youtube = youtubeClient ?? new YouTubeClient();
     this.linkedin = linkedinClient ?? new LinkedInClient();
+    this.telegram = telegramClient ?? new TelegramClient();
   }
 
   private webBase(): string {
@@ -910,6 +918,80 @@ export class SocialOAuthService {
       credential: { ...cred, organizationId: chosen.id },
       // CC28: the pick state carries the connect's app source.
       appSource: (row.payload as any)?.appSource === "own" ? "own" : "platform",
+    });
+    return this.serializeAccount(account);
+  }
+
+  // ---------- SN6: Telegram channel connect (bot token, NOT OAuth) ----------
+
+  /**
+   * Verify-before-save, in order — ANY failure throws a Bengali
+   * 400 carrying Telegram's verbatim message and NOTHING is
+   * stored (no Integration, no credential, no account row):
+   * 1. getMe — the pasted token really is a bot token;
+   * 2. getChat — the channel exists for this bot, and really is
+   *    a channel (a group/supergroup target is refused honestly:
+   *    SN6 publishes to channels);
+   * 3. getChatMember — the bot is that channel's administrator
+   *    (or creator) AND may post messages; a bot that cannot
+   *    post would only fail later, inside the worker.
+   * On success the account persists through the ONE OAuth
+   * persistence path (provider "telegram_social") with the bot
+   * token sealed exactly like every other social credential
+   * ({ accessToken, expiresAt: 0 } — bot tokens do not expire,
+   * so ensureAccessToken's skew check always returns the stored
+   * token and no refresh branch exists for telegram).
+   * externalId is the channel's numeric chat id (the stable id
+   * publishing addresses); the channel username rides along for
+   * display + public t.me URLs.
+   */
+  async connectTelegramChannel(
+    organizationId: string, userId: string,
+    dto: { botToken?: string; channel?: string },
+  ) {
+    const botToken = String(dto?.botToken ?? "").trim();
+    const channelInput = String(dto?.channel ?? "").trim();
+    if (!botToken) {
+      throw new BadRequestException("Bot Token প্রয়োজন — Telegram-এ @BotFather দিয়ে একটি Bot বানিয়ে তার Token-টি দিন।");
+    }
+    if (!channelInput) {
+      throw new BadRequestException("Channel-এর Username (যেমন @mychannel) অথবা numeric Chat ID প্রয়োজন।");
+    }
+    let bot: { id: number; username: string | null };
+    try {
+      bot = await this.telegram.getMe(botToken);
+    } catch (e) {
+      throw new BadRequestException(`Bot যাচাই ব্যর্থ হয়েছে — Token-টি সঠিক কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    let chat: { id: number; type: string; title: string | null; username: string | null };
+    try {
+      chat = await this.telegram.getChat(botToken, channelInput);
+    } catch (e) {
+      throw new BadRequestException(`Channel পাওয়া যায়নি — Username/ID সঠিক কিনা এবং Bot-টি Channel-এ যোগ করা হয়েছে কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    if (chat.type !== "channel") {
+      throw new BadRequestException(`এটি একটি Channel নয় (ধরন: ${chat.type || "unknown"}) — Telegram পোস্টিং এই সংস্করণে শুধু Channel-এ হয়। Channel-এর Username/ID দিন।`);
+    }
+    let member: { status: string; canPostMessages: boolean | null };
+    try {
+      member = await this.telegram.getChatMember(botToken, String(chat.id), bot.id);
+    } catch (e) {
+      throw new BadRequestException(`Bot-এর Channel-সদস্যতা যাচাই করা যায়নি। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+    }
+    const isAdmin = member.status === "administrator" || member.status === "creator";
+    if (!isAdmin) {
+      throw new BadRequestException(`Bot-টি এই Channel-এর Admin নয় (বর্তমান অবস্থা: ${member.status || "member নয়"}) — Channel Settings → Administrators-এ Bot-টিকে Admin করুন, তারপর আবার চেষ্টা করুন।`);
+    }
+    if (member.canPostMessages === false) {
+      throw new BadRequestException("Bot-টি Admin হলেও Channel-এ পোস্ট করার অনুমতি (Post Messages) বন্ধ আছে — Channel-এর Admin সেটিংসে Bot-এর 'Post Messages' অনুমতি চালু করুন, তারপর আবার চেষ্টা করুন।");
+    }
+    const account = await this.persistOAuthAccount({
+      organizationId, actorId: userId,
+      platform: "telegram", provider: "telegram_social",
+      externalId: String(chat.id),
+      name: chat.title || (chat.username ? `@${chat.username}` : `Channel ${chat.id}`),
+      username: chat.username ?? null,
+      credential: { accessToken: botToken, expiresAt: 0, botUsername: bot.username ?? null },
     });
     return this.serializeAccount(account);
   }

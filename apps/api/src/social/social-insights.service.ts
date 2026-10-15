@@ -311,6 +311,19 @@ export class SocialInsightsService {
    * every platform error propagates with its verbatim message.
    */
   private async fetchInsightsForPost(post: any): Promise<SocialPostInsights> {
+    // SN6: the Telegram Bot API exposes NO per-post views or
+    // engagement to bots (spike doc §৩) — so a Telegram post's
+    // insights are honestly UNAVAILABLE: this throws before any
+    // token resolution, the refresh surface shows the message,
+    // and nothing (certainly not a fabricated 0) is stored.
+    {
+      const account = await (this.prisma as any).socialAccount.findFirst({
+        where: { id: post.socialAccountId, organizationId: post.organizationId },
+      }).catch(() => null);
+      if (account?.platform === "telegram") {
+        throw new Error("Telegram Bot API পোস্টের Views/Engagement দেয় না — এই Platform-এর পোস্টের Insights পাওয়া যায় না।");
+      }
+    }
     const { account, accessToken } = await this.publish.resolveAccountToken(post.organizationId, post.socialAccountId);
     // Instagram's insights metrics differ for video (Reels) — the
     // post's own media refs say which shape it was published as.

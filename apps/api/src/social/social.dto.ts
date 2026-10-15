@@ -168,6 +168,16 @@ export class SelectLinkedInOrganizationDto {
   @IsString() @MaxLength(200) organizationId!: string;
 }
 
+// SN6: Telegram channel connect — the tenant's OWN bot token
+// (BotFather) + the channel (@username or numeric chat id).
+// Verification happens in the service BEFORE anything is saved;
+// the token is never echoed back (the account serializer carries
+// no credential material, like every other connect).
+export class ConnectTelegramDto {
+  @IsString() @MaxLength(200) botToken!: string;
+  @IsString() @MaxLength(200) channel!: string;
+}
+
 // SP7: the org-level social settings switch (OWNER/ADMIN write).
 // SU9: both fields optional — a PATCH touches only what it
 // carries (the service preserves the absent field).

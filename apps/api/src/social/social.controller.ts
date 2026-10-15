@@ -17,7 +17,7 @@ import { SocialShareService } from "./social-share.service";
 import { SocialStockService } from "./social-stock.service";
 import { SocialCoachService } from "./social-coach.service";
 import {
-  BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
+  BulkMediaDto, BulkSocialPostsDto, ConnectTelegramDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
   AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
@@ -131,6 +131,15 @@ export class SocialController {
   @Post("accounts/linkedin/select-organization") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   linkedinSelectOrganization(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SelectLinkedInOrganizationDto) {
     return this.oauth.selectLinkedInOrganization(orgId, user.userId, dto);
+  }
+
+  // SN6: Telegram channel connect — NOT OAuth: the tenant pastes
+  // their own BotFather bot token + channel; the service verifies
+  // bot → channel → admin BEFORE saving anything, and a failed
+  // verification returns Telegram's verbatim message in a 400.
+  @Post("accounts/telegram/connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  telegramConnect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectTelegramDto) {
+    return this.oauth.connectTelegramChannel(orgId, user.userId, dto);
   }
 
   // SP8/SP9: what the UI may honestly claim about the OAuth

@@ -10,6 +10,7 @@ import { SocialOAuthService } from "./social-oauth.service";
 import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
 import { LinkedInClient } from "./linkedin.client";
+import { TelegramClient, TELEGRAM_CAPTION_MAX, TELEGRAM_TEXT_MAX } from "./telegram.client";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -85,6 +86,9 @@ export class SocialPublishService {
   // do not own (YouTube playlists/comments, TikTok photo init).
   private readonly youtubeClient: YouTubeClient;
   private readonly tiktokClient: TikTokClient;
+  // SN6: Telegram Bot API client (bot-token platform — the token
+  // comes from resolveAccountToken like Meta's, no OAuth seam).
+  private readonly telegramClient: TelegramClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -107,10 +111,13 @@ export class SocialPublishService {
     // clients here, production defaults to real instances.
     @Optional() youtubeClient?: YouTubeClient,
     @Optional() tiktokClient?: TikTokClient,
+    // SN6: appended after the SN1 clients for the same reason.
+    @Optional() telegramClient?: TelegramClient,
   ) {
     this.links = links;
     this.youtubeClient = youtubeClient ?? new YouTubeClient();
     this.tiktokClient = tiktokClient ?? new TikTokClient();
+    this.telegramClient = telegramClient ?? new TelegramClient();
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -333,6 +340,14 @@ export class SocialPublishService {
       return this.publishToLinkedIn(post, account);
     }
 
+    // SN6: Telegram takes its own dispatch too — also BEFORE the
+    // Meta flow, reusing the token resolveAccountToken already
+    // decrypted above (the sealed bot token; bot tokens do not
+    // expire, so there is no refresh seam to call).
+    if (account.platform === "telegram") {
+      return this.publishToTelegram(post, account, accessToken);
+    }
+
     const assetRows: any[] = [];
     for (const ref of (post.mediaRefs ?? []) as { assetId: string; kind: string }[]) {
       const asset = await prisma.mediaAsset.findFirst({
@@ -542,6 +557,129 @@ export class SocialPublishService {
    * never from the possibly-stale snapshot resolveAccountToken
    * decrypted on the way in.
    */
+  /** Split a long Telegram text at the documented 4096-char
+   * message ceiling, preferring a newline boundary. */
+  private chunkTelegramText(text: string): string[] {
+    const chunks: string[] = [];
+    let rest = text;
+    while (rest.length > TELEGRAM_TEXT_MAX) {
+      let cut = rest.lastIndexOf("\n", TELEGRAM_TEXT_MAX);
+      if (cut < TELEGRAM_TEXT_MAX / 2) cut = TELEGRAM_TEXT_MAX;
+      chunks.push(rest.slice(0, cut));
+      rest = rest.slice(cut).replace(/^\n+/, "");
+    }
+    if (rest) chunks.push(rest);
+    return chunks.length > 0 ? chunks : [""];
+  }
+
+  /**
+   * SN6 — Telegram channel publish (Bot API; spike doc §৩).
+   * Media goes by PUBLIC URL (Telegram fetches it — the SP1
+   * public-link path, same as Meta); there is no byte upload in
+   * this flow, so a media URL Telegram cannot fetch surfaces
+   * Telegram's own verbatim error through the SP5 retry path.
+   * Shapes:
+   * - no media → sendMessage (text over the 4096 ceiling is
+   *   chunked at newline boundaries — Telegram's own rule);
+   * - one image/video → sendPhoto/sendVideo with the caption;
+   * - 2–10 media → sendMediaGroup, caption on the first item.
+   * A caption over the 1024 media-caption ceiling is NOT
+   * truncated: the media goes without it and the FULL caption
+   * follows as its own message(s) — nothing the tenant wrote is
+   * silently dropped. The post's linkUrl (Telegram has no link
+   * field) is appended to the text/caption when not already in
+   * it. Success = Telegram returned a message: the platform id
+   * is "chatId:messageId" and the URL is the public t.me link,
+   * present ONLY when the channel has a public username (a
+   * private channel's posts have no public URL — null, never
+   * fabricated). Telegram client errors propagate verbatim.
+   */
+  private async publishToTelegram(post: any, account: any, botToken: string): Promise<SocialPublishResult> {
+    const prisma = this.prisma as any;
+    const chatId = String(account.externalId);
+    const caption = String(post.caption ?? "");
+    const linkUrl = typeof post.linkUrl === "string" && post.linkUrl ? post.linkUrl : null;
+    const fullText = linkUrl && !caption.includes(linkUrl)
+      ? (caption ? `${caption}\n\n${linkUrl}` : linkUrl)
+      : caption;
+    const refs = (Array.isArray(post.mediaRefs) ? post.mediaRefs : []) as { assetId: string; kind: string }[];
+
+    const toResult = (sent: { messageId: number; chatId: number; chatUsername: string | null }): SocialPublishResult => ({
+      platformPostId: `${sent.chatId}:${sent.messageId}`,
+      platformUrl: sent.chatUsername ? `https://t.me/${sent.chatUsername}/${sent.messageId}` : null,
+      outcome: "published",
+    });
+
+    if (refs.length === 0) {
+      if (!fullText.trim()) {
+        throw new PermanentPublishError("Telegram পোস্টে লেখা (Caption) অথবা মিডিয়া — অন্তত একটি প্রয়োজন।");
+      }
+      let first: { messageId: number; chatId: number; chatUsername: string | null } | null = null;
+      for (const chunk of this.chunkTelegramText(fullText)) {
+        const sent = await this.telegramClient.sendMessage(botToken, chatId, chunk);
+        if (!first) first = sent;
+      }
+      return toResult(first!);
+    }
+
+    // Resolve assets exactly like the Meta flow (missing asset =
+    // the same permanent error; SVG images rasterized to PNG
+    // first, because Telegram renders linked media itself and an
+    // SVG URL is not a photo it can display).
+    const media: { type: "photo" | "video"; url: string }[] = [];
+    for (const ref of refs) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: ref.assetId, organizationId: post.organizationId },
+      });
+      if (!asset) {
+        throw new PermanentPublishError("পোস্টের একটি মিডিয়া পাওয়া যাচ্ছে না — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+      }
+      let resolved = asset;
+      if (ref.kind === "image" && String(asset.contentType ?? "").includes("svg")) {
+        try {
+          resolved = await this.raster.ensurePngAsset(post.organizationId, post.createdById, asset);
+        } catch (e) {
+          throw new PermanentPublishError(`SVG থেকে PNG তৈরি করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      media.push({
+        type: ref.kind === "video" ? "video" : "photo",
+        url: await this.publicUrlForAsset(post, resolved),
+      });
+    }
+
+    let mediaCaption: string | undefined;
+    let spill: string | null = null;
+    if (fullText) {
+      if (fullText.length <= TELEGRAM_CAPTION_MAX) mediaCaption = fullText;
+      else spill = fullText;
+    }
+    const sendSpill = async () => {
+      if (!spill) return;
+      for (const chunk of this.chunkTelegramText(spill)) {
+        await this.telegramClient.sendMessage(botToken, chatId, chunk);
+      }
+    };
+
+    if (media.length === 1) {
+      const only = media[0]!;
+      const sent = only.type === "video"
+        ? await this.telegramClient.sendVideo(botToken, chatId, only.url, mediaCaption)
+        : await this.telegramClient.sendPhoto(botToken, chatId, only.url, mediaCaption);
+      await sendSpill();
+      return toResult(sent);
+    }
+
+    const group = await this.telegramClient.sendMediaGroup(
+      botToken, chatId,
+      media.map((m, i) => (i === 0 && mediaCaption ? { ...m, caption: mediaCaption } : m)),
+    );
+    const firstSent = group[0];
+    if (!firstSent) throw new Error("Telegram Media Group-এর কোনো Message ফেরত দেয়নি।");
+    await sendSpill();
+    return toResult(firstSent);
+  }
+
   /**
    * CC20 — LinkedIn UGC publish. Media rule (ours, honest):
    * text-only posts and link posts (the post's linkUrl rides as
