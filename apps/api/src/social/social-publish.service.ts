@@ -372,6 +372,7 @@ export class SocialPublishService {
       if (tracked) publishLinkUrl = tracked;
     }
 
+    let published: SocialPublishResult;
     try {
       if (account.platform === "instagram") {
         return await this.publisher.publishToInstagram(accessToken, account.externalId, {
@@ -379,7 +380,7 @@ export class SocialPublishService {
           assets,
         });
       }
-      return await this.publisher.publishToPage(accessToken, account.externalId, {
+      published = await this.publisher.publishToPage(accessToken, account.externalId, {
         caption: post.caption,
         linkUrl: publishLinkUrl,
         assets,
@@ -397,6 +398,70 @@ export class SocialPublishService {
         await this.markAccountTokenDead(account.id, message);
       }
       throw e;
+    }
+
+    // SN1: FB Page video cover — post-publish thumbnails step,
+    // the spike's BUILD path (docs/social-sn1-fb-cover-spike.md
+    // §৫.৩), copying SU8's YouTube cover semantics exactly:
+    // only a meta_page post with exactly ONE video asset and a
+    // coverAssetId reaches here; every other Meta/IG post
+    // returns byte-identical to before (no extra read/call).
+    // The cover asset must be an IMAGE (SU3 stills are images);
+    // a non-image cover, a missing cover, a missing file, or a
+    // cover over Meta's documented 10 MB thumbnail limit is
+    // NOT attempted — the honest reason goes into the note.
+    // A thumbnail failure NEVER unpublishes the video and
+    // NEVER marks the token dead: the post stays published
+    // with `Cover (thumbnail) সেট করা যায়নি: {verbatim}` in
+    // its publishNote. Success leaves the note null, as the
+    // Meta path has always had no note. Both outcomes are
+    // audited (the YouTube-cover step's record-keeping intent:
+    // success and failure both leave a trace alongside the
+    // note).
+    if (
+      account.platform !== "meta_page"
+      || !post.coverAssetId
+      || !(assets.length === 1 && assets[0].kind === "video")
+    ) {
+      return published;
+    }
+    try {
+      const cover = await prisma.mediaAsset.findFirst({
+        where: { id: post.coverAssetId, organizationId: post.organizationId },
+      });
+      if (!cover) throw new Error("Cover asset পাওয়া যায়নি");
+      if (cover.kind !== "image") {
+        throw new Error(`Cover assetটি ছবি নয় (kind: ${cover.kind ?? "unknown"}) — Facebook video cover শুধু ছবি (image) asset দিয়ে সেট করা যায়।`);
+      }
+      const store = MediaStore.fromEnv();
+      const coverSize = await store.size(cover.storageKey).catch(() => null)
+        ?? (typeof cover.sizeBytes === "number" && cover.sizeBytes > 0 ? cover.sizeBytes : null);
+      if (!coverSize) throw new Error("Cover ফাইল Storage-এ পাওয়া যায়নি");
+      if (coverSize > MetaSocialPublisher.VIDEO_THUMBNAIL_MAX_BYTES) {
+        throw new Error(`Cover ছবিটি 10 MB সীমার বেশি (${coverSize} bytes) — Facebook Page video thumbnail সর্বোচ্চ 10 MB হতে পারে।`);
+      }
+      const bytes = await store.readRange(cover.storageKey, 0, coverSize);
+      if (!bytes) throw new Error("Cover-এর bytes পড়া যাচ্ছে না");
+      if (typeof (this.publisher as any).setVideoThumbnail !== "function") {
+        throw new Error("Meta video thumbnail সেট করার publisher method পাওয়া যায়নি");
+      }
+      await this.publisher.setVideoThumbnail(
+        accessToken, published.platformPostId, bytes, cover.contentType, cover.name ?? "cover.jpg",
+      );
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.fb_video_cover_set",
+        entityType: "SocialPost", entityId: post.id,
+        metadata: { platformPostId: published.platformPostId, coverAssetId: post.coverAssetId },
+      }).catch(() => undefined);
+      return published;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.fb_video_cover_failed",
+        entityType: "SocialPost", entityId: post.id,
+        metadata: { platformPostId: published.platformPostId, coverAssetId: post.coverAssetId, error: msg },
+      }).catch(() => undefined);
+      return { ...published, publishNote: `Cover (thumbnail) সেট করা যায়নি: ${msg}` };
     }
   }
 

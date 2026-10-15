@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import { SocialService } from "./social.service";
+import { MetaSocialPublisher } from "./meta-publisher";
 import { SocialPublishService, PermanentPublishError } from "./social-publish.service";
 import { validateForPlatform, TIKTOK_PHOTO_GATE_MSG } from "./social-preflight";
 import { YouTubeClient } from "./youtube.client";
@@ -134,11 +135,11 @@ function auditOf(db: any) {
 }
 
 /** Publish service with every SN1 seam stubbed positionally. */
-function publishService(db: any, stubs: { oauth?: any; ytPublisher?: any; ytClient?: any; ttPublisher?: any; ttClient?: any; linkedin?: any } = {}) {
+function publishService(db: any, stubs: { oauth?: any; ytPublisher?: any; ytClient?: any; ttPublisher?: any; ttClient?: any; linkedin?: any; metaPublisher?: any } = {}) {
   const audit = auditOf(db);
   return new SocialPublishService(
     db as any, audit as any, new SocialService(db as any, audit as any),
-    undefined,
+    stubs.metaPublisher,
     stubs.oauth ?? { ensureAccessToken: jest.fn(async () => "fresh-token") },
     stubs.ttPublisher,
     stubs.ytPublisher,
@@ -553,5 +554,217 @@ describe("SN1 SocialService — youtubePlaylistId pass-through", () => {
     await svc.updatePost(ORG, ACTOR, created.id, { youtubePlaylistId: "PL9" } as any);
     const clone = await svc.clonePost(ORG, ACTOR, created.id);
     expect(clone.youtubePlaylistId).toBe("PL9");
+  });
+});
+
+describe("SN1 FB video cover — MetaSocialPublisher.setVideoThumbnail (stub fetch, multipart)", () => {
+  function stub(handler: (url: string, opts: any) => { status?: number; body: any }) {
+    const calls: { url: string; opts: any; form: FormData | null; params: URLSearchParams | null }[] = [];
+    const fetchFn = jest.fn(async (url: string, opts: any = {}) => {
+      const form: FormData | null = opts.body instanceof FormData ? opts.body : null;
+      const params: URLSearchParams | null = opts.body instanceof URLSearchParams ? opts.body : null;
+      calls.push({ url, opts, form, params });
+      const r = handler(url, opts);
+      const status = r.status ?? 200;
+      return { ok: status >= 200 && status < 300, status, json: async () => r.body };
+    });
+    return { pub: new MetaSocialPublisher(fetchFn as any), calls, fetchFn };
+  }
+
+  it("posts multipart source + is_preferred=true to /{video}/thumbnails; success:true passes", async () => {
+    const { pub, calls } = stub(() => ({ body: { success: true } }));
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]);
+    await pub.setVideoThumbnail("page-token", "vid-42", bytes, "image/jpeg", "cover.jpg");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/vid-42/thumbnails");
+    expect(calls[0].form).not.toBeNull();
+    const form = calls[0].form!;
+    expect(form.get("is_preferred")).toBe("true");
+    expect(form.get("access_token")).toBe("page-token");
+    const src: any = form.get("source");
+    expect(src).toBeTruthy();
+    expect(src.type).toBe("image/jpeg");
+    expect(src.size).toBe(bytes.length);
+    expect(src.name).toBe("cover.jpg");
+  });
+
+  it("success !== true is an honest throw (cover never claimed without Meta's success)", async () => {
+    const { pub } = stub(() => ({ body: { success: false } }));
+    await expect(pub.setVideoThumbnail("tok", "vid-1", Buffer.from([1]), "image/jpeg", "c.jpg"))
+      .rejects.toThrow(/success:true/);
+    const empty = stub(() => ({ body: {} }));
+    await expect(empty.pub.setVideoThumbnail("tok", "vid-1", Buffer.from([1]), "image/jpeg", "c.jpg"))
+      .rejects.toThrow(/success:true/);
+  });
+
+  it("Meta's error propagates verbatim through the multipart helper", async () => {
+    const { pub } = stub(() => ({ status: 400, body: { error: { message: "verbatim thumb error" } } }));
+    await expect(pub.setVideoThumbnail("tok", "vid-1", Buffer.from([1]), "image/jpeg", "c.jpg"))
+      .rejects.toThrow("verbatim thumb error");
+  });
+
+  it("over the documented 10 MB limit → throws before any fetch attempt", async () => {
+    const { pub, fetchFn } = stub(() => ({ body: { success: true } }));
+    const big = Buffer.alloc(MetaSocialPublisher.VIDEO_THUMBNAIL_MAX_BYTES + 1, 1);
+    await expect(pub.setVideoThumbnail("tok", "vid-1", big, "image/jpeg", "big.jpg"))
+      .rejects.toThrow(/10 MB সীমার বেশি/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("SN1 FB video cover — publish service post-publish step", () => {
+  const COVER_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 8, 7]);
+
+  function seedMeta(db: any) {
+    db.integrations.push({ id: "int-meta", organizationId: ORG, provider: "meta_social", status: "CONNECTED", externalAccountId: "page-1" });
+    db.credentials.push({ id: "cred-meta", integrationId: "int-meta", encryptedData: encryptJson({ accessToken: "page-token" }) });
+    db.socialAccounts.push({
+      id: "acct-page", organizationId: ORG, integrationId: "int-meta", platform: "meta_page",
+      externalId: "page-1", name: "Page One", status: "connected",
+    });
+  }
+
+  async function setup(metaPublisher: any, postOver: Row = {}, coverOver: Row = {}) {
+    const db = fakeDb();
+    seedMeta(db);
+    const store = MediaStore.fromEnv();
+    await store.put(`${ORG}/social/fb-vid.mp4`, Buffer.alloc(32, 5), "video/mp4");
+    await store.put(`${ORG}/social/fb-cover.jpg`, COVER_BYTES, "image/jpeg");
+    db.mediaAssets.push(
+      { id: "asset-vid", organizationId: ORG, kind: "video", name: "v.mp4", contentType: "video/mp4", sizeBytes: 32, storageKey: `${ORG}/social/fb-vid.mp4`, publicToken: "tok-vid", createdById: ACTOR },
+      { id: "asset-img", organizationId: ORG, kind: "image", name: "p.jpg", contentType: "image/jpeg", sizeBytes: 10, storageKey: `${ORG}/social/fb-cover.jpg`, publicToken: "tok-img", createdById: ACTOR },
+      { id: "asset-cover", organizationId: ORG, kind: "image", name: "cover.jpg", contentType: "image/jpeg", sizeBytes: COVER_BYTES.length, storageKey: `${ORG}/social/fb-cover.jpg`, publicToken: null, createdById: ACTOR, ...coverOver },
+    );
+    db.socialPosts.push({
+      id: "post-fb", organizationId: ORG, socialAccountId: "acct-page",
+      caption: "ভিডিও পোস্ট", linkUrl: null,
+      mediaRefs: [{ assetId: "asset-vid", kind: "video" }], status: "draft",
+      attempts: 0, createdById: ACTOR, createdAt: new Date(), updatedAt: new Date(), ...postOver,
+    });
+    const publish = publishService(db, { metaPublisher });
+    return { db, publish, post: db.socialPosts[0] };
+  }
+
+  function metaStub(over: Row = {}): any {
+    return {
+      publishToPage: jest.fn(async () => ({ platformPostId: "vid-100", platformUrl: "https://www.facebook.com/vid-100" })),
+      publishToInstagram: jest.fn(async () => { throw new Error("IG path must not run"); }),
+      publishPhotoStory: jest.fn(async () => { throw new Error("story path must not run"); }),
+      setVideoThumbnail: jest.fn(async () => undefined),
+      ...over,
+    };
+  }
+
+  it("video + cover → thumbnail runs AFTER publish with the cover bytes; note stays clean; audited", async () => {
+    const stub = metaStub();
+    const { db, publish, post } = await setup(stub, { coverAssetId: "asset-cover" });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(out.publishNote ?? null).toBeNull();
+    expect(stub.publishToPage).toHaveBeenCalledTimes(1);
+    expect(stub.setVideoThumbnail).toHaveBeenCalledTimes(1);
+    const args = stub.setVideoThumbnail.mock.calls[0];
+    expect(args[0]).toBe("page-token");
+    expect(args[1]).toBe("vid-100");
+    expect(Buffer.compare(args[2], COVER_BYTES)).toBe(0);
+    expect(args[3]).toBe("image/jpeg");
+    expect(args[4]).toBe("cover.jpg");
+    // call order: publish first, thumbnail second
+    expect(stub.publishToPage.mock.invocationCallOrder[0]).toBeLessThan(stub.setVideoThumbnail.mock.invocationCallOrder[0]);
+    expect(db.auditRows.some((a: Row) => a.action === "social.fb_video_cover_set")).toBe(true);
+  });
+
+  it("end-to-end stub fetch: /videos (file_url) → /thumbnails multipart shape, success leaves no cover error", async () => {
+    const calls: { url: string; form: FormData | null; params: URLSearchParams | null }[] = [];
+    const fetchFn = jest.fn(async (url: string, opts: any = {}) => {
+      calls.push({ url, form: opts.body instanceof FormData ? opts.body : null, params: opts.body instanceof URLSearchParams ? opts.body : null });
+      if (url.includes("/thumbnails")) return { ok: true, status: 200, json: async () => ({ success: true }) };
+      if (url.includes("/videos")) return { ok: true, status: 200, json: async () => ({ id: "vid-200" }) };
+      throw new Error(`unexpected ${url}`);
+    });
+    const realPub = new MetaSocialPublisher(fetchFn as any);
+    const { publish, post } = await setup(realPub as any, { coverAssetId: "asset-cover" });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-200");
+    expect(out.publishNote ?? null).toBeNull();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toContain("/page-1/videos");
+    expect(calls[0].params!.get("file_url")).toContain("/public/media/tok-vid");
+    expect(calls[1].url).toContain("/vid-200/thumbnails");
+    expect(calls[1].form!.get("is_preferred")).toBe("true");
+    const src: any = calls[1].form!.get("source");
+    expect(src.type).toBe("image/jpeg");
+    expect(src.size).toBe(COVER_BYTES.length);
+  });
+
+  it("thumbnail failure → post stays published, verbatim reason appended to the note; audited as failed", async () => {
+    const stub = metaStub({
+      setVideoThumbnail: jest.fn(async () => { throw new Error("thumb verbatim fail"); }),
+    });
+    const { db, publish, post } = await setup(stub, { coverAssetId: "asset-cover" });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(out.publishNote).toBe("Cover (thumbnail) সেট করা যায়নি: thumb verbatim fail");
+    expect(db.auditRows.some((a: Row) => a.action === "social.fb_video_cover_failed" && a.metadata?.error === "thumb verbatim fail")).toBe(true);
+    // and through publishNow the post itself lands published with that note
+    const stub2 = metaStub({
+      setVideoThumbnail: jest.fn(async () => { throw new Error("thumb verbatim fail"); }),
+    });
+    const s2 = await setup(stub2, { coverAssetId: "asset-cover" });
+    const done = await s2.publish.publishNow(ORG, ACTOR, "post-fb");
+    expect(done.status).toBe("published");
+    const row = s2.db.socialPosts.find((p: Row) => p.id === "post-fb");
+    expect(row.publishNote).toContain("Cover (thumbnail) সেট করা যায়নি: thumb verbatim fail");
+  });
+
+  it("no coverAssetId → no thumbnail call at all", async () => {
+    const stub = metaStub();
+    const { publish, post } = await setup(stub, {});
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(stub.setVideoThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("image post + cover → no thumbnail call", async () => {
+    const stub = metaStub();
+    const { publish, post } = await setup(stub, {
+      coverAssetId: "asset-cover",
+      mediaRefs: [{ assetId: "asset-img", kind: "image" }],
+    });
+    await publish.publishToPlatform(post);
+    expect(stub.publishToPage).toHaveBeenCalledTimes(1);
+    expect(stub.setVideoThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("cover over 10 MB → no thumbnail attempt, note carries the limit reason", async () => {
+    const stub = metaStub();
+    const bigSize = MetaSocialPublisher.VIDEO_THUMBNAIL_MAX_BYTES + 1;
+    const { publish, post } = await setup(stub, { coverAssetId: "asset-cover" }, {
+      sizeBytes: bigSize, storageKey: `${ORG}/social/fb-cover-big.jpg`,
+    });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(stub.setVideoThumbnail).not.toHaveBeenCalled();
+    expect(out.publishNote).toContain("Cover (thumbnail) সেট করা যায়নি:");
+    expect(out.publishNote).toContain("10 MB সীমার বেশি");
+  });
+
+  it("non-image cover asset → no thumbnail attempt, note carries the honest reason", async () => {
+    const stub = metaStub();
+    const { publish, post } = await setup(stub, { coverAssetId: "asset-cover" }, { kind: "video", contentType: "video/mp4", name: "not-image.mp4" });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(stub.setVideoThumbnail).not.toHaveBeenCalled();
+    expect(out.publishNote).toContain("Cover (thumbnail) সেট করা যায়নি:");
+    expect(out.publishNote).toContain("ছবি নয়");
+  });
+
+  it("missing cover asset → no thumbnail attempt, note carries the reason; post stays published", async () => {
+    const stub = metaStub();
+    const { publish, post } = await setup(stub, { coverAssetId: "asset-gone" });
+    const out = await publish.publishToPlatform(post);
+    expect(out.platformPostId).toBe("vid-100");
+    expect(stub.setVideoThumbnail).not.toHaveBeenCalled();
+    expect(out.publishNote).toContain("Cover asset পাওয়া যায়নি");
   });
 });

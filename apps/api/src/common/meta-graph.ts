@@ -16,6 +16,34 @@ export async function graphPost(token: string, path: string, params: Record<stri
   if (!res.ok || json?.error) throw new MetaGraphError(res.status, json?.error?.message ?? `Meta request failed (${res.status})`);
   return json;
 }
+/**
+ * SN1 (FB video cover spike, path খ) — multipart variant of
+ * graphPost for endpoints that take raw file bytes (e.g.
+ * POST /{video_id}/thumbnails with a `source` image). graphPost
+ * only sends url-encoded strings, so thumbnails need this.
+ * FormData carries the string fields plus the file part as a
+ * Blob; Content-Type is NOT set by hand (fetch sets the
+ * multipart boundary itself). Error discipline is graphPost's
+ * exactly: json.error → MetaGraphError with Meta's verbatim
+ * message. Pattern precedent: inbox/meta-messaging.client.ts
+ * uploadWhatsAppMedia / uploadMessengerAttachment.
+ */
+export async function graphPostMultipart(
+  token: string,
+  path: string,
+  fields: Record<string, string>,
+  file: { bytes: Buffer | Uint8Array; contentType: string; fileName: string; fieldName?: string },
+  fetchFn: typeof fetch = fetch,
+): Promise<any> {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
+  form.append(file.fieldName ?? "source", new Blob([new Uint8Array(file.bytes)], { type: file.contentType }), file.fileName);
+  form.append("access_token", token);
+  const res = await fetchFn(`${graphBase()}${path}`, { method: "POST", body: form });
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok || json?.error) throw new MetaGraphError(res.status, json?.error?.message ?? `Meta request failed (${res.status})`);
+  return json;
+}
 export async function graphGet(token: string, path: string, params: Record<string, string> = {}, fetchFn: typeof fetch = fetch): Promise<any> {
   const qs = new URLSearchParams({ ...params, access_token: token });
   const res = await fetchFn(`${graphBase()}${path}?${qs.toString()}`);
