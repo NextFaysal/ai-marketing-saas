@@ -15,6 +15,7 @@ import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
 import { SocialShareService } from "./social-share.service";
 import { SocialStockService } from "./social-stock.service";
+import { SocialCoachService } from "./social-coach.service";
 import {
   BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
   AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
@@ -66,6 +67,8 @@ export class SocialController {
     // SN5: stock media (Pexels). Appended after shares for the
     // same reason — existing positional constructions stay put.
     private readonly stock: SocialStockService,
+    // SN9: the performance coach (latest digest + live preview).
+    private readonly coach: SocialCoachService,
   ) {}
 
   // Picker step 1: verify + list Pages. Stores nothing.
@@ -443,6 +446,11 @@ export class SocialController {
   // SU4: hashtag performance from the org's own published posts.
   @Get("insights/hashtags")
   insightsHashtags(@Param("organizationId") orgId: string) { return this.insights.hashtagPerformance(orgId); }
+
+  // SN9: the performance coach — latest weekly digest + a live
+  // compute preview (the preview never calls the LLM).
+  @Get("insights/coach")
+  insightsCoach(@Param("organizationId") orgId: string) { return this.coach.getCoach(orgId); }
 
   // SU7: analytics v2 — daily time series, per-account
   // comparison, content-type analysis, follower history.
