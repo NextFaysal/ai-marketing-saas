@@ -14,12 +14,13 @@ import { SocialCommerceDraftService } from "./social-commerce-draft.service";
 import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
 import { SocialShareService } from "./social-share.service";
+import { SocialStockService } from "./social-stock.service";
 import { AiModule } from "../ai/ai.module";
 
 @Module({
   imports: [AiModule],
   controllers: [SocialController, PublicMediaController, SocialOAuthCallbackController, PublicSocialLinkController],
-  providers: [SocialService, SocialAiService, SocialImageService, SocialPublishService, SocialInsightsService, SocialOAuthService, SocialRasterService, SocialImportService, SocialQueueService, SocialMediaLibraryService, SocialCommerceDraftService, SocialLinkService, SocialHealthService, SocialShareService],
+  providers: [SocialService, SocialAiService, SocialImageService, SocialPublishService, SocialInsightsService, SocialOAuthService, SocialRasterService, SocialImportService, SocialQueueService, SocialMediaLibraryService, SocialCommerceDraftService, SocialLinkService, SocialHealthService, SocialShareService, SocialStockService],
   // SocialHealthService exported for AdminModule (AB3 / AN13
   // operator retry + account recheck delegate to it).
   exports: [SocialService, SocialPublishService, SocialQueueService, SocialCommerceDraftService, SocialLinkService, SocialInsightsService, SocialHealthService, SocialShareService],

@@ -270,6 +270,29 @@ export class CoverMediaDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) atSeconds?: number;
 }
 
+// SN5: the org's own Pexels API key (verify-before-save in the
+// service — a failed Pexels probe saves nothing).
+export class SaveStockKeyDto {
+  @IsString() @MaxLength(300) apiKey!: string;
+}
+
+// SN5: import one stock item by its Pexels id — the service
+// re-reads the item from Pexels, so no URL ever comes from the
+// client.
+export class ImportStockMediaDto {
+  @IsString() @MaxLength(40) stockId!: string;
+  @IsOptional() @IsIn(["photo", "video"]) kind?: string;
+}
+
+// SN5: brand overlay on one image asset (derived asset; the
+// source is untouched). position defaults to "bottom" in the
+// service; barColor falls back to the org's brand colour.
+export class BrandOverlayMediaDto {
+  @IsOptional() @IsString() logoAssetId?: string;
+  @IsOptional() @IsIn(["bottom", "top", "corner"]) position?: string;
+  @IsOptional() @IsString() @MaxLength(7) barColor?: string;
+}
+
 // SU4: monthly AI content plan.
 export class GenerateContentPlanDto {
   @IsString() @MaxLength(7) @Matches(/^\d{4}-\d{2}$/) month!: string;

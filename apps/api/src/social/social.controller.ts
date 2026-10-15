@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { SocialService, type MediaFileStream } from "./social.service";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -14,9 +14,10 @@ import { SocialCommerceDraftService } from "./social-commerce-draft.service";
 import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
 import { SocialShareService } from "./social-share.service";
+import { SocialStockService } from "./social-stock.service";
 import {
   BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
-  AssignSocialPostDto, CreateShareLinkDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
+  AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
@@ -62,6 +63,9 @@ export class SocialController {
     // SN2: client-approval share links. LAST param (the module
     // provides it; no existing construction order changes).
     private readonly shares: SocialShareService,
+    // SN5: stock media (Pexels). Appended after shares for the
+    // same reason — existing positional constructions stay put.
+    private readonly stock: SocialStockService,
   ) {}
 
   // Picker step 1: verify + list Pages. Stores nothing.
@@ -212,6 +216,37 @@ export class SocialController {
   @Get("media/limits")
   mediaLimits() { return this.social.mediaLimits(); }
 
+  // SN5: stock media (Pexels, the org's OWN key) — the literal
+  // "stock" segments are declared with the other literal media
+  // segments, BEFORE every media/:id route. The key status shape
+  // carries configured + last-4 only; the key itself is never in
+  // any response.
+  @Get("media/stock/config")
+  stockConfig(@Param("organizationId") orgId: string) { return this.stock.getStockStatus(orgId); }
+
+  @Put("media/stock/config") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  saveStockConfig(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SaveStockKeyDto) {
+    return this.stock.saveStockKey(orgId, user.userId, dto);
+  }
+
+  @Delete("media/stock/config") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  deleteStockConfig(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.stock.deleteStockKey(orgId, user.userId);
+  }
+
+  @Get("media/stock/search")
+  stockSearch(
+    @Param("organizationId") orgId: string,
+    @Query("q") q?: string,
+    @Query("kind") kind?: string,
+    @Query("page") page?: string,
+  ) { return this.stock.searchStock(orgId, { q, kind, page: page === undefined ? undefined : Number(page) }); }
+
+  @Post("media/stock/import") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  stockImport(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportStockMediaDto) {
+    return this.stock.importStock(orgId, user.userId, dto);
+  }
+
   // SU3: media library — the literal "folders" / "bulk" segments
   // are declared BEFORE every media/:id route below so they are
   // never captured as an asset id.
@@ -271,6 +306,13 @@ export class SocialController {
   @Post("media/:id/cover") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   coverMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CoverMediaDto) {
     return this.library.coverFromVideo(orgId, user.userId, id, dto.atSeconds);
+  }
+
+  // SN5: brand overlay — derived image asset with the org's
+  // logo + brand bar (image assets only; the source untouched).
+  @Post("media/:id/brand-overlay") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  brandOverlayMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: BrandOverlayMediaDto) {
+    return this.library.brandOverlay(orgId, user.userId, id, dto);
   }
 
   @Get("media/:id/file")
