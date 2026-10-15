@@ -619,6 +619,11 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
               ✈️ Telegram বেছে নিয়েছেন — শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>১০টি মিডিয়ার Media Group</strong> পাঠানো যায়। মিডিয়ার ক্যাপশন ১০২৪ অক্ষরের বেশি হলে পুরো লেখাটি আলাদা মেসেজ হিসেবে ঠিক পরেই যাবে। First Comment Telegram-এ পাঠানো হয় না (Discussion Group-এর পথ আলাদা)।
             </p>
           ) : null}
+          {!editingPostId && accounts.some((a) => a.platform === "threads" && a.status === "connected" && accountSelected[a.id]) ? (
+            <p className="rounded-lg bg-slate-100 p-2.5 text-xs text-slate-700">
+              🧵 Threads বেছে নিয়েছেন — ক্যাপশন সর্বোচ্চ <strong>৫০০ অক্ষর</strong>; শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>২০টি মিডিয়ার Carousel</strong> পোস্ট করা যায়। First Comment Threads-এ পাঠানো হয় না।
+            </p>
+          ) : null}
         </div>
 
         {/* SU1: per-account variant panels (multiple accounts, or

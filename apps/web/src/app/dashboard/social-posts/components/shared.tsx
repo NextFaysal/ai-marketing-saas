@@ -187,6 +187,9 @@ export const PLATFORM_LABELS: Record<string, string> = {
 export interface PlatformModes {
   tiktok: { configured: boolean; audited: boolean };
   youtube: { configured: boolean };
+  linkedin?: { configured: boolean };
+  // SN7: the operator's Threads app presence (button honesty).
+  threads?: { configured: boolean };
 }
 
 // SU2 contract: per-account weekly posting slots (org timezone).

@@ -494,6 +494,7 @@ export default function SocialPostsPage() {
     if (oauthError) setError(oauthError);
     if (connected === "tiktok") setNotice("TikTok অ্যাকাউন্ট যুক্ত হয়েছে।");
     if (connected === "youtube") setNotice("YouTube Channel যুক্ত হয়েছে।");
+    if (connected === "threads") setNotice("Threads অ্যাকাউন্ট যুক্ত হয়েছে।");
     if (pick) {
       // SP9: the callback parked a multi-channel authorization —
       // load the offered channels for the picker (the state id is
@@ -631,7 +632,7 @@ export default function SocialPostsPage() {
   // The API returns the platform's authorize URL; the browser
   // leaves for the platform and the callback redirects back here
   // with social_connected / social_error (handled on mount).
-  async function connectOAuth(platform: "tiktok" | "youtube") {
+  async function connectOAuth(platform: "tiktok" | "youtube" | "threads") {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`connect-${platform}`); setError("");
     try {

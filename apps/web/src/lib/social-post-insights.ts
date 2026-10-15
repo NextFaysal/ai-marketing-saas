@@ -16,7 +16,7 @@ import type { SocialPost } from "./social-post-filters";
 import type { AutoDraftKind } from "./social-posts-su5";
 
 export interface SocialPostInsights {
-  platform: "meta_page" | "instagram";
+  platform: "meta_page" | "instagram" | "threads";
   reactions?: number;
   comments?: number;
   shares?: number;
@@ -26,6 +26,12 @@ export interface SocialPostInsights {
   reach?: number;
   saved?: number;
   plays?: number;
+  // SN7: Threads-native metrics (absent when Threads omits them).
+  views?: number;
+  likes?: number;
+  replies?: number;
+  reposts?: number;
+  quotes?: number;
 }
 
 export type SocialApprovalStatus = "pending" | "approved" | "rejected" | "manager_approved";
@@ -111,6 +117,12 @@ const METRIC_DEFS: { key: string; chipLabel: string; totalLabel: string }[] = [
   { key: "reach", chipLabel: "পৌঁছেছে", totalLabel: "মোট পৌঁছেছে" },
   { key: "saved", chipLabel: "সেভ", totalLabel: "মোট সেভ" },
   { key: "plays", chipLabel: "প্লে", totalLabel: "মোট প্লে" },
+  // SN7: Threads-native metrics (shares above is shared).
+  { key: "views", chipLabel: "👁️ ভিউ", totalLabel: "মোট ভিউ" },
+  { key: "likes", chipLabel: "❤️ লাইক", totalLabel: "মোট লাইক" },
+  { key: "replies", chipLabel: "💬 রিপ্লাই", totalLabel: "মোট রিপ্লাই" },
+  { key: "reposts", chipLabel: "🔁 রিপোস্ট", totalLabel: "মোট রিপোস্ট" },
+  { key: "quotes", chipLabel: "❝ কোট", totalLabel: "মোট কোট" },
 ];
 
 /**

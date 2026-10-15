@@ -62,6 +62,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => setShowTelegramConnect((s) => !s)}>
               ✈️ Telegram Channel যুক্ত করুন
             </button>
+            <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.threads?.configured === false}
+              title={platformModes && !platformModes.threads?.configured ? "Threads app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              onClick={() => connectOAuth("threads")}>
+              {busy === "connect-threads" ? "Threads-এ যাচ্ছে..." : "🧵 Threads যুক্ত করুন"}
+            </button>
           </div>
         </div>
         {showTelegramConnect ? (
@@ -89,10 +94,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             </form>
           </div>
         ) : null}
-        {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured) ? (
+        {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured || !platformModes.threads?.configured) ? (
           <p className="text-xs text-slate-400">
             {!platformModes.tiktok.configured ? "TikTok: Operator এখনো TikTok app configure করেননি — Connect করা যাচ্ছে না। " : null}
             {!platformModes.youtube.configured ? "YouTube: Operator এখনো Google app configure করেননি — Connect করা যাচ্ছে না।" : null}
+            {!platformModes.threads?.configured ? "Threads: Operator এখনো Threads app configure করেননি — প্ল্যাটফর্ম app দিয়ে Connect করা যাচ্ছে না (নিজের Threads app দিয়ে করা যায়: কানেক্ট সেন্টার → নিজের অ্যাপ)।" : null}
           </p>
         ) : null}
         {youtubePick ? (
@@ -158,6 +164,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                   {a.platform === "telegram" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       পোস্ট Bot-এর মাধ্যমে Channel-এ যায় — Bot-টির Admin মর্যাদা তুলে নিলে প্রকাশ ব্যর্থ হবে (Telegram-এর বার্তাই দেখানো হবে)। সৎ সীমা: Telegram Bot API পোস্টের Views/Engagement দেয় না, তাই এই অ্যাকাউন্টের Insights পাওয়া যায় না।
+                    </div>
+                  ) : null}
+                  {a.platform === "threads" ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      পোস্ট Threads-এ সরাসরি প্রকাশিত হয় (Container flow)। সৎ সীমা: প্রোডাকশনে প্রকাশের জন্য Operator-এর Threads app-এ Meta-র App Review (Advanced Access) লাগতে পারে — না থাকলে Meta শুধু app-role থাকা অ্যাকাউন্টে অনুমতি দেয়, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই দেখা যাবে।
                     </div>
                   ) : null}
                   {a.lastError ? (
