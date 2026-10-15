@@ -13,9 +13,10 @@ import { SocialMediaLibraryService } from "./social-media-library.service";
 import { SocialCommerceDraftService } from "./social-commerce-draft.service";
 import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
+import { SocialShareService } from "./social-share.service";
 import {
   BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
-  AssignSocialPostDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
+  AssignSocialPostDto, CreateShareLinkDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
@@ -58,6 +59,9 @@ export class SocialController {
     private readonly commerceDrafts: SocialCommerceDraftService,
     private readonly links: SocialLinkService,
     private readonly health: SocialHealthService,
+    // SN2: client-approval share links. LAST param (the module
+    // provides it; no existing construction order changes).
+    private readonly shares: SocialShareService,
   ) {}
 
   // Picker step 1: verify + list Pages. Stores nothing.
@@ -568,6 +572,31 @@ export class SocialController {
     return this.social.assignPost(orgId, user.userId, id, dto?.assignedUserId ?? null);
   }
 
+  // SN2: client-approval share links — one link per post or per
+  // group ("post-groups" is its own first segment, like
+  // "groups", so it never collides with posts/:id). The create
+  // response is the ONLY time the full token is returned (inside
+  // `url`); the list returns masked tokens + derived status.
+  @Post("posts/:id/share-link") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createPostShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateShareLinkDto) {
+    return this.shares.createShareLink(orgId, user.userId, { postId: id }, dto);
+  }
+
+  @Post("post-groups/:id/share-link") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createGroupShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateShareLinkDto) {
+    return this.shares.createShareLink(orgId, user.userId, { groupId: id }, dto);
+  }
+
+  @Get("posts/:id/share-links")
+  listPostShareLinks(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.shares.listShareLinksForPost(orgId, id);
+  }
+
+  @Delete("share-links/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  revokeShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.shares.revokeShareLink(orgId, user.userId, id);
+  }
+
   @Patch("posts/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   updatePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateSocialPostDto) {
     return this.social.updatePost(orgId, user.userId, id, dto);
@@ -691,7 +720,11 @@ export class PublicMediaController {
  */
 @Controller("public/social")
 export class PublicSocialLinkController {
-  constructor(private readonly links: SocialLinkService) {}
+  constructor(
+    private readonly links: SocialLinkService,
+    // SN2: client-approval share preview + review.
+    private readonly shares: SocialShareService,
+  ) {}
 
   @Public()
   @Get("r/:token")
@@ -703,6 +736,24 @@ export class PublicSocialLinkController {
     const result = await this.links.recordClick(token, userAgent ?? null);
     if (!result || !result.url) throw new NotFoundException("Link not found");
     return res.redirect(302, result.url);
+  }
+
+  // SN2 — PUBLIC client-approval share preview + review. No auth
+  // can apply (the client has no account) — the unguessable
+  // token IS the credential, exactly like the tracked-link
+  // redirect above. Unknown token → 404; revoked/expired → 410
+  // (the service's honest Gone messages). The GET payload is a
+  // strict whitelist built in SocialShareService.
+  @Public()
+  @Get("share/:token")
+  publicShare(@Param("token") token: string) {
+    return this.shares.getPublicShare(token);
+  }
+
+  @Public()
+  @Post("share/:token/review")
+  publicShareReview(@Param("token") token: string, @Body() dto: SubmitClientReviewDto) {
+    return this.shares.submitPublicReview(token, dto);
   }
 }
 

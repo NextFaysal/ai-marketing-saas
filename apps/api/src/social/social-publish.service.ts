@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
-import { SocialService, videoOnlyViolation } from "./social.service";
+import { SocialService, videoOnlyViolation, CLIENT_APPROVAL_PENDING_MSG } from "./social.service";
 import { validateForPlatform, TIKTOK_PHOTO_GATE_MSG } from "./social-preflight";
 import { addInterval } from "./social-queue-helpers";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
@@ -231,6 +231,48 @@ export class SocialPublishService {
       return org?.socialRequireApproval === true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * SN2: is this org's CLIENT approval requirement switched on?
+   * The publish-path twin of approvalRequired above (same
+   * defensive read — a lookup problem reads as OFF, so the
+   * publish path keeps its pre-SN2 behaviour whenever the
+   * setting cannot be confirmed).
+   */
+  async clientApprovalRequired(organizationId: string): Promise<boolean> {
+    try {
+      const model = (this.prisma as any).organization;
+      if (!model?.findFirst) return false;
+      const org = await model.findFirst({ where: { id: organizationId } });
+      return org?.socialRequireClientApproval === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * SN2: the post's latest client review, or null. Reviews are
+   * append-only; the latest one is the client's current word
+   * (a newer review supersedes an older one). Failure-isolated:
+   * any read problem reads as "no review" — which, while the
+   * requirement is ON, blocks rather than waves through.
+   */
+  async latestClientReview(organizationId: string, postId: string): Promise<any | null> {
+    try {
+      const model = (this.prisma as any).socialPostClientReview;
+      if (!model?.findMany) return null;
+      const rows = await model.findMany({ where: { organizationId, postId } });
+      let latest: any | null = null;
+      for (const r of Array.isArray(rows) ? rows : []) {
+        if (!latest || new Date(r.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime()) {
+          latest = r;
+        }
+      }
+      return latest;
+    } catch {
+      return null;
     }
   }
 
@@ -737,6 +779,17 @@ export class SocialPublishService {
     if ((await this.approvalRequired(organizationId)) && row.approvalStatus !== "approved") {
       throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে প্রকাশের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
     }
+    // SN2 client-approval gate: beside the internal gate above —
+    // while socialRequireClientApproval is on, the post also
+    // needs the client's latest review to be "approved" (never
+    // reviewed and changes_requested both block, with the one
+    // verbatim reason).
+    if (await this.clientApprovalRequired(organizationId)) {
+      const latest = await this.latestClientReview(organizationId, postId);
+      if (latest?.decision !== "approved") {
+        throw new ConflictException(CLIENT_APPROVAL_PENDING_MSG);
+      }
+    }
     const claim = await (this.prisma as any).socialPost.updateMany({
       where: { id: postId, organizationId, status: { in: ["draft", "scheduled"] } },
       data: { status: "publishing" },
@@ -789,6 +842,10 @@ export class SocialPublishService {
     // time — an approval revoked (or never given) after scheduling
     // must stop the publish, not ride through on a stale read.
     const approvalOn = await this.approvalRequired(organizationId);
+    // SN2: the client-approval requirement is read ONCE per scan
+    // too; each post's latest client review is re-checked fresh
+    // at claim time, exactly like the internal approval above.
+    const clientApprovalOn = await this.clientApprovalRequired(organizationId);
     for (const row of Array.isArray(dueRows) ? dueRows : []) {
       counts.due++;
       // CC27: the deny-list is re-checked at PUBLISH time against
@@ -827,6 +884,23 @@ export class SocialPublishService {
             data: {
               status: "draft", scheduledAt: null,
               error: "অনুমোদন না থাকায় পোস্টটি প্রকাশ হয়নি — অনুমোদন ব্যবস্থা চালু থাকলে প্রকাশের আগে অনুমোদন লাগে। পোস্টটি Draft-এ ফিরিয়ে দেওয়া হয়েছে; অনুমোদন নিয়ে আবার শিডিউল করুন।",
+            },
+          }).catch(() => undefined);
+          counts.blocked++;
+          continue;
+        }
+      }
+      if (clientApprovalOn) {
+        const latest = await this.latestClientReview(organizationId, row.id);
+        if (latest?.decision !== "approved") {
+          // Same non-silent pattern as the internal-approval
+          // block above: back to draft with the verbatim reason
+          // on the post, so the team sees why it did not go out.
+          await (this.prisma as any).socialPost.update({
+            where: { id: row.id },
+            data: {
+              status: "draft", scheduledAt: null,
+              error: CLIENT_APPROVAL_PENDING_MSG,
             },
           }).catch(() => undefined);
           counts.blocked++;

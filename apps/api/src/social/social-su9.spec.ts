@@ -537,11 +537,13 @@ describe("SU9 two-step approval", () => {
   it("settings: get returns both switches; PATCH of one preserves the other + audit", async () => {
     const db = fakeDb(); seedOrg(db);
     const { social } = services(db);
-    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: false, socialApprovalTwoStep: false });
+    // SN2: the settings response also carries
+    // socialRequireClientApproval (default false).
+    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: false, socialApprovalTwoStep: false, socialRequireClientApproval: false });
     expect(await social.updateSocialSettings(ORG, OWNER, { socialApprovalTwoStep: true }))
-      .toEqual({ socialRequireApproval: false, socialApprovalTwoStep: true });
+      .toEqual({ socialRequireApproval: false, socialApprovalTwoStep: true, socialRequireClientApproval: false });
     expect(await social.updateSocialSettings(ORG, OWNER, { socialRequireApproval: true }))
-      .toEqual({ socialRequireApproval: true, socialApprovalTwoStep: true });
+      .toEqual({ socialRequireApproval: true, socialApprovalTwoStep: true, socialRequireClientApproval: false });
     expect(db.organizations[0].socialApprovalTwoStep).toBe(true);
     const audit = db.auditRows.find((r: Row) => r.action === "social.settings_updated" && r.metadata.socialApprovalTwoStep === true);
     expect(audit).toBeTruthy();

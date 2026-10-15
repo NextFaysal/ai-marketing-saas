@@ -547,12 +547,14 @@ describe("SP7 approval flow", () => {
     const { social } = services(db);
     // SU9: the settings response also carries socialApprovalTwoStep
     // (default false — the SP7 one-step behaviour below is unchanged).
-    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: false, socialApprovalTwoStep: false });
+    // SN2: it also carries socialRequireClientApproval (default
+    // false — the client-approval gate is off unless switched on).
+    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: false, socialApprovalTwoStep: false, socialRequireClientApproval: false });
     expect(await social.updateSocialSettings(ORG, OWNER, { socialRequireApproval: true }))
-      .toEqual({ socialRequireApproval: true, socialApprovalTwoStep: false });
+      .toEqual({ socialRequireApproval: true, socialApprovalTwoStep: false, socialRequireClientApproval: false });
     expect(db.organizations[0].socialRequireApproval).toBe(true);
     expect(db.auditRows.some((r: Row) => r.action === "social.settings_updated" && r.metadata.socialRequireApproval === true)).toBe(true);
-    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: true, socialApprovalTwoStep: false });
+    expect(await social.getSocialSettings(ORG)).toEqual({ socialRequireApproval: true, socialApprovalTwoStep: false, socialRequireClientApproval: false });
   });
 
   it("setting OFF: behaviour exactly as before — MM post has null approval state and schedules fine", async () => {

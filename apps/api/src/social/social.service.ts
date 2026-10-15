@@ -35,6 +35,14 @@ import { parseCsv } from "./social-csv";
 export { videoOnlyViolation };
 
 /**
+ * SN2: the client-approval gate's block reason, verbatim. Every
+ * gated path (schedule, bulk reschedule, publish-now, the publish
+ * worker) reports exactly this string — the tenant and the client
+ * see one consistent reason, never a paraphrase.
+ */
+export const CLIENT_APPROVAL_PENDING_MSG = "ক্লায়েন্ট অনুমোদন বাকি";
+
+/**
  * SP3: normalize tenant-supplied hashtag tags — pure and exported
  * for tests. Trims, strips leading '#', drops empties, dedupes
  * case-insensitively keeping the first form, caps a set at 30 tags
@@ -285,6 +293,82 @@ export class SocialService {
       return org?.socialApprovalTwoStep === true;
     } catch {
       return false;
+    }
+  }
+
+  // ---------- SN2: client-approval helpers ----------
+
+  /**
+   * Is the org's CLIENT approval requirement on
+   * (Organization.socialRequireClientApproval)? Same defensive
+   * read as approvalSettingOn: any lookup problem reads as OFF,
+   * so the pre-SN2 behaviour is preserved byte-for-byte while
+   * the setting is off or unknown.
+   */
+  async clientApprovalRequired(organizationId: string): Promise<boolean> {
+    try {
+      const model = (this.prisma as any).organization;
+      if (!model?.findFirst) return false;
+      const org = await model.findFirst({ where: { id: organizationId } });
+      return org?.socialRequireClientApproval === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The post's CURRENT client word: its latest
+   * SocialPostClientReview (reviews are append-only history; a
+   * newer review supersedes an older one, which stays on record
+   * for the timeline). Model-optional + failure-isolated like
+   * the other SN-era reads: any problem reads as "no review".
+   * On a createdAt tie the later-stored row wins (insertion
+   * order is the only honest tiebreak available).
+   */
+  async latestClientReview(organizationId: string, postId: string): Promise<any | null> {
+    try {
+      const model = (this.prisma as any).socialPostClientReview;
+      if (!model?.findMany) return null;
+      const rows = await model.findMany({ where: { organizationId, postId } });
+      let latest: any | null = null;
+      for (const r of Array.isArray(rows) ? rows : []) {
+        if (!latest || new Date(r.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime()) {
+          latest = r;
+        }
+      }
+      return latest;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when the post's latest client review is "approved". */
+  async hasClientApproval(organizationId: string, postId: string): Promise<boolean> {
+    const latest = await this.latestClientReview(organizationId, postId);
+    return latest?.decision === "approved";
+  }
+
+  /**
+   * Setting-aware gate verdict: while the requirement is OFF
+   * every post passes (the exact pre-SN2 behaviour); while ON a
+   * post passes only with a latest "approved" client review —
+   * "never reviewed" and "changes_requested" both fail.
+   */
+  async clientApprovalSatisfied(organizationId: string, postId: string): Promise<boolean> {
+    if (!(await this.clientApprovalRequired(organizationId))) return true;
+    return this.hasClientApproval(organizationId, postId);
+  }
+
+  /**
+   * The throwing form of the gate, for the request paths
+   * (schedulePost here; SocialPublishService.publishNow carries
+   * its own copy of the check, mirroring how SP7's
+   * approvalRequired lives in both services). The reason is
+   * CLIENT_APPROVAL_PENDING_MSG verbatim.
+   */
+  async assertClientApproval(organizationId: string, postId: string): Promise<void> {
+    if (!(await this.clientApprovalSatisfied(organizationId, postId))) {
+      throw new ConflictException(CLIENT_APPROVAL_PENDING_MSG);
     }
   }
 
@@ -1434,6 +1518,10 @@ export class SocialService {
       }
     }
     const approvalOn = action === "reschedule" ? await this.approvalSettingOn(organizationId) : false;
+    // SN2: the client-approval setting is read ONCE per bulk
+    // reschedule (the approvalOn pattern); each post's own
+    // latest client review is then checked per item below.
+    const clientApprovalOn = action === "reschedule" ? await this.clientApprovalRequired(organizationId) : false;
     const results: { id: string; ok: boolean; error?: string }[] = [];
     for (const id of ids) {
       const post = await (this.prisma as any).socialPost.findFirst({ where: { id, organizationId } }).catch(() => null);
@@ -1457,6 +1545,12 @@ export class SocialService {
       }
       if (approvalOn && post.approvalStatus !== "approved") {
         results.push({ id, ok: false, error: "পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে শিডিউলের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।" });
+        continue;
+      }
+      // SN2: per-post client gate (post-based even inside a
+      // group — each variant needs its OWN client approval).
+      if (clientApprovalOn && !(await this.hasClientApproval(organizationId, post.id))) {
+        results.push({ id, ok: false, error: CLIENT_APPROVAL_PENDING_MSG });
         continue;
       }
       const account = await this.accountSummary(organizationId, post.socialAccountId);
@@ -1689,6 +1783,10 @@ export class SocialService {
     if ((await this.approvalSettingOn(organizationId)) && post.approvalStatus !== "approved") {
       throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে শিডিউলের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
     }
+    // SN2 client-approval gate: beside the internal gate above —
+    // while socialRequireClientApproval is on, the post also
+    // needs the client's latest review to be "approved".
+    await this.assertClientApproval(organizationId, post.id);
     // SP8/SP9: a TikTok/YouTube post without exactly one video
     // can NEVER publish — refuse at schedule time with the reason,
     // instead of letting the tenant discover it at publish time.
@@ -1881,6 +1979,8 @@ export class SocialService {
    * REAL source this module has:
    * - versions (SocialPostVersion rows),
    * - notes (SocialPostNote rows),
+   * - client reviews (SN2: SocialPostClientReview rows — the
+   *   real records, with reviewer / decision / comment),
    * - approval events from the AuditLog: social audit rows are
    *   written with entityType "SocialPost" + entityId = the post
    *   id CONSISTENTLY (see every audit.log call in this service),
@@ -1923,6 +2023,30 @@ export class SocialService {
           at: n.createdAt, kind: "note",
           label: `নোট — ${n.authorId}: ${excerpt}`,
           meta: { noteId: n.id, authorId: n.authorId },
+        });
+      }
+    }
+
+    // SN2: client reviews — the REAL SocialPostClientReview
+    // records (never derived from the post row): who reviewed,
+    // what they decided, and the comment they left. Share-link
+    // creation/revoke deliberately do NOT appear here (they are
+    // AuditLog-only events, per the SN2 plan).
+    const reviewModel = (this.prisma as any).socialPostClientReview;
+    if (reviewModel?.findMany) {
+      const reviews = await reviewModel.findMany({
+        where: { organizationId, postId: post.id },
+      }).catch(() => []);
+      for (const r of Array.isArray(reviews) ? reviews : []) {
+        entries.push({
+          at: r.createdAt, kind: "client_review",
+          label: r.decision === "approved"
+            ? `ক্লায়েন্ট অনুমোদন দিয়েছেন — ${r.reviewerName}`
+            : `ক্লায়েন্ট পরিবর্তন চেয়েছেন — ${r.reviewerName}`,
+          meta: {
+            reviewId: r.id, reviewerName: r.reviewerName,
+            decision: r.decision, comment: r.comment ?? null,
+          },
         });
       }
     }
@@ -2033,16 +2157,21 @@ export class SocialService {
       socialRequireApproval: await this.approvalSettingOn(organizationId),
       // SU9: the optional second approval step (default false).
       socialApprovalTwoStep: await this.twoStepSettingOn(organizationId),
+      // SN2: the optional CLIENT approval requirement (default
+      // false) — beside the two internal toggles, same read
+      // discipline.
+      socialRequireClientApproval: await this.clientApprovalRequired(organizationId),
     };
   }
 
   /** OWNER/ADMIN only (controller-enforced). Audited. A PATCH
    * touches only the fields it carries — an absent field keeps
    * its current value. */
-  async updateSocialSettings(organizationId: string, actorId: string, dto: { socialRequireApproval?: unknown; socialApprovalTwoStep?: unknown }) {
+  async updateSocialSettings(organizationId: string, actorId: string, dto: { socialRequireApproval?: unknown; socialApprovalTwoStep?: unknown; socialRequireClientApproval?: unknown }) {
     const data: Record<string, unknown> = {};
     if (dto?.socialRequireApproval !== undefined) data.socialRequireApproval = dto.socialRequireApproval === true;
     if (dto?.socialApprovalTwoStep !== undefined) data.socialApprovalTwoStep = dto.socialApprovalTwoStep === true;
+    if (dto?.socialRequireClientApproval !== undefined) data.socialRequireClientApproval = dto.socialRequireClientApproval === true;
     if (Object.keys(data).length > 0) {
       await (this.prisma as any).organization.update({
         where: { id: organizationId }, data,

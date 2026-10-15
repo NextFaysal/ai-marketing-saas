@@ -171,9 +171,31 @@ export class SelectLinkedInOrganizationDto {
 // SP7: the org-level social settings switch (OWNER/ADMIN write).
 // SU9: both fields optional — a PATCH touches only what it
 // carries (the service preserves the absent field).
+// SN2: socialRequireClientApproval joins the same PATCH, same
+// discipline.
 export class UpdateSocialSettingsDto {
   @IsOptional() @IsBoolean() socialRequireApproval?: boolean;
   @IsOptional() @IsBoolean() socialApprovalTwoStep?: boolean;
+  @IsOptional() @IsBoolean() socialRequireClientApproval?: boolean;
+}
+
+// SN2: create a client-approval share link. Only the expiry is
+// client-supplied; absent = the service's 7-day default. The
+// range is ALSO enforced in SocialShareService (direct callers).
+export class CreateShareLinkDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) expiresInDays?: number;
+}
+
+// SN2: a client's public review submission. Deliberately loose —
+// the semantic checks (post inside this link's scope, non-empty
+// reviewer name, decision in the closed set) live in
+// SocialShareService so their errors are the honest Bengali
+// explanations, mirroring the BulkSocialPostsDto discipline.
+export class SubmitClientReviewDto {
+  @IsOptional() @IsString() @MaxLength(200) postId?: string;
+  @IsOptional() @IsString() @MaxLength(200) reviewerName?: string;
+  @IsOptional() @IsString() @MaxLength(40) decision?: string;
+  @IsOptional() @IsString() @MaxLength(2000) comment?: string;
 }
 
 // SU9: an internal team note on a post (never sent to any
