@@ -113,10 +113,10 @@ describe("AA1 — systemEnvCheck", () => {
     expect(out.migrations.pending).toBeNull();
   });
 
-  it("includes the platform-config source summary (no secrets) for all 9 blocks", async () => {
+  it("includes the platform-config source summary (no secrets) for all 10 blocks", async () => {
     const out: any = await svcWithMigrations([]).systemEnvCheck();
     expect(out.platformConfig.map((a: any) => a.area)).toEqual([
-      "llm", "metaApp", "smtp", "sms", "sslcommerz", "bkash", "image", "tiktokApp", "googleApp",
+      "llm", "metaApp", "smtp", "sms", "sslcommerz", "bkash", "image", "tiktokApp", "googleApp", "linkedinApp",
     ]);
     expect(out.platformConfig.every((a: any) => ["admin", "env", "none"].includes(a.source))).toBe(true);
   });

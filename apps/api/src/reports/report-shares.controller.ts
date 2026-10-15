@@ -10,6 +10,8 @@ class CreateShareDto {
   @IsOptional() @IsNumber() days?: number;
   @IsOptional() @IsNumber() expiresInDays?: number;
   @IsOptional() @IsString() kind?: string;
+  // Frontier NB8 / CN18: required when kind = "campaign".
+  @IsOptional() @IsString() planId?: string;
 }
 
 @Controller("organizations/:organizationId/report-shares")

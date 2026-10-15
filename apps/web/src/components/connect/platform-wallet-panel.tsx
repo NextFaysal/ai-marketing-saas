@@ -1,6 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { buildPayoutBody, type PayoutForm } from "@/lib/connect-forms";
 import {
@@ -39,9 +39,14 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [requests, setRequests] = useState<PayoutRequestView[]>([]);
   const [form, setForm] = useState<PayoutForm>(EMPTY_PAYOUT);
+  // CC23: TOTP step-up code for the payout request (sent only
+  // when filled; the server requires it iff TOTP is enabled).
+  const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [stmtFrom, setStmtFrom] = useState("");
+  const [stmtTo, setStmtTo] = useState("");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -79,16 +84,18 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
     if (!orgId) return;
     setBusy("payout"); setError(""); setNotice("");
     try {
-      await apiFetch(`organizations/${orgId}/connections/payout-requests`, {
-        method: "POST", body: JSON.stringify(buildPayoutBody(form)),
+      const res = await apiFetch<{ stepUpUnavailable?: boolean }>(`organizations/${orgId}/connections/payout-requests`, {
+        method: "POST", body: JSON.stringify({ ...buildPayoutBody(form), ...(totpCode.trim() ? { totpCode: totpCode.trim() } : {}) }),
       });
-      setNotice("Payout অনুরোধ পাঠানো হয়েছে — পরিমাণটি অনুমোদন পর্যন্ত আটকে (hold) থাকবে। অ্যাডমিন অনুমোদন দিয়ে পাঠালে তবেই ব্যালেন্স থেকে কাটা হবে।");
+      const base = "Payout অনুরোধ পাঠানো হয়েছে — পরিমাণটি অনুমোদন পর্যন্ত আটকে (hold) থাকবে। অ্যাডমিন অনুমোদন দিয়ে পাঠালে তবেই ব্যালেন্স থেকে কাটা হবে।";
+      setNotice(res?.stepUpUnavailable ? `${base} (আপনার Two-Factor চালু নেই — Wallet থেকে টাকা তোলার মতো সংবেদনশীল কাজে অতিরিক্ত সুরক্ষার জন্য Settings থেকে Two-Factor চালু করুন।)` : base);
       setForm(EMPTY_PAYOUT);
+      setTotpCode("");
       await load(); onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Payout অনুরোধ পাঠানো যায়নি");
     } finally { setBusy(""); }
-  }, [form, load, onChanged]);
+  }, [form, load, onChanged, totpCode]);
 
   const cancel = useCallback(async (id: string) => {
     const orgId = getOrganizationId();
@@ -102,6 +109,32 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
       setError(err instanceof Error ? err.message : "বাতিল করা যায়নি");
     } finally { setBusy(""); }
   }, [load, onChanged]);
+
+  // CC19: Wallet statement download — সার্ভার আসল ledger থেকেই
+  // opening/entries/closing হিসাব করে ফাইল বানায়; এখানে শুধু
+  // তারিখের পরিসর পাঠানো হয় (auth header সহ blob download,
+  // customers export-এর একই প্যাটার্ন)।
+  const downloadStatement = useCallback(async (format: "csv" | "pdf") => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setBusy(`statement-${format}`); setError("");
+    try {
+      const params = new URLSearchParams();
+      if (stmtFrom) params.set("from", stmtFrom);
+      if (stmtTo) params.set("to", stmtTo);
+      const res = await fetch(`${API_URL}/organizations/${orgId}/connections/wallet/statement.${format}?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      if (!res.ok) { const body: any = await res.json().catch(() => ({})); throw new Error(body?.message ?? `HTTP ${res.status}`); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `wallet-statement.${format}`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Statement ডাউনলোড হয়নি");
+    } finally { setBusy(""); }
+  }, [stmtFrom, stmtTo]);
 
   const feePercent = platform ? platform.feePercent : null;
 
@@ -192,6 +225,30 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
         </div>
       ) : null}
 
+      {wallet ? (
+        <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+          <div className="text-sm font-semibold text-slate-700">📄 Wallet স্টেটমেন্ট (Ledger থেকে)</div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block text-xs text-slate-500">শুরু (থেকে)
+              <input type="date" className={inputCls} value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
+            </label>
+            <label className="block text-xs text-slate-500">শেষ (পর্যন্ত)
+              <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
+            </label>
+            <button type="button" disabled={busy === "statement-csv"} onClick={() => void downloadStatement("csv")} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+              {busy === "statement-csv" ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড"}
+            </button>
+            <button type="button" disabled={busy === "statement-pdf"} onClick={() => void downloadStatement("pdf")} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">
+              {busy === "statement-pdf" ? "তৈরি হচ্ছে…" : "PDF ডাউনলোড"}
+            </button>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            তারিখ খালি রাখলে পুরো ইতিহাস আসবে। Opening ব্যালেন্স হিসাব হয় পরিসরের আগের শেষ ledger এন্ট্রি থেকে — কোনো অনুমান নয়।
+            PDF-তে শুধু তারিখ/ধরন/পরিমাণ থাকে (পূর্ণ নোট CSV-তে) — এটি ফাইলের গায়েই লেখা থাকে।
+          </p>
+        </div>
+      ) : null}
+
       <form onSubmit={(e) => void submitPayout(e)} className="space-y-2 rounded-xl border border-slate-200 p-3">
         <div className="text-sm font-semibold text-slate-700">💸 Payout অনুরোধ</div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -225,6 +282,9 @@ export function PlatformWalletPanel({ onChanged }: { onChanged?: () => void }) {
             </label>
           </div>
         )}
+        <label className="block max-w-sm text-sm">🔐 TOTP কোড (শুধু আপনার Two-Factor চালু থাকলেই লাগবে)
+          <input className={inputCls} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" placeholder="৬-সংখ্যার কোড" />
+        </label>
         <button type="submit" disabled={busy === "payout"} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
           {busy === "payout" ? "পাঠানো হচ্ছে..." : "অনুরোধ পাঠান"}
         </button>

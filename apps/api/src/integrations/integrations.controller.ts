@@ -92,9 +92,19 @@ export class IntegrationsController {
     return this.health.getHealth(orgId, id);
   }
 
+  /** CC18: manual sync triggers REFUSE a paused connection
+   * with a clear message (the scheduled path instead skips
+   * quietly-but-logged inside the services). */
+  private assertSyncNotPaused(integration: any) {
+    if (integration?.syncPaused === true) {
+      throw new BadRequestException("এই কানেকশনের Sync বিরতি (pause) দেওয়া আছে — আগে Connect Center থেকে Sync চালু করুন, তারপর আবার চেষ্টা করুন।");
+    }
+  }
+
   @Post("integrations/:integrationId/sync/products") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   async syncProducts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string, @Body() body?: { bulk?: boolean }) {
     const integration = await this.integrations.getIntegration(orgId, id);
+    this.assertSyncNotPaused(integration);
     // EC12: Shopify-only bulk mode (falls back to REST in-service).
     if (integration.provider === "shopify") return this.shopify.syncProducts(orgId, user.userId, id, { bulk: body?.bulk === true });
     return this.integrations.syncProducts(orgId, user.userId, id);
@@ -103,6 +113,7 @@ export class IntegrationsController {
   @Post("integrations/:integrationId/sync/orders") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   async syncOrders(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
     const integration = await this.integrations.getIntegration(orgId, id);
+    this.assertSyncNotPaused(integration);
     if (integration.provider === "shopify") return this.shopify.syncOrders(orgId, user.userId, id);
     return this.integrations.syncOrders(orgId, user.userId, id);
   }
@@ -110,12 +121,15 @@ export class IntegrationsController {
   @Post("integrations/:integrationId/sync/customers") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   async syncCustomers(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
     const integration = await this.integrations.getIntegration(orgId, id);
+    this.assertSyncNotPaused(integration);
     if (integration.provider === "shopify") return this.shopify.syncCustomers(orgId, user.userId, id);
     return this.integrations.syncCustomers(orgId, user.userId, id);
   }
 
   @Post("integrations/:integrationId/sync/reviews") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
-  syncReviews(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
+  async syncReviews(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
+    const integration = await this.integrations.getIntegration(orgId, id);
+    this.assertSyncNotPaused(integration);
     return this.integrations.syncReviews(orgId, user.userId, id);
   }
 

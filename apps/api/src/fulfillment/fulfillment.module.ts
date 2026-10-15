@@ -9,6 +9,11 @@ import { InventoryModule } from "../inventory/inventory.module";
 import { OrdersModule } from "../orders/orders.module";
 import { InboxModule } from "../inbox/inbox.module";
 import { MessagingModule } from "../messaging/messaging.module";
+import { OrdersBulkController } from "./orders-bulk.controller";
+import { OrdersBulkService } from "./orders-bulk.service";
+import { FulfillmentExcellenceController } from "./fulfillment-excellence.controller";
+import { FulfillmentExcellenceService } from "./fulfillment-excellence.service";
+import { OrderNotificationsModule } from "../order-notifications/order-notifications.module";
 
 /**
  * EC9 — Fulfillment + Returns. All imports are one-directional:
@@ -20,9 +25,9 @@ import { MessagingModule } from "../messaging/messaging.module";
  * cycle.
  */
 @Module({
-  imports: [AuditModule, CommerceModule, CourierModule, InventoryModule, OrdersModule, InboxModule, MessagingModule],
-  controllers: [FulfillmentController, PublicReturnsController],
-  providers: [FulfillmentService, ReturnsService],
-  exports: [FulfillmentService, ReturnsService],
+  imports: [AuditModule, CommerceModule, CourierModule, InventoryModule, OrdersModule, InboxModule, MessagingModule, OrderNotificationsModule],
+  controllers: [FulfillmentController, PublicReturnsController, OrdersBulkController, FulfillmentExcellenceController],
+  providers: [FulfillmentService, ReturnsService, OrdersBulkService, FulfillmentExcellenceService],
+  exports: [FulfillmentService, ReturnsService, OrdersBulkService, FulfillmentExcellenceService],
 })
 export class FulfillmentModule {}

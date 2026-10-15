@@ -19,6 +19,8 @@ class UpdateCustomerDto {
   @IsOptional() @IsObject() customFields?: Record<string, unknown> | null;
   /** EC24d: staff-set wholesale flag (tier pricing at shop checkout). */
   @IsOptional() @IsBoolean() isWholesale?: boolean;
+  /** ON7: credit limit in minor units (string), or null to clear. */
+  @IsOptional() @IsString() creditLimitMinor?: string | null;
 }
 
 @PermissionArea("customers")
@@ -28,8 +30,8 @@ export class CustomersController {
   constructor(private readonly customers: CustomersService, private readonly customerPush: CustomerPushService) {}
 
   @Get()
-  list(@Param("organizationId") orgId: string, @Query("q") q?: string) {
-    return this.customers.list(orgId, q);
+  list(@Param("organizationId") orgId: string, @Query("q") q?: string, @Query("hasDue") hasDue?: string) {
+    return this.customers.list(orgId, q, { hasDue: hasDue === "true" || hasDue === "1" });
   }
 
   /** CRM C3: CSV export of this org's customers only. Declared
@@ -37,6 +39,13 @@ export class CustomersController {
   @Get("export") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=customers-export.csv")
   exportCsv(@Param("organizationId") orgId: string) {
     return this.customers.exportCsv(orgId);
+  }
+
+  /** ON7: customer খাতা (ledger). Declared before ":customerId"
+   * so the two-segment route is never shadowed. */
+  @Get(":customerId/khata")
+  khata(@Param("organizationId") orgId: string, @Param("customerId") id: string) {
+    return this.customers.getKhata(orgId, id);
   }
 
   @Get(":customerId")

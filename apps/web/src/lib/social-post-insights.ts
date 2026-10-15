@@ -13,6 +13,7 @@
  */
 
 import type { SocialPost } from "./social-post-filters";
+import type { AutoDraftKind } from "./social-posts-su5";
 
 export interface SocialPostInsights {
   platform: "meta_page" | "instagram";
@@ -27,7 +28,7 @@ export interface SocialPostInsights {
   plays?: number;
 }
 
-export type SocialApprovalStatus = "pending" | "approved" | "rejected";
+export type SocialApprovalStatus = "pending" | "approved" | "rejected" | "manager_approved";
 
 /** SocialPost extended with the SP7 fields every post response now carries. */
 export interface Sp7SocialPost extends SocialPost {
@@ -41,6 +42,41 @@ export interface Sp7SocialPost extends SocialPost {
    * successful hand-off (TikTok inbox mode / YouTube private
    * lock). Null for plain Meta publishes. */
   publishNote: string | null;
+  /** SU1: post-group id when this post was saved as one variant of
+   * a multi-account group; null for a standalone post. */
+  postGroupId: string | null;
+  /** SU1: first comment to post right after a successful publish
+   * (Meta Page / Instagram only). */
+  firstCommentText: string | null;
+  firstCommentStatus: "pending" | "posted" | "failed" | null;
+  firstCommentError: string | null;
+  /** SU2: recurring-series id + cadence, and the evergreen flags. */
+  seriesId: string | null;
+  recurrenceFrequency: "daily" | "weekly" | "monthly" | null;
+  recurrenceInterval: number | null;
+  isEvergreen: boolean;
+  evergreenMinGapDays: number | null;
+  evergreenMaxCycles: number | null;
+  evergreenCyclesUsed: number;
+  /** SU5: which commerce event created this draft, or null for a
+   * human-written post. */
+  autoDraftKind: AutoDraftKind | null;
+  /** SU6: whether a tracked short-link token exists (minted at
+   * schedule/publish time). The token itself is never serialized
+   * by the API — the UI only needs this boolean. */
+  hasTrackedLink: boolean;
+  /** SU8 (Batch 4): optional platform-publishing fields — YouTube
+   * title/tags/category/Shorts, a cover image asset, and the
+   * Facebook Story flag. All optional/null when never set. */
+  youtubeTitle?: string | null;
+  youtubeTags?: string[] | null;
+  youtubeCategoryId?: string | null;
+  youtubeIsShort?: boolean;
+  coverAssetId?: string | null;
+  isStory?: boolean;
+  /** SU9: the team member this post is assigned to (null =
+   * unassigned); members are picked from GET /organizations/:id/members. */
+  assignedUserId?: string | null;
 }
 
 export interface SocialInsightsSummary {

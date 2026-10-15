@@ -156,7 +156,14 @@ export class YouTubeClient {
    */
   async initiateResumable(accessToken: string, args: {
     title: string; description: string; contentType: string; contentLength: number;
+    // SU8: optional YouTube metadata — added to the snippet ONLY
+    // when present, so a call without them sends the exact
+    // pre-SU8 body (SP9 spec pins that shape).
+    tags?: string[]; categoryId?: string;
   }): Promise<string> {
+    const snippet: Record<string, unknown> = { title: args.title, description: args.description };
+    if (args.tags !== undefined) snippet.tags = args.tags;
+    if (args.categoryId !== undefined) snippet.categoryId = args.categoryId;
     const res = await this.fetchFn(UPLOAD_URL, {
       method: "POST",
       headers: {
@@ -166,7 +173,7 @@ export class YouTubeClient {
         "X-Upload-Content-Length": String(args.contentLength),
       },
       body: JSON.stringify({
-        snippet: { title: args.title, description: args.description },
+        snippet,
         status: { privacyStatus: "private" },
       }),
     });
@@ -174,6 +181,26 @@ export class YouTubeClient {
     const location = header(res, "location");
     if (!location) throw new Error("YouTube upload initiation returned no session URI (Location header)");
     return location;
+  }
+
+  /**
+   * SU8 — set a video's custom thumbnail (thumbnails.set): the
+   * image BYTES are the raw request body with the image's own
+   * Content-Type. Google's errors propagate verbatim (fail()).
+   */
+  async setThumbnail(accessToken: string, videoId: string, bytes: Buffer, contentType: string): Promise<void> {
+    const res = await this.fetchFn(
+      `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": contentType,
+        },
+        body: bytes,
+      },
+    );
+    if (!res.ok) await this.fail(res, "YouTube thumbnail set");
   }
 
   /** Parse a byte-transfer response: 200/201 + resource = done
@@ -255,10 +282,16 @@ export class YouTubePublisher {
     this.client = client;
   }
 
+  /** SU8: cover/thumbnail pass-through (client owns the HTTP). */
+  async setThumbnail(accessToken: string, videoId: string, bytes: Buffer, contentType: string): Promise<void> {
+    return this.client.setThumbnail(accessToken, videoId, bytes, contentType);
+  }
+
   /** SP9's original Buffer entry point, kept for its callers and
    * specs: a thin source over the in-memory bytes. */
   async upload(args: {
     accessToken: string; bytes: Buffer; contentType: string; title: string; description: string;
+    tags?: string[]; categoryId?: string;
   }): Promise<{ videoId: string }> {
     const { bytes, contentType, ...rest } = args;
     return this.uploadFromSource({
@@ -273,11 +306,13 @@ export class YouTubePublisher {
 
   async uploadFromSource(args: {
     accessToken: string; source: YouTubeByteSource; title: string; description: string;
+    tags?: string[]; categoryId?: string;
   }): Promise<{ videoId: string }> {
     const total = args.source.size;
     const session = await this.client.initiateResumable(args.accessToken, {
       title: args.title, description: args.description,
       contentType: args.source.contentType, contentLength: total,
+      tags: args.tags, categoryId: args.categoryId,
     });
     let firstError: unknown = null;
     try {

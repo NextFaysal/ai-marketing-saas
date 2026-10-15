@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch, formatMinorStr } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Overview {
   organizations: number; users: number; newOrganizations30d: number; newUsers30d: number;
@@ -36,7 +37,7 @@ export default function OverviewPage() {
     { icon: failedTotal > 0 ? "⚠️" : "✅", label: "ব্যর্থ Job (২৪ ঘণ্টা)", value: String(failedTotal), sub: `Sync ${data.failedSyncJobs24h} · Automation ${data.failedAutomationRuns24h}` },
   ] : [];
 
-  const today = new Date().toLocaleDateString("bn-BD", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const today = fmtDateTime(new Date(), "date", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <AdminShell title="📊 Command Center">
@@ -98,7 +99,7 @@ export default function OverviewPage() {
                       <span className="text-sm font-medium">{a.action}
                         <span className="ml-1.5 font-normal text-slate-500">({a.entityType}{a.entityId ? ` · ${a.entityId.slice(0, 8)}…` : ""})</span>
                       </span>
-                      <span className="text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")}</span>
+                      <span className="text-xs text-slate-500">{fmtDateTime(a.createdAt)}</span>
                     </div>
                   </li>
                 ))}

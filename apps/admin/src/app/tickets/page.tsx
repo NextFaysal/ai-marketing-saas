@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface TicketMessage { id: string; authorKind: string; body: string; createdAt: string }
 interface Ticket {
@@ -64,7 +65,7 @@ export default function TicketsPage() {
           <button key={f || "all"} onClick={() => setFilter(f)} className={filter === f ? "abtn abtn-primary" : "abtn"}>{f ? STATUS_LABEL[f] : "সব"}</button>
         ))}
       </div>
-      <div className="grid2" style={{ alignItems: "start" }}>
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2" style={{ alignItems: "start" }}>
         <div className="space-y-2">
           {tickets.length === 0 ? <div className="acard"><p className="amut">এই ফিল্টারে কোনো Ticket নেই।</p></div> : null}
           {tickets.map((t) => (
@@ -73,7 +74,7 @@ export default function TicketsPage() {
                 <b style={{ fontSize: 14 }}>{t.priority === "high" ? "🔴 " : ""}{t.subject}</b>
                 <span style={{ fontSize: 12 }}>{STATUS_LABEL[t.status] ?? t.status}</span>
               </div>
-              <p className="amut" style={{ marginTop: 4 }}>{t.organizationName ?? t.organizationId} · {t.messageCount ?? 0} বার্তা · {new Date(t.lastMessageAt).toLocaleString("bn-BD")}</p>
+              <p className="amut" style={{ marginTop: 4 }}>{t.organizationName ?? t.organizationId} · {t.messageCount ?? 0} বার্তা · {fmtDateTime(t.lastMessageAt)}</p>
             </button>
           ))}
         </div>
@@ -101,14 +102,14 @@ export default function TicketsPage() {
               <div className="space-y-2">
                 {(selected.messages ?? []).map((m) => (
                   <div key={m.id} style={{ borderRadius: 12, padding: "8px 12px", fontSize: 13.5, background: m.authorKind === "admin" ? "#eef2ff" : "#f1f5f9", marginLeft: m.authorKind === "admin" ? 0 : 32, marginRight: m.authorKind === "admin" ? 32 : 0 }}>
-                    <p style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{m.authorKind === "admin" ? "🛠 প্ল্যাটফর্ম টিম" : "Tenant"} · {new Date(m.createdAt).toLocaleString("bn-BD")}</p>
+                    <p style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{m.authorKind === "admin" ? "🛠 প্ল্যাটফর্ম টিম" : "Tenant"} · {fmtDateTime(m.createdAt)}</p>
                     <p style={{ whiteSpace: "pre-wrap", marginTop: 2 }}>{m.body}</p>
                   </div>
                 ))}
               </div>
-              <div className="flex gap-2" style={{ marginTop: 12 }}>
+              <div className="flex flex-col gap-2 sm:flex-row" style={{ marginTop: 12 }}>
                 <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="ainput" placeholder="উত্তর লিখুন — Tenant ইমেইলেও পাবে…" />
-                <button className="abtn abtn-primary" onClick={sendReply} disabled={!reply.trim()}>পাঠান</button>
+                <button className="abtn abtn-primary w-full sm:w-auto" onClick={sendReply} disabled={!reply.trim()}>পাঠান</button>
               </div>
             </>
           )}

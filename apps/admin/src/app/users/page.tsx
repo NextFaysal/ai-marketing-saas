@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface UserRow { id: string; email: string; name: string; isSuperAdmin: boolean; adminTier?: string | null; status: string; lastLoginAt?: string | null; createdAt: string; organizationCount: number }
 
@@ -17,7 +18,7 @@ export default function UsersPage() {
     <AdminShell title="👤 Users">
       {error ? <p className="mb-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
       <div className="acard overflow-hidden p-0">
-        <div className="flex gap-2 border-b border-slate-800 p-4">
+        <div className="flex flex-col gap-2 border-b border-slate-800 p-4 sm:flex-row">
           <input className="ainput max-w-sm" placeholder="ইমেইল বা নাম দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
         </div>
@@ -28,8 +29,8 @@ export default function UsersPage() {
               <td className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/users/${u.id}`}>{u.name}</a><div className="text-xs text-slate-500">{u.email}{u.isSuperAdmin ? ` · 🛡 ${u.adminTier ?? "SUPER"}` : ""}</div></td>
               <td className="atd">{u.organizationCount}</td>
               <td className="atd"><span className={u.status === "ACTIVE" ? "abadge-green" : u.status === "SUSPENDED" ? "abadge-amber" : "abadge-red"}>{u.status}</span></td>
-              <td className="atd text-slate-400">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("bn-BD") : "—"}</td>
-              <td className="atd text-slate-400">{new Date(u.createdAt).toLocaleDateString("bn-BD")}</td>
+              <td className="atd text-slate-400">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "—"}</td>
+              <td className="atd text-slate-400">{fmtDateTime(u.createdAt, "date")}</td>
             </tr>
           ))}</tbody>
         </table>

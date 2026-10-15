@@ -23,6 +23,7 @@ import { MessagingModule } from "../messaging/messaging.module";
 import { PracticeModeController } from "./practice-mode.controller";
 import { PracticeModeService } from "./practice-mode.service";
 import { CustomersModule } from "../customers/customers.module";
+import { FraudModule } from "../fraud/fraud.module";
 
 @Module({
   // CRM C5: CrmModule provides LeadAssignmentService for the
@@ -33,7 +34,7 @@ import { CustomersModule } from "../customers/customers.module";
   // IN2: CustomersModule provides CustomersService (the canonical
   // customer merge/unmerge) for the inbox merge endpoints. It
   // imports Orders + Crm only — no cycle back into Inbox.
-  imports: [OrdersModule, CrmModule, InventoryModule, MessagingModule, CustomersModule],
+  imports: [OrdersModule, CrmModule, InventoryModule, MessagingModule, CustomersModule, FraudModule],
   controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController, SocialCommentsController, AiInstructionsController, PracticeController, PracticeModeController],
   providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService, SocialCommentsService, AiInstructionsService, PracticeService, PracticeModeService],
   exports: [InboxService, RealtimeService, TelegramService, EmailChannelService, SocialCommentsService, PracticeModeService],

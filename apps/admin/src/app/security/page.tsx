@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell, { reasonPrompt } from "@/components/AdminShell";
 import { apiFetch, setAdminToken } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 import { useRouter } from "next/navigation";
 
 interface SecurityData {
@@ -94,7 +95,7 @@ export default function SecurityPage() {
           <ul className="space-y-2">
             {data.admins.map((a) => (
               <li key={a.id} className="flex items-center justify-between rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                <span>{a.name}<span className="block text-xs text-slate-500">{a.email} · {a.adminTier ?? "SUPER"} · শেষ লগইন {a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString("bn-BD") : "—"}</span></span>
+                <span>{a.name}<span className="block text-xs text-slate-500">{a.email} · {a.adminTier ?? "SUPER"} · শেষ লগইন {a.lastLoginAt ? fmtDateTime(a.lastLoginAt) : "—"}</span></span>
                 <span className="flex items-center gap-2">
                   {a.totpEnabled ? <span className="abadge-green">2FA</span> : <span className="abadge-amber">2FA নেই</span>}
                   {a.status !== "ACTIVE" ? <span className="abadge-red">{a.status}</span> : null}
@@ -112,7 +113,7 @@ export default function SecurityPage() {
           <ul className="space-y-2">
             {vaSessions.slice(0, 15).map((s) => (
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                <span>{s.adminEmail} → Org {s.organizationId.slice(0, 8)}… · {s.mode} · {s.active ? <span className="abadge-green">সক্রিয়</span> : <span className="abadge-amber">শেষ/বাতিল</span>} <span className="text-xs text-slate-500">মেয়াদ {new Date(s.expiresAt).toLocaleString("bn-BD")}</span></span>
+                <span>{s.adminEmail} → Org {s.organizationId.slice(0, 8)}… · {s.mode} · {s.active ? <span className="abadge-green">সক্রিয়</span> : <span className="abadge-amber">শেষ/বাতিল</span>} <span className="text-xs text-slate-500">মেয়াদ {fmtDateTime(s.expiresAt)}</span></span>
                 {s.active ? <button className="abtn-danger" onClick={() => revokeSession(s.id)}>বাতিল করুন</button> : null}
               </li>
             ))}
@@ -176,7 +177,7 @@ function ApiKeysAndAnomalies() {
         <ul className="space-y-2">
           {keys.map((k) => (
             <li key={k.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-              <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}</span><span className="block text-xs text-indigo-300">{!k.scopes?.length ? "Scope: legacy — পূর্ণ ক্ষমতা" : `Scope: ${k.scopes.join(", ")}`}</span></span>
+              <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {fmtDateTime(k.createdAt)} · শেষ ব্যবহার {k.lastUsedAt ? fmtDateTime(k.lastUsedAt) : "কখনো নয়"}</span><span className="block text-xs text-indigo-300">{!k.scopes?.length ? "Scope: legacy — পূর্ণ ক্ষমতা" : `Scope: ${k.scopes.join(", ")}`}</span></span>
               {k.revokedAt ? <span className="abadge-red">বাতিল</span> : (
                 <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
                   const reason = window.prompt("Key বাতিলের কারণ (Audit এ থাকবে):");
@@ -196,7 +197,7 @@ function ApiKeysAndAnomalies() {
           <ul className="space-y-2">
             {anomalies.map((a) => (
               <li key={a.email} className="rounded-lg bg-red-500/10 px-3 py-2 text-sm">
-                <b>{a.email}</b> — {a.failures} বার ব্যর্থ লগইন · সর্বশেষ {new Date(a.lastAt).toLocaleString("bn-BD")}
+                <b>{a.email}</b> — {a.failures} বার ব্যর্থ লগইন · সর্বশেষ {fmtDateTime(a.lastAt)}
                 <span className="block text-xs text-slate-400">{a.note}</span>
               </li>
             ))}

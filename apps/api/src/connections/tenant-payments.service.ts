@@ -6,6 +6,7 @@ import { decryptJson, encryptJson } from "../integrations/crypto";
 import { verifyIpnSignature } from "../payments/payments.service";
 import { TenantGatewayClient, type TenantBkashCreds, type TenantNagadCreds, type TenantSslCreds } from "./tenant-gateway.client";
 import { WalletService } from "./wallet.service";
+import { StepUpService, stepUpMarker } from "./step-up.service";
 
 /**
  * CC9 — the tenant's OWN payment gateways.
@@ -39,6 +40,28 @@ export type TenantGatewayProvider = (typeof TENANT_GATEWAY_PROVIDERS)[number];
 
 export type TenantGatewayCreds = TenantSslCreds | TenantBkashCreds | TenantNagadCreds;
 
+/**
+ * CC19: redact credential-shaped KEYS by name (any depth) from
+ * a stored gateway payload before it is shown in the IPN
+ * viewer. Values under keys like store_passwd / password /
+ * app_secret / verify_sign / token never leave the service;
+ * everything else is the gateway's own payload, verbatim.
+ */
+const SENSITIVE_KEY_PATTERN = /(passwd|password|secret|sign|signature|token|auth|credential|private|api[-_]?key|app[-_]?key)/i;
+
+export function redactSensitiveKeys(value: any, depth = 0): any {
+  if (depth > 8) return "…";
+  if (Array.isArray(value)) return value.map((v) => redactSensitiveKeys(v, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = SENSITIVE_KEY_PATTERN.test(k) ? "***" : redactSensitiveKeys(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 const VERIFICATION_NOTES: Record<string, string> = {
   bkash: "verified_with_gateway",
   sslcommerz: "no_pre_transaction_check",
@@ -49,15 +72,39 @@ const VERIFICATION_NOTES: Record<string, string> = {
 export class TenantPaymentsService {
   private readonly gateway: TenantGatewayClient;
   private readonly wallet: WalletService;
+  private readonly stepUp: StepUpService;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Optional() gatewayClient?: TenantGatewayClient,
     @Optional() walletService?: WalletService,
+    @Optional() stepUpService?: StepUpService,
   ) {
     this.gateway = gatewayClient ?? new TenantGatewayClient();
     this.wallet = walletService ?? new WalletService(prisma, audit);
+    this.stepUp = stepUpService ?? new StepUpService(prisma as any);
+  }
+
+  /**
+   * CC23: append one REJECTED-notification event to the
+   * transaction's ipnEvents record. This is the ONLY trace a
+   * rejected IPN leaves — it changes no status, no order, no
+   * wallet; it exists so the CC23 anomaly counter (and a human
+   * reviewing the transaction) can see that forgery/mismatch
+   * attempts happened. Recording is failure-isolated: an IPN
+   * endpoint must answer the gateway even if the audit write
+   * fails. The list is capped at the last 50 events.
+   */
+  async recordIpnEvent(txn: any, kind: "signature_invalid" | "amount_mismatch", detail?: string): Promise<void> {
+    try {
+      const prior: any[] = Array.isArray(txn?.ipnEvents) ? txn.ipnEvents : [];
+      const events = [...prior, { kind, at: new Date().toISOString(), ...(detail ? { detail: String(detail).slice(0, 200) } : {}) }].slice(-50);
+      await (this.prisma as any).tenantPaymentTransaction.update({
+        where: { id: txn.id }, data: { ipnEvents: events },
+      });
+      txn.ipnEvents = events;
+    } catch { /* recording never breaks the gateway response */ }
   }
 
   /**
@@ -72,8 +119,27 @@ export class TenantPaymentsService {
       if (!creds) return null;
       return (creds.ssl ?? creds.bkash) as TenantGatewayCreds;
     }
-    const resolved = await this.resolveGateway(txn.organizationId, String(txn.provider));
+    // CC19: verification must use the credential set the
+    // transaction was CREATED under — a sandbox txn verifies
+    // against the sandbox creds (and then markVerifiedPaid's
+    // sandbox guard keeps it away from orders and wallets).
+    const resolved = await this.resolveGateway(
+      txn.organizationId, String(txn.provider), txn.environment === "sandbox" ? "sandbox" : "live",
+    );
     return resolved?.creds ?? null;
+  }
+
+  /**
+   * CC24: the credential resolution for one transaction, exposed
+   * for the refund path — a refund must travel on the SAME
+   * credentials that carried the payment (tenant's own gateway
+   * for source "own" in the transaction's environment;
+   * platform credentials for source "platform"). Internal use
+   * only between connections services; credentials are never
+   * returned by any controller.
+   */
+  async resolveCredsForTransaction(txn: any): Promise<TenantGatewayCreds | null> {
+    return this.resolveCredsForTxn(txn);
   }
 
   private apiBase(): string {
@@ -83,16 +149,23 @@ export class TenantPaymentsService {
     return (process.env.WEB_URL ?? "http://localhost:3000").replace(/\/$/, "");
   }
 
-  private async findGatewayRow(organizationId: string, provider: string): Promise<any | null> {
+  /**
+   * CC19: gateway rows are per ENVIRONMENT. Production paths
+   * resolve "live" EXPLICITLY (the default here, always); the
+   * sandbox row is reachable only by passing "sandbox" — the
+   * Doctor's check and the labelled test initiation are the only
+   * callers that do.
+   */
+  private async findGatewayRow(organizationId: string, provider: string, environment = "live"): Promise<any | null> {
     try {
-      return await (this.prisma as any).tenantPaymentGateway.findFirst({ where: { organizationId, provider } });
+      return await (this.prisma as any).tenantPaymentGateway.findFirst({ where: { organizationId, provider, environment } });
     } catch { return null; }
   }
 
   /** Decrypted credentials for immediate in-memory use — the
    * tenant-app-config reader discipline. Never logged/returned. */
-  async resolveGateway(organizationId: string, provider: string): Promise<{ row: any; creds: TenantGatewayCreds } | null> {
-    const row = await this.findGatewayRow(organizationId, provider);
+  async resolveGateway(organizationId: string, provider: string, environment = "live"): Promise<{ row: any; creds: TenantGatewayCreds } | null> {
+    const row = await this.findGatewayRow(organizationId, provider, environment);
     if (!row?.encryptedData) return null;
     try {
       const creds = decryptJson<any>(row.encryptedData);
@@ -110,6 +183,7 @@ export class TenantPaymentsService {
     } catch { identifier = null; }
     return {
       provider: row.provider,
+      environment: row.environment === "sandbox" ? "sandbox" : "live",
       identifier,
       sandbox: (() => { try { return decryptJson<any>(row.encryptedData)?.sandbox === true; } catch { return false; } })(),
       status: row.status,
@@ -145,7 +219,18 @@ export class TenantPaymentsService {
     if (!(TENANT_GATEWAY_PROVIDERS as readonly string[]).includes(provider)) {
       throw new BadRequestException("provider must be sslcommerz | bkash | nagad");
     }
-    const sandbox = dto?.sandbox === true;
+    // CC19: the row's environment comes ONLY from an explicit
+    // dto.environment. Without one the save targets the LIVE
+    // row — the tenant's primary credential set — and the
+    // CC9-era dto.sandbox flag keeps its original meaning
+    // inside the creds (those credentials point at the
+    // provider's sandbox hosts), exactly as CC9 behaved.
+    // A row is a SANDBOX set only when the caller explicitly
+    // asks for it (the CC19 UI does); saving one forces its
+    // creds' sandbox flag on, since a sandbox set must talk
+    // to the sandbox hosts.
+    const environment = dto?.environment === "sandbox" ? "sandbox" : "live";
+    const sandbox = environment === "sandbox" ? true : dto?.sandbox === true;
     let creds: TenantGatewayCreds;
     let status = "configured";
     let lastVerifiedAt: Date | null = null;
@@ -182,21 +267,25 @@ export class TenantPaymentsService {
     }
 
     const data = { encryptedData: encryptJson(creds), status, isEnabled: true, lastVerifiedAt, lastError: null };
-    const existing = await this.findGatewayRow(organizationId, provider);
+    const existing = await this.findGatewayRow(organizationId, provider, environment);
     const row = existing
       ? await (this.prisma as any).tenantPaymentGateway.update({ where: { id: existing.id }, data })
-      : await (this.prisma as any).tenantPaymentGateway.create({ data: { organizationId, provider, ...data } });
+      : await (this.prisma as any).tenantPaymentGateway.create({ data: { organizationId, provider, environment, ...data } });
     await this.audit.log({
       organizationId, userId: actorId, action: "tenant_payment_gateway.saved",
       entityType: "TenantPaymentGateway", entityId: row.id,
-      metadata: { provider, status },
+      metadata: { provider, status, environment },
     });
     return this.gatewayView(row);
   }
 
-  async setGatewayEnabled(organizationId: string, actorId: string, providerRaw: string, isEnabled: boolean) {
+  async setGatewayEnabled(organizationId: string, actorId: string, providerRaw: string, isEnabled: boolean, environment = "live", totpCode?: string | null) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
-    const existing = await this.findGatewayRow(organizationId, provider);
+    // CC23: DISABLING a gateway is the sensitive direction (it
+    // silently stops a store taking money) — step-up first,
+    // before any mutation. Re-enabling needs no step-up.
+    const stepUp = isEnabled ? "not_required" as const : await this.stepUp.check(actorId, totpCode);
+    const existing = await this.findGatewayRow(organizationId, provider, environment);
     if (!existing) throw new NotFoundException("Payment gateway not found");
     const row = await (this.prisma as any).tenantPaymentGateway.update({
       where: { id: existing.id }, data: { isEnabled: Boolean(isEnabled) },
@@ -204,22 +293,25 @@ export class TenantPaymentsService {
     await this.audit.log({
       organizationId, userId: actorId, action: "tenant_payment_gateway.enabled_changed",
       entityType: "TenantPaymentGateway", entityId: existing.id,
-      metadata: { provider, isEnabled: Boolean(isEnabled) },
+      metadata: { provider, isEnabled: Boolean(isEnabled), environment, ...(stepUp !== "not_required" ? { stepUp } : {}) },
     });
-    return this.gatewayView(row);
+    return { ...this.gatewayView(row), ...(stepUp !== "not_required" ? stepUpMarker(stepUp) : {}) };
   }
 
-  async deleteGateway(organizationId: string, actorId: string, providerRaw: string) {
+  async deleteGateway(organizationId: string, actorId: string, providerRaw: string, environment = "live", totpCode?: string | null) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
-    const existing = await this.findGatewayRow(organizationId, provider);
+    // CC23: TOTP step-up BEFORE the delete — a refused check
+    // deletes nothing.
+    const stepUp = await this.stepUp.check(actorId, totpCode);
+    const existing = await this.findGatewayRow(organizationId, provider, environment);
     if (!existing) throw new NotFoundException("Payment gateway not found");
     await (this.prisma as any).tenantPaymentGateway.delete({ where: { id: existing.id } });
     await this.audit.log({
       organizationId, userId: actorId, action: "tenant_payment_gateway.deleted",
       entityType: "TenantPaymentGateway", entityId: existing.id,
-      metadata: { provider },
+      metadata: { provider, stepUp },
     });
-    return { provider, deleted: true };
+    return { provider, deleted: true, ...stepUpMarker(stepUp) };
   }
 
   // ---------- CC9 checkout: initiate + verified confirmation ----------
@@ -270,21 +362,142 @@ export class TenantPaymentsService {
     const txn = await (this.prisma as any).tenantPaymentTransaction.create({
       data: {
         organizationId, gatewayId: resolved.row.id, orderId: order.id, provider,
+        environment: "live",
         amountMinor, currency, status: "initiated",
       },
     });
 
     try {
       if (provider === "sslcommerz") {
-        return await this.startSslPayment(resolved.creds as TenantSslCreds, txn, order, opts);
+        return { ...(await this.startSslPayment(resolved.creds as TenantSslCreds, txn, order, opts)), environment: "live" };
       }
-      return await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, order, opts);
+      return { ...(await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, order, opts)), environment: "live" };
     } catch (e) {
       await (this.prisma as any).tenantPaymentTransaction.update({
         where: { id: txn.id }, data: { status: "failed" },
       }).catch(() => undefined);
       throw e;
     }
+  }
+
+  /** The orderId a sandbox test transaction carries — never a
+   * real order id, so no order lookup can ever match it. */
+  static readonly SANDBOX_TEST_ORDER_ID = "sandbox-test";
+
+  /**
+   * CC19 — the labelled TEST initiation against the SANDBOX
+   * credential set. Safety discipline, in layers:
+   * 1. It resolves ONLY the environment="sandbox" gateway row
+   *    (production resolution is live-only everywhere else).
+   * 2. The transaction is created with environment="sandbox"
+   *    and the sentinel orderId above — it is not attached to
+   *    any real order.
+   * 3. markVerifiedPaid refuses order transitions and wallet
+   *    credits for sandbox transactions even if a fully verified
+   *    sandbox IPN/callback arrives (see there).
+   * The amount defaults to ৳100.00 and is capped so a test can
+   * never move a large sum through the sandbox by accident.
+   */
+  async initiateTestPayment(organizationId: string, actorId: string, providerRaw: string, amountMinorRaw?: unknown) {
+    const provider = String(providerRaw ?? "").trim().toLowerCase();
+    if (provider === "nagad") {
+      throw new BadRequestException("Nagad-এর কোনো API চেকআউটই সংযুক্ত নয় — sandbox টেস্টও সম্ভব নয়।");
+    }
+    if (provider !== "sslcommerz" && provider !== "bkash") {
+      throw new BadRequestException("provider must be sslcommerz | bkash");
+    }
+    const resolved = await this.resolveGateway(organizationId, provider, "sandbox");
+    if (!resolved) {
+      throw new BadRequestException("এই প্রোভাইডারের sandbox credential সেট করা নেই — আগে Connect Center-এ sandbox গেটওয়ে যোগ করুন।");
+    }
+    let amountMinor = 10000n; // ৳100.00
+    if (amountMinorRaw !== undefined && amountMinorRaw !== null && String(amountMinorRaw).trim() !== "") {
+      const raw = String(amountMinorRaw).trim();
+      if (!/^\d+$/.test(raw)) throw new BadRequestException("amountMinor অবশ্যই minor unit-এ পূর্ণসংখ্যা হতে হবে।");
+      amountMinor = BigInt(raw);
+    }
+    if (amountMinor <= 0n || amountMinor > 100000n) {
+      throw new BadRequestException("Sandbox টেস্টের পরিমাণ ৳০.০১–৳১,০০০-এর মধ্যে হতে হবে।");
+    }
+    const txn = await (this.prisma as any).tenantPaymentTransaction.create({
+      data: {
+        organizationId, gatewayId: resolved.row.id, orderId: TenantPaymentsService.SANDBOX_TEST_ORDER_ID,
+        provider, environment: "sandbox", amountMinor, currency: "BDT", status: "initiated",
+      },
+    });
+    const fakeOrder = { id: TenantPaymentsService.SANDBOX_TEST_ORDER_ID, externalNumber: "SANDBOX-TEST" };
+    try {
+      const started = provider === "sslcommerz"
+        ? await this.startSslPayment(resolved.creds as TenantSslCreds, txn, fakeOrder, { customerName: "Sandbox Test" })
+        : await this.startBkashPayment(resolved.creds as TenantBkashCreds, txn, fakeOrder, {});
+      await this.audit.log({
+        organizationId, userId: actorId, action: "tenant_payment.test_initiated",
+        entityType: "TenantPaymentTransaction", entityId: txn.id,
+        metadata: { provider, environment: "sandbox", amountMinor: amountMinor.toString() },
+      });
+      return { ...started, test: true, environment: "sandbox" };
+    } catch (e) {
+      await (this.prisma as any).tenantPaymentTransaction.update({
+        where: { id: txn.id }, data: { status: "failed" },
+      }).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  private paymentTransactionView(row: any) {
+    return {
+      id: row.id, orderId: row.orderId, provider: row.provider,
+      source: row.source === "platform" ? "platform" : "own",
+      environment: row.environment === "sandbox" ? "sandbox" : "live",
+      amountMinor: String(row.amountMinor), currency: row.currency ?? "BDT",
+      status: row.status, providerTxnId: row.providerTxnId ?? null, valId: row.valId ?? null,
+      hasIpnPayload: row.ipnPayload != null,
+      createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * CC19: gateway transaction history for the Center — the
+   * org's TenantPaymentTransaction rows (own + platform,
+   * live + sandbox), newest first, filterable by status /
+   * source / environment. Amounts are the rows' own recorded
+   * values; nothing is recomputed or invented here.
+   */
+  async listTransactions(organizationId: string, query: { status?: string; source?: string; environment?: string; limit?: number } = {}) {
+    const where: Record<string, unknown> = { organizationId };
+    if (query.status) where.status = String(query.status);
+    if (query.source) where.source = String(query.source);
+    if (query.environment) where.environment = String(query.environment);
+    const take = Math.min(200, Math.max(1, Math.round(Number(query.limit) || 50)));
+    let rows: any[] = [];
+    try {
+      rows = await (this.prisma as any).tenantPaymentTransaction.findMany({
+        where, orderBy: { createdAt: "desc" }, take,
+      });
+    } catch { rows = []; }
+    return { transactions: (rows ?? []).map((r: any) => this.paymentTransactionView(r)) };
+  }
+
+  /**
+   * CC19: the IPN evidence viewer — the STORED verified payload
+   * for one transaction, with credential-shaped keys redacted by
+   * NAME (store_passwd / password / app_secret / secret / sign /
+   * key …) at any depth. The payload is the gateway's own POST
+   * body as the verified-confirmation path stored it; the raw
+   * row never leaves this service unredacted.
+   */
+  async getTransactionIpn(organizationId: string, transactionId: string) {
+    let row: any = null;
+    try {
+      row = await (this.prisma as any).tenantPaymentTransaction.findFirst({
+        where: { id: transactionId, organizationId },
+      });
+    } catch { row = null; }
+    if (!row) throw new NotFoundException("Transaction not found");
+    return {
+      transaction: this.paymentTransactionView(row),
+      ipnPayload: row.ipnPayload != null ? redactSensitiveKeys(row.ipnPayload) : null,
+    };
   }
 
   /**
@@ -325,14 +538,15 @@ export class TenantPaymentsService {
     const txn = await (this.prisma as any).tenantPaymentTransaction.create({
       data: {
         organizationId, gatewayId: null, orderId: order.id, provider, source: "platform",
+        environment: "live",
         amountMinor, currency, status: "initiated",
       },
     });
     try {
       if (provider === "sslcommerz") {
-        return await this.startSslPayment(creds.ssl as TenantSslCreds, txn, order, opts);
+        return { ...(await this.startSslPayment(creds.ssl as TenantSslCreds, txn, order, opts)), environment: "live" };
       }
-      return await this.startBkashPayment(creds.bkash as TenantBkashCreds, txn, order, opts);
+      return { ...(await this.startBkashPayment(creds.bkash as TenantBkashCreds, txn, order, opts)), environment: "live" };
     } catch (e) {
       await (this.prisma as any).tenantPaymentTransaction.update({
         where: { id: txn.id }, data: { status: "failed" },
@@ -403,6 +617,28 @@ export class TenantPaymentsService {
    */
   private async markVerifiedPaid(txn: any, evidence: { valId?: string; payload: any; providerTxnId?: string }) {
     if (txn.status === "verified_paid") return { ok: true, alreadyProcessed: true };
+    // CC19 hard guard: a SANDBOX transaction can be verified by
+    // its (sandbox) gateway all day — the verification is real
+    // for the test — but it must NEVER transition a real order
+    // or credit a wallet. The txn row itself records the
+    // verified outcome + payload as evidence; nothing else moves.
+    if (txn.environment === "sandbox") {
+      await (this.prisma as any).tenantPaymentTransaction.update({
+        where: { id: txn.id },
+        data: {
+          status: "verified_paid",
+          valId: evidence.valId ?? txn.valId ?? null,
+          providerTxnId: evidence.providerTxnId ?? txn.providerTxnId ?? null,
+          ipnPayload: evidence.payload ?? null,
+        },
+      }).catch(() => undefined);
+      await this.audit.log({
+        organizationId: txn.organizationId, userId: "gateway-ipn", action: "tenant_payment.test_verified",
+        entityType: "TenantPaymentTransaction", entityId: txn.id,
+        metadata: { provider: txn.provider, environment: "sandbox", amountMinor: String(txn.amountMinor) },
+      }).catch(() => undefined);
+      return { ok: true, test: true, environment: "sandbox" };
+    }
     if (txn.source === "platform") {
       // CC10: the verified_paid transition AND the wallet credit
       // happen atomically inside the wallet service (one Prisma
@@ -414,6 +650,8 @@ export class TenantPaymentsService {
           entityType: "TenantPaymentTransaction", entityId: txn.id,
           metadata: { provider: txn.provider, orderId: txn.orderId, amountMinor: String(txn.amountMinor), source: "platform", creditedMinor: String(credited.creditedMinor ?? ""), feeMinor: String(credited.feeMinor ?? "") },
         }).catch(() => undefined);
+        // CC26: a payment link that rode this payment is spent.
+        if (!credited.alreadyProcessed) await this.markLinkUsed(txn);
       }
       return credited;
     }
@@ -442,7 +680,35 @@ export class TenantPaymentsService {
       entityType: "TenantPaymentTransaction", entityId: txn.id,
       metadata: { provider: txn.provider, orderId: txn.orderId, amountMinor: String(txn.amountMinor) },
     }).catch(() => undefined);
+    // CC26: a payment link that rode this payment is spent.
+    await this.markLinkUsed(txn);
     return { ok: true, transaction: updated };
+  }
+
+  /**
+   * CC26 — when a payment reaches verified_paid, the ACTIVE
+   * payment link for the same (org, order, provider, source)
+   * becomes "used". This runs ONLY from the verified-paid
+   * transitions above — initiation never calls it, so a link
+   * is never spent by an unpaid attempt. Failure-isolated like
+   * the order-note write: a link-bookkeeping error must never
+   * break the gateway's IPN response (and re-initiation stays
+   * impossible anyway, because hasVerifiedPayment blocks a
+   * second payment for the order).
+   */
+  private async markLinkUsed(txn: any): Promise<void> {
+    try {
+      const link = await (this.prisma as any).paymentLink.findFirst({
+        where: {
+          organizationId: txn.organizationId, orderId: txn.orderId, provider: txn.provider,
+          source: txn.source === "platform" ? "platform" : "own", status: "active",
+        },
+      });
+      if (!link) return;
+      await (this.prisma as any).paymentLink.update({
+        where: { id: link.id }, data: { status: "used", usedAt: new Date() },
+      });
+    } catch { /* link bookkeeping never breaks the gateway response */ }
   }
 
   /**
@@ -467,6 +733,10 @@ export class TenantPaymentsService {
     const creds = (await this.resolveCredsForTxn(txn)) as TenantSslCreds | null;
     if (!creds) return { ok: false, reason: "gateway not configured" };
     if (!verifyIpnSignature(creds.storePass, body)) {
+      // CC23: a forged/unsigned IPN is recorded on the
+      // transaction (the anomaly counter reads these); it
+      // changes nothing else.
+      await this.recordIpnEvent(txn, "signature_invalid", "sslcommerz ipn signature verification failed");
       return { ok: false, reason: "signature verification failed" };
     }
     const status = String(body?.status ?? "").toUpperCase();
@@ -494,6 +764,7 @@ export class TenantPaymentsService {
     }
     const confirmedMinor = Math.round(Number(validation.amount) * 100);
     if (!Number.isFinite(confirmedMinor) || confirmedMinor !== Number(txn.amountMinor)) {
+      await this.recordIpnEvent(txn, "amount_mismatch", `sslcommerz validated amount ${String(validation.amount)} != transaction ${String(txn.amountMinor)} minor`);
       return { ok: false, reason: "confirmed amount does not match this transaction" };
     }
     if (String(validation.currency ?? "BDT").toUpperCase() !== String(txn.currency).toUpperCase()) {
@@ -570,6 +841,7 @@ export class TenantPaymentsService {
     }
     const confirmedMinor = Math.round(Number(confirmation.amount) * 100);
     if (!Number.isFinite(confirmedMinor) || confirmedMinor !== Number(txn.amountMinor)) {
+      await this.recordIpnEvent(txn, "amount_mismatch", `bkash confirmed amount ${String(confirmation.amount)} != transaction ${String(txn.amountMinor)} minor`);
       return done("failed");
     }
     if (confirmation.currency && String(confirmation.currency).toUpperCase() !== String(txn.currency).toUpperCase()) {
@@ -608,5 +880,32 @@ export class TenantPaymentsService {
     // the CC9 own-gateway path.
     if (source === "platform") return this.initiatePlatformOrderPayment(org.id, order.id, provider, opts);
     return this.initiateOrderPayment(org.id, order.id, provider, opts);
+  }
+
+  /**
+   * CC19: which online-payment options a shop's buyer may be
+   * offered — the public counterpart of the Center's payment
+   * section. An option appears ONLY when it would really work:
+   * an own LIVE gateway that exists and is enabled, or a
+   * platform provider the tenant enabled AND the platform
+   * actually offers. Sandbox rows are never buyer options.
+   * No identifiers or secrets — just provider + source pairs.
+   */
+  async publicPaymentOptions(orgSlug: string) {
+    let org: any = null;
+    try {
+      org = await (this.prisma as any).organization.findFirst({ where: { slug: String(orgSlug ?? "").trim() } });
+    } catch { org = null; }
+    if (!org) throw new NotFoundException("Shop not found");
+    const options: { provider: string; source: "own" | "platform" }[] = [];
+    for (const provider of ["sslcommerz", "bkash"] as const) {
+      const own = await this.resolveGateway(org.id, provider, "live").catch(() => null);
+      if (own && own.row.isEnabled !== false) options.push({ provider, source: "own" });
+      const offered = this.wallet.platformProviders().find((p) => p.provider === provider)?.offered === true;
+      if (offered && (await this.wallet.isPlatformEnabled(org.id, provider))) {
+        options.push({ provider, source: "platform" });
+      }
+    }
+    return { options };
   }
 }

@@ -3,6 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonPrompt } from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Detail { id: string; email: string; name: string; isSuperAdmin: boolean; adminTier?: string | null; status: string; lastLoginAt?: string | null; createdAt: string; totpEnabled: boolean; memberships: { id: string; role: string; organizationId: string; organizationName?: string | null }[]; auditTrail: { id: string; action: string; createdAt: string }[] }
 
@@ -37,7 +38,7 @@ export default function UserDetailPage() {
         <div className="acard space-y-2 text-sm">
           <div><span className="text-slate-400">ইমেইল:</span> {data.email}</div>
           <div><span className="text-slate-400">অবস্থা:</span> <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span>{data.isSuperAdmin ? <span className="abadge-slate ml-2">🛡 Admin ({data.adminTier ?? "SUPER"})</span> : null}</div>
-          <div><span className="text-slate-400">শেষ লগইন:</span> {data.lastLoginAt ? new Date(data.lastLoginAt).toLocaleString("bn-BD") : "—"}</div>
+          <div><span className="text-slate-400">শেষ লগইন:</span> {data.lastLoginAt ? fmtDateTime(data.lastLoginAt) : "—"}</div>
           <div><span className="text-slate-400">2FA:</span> {data.totpEnabled ? "চালু" : "বন্ধ"}</div>
           <div className="pt-2 font-medium">Membership সমূহ</div>
           {data.memberships.map((m) => <div key={m.id} className="rounded-lg bg-slate-800 px-3 py-2">{m.organizationName ?? m.organizationId} — <b>{m.role}</b></div>)}
@@ -61,13 +62,13 @@ export default function UserDetailPage() {
               <input className="ainput" placeholder="অভ্যন্তরীণ নোট লিখুন…" value={note} onChange={(e) => setNote(e.target.value)} />
               <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "user", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
             </div>
-            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {new Date(n.createdAt).toLocaleString("bn-BD")}</span></li>)}</ul>
+            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
           </div>
         </div>
       </div>
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">সাম্প্রতিক কার্যকলাপ (Audit)</div>
-        <ul className="space-y-1 text-sm text-slate-400">{data.auditTrail.map((a) => <li key={a.id} className="flex justify-between border-b border-slate-800 pb-1"><span>{a.action}</span><span>{new Date(a.createdAt).toLocaleString("bn-BD")}</span></li>)}</ul>
+        <ul className="space-y-1 text-sm text-slate-400">{data.auditTrail.map((a) => <li key={a.id} className="flex justify-between border-b border-slate-800 pb-1"><span>{a.action}</span><span>{fmtDateTime(a.createdAt)}</span></li>)}</ul>
       </div>
     </AdminShell>
   );

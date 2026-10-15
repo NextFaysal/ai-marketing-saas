@@ -3,6 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import AdminShell, { reasonPrompt } from "@/components/AdminShell";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface OrgDetail {
   id: string; name: string; slug: string; status: string; country: string; currency: string; timezone: string; createdAt: string;
@@ -54,7 +55,7 @@ export default function OrgDetailPage() {
         <div className="acard space-y-2 text-sm">
           <div><span className="text-slate-400">Slug:</span> {data.slug} · <span className="text-slate-400">দেশ:</span> {data.country} · <span className="text-slate-400">মুদ্রা:</span> {data.currency}</div>
           <div><span className="text-slate-400">অবস্থা:</span> <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span></div>
-          <div><span className="text-slate-400">Subscription:</span> {data.subscription ? `${data.subscription.plan} · ${data.subscription.status}${data.subscription.currentPeriodEnd ? ` · মেয়াদ শেষ ${new Date(data.subscription.currentPeriodEnd).toLocaleDateString("bn-BD")}` : ""}` : "কোনো Subscription রেকর্ড নেই"}</div>
+          <div><span className="text-slate-400">Subscription:</span> {data.subscription ? `${data.subscription.plan} · ${data.subscription.status}${data.subscription.currentPeriodEnd ? ` · মেয়াদ শেষ ${fmtDateTime(data.subscription.currentPeriodEnd, "date")}` : ""}` : "কোনো Subscription রেকর্ড নেই"}</div>
           <div className="flex flex-wrap items-end gap-2 rounded-lg bg-slate-800 p-3">
             <label className="text-xs text-slate-400">Plan
               <select id="sub-plan" className="ainput mt-1 w-32" defaultValue={data.subscription?.plan ?? "FREE"}>{["FREE", "STARTER", "GROWTH", "AGENCY"].map((pl) => <option key={pl} value={pl}>{pl}</option>)}</select></label>
@@ -132,7 +133,7 @@ export default function OrgDetailPage() {
               <input className="ainput" placeholder="অভ্যন্তরীণ নোট লিখুন…" value={note} onChange={(e) => setNote(e.target.value)} />
               <button className="abtn-secondary" onClick={async () => { if (!note.trim()) return; await apiFetch("/admin/notes", { method: "POST", body: JSON.stringify({ targetType: "organization", targetId: id, body: note }) }); setNote(""); await load(); }}>যোগ</button>
             </div>
-            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {new Date(n.createdAt).toLocaleString("bn-BD")}</span></li>)}</ul>
+            <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
           </div>
         </div>
       </div>
@@ -253,7 +254,7 @@ function OrgHistory({ orgId }: { orgId: string }) {
                 <span className="absolute -left-[25px] top-0 flex h-4 w-4 items-center justify-center text-[10px]">{icon(e.kind)}</span>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm">{e.title}{e.detail ? <span className="ml-1.5 text-slate-500">{e.detail}</span> : null}</span>
-                  <span className="text-xs text-slate-500">{new Date(e.at).toLocaleString("bn-BD")}</span>
+                  <span className="text-xs text-slate-500">{fmtDateTime(e.at)}</span>
                 </div>
               </li>
             ))}

@@ -116,6 +116,12 @@ export class EmailChannelService {
       include: { credential: true }, orderBy: { createdAt: "desc" },
     });
     if (!integration?.credential) throw new NotFoundException("No connected email integration for this organization");
+    // CC18: a tenant-paused email connection is skipped by the
+    // scheduled sync — the skip marker is the job's result
+    // (channel syncs keep no SyncJob rows to record it in).
+    if ((integration as any).syncPaused === true) {
+      return { skipped: true, reason: "sync_paused", integrationId: integration.id, stored: 0, duplicates: 0, fetched: 0 };
+    }
     const creds = decryptJson<EmailCredentials>(integration.credential.encryptedData);
     const client = this.buildImapClient(creds);
     let stored = 0;

@@ -88,6 +88,31 @@ export class TenantGatewayClient {
     return this.bkashCall(creds, "/checkout/payment/status", { paymentID });
   }
 
+  /**
+   * CC24 — bKash refund against an EXECUTED payment. The refund
+   * call names the original payment (paymentID + its trxID) and
+   * the amount; the response carries refundTrxID. Acceptance of
+   * this call is NOT proof the money came back — the caller
+   * verifies via bkashSearchTransaction before calling anything
+   * "refunded".
+   */
+  bkashRefundPayment(creds: TenantBkashCreds, input: { paymentID: string; trxID: string; amount: string; reason?: string }): Promise<any> {
+    return this.bkashCall(creds, "/checkout/payment/refund", {
+      paymentID: input.paymentID,
+      trxID: input.trxID,
+      amount: input.amount,
+      sku: "order-refund",
+      reason: (input.reason ?? "order refund").slice(0, 200),
+    });
+  }
+
+  /** CC24 — bKash transaction search by trxID (the refund
+   * verification source: the refund's own trxID must come back
+   * with transactionStatus "Completed"). */
+  bkashSearchTransaction(creds: TenantBkashCreds, trxID: string): Promise<any> {
+    return this.bkashCall(creds, "/checkout/payment/search", { trxID });
+  }
+
   // ---------------- SSLCommerz ----------------
 
   /** Session init — returns the gateway's raw response; the
@@ -103,6 +128,54 @@ export class TenantGatewayClient {
       return await res.json().catch(() => null);
     } catch (e) {
       throw new Error(`Could not reach SSLCommerz: ${e instanceof Error ? e.message : "network error"}`);
+    }
+  }
+
+  /**
+   * CC24 — SSLCommerz refund initiation against the original
+   * transaction's bank_tran_id. The response's status "success"
+   * + refund_ref_id mean the gateway ACCEPTED the request —
+   * NOT that money moved; the caller verifies via
+   * sslRefundStatus before calling anything "refunded".
+   * GET-with-query mirrors sslValidate's wire shape.
+   */
+  async sslInitiateRefund(creds: TenantSslCreds, input: { bankTranId: string; amountMajor: string; remarks?: string }): Promise<any | null> {
+    const q = new URLSearchParams({
+      bank_tran_id: input.bankTranId,
+      store_id: creds.storeId,
+      store_passwd: creds.storePass,
+      refund_amount: input.amountMajor,
+      refund_remarks: (input.remarks ?? "order refund").slice(0, 200),
+      v: "1", format: "json",
+    });
+    try {
+      const res = await this.fetchFn(`${sslcommerzBase(creds)}/validator/api/initiateRefund.php?${q.toString()}`, {
+        signal: AbortSignal.timeout(20_000),
+      } as any);
+      return await res.json().catch(() => null);
+    } catch (e) {
+      throw new Error(`Could not reach SSLCommerz: ${e instanceof Error ? e.message : "network error"}`);
+    }
+  }
+
+  /** CC24 — SSLCommerz refund status query by refund_ref_id.
+   * The response status "refunded" is the ONLY state the caller
+   * treats as money-back proof ("processing" stays in-flight,
+   * "cancelled" is a failure). */
+  async sslRefundStatus(creds: TenantSslCreds, refundRefId: string): Promise<any | null> {
+    const q = new URLSearchParams({
+      refund_ref_id: refundRefId,
+      store_id: creds.storeId,
+      store_passwd: creds.storePass,
+      v: "1", format: "json",
+    });
+    try {
+      const res = await this.fetchFn(`${sslcommerzBase(creds)}/validator/api/refundStateAPI.php?${q.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      } as any);
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
     }
   }
 

@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { buildCourierConnectBody, type CourierProvider, type PathaoForm, type RedxForm, type SteadfastForm } from "@/lib/connect-forms";
-import type { ConnectionsOverview } from "@/lib/connections";
 
 /**
  * CC6 (Connect Center B3) — Courier connect panel for the
@@ -14,18 +13,38 @@ import type { ConnectionsOverview } from "@/lib/connections";
  * RedX coexist as separate Integration rows and are listed
  * separately here.
  *
+ * CC29 — MULTIPLE accounts per provider: connections are keyed
+ * by a credential fingerprint server-side, so connecting a
+ * second credential set ADDS an account (the list below shows
+ * them all with the CC2 default badge), while re-entering the
+ * SAME credentials updates that same account. Each account can
+ * be made default or disconnected on its own; the connect form
+ * stays available to add another account. The account identity
+ * shown is the label (CC17) or the fingerprint prefix — never
+ * any part of the credential.
+ *
  * Default courier: the Connect Center's B1 PATCH set-default on
  * the courier Integration row (category group = courier).
  *
  * Live test: only where an existing real read endpoint exists —
  * Pathao stores and RedX areas are read with the STORED
- * credentials through the provider's own API. Steadfast exposes
- * no balance/test read endpoint in this API (its balance check
- * happens inside connect), so NO test button is offered for it —
- * the card says so instead of inventing one.
+ * credentials through the provider's own API (the primary
+ * account). Steadfast exposes no balance/test read endpoint in
+ * this API (its balance check happens inside connect), so NO
+ * test button is offered for it — the card says so instead of
+ * inventing one.
  */
 
-interface CourierConnection { provider: string; connected: boolean; status?: string }
+interface CourierAccountView {
+  id: string;
+  externalAccountId: string | null;
+  status: string;
+  isDefault: boolean;
+  label: string | null;
+  connectedAt?: string;
+}
+
+interface CourierConnection { provider: string; connected: boolean; status?: string; accounts?: CourierAccountView[] }
 
 const PROVIDER_TITLES: Record<CourierProvider, string> = {
   steadfast: "Steadfast", pathao: "Pathao Courier", redx: "RedX",
@@ -33,7 +52,6 @@ const PROVIDER_TITLES: Record<CourierProvider, string> = {
 
 export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
   const [conns, setConns] = useState<CourierConnection[]>([]);
-  const [courierAccounts, setCourierAccounts] = useState<{ id: string; provider: string; isDefault: boolean }[]>([]);
   const [steadfast, setSteadfast] = useState<SteadfastForm>({ apiKey: "", secretKey: "" });
   const [pathao, setPathao] = useState<PathaoForm>({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
   const [redx, setRedx] = useState<RedxForm>({ accessToken: "", baseUrl: "" });
@@ -49,18 +67,15 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
       const all = await apiFetch<CourierConnection[]>(`/organizations/${orgId}/courier/connections`);
       setConns(all);
     } catch { /* courier is optional — the forms still render */ }
-    try {
-      const overview = await apiFetch<ConnectionsOverview>(`/organizations/${orgId}/connections/overview`);
-      const courier = overview.categories.find((c) => c.key === "courier");
-      setCourierAccounts((courier?.accounts ?? []).filter((a) => a.source === "integration").map((a) => ({ id: a.id, provider: a.provider, isDefault: a.isDefault })));
-    } catch { /* default buttons simply won't render */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   const reload = async () => { await load(); onChanged?.(); };
   const connOf = (p: CourierProvider) => conns.find((c) => c.provider === p);
-  const accountOf = (p: CourierProvider) => courierAccounts.find((a) => a.provider === p);
+  // CC29: the provider's accounts, straight from the courier
+  // connections response (the API's own account list).
+  const accountsOf = (p: CourierProvider): CourierAccountView[] => connOf(p)?.accounts ?? [];
 
   async function connect(provider: CourierProvider, e: React.FormEvent) {
     e.preventDefault();
@@ -84,25 +99,25 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
     finally { setBusy(""); }
   }
 
-  async function disconnect(provider: CourierProvider) {
+  /** CC29: disconnect exactly ONE account (its siblings keep
+   * working); the API targets the row by integrationId. */
+  async function disconnectAccount(provider: CourierProvider, account: CourierAccountView) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy(`dc-${provider}`); setError(""); setNotice("");
+    setBusy(`dc-${account.id}`); setError(""); setNotice("");
     try {
-      await apiFetch(`/organizations/${orgId}/courier/connection?provider=${provider}`, { method: "DELETE" });
-      setNotice(`${PROVIDER_TITLES[provider]} সংযোগ বিচ্ছিন্ন হয়েছে।`);
+      await apiFetch(`/organizations/${orgId}/courier/connection?provider=${provider}&integrationId=${encodeURIComponent(account.id)}`, { method: "DELETE" });
+      setNotice(`${PROVIDER_TITLES[provider]}-এর একটি অ্যাকাউন্ট সংযোগ বিচ্ছিন্ন হয়েছে — বাকি অ্যাকাউন্টগুলো আগের মতোই চলবে।`);
       await reload();
     } catch (err) { setError(err instanceof Error ? err.message : "Disconnect ব্যর্থ"); }
     finally { setBusy(""); }
   }
 
-  async function makeDefault(provider: CourierProvider) {
+  async function makeDefault(provider: CourierProvider, account: CourierAccountView) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const account = accountOf(provider);
-    if (!account) return;
-    setBusy(`def-${provider}`); setError(""); setNotice("");
+    setBusy(`def-${account.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/connections/${account.id}/default`, { method: "PATCH" });
-      setNotice(`${PROVIDER_TITLES[provider]} এখন ডিফল্ট কুরিয়ার।`);
+      setNotice(`${PROVIDER_TITLES[provider]}-এর বেছে নেওয়া অ্যাকাউন্টটি এখন ডিফল্ট।`);
       await reload();
     } catch (err) { setError(err instanceof Error ? err.message : "ডিফল্ট করা যায়নি"); }
     finally { setBusy(""); }
@@ -130,42 +145,64 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
 
   const inputCls = "input mt-1 w-full";
 
+  function accountName(account: CourierAccountView): string {
+    if (account.label) return account.label;
+    if (account.externalAccountId) return `অ্যাকাউন্ট ${account.externalAccountId.slice(0, 11)}…`;
+    return "অ্যাকাউন্ট";
+  }
+
   function providerCard(provider: CourierProvider, form: React.ReactNode, help: string) {
     const conn = connOf(provider);
-    const account = accountOf(provider);
+    const accounts = accountsOf(provider);
     const connected = conn?.connected === true;
+    const anyConnected = accounts.some((a) => a.status === "CONNECTED");
     return (
       <div className="space-y-2 rounded-xl bg-slate-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-medium text-slate-800">{PROVIDER_TITLES[provider]}</span>
-          <span className="flex items-center gap-1.5">
-            {connected && account?.isDefault ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">⭐ ডিফল্ট</span> : null}
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${connected ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
-          </span>
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${connected ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{connected ? "যুক্ত আছে" : "যুক্ত নেই"}</span>
         </div>
-        {connected ? (
+        {accounts.length > 0 ? (
+          <ul className="space-y-1.5">
+            {accounts.map((account) => (
+              <li key={account.id} className="flex flex-wrap items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs">
+                <span className="font-medium text-slate-700">{accountName(account)}</span>
+                {account.isDefault ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">⭐ ডিফল্ট</span> : null}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${account.status === "CONNECTED" ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>
+                  {account.status === "CONNECTED" ? "যুক্ত আছে" : "বিচ্ছিন্ন"}
+                </span>
+                <span className="ml-auto flex gap-1">
+                  {account.status === "CONNECTED" && !account.isDefault ? (
+                    <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void makeDefault(provider, account)}>⭐ ডিফল্ট করুন</button>
+                  ) : null}
+                  {account.status === "CONNECTED" ? (
+                    <button type="button" className="btn-ghost btn-sm text-red-600" disabled={busy !== ""} onClick={() => void disconnectAccount(provider, account)}>বিচ্ছিন্ন করুন</button>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {anyConnected ? (
           <div className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              {account && !account.isDefault ? (
-                <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void makeDefault(provider)}>⭐ ডিফল্ট করুন</button>
-              ) : null}
-              {provider !== "steadfast" ? (
-                <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void test(provider)}>{busy === `test-${provider}` ? "যাচাই হচ্ছে..." : "লাইভ টেস্ট"}</button>
-              ) : null}
-              <button type="button" className="btn-ghost btn-sm text-red-600" disabled={busy !== ""} onClick={() => void disconnect(provider)}>সংযোগ বিচ্ছিন্ন</button>
-            </div>
-            {provider === "steadfast" ? (
+            {provider !== "steadfast" ? (
+              <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void test(provider)}>{busy === `test-${provider}` ? "যাচাই হচ্ছে..." : "লাইভ টেস্ট (ডিফল্ট অ্যাকাউন্ট)"}</button>
+            ) : (
               <p className="text-xs text-slate-400">Steadfast-এর জন্য আলাদা টেস্ট/ব্যালেন্স পড়ার endpoint এই API-তে নেই — যাচাই কানেক্টের সময়ই আসল Balance কল দিয়ে হয়।</p>
-            ) : null}
+            )}
             {testResult[provider] ? <p className="text-xs text-slate-600">{testResult[provider]}</p> : null}
           </div>
-        ) : (
-          <form onSubmit={(e) => void connect(provider, e)} className="grid gap-2">
-            {form}
-            <button className="btn-primary btn-sm" disabled={busy !== ""}>{busy === provider ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-            <p className="text-xs text-slate-400">{help}</p>
-          </form>
-        )}
+        ) : null}
+        <form onSubmit={(e) => void connect(provider, e)} className="grid gap-2">
+          {accounts.length > 0 ? (
+            <p className="text-xs font-medium text-slate-500">
+              আরেকটি অ্যাকাউন্ট যুক্ত করুন — একই credential আবার দিলে সেই অ্যাকাউন্টটিই আপডেট হবে, নতুন তৈরি হবে না।
+            </p>
+          ) : null}
+          {form}
+          <button className="btn-primary btn-sm" disabled={busy !== ""}>{busy === provider ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
+          <p className="text-xs text-slate-400">{help}</p>
+        </form>
       </div>
     );
   }

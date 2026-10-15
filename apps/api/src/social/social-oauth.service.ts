@@ -4,11 +4,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson, encryptJson } from "../integrations/crypto";
 import {
-  effectiveGoogleAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
+  effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
 } from "../common/platform-config";
 import { TikTokClient, type TikTokTokenSet, type TikTokAppCreds } from "./tiktok.client";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
-import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel } from "./youtube.client";
+import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel, type GoogleAppCreds } from "./youtube.client";
+import { LinkedInClient, type LinkedinTokenSet, type LinkedinAppCreds } from "./linkedin.client";
 import { PermanentPublishError } from "./social-publish.service";
 
 /**
@@ -60,21 +61,37 @@ export const OWN_TIKTOK_NOT_CONFIGURED_MSG =
   "নিজের TikTok অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার TikTok অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
 export const GOOGLE_NOT_CONFIGURED_MSG =
   "Google app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন (Admin Panel → Platform Config → Google App)।";
+/** CC28: appSource "own" was chosen but this org has no Google
+ * app of its own saved in the Connect Center (CC28). */
+export const OWN_GOOGLE_NOT_CONFIGURED_MSG =
+  "নিজের Google অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Google অ্যাপটি যোগ করুন (সেখানে দেওয়া Redirect URI-গুলো Google Cloud Console-এ register করতে হবে), অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
+/** CC20 shipped LinkedIn platform-app only; CC28 adds the
+ * tenant-own-LinkedIn-app path beside it. */
+export const LINKEDIN_NOT_CONFIGURED_MSG =
+  "LinkedIn app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন (Admin Panel → Platform Config → LinkedIn App)।";
+/** CC28: appSource "own" was chosen but this org has no
+ * LinkedIn app of its own saved in the Connect Center. */
+export const OWN_LINKEDIN_NOT_CONFIGURED_MSG =
+  "নিজের LinkedIn অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার LinkedIn অ্যাপটি যোগ করুন (সেখানে দেওয়া Callback URL-টি LinkedIn অ্যাপে register করতে হবে), অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
+export const LINKEDIN_SCOPES = "r_liteprofile r_organization_admin w_organization_social";
 
 @Injectable()
 export class SocialOAuthService {
   private readonly logger = new Logger(SocialOAuthService.name);
   private readonly tiktok: TikTokClient;
   private readonly youtube: YouTubeClient;
+  private readonly linkedin: LinkedInClient;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Optional() tiktokClient?: TikTokClient,
     @Optional() youtubeClient?: YouTubeClient,
+    @Optional() linkedinClient?: LinkedInClient,
   ) {
     this.tiktok = tiktokClient ?? new TikTokClient();
     this.youtube = youtubeClient ?? new YouTubeClient();
+    this.linkedin = linkedinClient ?? new LinkedInClient();
   }
 
   private webBase(): string {
@@ -89,6 +106,14 @@ export class SocialOAuthService {
   private webRedirect(params: Record<string, string>): string {
     const qs = new URLSearchParams(params).toString();
     return `${this.webBase()}/dashboard/social-posts?${qs}`;
+  }
+
+  /** CC20: LinkedIn connects are STARTED from the Connect Center
+   * (SocialAccount surfaced there), so LinkedIn callbacks land
+   * back on the connections page — not social-posts. */
+  private connectionsRedirect(params: Record<string, string>): string {
+    const qs = new URLSearchParams(params).toString();
+    return `${this.webBase()}/dashboard/connections?${qs}`;
   }
 
   // ---------- OAuth state ----------
@@ -147,6 +172,7 @@ export class SocialOAuthService {
     return {
       tiktok: { configured: Boolean(tt), audited: tt?.audited === true },
       youtube: { configured: Boolean(gg) },
+      linkedin: { configured: Boolean(effectiveLinkedinAppConfig()) },
     };
   }
 
@@ -283,7 +309,7 @@ export class SocialOAuthService {
     // connect is as terminal as a dead refresh token.
     try {
       await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
-      let fresh: TikTokTokenSet | GoogleTokenSet;
+      let fresh: TikTokTokenSet | GoogleTokenSet | LinkedinTokenSet;
       if (account.platform === "tiktok") {
         // CC4: an account connected under the tenant's OWN app
         // refreshes against THAT app — the platform app's secret
@@ -305,12 +331,44 @@ export class SocialOAuthService {
           );
         }
       } else if (account.platform === "youtube") {
-        const cfg = effectiveGoogleAppConfig();
-        if (!cfg) throw new Error(GOOGLE_NOT_CONFIGURED_MSG);
-        fresh = await this.youtube.refreshAccessToken(
-          { clientId: cfg.clientId, clientSecret: cfg.clientSecret, redirectUri: socialOAuthRedirectUri("youtube", cfg.redirectUri) },
-          String(cred.refreshToken),
-        );
+        // CC28: an account connected under the tenant's OWN
+        // Google app refreshes against THAT app (same rule as
+        // TikTok CC4); platform accounts refresh exactly as
+        // before. A deleted own config is terminal.
+        if ((account as any).appSource === "own") {
+          const own = await resolveTenantAppConfig(this.prisma, organizationId, "google");
+          if (!own) throw new Error("নিজের Google অ্যাপের কনফিগ পাওয়া যাচ্ছে না — কানেক্ট সেন্টারে নিজের Google অ্যাপটি আবার কনফিগার করুন, তারপর অ্যাকাউন্টটি রি-কানেক্ট করুন।");
+          fresh = await this.youtube.refreshAccessToken(
+            { clientId: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("youtube") },
+            String(cred.refreshToken),
+          );
+        } else {
+          const cfg = effectiveGoogleAppConfig();
+          if (!cfg) throw new Error(GOOGLE_NOT_CONFIGURED_MSG);
+          fresh = await this.youtube.refreshAccessToken(
+            { clientId: cfg.clientId, clientSecret: cfg.clientSecret, redirectUri: socialOAuthRedirectUri("youtube", cfg.redirectUri) },
+            String(cred.refreshToken),
+          );
+        }
+      } else if (account.platform === "linkedin_page") {
+        // CC28: same own-app rule for LinkedIn (CC20 shipped
+        // platform-only; the account's recorded appSource now
+        // decides, and platform accounts refresh as before).
+        if ((account as any).appSource === "own") {
+          const own = await resolveTenantAppConfig(this.prisma, organizationId, "linkedin");
+          if (!own) throw new Error("নিজের LinkedIn অ্যাপের কনফিগ পাওয়া যাচ্ছে না — কানেক্ট সেন্টারে নিজের LinkedIn অ্যাপটি আবার কনফিগার করুন, তারপর অ্যাকাউন্টটি রি-কানেক্ট করুন।");
+          fresh = await this.linkedin.refreshAccessToken(
+            { clientId: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("linkedin") },
+            String(cred.refreshToken),
+          );
+        } else {
+          const cfg = effectiveLinkedinAppConfig();
+          if (!cfg) throw new Error(LINKEDIN_NOT_CONFIGURED_MSG);
+          fresh = await this.linkedin.refreshAccessToken(
+            { clientId: cfg.clientId, clientSecret: cfg.clientSecret, redirectUri: socialOAuthRedirectUri("linkedin", cfg.redirectUri) },
+            String(cred.refreshToken),
+          );
+        }
       } else {
         throw new Error(`OAuth refresh is not supported for platform: ${account.platform}`);
       }
@@ -417,6 +475,42 @@ export class SocialOAuthService {
     };
   }
 
+  /** CC28: the Google app credentials for one app source (the
+   * YouTube flow's client — the Google pack has its own resolver
+   * in google-connect.service). For "own" the redirect URI is
+   * the DERIVED YouTube callback with NO configured override:
+   * the tenant registers exactly that URL in their own Google
+   * Cloud console (the Connect Center shows it before saving). */
+  private async googleCredsFor(organizationId: string, appSource: string): Promise<GoogleAppCreds | null> {
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "google");
+      if (!own) return null;
+      return { clientId: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("youtube") };
+    }
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    const cfg = effectiveGoogleAppConfig();
+    if (!cfg) return null;
+    return {
+      clientId: cfg.clientId, clientSecret: cfg.clientSecret,
+      redirectUri: socialOAuthRedirectUri("youtube", cfg.redirectUri),
+    };
+  }
+
+  /** CC28: the LinkedIn app credentials for one app source —
+   * same discipline as googleCredsFor (derived callback, no
+   * override, for the tenant's own app). */
+  private async linkedinCredsFor(organizationId: string, appSource: string): Promise<LinkedinAppCreds | null> {
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "linkedin");
+      if (!own) return null;
+      return { clientId: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("linkedin") };
+    }
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    const cfg = effectiveLinkedinAppConfig();
+    if (!cfg) return null;
+    return this.linkedinCreds(cfg);
+  }
+
   /**
    * Step 2 (PUBLIC callback): exchange the code and create the
    * account. NEVER throws — every outcome is a redirect back to
@@ -491,14 +585,25 @@ export class SocialOAuthService {
    * prompt=consent so Google issues a refresh token — including
    * on a RE-connect, where it would otherwise withhold it.
    */
-  async youtubeConnectUrl(organizationId: string, userId: string): Promise<{ url: string }> {
-    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
-    const cfg = effectiveGoogleAppConfig();
-    if (!cfg) throw new BadRequestException(GOOGLE_NOT_CONFIGURED_MSG);
-    const state = await this.createState(organizationId, userId, "youtube", "connect");
+  async youtubeConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
+    if (appSource != null && !["platform", "own"].includes(appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    // CC28: the tenant's OWN Google app (TenantAppConfig
+    // "google"). The choice is bound into the OAuth state's
+    // payload exactly like TikTok CC4, so the public callback
+    // exchanges with the SAME app. The platform path below is
+    // byte-identical to the SP9 flow.
+    const creds = await this.googleCredsFor(organizationId, appSource ?? "platform");
+    if (!creds) {
+      throw new BadRequestException(appSource === "own" ? OWN_GOOGLE_NOT_CONFIGURED_MSG : GOOGLE_NOT_CONFIGURED_MSG);
+    }
+    const state = appSource === "own"
+      ? await this.createState(organizationId, userId, "youtube", "connect", { appSource: "own" })
+      : await this.createState(organizationId, userId, "youtube", "connect");
     const params = new URLSearchParams({
-      client_id: cfg.clientId,
-      redirect_uri: socialOAuthRedirectUri("youtube", cfg.redirectUri),
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
       response_type: "code",
       scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
       access_type: "offline",
@@ -542,13 +647,10 @@ export class SocialOAuthService {
       if (!stateRow) {
         return this.webRedirect({ social_error: "Connect লিংকটি মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — Social Posts পেজ থেকে আবার Connect করুন।" });
       }
-      await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
-      const cfg = effectiveGoogleAppConfig();
-      if (!cfg) return this.webRedirect({ social_error: GOOGLE_NOT_CONFIGURED_MSG });
-      const creds = {
-        clientId: cfg.clientId, clientSecret: cfg.clientSecret,
-        redirectUri: socialOAuthRedirectUri("youtube", cfg.redirectUri),
-      };
+      // CC28: exchange with the app the state was bound to.
+      const appSource = (stateRow as any).payload?.appSource === "own" ? "own" : "platform";
+      const creds = await this.googleCredsFor(stateRow.organizationId, appSource);
+      if (!creds) return this.webRedirect({ social_error: appSource === "own" ? OWN_GOOGLE_NOT_CONFIGURED_MSG : GOOGLE_NOT_CONFIGURED_MSG });
       let tokens: GoogleTokenSet;
       try {
         tokens = await this.youtube.exchangeCode(creds, query.code);
@@ -577,11 +679,13 @@ export class SocialOAuthService {
           platform: "youtube", provider: "youtube_social",
           externalId: ch.id, name: ch.title, pictureUrl: ch.pictureUrl,
           credential: this.youtubeCredential(tokens, ch.id),
+          appSource,
         });
         return this.webRedirect({ social_connected: "youtube" });
       }
       const pickState = await this.createState(stateRow.organizationId, stateRow.userId, "youtube", "channel_pick", {
         sealed: encryptJson(this.youtubeCredential(tokens, "")),
+        appSource,
         channels: channels.map((c) => ({ id: c.id, title: c.title, pictureUrl: c.pictureUrl })),
       });
       return this.webRedirect({ youtube_pick: pickState });
@@ -642,6 +746,170 @@ export class SocialOAuthService {
       platform: "youtube", provider: "youtube_social",
       externalId: chosen.id, name: chosen.title, pictureUrl: chosen.pictureUrl ?? null,
       credential: { ...cred, channelId: chosen.id },
+      // CC28: the pick state carries the connect's app source.
+      appSource: (row.payload as any)?.appSource === "own" ? "own" : "platform",
+    });
+    return this.serializeAccount(account);
+  }
+
+  // ---------- CC20: LinkedIn Page connect (CC28: + own app) ----------
+
+  /** The sealed credential a LinkedIn SocialAccount carries.
+   * refreshToken may be null: LinkedIn only issues one when the
+   * operator's app holds the refresh-token product — the
+   * connection still works until the access token expires, and
+   * ensureAccessToken then marks the account with the honest
+   * reconnect message instead of silently dying. */
+  private linkedinCredential(tokens: LinkedinTokenSet, organizationId: string): Record<string, unknown> {
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken ?? null,
+      expiresAt: tokens.expiresAt,
+      scope: tokens.scope ?? null,
+      organizationId,
+    };
+  }
+
+  private linkedinCreds(cfg: { clientId: string; clientSecret: string; redirectUri?: string }) {
+    return {
+      clientId: cfg.clientId, clientSecret: cfg.clientSecret,
+      redirectUri: socialOAuthRedirectUri("linkedin", cfg.redirectUri),
+    };
+  }
+
+  /** Step 1 (authenticated): state + LinkedIn's authorize URL.
+   * CC28: ?appSource=own runs under the tenant's OWN LinkedIn
+   * app with the choice bound into the state (CC4 discipline);
+   * the platform path is byte-identical to CC20. */
+  async linkedinConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
+    if (appSource != null && !["platform", "own"].includes(appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    const creds = await this.linkedinCredsFor(organizationId, appSource ?? "platform");
+    if (!creds) {
+      throw new BadRequestException(appSource === "own" ? OWN_LINKEDIN_NOT_CONFIGURED_MSG : LINKEDIN_NOT_CONFIGURED_MSG);
+    }
+    const state = appSource === "own"
+      ? await this.createState(organizationId, userId, "linkedin", "connect", { appSource: "own" })
+      : await this.createState(organizationId, userId, "linkedin", "connect");
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: creds.clientId,
+      redirect_uri: creds.redirectUri,
+      scope: LINKEDIN_SCOPES,
+      state,
+    });
+    return { url: `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}` };
+  }
+
+  /**
+   * Step 2 (PUBLIC callback): exchange + list the organizations
+   * the member administrates. Exactly one → account created.
+   * MORE than one → pick state (purpose "org_pick"), browser
+   * lands on the Connect Center with ?linkedin_pick=<state>.
+   * ZERO → honest error, NOTHING stored. Never throws.
+   */
+  async handleLinkedInCallback(query: { code?: string; state?: string; error?: string }): Promise<string> {
+    try {
+      if (query.error) {
+        return this.connectionsRedirect({ linkedin_error: `LinkedIn Connect বাতিল/ব্যর্থ হয়েছে: ${query.error}` });
+      }
+      if (!query.code || !query.state) {
+        return this.connectionsRedirect({ linkedin_error: "LinkedIn callback-এ code/state পাওয়া যায়নি — আবার Connect করার চেষ্টা করুন।" });
+      }
+      const stateRow = await this.consumeState(query.state, "linkedin", "connect");
+      if (!stateRow) {
+        return this.connectionsRedirect({ linkedin_error: "Connect লিংকটি মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — কানেক্ট সেন্টার থেকে আবার Connect করুন।" });
+      }
+      // CC28: exchange with the app the state was bound to.
+      const appSource = (stateRow as any).payload?.appSource === "own" ? "own" : "platform";
+      const creds = await this.linkedinCredsFor(stateRow.organizationId, appSource);
+      if (!creds) return this.connectionsRedirect({ linkedin_error: appSource === "own" ? OWN_LINKEDIN_NOT_CONFIGURED_MSG : LINKEDIN_NOT_CONFIGURED_MSG });
+      let tokens: LinkedinTokenSet;
+      try {
+        tokens = await this.linkedin.exchangeCode(creds, query.code);
+      } catch (e) {
+        return this.connectionsRedirect({ linkedin_error: `LinkedIn Token বিনিময় ব্যর্থ হয়েছে: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      let orgs: { id: string; name: string }[];
+      try {
+        orgs = await this.linkedin.listAdminOrganizations(tokens.accessToken);
+      } catch (e) {
+        return this.connectionsRedirect({ linkedin_error: `LinkedIn Page তালিকা আনা যায়নি: ${e instanceof Error ? e.message : "unknown error"}` });
+      }
+      if (orgs.length === 0) {
+        return this.connectionsRedirect({ linkedin_error: "এই LinkedIn অ্যাকাউন্ট কোনো Page-এর admin নয় — কোনো Page পাওয়া যায়নি, তাই কিছু সেভ করা হয়নি। যেই অ্যাকাউন্ট Page-এর admin, সেটি দিয়ে Connect করুন।" });
+      }
+      if (orgs.length === 1) {
+        const org = orgs[0]!;
+        await this.persistOAuthAccount({
+          organizationId: stateRow.organizationId, actorId: stateRow.userId,
+          platform: "linkedin_page", provider: "linkedin_social",
+          externalId: org.id, name: org.name,
+          credential: this.linkedinCredential(tokens, org.id),
+          appSource,
+        });
+        return this.connectionsRedirect({ linkedin_connected: "linkedin_page" });
+      }
+      const pickState = await this.createState(stateRow.organizationId, stateRow.userId, "linkedin", "org_pick", {
+        sealed: encryptJson(this.linkedinCredential(tokens, "")),
+        appSource,
+        organizations: orgs.map((o) => ({ id: o.id, name: o.name })),
+      });
+      return this.connectionsRedirect({ linkedin_pick: pickState });
+    } catch (e) {
+      this.logger.warn(`linkedin callback failed: ${e instanceof Error ? e.message : "unknown"}`);
+      return this.connectionsRedirect({ linkedin_error: "LinkedIn Connect সম্পন্ন করা যায়নি — আবার চেষ্টা করুন।" });
+    }
+  }
+
+  private async peekLinkedinPickState(organizationId: string, userId: string, stateId: string): Promise<any | null> {
+    const row = await this.peekState(stateId, "linkedin", "org_pick");
+    if (!row) return null;
+    if (row.organizationId !== organizationId || row.userId !== userId) return null;
+    return row;
+  }
+
+  /** Picker step A (authenticated): the Pages on offer. */
+  async getLinkedInPickInfo(organizationId: string, userId: string, stateId: string) {
+    const row = await this.peekLinkedinPickState(organizationId, userId, stateId);
+    if (!row) {
+      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — LinkedIn Connect আবার শুরু করুন।");
+    }
+    const organizations = Array.isArray(row.payload?.organizations) ? row.payload.organizations : [];
+    return { organizations };
+  }
+
+  /** Picker step B (authenticated): store EXACTLY the picked
+   * Page; an id outside the offered list is refused. */
+  async selectLinkedInOrganization(organizationId: string, userId: string, dto: { state?: string; organizationId?: string }) {
+    const stateId = typeof dto?.state === "string" ? dto.state : "";
+    const row = await this.peekLinkedinPickState(organizationId, userId, stateId);
+    if (!row) {
+      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — LinkedIn Connect আবার শুরু করুন।");
+    }
+    const orgs: { id: string; name: string }[] = Array.isArray(row.payload?.organizations) ? row.payload.organizations : [];
+    const chosen = orgs.find((o) => o.id === dto?.organizationId);
+    if (!chosen) {
+      throw new BadRequestException("নির্বাচিত Pageটি এই Connect-এর তালিকায় নেই — তালিকা থেকে একটি Page বেছে নিন।");
+    }
+    const consumed = await this.consumeState(stateId, "linkedin", "org_pick");
+    if (!consumed) {
+      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি ইতিমধ্যে ব্যবহৃত হয়েছে — কানেক্ট সেন্টারে অ্যাকাউন্টটি যুক্ত হয়েছে কিনা দেখুন, না হলে আবার Connect করুন।");
+    }
+    let cred: Record<string, any>;
+    try {
+      cred = decryptJson<Record<string, any>>(String(row.payload?.sealed ?? ""));
+    } catch {
+      throw new BadRequestException("Connect-এর তথ্য পড়া যাচ্ছে না — LinkedIn Connect আবার শুরু করুন।");
+    }
+    const account = await this.persistOAuthAccount({
+      organizationId, actorId: userId,
+      platform: "linkedin_page", provider: "linkedin_social",
+      externalId: chosen.id, name: chosen.name,
+      credential: { ...cred, organizationId: chosen.id },
+      // CC28: the pick state carries the connect's app source.
+      appSource: (row.payload as any)?.appSource === "own" ? "own" : "platform",
     });
     return this.serializeAccount(account);
   }

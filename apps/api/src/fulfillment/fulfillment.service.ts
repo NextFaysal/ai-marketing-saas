@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrderPushService } from "../commerce/order-push.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+import { OrderNotificationService } from "../order-notifications/order-notifications.service";
+import { computeSlaStage, SLA_DEFAULTS } from "./sla";
 
 export interface FulfillmentItemLine { orderItemId: string; quantity: number; packed?: boolean }
 
@@ -24,6 +26,9 @@ export class FulfillmentService {
     private readonly prisma: PrismaService,
     @Optional() private readonly audit?: AuditService,
     @Optional() private readonly orderPush?: OrderPushService,
+    // ON5: appended LAST + @Optional (same discipline) — the
+    // transactional notification engine for order_packed.
+    @Optional() private readonly orderNotifications?: OrderNotificationService,
   ) {}
 
   async loadOrder(organizationId: string, orderId: string) {
@@ -137,6 +142,9 @@ export class FulfillmentService {
   }) {
     const f = await (this.prisma as any).fulfillment.findFirst({ where: { id: fulfillmentId, organizationId } });
     if (!f) throw new NotFoundException("Fulfillment not found in this organization");
+    // ON5: capture the status BEFORE the update — after it,
+    // nothing may be trusted to still hold the old status.
+    const statusBefore = f.status;
     const data: Record<string, any> = {};
     if (dto.status !== undefined) {
       if (!(FULFILLMENT_STATUSES as readonly string[]).includes(dto.status)) {
@@ -162,6 +170,14 @@ export class FulfillmentService {
       organizationId, userId: actorId, action: "fulfillment.updated",
       entityType: "Fulfillment", entityId: f.id, metadata: { status: data.status ?? null },
     }).catch(() => undefined);
+    // ON5: a transition INTO "packed" (explicit status or the
+    // all-items-packed derivation above) notifies order_packed
+    // for the fulfillment's order — failure-isolated.
+    if (this.orderNotifications && updated.status === "packed" && statusBefore !== "packed") {
+      try {
+        await this.orderNotifications.notify(organizationId, f.orderId, "order_packed", {}).catch(() => undefined);
+      } catch { /* failure-isolated: the update stands */ }
+    }
     // Late tracking assignment also earns the store push, once.
     if (updated.trackingCode && !f.storePushEnqueuedAt && this.orderPush) {
       try {
@@ -315,6 +331,57 @@ export class FulfillmentService {
         itemCount: ((f.items ?? []) as FulfillmentItemLine[]).reduce((s, l) => s + (l.quantity ?? 0), 0),
         lines: sortedLines,
       });
+    }
+    // ON6: SLA enrichment — computed ONCE per distinct orderId
+    // from data the board already has (the order rows are bulk-
+    // reloaded, `all` already holds every fulfilment of those
+    // orders, shipments come from ONE bulk query, the org's
+    // FulfillmentSetting from ONE read). Failure-isolated like
+    // the EC21/EC30 blocks above: any failure leaves sla: null
+    // on the rows and the board never breaks. Packed time is
+    // the sla.ts documented approximation (earliest packed-or-
+    // later fulfilment's updatedAt — there is no packedAt).
+    try {
+      const slaOrderIds = [...new Set(enriched.map((f: any) => String(f.orderId)).filter(Boolean))];
+      const slaByOrderId = new Map<string, any>();
+      if (slaOrderIds.length > 0) {
+        const slaOrders: any[] = ((await (this.prisma as any).order?.findMany({
+          where: { organizationId, id: { in: slaOrderIds } },
+        }).catch(() => [])) ?? []) as any[];
+        const slaOrderById = new Map(slaOrders.map((o: any) => [String(o.id), o]));
+        const slaShipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+          where: { organizationId, orderId: { in: slaOrderIds } },
+        }).catch(() => [])) ?? []) as any[];
+        const shipmentsByOrder = new Map<string, any[]>();
+        for (const s of slaShipments) {
+          const list = shipmentsByOrder.get(String(s.orderId)) ?? [];
+          list.push(s);
+          shipmentsByOrder.set(String(s.orderId), list);
+        }
+        let slaSetting: any = { ...SLA_DEFAULTS };
+        try {
+          const settingTable = (this.prisma as any).fulfillmentSetting;
+          const row = settingTable?.findFirst
+            ? await settingTable.findFirst({ where: { organizationId } }).catch(() => null)
+            : null;
+          if (row) slaSetting = row;
+        } catch { /* defaults */ }
+        const fulfillmentsByOrder = new Map<string, any[]>();
+        for (const f of all) {
+          const list = fulfillmentsByOrder.get(String(f.orderId)) ?? [];
+          list.push(f);
+          fulfillmentsByOrder.set(String(f.orderId), list);
+        }
+        for (const orderId of slaOrderIds) {
+          const order = slaOrderById.get(orderId);
+          slaByOrderId.set(orderId, order
+            ? computeSlaStage(order, fulfillmentsByOrder.get(orderId) ?? [], shipmentsByOrder.get(orderId) ?? [], slaSetting, now)
+            : null);
+        }
+      }
+      for (const row of enriched) (row as any).sla = slaByOrderId.get(String(row.orderId)) ?? null;
+    } catch {
+      for (const row of enriched) (row as any).sla = null;
     }
     return { date: dayStart.toISOString(), total: enriched.length, fulfillments: enriched };
   }

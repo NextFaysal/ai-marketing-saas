@@ -1,5 +1,6 @@
 import { ensurePlatformConfig, getPlatformConfigSync, resolveMessagingAppSecret } from "../common/platform-config";
 import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { isConnectionDenied, isMemberConnectionDenied } from "../common/permission-catalog";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -34,6 +35,8 @@ import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
+import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { computeIntakeWarnings } from "../orders/intake-warnings";
 
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3 };
 import { applyReaction, nextDeliveryPatch, reactionEmoji } from "./message-lifecycle";
@@ -366,6 +369,10 @@ export class InboxService {
     // MessagingModule imports no module at all, so InboxModule
     // importing it for this service adds no cycle.
     @Optional() private readonly messagingPrefs?: MessagingService,
+    // ON4/ON11: blocklist reads for chat-order intake warnings.
+    // Appended LAST + @Optional (FraudModule imported by
+    // InboxModule); absent leaves warnings without that check.
+    @Optional() private readonly blockedPhones?: BlockedPhoneService,
   ) {}
 
   // ----- Realtime fan-out (Unified Inbox U1) -----
@@ -828,16 +835,53 @@ export class InboxService {
     for (const f of data?.field_data ?? []) {
       if (f?.name) fields.set(String(f.name), Array.isArray(f.values) ? String(f.values[0] ?? "") : String(f.values ?? ""));
     }
-    const name = fields.get("full_name") ?? fields.get("name")
+    // CN4: when this lead came from one of OUR modelled
+    // LeadForms, apply its fieldMapping — a mapped standard
+    // target (name/email/phone/notes) wins over the default
+    // field names below, and custom:<key> targets land in
+    // Lead.customFields while that CustomFieldDef is live.
+    // A mapping whose def was deleted simply does not apply;
+    // the answer still appears in the activity text, so
+    // nothing is silently dropped. Forms we did not model
+    // (or orgs without one) keep the exact pre-CN4 behaviour.
+    const formId = String(data?.form_id ?? lg.formId ?? "");
+    let mapping: Record<string, string> = {};
+    let customFields: Record<string, string> | null = null;
+    if (formId && (this.prisma as any).leadForm?.findFirst) {
+      const form = await (this.prisma as any).leadForm.findFirst({ where: { organizationId, externalFormId: formId } }).catch(() => null);
+      if (form?.fieldMapping && typeof form.fieldMapping === "object") {
+        mapping = form.fieldMapping as Record<string, string>;
+        const customKeys = [...new Set(Object.values(mapping).filter((v) => typeof v === "string" && v.startsWith("custom:")).map((v) => (v as string).slice("custom:".length)))];
+        if (customKeys.length && (this.prisma as any).customFieldDef?.findMany) {
+          const defs = await (this.prisma as any).customFieldDef.findMany({ where: { organizationId, entity: "lead" } }).catch(() => []);
+          const live = new Set((defs ?? []).filter((d: any) => !d.archivedAt).map((d: any) => d.key));
+          const built: Record<string, string> = {};
+          for (const [qk, target] of Object.entries(mapping)) {
+            if (typeof target !== "string" || !target.startsWith("custom:")) continue;
+            const ck = target.slice("custom:".length);
+            if (live.has(ck) && fields.has(qk)) built[ck] = fields.get(qk)!;
+          }
+          if (Object.keys(built).length) customFields = built;
+        }
+      }
+    }
+    const mappedAnswer = (target: string) => {
+      const qk = Object.keys(mapping).find((k) => mapping[k] === target);
+      return qk ? fields.get(qk) : undefined;
+    };
+    const name = mappedAnswer("name") ?? fields.get("full_name") ?? fields.get("name")
       ?? [fields.get("first_name"), fields.get("last_name")].filter(Boolean).join(" ")
       ?? "Facebook Lead";
     const answers = [...fields.entries()].map(([k, v]) => `${k}: ${v}`).join(" | ");
+    const notesAnswer = mappedAnswer("notes");
     const lead = await (this.prisma as any).lead.create({
       data: {
         organizationId, name: name || "Facebook Lead",
-        email: fields.get("email") ?? null, phone: fields.get("phone_number") ?? fields.get("phone") ?? null,
+        email: mappedAnswer("email") ?? fields.get("email") ?? null,
+        phone: mappedAnswer("phone") ?? fields.get("phone_number") ?? fields.get("phone") ?? null,
         source: "facebook_lead_ads", externalId: lg.leadgenId, stage: "new",
-        notes: `Lead Ads form ${data?.form_id ?? lg.formId ?? ""}`.trim(),
+        notes: `Lead Ads form ${data?.form_id ?? lg.formId ?? ""}${notesAnswer ? ` — ${notesAnswer}` : ""}`.trim(),
+        ...(customFields ? { customFields } : {}),
       },
     });
     await (this.prisma as any).leadActivity.create({
@@ -906,6 +950,9 @@ export class InboxService {
     const row = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     return {
       organizationId,
+      // CC27: the recorded configuring actor of these settings
+      // (null when never saved through the API since CC27).
+      updatedById: row?.updatedById ?? null,
       autoReplyMode: row?.autoReplyMode ?? "off",
       confidenceThreshold: row?.confidenceThreshold ?? 70,
       perIntent: row?.perIntent ?? {},
@@ -1079,6 +1126,10 @@ export class InboxService {
       ...(dto.slaEscalateAfterMinutes !== undefined ? { slaEscalateAfterMinutes: dto.slaEscalateAfterMinutes } : {}),
       ...(dto.slaLeadAlertEnabled !== undefined ? { slaLeadAlertEnabled: Boolean(dto.slaLeadAlertEnabled) } : {}),
       ...(dto.slaAutoReassignEnabled !== undefined ? { slaAutoReassignEnabled: Boolean(dto.slaAutoReassignEnabled) } : {}),
+      // CC27: EVERY settings save records its actor — the
+      // autopilot's configuring actor for the CC27 deny gate
+      // (see assertSystemSendAllowed / maybeAutoReply).
+      updatedById: actorId,
     };
     const existing = await (this.prisma as any).inboxSetting.findUnique({ where: { organizationId } }).catch(() => null);
     const saved = existing
@@ -2374,6 +2425,35 @@ export class InboxService {
     return true;
   }
 
+  /**
+   * CC27: the actor whose deny-list governs an AUTOMATED send on
+   * this conversation — the conversation's assignee when one is
+   * recorded, else the autopilot settings' recorded configuring
+   * actor (InboxSetting.updatedById). Neither recorded → null →
+   * no actor exists and the deny gate honestly does not apply
+   * (documented in the B12 acceptance, never faked).
+   */
+  private async systemSendActor(organizationId: string, conv: any): Promise<string | null> {
+    if (conv?.assignedUserId) return conv.assignedUserId;
+    const row = await (this.prisma as any).inboxSetting?.findUnique?.({
+      where: { organizationId }, select: { updatedById: true },
+    }).catch(() => null);
+    return row?.updatedById ?? null;
+  }
+
+  /** CC27: is an automated send on this conversation denied to
+   * its governing actor (systemSendActor) for the conversation's
+   * channel account? No account / no actor / no membership → not
+   * denied (the helper's defensive semantics). */
+  private async systemSendDenied(organizationId: string, conv: any): Promise<{ denied: boolean; actorId: string | null }> {
+    const targetId = conv?.integrationId ?? null;
+    if (!targetId) return { denied: false, actorId: null };
+    const actorId = await this.systemSendActor(organizationId, conv);
+    if (!actorId) return { denied: false, actorId: null };
+    const denied = await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, targetId);
+    return { denied, actorId };
+  }
+
   private async maybeAutoReply(organizationId: string, conversation: any, classification: Classification, text: string, opts?: { firedFromDebounce?: boolean }) {
     const settings = await this.getSettings(organizationId);
     const perIntent = (settings.perIntent ?? {}) as Record<string, string>;
@@ -2386,6 +2466,22 @@ export class InboxService {
     const fresh = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversation.id } }).catch(() => null);
     const current = fresh ?? conversation;
     if (current.autoReplyPaused) return; // a human owns this thread now
+
+    // CC27 DENY GATE: the governing actor (assignee, else the
+    // settings' configuring actor) is denied this conversation's
+    // channel account → the AI sends NOTHING here. The thread is
+    // handed to a human through the existing escalation
+    // machinery — autoReplyPaused + handoverReason + priority +
+    // notification + audit — a recorded, visible state, not a
+    // silent drop. (Conversations with no channel account or no
+    // recorded actor are not gated; see systemSendActor.)
+    {
+      const gate = await this.systemSendDenied(organizationId, current).catch(() => ({ denied: false, actorId: null }));
+      if (gate.denied) {
+        await this.escalateAutopilot(organizationId, current, "connection_denied");
+        return;
+      }
+    }
 
     // ---- Escalation gate (before any composing) ----
     const lower = text.toLowerCase();
@@ -4271,6 +4367,26 @@ export class InboxService {
    */
   async sendAutomatedMessage(organizationId: string, conversationId: string, content: string, sourceTag: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    // CC27 DENY GATE: every system sender (order bot, workflows,
+    // courier/return updates, review requests, order chase) comes
+    // through this one funnel, so the gate lives here: when the
+    // governing actor (assignee, else the settings' configuring
+    // actor — see systemSendActor) is denied this conversation's
+    // channel account, the send is refused BEFORE any message row
+    // exists. The refusal is audited, and every caller already
+    // treats a throw from here as "not sent" in its own native
+    // record (bot hands off, chase keeps the attempt, review ask
+    // stays pending_send, courier does not stamp notified).
+    {
+      const gate = await this.systemSendDenied(organizationId, conv).catch(() => ({ denied: false, actorId: null as string | null }));
+      if (gate.denied) {
+        await this.audit.log({
+          organizationId, userId: "system", action: "inbox.system_send.suppressed_denied", entityType: "ChannelConversation",
+          entityId: conversationId, metadata: { source: sourceTag, actorId: gate.actorId, integrationId: conv.integrationId },
+        }).catch(() => undefined);
+        throw new ForbiddenException("এই অ্যাকাউন্টে স্বয়ংক্রিয় বার্তা পাঠানো যাবে না — দায়িত্বপ্রাপ্ত সদস্যের এই কানেকশন ব্যবহারের অনুমতি Connect Center-এর অ্যাক্সেস সেটিংসে প্রত্যাহার করা হয়েছে।");
+      }
+    }
     // Webchat delivery needs no Meta integration (deliverText
     // serves it in-process). Gating webchat on a Meta integration
     // made the order bot / automated messages unusable on the
@@ -4468,6 +4584,10 @@ export class InboxService {
           total: Number(order.totalMinor) / 100, currency: order.currency, status: order.status, source: "chat",
         },
       });
+      // ON4: fraud assessment hook (same event as integrations).
+      try {
+        this.events?.emit("order.ingested", { organizationId, context: { orderId: order.id, source: "chat" } });
+      } catch { /* isolated */ }
     } catch { /* workflows never block order creation */ }
     // U5: the pipeline follows the sale — a first order moves the
     // thread to "ordered"; a customer who already ordered before
@@ -4497,6 +4617,23 @@ export class InboxService {
         }
       } catch { risk = null; }
     }
+    // ON11: intake warnings (advisory only, failure-isolated;
+    // practice orders skip warnings entirely).
+    let intakeWarnings: any[] = [];
+    let addressSuggestion: any = null;
+    if (!isPractice) {
+      try {
+        const intake = await computeIntakeWarnings(this.prisma, this.blockedPhones, organizationId, {
+          phone: conv.contactPhone ?? customer?.phone ?? null,
+          name: conv.contactName
+            ?? ([customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || null),
+          addressText: dto.address ?? null,
+          customerDistrict: null,
+        });
+        intakeWarnings = intake.warnings;
+        addressSuggestion = intake.addressSuggestion;
+      } catch { /* warnings never break a chat order */ }
+    }
     return {
       ...fresh, subtotalMinor: String(fresh.subtotalMinor), shippingMinor: String(fresh.shippingMinor),
       totalMinor: String(fresh.totalMinor), discountMinor: String(fresh.discountMinor ?? 0),
@@ -4504,6 +4641,8 @@ export class InboxService {
       storeSyncStatus: fresh.storeSyncStatus ?? syncStatus,
       items: items.map((i: any) => ({ ...i, priceMinor: String(i.priceMinor), totalMinor: String(i.totalMinor) })),
       risk,
+      warnings: intakeWarnings,
+      addressSuggestion,
     };
   }
 
@@ -5506,6 +5645,7 @@ export class InboxService {
    */
   async sendProductCard(organizationId: string, actorId: string, conversationId: string, dto: { productId: string; caption?: string }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.assertConnectionAccess(organizationId, actorId, conv);
     const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
     if (!product) throw new NotFoundException("Product not found in this organization");
     const cardText = composeProductCardText(product, dto.caption);
@@ -6643,8 +6783,35 @@ export class InboxService {
     };
   }
 
+  /**
+   * CC17: per-member connection deny-list enforcement (the M72
+   * family). When the acting member has been denied this
+   * conversation's channel account in the Connect Center
+   * member-access matrix, every human send path refuses BEFORE
+   * any message row is created or any delivery is attempted.
+   * OWNER memberships never deny (M72 semantics); a conversation
+   * with no channel account cannot be denied; automated/system
+   * sends never pass through these methods.
+   */
+  private async assertConnectionAccess(organizationId: string, actorId: string, conv: any) {
+    const targetId = conv?.integrationId ?? null;
+    if (!targetId || !actorId) return;
+    // Defensive read (the codebase's safeFindMany discipline):
+    // if the membership lookup itself is unavailable there is
+    // no deny-list to enforce — the guard must never take down
+    // every inbox send with it.
+    const membership = await (this.prisma as any).membership?.findFirst({
+      where: { organizationId, userId: actorId, status: "ACTIVE" },
+    }).catch(() => null);
+    if (!membership) return;
+    if (isConnectionDenied(membership, targetId)) {
+      throw new ForbiddenException("এই অ্যাকাউন্টে মেসেজ পাঠানোর অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+    }
+  }
+
   async sendReply(organizationId: string, actorId: string, conversationId: string, content: string, opts: { viaDraftId?: string; signature?: boolean; aiAssisted?: boolean; quickReplyId?: string; draftEdited?: boolean; replyToMessageId?: string } = {}) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.assertConnectionAccess(organizationId, actorId, conv);
     // IN6b: a quote target must be a message in THIS conversation —
     // quoting across threads (or a made-up id) is refused before
     // any row is created, never silently dropped or mis-attached.
@@ -6872,6 +7039,7 @@ export class InboxService {
    */
   async sendTemplate(organizationId: string, actorId: string, conversationId: string, templateId: string, variables: string[] = []) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.assertConnectionAccess(organizationId, actorId, conv);
     if (conv.channel !== "whatsapp") throw new BadRequestException("Template messages are WhatsApp-only");
     const template = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: templateId, organizationId } });
     if (!template) throw new NotFoundException("Template not found in this organization");
@@ -6902,6 +7070,7 @@ export class InboxService {
   /** Image reply by public URL - same queued -> sent-only-with-id path. */
   async sendImageReply(organizationId: string, actorId: string, conversationId: string, imageUrl: string, caption?: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.assertConnectionAccess(organizationId, actorId, conv);
     if (!/^https:\/\//i.test(imageUrl ?? "")) throw new BadRequestException("imageUrl must be a public https URL");
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
@@ -6944,6 +7113,7 @@ export class InboxService {
    */
   async sendMediaReply(organizationId: string, actorId: string, conversationId: string, dto: { dataBase64: string; fileName?: string; contentType?: string; caption?: string }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
+    await this.assertConnectionAccess(organizationId, actorId, conv);
     const bytes = Buffer.from(String(dto.dataBase64 ?? ""), "base64");
     if (!bytes.length) throw new BadRequestException("ফাইলটি খালি অথবা পড়া যায়নি।");
     if (bytes.length > MEDIA_UPLOAD_MAX_BYTES) throw new BadRequestException(`ফাইল খুব বড় — সর্বোচ্চ ${Math.round(MEDIA_UPLOAD_MAX_BYTES / 100000) / 10}MB পর্যন্ত আপলোড করা যাবে।`);

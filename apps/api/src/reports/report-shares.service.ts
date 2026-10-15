@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnalyticsService } from "../analytics/analytics.service";
 import { ExecutiveService } from "./executive.service";
+import { CampaignsService } from "../campaigns/campaigns.service";
 
 @Injectable()
 export class ReportSharesService {
@@ -12,22 +13,33 @@ export class ReportSharesService {
     private readonly audit: AuditService,
     private readonly analytics: AnalyticsService,
     @Optional() private readonly executiveSvc?: ExecutiveService,
+    @Optional() private readonly campaignsSvc?: CampaignsService,
   ) {}
 
-  async create(organizationId: string, actorId: string, dto: { title: string; days?: number; expiresInDays?: number; kind?: string }) {
+  async create(organizationId: string, actorId: string, dto: { title: string; days?: number; expiresInDays?: number; kind?: string; planId?: string }) {
     const days = dto.days ?? 30;
     if (![7, 14, 30, 60, 90].includes(days)) throw new BadRequestException("days must be one of 7, 14, 30, 60, 90");
     const kind = dto.kind ?? "overview";
-    if (!["overview", "executive"].includes(kind)) throw new BadRequestException("kind must be overview or executive");
+    if (!["overview", "executive", "campaign"].includes(kind)) throw new BadRequestException("kind must be overview, executive or campaign");
+    // Frontier NB8 / CN18: a campaign share names ONE
+    // plan of this org (validated here, at creation —
+    // a token must never resolve to another org's plan).
+    let planId: string | null = null;
+    if (kind === "campaign") {
+      if (!dto.planId) throw new BadRequestException("A campaign report share needs a planId");
+      const plan = await (this.prisma as any).campaignPlan?.findFirst?.({ where: { id: dto.planId, organizationId } }).catch(() => null);
+      if (!plan) throw new BadRequestException("Campaign plan not found in this organization");
+      planId = dto.planId;
+    }
     const expiresInDays = Math.min(365, Math.max(1, dto.expiresInDays ?? 30));
     const token = randomBytes(24).toString("base64url");
     const share = await (this.prisma as any).reportShare.create({
       data: {
-        organizationId, token, title: dto.title, days, kind,
+        organizationId, token, title: dto.title, days, kind, planId,
         expiresAt: new Date(Date.now() + expiresInDays * 86400000), createdById: actorId,
       },
     });
-    await this.audit.log({ organizationId, userId: actorId, action: "report_share.created", entityType: "ReportShare", entityId: share.id, metadata: { days, kind } });
+    await this.audit.log({ organizationId, userId: actorId, action: "report_share.created", entityType: "ReportShare", entityId: share.id, metadata: { days, kind, planId } });
     return share;
   }
 
@@ -67,6 +79,21 @@ export class ReportSharesService {
     };
   }
 
+  /**
+   * Frontier NB8 / CN18: the public CAMPAIGN rendering.
+   * The payload comes from CampaignsService.
+   * publicCampaignReport, whose shape is an explicit
+   * allowlist (totals / per-ad-set / breakdowns /
+   * pacing) — no comments, mentions, approval internals
+   * or publish logs can reach a public token. The share
+   * row supplies only the title and the window.
+   */
+  private async publicCampaign(share: any) {
+    if (!this.campaignsSvc || !share.planId) throw new NotFoundException("This report link is invalid");
+    const payload = await this.campaignsSvc.publicCampaignReport(share.organizationId, share.planId, share.days);
+    return { ...payload, title: share.title };
+  }
+
   async list(organizationId: string) {
     return (this.prisma as any).reportShare.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 50 });
   }
@@ -85,6 +112,7 @@ export class ReportSharesService {
     if (!share) throw new NotFoundException("This report link is invalid");
     if (new Date(share.expiresAt).getTime() < Date.now()) throw new NotFoundException("This report link has expired");
     if (share.kind === "executive") return this.publicExecutive(share);
+    if (share.kind === "campaign") return this.publicCampaign(share);
     const to = new Date(); to.setUTCHours(0, 0, 0, 0);
     const from = new Date(to.getTime() - (share.days - 1) * 86400000);
     const toExclusive = new Date(to.getTime() + 86400000);

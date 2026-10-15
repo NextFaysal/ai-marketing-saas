@@ -166,6 +166,13 @@ export function invoicePage(input: {
   discountMinor: bigint | number | string; totalMinor: bigint | number | string;
   paymentLabel: string; currency?: string;
   brandColor?: string | null;
+  // ON10: optional print-template fields (PrintTemplateSetting).
+  // Each renders ONLY when non-empty, so a template with every
+  // field unset produces a byte-identical page to the pre-ON10
+  // composer (spec-pinned in on10-print.spec.ts).
+  invoiceNote?: string | null;
+  termsText?: string | null;
+  footerText?: string | null;
 }): PdfPageSpec {
   const c = new PdfCanvas();
   const W = 595, H = 842;
@@ -195,6 +202,136 @@ export function invoicePage(input: {
   row("Shipping", input.shippingMinor);
   if (BigInt(input.discountMinor as any) > 0n) row("Discount", input.discountMinor);
   row("Total", input.totalMinor, true);
+  // ON10 template blocks — rendered only when set (see the
+  // interface note above; unset = pre-ON10 bytes exactly).
+  const note = String(input.invoiceNote ?? "").trim();
+  if (note) {
+    y -= 8;
+    for (const line of wrapText(`Note: ${note}`, 88).slice(0, 3)) { c.text(48, y, 9, line); y -= 12; }
+  }
+  const terms = String(input.termsText ?? "").trim();
+  if (terms) {
+    y -= 6;
+    c.text(48, y, 9, "Terms:", true); y -= 12;
+    for (const line of wrapText(terms, 92).slice(0, 5)) { c.text(48, y, 8, line); y -= 11; }
+  }
   c.text(48, 64, 8, "Generated from the order record exactly as stored in the system.");
+  const footer = String(input.footerText ?? "").trim();
+  if (footer) c.text(48, 48, 8, wrapText(footer, 100)[0]);
+  return { width: W, height: H, content: c.build() };
+}
+
+/**
+ * ON10: one A4 delivery-challan page for an order — what the
+ * courier hands over: order number, customer + phone + address,
+ * the item lines (name × qty, NO prices — a challan is a
+ * delivery document, not a bill) and the COD amount still due
+ * (EC19 math, computed by the caller: total − Σ APPROVED
+ * PaymentVerification amounts, capped at the total).
+ */
+export function challanPage(input: {
+  orgName: string; orgPhone?: string | null; orderNo: string; date: string;
+  customerName: string; customerPhone?: string | null; address?: string | null;
+  items: { name: string; quantity: number }[];
+  codDueMinor: bigint | number | string; currency?: string;
+  brandColor?: string | null;
+  termsText?: string | null;
+  footerText?: string | null;
+}): PdfPageSpec {
+  const c = new PdfCanvas();
+  const W = 595, H = 842;
+  c.text(48, H - 56, 18, input.orgName, true);
+  if (input.brandColor) { c.fillColor(input.brandColor); c.rect(48, H - 66, W - 96, 3); c.resetFill(); }
+  if (input.orgPhone) c.text(48, H - 72, 9, `Phone: ${input.orgPhone}`);
+  c.text(48, H - 96, 13, "DELIVERY CHALLAN", true);
+  c.text(48, H - 112, 10, `Order: ${input.orderNo}   Date: ${input.date}`);
+  c.text(48, H - 126, 10, `Customer: ${input.customerName}${input.customerPhone ? ` (${input.customerPhone})` : ""}`);
+  let y = H - 140;
+  const address = String(input.address ?? "").trim();
+  if (address) {
+    for (const line of wrapText(`Address: ${address}`, 88).slice(0, 3)) { c.text(48, y, 10, line); y -= 13; }
+  }
+  y -= 4; c.line(48, y, W - 48); y -= 22;
+  c.text(48, y, 10, "Item", true); c.text(W - 118, y, 10, "Qty", true);
+  y -= 8; c.line(48, y, W - 48); y -= 18;
+  for (const item of input.items) {
+    const nameLines = wrapText(item.name, 58).slice(0, 2);
+    c.text(48, y, 10, nameLines[0]);
+    if (nameLines[1]) c.text(48, y - 12, 10, nameLines[1]);
+    c.text(W - 118, y, 10, String(item.quantity));
+    y -= nameLines[1] ? 26 : 16;
+    if (y < 190) break;
+  }
+  y -= 6; c.line(48, y, W - 48); y -= 24;
+  const due = BigInt(input.codDueMinor as any);
+  c.text(48, y, 12, due > 0n ? `COD amount due: ${moneyText(due, input.currency)}` : "No COD due (already paid)", true);
+  y -= 28;
+  c.text(48, y, 9, "Received by: ______________________    Signature: ______________________");
+  const terms = String(input.termsText ?? "").trim();
+  if (terms) {
+    y -= 26;
+    c.text(48, y, 9, "Terms:", true); y -= 12;
+    for (const line of wrapText(terms, 92).slice(0, 5)) { c.text(48, y, 8, line); y -= 11; }
+  }
+  const footer = String(input.footerText ?? "").trim();
+  if (footer) c.text(48, 48, 8, wrapText(footer, 100)[0]);
+  return { width: W, height: H, content: c.build() };
+}
+
+/**
+ * ON10: one A4 packing-slip page for an order — the server-side
+ * mirror of the web print page's slip (apps/web .../commerce/
+ * print/page.tsx, kind=slip), built from the SAME stored fields
+ * that page reads through GET orders/:orderId: item lines
+ * (name × qty, SKU, gift + bundle markers — NO prices, a slip
+ * is a packing document), the EC29 gift message, and the
+ * delivery address. Bengali text hits the toolkit's documented
+ * WinAnsi limit exactly like labels/invoices do.
+ */
+export function packingSlipPage(input: {
+  orgName: string; orgPhone?: string | null; orderNo: string; date: string;
+  customerName: string; customerPhone?: string | null; address?: string | null;
+  items: { name: string; quantity: number; sku?: string | null; isGift?: boolean; bundleName?: string | null }[];
+  giftMessage?: string | null;
+  brandColor?: string | null;
+  footerText?: string | null;
+}): PdfPageSpec {
+  const c = new PdfCanvas();
+  const W = 595, H = 842;
+  c.text(48, H - 56, 18, input.orgName, true);
+  if (input.brandColor) { c.fillColor(input.brandColor); c.rect(48, H - 66, W - 96, 3); c.resetFill(); }
+  if (input.orgPhone) c.text(48, H - 72, 9, `Phone: ${input.orgPhone}`);
+  c.text(48, H - 96, 13, "PACKING SLIP", true);
+  c.text(48, H - 112, 10, `Order: ${input.orderNo}   Date: ${input.date}`);
+  c.text(48, H - 126, 10, `Customer: ${input.customerName}${input.customerPhone ? ` (${input.customerPhone})` : ""}`);
+  let y = H - 140;
+  const address = String(input.address ?? "").trim();
+  if (address) {
+    for (const line of wrapText(`Address: ${address}`, 88).slice(0, 3)) { c.text(48, y, 10, line); y -= 13; }
+  }
+  const gift = String(input.giftMessage ?? "").trim();
+  if (gift) {
+    y -= 6;
+    const giftLines = wrapText(`Gift message: ${gift}`, 80).slice(0, 3);
+    c.strokeRect(48, y - giftLines.length * 13 - 6, W - 96, giftLines.length * 13 + 12, 1.2);
+    for (const line of giftLines) { c.text(60, y, 10, line, true); y -= 13; }
+    y -= 6;
+  }
+  y -= 4; c.line(48, y, W - 48); y -= 22;
+  c.text(48, y, 10, "Item", true); c.text(W - 118, y, 10, "Qty", true);
+  y -= 8; c.line(48, y, W - 48); y -= 18;
+  for (const item of input.items) {
+    const label = `${item.isGift ? "GIFT - " : ""}${item.name}`;
+    const nameLines = wrapText(label, 58).slice(0, 2);
+    c.text(48, y, 10, nameLines[0]);
+    if (nameLines[1]) c.text(48, y - 12, 10, nameLines[1]);
+    c.text(W - 118, y, 10, String(item.quantity));
+    y -= nameLines[1] ? 26 : 16;
+    const sub = [item.sku ? `SKU: ${item.sku}` : null, item.bundleName ? `Bundle: ${item.bundleName}` : null].filter(Boolean).join("   ");
+    if (sub) { c.text(48, y, 8, sub); y -= 12; }
+    if (y < 120) break;
+  }
+  const footer = String(input.footerText ?? "").trim();
+  if (footer) c.text(48, 48, 8, wrapText(footer, 100)[0]);
   return { width: W, height: H, content: c.build() };
 }

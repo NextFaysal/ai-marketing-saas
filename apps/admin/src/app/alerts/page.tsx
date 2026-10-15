@@ -49,15 +49,15 @@ export default function AlertsPage() {
       {loaded && alerts.length === 0 ? <div className="acard"><p className="amut">🎉 এই মুহূর্তে কোনো Alert নেই।</p></div> : null}
       <div className="space-y-2">
         {alerts.map((a, i) => (
-          <div key={`${a.organizationId}-${a.kind}-${i}`} className="acard" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div key={`${a.organizationId}-${a.kind}-${i}`} className="acard flex-col sm:flex-row" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <span className="abadge" style={a.severity === "high" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#fef3c7", color: "#92400e" }}>{a.severity === "high" ? "HIGH" : "MEDIUM"}</span>
             <div style={{ flex: 1, minWidth: 220 }}>
               <b style={{ fontSize: 14 }}>{KIND_LABEL[a.kind] ?? a.kind} — {a.organizationName}</b>
               <p className="amut">{a.detail}</p>
             </div>
-            <a className="abtn" href={`/orgs/${a.organizationId}`}>Org দেখুন</a>
-            <button className="abtn abtn-primary" onClick={() => nudge(a)}>📧 Nudge পাঠান</button>
-            <button className="abtn" onClick={() => nudgeOnboarding(a)}>Onboarding Nudge</button>
+            <a className="abtn w-full sm:w-auto" href={`/orgs/${a.organizationId}`}>Org দেখুন</a>
+            <button className="abtn abtn-primary w-full sm:w-auto" onClick={() => nudge(a)}>📧 Nudge পাঠান</button>
+            <button className="abtn w-full sm:w-auto" onClick={() => nudgeOnboarding(a)}>Onboarding Nudge</button>
           </div>
         ))}
       </div>

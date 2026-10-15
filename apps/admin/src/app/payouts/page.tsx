@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch, formatMinorStr } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 /**
  * CC10 — Tenant Wallet payouts (platform payment).
@@ -98,7 +99,7 @@ export default function PayoutsPage() {
       <div className="acard space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold">Tenant Payout অনুরোধসমূহ</span>
-          <select className="ainput !w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select className="ainput w-full sm:!w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s === "" ? "সব status" : STATUS_LABEL[s]}</option>)}
           </select>
         </div>
@@ -122,7 +123,7 @@ export default function PayoutsPage() {
                     <td className="atd">৳ {formatMinorStr(r.amountMinor)}</td>
                     <td className="atd">{r.method}<span className="block text-[11px] text-slate-500">{destText(r.destination)}</span></td>
                     <td className="atd">{STATUS_LABEL[r.status] ?? r.status}</td>
-                    <td className="atd text-slate-400">{new Date(r.createdAt).toLocaleString("bn-BD")}</td>
+                    <td className="atd text-slate-400">{fmtDateTime(r.createdAt)}</td>
                     <td className="atd text-slate-400">{r.payoutRef ?? "—"}{r.adminNote ? <span className="block text-[11px]">{r.adminNote}</span> : null}</td>
                     <td className="atd">
                       <div className="flex flex-wrap gap-1.5">
@@ -153,7 +154,7 @@ export default function PayoutsPage() {
         <label className="block text-sm">Organization ID<input className="ainput mt-1" value={adj.organizationId} onChange={(e) => setAdj({ ...adj, organizationId: e.target.value })} required /></label>
         <label className="block text-sm">পরিমাণ (টাকা; কাটতে হলে - দিন)<input className="ainput mt-1" inputMode="decimal" value={adj.amountTaka} onChange={(e) => setAdj({ ...adj, amountTaka: e.target.value })} required placeholder="যেমন: 500 বা -250" /></label>
         <label className="block text-sm">Note (আবশ্যক)<input className="ainput mt-1" value={adj.note} onChange={(e) => setAdj({ ...adj, note: e.target.value })} required placeholder="সংশোধনের কারণ" /></label>
-        <button className="abtn" disabled={busy !== ""} type="submit">{busy === "adjust" ? "হচ্ছে…" : "Adjustment প্রয়োগ করুন"}</button>
+        <button className="abtn w-full sm:w-auto" disabled={busy !== ""} type="submit">{busy === "adjust" ? "হচ্ছে…" : "Adjustment প্রয়োগ করুন"}</button>
       </form>
     </AdminShell>
   );

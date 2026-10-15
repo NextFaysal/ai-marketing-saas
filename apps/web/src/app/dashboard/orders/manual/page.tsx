@@ -1,7 +1,14 @@
 "use client";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+
+/** ON11: POST /orders/parse-address suggestion shape. */
+interface AddressSuggestion {
+  district: string | null; thana: string | null;
+  confidence: string; matchedTerms?: string[];
+}
+interface CreateWarning { key: string; label: string }
 
 /**
  * Milestone 65: manual order entry + orders CSV import.
@@ -27,16 +34,52 @@ export default function ManualOrderPage() {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
+  // ON11: address -> district suggestion. A suggestion is NEVER
+  // sent with the order — only a district the staff explicitly
+  // confirmed (confirmedDistrict) goes into the create body.
+  const [addrSuggestion, setAddrSuggestion] = useState<AddressSuggestion | null>(null);
+  const [confirmedDistrict, setConfirmedDistrict] = useState("");
+  const [parseBusy, setParseBusy] = useState(false);
+  const lastParsedRef = useRef("");
+  // ON11: intake warnings + address suggestion returned BY the
+  // create call itself (shown on the success area, not lost).
+  const [createWarnings, setCreateWarnings] = useState<CreateWarning[]>([]);
+  const [createAddrSuggestion, setCreateAddrSuggestion] = useState<AddressSuggestion | null>(null);
 
   const takaToMinor = (v: string) => Math.round((Number(v) || 0) * 100);
   const subtotal = lines.reduce((a, l) => a + (Number(l.unitPrice) || 0) * (l.quantity || 0), 0);
   const total = Math.max(0, subtotal + (Number(shipping) || 0) - (Number(discount) || 0));
+
+  /** ON11: ask the server to guess the district from the free
+   * text address. Only high/medium-confidence guesses are shown
+   * as a confirm chip; anything weaker is ignored silently (the
+   * staff can still type the order normally). */
+  async function parseAddress() {
+    const text = customer.address.trim();
+    if (text.length < 4 || text === lastParsedRef.current) return;
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    lastParsedRef.current = text;
+    setParseBusy(true);
+    try {
+      const out = await apiFetch<AddressSuggestion>(`/organizations/${orgId}/orders/parse-address`, {
+        method: "POST", body: JSON.stringify({ text }),
+      });
+      if (out && out.district && (out.confidence === "high" || out.confidence === "medium")) {
+        setAddrSuggestion(out);
+      } else {
+        setAddrSuggestion(null);
+      }
+    } catch { setAddrSuggestion(null); /* suggestion is advisory — never block entry */ }
+    finally { setParseBusy(false); }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const orgId = getOrganizationId();
     if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
     setBusy(true); setError(""); setNotice("");
+    setCreateWarnings([]); setCreateAddrSuggestion(null);
     try {
       const out = await apiFetch<any>(`/organizations/${orgId}/orders`, {
         method: "POST",
@@ -45,6 +88,9 @@ export default function ManualOrderPage() {
           customerName: customer.name.trim() || undefined,
           customerEmail: customer.email.trim() || undefined,
           address: customer.address.trim() || undefined,
+          // ON11: district goes ONLY when staff confirmed the
+          // suggestion — an unconfirmed guess is never sent.
+          ...(confirmedDistrict ? { district: confirmedDistrict } : {}),
           externalRef: customer.externalRef.trim() || undefined,
           items: lines.filter((l) => l.name.trim()).map((l) => ({
             name: l.name.trim(), sku: l.sku.trim() || undefined,
@@ -58,8 +104,15 @@ export default function ManualOrderPage() {
       setNotice(out.upsertResult === "updated"
         ? "একই রেফারেন্সের অর্ডার আপডেট হয়েছে (ডুপ্লিকেট হয়নি)।"
         : `অর্ডার তৈরি হয়েছে — মোট ৳${(Number(out.totalMinor) / 100).toLocaleString("en-IN")}। এটি এখন অটোমেশন, রিস্ক স্কোর ও রিপোর্টে দেখা যাবে।`);
+      // ON11: intake warnings + a create-time address suggestion
+      // stay visible on this success area (the page does not
+      // navigate away, so nothing is lost). The suggestion is
+      // info only — nothing was auto-applied to the order.
+      setCreateWarnings(Array.isArray(out.warnings) ? out.warnings : []);
+      setCreateAddrSuggestion(!confirmedDistrict && out.addressSuggestion ? out.addressSuggestion : null);
       setCustomer({ phone: "", name: "", email: "", address: "", externalRef: "" });
       setLines([{ name: "", sku: "", quantity: 1, unitPrice: "" }]);
+      setAddrSuggestion(null); setConfirmedDistrict(""); lastParsedRef.current = "";
     } catch (err) { setError(err instanceof Error ? err.message : "অর্ডার তৈরি ব্যর্থ"); }
     finally { setBusy(false); }
   }
@@ -106,9 +159,41 @@ export default function ManualOrderPage() {
           <label className="text-sm">ইমেইল (ঐচ্ছিক)
             <input className={input} value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} />
           </label>
-          <label className="text-sm md:col-span-2">ঠিকানা
-            <input className={input} value={customer.address} onChange={(e) => setCustomer({ ...customer, address: e.target.value })} />
-          </label>
+          <div className="text-sm md:col-span-2">
+            <label>ঠিকানা
+              <input className={input} value={customer.address}
+                onChange={(e) => {
+                  setCustomer({ ...customer, address: e.target.value });
+                  // ঠিকানা বদলালে আগের নিশ্চিত জেলা / সাজেশন আর
+                  // এই ঠিকানার নয় — দুটোই তুলে নেওয়া হয়।
+                  if (confirmedDistrict) setConfirmedDistrict("");
+                  setAddrSuggestion(null);
+                }}
+                onBlur={() => void parseAddress()} />
+            </label>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <button type="button" className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50"
+                disabled={parseBusy || customer.address.trim().length < 4}
+                onClick={() => { lastParsedRef.current = ""; void parseAddress(); }}>
+                {parseBusy ? "জেলা খোঁজা হচ্ছে…" : "🔍 জেলা খুঁজুন"}
+              </button>
+              {confirmedDistrict ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                  জেলা: {confirmedDistrict} ✓
+                  <button type="button" className="text-emerald-600 hover:text-red-600" title="নিশ্চিত জেলা সরান" onClick={() => setConfirmedDistrict("")}>✕</button>
+                </span>
+              ) : addrSuggestion?.district ? (
+                <span className="inline-flex flex-wrap items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                  জেলা: {addrSuggestion.district}?{addrSuggestion.thana ? ` · থানা: ${addrSuggestion.thana}` : ""}
+                  <button type="button" className="rounded-full bg-amber-600 px-2 py-0.5 text-white hover:bg-amber-700"
+                    onClick={() => { setConfirmedDistrict(addrSuggestion.district!); setAddrSuggestion(null); }}>
+                    নিশ্চিত করুন
+                  </button>
+                  <button type="button" className="text-amber-700 hover:text-red-600" title="সাজেশন এড়িয়ে যান" onClick={() => setAddrSuggestion(null)}>✕</button>
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -140,6 +225,19 @@ export default function ManualOrderPage() {
 
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {notice ? <p className="text-sm text-green-700">{notice}</p> : null}
+        {createWarnings.length > 0 ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+            <p className="text-sm font-semibold text-amber-800">⚠️ অর্ডার তৈরি হয়েছে, তবে যাচাই করে দেখুন:</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-amber-800">
+              {createWarnings.map((w) => <li key={w.key}>{w.label}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        {createAddrSuggestion?.district ? (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            ঠিকানা থেকে সম্ভাব্য জেলা মনে হচ্ছে: <b>{createAddrSuggestion.district}</b>{createAddrSuggestion.thana ? ` · থানা: ${createAddrSuggestion.thana}` : ""} — এটি অর্ডারে নিজে থেকে প্রয়োগ করা হয়নি; প্রয়োজনে পরের অর্ডারে ঠিকানা লেখার সময় নিশ্চিত করুন।
+          </p>
+        ) : null}
         <button disabled={busy} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
           {busy ? "তৈরি হচ্ছে..." : "অর্ডার তৈরি করুন"}
         </button>

@@ -1,13 +1,16 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { AuditService } from "../audit/audit.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { CreateAdAccountDto, ManualMetricDto, ImportAdCsvDto, MetaConnectDto, MetaSyncDto } from "./ads.dto";
 import { parseAdSpendCsv } from "./ads.csv";
 import { encryptJson, decryptJson } from "../integrations/crypto";
 import { MetaClient } from "./meta/meta.client";
+import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { GoogleAdsClient, GoogleAdsSecrets } from "./google/google.client";
 import { TikTokAdsClient } from "./tiktok/tiktok.client";
+import { computeCreativeLeaderboard } from "./creative-fatigue";
 import { normalizeMetaInsight, normalizeMetaAdInsight } from "./meta/normalize";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { metaStatusInfo, googleStatusInfo, tiktokStatusInfo, bucketLabelBn, PlatformStatusInfo } from "./platform-status";
@@ -271,9 +274,32 @@ export class AdsService {
     if (account.syncDisabled) {
       return { skipped: true, reason: "sync_disabled", accountId: account.id, platform };
     }
-    if (platform === "meta") return this.syncMetaInsights(organizationId, actorId, accountId, {});
-    if (platform === "google") return this.syncGoogleInsights(organizationId, actorId, accountId, {});
-    return this.syncTikTokInsights(organizationId, actorId, accountId, {});
+    // CC27: the scheduled job path is deliberately NOT deny-gated
+    // (fromJob) — it is a system sweep, not a member's manual
+    // action; the manual triggers below are the gated surface.
+    // Documented in docs/connect-center-b12-acceptance.md.
+    if (platform === "meta") return this.syncMetaInsights(organizationId, actorId, accountId, {}, { fromJob: true });
+    if (platform === "google") return this.syncGoogleInsights(organizationId, actorId, accountId, {}, { fromJob: true });
+    return this.syncTikTokInsights(organizationId, actorId, accountId, {}, { fromJob: true });
+  }
+
+  /**
+   * CC27: AdAccount deny gate for MANUAL sync triggers — a member
+   * denied this ad account in the Connect Center matrix cannot
+   * pull its data. Refused BEFORE any platform client is built.
+   * OWNER is never denied (helper semantics); the scheduled job
+   * path never calls this (see syncInsightsJob).
+   */
+  private async assertAdAccountAccess(organizationId: string, actorId: string, accountId: string) {
+    if (await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, accountId)) {
+      throw new ForbiddenException("এই বিজ্ঞাপন অ্যাকাউন্টের ডেটা Sync করার অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+    }
+  }
+
+  /** CC27: boolean form for the sync-all loop's per-account
+   * skipped_denied outcome (its native result record). */
+  private async isAdAccountDenied(organizationId: string, actorId: string, accountId: string): Promise<boolean> {
+    return isMemberConnectionDenied(this.prisma as any, organizationId, actorId, accountId);
   }
 
   /**
@@ -302,7 +328,7 @@ export class AdsService {
       orderBy: { createdAt: "asc" },
       select: { id: true, platform: true, sourceType: true, integrationId: true, syncDisabled: true },
     });
-    type SyncAllResult = { accountId: string; status: "success" | "failed" | "skipped_disabled" | "skipped_no_connection"; error?: string };
+    type SyncAllResult = { accountId: string; status: "success" | "failed" | "skipped_disabled" | "skipped_no_connection" | "skipped_denied"; error?: string };
     const results: SyncAllResult[] = [];
     for (const account of accounts as Array<{ id: string; platform: string; sourceType: string; integrationId: string | null; syncDisabled: boolean }>) {
       if (account.sourceType !== "api" || !account.integrationId) {
@@ -311,6 +337,14 @@ export class AdsService {
       }
       if (account.syncDisabled) {
         results.push({ accountId: account.id, status: "skipped_disabled" });
+        continue;
+      }
+      // CC27: sync-all is a MANUAL trigger — an account denied to
+      // the acting member is skipped with its own named outcome
+      // (the per-account sync methods would refuse anyway; here
+      // the batch records the reason instead of a generic fail).
+      if (await this.isAdAccountDenied(organizationId, actorId, account.id)) {
+        results.push({ accountId: account.id, status: "skipped_denied" });
         continue;
       }
       try {
@@ -330,7 +364,7 @@ export class AdsService {
       total: results.length,
       success: results.filter((r) => r.status === "success").length,
       failed: results.filter((r) => r.status === "failed").length,
-      skipped: results.filter((r) => r.status === "skipped_disabled" || r.status === "skipped_no_connection").length,
+      skipped: results.filter((r) => r.status === "skipped_disabled" || r.status === "skipped_no_connection" || r.status === "skipped_denied").length,
     };
     await this.audit.log({
       organizationId, userId: actorId,
@@ -875,6 +909,17 @@ export class AdsService {
 
   // ---------- Meta ----------
   async connectMeta(organizationId: string, actorId: string, dto: MetaConnectDto) {
+    // CC28: record WHICH Meta app the pasted token belongs to.
+    // "own" requires the tenant's Meta app config to exist (the
+    // CC4 require-config discipline). Recorded on the Integration
+    // row; AdAccount has no appSource column.
+    const appSource = dto.appSource === "own" ? "own" : "platform";
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma as any, organizationId, "meta");
+      if (!own) {
+        throw new BadRequestException("নিজের Meta অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Meta অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ হিসেবে কানেক্ট করুন।");
+      }
+    }
     const client = new MetaClient(dto.accessToken);
     let me: { id: string; name?: string };
     try {
@@ -905,7 +950,7 @@ export class AdsService {
     if (discovered.length === 0) throw new BadRequestException("No Meta ad accounts found for this token");
 
     const integration = await (this.prisma as any).integration.create({
-      data: { organizationId, provider: "meta", status: "CONNECTED", externalAccountId: me.id },
+      data: { organizationId, provider: "meta", status: "CONNECTED", externalAccountId: me.id, appSource },
     });
     await (this.prisma as any).integrationCredential.create({
       data: { integrationId: integration.id, encryptedData: encryptJson({ accessToken: dto.accessToken }) },
@@ -940,11 +985,14 @@ export class AdsService {
     // Meta identity's (token user id) previous CONNECTED integrations
     // that no account references any more.
     await this.supersedePreviousIntegrations(organizationId, actorId, "meta", me.id, integration.id);
-    await this.audit.log({ organizationId, userId: actorId, action: "integration.connect", entityType: "Integration", entityId: integration.id, metadata: { provider: "meta", accounts: accounts.length } });
+    await this.audit.log({ organizationId, userId: actorId, action: "integration.connect", entityType: "Integration", entityId: integration.id, metadata: { provider: "meta", accounts: accounts.length, appSource } });
     return { integrationId: integration.id, connectedAccounts: accounts.map((a: any) => this.serializeAccount(a)) };
   }
 
-  async syncMetaInsights(organizationId: string, actorId: string, accountId: string, dto: MetaSyncDto) {
+  async syncMetaInsights(organizationId: string, actorId: string, accountId: string, dto: MetaSyncDto, opts?: { fromJob?: boolean }) {
+    // CC27: manual triggers are deny-gated; the scheduled job
+    // path passes fromJob and is not (see syncInsightsJob).
+    if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
     if (account.platform !== "meta" || !account.integrationId || !account.externalId) {
       throw new BadRequestException("This ad account is not connected to Meta via API");
@@ -1054,6 +1102,8 @@ export class AdsService {
   }
 
   async syncMetaAdInsights(organizationId: string, actorId: string, accountId: string, dto: MetaSyncDto) {
+    // CC27: manual-only trigger (no job path) — deny-gated.
+    await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const { account, integration, client } = await this.metaClientFor(organizationId, accountId);
     const until = dto.until ?? new Date().toISOString().slice(0, 10);
     const since = dto.since ?? new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -1094,6 +1144,8 @@ export class AdsService {
   }
 
   async syncMetaBreakdowns(organizationId: string, actorId: string, accountId: string, dto: MetaSyncDto) {
+    // CC27: manual-only trigger (no job path) — deny-gated.
+    await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const { account, integration, client } = await this.metaClientFor(organizationId, accountId);
     const until = dto.until ?? new Date().toISOString().slice(0, 10);
     const since = dto.since ?? new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -1194,47 +1246,14 @@ export class AdsService {
    * inputs come from Meta's rows; nothing is predicted. */
   async creativeLeaderboard(organizationId: string, days = 14) {
     const now = new Date();
-    const since = new Date(now.getTime() - days * 86400000);
     const prevSince = new Date(now.getTime() - 2 * days * 86400000);
     const rows = await (this.prisma as any).dailyAdMetric.findMany({
       where: { organizationId, source: "meta", date: { gte: prevSince } }, take: 20000,
     });
-    type Agg = { adExternalId: string; adName: string; campaign: string; spend: bigint; impressions: bigint; clicks: bigint; reach: bigint; conversions: bigint; prevClicks: bigint; prevImpressions: bigint };
-    const map = new Map<string, Agg>();
-    for (const r of rows as any[]) {
-      if (!r.adExternalId) continue;
-      const key = String(r.adExternalId);
-      const a = map.get(key) ?? { adExternalId: key, adName: r.adName ?? key, campaign: r.campaignName ?? r.campaignExternalId ?? "", spend: 0n, impressions: 0n, clicks: 0n, reach: 0n, conversions: 0n, prevClicks: 0n, prevImpressions: 0n };
-      const rowDate = new Date(r.date);
-      if (rowDate >= since) {
-        a.spend += BigInt(r.spendMinor ?? 0); a.impressions += BigInt(r.impressions ?? 0);
-        a.clicks += BigInt(r.clicks ?? 0); a.reach += BigInt(r.reach ?? 0); a.conversions += BigInt(r.conversions ?? 0);
-      } else {
-        a.prevClicks += BigInt(r.clicks ?? 0); a.prevImpressions += BigInt(r.impressions ?? 0);
-      }
-      map.set(key, a);
-    }
-    const list = [...map.values()].map((a) => {
-      const ctr = a.impressions > 0n ? Number(a.clicks) / Number(a.impressions) * 100 : null;
-      const prevCtr = a.prevImpressions > 0n ? Number(a.prevClicks) / Number(a.prevImpressions) * 100 : null;
-      const frequency = a.reach > 0n ? Number(a.impressions) / Number(a.reach) : null;
-      const ctrDropPercent = ctr !== null && prevCtr !== null && prevCtr > 0 ? (prevCtr - ctr) / prevCtr * 100 : null;
-      const reasons: string[] = [];
-      if (frequency !== null && frequency >= 3.5) reasons.push("frequency_high");
-      if (ctrDropPercent !== null && ctrDropPercent >= 30) reasons.push("ctr_declining");
-      return {
-        adExternalId: a.adExternalId, adName: a.adName, campaign: a.campaign,
-        spendMinor: a.spend.toString(), impressions: Number(a.impressions), clicks: Number(a.clicks),
-        conversions: Number(a.conversions),
-        ctrPercent: ctr !== null ? Math.round(ctr * 100) / 100 : null,
-        frequency: frequency !== null ? Math.round(frequency * 100) / 100 : null,
-        cpaMinor: a.conversions > 0n ? (a.spend / a.conversions).toString() : null,
-        ctrDropPercent: ctrDropPercent !== null ? Math.round(ctrDropPercent) : null,
-        fatigued: reasons.length === 2, fatigueReasons: reasons,
-      };
-    }).filter((x) => x.impressions > 0 || x.spendMinor !== "0");
-    list.sort((x, y) => Number(BigInt(y.spendMinor) - BigInt(x.spendMinor)));
-    return { days, ads: list.slice(0, 50) };
+    // NB4/CN7: the aggregation itself lives in
+    // creative-fatigue.ts, shared verbatim with the Campaign
+    // Builder's per-plan creative insights — one fatigue rule.
+    return computeCreativeLeaderboard(rows, days, now);
   }
 
   /** Budget pacing (Phase K): month-to-date spend vs an optional
@@ -1355,7 +1374,10 @@ export class AdsService {
     return { integrationId: integration.id, connectedAccounts: [this.serializeAccount(account)] };
   }
 
-  async syncGoogleInsights(organizationId: string, actorId: string, accountId: string, dto: { since?: string; until?: string }) {
+  async syncGoogleInsights(organizationId: string, actorId: string, accountId: string, dto: { since?: string; until?: string }, opts?: { fromJob?: boolean }) {
+    // CC27: manual triggers are deny-gated; the scheduled job
+    // path passes fromJob and is not (see syncInsightsJob).
+    if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
     if (account.platform !== "google") throw new BadRequestException("This is not a Google Ads account");
     this.assertSyncEnabled(account);
@@ -1417,7 +1439,10 @@ export class AdsService {
     return { integrationId: integration.id, connectedAccounts: [this.serializeAccount(account)] };
   }
 
-  async syncTikTokInsights(organizationId: string, actorId: string, accountId: string, dto: { since?: string; until?: string }) {
+  async syncTikTokInsights(organizationId: string, actorId: string, accountId: string, dto: { since?: string; until?: string }, opts?: { fromJob?: boolean }) {
+    // CC27: manual triggers are deny-gated; the scheduled job
+    // path passes fromJob and is not (see syncInsightsJob).
+    if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
     if (account.platform !== "tiktok") throw new BadRequestException("This is not a TikTok Ads account");
     this.assertSyncEnabled(account);

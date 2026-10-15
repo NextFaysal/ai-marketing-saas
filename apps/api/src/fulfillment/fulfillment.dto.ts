@@ -27,6 +27,26 @@ export class UpdateFulfillmentDto {
   @IsOptional() @IsString() @MaxLength(60) courierProvider?: string;
 }
 
+// ---- ON6: Fulfillment Excellence ----
+
+export class UpdateFulfillmentSettingsDto {
+  @IsOptional() @IsInt() @Min(1) @Max(720) confirmToPackHours?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(720) packToHandoverHours?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(720) stuckDays?: number;
+}
+
+export class CreatePickWaveDto {
+  @IsArray() @IsString({ each: true }) orderIds!: string[];
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+export class RecordDeliveryAttemptDto {
+  @IsOptional() @IsString() @MaxLength(80) shipmentId?: string;
+  @IsString() outcome!: string;
+  @IsOptional() @IsString() @MaxLength(1000) note?: string;
+  @IsOptional() @IsString() @MaxLength(10) rescheduleDate?: string;
+}
+
 export class SubmitReturnItemDto {
   @IsString() orderItemId!: string;
   @IsInt() @Min(1) @Max(9999) quantity!: number;

@@ -62,8 +62,10 @@ export class InventoryService {
     // wiring) keep working; when present, absolute balances after a
     // local stock change are pushed to connected stores.
     @Optional() private readonly catalogPush?: CatalogPushService,
-    // EC28: optional event bus for the back-in-stock hook; LAST
-    // param so existing positional constructions keep working.
+    // EC28 + SU5: optional event bus — EC28 back-in-stock hook and
+    // SU5 social auto-draft producer both ride this param. LAST
+    // param so existing positional constructions keep working
+    // (EventsService is global); fire-and-forget emits.
     @Optional() private readonly events?: EventsService,
   ) {}
 
@@ -313,6 +315,266 @@ export class InventoryService {
     return lines;
   }
 
+  // ---------- ON3: order-edit stock delta ----------
+
+  /**
+   * ON3 — apply the stock effect of an order ITEM EDIT.
+   * `deltaQty` is the change in SOLD quantity for the line
+   * (+ = more sold → stock decreases; − = fewer sold → stock
+   * rises). Mirrors placement's tracked rules exactly: preorder
+   * lines and product-less lines are skipped, the variant is
+   * resolved by (productId, sku) exactly like loadOrderLines,
+   * and an untracked resolved row is skipped with NO
+   * product↔variant fallback. Every applied line writes an
+   * "order_edit" StockMovement (delta is STOCK-signed:
+   * −deltaQty) — applyOrderRestore's Phase B nets these against
+   * the placed movements so a later cancel restores exactly the
+   * net sold quantity.
+   */
+  async applyOrderEditDelta(
+    organizationId: string,
+    orderId: string,
+    lines: Array<{ productId: string | null; sku?: string | null; deltaQty: number; isPreorder?: boolean }>,
+  ): Promise<{ adjusted: number; skipped: number }> {
+    let adjusted = 0;
+    let skipped = 0;
+    for (const line of lines ?? []) {
+      if (line.isPreorder || !line.productId || !line.deltaQty || line.deltaQty === 0) { skipped++; continue; }
+      const deltaQty = line.deltaQty;
+      // Resolve the variant by the loadOrderLines SKU rule.
+      let variant: any = null;
+      if (line.sku) {
+        variant = await (this.prisma as any).productVariant.findFirst({
+          where: { productId: line.productId, sku: line.sku },
+        }).catch(() => null);
+      }
+      let applied = false;
+      if (variant) {
+        if (variant.stockQuantity == null) { skipped++; continue; }
+        const prev = variant.stockQuantity as number;
+        const balanceAfter = prev - deltaQty;
+        await (this.prisma as any).productVariant.update({
+          where: { id: variant.id }, data: { stockQuantity: balanceAfter },
+        });
+        await (this.prisma as any).stockMovement.create({
+          data: {
+            organizationId, productId: line.productId, variantId: variant.id,
+            delta: -deltaQty, balanceAfter, reason: "order_edit", orderId,
+          },
+        });
+        adjusted++;
+        applied = true;
+        const product = await (this.prisma as any).product.findFirst({ where: { id: line.productId, organizationId } });
+        if (product) await this.maybeLowStockAlert(organizationId, product, variant, prev, balanceAfter);
+        await this.notifyStockPush(organizationId, line.productId, variant.id, balanceAfter);
+      } else {
+        const product = await (this.prisma as any).product.findFirst({ where: { id: line.productId, organizationId } });
+        if (!product || product.stockQuantity == null) { skipped++; continue; }
+        const prev = product.stockQuantity as number;
+        const balanceAfter = prev - deltaQty;
+        await (this.prisma as any).product.update({
+          where: { id: product.id }, data: { stockQuantity: balanceAfter },
+        });
+        await (this.prisma as any).stockMovement.create({
+          data: {
+            organizationId, productId: line.productId, variantId: null,
+            delta: -deltaQty, balanceAfter, reason: "order_edit", orderId,
+          },
+        });
+        adjusted++;
+        applied = true;
+        await this.maybeLowStockAlert(organizationId, product, null, prev, balanceAfter);
+        await this.notifyStockPush(organizationId, line.productId, null, balanceAfter);
+      }
+      if (applied) {
+        await this.editBundleComponents(organizationId, orderId, line.productId, deltaQty);
+      }
+    }
+    return { adjusted, skipped };
+  }
+
+  /**
+   * ON3 — the EC4 bundle-composition mirror of
+   * decrementBundleComponents for EDIT deltas: same
+   * resolution/tracked rules and per-component failure
+   * isolation, but WITHOUT the placement idempotency skip and
+   * with SIGNED amounts (a negative deltaQty gives components
+   * back). Movements carry reason "order_edit" so restore
+   * Phase B nets them. Not counted in applyOrderEditDelta's
+   * { adjusted, skipped } — those describe the sold lines only.
+   */
+  private async editBundleComponents(
+    organizationId: string,
+    orderId: string,
+    parentProductId: string,
+    deltaQty: number,
+  ): Promise<void> {
+    try {
+      const bundleTable = (this.prisma as any).bundleItem;
+      if (!bundleTable?.findMany) return;
+      const items = await bundleTable.findMany({
+        where: { organizationId, parentProductId },
+      }).catch(() => null);
+      if (!items) return;
+      for (const item of items as any[]) {
+        try {
+          const needed = (item.quantity as number) * deltaQty;
+          if (!needed) continue;
+          const componentProductId = item.componentProductId as string;
+          const componentVariantId = (item.componentVariantId ?? null) as string | null;
+          if (componentVariantId) {
+            const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: componentVariantId } });
+            if (!variant || variant.stockQuantity == null) continue;
+            const prev = variant.stockQuantity as number;
+            const balanceAfter = prev - needed;
+            await (this.prisma as any).productVariant.update({
+              where: { id: variant.id }, data: { stockQuantity: balanceAfter },
+            });
+            await (this.prisma as any).stockMovement.create({
+              data: {
+                organizationId, productId: componentProductId, variantId: componentVariantId,
+                delta: -needed, balanceAfter, reason: "order_edit", orderId,
+              },
+            });
+            const componentProduct = await (this.prisma as any).product.findFirst({
+              where: { id: componentProductId, organizationId },
+            });
+            if (componentProduct) await this.maybeLowStockAlert(organizationId, componentProduct, variant, prev, balanceAfter);
+            await this.notifyStockPush(organizationId, componentProductId, componentVariantId, balanceAfter);
+          } else {
+            const componentProduct = await (this.prisma as any).product.findFirst({
+              where: { id: componentProductId, organizationId },
+            });
+            if (!componentProduct || componentProduct.stockQuantity == null) continue;
+            const prev = componentProduct.stockQuantity as number;
+            const balanceAfter = prev - needed;
+            await (this.prisma as any).product.update({
+              where: { id: componentProduct.id }, data: { stockQuantity: balanceAfter },
+            });
+            await (this.prisma as any).stockMovement.create({
+              data: {
+                organizationId, productId: componentProductId, variantId: null,
+                delta: -needed, balanceAfter, reason: "order_edit", orderId,
+              },
+            });
+            await this.maybeLowStockAlert(organizationId, componentProduct, null, prev, balanceAfter);
+            await this.notifyStockPush(organizationId, componentProductId, null, balanceAfter);
+          }
+        } catch (e) {
+          this.logger.warn(`bundle component edit failed for parent ${parentProductId}: ${e instanceof Error ? e.message : "unknown"}`);
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`bundle edit expansion failed for parent ${parentProductId}: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+  }
+
+  // ---------- ON3: ledger-only stock transfer (split / merge) ----------
+
+  /**
+   * ON3 — record that sold stock moved from one order to
+   * another (split-out child / merge survivor) WITHOUT changing
+   * any balance: the goods were already decremented once, at
+   * the original placement.
+   *
+   * Reason mapping (documented because restore depends on it):
+   * - FROM order: "order_edit" with delta +quantity. Restore
+   *   Phase B nets order_edit against the from-order's placed
+   *   movements, so cancelling the from-order afterwards
+   *   restores only what stayed on it.
+   * - TO order (sold line): "order_placed" with delta −quantity.
+   *   Restore Phase A replays order_placed movements, so
+   *   cancelling the to-order restores the transferred qty.
+   * - TO order (EC4 bundle components): "bundle_component"
+   *   with delta −componentQty — Phase A reads order_placed +
+   *   bundle_component. FROM-order components mirror as
+   *   "order_edit" +componentQty (Phase B nets them there).
+   * balanceAfter on every movement is the CURRENT (unchanged)
+   * balance. Untracked / missing rows skip that line entirely.
+   */
+  async recordStockTransfer(
+    organizationId: string,
+    fromOrderId: string,
+    toOrderId: string,
+    lines: Array<{ productId: string | null; sku?: string | null; quantity: number; isPreorder?: boolean }>,
+  ): Promise<{ recorded: number; skipped: number }> {
+    let recorded = 0;
+    let skipped = 0;
+    for (const line of lines ?? []) {
+      if (line.isPreorder || !line.productId || !line.quantity || line.quantity <= 0) { skipped++; continue; }
+      let variant: any = null;
+      if (line.sku) {
+        variant = await (this.prisma as any).productVariant.findFirst({
+          where: { productId: line.productId, sku: line.sku },
+        }).catch(() => null);
+      }
+      let balance: number | null = null;
+      let variantId: string | null = null;
+      if (variant) {
+        if (variant.stockQuantity == null) { skipped++; continue; }
+        balance = variant.stockQuantity as number;
+        variantId = variant.id;
+      } else {
+        const product = await (this.prisma as any).product.findFirst({ where: { id: line.productId, organizationId } });
+        if (!product || product.stockQuantity == null) { skipped++; continue; }
+        balance = product.stockQuantity as number;
+      }
+      await (this.prisma as any).stockMovement.create({
+        data: {
+          organizationId, productId: line.productId, variantId,
+          delta: line.quantity, balanceAfter: balance, reason: "order_edit", orderId: fromOrderId,
+        },
+      });
+      await (this.prisma as any).stockMovement.create({
+        data: {
+          organizationId, productId: line.productId, variantId,
+          delta: -line.quantity, balanceAfter: balance, reason: "order_placed", orderId: toOrderId,
+        },
+      });
+      recorded++;
+      // EC4 components mirror on both orders (failure-isolated).
+      try {
+        const bundleTable = (this.prisma as any).bundleItem;
+        if (bundleTable?.findMany) {
+          const items = await bundleTable.findMany({
+            where: { organizationId, parentProductId: line.productId },
+          }).catch(() => null);
+          for (const item of (items as any[]) ?? []) {
+            try {
+              const compQty = (item.quantity as number) * line.quantity;
+              if (!compQty || compQty <= 0) continue;
+              const componentProductId = item.componentProductId as string;
+              const componentVariantId = (item.componentVariantId ?? null) as string | null;
+              let compBalance: number | null = null;
+              if (componentVariantId) {
+                const cv = await (this.prisma as any).productVariant.findFirst({ where: { id: componentVariantId } });
+                if (!cv || cv.stockQuantity == null) continue;
+                compBalance = cv.stockQuantity as number;
+              } else {
+                const cp = await (this.prisma as any).product.findFirst({ where: { id: componentProductId, organizationId } });
+                if (!cp || cp.stockQuantity == null) continue;
+                compBalance = cp.stockQuantity as number;
+              }
+              await (this.prisma as any).stockMovement.create({
+                data: {
+                  organizationId, productId: componentProductId, variantId: componentVariantId,
+                  delta: compQty, balanceAfter: compBalance, reason: "order_edit", orderId: fromOrderId,
+                },
+              });
+              await (this.prisma as any).stockMovement.create({
+                data: {
+                  organizationId, productId: componentProductId, variantId: componentVariantId,
+                  delta: -compQty, balanceAfter: compBalance, reason: "bundle_component", orderId: toOrderId,
+                },
+              });
+            } catch { /* per-component isolation, as in placement */ }
+          }
+        }
+      } catch { /* bundle mirror never breaks a transfer */ }
+    }
+    return { recorded, skipped };
+  }
+
   // ---------- Order restore (cancel / return) ----------
 
   async applyOrderRestore(
@@ -332,7 +594,11 @@ export class InventoryService {
     const placed = await (this.prisma as any).stockMovement.findMany({
       where: { orderId, reason: { in: ["order_placed", "bundle_component"] } },
     });
-    if (!placed.length) return { restored: 0, skipped: 0 };
+    if (!placed.length) {
+      // ON3 Phase B can still apply on its own (an order whose
+      // only stock movements came from item edits).
+      return this.applyRestoreNetting(organizationId, orderId, reason, 0, 0);
+    }
     // An order restored once (either reason) must never restore
     // twice — collect every line already restored under EITHER
     // restore reason.
@@ -384,6 +650,102 @@ export class InventoryService {
         restored++;
         await this.notifyStockPush(organizationId, movement.productId, null, balanceAfter);
         this.emitStockIncreased(organizationId, movement.productId, null, product.stockQuantity as number, balanceAfter);
+      }
+    }
+    // ON3 Phase B: net the order_edit movements (item edits +
+    // split/merge transfers) against what Phase A just restored.
+    return this.applyRestoreNetting(organizationId, orderId, reason, restored, skipped);
+  }
+
+  /**
+   * ON3 restore Phase B — netting. Phase A above replays the
+   * PLACED movements exactly; item edits after placement (and
+   * split/merge transfers) mean the placed quantity is no
+   * longer the net sold quantity. For each stock key in the
+   * union of placed-family (order_placed, bundle_component)
+   * and order_edit movements:
+   *   target  = −Σ deltas over those three reasons
+   *             (the total quantity that must end up restored)
+   *   already = Σ deltas over the RESTORE_REASONS movements
+   *             (queried FRESH, after Phase A, so Phase A's own
+   *             writes count)
+   *   diff    = target − already
+   * A non-zero diff is written as one more restore movement
+   * (delta = diff; diff may be NEGATIVE — Phase A over-restored
+   * when units were edited away / transferred out). Counting
+   * choice: `restored` increments only when diff > 0 (a real
+   * give-back); a negative correction is a ledger fix, not a
+   * restoration. Idempotent by construction: a second restore
+   * computes diff 0 for every key.
+   */
+  private async applyRestoreNetting(
+    organizationId: string,
+    orderId: string,
+    reason: RestoreReason,
+    restored: number,
+    skipped: number,
+  ): Promise<{ restored: number; skipped: number }> {
+    const edits = await (this.prisma as any).stockMovement.findMany({
+      where: { orderId, reason: "order_edit" },
+    }).catch(() => []);
+    if (!(edits as any[]).length) return { restored, skipped };
+
+    const placedFamily = await (this.prisma as any).stockMovement.findMany({
+      where: { orderId, reason: { in: ["order_placed", "bundle_component", "order_edit"] } },
+    });
+    const restoreRows = await (this.prisma as any).stockMovement.findMany({
+      where: { orderId, reason: { in: [...RESTORE_REASONS] } },
+    });
+    const targetByKey = new Map<string, { productId: string; variantId: string | null; target: number }>();
+    for (const m of placedFamily as any[]) {
+      const key = `${m.productId}::${m.variantId ?? ""}`;
+      const entry = targetByKey.get(key) ?? { productId: m.productId, variantId: m.variantId ?? null, target: 0 };
+      entry.target += -(m.delta as number);
+      targetByKey.set(key, entry);
+    }
+    const alreadyByKey = new Map<string, number>();
+    for (const m of restoreRows as any[]) {
+      const key = `${m.productId}::${m.variantId ?? ""}`;
+      alreadyByKey.set(key, (alreadyByKey.get(key) ?? 0) + (m.delta as number));
+    }
+
+    for (const [key, entry] of targetByKey) {
+      const diff = entry.target - (alreadyByKey.get(key) ?? 0);
+      if (diff === 0) continue;
+      if (entry.variantId) {
+        const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: entry.variantId } });
+        if (!variant || variant.stockQuantity == null) { skipped++; continue; }
+        const prev = variant.stockQuantity as number;
+        const balanceAfter = prev + diff;
+        await (this.prisma as any).productVariant.update({
+          where: { id: variant.id }, data: { stockQuantity: balanceAfter },
+        });
+        await (this.prisma as any).stockMovement.create({
+          data: {
+            organizationId, productId: entry.productId, variantId: entry.variantId,
+            delta: diff, balanceAfter, reason, orderId,
+          },
+        });
+        if (diff > 0) restored++;
+        await this.notifyStockPush(organizationId, entry.productId, entry.variantId, balanceAfter);
+        if (diff > 0) this.emitStockIncreased(organizationId, entry.productId, variant, prev, balanceAfter);
+      } else {
+        const product = await (this.prisma as any).product.findFirst({ where: { id: entry.productId, organizationId } });
+        if (!product || product.stockQuantity == null) { skipped++; continue; }
+        const prev = product.stockQuantity as number;
+        const balanceAfter = prev + diff;
+        await (this.prisma as any).product.update({
+          where: { id: product.id }, data: { stockQuantity: balanceAfter },
+        });
+        await (this.prisma as any).stockMovement.create({
+          data: {
+            organizationId, productId: entry.productId, variantId: null,
+            delta: diff, balanceAfter, reason, orderId,
+          },
+        });
+        if (diff > 0) restored++;
+        await this.notifyStockPush(organizationId, entry.productId, null, balanceAfter);
+        if (diff > 0) this.emitStockIncreased(organizationId, entry.productId, null, prev, balanceAfter);
       }
     }
     return { restored, skipped };
@@ -454,6 +816,12 @@ export class InventoryService {
     // purchase-receive, stock counts and return restock — a
     // 0 → >0 transition here fires the back-in-stock hook.
     this.emitStockIncreased(organizationId, productId, variant, current, newBalance);
+    // SU5 (INT5 union, in addition to the EC28 hook above):
+    // product-level (NOT variant) restock from zero may become a
+    // social DRAFT when the org enabled the trigger.
+    if (!variant && current <= 0 && newBalance > 0) {
+      this.events?.emit?.("social_draft.back_in_stock", { organizationId, productId });
+    }
     return { productId, variantId: variant?.id ?? null, stockQuantity: newBalance, movement };
   }
 

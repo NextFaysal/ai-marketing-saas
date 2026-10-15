@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { API_URL, apiFetch, formatMinorStr, getAdminToken } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Summary {
   mrrMinor: string; trialingCount: number; perPlan: Record<string, number>;
@@ -184,7 +185,7 @@ export default function BillingPage() {
               <thead className="bg-slate-900"><tr><th className="ath">তারিখ</th><th className="ath">Organization</th><th className="ath">পরিমাণ (নিট)</th><th className="ath">মাধ্যম</th><th className="ath">রেফারেন্স</th><th className="ath"></th></tr></thead>
               <tbody>{payments.map((p) => (
                 <tr key={p.id} className="border-t border-slate-800">
-                  <td className="atd text-slate-400">{new Date(p.createdAt).toLocaleString("bn-BD")}</td>
+                  <td className="atd text-slate-400">{fmtDateTime(p.createdAt)}</td>
                   <td className="atd">{p.organizationName ?? p.organizationId}</td>
                   <td className="atd">৳ {formatMinorStr(p.netMinor ?? p.amountMinor)}
                     {p.refundedMinor && p.refundedMinor !== "0" ? <div className="text-xs text-amber-300">ফেরত ৳ {formatMinorStr(p.refundedMinor)} (মোট ৳ {formatMinorStr(p.amountMinor)})</div> : null}
@@ -223,7 +224,7 @@ export default function BillingPage() {
                     <thead><tr><th className="ath">সময়</th><th className="ath">Org / প্ল্যান</th><th className="ath">Gateway</th><th className="ath">পরিমাণ</th><th className="ath">অবস্থা</th><th className="ath"></th></tr></thead>
                     <tbody>{checkouts.map((c) => (
                       <tr key={c.id}>
-                        <td className="atd text-slate-400">{new Date(c.createdAt).toLocaleString("bn-BD")}</td>
+                        <td className="atd text-slate-400">{fmtDateTime(c.createdAt)}</td>
                         <td className="atd">{c.organizationName ?? "—"}<div className="text-xs text-slate-500">{c.plan} · {c.tranId}{c.couponCode ? ` · 🎟 ${c.couponCode}` : ""}</div></td>
                         <td className="atd">{c.gateway}</td>
                         <td className="atd">৳ {formatMinorStr(c.amountMinor)}{c.discountMinor !== "0" ? <div className="text-xs text-slate-500">ছাড় ৳ {formatMinorStr(c.discountMinor)}</div> : null}</td>

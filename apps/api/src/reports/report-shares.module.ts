@@ -8,9 +8,10 @@ import { ReportExportService } from "./report-export.service";
 import { ReportGoalsService } from "./report-goals.service";
 import { ExecutiveService } from "./executive.service";
 import { AnalyticsModule } from "../analytics/analytics.module";
+import { CampaignsModule } from "../campaigns/campaigns.module";
 
 @Module({
-  imports: [AnalyticsModule],
+  imports: [AnalyticsModule, CampaignsModule],
   controllers: [ReportSharesController, PublicReportsController, ReportsController],
   providers: [ReportSharesService, ReportCenterService, CustomReportsService, ReportExportService, ReportGoalsService, ExecutiveService],
   exports: [ReportSharesService, ReportCenterService, CustomReportsService, ReportExportService, ReportGoalsService, ExecutiveService],

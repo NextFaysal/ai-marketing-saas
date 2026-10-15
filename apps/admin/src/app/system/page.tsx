@@ -3,6 +3,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Version {
   appVersion: string; gitSha: string | null; nodeVersion: string; environment: string;
@@ -106,6 +107,28 @@ export default function SystemPage() {
     apiFetch<LogRow[]>(`/admin/system/logs?take=60${logQ ? `&q=${encodeURIComponent(logQ)}` : ""}`).then(setLogs).catch(() => setLogs([]));
   }, [logQ]);
 
+  // AB3 / AN12: queue operator actions — reason বাধ্যতামূলক (Audit-এ
+  // থাকে), API-র ফলাফল হুবহু দেখানো হয়। Drain/Delete জাতীয় কোনো
+  // ধ্বংসাত্মক action এখানে নেই।
+  async function queueAction(queue: string, action: "pause" | "resume" | "retry-failed") {
+    const reason = window.prompt(`${queue} queue — ${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`);
+    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    try {
+      const out = await apiFetch<any>(`/admin/system/queues/${queue}/${action}`, { method: "POST", body: JSON.stringify({ reason }) });
+      if (out.available === false) {
+        setMsg(`⚠ ${queue}: action করা যায়নি — ${out.reason ?? out.error ?? "queue উপলব্ধ নয়"}`);
+      } else if (action === "retry-failed") {
+        const fails = (out.results ?? []).filter((r: any) => !r.retried).map((r: any) => `#${r.id}: ${r.error}`).join("; ");
+        setMsg(`✅ ${queue}: ${out.requested}টি ব্যর্থ Job-এর মধ্যে ${out.retried}টি আবার queue-তে গেছে (Failed ছিল ${out.failedBefore} → এখন ${out.failedAfter})।${fails ? ` হয়নি: ${fails}` : ""}`);
+      } else {
+        setMsg(`✅ ${queue}: ${action === "pause" ? "Pause করা হয়েছে" : "Resume করা হয়েছে"} (Paused: ${out.paused ? "হ্যাঁ" : "না"})।`);
+      }
+      await load();
+    } catch (e) {
+      setMsg(`❌ ${queue}: ${e instanceof Error ? e.message : "action ব্যর্থ হয়েছে"}`);
+    }
+  }
+
   return (
     <AdminShell title="🖥 System & Reliability">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
@@ -156,7 +179,7 @@ export default function SystemPage() {
             <div className="space-y-1 text-sm">
               <div>Version: <b>{version.appVersion}</b> · Git: <b>{version.gitSha ? version.gitSha.slice(0, 10) : "সেট নেই (GIT_SHA env)"}</b></div>
               <div>Node: {version.nodeVersion} · পরিবেশ: {version.environment}</div>
-              <div>চালু আছে: {fmtUptime(version.uptimeSeconds)} (Boot {new Date(version.bootTime).toLocaleString("bn-BD")})</div>
+              <div>চালু আছে: {fmtUptime(version.uptimeSeconds)} (Boot {fmtDateTime(version.bootTime)})</div>
               <div>Database: {version.database.reachable ? <span className="abadge-green">পৌঁছানো যাচ্ছে · {version.database.latencyMs}ms</span> : <span className="abadge-red">পৌঁছানো যাচ্ছে না</span>}</div>
               <div>Migration প্রয়োগ হয়েছে: <b>{version.migrations ? version.migrations.applied : "—"}</b>{version.migrations?.latest ? ` · সর্বশেষ ${version.migrations.latest}` : ""}</div>
               <p className="text-xs text-slate-500">Dokploy তে GIT_SHA / APP_VERSION env দিলে এখানে Deploy এর পরিচয় দেখাবে। Migration সংখ্যা আসে সরাসরি Database থেকে।</p>
@@ -185,7 +208,7 @@ export default function SystemPage() {
                     </div>
                     <div>Redis: {queues.worker.health?.redis === "ok" ? <span className="text-emerald-500">ঠিক আছে</span> : <span className="text-red-400">সমস্যা ({queues.worker.health?.redis ?? "?"})</span>}
                       {" "}· Job Secret: {queues.worker.health?.secretConfigured ? "সেট আছে" : <span className="text-red-400">সেট নেই — Job চলবে না</span>}</div>
-                    <div className="text-xs text-slate-400">Queue: {(queues.worker.health?.queues ?? []).join(", ") || "—"} · যাচাই {new Date(queues.worker.checkedAt).toLocaleTimeString("bn-BD")}</div>
+                    <div className="text-xs text-slate-400">Queue: {(queues.worker.health?.queues ?? []).join(", ") || "—"} · যাচাই {fmtDateTime(queues.worker.checkedAt, "time")}</div>
                   </div>
                 ) : (
                   <div className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
@@ -196,16 +219,24 @@ export default function SystemPage() {
                 {queues.bullmq ? (
                   queues.bullmq.available ? (
                     <table className="atable mt-2">
-                      <thead><tr><th className="ath">BullMQ Queue</th><th className="ath">Waiting</th><th className="ath">Active</th><th className="ath">Delayed</th><th className="ath">Failed</th><th className="ath">Completed</th></tr></thead>
+                      <thead><tr><th className="ath">BullMQ Queue</th><th className="ath">Waiting</th><th className="ath">Active</th><th className="ath">Delayed</th><th className="ath">Failed</th><th className="ath">Completed</th><th className="ath">Action (AB3)</th></tr></thead>
                       <tbody>{queues.bullmq.queues.map((q) => (
                         <tr key={q.name} className="border-t border-slate-800">
                           <td className="atd font-medium">{q.name}</td><td className="atd">{q.waiting}</td><td className="atd">{q.active}</td><td className="atd">{q.delayed}</td>
                           <td className="atd">{q.failed > 0 ? <span className="text-red-400 font-semibold">{q.failed}</span> : q.failed}</td><td className="atd">{q.completed}</td>
+                          <td className="atd">
+                            <div className="flex flex-wrap gap-1.5">
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => queueAction(q.name, "pause")}>Pause</button>
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => queueAction(q.name, "resume")}>Resume</button>
+                              <button className="abtn-secondary !px-2 !py-0.5 text-xs" disabled={q.failed === 0} onClick={() => queueAction(q.name, "retry-failed")}>ব্যর্থ আবার চেষ্টা</button>
+                            </div>
+                          </td>
                         </tr>
                       ))}</tbody>
                     </table>
                   ) : <p className="mt-1 text-xs text-slate-500">BullMQ count পাওয়া যাচ্ছে না: {queues.bullmq.reason ?? queues.bullmq.error ?? ""}</p>
                 ) : null}
+                {queues.bullmq?.available ? <p className="mt-1 text-xs text-slate-500">Queue action (Pause/Resume/Retry) শুধু SUPER Admin-এর জন্য, প্রতিটিতে কারণ বাধ্যতামূলক ও Audit-এ থাকে। Queue খালি করা (drain) বা Job মোছার কোনো action ইচ্ছা করেই রাখা হয়নি।</p> : null}
               </div>
             </div>
           )}
@@ -218,7 +249,7 @@ export default function SystemPage() {
           <div className="space-y-1.5 text-sm">
             <div>ব্যর্থ Send (২৪ ঘণ্টা): <b>{inboxHealth.failedSends24h}</b> · Webhook Error (২৪ ঘণ্টা): <b>{inboxHealth.webhookErrors24h}</b></div>
             {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — {f.error ?? ""}</div>)}
-            <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${new Date(inboxHealth.oldestUnassignedAt).toLocaleString("bn-BD")}` : ""}</div>
+            <div>অ্যাসাইনবিহীন খোলা কথোপকথন: <b>{inboxHealth.unassignedOpenBacklog}</b>{inboxHealth.oldestUnassignedAt ? ` · সবচেয়ে পুরনো: ${fmtDateTime(inboxHealth.oldestUnassignedAt)}` : ""}</div>
             <div>সংরক্ষিত মিডিয়া (Pipeline): <b>{inboxHealth.mediaStoredTotal}</b>টি ফাইল</div>
             <div className="text-xs text-slate-400">{inboxHealth.realtime}</div>
             <div className="flex flex-wrap gap-1.5 pt-1">
@@ -240,7 +271,7 @@ export default function SystemPage() {
             {dlq.entries.map((e: any) => (
               <div key={e.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">
                 <span className="font-semibold">{e.jobType ?? "job"}</span>
-                <span className="text-slate-400">{e.createdAt ? new Date(e.createdAt).toLocaleString("bn-BD") : ""} · {e.attempts} বার চেষ্টা</span>
+                <span className="text-slate-400">{e.createdAt ? fmtDateTime(e.createdAt) : ""} · {e.attempts} বার চেষ্টা</span>
                 <span className="min-w-0 flex-1 truncate" title={e.error}>{e.error}</span>
                 {e.replayedAt ? <span className="text-emerald-500">↻ Replay হয়েছে</span> : (
                   <button className="rounded bg-white/10 px-2 py-0.5 font-semibold hover:bg-white/20" onClick={async () => {
@@ -271,7 +302,7 @@ export default function SystemPage() {
                 <span className="font-medium">{w.provider}</span>
                 <span className="text-slate-400">{w.topic ?? "—"}</span>
                 {w.organizationId ? <a className="text-indigo-300 hover:underline" href={`/orgs/${w.organizationId}`} onClick={(e) => e.stopPropagation()}>{w.organizationName ?? w.organizationId}</a> : <span className="text-slate-500">—</span>}
-                <span className="text-xs text-slate-500">{new Date(w.receivedAt).toLocaleString("bn-BD")}</span>
+                <span className="text-xs text-slate-500">{fmtDateTime(w.receivedAt)}</span>
                 {w.error ? <span className="text-xs text-red-400">{w.error}</span> : null}
               </button>
             ))}
@@ -296,7 +327,7 @@ export default function SystemPage() {
             {errors.sources.map((s) => (
               <div key={s.source} className="rounded-xl border border-slate-800 p-3">
                 <div className="flex items-center justify-between"><b className="text-sm">{s.source}</b><span className={s.count > 0 ? "abadge-red" : "abadge-green"}>{s.count}</span></div>
-                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{new Date(e.at).toLocaleString("bn-BD")}</span></div>)}
+                {s.latest.map((e, i) => <div key={i} className="mt-1.5 text-xs text-slate-400">{e.title} — {e.detail ?? ""} <span className="text-slate-600">{fmtDateTime(e.at)}</span></div>)}
                 {s.count === 0 ? <p className="mt-1 text-xs text-slate-500">কোনো Error নেই।</p> : null}
               </div>
             ))}
@@ -322,7 +353,7 @@ export default function SystemPage() {
           <p className="text-xs text-slate-500">আসল Backup হয় অ্যাপের বাইরে (Dokploy/Postgres)। অ্যাপ যেটা যাচাই করতে পারে তা হলো ডেটার বর্তমান Integrity — নিচের Manifest টি লাইভ Row Count থেকে তৈরি। বাইরের Backup এর তথ্য Operator রেকর্ড করেন।</p>
           {backup?.manifest ? (
             <div className="rounded-xl bg-slate-800 px-3 py-2 text-sm">
-              ✅ সর্বশেষ যাচাই {new Date(backup.manifest.at).toLocaleString("bn-BD")} — মোট <b>{backup.manifest.totalRows.toLocaleString()}</b> Row, {Object.keys(backup.manifest.tables).length} টি Core Table · যাচাই করেছেন {backup.manifest.verifiedBy}
+              ✅ সর্বশেষ যাচাই {fmtDateTime(backup.manifest.at)} — মোট <b>{backup.manifest.totalRows.toLocaleString()}</b> Row, {Object.keys(backup.manifest.tables).length} টি Core Table · যাচাই করেছেন {backup.manifest.verifiedBy}
             </div>
           ) : <p className="text-sm text-slate-500">এখনো কোনো Integrity যাচাই হয়নি।</p>}
           <button className="abtn" onClick={async () => {
@@ -338,7 +369,7 @@ export default function SystemPage() {
               try { await apiFetch("/admin/system/backup-info", { method: "PATCH", body: JSON.stringify({ lastBackupAt: bkAt ? new Date(bkAt).toISOString() : null, location: bkLocation, note: bkNote }) }); setMsg("Backup তথ্য সেভ হয়েছে।"); await load(); }
               catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
             }}>রেকর্ড সেভ করুন</button>
-            {backup?.info ? <p className="text-xs text-slate-500">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? new Date(backup.info.lastBackupAt).toLocaleString("bn-BD") : "—"} · {backup.info.location}</p> : null}
+            {backup?.info ? <p className="text-xs text-slate-500">রেকর্ড করেছেন {backup.info.recordedBy} · শেষ Backup: {backup.info.lastBackupAt ? fmtDateTime(backup.info.lastBackupAt) : "—"} · {backup.info.location}</p> : null}
           </div>
         </div>
       </div>
@@ -352,7 +383,7 @@ export default function SystemPage() {
         <table className="atable">
           <thead><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Org</th><th className="ath">IP</th></tr></thead>
           <tbody>{logs.map((l, i) => (
-            <tr key={i} className="border-t border-slate-800"><td className="atd text-slate-400">{new Date(l.at).toLocaleString("bn-BD")}</td><td className="atd font-medium">{l.action}</td><td className="atd">{l.entityType ?? "—"}</td><td className="atd">{l.organizationId ? l.organizationId.slice(0, 8) + "…" : "platform"}</td><td className="atd">{(l as any).ip ?? "—"}</td></tr>
+            <tr key={i} className="border-t border-slate-800"><td className="atd text-slate-400">{fmtDateTime(l.at)}</td><td className="atd font-medium">{l.action}</td><td className="atd">{l.entityType ?? "—"}</td><td className="atd">{l.organizationId ? l.organizationId.slice(0, 8) + "…" : "platform"}</td><td className="atd">{(l as any).ip ?? "—"}</td></tr>
           ))}</tbody>
         </table>
         {logs.length === 0 ? <p className="p-3 text-sm text-slate-500">কোনো Log নেই।</p> : null}

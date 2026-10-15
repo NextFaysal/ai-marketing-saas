@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { decryptJson } from "../integrations/crypto";
 import { MetaMessagingClient, MessagingSecrets } from "./meta-messaging.client";
 import { CommentClassifier } from "./comment-classifier";
@@ -69,6 +70,11 @@ export class SocialCommentsService {
         urgentAlertTelegramEnabled: dto.urgentAlertTelegramEnabled ?? existing.urgentAlertTelegramEnabled,
         telegramChatId: dto.telegramChatId !== undefined ? dto.telegramChatId : existing.telegramChatId,
         telegramBotToken: dto.telegramBotToken !== undefined ? dto.telegramBotToken : existing.telegramBotToken,
+        // CC27: record the CONFIGURING actor on the settings row
+        // itself — the AI auto-reply deny gate reads exactly this
+        // (see aiAutoReplyDenied). Default-minted rows keep null:
+        // no human configured them, so no actor exists to deny.
+        updatedById: actorId,
       },
     });
 
@@ -108,25 +114,98 @@ export class SocialCommentsService {
     return new MetaMessagingClient(secrets);
   }
 
+  /**
+   * CC27: the Integration a comment action for this platform
+   * would actually send through — the SAME resolution
+   * graphClientFor performs (provider preference order, newest
+   * CONNECTED first). The deny gate checks the member against
+   * THIS row: it is the connection the reply leaves through.
+   * Null when no wired Graph path / no connected integration
+   * exists (graphClientFor then produces its own honest error;
+   * there is no target to deny).
+   */
+  private async resolveGraphIntegration(organizationId: string, platform: string): Promise<any | null> {
+    const providers = this.graphProvidersFor(platform);
+    if (!providers.length) return null;
+    const findFirst = (this.prisma as any).integration?.findFirst;
+    if (!findFirst) return null;
+    return findFirst.call((this.prisma as any).integration, {
+      where: { organizationId, provider: { in: providers }, status: "CONNECTED" },
+      orderBy: { createdAt: "desc" },
+      include: { credential: true },
+    }).catch(() => null);
+  }
+
   private async graphClientFor(organizationId: string, platform: string): Promise<MetaMessagingClient> {
     const providers = this.graphProvidersFor(platform);
     if (!providers.length) {
       throw new BadRequestException(`Meta Graph comment actions are not available for platform "${platform}" — no Graph comment API path is wired for it, so nothing was sent or changed`);
     }
-    const findFirst = (this.prisma as any).integration?.findFirst;
-    const integration = findFirst
-      ? await findFirst.call((this.prisma as any).integration, {
-          where: { organizationId, provider: { in: providers }, status: "CONNECTED" },
-          orderBy: { createdAt: "desc" },
-          include: { credential: true },
-        }).catch(() => null)
-      : null;
+    const integration = await this.resolveGraphIntegration(organizationId, platform);
     if (!integration?.credential) {
       throw new BadRequestException("No connected Meta (Messenger/Instagram) integration for this organization — the comment action cannot reach Meta Graph, so nothing was sent or changed");
     }
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
     if (!secrets?.accessToken) throw new BadRequestException("The connected Meta integration has no access token — the comment action cannot reach Meta Graph, so nothing was sent or changed");
     return this.createGraphClient(secrets);
+  }
+
+  /**
+   * CC27: human comment-reply deny gate. If the acting member is
+   * denied the Integration this reply would be sent through,
+   * refuse BEFORE any Graph call (the CC17 inbox discipline).
+   * No resolvable integration → no gate (graphClientFor's own
+   * error follows); OWNER is never denied (helper semantics).
+   */
+  private async assertCommentReplyAccess(organizationId: string, actorId: string, comment: any): Promise<void> {
+    const integration = await this.resolveGraphIntegration(organizationId, comment.platform);
+    if (!integration?.id) return;
+    if (await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, integration.id)) {
+      throw new ForbiddenException("এই অ্যাকাউন্টে কমেন্টের উত্তর পাঠানোর অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+    }
+  }
+
+  /**
+   * CC27: is the AI comment auto-reply DENIED for this platform?
+   * The actor is the member recorded as having configured the
+   * autopilot settings (SocialReplySetting.updatedById, written
+   * by updateSettings since CC27). No recorded actor (default-
+   * minted or pre-CC27 settings) → NOT denied and NOT gated:
+   * there is nobody whose deny-list could apply, and inventing
+   * an actor would be fake gating (documented in the B12
+   * acceptance). Returns the denying integration id or null.
+   */
+  private async aiAutoReplyDeniedTarget(organizationId: string, settings: any, platform: string): Promise<string | null> {
+    const actorId = settings?.updatedById ?? null;
+    if (!actorId) return null;
+    const integration = await this.resolveGraphIntegration(organizationId, platform);
+    if (!integration?.id) return null;
+    const denied = await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, integration.id);
+    return denied ? integration.id : null;
+  }
+
+  /** CC27: record an AI-reply suppression on the comment itself
+   * (visible in its metadata, not a silent drop) + audit. The
+   * comment stays PENDING — a human answers it. */
+  private async recordAiReplySuppressed(organizationId: string, settings: any, comment: any, integrationId: string): Promise<void> {
+    await (this.prisma as any).socialComment.update({
+      where: { id: comment.id },
+      data: {
+        metadata: this.graphMeta(comment, {
+          denySuppressed: {
+            at: new Date().toISOString(),
+            reason: "settings_actor_connection_denied",
+            actorId: settings?.updatedById ?? null,
+            integrationId,
+          },
+        }),
+      },
+    }).catch(() => undefined);
+    await this.audit.log({
+      organizationId, userId: "system", action: "social_comments.ai_reply_suppressed_denied",
+      entityType: "SocialComment", entityId: comment.id,
+      metadata: { actorId: settings?.updatedById ?? null, integrationId },
+    }).catch(() => undefined);
   }
 
   private graphMeta(comment: any, patch: Record<string, unknown>): Record<string, unknown> {
@@ -480,6 +559,15 @@ export class SocialCommentsService {
    * Never throws — webhook ingest must not break on a send.
    */
   private async attemptInstantGraphReply(organizationId: string, settings: any, comment: any, aiPlan: any): Promise<any> {
+    // CC27: AI auto-reply deny gate — the settings' recorded
+    // configuring actor is denied the account this reply would
+    // leave through → no Graph call; the suppression is recorded
+    // on the comment and it stays PENDING for a human.
+    const deniedTarget = await this.aiAutoReplyDeniedTarget(organizationId, settings, comment.platform).catch(() => null);
+    if (deniedTarget) {
+      await this.recordAiReplySuppressed(organizationId, settings, comment, deniedTarget);
+      return comment;
+    }
     try {
       let client: MetaMessagingClient;
       let graphReplyId: string;
@@ -654,6 +742,18 @@ export class SocialCommentsService {
         if (!fresh || fresh.status !== "PENDING") { skipped++; continue; }
         const settings = await this.getSettings(organizationId);
         if (!settings.aiAutoReplyEnabled) { skipped++; continue; }
+        // CC27: AI auto-reply deny gate (configuring-actor rule,
+        // see aiAutoReplyDeniedTarget). The claim already cleared
+        // aiReplyDueAt, so a suppressed reply is NOT re-due — the
+        // comment stays PENDING for a human, with the suppression
+        // recorded on it (same drop semantics as the CX12d
+        // schedule block below).
+        const deniedTarget = await this.aiAutoReplyDeniedTarget(organizationId, settings, fresh.platform).catch(() => null);
+        if (deniedTarget) {
+          await this.recordAiReplySuppressed(organizationId, settings, fresh, deniedTarget);
+          skipped++;
+          continue;
+        }
         // CX12d DROP SEMANTICS: the claim above already cleared
         // aiReplyDueAt, so a comment whose fire time falls outside
         // the AI schedule is NOT retried later — its pending AI
@@ -754,6 +854,8 @@ export class SocialCommentsService {
     });
     if (!comment) throw new NotFoundException("Comment not found");
 
+    // CC27: deny gate — before any Graph call.
+    await this.assertCommentReplyAccess(organizationId, actorId, comment);
     const client = await this.graphClientFor(organizationId, comment.platform);
     let graphReplyId: string;
     try {
@@ -814,6 +916,8 @@ export class SocialCommentsService {
     if (comment.isPrivateDmSent) {
       throw new BadRequestException("A private reply was already sent for this comment — Meta allows only one private reply per comment");
     }
+    // CC27: deny gate — before any Graph call.
+    await this.assertCommentReplyAccess(organizationId, actorId, comment);
     const client = await this.graphClientFor(organizationId, comment.platform);
     const dm = await this.attemptPrivateDm(organizationId, actorId, comment, message, client);
     if (!dm.sent) throw new BadRequestException(dm.error ?? "Private reply failed");
@@ -968,6 +1072,11 @@ export class SocialCommentsService {
         affected++;
       } else if (action === "AI_REPLY_ALL") {
         try {
+          // CC27: the bulk AI reply is a HUMAN-triggered send —
+          // the acting member's deny-list applies per comment,
+          // refused into the per-item failure list (the path's
+          // native record), never sent.
+          await this.assertCommentReplyAccess(organizationId, actorId, c);
           const suggestion = await this.generateAiSuggestion(organizationId, id);
           const client = await this.graphClientFor(organizationId, c.platform);
           const graphReplyId = (await client.replyToComment(c.externalCommentId, suggestion.aiPlan.publicCommentReply)).commentId;

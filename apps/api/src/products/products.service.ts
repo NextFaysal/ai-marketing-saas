@@ -8,6 +8,7 @@ import { DiscountsService } from "../commerce/discounts.service";
 import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
 import { PromotionsService, type CheckoutEvaluation } from "../commerce/promotions.service";
 import { AffiliatesService } from "../affiliates/affiliates.service";
+import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import type { PromotionLine } from "../commerce/promotions";
 import { computeStockDiverged, pendingOutboxKeys } from "../commerce/stock-divergence";
 import { assertEc24Conditionals, assertPreorderLimit, preorderInfo, validateWholesaleTiers } from "../commerce/ec24";
@@ -127,6 +128,7 @@ function slugify(text: string): string {
 }
 
 import { IntegrationsService } from "../integrations/integrations.service";
+import { EventsService } from "../common/events.service";
 import { PublicCheckoutOrderDto } from "./products.dto";
 import { randomUUID } from "node:crypto";
 
@@ -154,8 +156,23 @@ export class ProductsService {
     // param + Optional, same discipline as EC7; spec harnesses
     // without it keep the EC7 coupon-only block below.
     @Optional() private readonly promotions?: PromotionsService,
-    // EC32: affiliate attribution stamp. LAST param + Optional,
-    // same discipline; the stamp itself never throws.
+    // SU5: commerce auto-draft producer hook. Optional
+    // (EventsService is global); fire-and-forget emit. INT5 union:
+    // events KEEPS slot 8 because the SU5 spec constructs
+    // ProductsService positionally with events as the 8th argument,
+    // while no EC spec passes affiliates positionally.
+    @Optional() private readonly events?: EventsService,
+    // ON4: checkout blocklist refusal. INT6 union: blockedPhones
+    // takes slot 9 because the ON11 spec constructs ProductsService
+    // positionally with the blocklist stub as the 9th argument
+    // (on the orders-next line affiliates held slot 8 with no
+    // events param). Nest injects by type, so production wiring
+    // is unaffected.
+    @Optional() private readonly blockedPhones?: BlockedPhoneService,
+    // EC32: affiliate attribution stamp. INT6 union: moved AFTER
+    // blockedPhones (slot 10) — no EC spec passes affiliates
+    // positionally (the INT5 note above still holds), and the
+    // SU5 events slot (8) is preserved; the stamp never throws.
     @Optional() private readonly affiliates?: AffiliatesService,
   ) {}
 
@@ -301,6 +318,9 @@ export class ProductsService {
       }
     }
     await this.audit.log({ organizationId, userId: actorId, action: "product.create", entityType: "Product", entityId: product.id });
+    // SU5: a new product may become a social DRAFT (never a
+    // publish) when the org enabled the trigger. Fire-and-forget.
+    this.events?.emit?.("social_draft.product_created", { organizationId, productId: product.id });
     // EC3: full-manage stores get a DRAFT listing for the new
     // product (no push yet). Failure-isolated — see pushHook.
     await this.pushHook("createListingsForNewProduct", () =>
@@ -676,6 +696,8 @@ export class ProductsService {
     if (!this.integrations) {
       throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
     }
+    // ON4: blocklist refusal — generic message, never reveals the blocklist.
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(p.organization.id, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
     await this.integrations.upsertOrder(
       p.organization.id,
       null,

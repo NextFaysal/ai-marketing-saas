@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface OrgRow { id: string; name: string; slug: string; status: string; country: string; createdAt: string; memberCount: number; orderCount: number; subscription?: { plan: string; status: string } | null }
 
@@ -38,7 +39,7 @@ export default function OrgsPage() {
         </div>
       ) : null}
       <div className="acard overflow-hidden p-0">
-        <div className="flex gap-2 border-b border-slate-800 p-4">
+        <div className="flex flex-col gap-2 border-b border-slate-800 p-4 sm:flex-row">
           <input className="ainput max-w-sm" placeholder="নাম বা slug দিয়ে খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="abtn-secondary" onClick={load}>খুঁজুন</button>
         </div>
@@ -52,7 +53,7 @@ export default function OrgsPage() {
               <td className="atd">{o.memberCount}</td>
               <td className="atd">{o.orderCount}</td>
               <td className="atd"><span className={o.status === "ACTIVE" ? "abadge-green" : o.status === "SUSPENDED" ? "abadge-amber" : "abadge-red"}>{o.status}</span></td>
-              <td className="atd text-slate-400">{new Date(o.createdAt).toLocaleDateString("bn-BD")}</td>
+              <td className="atd text-slate-400">{fmtDateTime(o.createdAt, "date")}</td>
             </tr>
           ))}</tbody>
         </table>

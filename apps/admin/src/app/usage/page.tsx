@@ -84,7 +84,7 @@ function AiFeatureSection() {
           <option value={30}>শেষ ৩০ দিন</option>
           <option value={90}>শেষ ৯০ দিন</option>
         </select>
-        <input className="ainput !w-64 px-2 py-1 text-sm" placeholder="Org নাম বা ID দিয়ে ফিল্টার" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input className="ainput px-2 py-1 text-sm sm:!w-64" placeholder="Org নাম বা ID দিয়ে ফিল্টার" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={downloadCsv}>⬇ CSV Export</button>
         {loading ? <span className="text-xs text-slate-500">লোড হচ্ছে…</span> : null}
       </div>

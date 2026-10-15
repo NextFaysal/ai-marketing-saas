@@ -1,9 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { decryptJson } from "../integrations/crypto";
 import { orgFlagEnabled } from "../common/feature-flags";
+import { MetaCapiClient } from "../conversions/capi.client";
+import { hashEmail, hashPhone } from "../conversions/conversions.service";
 
 const TRIGGERS = ["placed", "cod_confirmed", "delivered"] as const;
 
@@ -26,6 +29,23 @@ export function googleDateTime(d: Date): string {
  * as sent ONLY when the platform's response confirms it, and an
  * order without a recorded click id is skipped honestly — never
  * sent unkeyed.
+ *
+ * Frontier CN14 (NB6): Meta joins the surface. Spike verdict
+ * (see docs/campaign-builder-nb6-acceptance.md): Meta's legacy
+ * Offline Conversions API / offline event sets were
+ * DISCONTINUED (event-set creation ended May 2024, the API
+ * itself in May 2025) — the current documented path is the
+ * Conversions API to a DATASET: POST /{dataset_id}/events
+ * with action_source "system_generated" for CRM/backend
+ * events, the exact endpoint this codebase's MetaCapiClient
+ * already speaks. The meta upload therefore rides that
+ * client, is keyed by hashed customer data (Meta has no
+ * click id to require), and dedupes against BOTH its own
+ * log and the Conversions API's log: the event_id is the
+ * SAME deterministic `purchase-{orderKey}` ConversionsService
+ * uses, so when that service already delivered the Purchase
+ * to the same dataset, this upload records a skip instead
+ * of double-counting the order.
  */
 @Injectable()
 export class OfflineConversionsService {
@@ -38,6 +58,11 @@ export class OfflineConversionsService {
       this.events.on("order.created", (p) => { void this.handleTrigger(p?.organizationId, p?.context?.orderId, "placed"); });
       this.events.on("order.cod_confirmed", (p) => { void this.handleTrigger(p?.organizationId, p?.context?.orderId, "cod_confirmed"); });
       this.events.on("order.delivered", (p) => { void this.handleTrigger(p?.organizationId, p?.context?.orderId, "delivered"); });
+      // CN14: CRM stage outcomes for Meta lead-ads leads
+      // (LeadsService already emits lead.stage_changed;
+      // the handler itself enforces every gate and never
+      // throws back into the bus).
+      this.events.on("lead.stage_changed", (p) => { void this.sendLeadFeedback(p?.organizationId, p?.context?.leadId, p?.context?.stage).catch(() => undefined); });
     }
   }
 
@@ -48,19 +73,23 @@ export class OfflineConversionsService {
 
   async saveSetting(organizationId: string, actorId: string, platform: string, dto: {
     adAccountId: string; conversionAction?: string; pixelCode?: string; trigger?: string; enabled?: boolean;
+    datasetId?: string; leadFeedbackEnabled?: boolean;
   }) {
-    if (!["google", "tiktok"].includes(platform)) throw new BadRequestException("platform must be google or tiktok");
+    if (!["google", "tiktok", "meta"].includes(platform)) throw new BadRequestException("platform must be google, tiktok or meta");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
     if (!account) throw new NotFoundException("Ad account not found");
     if (account.platform !== platform) throw new BadRequestException(`That ad account is a ${account.platform} account, not ${platform}`);
     if (platform === "google" && !dto.conversionAction?.trim()) throw new BadRequestException("Google needs the offline conversion action id (from Google Ads > Goals > Conversions)");
     if (platform === "tiktok" && !dto.pixelCode?.trim()) throw new BadRequestException("TikTok needs the Events API pixel code");
+    if (platform === "meta" && !dto.datasetId?.trim()) throw new BadRequestException("Meta needs the dataset (pixel) id that receives offline events (Events Manager > Data sources)");
     if (dto.trigger && !(TRIGGERS as readonly string[]).includes(dto.trigger)) throw new BadRequestException("Invalid trigger");
     const existing = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } });
     const data = {
       organizationId, platform, adAccountId: dto.adAccountId,
       conversionAction: dto.conversionAction?.trim() ?? null,
       pixelCode: dto.pixelCode?.trim() ?? null,
+      datasetId: dto.datasetId?.trim() ?? null,
+      leadFeedbackEnabled: dto.leadFeedbackEnabled === true,
       trigger: dto.trigger ?? "cod_confirmed",
       enabled: dto.enabled !== false,
     };
@@ -82,7 +111,7 @@ export class OfflineConversionsService {
     if (!organizationId || !orderId) return;
     // Milestone 40: platform feature flag (offline_conversions).
     if (!(await orgFlagEnabled(this.prisma as any, organizationId, "offline_conversions"))) return;
-    for (const platform of ["google", "tiktok"] as const) {
+    for (const platform of ["google", "tiktok", "meta"] as const) {
       const setting = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } }).catch(() => null);
       if (!setting?.enabled || setting.trigger !== trigger) continue;
       await this.uploadForOrder(organizationId, orderId, platform).catch(() => undefined);
@@ -102,7 +131,7 @@ export class OfflineConversionsService {
     return null;
   }
 
-  private async recordLog(organizationId: string, platform: string, eventId: string, orderId: string, status: string, detail?: string) {
+  private async recordLog(organizationId: string, platform: string, eventId: string, orderId: string | null, status: string, detail?: string) {
     const existing = await (this.prisma as any).offlineConversionLog.findFirst({ where: { organizationId, platform, eventId } });
     if (existing) {
       return (this.prisma as any).offlineConversionLog.update({ where: { id: existing.id }, data: { status, detail: detail ?? null, orderId } });
@@ -120,7 +149,7 @@ export class OfflineConversionsService {
     return { account, secrets: decryptJson<any>(integration.credential.encryptedData) };
   }
 
-  async uploadForOrder(organizationId: string, orderId: string, platform: "google" | "tiktok") {
+  async uploadForOrder(organizationId: string, orderId: string, platform: "google" | "tiktok" | "meta") {
     const setting = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } });
     if (!setting) throw new BadRequestException(`No ${platform} offline conversion setting saved`);
     if (!setting.enabled) throw new BadRequestException(`${platform} offline conversions are disabled`);
@@ -132,6 +161,9 @@ export class OfflineConversionsService {
     if (["cancelled", "refunded"].includes(String(order.status))) {
       return this.recordLog(organizationId, platform, eventId, orderId, "skipped", `order status is ${order.status}`);
     }
+    // CN14: Meta matches on hashed customer data, not a
+    // click id — its own path (dataset dedup + user_data).
+    if (platform === "meta") return this.uploadMetaForOrder(organizationId, order, setting, eventId);
     const clickType = platform === "google" ? "gclid" : "ttclid";
     const clickId = await this.clickIdForOrder(organizationId, orderId, clickType as any);
     if (!clickId) {
@@ -211,8 +243,137 @@ export class OfflineConversionsService {
     return "tiktok confirmed (code 0)";
   }
 
+  /** CN14: one event to a Meta dataset through the
+   *  EXISTING Conversions API client (an event counts as
+   *  sent only when Meta answers events_received >= 1 —
+   *  the client throws otherwise). The token is the Meta
+   *  ad account's own integration token. */
+  private async sendMetaEvent(setting: any, datasetId: string, event: any): Promise<string> {
+    const { secrets } = await this.accountSecrets(setting.organizationId, setting.adAccountId);
+    const token = secrets?.accessToken;
+    if (!token) throw new Error("the Meta ad account's integration has no access token — reconnect Meta Ads");
+    const out = await new MetaCapiClient(String(token)).sendEvents(datasetId, [event]);
+    return `meta confirmed events_received ${out.eventsReceived}${out.fbtraceId ? ` (fbtrace ${out.fbtraceId})` : ""}`;
+  }
+
+  /** CN14: the Meta order upload. Dedup order: this
+   *  surface's own log (checked by the caller) → the
+   *  Conversions API's log for the SAME dataset + SAME
+   *  event_id (already delivered = skip, named) → send.
+   *  The event_id is deterministic (`purchase-{orderKey}`,
+   *  shared with ConversionsService by construction) and
+   *  the log detail says so — Meta also dedupes on
+   *  event_id server-side, but we never rely on that
+   *  alone to avoid a double send. */
+  private async uploadMetaForOrder(organizationId: string, order: any, setting: any, eventId: string) {
+    const datasetId = setting.datasetId?.trim();
+    if (!datasetId) {
+      return this.recordLog(organizationId, "meta", eventId, order.id, "skipped", "the meta offline setting has no datasetId — set the dataset (pixel) id on the setting first");
+    }
+    const capiSetting = await (this.prisma as any).conversionApiSetting?.findFirst?.({ where: { organizationId } }).catch(() => null);
+    if (capiSetting?.pixelId && String(capiSetting.pixelId) === datasetId) {
+      const delivered = await (this.prisma as any).conversionEventLog?.findFirst?.({ where: { organizationId, eventId, status: "sent" } }).catch(() => null);
+      if (delivered) {
+        return this.recordLog(organizationId, "meta", eventId, order.id, "skipped", `already delivered to dataset ${datasetId} by the Conversions API under the same event_id (${eventId}) — not sent twice`);
+      }
+    }
+    const customer = order.customerId
+      ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } }).catch(() => null)
+      : null;
+    const userData: Record<string, unknown> = {};
+    const em = hashEmail(customer?.email); if (em) userData.em = [em];
+    const ph = hashPhone(customer?.phone); if (ph) userData.ph = [ph];
+    if (customer?.id) userData.external_id = [createHash("sha256").update(String(customer.id)).digest("hex")];
+    if (!Object.keys(userData).length) {
+      return this.recordLog(organizationId, "meta", eventId, order.id, "skipped", "no customer email or phone on this order — Meta has nothing to match an offline event to, so nothing was sent");
+    }
+    const items = await (this.prisma as any).orderItem?.findMany?.({ where: { orderId: order.id }, take: 50 }).catch(() => []) ?? [];
+    const key = order.externalNumber ?? order.externalId ?? order.id;
+    const event = {
+      event_name: "Purchase",
+      event_time: Math.floor(new Date(order.placedAt ?? order.createdAt).getTime() / 1000),
+      event_id: eventId,
+      action_source: "system_generated",
+      user_data: userData,
+      custom_data: {
+        currency: order.currency ?? "BDT",
+        value: Number(BigInt(order.totalMinor ?? 0)) / 100,
+        order_id: String(key),
+        num_items: (items as any[]).reduce((s: number, i: any) => s + (i.quantity ?? 1), 0),
+        content_ids: (items as any[]).map((i: any) => i.sku ?? i.name).filter(Boolean).slice(0, 50),
+        content_type: "product",
+      },
+    };
+    try {
+      const detail = await this.sendMetaEvent(setting, datasetId, event);
+      return await this.recordLog(organizationId, "meta", eventId, order.id, "sent", `${detail}; event_id ${eventId} is the deterministic order-derived id shared with the Conversions API`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "upload failed";
+      await this.recordLog(organizationId, "meta", eventId, order.id, "failed", message).catch(() => undefined);
+      throw new BadRequestException(`meta upload did NOT confirm: ${message}`);
+    }
+  }
+
+  /** CN14 lead quality feedback (Meta's Conversion Leads
+   *  payload specification, developers.facebook.com):
+   *  a CRM stage event to the org's dataset —
+   *  event_name = the CRM stage (the spec's free-form
+   *  stage field), action_source "system_generated",
+   *  user_data carrying the lead's Meta leadgen id
+   *  (lead_id; hashed email/phone alongside when known),
+   *  custom_data with the two REQUIRED fields
+   *  lead_event_source + event_source "crm".
+   *  Gates, all required: the meta offline setting exists,
+   *  is enabled, has leadFeedbackEnabled AND a datasetId;
+   *  the lead is a Meta lead-ads lead (only those carry a
+   *  lead_id Meta recognises). Best-effort by design: the
+   *  CRM stage change has already succeeded; every outcome
+   *  lands in OfflineConversionLog and nothing here throws. */
+  async sendLeadFeedback(organizationId?: string, leadId?: string, stage?: string) {
+    if (!organizationId || !leadId || !stage) return;
+    if (!["qualified", "won"].includes(stage)) return;
+    if (!(await orgFlagEnabled(this.prisma as any, organizationId, "offline_conversions").catch(() => false))) return;
+    const setting = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform: "meta" } }).catch(() => null);
+    if (!setting?.enabled || !setting.leadFeedbackEnabled) return;
+    const datasetId = setting.datasetId?.trim();
+    if (!datasetId) return;
+    const lead = await (this.prisma as any).lead.findFirst({ where: { id: leadId, organizationId } }).catch(() => null);
+    if (!lead || lead.source !== "facebook_lead_ads") return;
+    const eventId = `lead-feedback-${lead.id}-${stage}`;
+    const prior = await (this.prisma as any).offlineConversionLog.findFirst({ where: { organizationId, platform: "meta", eventId } }).catch(() => null);
+    if (prior?.status === "sent") return;
+    const userData: Record<string, unknown> = {};
+    const leadgenId = lead.externalId ? String(lead.externalId) : "";
+    // The spec's example carries lead_id as a JSON number;
+    // ids up to 16 digits are exactly representable. A
+    // longer id goes as a string rather than a rounded
+    // number — never a corrupted id.
+    if (/^\d{1,16}$/.test(leadgenId)) userData.lead_id = Number(leadgenId);
+    else if (leadgenId) userData.lead_id = leadgenId;
+    const em = hashEmail(lead.email); if (em) userData.em = [em];
+    const ph = hashPhone(lead.phone); if (ph) userData.ph = [ph];
+    if (!Object.keys(userData).length) {
+      await this.recordLog(organizationId, "meta", eventId, null, "skipped", `lead ${lead.id} stage "${stage}": no lead_id or hashed email/phone to match on — nothing sent`).catch(() => undefined);
+      return;
+    }
+    const event = {
+      event_name: stage,
+      event_time: Math.floor(Date.now() / 1000),
+      event_id: eventId,
+      action_source: "system_generated",
+      user_data: userData,
+      custom_data: { lead_event_source: "Qosprey CRM", event_source: "crm", lead_stage: stage },
+    };
+    try {
+      const detail = await this.sendMetaEvent(setting, datasetId, event);
+      await this.recordLog(organizationId, "meta", eventId, null, "sent", `lead ${lead.id} stage "${stage}" → dataset ${datasetId}: ${detail}`);
+    } catch (e) {
+      await this.recordLog(organizationId, "meta", eventId, null, "failed", e instanceof Error ? e.message : "lead feedback failed").catch(() => undefined);
+    }
+  }
+
   /** Backfill recent orders (respecting dedupe + skips). */
-  async uploadRecent(organizationId: string, platform: "google" | "tiktok", days = 30) {
+  async uploadRecent(organizationId: string, platform: "google" | "tiktok" | "meta", days = 30) {
     const since = new Date(Date.now() - Math.min(90, Math.max(1, days)) * 86400000);
     const orders = await (this.prisma as any).order.findMany({
       where: { organizationId, createdAt: { gte: since } }, orderBy: { createdAt: "desc" }, take: 100,

@@ -1,4 +1,5 @@
 import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -11,10 +12,12 @@ import { EventsService } from "../common/events.service";
 import { SmsProvider, normalizeBdPhone as normalizeSmsPhone } from "../messaging/sms.provider";
 import { EmailProvider } from "../messaging/email.provider";
 import { newTrackingToken, trackingLinkFor } from "./tracking-token";
-import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
+import { buildPdf, shippingLabelPage, invoicePage, challanPage, packingSlipPage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
+import { buildCourierPerformance } from "./courier-performance";
 import { CourierRulesService } from "./courier-rules.service";
+import { OrderNotificationService } from "../order-notifications/order-notifications.service";
+import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -24,8 +27,66 @@ function courierError(e: unknown): Error {
   return new BadGatewayException(`Courier API তে সংযোগ করা যাচ্ছে না: ${e instanceof Error ? e.message : "network error"}`);
 }
 
+/** ON10: the org's print-template fields (PrintTemplateSetting),
+ * passed into the PDF builders by the print center only. Every
+ * field is optional; all-null = the pre-ON10 default documents.
+ * logoUrl is carried for completeness — the dependency-free
+ * toolkit cannot embed raster images, so it does not render
+ * (see the PrintTemplateSetting schema note). */
+export interface PrintTemplateOptions {
+  logoUrl?: string | null;
+  footerText?: string | null;
+  termsText?: string | null;
+  invoiceNote?: string | null;
+}
+
 const PROVIDERS = ["steadfast", "pathao", "redx"] as const;
 type Provider = (typeof PROVIDERS)[number];
+
+/**
+ * CC29 (Connect Center Next): the account key a courier
+ * connection is keyed by — (organizationId, provider,
+ * externalAccountId), the CC2/CC7 discipline. NONE of the three
+ * couriers' verify/me responses returns a real account id:
+ * Steadfast's balance call returns only a balance, Pathao's
+ * token issue + store list identifies merchant OUTLETS (stores
+ * exist many-per-account and are chosen per booking, so a store
+ * id is not an account id), and RedX's verify returns area
+ * geography. The key is therefore a stable CREDENTIAL
+ * FINGERPRINT: sha256 over the credential that identifies the
+ * account, truncated and prefixed — computed server-side from
+ * the sealed credential, never exposing any part of it.
+ * Pathao's fingerprint deliberately uses clientId + username
+ * and NOT the access/refresh tokens: those ROTATE and are
+ * persisted back into the same credential row by the client's
+ * onTokens hook — keying on them would fork the account row at
+ * every refresh. Honest consequence (documented in the B12
+ * acceptance): rotating the fingerprinted credential itself
+ * (a new RedX token, a new Steadfast API key) reads as a NEW
+ * account; the tenant disconnects the stale row.
+ */
+export function courierAccountKey(provider: Provider, creds: Record<string, any>): string {
+  const material =
+    provider === "steadfast" ? String(creds.apiKey ?? "")
+    : provider === "pathao" ? `${String(creds.clientId ?? "")}:${String(creds.username ?? "")}`
+    : String(creds.accessToken ?? "");
+  return `fp_${createHash("sha256").update(material).digest("hex").slice(0, 24)}`;
+}
+
+/**
+ * CC29: which of a provider's account rows is the PRIMARY one —
+ * the CC2 default-resolution every pre-CC29 caller meant by "the"
+ * account: a CONNECTED default first, then the earliest
+ * CONNECTED account, then (for read paths like templates) the
+ * earliest row of any status. Pure + exported for specs.
+ */
+export function pickPrimaryCourierAccount(rows: any[]): any | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const byAge = [...rows].sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+  const connected = byAge.filter((r) => r.status === "CONNECTED");
+  const pool = connected.length > 0 ? connected : byAge;
+  return pool.find((r) => r.isDefault) ?? pool[0] ?? null;
+}
 
 const TERMINAL = ["delivered", "partial_delivered", "cancelled", "returned"];
 const NOTIFY: Record<string, string> = {
@@ -62,12 +123,17 @@ export class CourierService {
     // wiring it into CourierModule adds no cycle.
     @Optional() private readonly sms?: SmsProvider,
     @Optional() private readonly email?: EmailProvider,
-    @Optional() private readonly ndr?: CourierNdrService,
     // EC22: appended LAST + @Optional (same discipline as the
     // deps above) — courier auto-selection rules. Existing specs
     // constructing CourierService positionally keep working; when
     // absent, booking behaves exactly as before.
     @Optional() private readonly rules?: CourierRulesService,
+    // ON5: appended LAST + @Optional (same discipline as the
+    // deps above) — the transactional notification engine.
+    // Existing specs constructing CourierService positionally
+    // keep working; when absent, booking/sync behave as before.
+    @Optional() private readonly orderNotifications?: OrderNotificationService,
+    @Optional() private readonly ndr?: CourierNdrService,
   ) {}
 
   private providerOf(value?: string): Provider {
@@ -76,15 +142,52 @@ export class CourierService {
     return p;
   }
 
-  private async integration(organizationId: string, provider: Provider) {
-    return (this.prisma as any).integration.findFirst({
+  /** CC29: every account row of one provider (oldest first). */
+  private async integrations(organizationId: string, provider: Provider): Promise<any[]> {
+    const rows = await (this.prisma as any).integration.findMany({
       where: { organizationId, provider }, include: { credential: true },
-    });
+    }).catch(() => []);
+    const list = Array.isArray(rows) ? rows : [];
+    // The credential join is part of the query above; this only
+    // backfills when a data layer returned the row without it.
+    for (const row of list) {
+      if (row && row.credential === undefined) {
+        row.credential = await (this.prisma as any).integrationCredential?.findFirst?.({
+          where: { integrationId: row.id },
+        }).catch(() => null) ?? null;
+      }
+    }
+    return list;
   }
 
-  private async saveIntegration(organizationId: string, provider: Provider, secrets: Record<string, unknown>) {
+  /**
+   * The provider's PRIMARY account row (CC29 resolution — see
+   * pickPrimaryCourierAccount). Pre-CC29 this was a bare
+   * findFirst; every caller that means "the account" (quotes,
+   * picker lookups, templates, new bookings without an account
+   * choice) keeps working through this one resolution.
+   */
+  private async integration(organizationId: string, provider: Provider) {
+    return pickPrimaryCourierAccount(await this.integrations(organizationId, provider));
+  }
+
+  /** One SPECIFIC account row by id (org + provider scoped). */
+  private async integrationById(organizationId: string, provider: Provider, integrationId: string) {
+    const rows = await this.integrations(organizationId, provider);
+    return rows.find((r) => r.id === integrationId) ?? null;
+  }
+
+  /**
+   * CC29: save a VERIFIED credential set under its account key.
+   * Reconnecting the same credentials updates the SAME row (its
+   * isDefault is kept); a different credential set creates a
+   * sibling row, which becomes the default only when no existing
+   * row carries the default flag.
+   */
+  private async saveIntegration(organizationId: string, provider: Provider, secrets: Record<string, unknown>, externalAccountId: string) {
     const encrypted = encryptJson(secrets);
-    const existing = await this.integration(organizationId, provider);
+    const siblings = await this.integrations(organizationId, provider);
+    const existing = siblings.find((r) => r.externalAccountId === externalAccountId) ?? null;
     if (existing) {
       await (this.prisma as any).integration.update({ where: { id: existing.id }, data: { status: "CONNECTED", lastError: null } });
       if (existing.credential) {
@@ -94,19 +197,16 @@ export class CourierService {
       }
       return existing;
     }
+    const isDefault = !siblings.some((r) => r.isDefault);
     const created = await (this.prisma as any).integration.create({
-      data: { organizationId, provider, status: "CONNECTED" },
+      data: { organizationId, provider, status: "CONNECTED", externalAccountId, isDefault },
     });
     await (this.prisma as any).integrationCredential.create({ data: { integrationId: created.id, encryptedData: encrypted } });
     return created;
   }
 
-  /** Build the provider client for an org, or throw a clear "not connected". */
-  private async clientFor(organizationId: string, provider: Provider) {
-    const integration = await this.integration(organizationId, provider);
-    if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
-      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
-    }
+  /** Build the provider client from one resolved account row. */
+  private buildClient(provider: Provider, integration: any) {
     const creds = decryptJson<any>(integration.credential.encryptedData);
     if (provider === "steadfast") return new SteadfastClient({ apiKey: creds.apiKey, secretKey: creds.secretKey });
     if (provider === "redx") return new RedxClient({ baseUrl: creds.baseUrl || REDX_DEFAULT_BASE, accessToken: creds.accessToken });
@@ -127,10 +227,89 @@ export class CourierService {
     return client;
   }
 
+  /**
+   * Build the provider client for an org, or throw a clear "not
+   * connected". Default mode resolves the PRIMARY account and
+   * requires it CONNECTED (every pre-CC29 caller). CC29's
+   * recorded-account mode (opts.integrationId, used by status
+   * sync) builds from THAT row: the row + its credential are
+   * required, its status is not — syncing a shipment booked on
+   * an account that was later disconnected from the picker must
+   * still be able to ask the courier about that parcel; a DELETED
+   * row falls back to the primary resolution.
+   */
+  private async clientFor(organizationId: string, provider: Provider, opts?: { integrationId?: string | null; recordedAccount?: boolean }) {
+    if (opts?.integrationId) {
+      const specific = await this.integrationById(organizationId, provider, opts.integrationId);
+      if (specific?.credential && (opts.recordedAccount || specific.status === "CONNECTED")) {
+        return this.buildClient(provider, specific);
+      }
+      if (specific && !opts.recordedAccount) {
+        throw new BadRequestException(`${provider} অ্যাকাউন্টটি যুক্ত নেই (সংযোগ বিচ্ছিন্ন)। আবার Connect করুন অথবা অন্য অ্যাকাউন্ট বেছে নিন।`);
+      }
+      // recordedAccount + row deleted → fall through to primary.
+    }
+    const integration = await this.integration(organizationId, provider);
+    if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
+      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+    }
+    return this.buildClient(provider, integration);
+  }
+
+  /**
+   * CC29: resolve the account a BOOKING dispatches through, in
+   * the decided order: (1) the explicit per-order choice
+   * (dto.courierIntegrationId), (2) the account an EC22 rule
+   * pinned for this order (CourierRule.courierAccountId — read
+   * but ignored by booking before CC29), (3) the provider's
+   * default CONNECTED account, (4) the earliest CONNECTED
+   * account. An explicit or rule-pinned account that is missing,
+   * another provider's, or disconnected is an honest 400 — a
+   * booking never silently reroutes to a different account than
+   * the one chosen/pinned.
+   */
+  private async resolveBookingAccount(
+    organizationId: string, provider: Provider,
+    choice: { explicitId?: string | null; ruleAccountId?: string | null },
+  ): Promise<any> {
+    const wanted = choice.explicitId ?? choice.ruleAccountId ?? null;
+    if (wanted) {
+      const row = await this.integrationById(organizationId, provider, wanted);
+      if (!row) {
+        throw new BadRequestException(choice.explicitId
+          ? "বেছে নেওয়া কুরিয়ার অ্যাকাউন্টটি পাওয়া যায়নি — অন্য একটি অ্যাকাউন্ট বেছে নিন।"
+          : "কুরিয়ার নিয়মে নির্ধারিত অ্যাকাউন্টটি পাওয়া যায়নি — নিয়মটি ঠিক করুন অথবা অ্যাকাউন্টটি আবার কানেক্ট করুন।");
+      }
+      if (row.status !== "CONNECTED" || !row.credential) {
+        throw new BadRequestException("বেছে নেওয়া কুরিয়ার অ্যাকাউন্টটি সংযোগ বিচ্ছিন্ন — আবার Connect করুন অথবা অন্য অ্যাকাউন্ট বেছে নিন।");
+      }
+      return row;
+    }
+    const rows = await this.integrations(organizationId, provider);
+    const connected = rows.filter((r) => r.status === "CONNECTED" && r.credential);
+    const account = connected.find((r) => r.isDefault) ?? pickPrimaryCourierAccount(connected);
+    if (!account) {
+      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+    }
+    return account;
+  }
+
   async getConnection(organizationId: string, providerValue?: string) {
     const provider = this.providerOf(providerValue);
-    const integration = await this.integration(organizationId, provider);
-    if (!integration) return { provider, id: null, connected: false, trackingUrlTemplate: null };
+    const rows = await this.integrations(organizationId, provider);
+    const integration = pickPrimaryCourierAccount(rows);
+    // CC29: EVERY account of the provider, oldest first — the
+    // Connect Center / courier UI lists them all with the CC17
+    // label and the CC2 default badge. The top-level fields keep
+    // describing the PRIMARY account (pre-CC29 shape).
+    const accounts = [...rows]
+      .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
+      .map((r) => ({
+        id: r.id, externalAccountId: r.externalAccountId ?? null,
+        status: r.status, isDefault: !!r.isDefault, label: r.label ?? null,
+        connectedAt: r.createdAt,
+      }));
+    if (!integration) return { provider, id: null, connected: false, trackingUrlTemplate: null, accounts };
     return {
       provider,
       // EC22: the Integration row id — the web rule form uses it
@@ -138,6 +317,7 @@ export class CourierService {
       id: integration.id ?? null,
       connected: integration.status === "CONNECTED", status: integration.status, connectedAt: integration.createdAt,
       trackingUrlTemplate: integration.trackingUrlTemplate ?? null,
+      accounts,
     };
   }
 
@@ -152,8 +332,19 @@ export class CourierService {
   async trackingUrlForShipment(organizationId: string, shipment: any): Promise<string | null> {
     if (!shipment?.trackingCode) return null;
     try {
-      const integration = await this.integration(organizationId, shipment.provider);
-      const template = integration?.trackingUrlTemplate;
+      // CC29: the shipment's OWN account template wins (it is the
+      // account the parcel actually rides on); the primary
+      // account's template is the fallback (pre-CC29 shipments
+      // record no account).
+      let template: string | null | undefined;
+      if (shipment.integrationId) {
+        const own = await this.integrationById(organizationId, shipment.provider, shipment.integrationId);
+        template = own?.trackingUrlTemplate;
+      }
+      if (!template) {
+        const integration = await this.integration(organizationId, shipment.provider);
+        template = integration?.trackingUrlTemplate;
+      }
       if (!template) return null;
       return template.split("{trackingId}").join(encodeURIComponent(shipment.trackingCode));
     } catch {
@@ -210,7 +401,11 @@ export class CourierService {
         if (!dto.apiKey?.trim() || !dto.secretKey?.trim()) throw new BadRequestException("apiKey and secretKey are required");
         const client = new SteadfastClient({ apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() });
         await client.getBalance();
-        await this.saveIntegration(organizationId, provider, { apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() });
+        // CC29: keyed by the credential fingerprint (Steadfast's
+        // balance response carries no account id — see
+        // courierAccountKey).
+        const key = courierAccountKey(provider, { apiKey: dto.apiKey.trim() });
+        await this.saveIntegration(organizationId, provider, { apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() }, key);
       } else if (provider === "pathao") {
         const required = ["clientId", "clientSecret", "username", "password"] as const;
         for (const field of required) if (!dto[field]?.trim()) throw new BadRequestException(`${field} is required for Pathao`);
@@ -221,33 +416,45 @@ export class CourierService {
         };
         const client = new PathaoClient(creds);
         const { stores } = await client.verify(); // real token issue + stores read
-        await this.saveIntegration(organizationId, provider, { ...creds, ...pathaoClientTokens(client) });
-        await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, stores } });
+        // CC29: fingerprint over clientId + username — the issued
+        // tokens rotate and must never fork the account row.
+        const key = courierAccountKey(provider, creds);
+        await this.saveIntegration(organizationId, provider, { ...creds, ...pathaoClientTokens(client) }, key);
+        await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, stores, externalAccountId: key } });
         return this.getConnection(organizationId, provider);
       } else {
         if (!dto.accessToken?.trim()) throw new BadRequestException("accessToken is required for RedX");
         const baseUrl = dto.baseUrl?.trim() || REDX_DEFAULT_BASE;
         const client = new RedxClient({ baseUrl, accessToken: dto.accessToken.trim() });
         const { areas } = await client.verify(); // real areas list from RedX
-        await this.saveIntegration(organizationId, provider, { baseUrl, accessToken: dto.accessToken.trim() });
-        await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, areas } });
+        const key = courierAccountKey(provider, { accessToken: dto.accessToken.trim() });
+        await this.saveIntegration(organizationId, provider, { baseUrl, accessToken: dto.accessToken.trim() }, key);
+        await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, areas, externalAccountId: key } });
         return this.getConnection(organizationId, provider);
       }
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
       throw courierError(e);
     }
-    await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider } });
+    await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, externalAccountId: courierAccountKey(provider, dto as any) } });
     return this.getConnection(organizationId, provider);
   }
 
-  async disconnect(organizationId: string, actorId: string, providerValue?: string) {
+  /**
+   * CC29: disconnect ONE account. With an integrationId, exactly
+   * that account is disconnected and its siblings keep working
+   * untouched. Without one (the pre-CC29 call shape), the
+   * PRIMARY account is disconnected — the historical behavior.
+   */
+  async disconnect(organizationId: string, actorId: string, providerValue?: string, integrationId?: string) {
     const provider = this.providerOf(providerValue);
-    const integration = await this.integration(organizationId, provider);
+    const integration = integrationId
+      ? await this.integrationById(organizationId, provider, integrationId)
+      : await this.integration(organizationId, provider);
     if (!integration) return { connected: false };
     await (this.prisma as any).integration.update({ where: { id: integration.id }, data: { status: "DISCONNECTED" } });
-    await this.audit.log({ organizationId, userId: actorId, action: "courier.disconnected", entityType: "Integration", entityId: integration.id, metadata: { provider } });
-    return { connected: false };
+    await this.audit.log({ organizationId, userId: actorId, action: "courier.disconnected", entityType: "Integration", entityId: integration.id, metadata: { provider, externalAccountId: integration.externalAccountId ?? null } });
+    return { connected: false, integrationId: integration.id };
   }
 
   // ---------- Provider lookups (booking form pickers) ----------
@@ -373,7 +580,12 @@ export class CourierService {
 
   async bookShipment(organizationId: string, actorId: string, dto: {
     provider?: string;
+    // CC29: the explicit per-order courier ACCOUNT choice (an
+    // Integration row id of this provider). Wins over the EC22
+    // rule's pinned account and the provider default.
+    courierIntegrationId?: string;
     orderId: string; recipientName?: string; recipientPhone?: string; recipientAddress: string; note?: string;
+    overrideReviewHold?: boolean;
     pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
     redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
   }) {
@@ -387,6 +599,19 @@ export class CourierService {
     if ((order as any).isPractice) {
       throw new BadRequestException("এটি একটি প্র্যাক্টিস অর্ডার — প্র্যাক্টিস অর্ডারে কুরিয়ার বুকিং করা যায় না");
     }
+    // ON4: a review-held order cannot ship unless staff pass the
+    // explicit override — which is audited BEFORE proceeding.
+    if ((order as any).reviewHold) {
+      if (!dto.overrideReviewHold) {
+        throw new BadRequestException(
+          `এই অর্ডারটি পর্যালোচনার জন্য আটকানো আছে (কারণ: ${(order as any).reviewHoldReason ?? "—"}) — আগে অর্ডার থেকে ছাড় দিন, অথবা override নিশ্চিত করে আবার বুক করুন`,
+        );
+      }
+      await this.audit.log({
+        organizationId, userId: actorId, action: "courier.booking_review_hold_override",
+        entityType: "Order", entityId: order.id, metadata: { provider },
+      }).catch(() => undefined);
+    }
     // EC22: when staff did NOT choose a provider, the org's
     // courier rules may choose one from the order's real facts.
     // An explicit dto.provider ALWAYS wins (no evaluation runs).
@@ -394,6 +619,14 @@ export class CourierService {
     // default provider exactly as before; a rules problem must
     // never block a booking staff asked for.
     let appliedRule: { ruleId: string; ruleName: string } | null = null;
+    // CC29: the account an EC22 rule pinned (CourierRule.
+    // courierAccountId). Before CC29 booking read the rule's
+    // PROVIDER only and silently dropped the pinned account;
+    // now the account follows the resolution order documented
+    // on resolveBookingAccount. (When staff chose a provider
+    // explicitly, no rule runs — as before — so no rule account
+    // can apply either.)
+    let ruleAccountId: string | null = null;
     if ((dto.provider === undefined || dto.provider === null) && this.rules) {
       try {
         const facts = await this.rules.factsForOrder(organizationId, order);
@@ -401,6 +634,7 @@ export class CourierService {
         if (match && PROVIDERS.includes(match.provider as Provider)) {
           provider = match.provider as Provider;
           appliedRule = { ruleId: match.rule.id, ruleName: match.rule.name };
+          ruleAccountId = match.courierAccountId ?? null;
         }
       } catch (e) {
         this.logger.warn(`courier rule evaluation failed for order ${order.id}: ${e instanceof Error ? e.message : "unknown"}`);
@@ -424,7 +658,15 @@ export class CourierService {
     const items = ((await (this.prisma as any).orderItem?.findMany({ where: { orderId: order.id } })?.catch(() => [])) ?? []) as any[];
     const codMajor = order.isCod ? Number(BigInt(order.totalMinor)) / 100 : 0;
     const invoice = String(order.externalNumber ?? order.id);
-    const client = await this.clientFor(organizationId, provider);
+    // CC29: resolve the ACCOUNT this booking rides on (explicit
+    // choice → rule-pinned account → provider default → earliest
+    // connected) and build the client from THAT account; the
+    // shipment records it so status sync can use the same one.
+    const bookingAccount = await this.resolveBookingAccount(organizationId, provider, {
+      explicitId: dto.courierIntegrationId ?? null,
+      ruleAccountId,
+    });
+    const client = await this.clientFor(organizationId, provider, { integrationId: bookingAccount.id });
 
     let consignmentId: string | null = null;
     let trackingCode: string;
@@ -502,6 +744,9 @@ export class CourierService {
     const shipment = await (this.prisma as any).courierShipment.create({
       data: {
         organizationId, orderId: order.id, provider,
+        // CC29: the account this parcel was booked through —
+        // status sync resolves its credentials from this row.
+        integrationId: bookingAccount.id,
         consignmentId, trackingCode, invoice, status,
         codAmountMinor: BigInt(Math.round(codMajor * 100)),
         recipientName, recipientPhone, recipientAddress, lastCheckedAt: new Date(),
@@ -519,8 +764,29 @@ export class CourierService {
     }
     await this.audit.log({
       organizationId, userId: actorId, action: "courier.shipment.booked", entityType: "CourierShipment",
-      entityId: shipment.id, metadata: { provider, orderId: order.id, trackingCode, deliveryFeeMajor },
+      entityId: shipment.id, metadata: { provider, orderId: order.id, trackingCode, deliveryFeeMajor, integrationId: bookingAccount.id, externalAccountId: bookingAccount.externalAccountId ?? null },
     });
+    // ON5: handed_to_courier via the notification engine —
+    // failure-isolated, booking NEVER breaks on a notification.
+    // When the engine actually SENT the handover message, stamp
+    // lastNotifiedStatus with the booking status (only when it
+    // is currently null) to suppress the legacy "shipped card"
+    // duplicate: the legacy shippedOnce card in notifyCustomer
+    // keys off lastNotifiedStatus in {null, "booked"}, so
+    // stamping the booking status makes the first sync a no-op
+    // for that card — while terminal NOTIFY headlines
+    // (delivered / partial_delivered / cancelled / returned)
+    // still fire, because then last !== rawStatus.
+    if (this.orderNotifications) {
+      try {
+        const res: any = await this.orderNotifications.notify(organizationId, order.id, "handed_to_courier", { shipmentId: shipment.id }).catch(() => null);
+        if (res?.sent && (shipment as any).lastNotifiedStatus == null) {
+          await (this.prisma as any).courierShipment.update({
+            where: { id: shipment.id }, data: { lastNotifiedStatus: shipment.status },
+          }).catch(() => undefined);
+        }
+      } catch { /* failure-isolated: booking stands */ }
+    }
     return { ...this.serialize(shipment), deliveryFeeMajor };
   }
 
@@ -534,6 +800,9 @@ export class CourierService {
    */
   async bookBulk(organizationId: string, actorId: string, dto: {
     provider?: string; orderIds: string[];
+    // CC29: one explicit account choice for the whole batch
+    // (forwarded to every single booking; same resolution).
+    courierIntegrationId?: string;
     recipientName?: string; recipientPhone?: string; recipientAddress?: string; note?: string;
     pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
     redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
@@ -558,6 +827,7 @@ export class CourierService {
       try {
         const shipment = await this.bookShipment(organizationId, actorId, {
           provider, orderId,
+          courierIntegrationId: dto.courierIntegrationId,
           recipientName: dto.recipientName, recipientPhone: dto.recipientPhone,
           recipientAddress: dto.recipientAddress ?? order.address ?? "",
           note: dto.note, pathao: dto.pathao, redx: dto.redx,
@@ -609,11 +879,16 @@ export class CourierService {
     return buildPdf([this.labelPageFor(shipment, sender)]);
   }
 
-  /** Milestone 53: many shipments' labels in ONE PDF (one page each). */
-  async labelsPdf(organizationId: string, shipmentIds: string[]): Promise<Buffer> {
+  /** Milestone 53: many shipments' labels in ONE PDF (one page each).
+   * ON10: the optional maxLabels lifts the direct-endpoint cap of
+   * 50 for print-center jobs (which validate 1–100 orders up
+   * front); the legacy endpoint passes no options and keeps the
+   * exact pre-ON10 behaviour + error text. */
+  async labelsPdf(organizationId: string, shipmentIds: string[], options?: { maxLabels?: number }): Promise<Buffer> {
+    const cap = options?.maxLabels ?? 50;
     const ids = [...new Set((shipmentIds ?? []).filter(Boolean))];
     if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি পার্সেল বেছে নিন");
-    if (ids.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি লেবেল ডাউনলোড করা যায়");
+    if (ids.length > cap) throw new BadRequestException(cap === 50 ? "একবারে সর্বোচ্চ ৫০টি লেবেল ডাউনলোড করা যায়" : `একবারে সর্বোচ্চ ${cap}টি লেবেল ডাউনলোড করা যায়`);
     const sender = await this.orgSender(organizationId);
     const pages = [];
     for (const id of ids) {
@@ -625,16 +900,12 @@ export class CourierService {
     return buildPdf(pages);
   }
 
-  /** Milestone 53: per-order invoice as a real PDF (stored order data). */
-  async invoicePdf(organizationId: string, orderId: string): Promise<Buffer> {
-    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+  private async invoicePageFor(organizationId: string, order: any, sender: { name: string; phone: string | null; currency: string; brandColor?: string | null }, template?: PrintTemplateOptions | null) {
     const items = ((await (this.prisma as any).orderItem?.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? []) as any[];
     const customer = order.customerId
-      ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } })
+      ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } }).catch(() => null)
       : null;
-    const sender = await this.orgSender(organizationId);
-    return buildPdf([invoicePage({
+    return invoicePage({
       orgName: sender.name, orgPhone: sender.phone,
       invoiceNo: String(order.externalNumber ?? order.id),
       date: (order.placedAt ?? order.createdAt ?? new Date()).toISOString().slice(0, 10),
@@ -646,7 +917,163 @@ export class CourierService {
       paymentLabel: order.isCod ? "Cash on Delivery (COD)" : (order.paymentMethod ?? "Prepaid"),
       currency: order.currency ?? sender.currency,
       brandColor: sender.brandColor,
-    })]);
+      // ON10: template fields ride through only when the caller
+      // (the print center) supplies them; null/empty renders
+      // nothing, keeping the direct endpoint byte-identical.
+      invoiceNote: template?.invoiceNote ?? null,
+      termsText: template?.termsText ?? null,
+      footerText: template?.footerText ?? null,
+    });
+  }
+
+  /** Milestone 53: per-order invoice as a real PDF (stored order data). */
+  async invoicePdf(organizationId: string, orderId: string): Promise<Buffer> {
+    const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+    const sender = await this.orgSender(organizationId);
+    return buildPdf([await this.invoicePageFor(organizationId, order, sender)]);
+  }
+
+  /** ON1: many orders' invoices in ONE PDF (one page each) — mirrors labelsPdf.
+   * ON10: optional template (PrintTemplateSetting fields) +
+   * maxOrders cap lift for print-center jobs; the legacy direct
+   * endpoint passes no options and keeps the exact pre-ON10
+   * behaviour, error text and output bytes. */
+  async invoicesPdf(organizationId: string, orderIds: string[], options?: { template?: PrintTemplateOptions | null; maxOrders?: number }): Promise<Buffer> {
+    const cap = options?.maxOrders ?? 50;
+    const ids = [...new Set((orderIds ?? []).filter(Boolean))];
+    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
+    if (ids.length > cap) throw new BadRequestException(cap === 50 ? "একবারে সর্বোচ্চ ৫০টি ইনভয়েস ডাউনলোড করা যায়" : `একবারে সর্বোচ্চ ${cap}টি ইনভয়েস ডাউনলোড করা যায়`);
+    const sender = await this.orgSender(organizationId);
+    const pages = [];
+    for (const id of ids) {
+      const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
+      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      pages.push(await this.invoicePageFor(organizationId, order, sender, options?.template ?? null));
+    }
+    return buildPdf(pages);
+  }
+
+  /** ON10: EC19 due math for challans — Σ APPROVED
+   * PaymentVerification amounts per order (the same grouped
+   * helper shape OrdersService / OrderProfitService use; capped
+   * at the order total by the caller). */
+  private async approvedSumsByOrder(organizationId: string, orderIds: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>();
+    if (!orderIds.length) return out;
+    const table = (this.prisma as any).paymentVerification;
+    try {
+      if (table?.groupBy) {
+        const rows = await table.groupBy({
+          by: ["orderId"],
+          where: { organizationId, status: "approved", orderId: { in: orderIds } },
+          _sum: { amountMinor: true },
+        });
+        for (const r of rows ?? []) {
+          if (r?.orderId == null) continue;
+          out.set(String(r.orderId), BigInt(r._sum?.amountMinor ?? 0));
+        }
+        return out;
+      }
+    } catch { /* fall through to the findMany path */ }
+    try {
+      const rows = (await table?.findMany({ where: { organizationId, status: "approved", orderId: { in: orderIds } } }).catch(() => [])) ?? [];
+      for (const r of rows as any[]) {
+        if (r?.orderId == null) continue;
+        const key = String(r.orderId);
+        out.set(key, (out.get(key) ?? 0n) + BigInt(r.amountMinor ?? 0));
+      }
+    } catch { /* no rows readable = nothing approved */ }
+    return out;
+  }
+
+  /** The web print page's address fallback, mirrored: the
+   * order's own address text wins; else the customer's
+   * structured address composed (ON1 bulk helper shape). */
+  private composedCustomerAddress(customer: any): string {
+    const addr = customer?.address;
+    if (!addr) return "";
+    if (typeof addr === "string") return addr.trim();
+    if (typeof addr === "object") {
+      return [addr.address_1 ?? addr.addressLine ?? addr.line, addr.area, addr.district, addr.city, addr.note]
+        .filter((v: any) => v != null && String(v).trim() !== "")
+        .map((v: any) => String(v).trim())
+        .join(", ");
+    }
+    return "";
+  }
+
+  private async orderCustomerItems(organizationId: string, order: any) {
+    const items = ((await (this.prisma as any).orderItem?.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? []) as any[];
+    const customer = order.customerId
+      ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } }).catch(() => null)
+      : null;
+    return { items, customer };
+  }
+
+  /** ON10: many orders' delivery challans in ONE PDF (one page
+   * each) — print-center only (no legacy endpoint). The COD due
+   * per order is the EC19 figure: total − Σ approved
+   * verifications, never below 0. */
+  async challansPdf(organizationId: string, orderIds: string[], template?: PrintTemplateOptions | null): Promise<Buffer> {
+    const ids = [...new Set((orderIds ?? []).filter(Boolean))];
+    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
+    if (ids.length > 100) throw new BadRequestException("একবারে সর্বোচ্চ ১০০টি চালান তৈরি করা যায়");
+    const sender = await this.orgSender(organizationId);
+    const sums = await this.approvedSumsByOrder(organizationId, ids);
+    const pages = [];
+    for (const id of ids) {
+      const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
+      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      const { items, customer } = await this.orderCustomerItems(organizationId, order);
+      const total = BigInt(order.totalMinor ?? 0);
+      const paidRaw = sums.get(String(order.id)) ?? 0n;
+      const paid = paidRaw > total ? total : paidRaw;
+      pages.push(challanPage({
+        orgName: sender.name, orgPhone: sender.phone,
+        orderNo: String(order.externalNumber ?? order.id),
+        date: (order.placedAt ?? order.createdAt ?? new Date()).toISOString().slice(0, 10),
+        customerName: [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || "Customer",
+        customerPhone: customer?.phone ?? null,
+        address: (typeof order.address === "string" && order.address.trim()) ? order.address.trim() : this.composedCustomerAddress(customer),
+        items: items.map((i: any) => ({ name: i.name, quantity: i.quantity })),
+        codDueMinor: total - paid,
+        currency: order.currency ?? sender.currency,
+        brandColor: sender.brandColor,
+        termsText: template?.termsText ?? null,
+        footerText: template?.footerText ?? null,
+      }));
+    }
+    return buildPdf(pages);
+  }
+
+  /** ON10: many orders' packing slips in ONE PDF (one page
+   * each) — the server mirror of the web slip page (see
+   * packingSlipPage in pdf.ts for the field-for-field mapping). */
+  async packingSlipsPdf(organizationId: string, orderIds: string[], template?: PrintTemplateOptions | null): Promise<Buffer> {
+    const ids = [...new Set((orderIds ?? []).filter(Boolean))];
+    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
+    if (ids.length > 100) throw new BadRequestException("একবারে সর্বোচ্চ ১০০টি প্যাকিং স্লিপ তৈরি করা যায়");
+    const sender = await this.orgSender(organizationId);
+    const pages = [];
+    for (const id of ids) {
+      const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
+      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      const { items, customer } = await this.orderCustomerItems(organizationId, order);
+      pages.push(packingSlipPage({
+        orgName: sender.name, orgPhone: sender.phone,
+        orderNo: String(order.externalNumber ?? order.id),
+        date: (order.placedAt ?? order.createdAt ?? new Date()).toISOString().slice(0, 10),
+        customerName: [customer?.firstName, customer?.lastName].filter(Boolean).join(" ") || "Customer",
+        customerPhone: customer?.phone ?? null,
+        address: (typeof order.address === "string" && order.address.trim()) ? order.address.trim() : this.composedCustomerAddress(customer),
+        items: items.map((i: any) => ({ name: i.name, quantity: i.quantity, sku: i.sku ?? null, isGift: !!i.isGift, bundleName: i.bundleName ?? null })),
+        giftMessage: order.giftMessage ?? null,
+        brandColor: sender.brandColor,
+        footerText: template?.footerText ?? null,
+      }));
+    }
+    return buildPdf(pages);
   }
 
   /**
@@ -689,7 +1116,14 @@ export class CourierService {
     if (!shipment) throw new NotFoundException("Shipment not found");
     if (!shipment.trackingCode) throw new BadRequestException("Shipment has no tracking code yet");
     const provider = this.providerOf(shipment.provider);
-    const client = await this.clientFor(organizationId, provider);
+    // CC29: sync through the account the shipment was BOOKED on
+    // (its recorded integrationId) — another account's
+    // credentials cannot see this parcel. Pre-CC29 shipments
+    // record none → the primary resolution, exactly as before;
+    // a deleted account row falls back the same way.
+    const client = await this.clientFor(organizationId, provider, {
+      integrationId: shipment.integrationId ?? null, recordedAccount: true,
+    });
     let status: string;
     try {
       if (provider === "steadfast") status = await (client as SteadfastClient).statusByTrackingCode(shipment.trackingCode);
@@ -735,6 +1169,53 @@ export class CourierService {
       } catch (e) { this.logger.warn(`shipment.status_changed emit failed for shipment ${shipment.id}: ${e instanceof Error ? e.message : "unknown"}`); }
     }
     if (changed) await this.notifyCustomer(organizationId, updated).catch(() => undefined);
+    // ON5: engine notifications for mapped courier transitions —
+    // failure-isolated; a notification problem never breaks sync.
+    // Mapping: out_for_delivery → out_for_delivery;
+    // delivered / partial_delivered → delivered; delivery_failed /
+    // failed_delivery / failed → delivery_failed (NOTE: no current
+    // courier client emits those failure statuses; returned /
+    // cancelled are deliberately NOT mapped to delivery_failed —
+    // the legacy NOTIFY headlines own those).
+    // coveredExisting: the legacy notifyCustomer stamps
+    // lastNotifiedStatus ONLY after a confirmed send, so a
+    // re-read stamp === newStatus means legacy already reached
+    // the customer for this transition and the engine must only
+    // record the coverage, not send a duplicate.
+    if (changed && this.orderNotifications) {
+      try {
+        const mapped =
+          status === "out_for_delivery" ? "out_for_delivery"
+          : status === "delivered" || status === "partial_delivered" ? "delivered"
+          : ["delivery_failed", "failed_delivery", "failed"].includes(status) ? "delivery_failed"
+          : null;
+        if (mapped) {
+          const fresh = await (this.prisma as any).courierShipment.findFirst({
+            where: { id: shipmentId, organizationId },
+          }).catch(() => null);
+          const legacyStamped = fresh != null && fresh.lastNotifiedStatus === status;
+          if (mapped === "out_for_delivery" && legacyStamped) {
+            // SPECIAL out_for_delivery case: legacy's shippedOnce
+            // card may have stamped out_for_delivery as the FIRST
+            // movement while the engine's handed_to_courier never
+            // sent (setting off at booking / booking pre-dates
+            // the engine) — that stamp means the customer already
+            // got a courier card for this transition. Record the
+            // handed_to_courier coverage first so the log shows
+            // the coverage chain, unless a handed send exists.
+            const handedSent = await (this.prisma as any).orderNotificationLog?.findFirst({
+              where: { organizationId, orderId: shipment.orderId, event: "handed_to_courier", status: "sent" },
+            }).catch(() => null);
+            if (!handedSent) {
+              await this.orderNotifications.notify(organizationId, shipment.orderId, "handed_to_courier", { coveredExisting: true, shipmentId }).catch(() => undefined);
+            }
+          }
+          await this.orderNotifications.notify(organizationId, shipment.orderId, mapped, {
+            shipmentId, ...(legacyStamped ? { coveredExisting: true } : {}),
+          }).catch(() => undefined);
+        }
+      } catch { /* failure-isolated: sync stands */ }
+    }
     // Courier NDR Interceptor: automatically intercept delivery failure / hold and initiate customer recovery
     if (this.ndr && isNdrStatus(status)) {
       await this.ndr.interceptNdr(organizationId, updated).catch((err) => {

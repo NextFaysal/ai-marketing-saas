@@ -41,13 +41,28 @@ export interface TiktokAppConfig { clientKey: string; clientSecret: string; redi
 /** SP9: the OPERATOR's Google app for YouTube (same one-app
  * model). Tenants OAuth their own Google accounts into it. */
 export interface GoogleAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
+/** CC20: the OPERATOR's LinkedIn app for Page connect +
+ * organic posting (same one-app model as Google/TikTok).
+ * Live posting additionally requires LinkedIn's Community
+ * Management API approval for THIS app — a platform-side gate
+ * the config cannot declare away; the app carries no such flag
+ * because approval is LinkedIn's to grant, not ours to assert. */
+export interface LinkedinAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
 /** CC10: platform-payment wallet settings. `feeBps` is the
  * platform fee on PLATFORM-gateway payments, in basis points
  * (200 = 2%). It is read at the moment a verified payment is
  * credited — the fee applied is the CURRENT configured value,
  * computed server-side. Absent/invalid config means feeBps 0:
  * a fee is never invented. */
-export interface WalletConfig { feeBps: number }
+export interface WalletConfig {
+  feeBps: number;
+  /** CC23: four-eyes payout threshold in minor units. When
+   * set (a non-negative integer), a payout at/above this
+   * amount may not be marked paid by the same admin who
+   * approved it. Null/absent = the feature is OFF — mark-paid
+   * behaves exactly as CC10 defined it. */
+  payoutFourEyesThresholdMinor?: number | null;
+}
 
 export interface PlatformConfigSnapshot {
   llm: LlmConfig | null;
@@ -59,13 +74,14 @@ export interface PlatformConfigSnapshot {
   image: ImageConfig | null;
   tiktokApp: TiktokAppConfig | null;
   googleApp: GoogleAppConfig | null;
+  linkedinApp: LinkedinAppConfig | null;
   wallet: WalletConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, wallet: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -74,8 +90,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -104,13 +120,13 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
     readKey(prisma, "imageConfig"),
     readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
-    readKey(prisma, "walletConfig"),
+    readKey(prisma, "walletConfig"), readKey(prisma, "linkedinAppConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -163,10 +179,24 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
       }
     : null;
   const walletFeeBps = Number(walletRaw?.feeBps);
-  const wallet: WalletConfig | null = walletRaw && Number.isInteger(walletFeeBps) && walletFeeBps >= 0 && walletFeeBps <= 10_000
-    ? { feeBps: walletFeeBps }
+  const walletThresholdRaw = walletRaw?.payoutFourEyesThresholdMinor;
+  const walletThreshold: number | null = walletThresholdRaw !== null && walletThresholdRaw !== undefined
+    && Number.isInteger(Number(walletThresholdRaw)) && Number(walletThresholdRaw) >= 0
+    ? Number(walletThresholdRaw)
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, wallet, loadedAt: Date.now() };
+  const wallet: WalletConfig | null = walletRaw && Number.isInteger(walletFeeBps) && walletFeeBps >= 0 && walletFeeBps <= 10_000
+    ? { feeBps: walletFeeBps, payoutFourEyesThresholdMinor: walletThreshold }
+    : walletRaw && walletThreshold !== null
+      ? { feeBps: 0, payoutFourEyesThresholdMinor: walletThreshold }
+      : null;
+  const linkedinApp: LinkedinAppConfig | null = linkedinRaw?.clientId
+    ? {
+        clientId: String(linkedinRaw.clientId),
+        clientSecret: unseal(linkedinRaw.clientSecretEncrypted) ?? "",
+        redirectUri: linkedinRaw.redirectUri ? String(linkedinRaw.redirectUri) : undefined,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, wallet, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -272,6 +302,14 @@ export function effectiveWalletFeeBps(): number {
   return Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= 10_000 ? feeBps : 0;
 }
 
+/** CC23: the four-eyes payout threshold (minor units) from the
+ * admin walletConfig, or null when the feature is off (unset,
+ * null, or invalid in the stored config — never guessed). */
+export function effectivePayoutFourEyesThresholdMinor(): number | null {
+  const v = snapshot.wallet?.payoutFourEyesThresholdMinor;
+  return v !== null && v !== undefined && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
 export function bkashBase(cfg: BkashConfig): string {
   return cfg.sandbox ? "https://tokenized.sandbox.bka.sh/v1.2.0-beta" : "https://tokenized.pay.bka.sh/v1.2.0-beta";
 }
@@ -314,12 +352,30 @@ export function effectiveGoogleAppConfig(): (GoogleAppConfig & { source: "admin"
   return null;
 }
 
+/** CC20: the operator's LinkedIn app — same resolution as Google. */
+export function effectiveLinkedinAppConfig(): (LinkedinAppConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.linkedinApp?.clientId && snapshot.linkedinApp.clientSecret) {
+    return { ...snapshot.linkedinApp, source: "admin" };
+  }
+  if (process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET) {
+    return {
+      clientId: process.env.LINKEDIN_CLIENT_ID,
+      clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
+      redirectUri: process.env.LINKEDIN_REDIRECT_URI || undefined,
+      source: "env",
+    };
+  }
+  return null;
+}
+
 /** The OAuth callback URL for a social platform: the operator's
  * configured redirect URI wins (it must match what is registered
  * in the TikTok/Google app console EXACTLY); otherwise it is
  * derived from API_PUBLIC_URL + the API's public callback route
- * (payments.service apiBase convention). */
-export function socialOAuthRedirectUri(platform: "tiktok" | "youtube", configured?: string): string {
+ * (payments.service apiBase convention). CC20 widens the segment
+ * vocabulary for the Google pack + LinkedIn callback routes —
+ * each flow's segment is its own registered redirect path. */
+export function socialOAuthRedirectUri(platform: "tiktok" | "youtube" | "google-ga4" | "google-merchant" | "google-business" | "linkedin", configured?: string): string {
   if (configured) return configured.replace(/\/$/, "");
   const apiBase = (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, "");
   return `${apiBase}/social/oauth/${platform}/callback`;

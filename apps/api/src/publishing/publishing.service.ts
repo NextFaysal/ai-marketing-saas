@@ -167,14 +167,46 @@ export class PublishingService {
   }
 
   // ---------------- TikTok Ads ----------------
+  /**
+   * Frontier NB8 / CN17: `objectiveType` is OPTIONAL and is
+   * only ever supplied by the campaign-plan draft path
+   * (CampaignsService cross-platform drafts). The direct
+   * publishing page never sends it, and with it absent the
+   * payloads below are byte-identical to the pre-NB8
+   * TRAFFIC behaviour. Spike basis (TikTok Marketing API
+   * v1.3 docs + the official SDK field spec, read
+   * 2026-10-15): the objective enum includes TRAFFIC,
+   * WEB_CONVERSIONS (the current API name for the Ads
+   * Manager "Website conversions" objective) and
+   * LEAD_GENERATION. For WEB_CONVERSIONS the ad group
+   * carries pixel_id + optimization_event (required
+   * together), optimization_goal CONVERT and billing
+   * OCPM; an ad-group pixel_id with any other objective
+   * is rejected by TikTok, so it is never sent there.
+   * LEAD_GENERATION needs a TikTok Instant Form bound at
+   * the AD level — this flow creates website creatives
+   * and has no form binding, so it refuses up front
+   * instead of making a create call TikTok would reject.
+   */
   async publishTikTok(organizationId: string, actorId: string, dto: {
     adAccountId: string; name: string; dailyBudget: string; countryCodes: string[];
     adText: string; landingUrl: string; imageUrl?: string; videoUrl?: string; identityId?: string;
+    objectiveType?: string; pixelId?: string; optimizationEvent?: string;
   }) {
     const daily = Number(dto.dailyBudget);
     if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("dailyBudget must be a positive amount");
     if (!dto.countryCodes?.length) throw new BadRequestException("At least one country is required");
     if (!dto.videoUrl && !dto.imageUrl) throw new BadRequestException("Provide an image URL or a video URL for the creative");
+    const objective = String(dto.objectiveType ?? "TRAFFIC").trim().toUpperCase() || "TRAFFIC";
+    if (!["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION"].includes(objective)) {
+      throw new BadRequestException(`Unsupported TikTok objective for this flow: ${objective} (TRAFFIC | WEB_CONVERSIONS | LEAD_GENERATION)`);
+    }
+    if (objective === "LEAD_GENERATION") {
+      throw new BadRequestException("TikTok LEAD_GENERATION needs an Instant Form bound to the ad — this publishing flow creates website creatives and cannot supply one, so the create call is refused rather than sent to fail");
+    }
+    if (objective === "WEB_CONVERSIONS" && (!dto.pixelId?.trim() || !dto.optimizationEvent?.trim())) {
+      throw new BadRequestException("TikTok WEB_CONVERSIONS needs a pixelId and an optimizationEvent (the ad group optimizes on that pixel event)");
+    }
     const { account, secrets } = await this.accountSecrets(organizationId, dto.adAccountId, "tiktok");
     const advertiserId = String(secrets.advertiserId ?? account.externalId);
     const record = await this.startRecord(organizationId, actorId, "tiktok", dto.adAccountId, dto.name);
@@ -209,17 +241,31 @@ export class PublishingService {
         if (!hit) throw new Error(`location lookup: no TikTok location id resolved for ${code} — refusing to guess`);
         locationIds.push(Number(hit.location_id ?? hit.id));
       }
+      detail.objectiveType = objective;
       const campaign = await call("/campaign/create/", "POST", {
-        advertiser_id: advertiserId, campaign_name: dto.name, objective_type: "TRAFFIC", operation_status: "DISABLE",
+        advertiser_id: advertiserId, campaign_name: dto.name, objective_type: objective, operation_status: "DISABLE",
       }, "campaign");
       if (!campaign?.campaign_id) throw new Error("campaign: TikTok returned no campaign id; creation is NOT confirmed");
       detail.campaignId = String(campaign.campaign_id);
-      const adgroup = await call("/adgroup/create/", "POST", {
-        advertiser_id: advertiserId, campaign_id: campaign.campaign_id, adgroup_name: `${dto.name} - AG1`,
-        objective_type: "TRAFFIC", placement_type: "PLACEMENT_TYPE_AUTOMATIC", location_ids: locationIds,
-        budget_mode: "BUDGET_MODE_DAY", budget: daily, schedule_type: "SCHEDULE_FROM_NOW",
-        billing_event: "CPC", optimization_goal: "CLICK", operation_status: "DISABLE",
-      }, "ad group");
+      // CN17: only the WEB_CONVERSIONS branch differs from
+      // the long-standing TRAFFIC payload — pixel and event
+      // on the ad group, CONVERT goal, OCPM billing, no-bid
+      // (the documented auction shape for pixel events).
+      const adgroupPayload: Record<string, unknown> = objective === "WEB_CONVERSIONS"
+        ? {
+          advertiser_id: advertiserId, campaign_id: campaign.campaign_id, adgroup_name: `${dto.name} - AG1`,
+          objective_type: "WEB_CONVERSIONS", promotion_type: "WEBSITE", placement_type: "PLACEMENT_TYPE_AUTOMATIC", location_ids: locationIds,
+          pixel_id: String(dto.pixelId).trim(), optimization_event: String(dto.optimizationEvent).trim(),
+          budget_mode: "BUDGET_MODE_DAY", budget: daily, schedule_type: "SCHEDULE_FROM_NOW",
+          billing_event: "OCPM", optimization_goal: "CONVERT", bid_type: "BID_TYPE_NO_BID", operation_status: "DISABLE",
+        }
+        : {
+          advertiser_id: advertiserId, campaign_id: campaign.campaign_id, adgroup_name: `${dto.name} - AG1`,
+          objective_type: "TRAFFIC", placement_type: "PLACEMENT_TYPE_AUTOMATIC", location_ids: locationIds,
+          budget_mode: "BUDGET_MODE_DAY", budget: daily, schedule_type: "SCHEDULE_FROM_NOW",
+          billing_event: "CPC", optimization_goal: "CLICK", operation_status: "DISABLE",
+        };
+      const adgroup = await call("/adgroup/create/", "POST", adgroupPayload, "ad group");
       if (!adgroup?.adgroup_id) throw new Error("ad group: TikTok returned no adgroup id; creation is NOT confirmed");
       detail.adgroupId = String(adgroup.adgroup_id);
       let creativeFields: Record<string, unknown>;

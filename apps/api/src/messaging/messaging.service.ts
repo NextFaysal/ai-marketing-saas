@@ -1,4 +1,5 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
@@ -2182,7 +2183,9 @@ export class MessagingService {
     let waSend: ((entry: SnapshotEntry) => Promise<{ status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string }>) | null = null;
     let waBuildError: string | null = null;
     if (broadcast.channel === "whatsapp") {
-      try { waSend = await this.createWhatsAppSender(organizationId, broadcast, broadcastId); }
+      // CC27: the send-time deny re-check keys on the broadcast's
+      // CREATING member (recorded on the row at creation).
+      try { waSend = await this.createWhatsAppSender(organizationId, broadcast, broadcastId, broadcast.createdById ?? null); }
       catch (e) { waBuildError = e instanceof Error ? e.message : "WhatsApp sender unavailable"; }
     }
 
@@ -2747,11 +2750,25 @@ export class MessagingService {
    * MS2 suppression guard applies here too (sendToRecipient's
    * guard covers email/sms only — WhatsApp sends through Meta).
    */
-  private async createWhatsAppSender(organizationId: string, broadcast: any, broadcastId: string) {
+  private async createWhatsAppSender(organizationId: string, broadcast: any, broadcastId: string, denyActorId?: string | null) {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { organizationId, provider: "whatsapp", status: "CONNECTED" }, include: { credential: true },
     });
     if (!integration?.credential) throw new BadRequestException("No connected WhatsApp integration for this organization");
+    // CC27: send-time deny re-check. A WhatsApp broadcast resolves
+    // to THIS WhatsApp Integration — a connection target — so the
+    // CREATING member's deny-list is re-checked here, at send
+    // time (the sweep may run long after creation; a deny granted
+    // in between must stop the send). The throw lands in
+    // processBroadcast's build-error path: every pending entry is
+    // recorded failed with this reason — the path's native
+    // failure record — and nothing is sent. SMS/Email broadcasts
+    // send through MessagingSenderConfig rows, which are NOT
+    // connection targets, so they carry no deny gate (documented
+    // in the B12 acceptance; no mapping is invented for them).
+    if (denyActorId && await isMemberConnectionDenied(this.prisma as any, organizationId, denyActorId, integration.id)) {
+      throw new ForbiddenException("এই WhatsApp অ্যাকাউন্টে ব্রডকাস্ট পাঠানোর অনুমতি ব্রডকাস্টের লেখককে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংসে তার এই কানেকশনের অনুমতি প্রত্যাহার করা হয়েছে।");
+    }
     const template = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: broadcast.whatsappTemplateId, organizationId } });
     if (!template) throw new NotFoundException("WhatsApp template not found");
     const secrets = decryptJson(integration.credential.encryptedData) as any;
@@ -3236,7 +3253,9 @@ export class MessagingService {
     if (!to) throw new BadRequestException("A test recipient address is required (to)");
     let result: { status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string };
     if (broadcast.channel === "whatsapp") {
-      const sender = await this.createWhatsAppSender(organizationId, broadcast, broadcastId);
+      // CC27: a test send is the TESTER's own send through the
+      // resolved account — the gate keys on the acting member.
+      const sender = await this.createWhatsAppSender(organizationId, broadcast, broadcastId, actorId);
       const entry: SnapshotEntry = {
         type: "test", id: "", name: "Test", email: null, phone: to,
         status: "pending", attempts: 0, vars: { name: "Test" },

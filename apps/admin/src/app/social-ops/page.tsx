@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface SocialPostItem {
   id: string; organizationId: string; organizationName: string | null;
@@ -36,7 +37,7 @@ interface AdsBoard {
 function fmtDate(v: string | null | undefined): string {
   if (!v) return "—";
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("bn-BD");
+  return Number.isNaN(d.getTime()) ? "—" : fmtDateTime(d);
 }
 function OrgLink({ id, name }: { id: string; name: string | null }) {
   return <a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${id}`}>{name ?? id}</a>;
@@ -52,7 +53,7 @@ function Chips({ data }: { data: Record<string, number> }) {
     </div>
   );
 }
-function PostRows({ items, emptyText }: { items: SocialPostItem[]; emptyText: string }) {
+function PostRows({ items, emptyText, action }: { items: SocialPostItem[]; emptyText: string; action?: { label: string; run: (p: SocialPostItem) => void } }) {
   if (items.length === 0) return <p className="text-sm text-emerald-300">{emptyText}</p>;
   return (
     <ul className="space-y-2 text-sm">
@@ -65,6 +66,9 @@ function PostRows({ items, emptyText }: { items: SocialPostItem[]; emptyText: st
           </div>
           {p.captionExcerpt ? <div className="mt-1 text-xs text-slate-300">{p.captionExcerpt}</div> : null}
           {p.error ? <div className="mt-1 text-xs text-red-300">{p.error}</div> : null}
+          {action ? (
+            <button className="abtn-secondary mt-2 !px-2 !py-0.5 text-xs" onClick={() => action.run(p)}>{action.label}</button>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -74,14 +78,36 @@ function PostRows({ items, emptyText }: { items: SocialPostItem[]; emptyText: st
 export default function SocialOpsPage() {
   const [social, setSocial] = React.useState<SocialBoard | null>(null);
   const [ads, setAds] = React.useState<AdsBoard | null>(null);
+  const [msg, setMsg] = React.useState("");
   const load = React.useCallback(async () => {
     setSocial(await apiFetch<SocialBoard>("/admin/system/social-board").catch(() => null));
     setAds(await apiFetch<AdsBoard>("/admin/system/ads-board").catch(() => null));
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
+  // AB3 / AN13: operator retry — প্রতিটি action Tenant পাশের নিজের
+  // service পথেই যায় (আলাদা Admin logic নয়), কারণ বাধ্যতামূলক
+  // (Audit-এ থাকে), আর API/Provider-এর ফল বা ভুল হুবহু দেখানো হয়।
+  async function opsAction(path: string, label: string) {
+    const reason = window.prompt(`${label} — কারণ (Audit-এ থাকবে):`);
+    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    try {
+      const out = await apiFetch<any>(path, { method: "POST", body: JSON.stringify({ reason }) });
+      const detail = out?.result?.error ?? out?.note ?? (out?.sweep ? `Sweep: recovered ${out.sweep.recovered}, published ${out.sweep.published}, failed ${out.sweep.failed} · Post এখন: ${out.postStatusAfter ?? "—"}` : "সম্পন্ন হয়েছে");
+      setMsg(`✅ ${label}: ${detail}`);
+      await load();
+    } catch (e) {
+      setMsg(`❌ ${label}: ${e instanceof Error ? e.message : "ব্যর্থ হয়েছে"}`);
+    }
+  }
+
   return (
     <AdminShell title="📣 Social & Ads Ops">
+      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <p className="mb-4 rounded-lg bg-slate-800/60 p-3 text-xs text-slate-400">
+        Operator action (AB3): নিচের Retry/যাচাই বোতামগুলো Tenant পাশের নিজের service দিয়েই কাজ করে — ব্যর্থ হলে Provider-এর আসল ভুলটাই দেখাবে।
+        সীমা: কোনো Account <b>Disconnect/Reconnect Admin থেকে করা যায় না</b> — Reconnect-এ Tenant-এর নিজের OAuth লাগে, Tenant-কে তার অ্যাকাউন্টে গিয়ে আবার কানেক্ট করতে হবে।
+      </p>
       <div className="acard mb-4">
         <div className="mb-2 font-semibold">📣 Social <span className="text-xs font-normal text-slate-500">(সব Tenant মিলিয়ে — শুধু Metadata, কোনো Token/Credential কখনো দেখানো হয় না)</span></div>
         {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
@@ -105,7 +131,7 @@ export default function SocialOpsPage() {
           <p className="p-4 text-sm text-emerald-300">কোনো Social Account Error অবস্থায় নেই।</p>
         ) : (
           <table className="atable">
-            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Last Error</th><th className="ath">Updated</th></tr></thead>
+            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Last Error</th><th className="ath">Updated</th><th className="ath">Action</th></tr></thead>
             <tbody>{social.errorAccounts.map((a) => (
               <tr key={a.id} className="border-t border-slate-800">
                 <td className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
@@ -113,6 +139,7 @@ export default function SocialOpsPage() {
                 <td className="atd">{a.platform}</td>
                 <td className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
                 <td className="atd text-slate-400">{fmtDate(a.updatedAt)}</td>
+                <td className="atd"><button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/social-board/accounts/${a.id}/recheck`, `${a.name} — স্বাস্থ্য আবার যাচাই`)}>স্বাস্থ্য আবার যাচাই</button></td>
               </tr>
             ))}</tbody>
           </table>
@@ -123,19 +150,25 @@ export default function SocialOpsPage() {
         <div className="acard">
           <div className="mb-2 font-semibold">ব্যর্থ Post ({social?.posts.failed.length ?? "…"})</div>
           {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
-            <PostRows items={social.posts.failed} emptyText="কোনো ব্যর্থ Post নেই।" />
+            <PostRows items={social.posts.failed} emptyText="কোনো ব্যর্থ Post নেই।" action={{ label: "আবার Publish চেষ্টা", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/retry`, "ব্যর্থ Post আবার চেষ্টা") }} />
           )}
         </div>
         <div className="acard">
           <div className="mb-2 font-semibold">Creator-এর কাছে পাঠানো, ৪৮ ঘণ্টার বেশি অপেক্ষমাণ ({social?.posts.sentToCreatorStale.count ?? "…"})</div>
           {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
-            <PostRows items={social.posts.sentToCreatorStale.items} emptyText="অপেক্ষমাণ কোনো Post নেই।" />
+            <>
+              <PostRows items={social.posts.sentToCreatorStale.items} emptyText="অপেক্ষমাণ কোনো Post নেই।" />
+              <p className="mt-2 text-xs text-slate-500">এই তালিকা শুধু দেখার জন্য — Postটি Creator-এর সাড়ার অপেক্ষায়, retry করার কোনো পথ নেই।</p>
+            </>
           )}
         </div>
         <div className="acard">
           <div className="mb-2 font-semibold">Publishing-এ আটকে আছে (&gt;১৫ মিনিট) ({social?.posts.stuckPublishing.count ?? "…"})</div>
           {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
-            <PostRows items={social.posts.stuckPublishing.items} emptyText="আটকে থাকা কোনো Post নেই।" />
+            <>
+              <PostRows items={social.posts.stuckPublishing.items} emptyText="আটকে থাকা কোনো Post নেই।" action={{ label: "Publish sweep চালান", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/recover-stuck`, "আটকে থাকা Post recovery") }} />
+              <p className="mt-2 text-xs text-slate-500">Sweep-টি ওই Org-এর — stale claim recovery-সহ Org-এর সব due Post প্রসেস হয়, শুধু এই Postটি নয় (৫ মিনিটের automation job যে পথে চলে, হুবহু সেই পথ)।</p>
+            </>
           )}
         </div>
       </div>
@@ -163,7 +196,7 @@ export default function SocialOpsPage() {
           <p className="p-4 text-sm text-emerald-300">কোনো Ad Account-এ সমস্যা নেই।</p>
         ) : (
           <table className="atable">
-            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Health</th><th className="ath">Platform Status</th><th className="ath">Last Error</th><th className="ath">Last Sync</th></tr></thead>
+            <thead><tr><th className="ath">Org</th><th className="ath">Account</th><th className="ath">Platform</th><th className="ath">Health</th><th className="ath">Platform Status</th><th className="ath">Last Error</th><th className="ath">Last Sync</th><th className="ath">Action</th></tr></thead>
             <tbody>{ads.broken.map((a) => (
               <tr key={a.id} className="border-t border-slate-800">
                 <td className="atd"><OrgLink id={a.organizationId} name={a.organizationName} /></td>
@@ -173,6 +206,7 @@ export default function SocialOpsPage() {
                 <td className="atd">{a.platformStatusBucket ? <span className="abadge-amber">{a.platformStatusBucket}</span> : "—"}</td>
                 <td className="atd"><span className="text-red-300">{a.lastError ?? "—"}</span></td>
                 <td className="atd text-slate-400">{fmtDate(a.lastSyncAt)}</td>
+                <td className="atd">{["meta", "google", "tiktok"].includes(a.platform) ? <button className="abtn-secondary !px-2 !py-0.5 text-xs" onClick={() => opsAction(`/admin/system/ads-board/accounts/${a.id}/retry-sync`, `${a.displayName} — Sync আবার চেষ্টা`)}>Sync আবার চেষ্টা</button> : <span className="text-xs text-slate-500">এই Platform-এর sync পথ নেই</span>}</td>
               </tr>
             ))}</tbody>
           </table>

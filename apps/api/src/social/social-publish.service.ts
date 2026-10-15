@@ -3,12 +3,16 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { SocialService, videoOnlyViolation } from "./social.service";
+import { validateForPlatform } from "./social-preflight";
+import { addInterval } from "./social-queue-helpers";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
 import { SocialOAuthService } from "./social-oauth.service";
 import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
+import { LinkedInClient } from "./linkedin.client";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
+import { SocialLinkService } from "./social-link.service";
 import { effectiveTiktokAppConfig, ensurePlatformConfig } from "../common/platform-config";
 
 /**
@@ -74,7 +78,9 @@ export class SocialPublishService {
   private readonly oauth: SocialOAuthService;
   private readonly tiktokPublisher: TikTokPublisher;
   private readonly youtubePublisher: YouTubePublisher;
+  private readonly linkedinClient: LinkedInClient;
   private readonly raster: SocialRasterService;
+  private readonly links?: SocialLinkService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -85,7 +91,15 @@ export class SocialPublishService {
     @Optional() tiktokPublisher?: TikTokPublisher,
     @Optional() youtubePublisher?: YouTubePublisher,
     @Optional() raster?: SocialRasterService,
+    // CC20: LinkedIn client — kept at positional slot 9 because
+    // the CC20 spec constructs this service positionally with the
+    // LinkedIn stub there (integration-4 union decision).
+    @Optional() linkedinClient?: LinkedInClient,
+    // SU6: tracked-link builder. LAST param + Optional so every
+    // existing positional spec construction keeps working.
+    @Optional() links?: SocialLinkService,
   ) {
+    this.links = links;
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -101,6 +115,9 @@ export class SocialPublishService {
     // service; specs may inject one with stubbed seams). Defaults
     // to a real instance sharing this service's prisma + audit.
     this.raster = raster ?? new SocialRasterService(prisma, audit);
+    // CC20: LinkedIn UGC posting (specs inject a stub-fetch
+    // client at this seam).
+    this.linkedinClient = linkedinClient ?? new LinkedInClient();
   }
 
   /** Public base URL of this API (payments.service convention). */
@@ -115,7 +132,10 @@ export class SocialPublishService {
    * Every failure here is a PermanentPublishError: a missing or
    * disconnected account/credential cannot fix itself on retry.
    */
-  async resolveAccountToken(organizationId: string, socialAccountId: string): Promise<{ account: any; accessToken: string }> {
+  async resolveAccountToken(
+    organizationId: string, socialAccountId: string,
+    opts?: { allowErrorStatus?: boolean },
+  ): Promise<{ account: any; accessToken: string }> {
     const prisma = this.prisma as any;
     const account = await prisma.socialAccount.findFirst({
       where: { id: socialAccountId, organizationId },
@@ -123,7 +143,14 @@ export class SocialPublishService {
     if (!account) {
       throw new PermanentPublishError("পোস্টের Social অ্যাকাউন্টটি পাওয়া যায়নি।");
     }
-    if (account.status !== "connected" || !account.integrationId) {
+    // SU10: the health check is the ONE caller allowed to resolve
+    // the token of an "error"-status account — re-validating that
+    // token is exactly how an error account can honestly recover
+    // to "connected". Every other caller (publish, insights)
+    // keeps the original rule: only "connected" resolves.
+    const statusOk = account.status === "connected"
+      || (opts?.allowErrorStatus === true && account.status === "error");
+    if (!statusOk || !account.integrationId) {
       throw new PermanentPublishError("এই অ্যাকাউন্টটি এখন সংযুক্ত নেই — Social Posts পেজ থেকে অ্যাকাউন্টটি আবার কানেক্ট করে তারপর প্রকাশ করুন।");
     }
     const integration = await prisma.integration.findFirst({
@@ -197,12 +224,31 @@ export class SocialPublishService {
 
     const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
 
+    // SU1: full platform pre-flight, right after account
+    // resolution and BEFORE any platform dispatch — content that
+    // can never succeed fails permanently with the pre-flight
+    // message (for OAuth platforms that is the same video-only
+    // text the OAuth path itself used).
+    const preflightViolation = validateForPlatform(
+      { caption: post.caption, mediaRefs: post.mediaRefs, isStory: post.isStory === true }, account.platform ?? "",
+    );
+    if (preflightViolation) throw new PermanentPublishError(preflightViolation);
+
     // SP8/SP9: OAuth platforms (TikTok / YouTube) take their own
     // dispatch — different media rule (exactly one video),
     // different token path (refresh-on-expiry), different success
     // semantics. The Meta flow below is untouched.
     if (account.platform === "tiktok" || account.platform === "youtube") {
       return this.publishToOAuthPlatform(post, account);
+    }
+
+    // CC20: LinkedIn Page takes its own dispatch BEFORE the Meta
+    // flow — its media rule is the inverse of TikTok/YouTube's
+    // (publishToOAuthPlatform would dereference mediaRefs[0] on
+    // a text post and crash; LinkedIn's honest v1 is text + an
+    // optional public link, no media upload step at all).
+    if (account.platform === "linkedin_page") {
+      return this.publishToLinkedIn(post, account);
     }
 
     const assetRows: any[] = [];
@@ -252,6 +298,40 @@ export class SocialPublishService {
       });
     }
 
+    // SU8: FB Page photo story — its own documented flow
+    // (unpublished photo → photo_stories), NOT a feed post. The
+    // pre-flight above already guaranteed exactly one image.
+    // Token-death discipline matches the feed path below.
+    if (account.platform === "meta_page" && post.isStory === true) {
+      try {
+        const story = await this.publisher.publishPhotoStory(accessToken, account.externalId, {
+          imageUrl: assets[0].publicUrl,
+        });
+        return {
+          platformPostId: story.platformPostId,
+          platformUrl: `https://www.facebook.com/stories/${story.platformPostId}`,
+        };
+      } catch (e) {
+        if (isTokenDeadError(e)) {
+          const message = e instanceof Error ? e.message : String(e);
+          await this.markAccountTokenDead(account.id, message);
+        }
+        throw e;
+      }
+    }
+
+    // SU6: a Meta Page post with a link publishes the TRACKED
+    // URL (clicks land on /public/social/r/:token and redirect
+    // with UTM). When no tracked URL can be built (API_PUBLIC_URL
+    // unconfigured, or the link service is not wired) the raw
+    // linkUrl goes out exactly as before. Other platforms are
+    // untouched (Instagram's publisher takes no link at all).
+    let publishLinkUrl: string | null = post.linkUrl ?? null;
+    if (account.platform === "meta_page" && post.linkUrl && this.links) {
+      const tracked = await this.links.buildTrackedUrl(post, account).catch(() => null);
+      if (tracked) publishLinkUrl = tracked;
+    }
+
     try {
       if (account.platform === "instagram") {
         return await this.publisher.publishToInstagram(accessToken, account.externalId, {
@@ -261,7 +341,7 @@ export class SocialPublishService {
       }
       return await this.publisher.publishToPage(accessToken, account.externalId, {
         caption: post.caption,
-        linkUrl: post.linkUrl ?? null,
+        linkUrl: publishLinkUrl,
         assets,
       });
     } catch (e) {
@@ -315,6 +395,35 @@ export class SocialPublishService {
    * never from the possibly-stale snapshot resolveAccountToken
    * decrypted on the way in.
    */
+  /**
+   * CC20 — LinkedIn UGC publish. Media rule (ours, honest):
+   * text-only posts and link posts (the post's linkUrl rides as
+   * an ARTICLE share — LinkedIn builds the preview from the
+   * public URL itself). Any mediaRefs → PermanentPublishError:
+   * LinkedIn native media needs an asset-upload step this
+   * version deliberately does not fake. The result stores the
+   * post URN EXACTLY as LinkedIn returns it and NO url —
+   * LinkedIn returns none, so none is stored. Failures
+   * propagate LinkedIn's own message verbatim.
+   *
+   * Live use additionally requires the operator's LinkedIn app
+   * to hold Community Management API approval — LinkedIn's
+   * gate, surfaced verbatim when it refuses.
+   */
+  private async publishToLinkedIn(post: any, account: any): Promise<SocialPublishResult> {
+    const refs = Array.isArray(post.mediaRefs) ? post.mediaRefs : [];
+    if (refs.length > 0) {
+      throw new PermanentPublishError("LinkedIn-এ এই সংস্করণে শুধু টেক্সট ও লিংক পোস্ট হয় — ছবি/ভিডিও আপলোডের ধাপ তৈরি হয়নি। মিডিয়া ছাড়া পোস্টটি আবার প্রকাশ করুন।");
+    }
+    const accessToken = await this.oauth.ensureAccessToken(post.organizationId, account);
+    const { platformPostId } = await this.linkedinClient.publishUgcPost(accessToken, {
+      organizationId: String(account.externalId),
+      text: String(post.caption ?? ""),
+      linkUrl: post.linkUrl ?? null,
+    });
+    return { platformPostId, platformUrl: null, outcome: "published" };
+  }
+
   private async publishToOAuthPlatform(post: any, account: any): Promise<SocialPublishResult> {
     const prisma = this.prisma as any;
     const violation = videoOnlyViolation(account.platform, post.mediaRefs);
@@ -370,9 +479,23 @@ export class SocialPublishService {
         throw new PermanentPublishError("ভিডিওর ফাইল Storage-এ পাওয়া যাচ্ছে না — মিডিয়াটি আবার আপলোড করে প্রকাশ করুন।");
       }
       // Metadata per the plan: title = the caption's first line
-      // (≤100 chars), description = the full caption.
+      // (≤100 chars), description = the full caption. SU8: an
+      // explicit youtubeTitle wins over the caption-derived one;
+      // a Short gets "#Shorts" appended unless already present
+      // (the base is trimmed so the total stays ≤100 chars).
       const firstLine = String(post.caption ?? "").split(/\r?\n/).map((s: string) => s.trim()).find((s: string) => s.length > 0) ?? "";
-      const title = (firstLine || String(post.caption ?? "").trim()).slice(0, 100);
+      let title = (typeof post.youtubeTitle === "string" && post.youtubeTitle.trim()
+        ? post.youtubeTitle.trim()
+        : (firstLine || String(post.caption ?? "").trim())).slice(0, 100);
+      if (post.youtubeIsShort === true && !/#shorts/i.test(title)) {
+        const suffix = " #Shorts";
+        title = `${title.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
+      }
+      const youtubeTags = Array.isArray(post.youtubeTags)
+        ? post.youtubeTags.filter((t: unknown) => typeof t === "string") as string[]
+        : undefined;
+      const youtubeCategoryId = typeof post.youtubeCategoryId === "string" && post.youtubeCategoryId
+        ? post.youtubeCategoryId : undefined;
       const outcome = await this.youtubePublisher.uploadFromSource({
         accessToken,
         source: {
@@ -385,7 +508,33 @@ export class SocialPublishService {
           },
         },
         title, description: String(post.caption ?? ""),
+        ...(youtubeTags !== undefined ? { tags: youtubeTags } : {}),
+        ...(youtubeCategoryId !== undefined ? { categoryId: youtubeCategoryId } : {}),
       });
+      const baseNote = "YouTube-এ Private হিসেবে আপলোড হয়েছে — app যাচাই সম্পন্ন হলে Public করা যাবে। (Unverified app-এর upload YouTube নিজে Private আটকে রাখে; ভিডিওটি Channel-এ YouTube Studio-তে দেখা যাবে।)";
+      // SU8: cover (custom thumbnail) — set AFTER a successful
+      // upload, from the cover asset's stored bytes (readRange,
+      // the video path's pattern). A thumbnail failure NEVER
+      // unpublishes the video: the post stays published and the
+      // verbatim reason is appended to the publish note.
+      let publishNote = baseNote;
+      if (post.coverAssetId) {
+        try {
+          const cover = await prisma.mediaAsset.findFirst({
+            where: { id: post.coverAssetId, organizationId: post.organizationId },
+          });
+          if (!cover) throw new Error("Cover asset পাওয়া যায়নি");
+          const coverSize = await store.size(cover.storageKey).catch(() => null)
+            ?? (typeof cover.sizeBytes === "number" && cover.sizeBytes > 0 ? cover.sizeBytes : null);
+          if (!coverSize) throw new Error("Cover ফাইল Storage-এ পাওয়া যায়নি");
+          const bytes = await store.readRange(cover.storageKey, 0, coverSize);
+          if (!bytes) throw new Error("Cover-এর bytes পড়া যাচ্ছে না");
+          await this.youtubePublisher.setThumbnail(accessToken, outcome.videoId, bytes, cover.contentType);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          publishNote = `${baseNote} Cover (thumbnail) সেট করা যায়নি: ${msg}`;
+        }
+      }
       return {
         platformPostId: outcome.videoId,
         platformUrl: `https://www.youtube.com/watch?v=${outcome.videoId}`,
@@ -393,7 +542,7 @@ export class SocialPublishService {
         // The upload is REAL (the video is on the channel), but
         // YouTube locks unverified-app uploads to PRIVATE — the
         // note says exactly that, wherever the post is shown.
-        publishNote: "YouTube-এ Private হিসেবে আপলোড হয়েছে — app যাচাই সম্পন্ন হলে Public করা যাবে। (Unverified app-এর upload YouTube নিজে Private আটকে রাখে; ভিডিওটি Channel-এ YouTube Studio-তে দেখা যাবে।)",
+        publishNote,
       };
     }
 
@@ -408,6 +557,12 @@ export class SocialPublishService {
   async publishNow(organizationId: string, actorId: string, postId: string) {
     const row = await (this.prisma as any).socialPost.findFirst({ where: { id: postId, organizationId } });
     if (!row) throw new NotFoundException("Social post not found in this organization");
+    // CC17: the manual publish path enforces the member deny-list
+    // for the post's account. CC27: the scheduled sweep now
+    // re-checks the AUTHOR's deny-list at publish time too (see
+    // runDuePublishes) — this manual path keeps its own check on
+    // the ACTING member, who may differ from the author.
+    await this.social.assertAccountAccess(organizationId, actorId, row.socialAccountId);
     if (!["draft", "scheduled"].includes(row.status)) {
       throw new ConflictException("এই পোস্টটি এখন প্রকাশ করা যাবে না — এটি ইতিমধ্যে প্রকাশিত/প্রকাশ হচ্ছে/বাতিল অবস্থায় আছে।");
     }
@@ -471,6 +626,29 @@ export class SocialPublishService {
     const approvalOn = await this.approvalRequired(organizationId);
     for (const row of Array.isArray(dueRows) ? dueRows : []) {
       counts.due++;
+      // CC27: the deny-list is re-checked at PUBLISH time against
+      // the post's AUTHOR — a post scheduled while its author was
+      // allowed, whose account has since been denied to them in
+      // the Connect Center matrix, must NOT go out. Not a silent
+      // skip: the post returns to draft with the reason written
+      // on it (the SP7 blocked pattern) and the refusal is
+      // audited, so the team sees exactly what happened.
+      if (await this.social.isAccountDenied(organizationId, row.createdById, row.socialAccountId).catch(() => false)) {
+        await (this.prisma as any).socialPost.update({
+          where: { id: row.id },
+          data: {
+            status: "draft", scheduledAt: null,
+            error: "পোস্টটি প্রকাশ হয়নি — পোস্টের লেখকের এই সোশ্যাল অ্যাকাউন্ট ব্যবহারের অনুমতি Connect Center-এর অ্যাক্সেস সেটিংসে প্রত্যাহার করা হয়েছে। পোস্টটি Draft-এ ফিরিয়ে দেওয়া হয়েছে; অনুমতি ফিরিয়ে দিয়ে আবার শিডিউল করুন, অথবা অন্য সদস্য প্রকাশ করুন।",
+          },
+        }).catch(() => undefined);
+        await this.audit.log({
+          organizationId, userId: row.createdById ?? "system", action: "social.post_publish_denied",
+          entityType: "SocialPost", entityId: row.id,
+          metadata: { socialAccountId: row.socialAccountId, reason: "author_connection_denied" },
+        }).catch(() => undefined);
+        counts.blocked++;
+        continue;
+      }
       if (approvalOn) {
         const fresh = await (this.prisma as any).socialPost.findFirst({
           where: { id: row.id, organizationId },
@@ -525,6 +703,20 @@ export class SocialPublishService {
           publishNote: r.publishNote ?? null, error: null,
         },
       });
+      // SU1/SU2 finalize (published only — a TikTok inbox
+      // hand-off is not a publish): first comment, then the
+      // recurrence chain. Each step is failure-isolated: neither
+      // can turn a published post into a failure. The guards keep
+      // posts without these fields on the exact pre-SU path (no
+      // extra reads/writes).
+      if (!sentToCreator) {
+        if (post.firstCommentText) {
+          await this.tryPostFirstComment(post, r.platformPostId).catch(() => undefined);
+        }
+        if (post.recurrenceFrequency && post.seriesId && post.scheduledAt) {
+          await this.finalizeRecurrence(post).catch(() => undefined);
+        }
+      }
       return "published";
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Publish failed";
@@ -549,6 +741,93 @@ export class SocialPublishService {
         data: { status: "scheduled", attempts, error: msg, scheduledAt: new Date(Date.now() + backoff * 60_000) },
       });
       return "rescheduled";
+    }
+  }
+
+  /**
+   * SU1 — post the first comment after a successful publish.
+   * Only Meta Page / Instagram support it here; TikTok/YouTube
+   * posts never reach this step's platform call. Failure is
+   * recorded verbatim on the post (firstCommentStatus "failed")
+   * and NEVER rethrown — the post stays published.
+   */
+  async tryPostFirstComment(post: any, platformPostId: string): Promise<void> {
+    const prisma = this.prisma as any;
+    try {
+      const { account, accessToken } = await this.resolveAccountToken(post.organizationId, post.socialAccountId);
+      if (account.platform !== "meta_page" && account.platform !== "instagram") return;
+      const { commentId } = await this.publisher.postFirstComment(
+        accessToken, account.platform, platformPostId, String(post.firstCommentText),
+      );
+      await prisma.socialPost.update({
+        where: { id: post.id },
+        data: { firstCommentStatus: "posted", firstCommentId: commentId, firstCommentError: null },
+      }).catch(() => undefined);
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_posted",
+        entityType: "SocialPost", entityId: post.id, metadata: { firstCommentId: commentId },
+      }).catch(() => undefined);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await prisma.socialPost.update({
+        where: { id: post.id },
+        data: { firstCommentStatus: "failed", firstCommentError: msg },
+      }).catch(() => undefined);
+      await this.audit.log({
+        organizationId: post.organizationId, userId: post.createdById, action: "social.first_comment_failed",
+        entityType: "SocialPost", entityId: post.id, metadata: { error: msg },
+      }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * SU2 — recurrence chain: after a recurring post publishes,
+   * create exactly one next instance scheduled at
+   * scheduledAt + interval (anchored to the SCHEDULED time, so
+   * the series never drifts). Idempotent on (seriesId, nextAt);
+   * a fresh read of the source decides — if it is no longer
+   * published/sent or its recurrence was removed, no chain.
+   * Never throws.
+   */
+  async finalizeRecurrence(post: any): Promise<void> {
+    try {
+      if (!post?.recurrenceFrequency || !post?.seriesId || !post?.scheduledAt) return;
+      const prisma = this.prisma as any;
+      const source = await prisma.socialPost.findFirst({
+        where: { id: post.id, organizationId: post.organizationId },
+      }).catch(() => null);
+      if (!source) return;
+      if (!["published", "sent_to_creator"].includes(source.status)) return;
+      if (!source.recurrenceFrequency || !source.seriesId || !source.scheduledAt) return;
+      const nextAt = addInterval(new Date(source.scheduledAt), source.recurrenceFrequency, source.recurrenceInterval ?? 1);
+      const existing = await prisma.socialPost.findFirst({
+        where: { organizationId: post.organizationId, seriesId: source.seriesId, scheduledAt: nextAt },
+      }).catch(() => null);
+      if (existing) return;
+      const firstCommentText = source.firstCommentText ?? null;
+      const approval = source.approvalStatus === "approved"
+        ? { approvalStatus: "approved", submittedById: source.submittedById ?? null, reviewedById: source.reviewedById ?? null }
+        : {};
+      const created = await prisma.socialPost.create({
+        data: {
+          organizationId: post.organizationId, socialAccountId: source.socialAccountId,
+          caption: source.caption, linkUrl: source.linkUrl ?? null,
+          mediaRefs: Array.isArray(source.mediaRefs) ? source.mediaRefs : [],
+          status: "scheduled", scheduledAt: nextAt,
+          firstCommentText, firstCommentStatus: firstCommentText ? "pending" : null,
+          seriesId: source.seriesId,
+          recurrenceFrequency: source.recurrenceFrequency,
+          recurrenceInterval: source.recurrenceInterval ?? null,
+          attempts: 0, createdById: source.createdById, ...approval,
+        },
+      });
+      await this.audit.log({
+        organizationId: post.organizationId, userId: source.createdById, action: "social.post_recurrence_chained",
+        entityType: "SocialPost", entityId: created.id,
+        metadata: { sourcePostId: source.id, seriesId: source.seriesId, scheduledAt: nextAt.toISOString() },
+      }).catch(() => undefined);
+    } catch (e) {
+      this.logger.warn(`social recurrence chain failed for post ${post?.id}: ${e instanceof Error ? e.message : "unknown"}`);
     }
   }
 

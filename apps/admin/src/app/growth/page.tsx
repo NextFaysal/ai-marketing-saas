@@ -3,6 +3,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Campaign { id: string; subject: string; audience: string; recipients: number; sent: number; failed: number; createdAt: string }
 interface Changelog { id: string; version: string | null; title: string; body: string; published: boolean; publishedAt: string | null; createdAt: string }
@@ -111,10 +112,11 @@ export default function GrowthPage() {
           <ul className="space-y-1.5">
             {campaigns.slice(0, 5).map((c) => (
               <li key={c.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                <b>{c.subject}</b> · {c.audience} · পাঠানো {c.sent}/{c.recipients} (ব্যর্থ {c.failed}) · {new Date(c.createdAt).toLocaleString("bn-BD")}
+                <b>{c.subject}</b> · {c.audience} · পাঠানো {c.sent}/{c.recipients} (ব্যর্থ {c.failed}) · {fmtDateTime(c.createdAt)}
               </li>
             ))}
           </ul>
+          <p className="text-xs text-slate-500">পাঠানো Campaign সম্পাদনা বা মোছা যায় না — প্রতিটি Campaign-ই পাঠানোর পরের ইতিহাস (কে পেয়েছে, কত সফল/ব্যর্থ) হিসেবে সংরক্ষিত থাকে, ইতিহাস বদলানো হয় না। Draft Campaign বলে কিছু এই সিস্টেমে নেই — "Campaign পাঠান" চাপলেই তা সরাসরি পাঠানো হয়।</p>
         </div>
 
         <div className="acard space-y-3">
@@ -253,7 +255,7 @@ export default function GrowthPage() {
                 <ul className="space-y-1.5">
                   {referrals.recent.slice(0, 6).map((r) => (
                     <li key={r.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                      {r.referrerEmail ?? "🏷️ ক্যাম্পেইন"} → {r.referredEmail ?? "?"} · {r.status === "rewarded" ? `✅ ${taka(r.rewardMinor ?? 0)}` : r.status === "clawed_back" ? "↩️ ফেরত" : "⏳ pending"} · {new Date(r.createdAt).toLocaleDateString("bn-BD")}
+                      {r.referrerEmail ?? "🏷️ ক্যাম্পেইন"} → {r.referredEmail ?? "?"} · {r.status === "rewarded" ? `✅ ${taka(r.rewardMinor ?? 0)}` : r.status === "clawed_back" ? "↩️ ফেরত" : "⏳ pending"} · {fmtDateTime(r.createdAt, "date")}
                     </li>
                   ))}
                 </ul>
@@ -296,7 +298,7 @@ export default function GrowthPage() {
             {refCampaigns.map((c) => (
               <li key={c.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
                 <span><b>{c.code}</b> · {c.label} · {c.live ? "🟢 live" : "⚪ বন্ধ/শেষ"} · ব্যবহার {c.usedCount}{c.maxUses ? `/${c.maxUses}` : ""}
-                  <span className="block text-slate-400">রিওয়ার্ড {c.rewardMinor ? taka(Number(c.rewardMinor)) : "—"} · Welcome {c.refereeBonusMinor ? taka(Number(c.refereeBonusMinor)) : "—"}{c.expiresAt ? ` · মেয়াদ ${new Date(c.expiresAt).toLocaleDateString("bn-BD")}` : ""}</span></span>
+                  <span className="block text-slate-400">রিওয়ার্ড {c.rewardMinor ? taka(Number(c.rewardMinor)) : "—"} · Welcome {c.refereeBonusMinor ? taka(Number(c.refereeBonusMinor)) : "—"}{c.expiresAt ? ` · মেয়াদ ${fmtDateTime(c.expiresAt, "date")}` : ""}</span></span>
                 <button className="abtn-secondary !px-2 !py-0.5 shrink-0" onClick={async () => { await apiFetch(`/admin/referrals/campaigns/${c.id}`, { method: "PATCH", body: JSON.stringify({ active: !c.active }) }); await load(); }}>{c.active ? "বন্ধ করুন" : "চালু করুন"}</button>
               </li>
             ))}
@@ -317,7 +319,7 @@ export default function GrowthPage() {
               <ul className="space-y-1.5">
                 {feedback.recent.slice(0, 8).map((f) => (
                   <li key={f.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
-                    <b>{f.score}/10</b> · {f.organizationName ?? f.id} · {new Date(f.createdAt).toLocaleDateString("bn-BD")}
+                    <b>{f.score}/10</b> · {f.organizationName ?? f.id} · {fmtDateTime(f.createdAt, "date")}
                     {f.comment ? <span className="block text-slate-400">“{f.comment}”</span> : null}
                   </li>
                 ))}

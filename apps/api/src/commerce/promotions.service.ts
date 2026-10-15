@@ -21,6 +21,7 @@ import {
   type PromotionLine,
 } from "./promotions";
 import type { PromotionDto, PromotionPreviewDto } from "./commerce.dto";
+import { EventsService } from "../common/events.service";
 import { computeTax, serializeTaxBreakdown, type TaxBreakdownEntry } from "./tax";
 
 export interface CheckoutEvaluation {
@@ -86,6 +87,9 @@ export class PromotionsService {
     private readonly prisma: PrismaService,
     private readonly discounts: DiscountsService,
     @Optional() private readonly audit?: AuditService,
+    // SU5: sale-start producer hook. LAST param + Optional
+    // (EventsService is global); fire-and-forget emit.
+    @Optional() private readonly events?: EventsService,
   ) {}
 
   private table(): any {
@@ -210,11 +214,18 @@ export class PromotionsService {
       organizationId: orgId, userId: actorId, action: "promotion.created",
       entityType: "Promotion", entityId: row.id, metadata: { type: row.type, name },
     });
+    // SU5: a promotion born active may become a social DRAFT.
+    if (row.active) {
+      this.events?.emit?.("social_draft.promotion_activated", { organizationId: orgId, promotionId: row.id });
+    }
     return { promotion: this.serialize(row) };
   }
 
   async update(orgId: string, actorId: string, id: string, dto: PromotionDto) {
     const existing = await this.loadOr404(orgId, id);
+    // SU5: captured BEFORE the write — the transition check
+    // below must compare against the pre-update state.
+    const wasActive = existing.active === true;
     const type = dto.type !== undefined ? String(dto.type) : String(existing.type);
     const startsAt = dto.startsAt !== undefined ? toDateOrNull(dto.startsAt) : (existing.startsAt ? new Date(existing.startsAt) : null);
     const endsAt = dto.endsAt !== undefined ? toDateOrNull(dto.endsAt) : (existing.endsAt ? new Date(existing.endsAt) : null);
@@ -239,6 +250,10 @@ export class PromotionsService {
       organizationId: orgId, userId: actorId, action: "promotion.updated",
       entityType: "Promotion", entityId: id,
     });
+    // SU5: an inactive → active transition is a sale start.
+    if (!wasActive && updated.active === true) {
+      this.events?.emit?.("social_draft.promotion_activated", { organizationId: orgId, promotionId: id });
+    }
     return { promotion: this.serialize(updated) };
   }
 
@@ -249,6 +264,10 @@ export class PromotionsService {
       organizationId: orgId, userId: actorId, action: "promotion.toggled",
       entityType: "Promotion", entityId: id, metadata: { active },
     });
+    // SU5: explicit activation is a sale start.
+    if (active === true) {
+      this.events?.emit?.("social_draft.promotion_activated", { organizationId: orgId, promotionId: id });
+    }
     return { promotion: this.serialize(updated) };
   }
 
@@ -639,6 +658,19 @@ export class PromotionsService {
               : null,
           referralDiscountMinor: ev.referralDiscountMinor,
           referralCode: ev.referralCodeToRecord,
+          // ON3: stamp the coupon code ONLY when a coupon truly
+          // applied in this evaluation (appliedDiscountId set) —
+          // the value is then ev.appliedCouponCode. When no
+          // coupon was decided by this evaluation the stored
+          // couponCode is left unchanged: stampOrder also runs
+          // for evaluations that carried no coupon input, and
+          // erasing (or inventing) the code there would break
+          // ON3 surgery's re-validation of the original coupon.
+          // Order surgery writes couponCode itself on its own
+          // updates (including clearing it when a coupon drops).
+          ...(ev.appliedDiscountId != null
+            ? { couponCode: ev.appliedCouponCode }
+            : {}),
           // EC23: the per-rate tax snapshot. taxMinor/totalMinor
           // already rode the checkout's own order write (upsert);
           // taxBreakdown is not part of that payload, so it is

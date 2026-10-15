@@ -14,6 +14,7 @@ import { ensureShopifyWebhookSubscriptions } from "./shopify-webhooks";
 import { normalizeShopifyCustomerNode, upsertSyncedCustomer } from "../customer-sync";
 import { ErasureService } from "../../customers/erasure.service";
 import { upsertAbandonedStoreCheckout } from "./shopify-checkouts";
+import { cadenceSkip } from "../sync-cadence";
 
 const EC_CUSTOMERS_QUERY = `query ecCustomers($first: Int!, $after: String) { customers(first: $first, after: $after) { edges { node { id firstName lastName email phone defaultAddress { address1 address2 city zip country phone } } } pageInfo { hasNextPage endCursor } } }`;
 
@@ -345,6 +346,21 @@ export class ShopifyService {
     return integration;
   }
 
+  /** CC18: the sync-pause gate — same recorded-skip discipline
+   * as IntegrationsService.pausedSkip (a COMPLETED SyncJob whose
+   * error carries "sync_paused" + the AD5-style skip marker). */
+  private async pausedSkip(integration: any, kind: string): Promise<any | null> {
+    if (!integration || integration.syncPaused !== true) return null;
+    const job = await (this.prisma as any).syncJob.create({
+      data: {
+        integrationId: integration.id, kind, status: "COMPLETED",
+        fetched: 0, created: 0, updated: 0, skipped: 0,
+        error: "sync_paused", completedAt: new Date(),
+      },
+    });
+    return { skipped: true, reason: "sync_paused", jobId: job.id, job };
+  }
+
   private async clientFor(integration: any): Promise<ShopifyClient> {
     if (!integration.credential) throw new BadRequestException("Shopify credentials are missing; reconnect");
     const secrets = await this.refreshTokenIfNeeded(integration);
@@ -396,8 +412,11 @@ export class ShopifyService {
     throw new Error("Shopify bulk operation completed without a result URL");
   }
 
-  async syncProducts(organizationId: string, actorId: string, integrationId: string, opts?: { bulk?: boolean }) {
+  async syncProducts(organizationId: string, actorId: string, integrationId: string, opts?: { bulk?: boolean; scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "products");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "products"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "products", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     let bulkUsed: string | undefined;
@@ -473,8 +492,11 @@ export class ShopifyService {
     }
   }
 
-  async syncOrders(organizationId: string, actorId: string, integrationId: string) {
+  async syncOrders(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "orders");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "orders"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "orders", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     try {
@@ -501,8 +523,11 @@ export class ShopifyService {
     }
   }
 
-  async syncCustomers(organizationId: string, actorId: string, integrationId: string) {
+  async syncCustomers(organizationId: string, actorId: string, integrationId: string, opts?: { scheduled?: boolean }) {
     const integration = await this.getIntegration(organizationId, integrationId);
+    const paused = await this.pausedSkip(integration, "customers");
+    if (paused) return paused;
+    if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "customers"); if (cadence) return cadence; }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "customers", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     const errors: string[] = [];

@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch, formatMinorStr } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface Settings {
   maintenanceMode: boolean; signupOpen: boolean; supportContact: string;
@@ -27,7 +28,8 @@ interface PlatformConfigView {
   image: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
   tiktokApp: { source: string; clientKey: string | null; redirectUri: string | null; audited: boolean; secretConfigured: boolean };
   googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
-  wallet: { source: string; feeBps: number };
+  linkedinApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
+  wallet: { source: string; feeBps: number; payoutFourEyesThresholdMinor: number | null };
   note: string;
 }
 
@@ -53,7 +55,7 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
     } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Test ব্যর্থ"}`); }
     finally { setBusy(""); }
   }
-  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google") {
+  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin") {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: "{}" });
@@ -179,8 +181,11 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
         <div className="acard space-y-3">
           <div className="flex items-center justify-between"><span className="font-semibold">🏦 Wallet — প্ল্যাটফর্ম পেমেন্ট ফি (CC10)</span>{srcBadge(cfg.wallet.source)}</div>
           <label className="block text-sm">ফি (basis points — 200 = 2%)<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
+          <label className="block text-sm">Four-eyes payout সীমা (minor unit — যেমন 50000 = ৳500; খালি = নিয়ম বন্ধ)<input id="pc-wallet-foureyes" type="number" min={0} step={1} className="ainput mt-1" defaultValue={cfg.wallet.payoutFourEyesThresholdMinor ?? ""} placeholder="খালি রাখলে four-eyes নিয়ম বন্ধ" /></label>
+          <p className="text-xs text-slate-500">সীমা সেট থাকলে, ওই পরিমাণ বা তার বেশি payout যে Admin approve করবেন, তিনি নিজে mark-paid করতে পারবেন না — অন্য একজন Admin লাগবে (CC23)।</p>
+          <p className="text-xs text-slate-500">💡 সেভ করার পর থেকে কার্যকর: নতুন ফি শুধু সেভ করার পরের যাচাইকৃত (verified) প্ল্যাটফর্ম পেমেন্টে কাটা হবে — আগের পেমেন্ট বা জমা হওয়া ব্যালেন্সে কোনো পরিবর্তন হবে না।</p>
           <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("wallet", { feeBps: Number(val("pc-wallet-fee")) }, "Wallet ফি সেভ হয়েছে — এখন থেকে যাচাই হওয়া প্ল্যাটফর্ম পেমেন্টে এই হারেই ফি কাটা হবে।")}>সেভ করুন</button>
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("wallet", { feeBps: Number(val("pc-wallet-fee")), payoutFourEyesThresholdMinor: val("pc-wallet-foureyes").trim() === "" ? null : Number(val("pc-wallet-foureyes")) }, "Wallet সেটিং সেভ হয়েছে — ফি এখন থেকে যাচাই হওয়া প্ল্যাটফর্ম পেমেন্টে এই হারেই কাটা হবে; four-eyes সীমা কার্যকর হবে এখন থেকে।")}>সেভ করুন</button>
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("wallet", { clear: true }, "Wallet কনফিগ মোছা হয়েছে — ফি এখন 0 (কোনো ফি কাটা হবে না)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-500">এই ফি শুধু প্ল্যাটফর্ম গেটওয়ে (উপরের SSLCommerz/bKash — প্ল্যাটফর্মের অ্যাকাউন্ট) দিয়ে আসা Tenant পেমেন্টে কাটা হয়: যাচাইকৃত পেমেন্টের মুহূর্তে তখনকার হারেই হিসাব হয়, Tenant-এর Wallet-এ নিট অংশ জমা হয় (ledger-এ ফি আলাদা row)। সেট না থাকলে ফি 0 — কখনো অনুমান করা হয় না। Tenant-এর নিজের গেটওয়ের (CC9) টাকায় কোনো ফি নেই। Payout পরিচালনা: Wallet Payouts পেজে।</p>
@@ -212,6 +217,19 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
+          <p className="text-xs text-slate-500">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
+        </div>
+        <div className="acard space-y-3">
+          <div className="flex items-center justify-between"><span className="font-semibold">💼 LinkedIn App — Page Connect + পোস্টিং (Connect Center — CC20)</span>{srcBadge(cfg.linkedinApp.source)}</div>
+          <label className="block text-sm">Client ID<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder="LinkedIn Developer App Client ID" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-li-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.linkedinApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-li-redirect" className="ainput mt-1" defaultValue={cfg.linkedinApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/linkedin/callback" /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("linkedin", { clientId: val("pc-li-id"), clientSecret: val("pc-li-secret") || undefined, redirectUri: val("pc-li-redirect") }, "LinkedIn App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-linkedin")}>{busy === "test-linkedin" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, "LinkedIn App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy refresh token পাঠিয়ে LinkedIn-এর invalid_client বনাম token-error উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা Community Management API অনুমোদন প্রমাণ করে না। LinkedIn Developer Portal-এ App বানিয়ে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/linkedin/callback</code> (অথবা উপরে নিজে যা দিলেন)। সৎ সীমা: Page-এ লাইভ পোস্টিংয়ের জন্য এই App-এ LinkedIn-এর <b>Community Management API</b> অনুমোদন লাগবে — অনুমোদন ছাড়া কানেক্ট চললেও পোস্ট LinkedIn প্রত্যাখ্যান করবে, এবং সেই আসল বার্তাটাই tenant দেখবে।</p>
         </div>
       </div>
     </div>
@@ -290,6 +308,18 @@ export default function SettingsPage() {
                   <div className="mb-2 flex items-center gap-2 text-sm">
                     <span className="w-20 font-medium">{tier}</span>
                     {fromSetting ? <span className="abadge-green">Setting</span> : <span className="abadge-amber">Default</span>}
+                    {fromSetting ? (
+                      <button className="abtn-secondary ml-auto !px-2 !py-0.5 text-xs" onClick={async () => {
+                        if (!confirm(`${tier} প্ল্যানের সেভ করা Limits মুছে Code Default-এ ফেরাতে চান? অন্য প্ল্যানের Limits বদলাবে না।`)) return;
+                        const reason = window.prompt("Default-এ ফেরানোর কারণ (Audit-এ থাকবে):");
+                        if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া Default-এ ফেরানো যাবে না।"); return; }
+                        try {
+                          const out = await apiFetch<{ cleared: boolean; note?: string }>(`/admin/settings/plan-limits/${tier}/clear`, { method: "POST", body: JSON.stringify({ reason }) });
+                          setMsg(out.cleared ? `✅ ${tier} — সেভ করা Limits মোছা হয়েছে, এখন থেকে Code Default কার্যকর।` : `⚠ ${tier}: ${out.note ?? "কোনো বদল হয়নি"}`);
+                          await load();
+                        } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Default-এ ফেরানো যায়নি"}`); }
+                      }}>Code Default-এ ফেরান</button>
+                    ) : null}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     <label className="block">AI Daily
@@ -306,7 +336,7 @@ export default function SettingsPage() {
               );
             })}
             <button className="abtn-secondary" onClick={() => save({ planLimits: s.planLimits }, "Plan Limits আপডেট হয়েছে।")}>Limits সেভ করুন</button>
-            <p className="mt-1 text-xs text-slate-500">সেভ করলে সব Tier স্পষ্টভাবে Setting হিসেবে সংরক্ষিত হবে — এরপর Badge-এ Setting দেখাবে।</p>
+            <p className="mt-1 text-xs text-slate-500">সেভ করলে সব Tier স্পষ্টভাবে Setting হিসেবে সংরক্ষিত হবে — এরপর Badge-এ Setting দেখাবে। কোনো একটা Tier আবার Code Default-এ ফেরাতে চাইলে ওই Tier-এর "Code Default-এ ফেরান" বোতাম — শুধু ওই Tier-এর entry-ই মুছবে, বাকিগুলো যেমন ছিল তেমনই থাকবে (কারণ + Audit বাধ্যতামূলক)।</p>
           </div>
         </div>
         <div className="space-y-4">
@@ -343,7 +373,7 @@ export default function SettingsPage() {
             <ul className="space-y-2">
               {anns.map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
-                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{new Date(a.createdAt).toLocaleString("bn-BD")} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}{(a.startsAt || a.endsAt) ? <span className="block">🗓 {a.startsAt ? new Date(a.startsAt).toLocaleString("bn-BD") : "—"} → {a.endsAt ? new Date(a.endsAt).toLocaleString("bn-BD") : "—"}</span> : null}</span></span>
+                  <span><b>{a.title}</b> — {a.body}<span className="block text-xs text-slate-500">{fmtDateTime(a.createdAt)} · {a.active ? "সক্রিয়" : "নিষ্ক্রিয়"} · 👥 {AUDIENCES.find((x) => x.value === (a.audience ?? "all"))?.label ?? a.audience}{(a.startsAt || a.endsAt) ? <span className="block">🗓 {a.startsAt ? fmtDateTime(a.startsAt) : "—"} → {a.endsAt ? fmtDateTime(a.endsAt) : "—"}</span> : null}</span></span>
                   <span className="flex shrink-0 gap-1">
                     <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) }); await load(); }}>{a.active ? "বন্ধ" : "চালু"}</button>
                     <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => { await apiFetch(`/admin/announcements/${a.id}`, { method: "DELETE" }); await load(); }}>মুছুন</button>

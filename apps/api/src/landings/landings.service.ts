@@ -22,6 +22,7 @@ import { assertPreorderLimit, preorderInfo } from "../commerce/ec24";
 import type { PromotionLine } from "../commerce/promotions";
 import { InventoryService } from "../inventory/inventory.service";
 import { AffiliatesService } from "../affiliates/affiliates.service";
+import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { normalizeSections, validateSections } from "./sections";
 import type {
   CreateLandingDto,
@@ -154,6 +155,9 @@ export class LandingsService {
     // EC32: affiliate attribution stamp. LAST param + Optional,
     // same discipline; the stamp itself never throws.
     @Optional() private readonly affiliates?: AffiliatesService,
+    // ON4: checkout blocklist refusal. LAST param + Optional,
+    // same discipline; absent keeps checkout exactly as before.
+    @Optional() private readonly blockedPhones?: BlockedPhoneService,
   ) {}
 
   private t(name: string): any {
@@ -1006,6 +1010,8 @@ export class LandingsService {
     if (!this.integrations) {
       throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
     }
+    // ON4: blocklist refusal — generic message, never reveals the blocklist.
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(organizationId, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
     await this.integrations.upsertOrder(
       organizationId,
       null,

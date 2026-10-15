@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 import { CourierService } from "./courier.service";
+import { CourierRulesService } from "./courier-rules.service";
 import { CourierNdrService } from "./courier-ndr.service";
 import { CourierReconciliationService } from "./courier-reconciliation.service";
-import { CourierRulesService } from "./courier-rules.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
 import { RescheduleNdrDto, ResolveNdrDto, CustomerNdrActionDto } from "./courier-ndr.dto";
 import { UploadDisbursementDto, UpdateDisputeDto } from "./courier-reconciliation.dto";
@@ -17,9 +17,9 @@ import { RolesGuard } from "../common/roles.guard";
 export class CourierController {
   constructor(
     private readonly courier: CourierService,
+    private readonly rules: CourierRulesService,
     private readonly ndr: CourierNdrService,
     private readonly reconciliation: CourierReconciliationService,
-    private readonly rules: CourierRulesService,
   ) {}
 
   @Get("connection")
@@ -72,9 +72,12 @@ export class CourierController {
     return this.courier.connect(orgId, user.userId, dto);
   }
 
+  // CC29: ?integrationId= disconnects exactly that account of
+  // the provider; without it the primary account is disconnected
+  // (the pre-CC29 behavior).
   @Delete("connection") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
-  disconnect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("provider") provider?: string) {
-    return this.courier.disconnect(orgId, user.userId, provider);
+  disconnect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("provider") provider?: string, @Query("integrationId") integrationId?: string) {
+    return this.courier.disconnect(orgId, user.userId, provider, integrationId);
   }
 
   @Get("pathao/stores")
@@ -144,6 +147,11 @@ export class CourierController {
   @Get("orders/:orderId/invoice.pdf")
   async invoicePdf(@Param("organizationId") organizationId: string, @Param("orderId") orderId: string, @Res() res: Response) {
     this.sendPdf(res, await this.courier.invoicePdf(organizationId, orderId), `invoice-${orderId}.pdf`);
+  }
+
+  @Get("invoices.pdf")
+  async invoicesPdf(@Param("organizationId") organizationId: string, @Query("ids") ids: string, @Res() res: Response) {
+    this.sendPdf(res, await this.courier.invoicesPdf(organizationId, (ids ?? "").split(",").map((s) => s.trim()).filter(Boolean)), "invoices.pdf");
   }
 
   @Post("shipments/:shipmentId/sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")

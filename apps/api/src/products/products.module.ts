@@ -5,9 +5,10 @@ import { InventoryModule } from "../inventory/inventory.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { CommerceModule } from "../commerce/commerce.module";
 import { AffiliatesModule } from "../affiliates/affiliates.module";
+import { FraudModule } from "../fraud/fraud.module";
 
 @Module({
-  imports: [InventoryModule, IntegrationsModule, CommerceModule, AffiliatesModule],
+  imports: [InventoryModule, IntegrationsModule, CommerceModule, AffiliatesModule, FraudModule],
   controllers: [ProductsController, PublicCheckoutController],
   providers: [ProductsService],
   exports: [ProductsService],

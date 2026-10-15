@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 export class CreateAdAccountDto {
   @IsString() platform!: string; // meta | google | tiktok | manual
   @IsOptional() @IsString() sourceType?: string; // api | csv | manual
@@ -22,6 +22,13 @@ export class ImportAdCsvDto {
 export class MetaConnectDto {
   @IsString() @MinLength(10) accessToken!: string;
   @IsOptional() @IsArray() adAccountExternalIds?: string[]; // omit = connect all discovered accounts
+  // CC28: which Meta app this token was minted under — "own"
+  // requires the tenant's Meta app config (TenantAppConfig);
+  // recorded on the Integration row (AdAccount has no appSource
+  // column). Nothing in the ads module resolves an app secret
+  // downstream today — the value is the honest record of which
+  // app the token belongs to (see the B12 acceptance).
+  @IsOptional() @IsIn(["platform", "own"]) appSource?: string;
 }
 // AD5: step 1 of the picker flow — verify a Meta token and list the
 // accounts under it WITHOUT storing anything (no Integration, no

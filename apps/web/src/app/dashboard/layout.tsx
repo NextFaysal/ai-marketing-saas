@@ -25,7 +25,7 @@ const GROUPS: NavGroup[] = [
     id: "commerce",
     title: "কমার্স ও সেলস",
     icon: "🛍️",
-    hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/pos", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
+    hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
   },
   {
     id: "marketing",
@@ -43,7 +43,7 @@ const GROUPS: NavGroup[] = [
     id: "settings",
     title: "টিম ও সেটিংস",
     icon: "⚙️",
-    hrefs: ["/dashboard/setup", "/dashboard/connections", "/dashboard/team", "/dashboard/settings", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog"],
+    hrefs: ["/dashboard/team", "/dashboard/settings", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog", "/dashboard/connections", "/dashboard/setup"],
   },
 ];
 

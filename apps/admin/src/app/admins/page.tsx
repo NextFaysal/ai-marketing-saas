@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { apiFetch } from "@/lib/api";
+import { fmtDateTime } from "@/lib/dates";
 
 interface AdminRow {
   id: string; name: string | null; email: string; tier: string; status: string;
@@ -23,7 +24,7 @@ export default function AdminsPage() {
   }, []);
 
   const superWithoutTotp = admins.filter((a) => a.tier === "SUPER" && !a.totpEnrolled && a.status === "ACTIVE");
-  const fmt = (v: string | null) => (v ? new Date(v).toLocaleString("bn-BD") : "—");
+  const fmt = (v: string | null) => (v ? fmtDateTime(v) : "—");
 
   return (
     <AdminShell title="🧑‍💼 Admins (রোস্টার)">
@@ -48,7 +49,7 @@ export default function AdminsPage() {
             return (
               <tr key={a.id} className={`border-t border-slate-800 ${danger ? "bg-red-500/5" : ""}`}>
                 <td className="atd"><a className="text-indigo-300 hover:underline" href={`/users/${a.id}`}>{a.name ?? "—"}</a></td>
-                <td className="atd">{a.email}</td>
+                <td className="atd break-all sm:break-normal">{a.email}</td>
                 <td className="atd"><span className={a.tier === "SUPER" ? "abadge-red" : "abadge-amber"}>{a.tier}</span></td>
                 <td className="atd">{a.status === "ACTIVE" ? <span className="abadge-green">ACTIVE</span> : <span className="abadge-amber">{a.status}</span>}</td>
                 <td className="atd">

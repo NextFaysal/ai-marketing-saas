@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export class ConnectCourierDto {
   @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx (default steadfast)
@@ -17,11 +17,17 @@ export class ConnectCourierDto {
 
 export class BookShipmentDto {
   @IsOptional() @IsString() provider?: string;
+  // CC29: the explicit per-order courier ACCOUNT choice (an
+  // Integration row id of the chosen provider). Omitted → the
+  // EC22 rule's pinned account, else the provider default.
+  @IsOptional() @IsString() courierIntegrationId?: string;
   @IsString() orderId!: string;
   @IsOptional() @IsString() @MaxLength(120) recipientName?: string;
   @IsOptional() @IsString() @MaxLength(30) recipientPhone?: string;
   @IsString() @MinLength(8) @MaxLength(500) recipientAddress!: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** ON4: explicit staff override for a review-held order (audited). */
+  @IsOptional() @IsBoolean() overrideReviewHold?: boolean;
   @IsOptional() @IsObject() pathao?: {
     storeId?: number; cityId?: number; zoneId?: number; areaId?: number;
     deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string;
@@ -34,6 +40,8 @@ export class BookShipmentDto {
 /** Milestone 53: bulk booking — up to 50 orders through one provider. */
 export class BulkBookDto {
   @IsOptional() @IsIn(["steadfast", "pathao", "redx"]) provider?: string;
+  // CC29: one explicit courier account for the whole batch.
+  @IsOptional() @IsString() courierIntegrationId?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsString({ each: true }) orderIds!: string[];
   @IsOptional() @IsString() recipientName?: string;
   @IsOptional() @IsString() recipientPhone?: string;
