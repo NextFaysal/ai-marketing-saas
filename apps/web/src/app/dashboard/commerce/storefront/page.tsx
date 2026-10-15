@@ -1309,7 +1309,7 @@ export default function StorefrontStaffPage() {
                 <div className="flex items-center gap-2">
                   <span className={statusMark(false)}>…</span>
                   <span className="font-semibold">SSL</span>
-                  <span className="text-slate-500">স্বয়ংক্রিয় SSL ব্যবস্থা অপেক্ষমাণ (TD10) — সার্ভার ধাপ ছাড়া HTTPS নিশ্চিত নয়</span>
+                  <span className="text-slate-500">স্বয়ংক্রিয় SSL-এর পথ বেছে নেওয়া হয়েছে: Cloudflare for SaaS (TD10 spike রায়) — তবে প্ল্যাটফর্ম-মালিকের প্যানেল ধাপ (SaaS enable + লাইভ টেস্ট) বাকি থাকায় এই মুহূর্তে HTTPS নিশ্চিত নয়; routing ঠিক থাকলেও ব্রাউজারে সার্টিফিকেট সতর্কতা দেখাতে পারে</span>
                 </div>
               </div>
 
