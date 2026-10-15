@@ -4,6 +4,7 @@ import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, AccountAvatar, PlatformDot } from "./shared";
 import { summaryMetricRows, weekdayNameBn, formatHourBn } from "@/lib/social-post-insights";
 import { contentTypeLabel, followerGrowth, formatBnNumber, monthLabelBn } from "@/lib/social-analytics";
+import { coachSourceLabel } from "@/lib/social-stock-coach";
 
 /**
  * SU11 — performance strip + Analytics v2 card (SP7/SU7). Pure move from the former single-file page:
@@ -25,7 +26,7 @@ import { contentTypeLabel, followerGrowth, formatBnNumber, monthLabelBn } from "
  * (data labels on a chart, documented in the batch acceptance).
  */
 export function AnalyticsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, analyticsAccounts, analyticsBars, analyticsContentTypes, analyticsFollowers, analyticsHasTimeseriesData, analyticsTimeseries, busy, downloadReport, followerHasGrowth, hasPublishedOrInsights, inputCls, insightsSummary, posts, refreshAllInsights, reportMonth, setReportMonth } = c;
+  const { accounts, analyticsAccounts, analyticsBars, analyticsContentTypes, analyticsFollowers, analyticsHasTimeseriesData, analyticsTimeseries, busy, coach, downloadReport, followerHasGrowth, hasPublishedOrInsights, inputCls, insightsSummary, posts, refreshAllInsights, reportMonth, setReportMonth } = c;
   // SD6 tiles: pure sums over data this panel already receives.
   const publishedCount = posts.filter((p) => p.status === "published").length;
   const engagementTotal = analyticsBars.reduce((s, b) => s + b.engagementTotal, 0);
@@ -56,6 +57,84 @@ export function AnalyticsPanel({ c }: { c: SocialPageCtx }) {
           <div className="ctx-tile-value">{followerDeltaTotal !== null ? `${followerDeltaTotal >= 0 ? "+" : "−"}${formatBnNumber(Math.abs(followerDeltaTotal))}` : "—"}</div>
           <p className="mt-0.5 text-xs text-slate-400">{followerDeltaTotal !== null ? "snapshot অনুযায়ী" : "যথেষ্ট snapshot নেই"}</p>
         </div>
+      </div>
+
+      {/* SN9: the weekly performance coach — the latest stored
+          digest when there is one; otherwise the live compute
+          preview (clearly labelled as a preview, with the honest
+          note about the weekly job template). Every number comes
+          from the coach compute over the org's own posts. */}
+      <div className="card space-y-3 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="font-semibold">🧭 Social Coach — সাপ্তাহিক সারসংক্ষেপ</div>
+          {coach?.latest ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+              {coachSourceLabel(coach.latest.narrationSource)}
+            </span>
+          ) : null}
+        </div>
+        {coach ? (
+          <>
+            <p className="text-sm leading-relaxed text-slate-700">
+              {(coach.latest ?? coach.preview).summary}
+            </p>
+            {!coach.latest ? (
+              <p className="text-xs text-slate-500">
+                এটি এখনকার হিসাবের পূর্বরূপ (preview) — এখনো কোনো সাপ্তাহিক digest তৈরি হয়নি। Automations-এ “Social Coach Weekly” template চালু করলে প্রতি সপ্তাহে digest এখানে জমা হবে এবং Owner/Admin-রা নোটিফিকেশন পাবেন। Coach নিজে থেকে কোনো post তৈরি বা publish করে না।
+              </p>
+            ) : null}
+            {(() => {
+              const data = (coach.latest?.data ?? coach.preview.data);
+              return (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2 text-sm text-slate-700">
+                    <span className="rounded-lg bg-slate-50 px-3 py-2">
+                      গত ৭ দিন: <span className="font-semibold">{formatBnNumber(data.current.posts)}টি post</span> · engagement <span className="font-semibold">{formatBnNumber(data.current.engagement)}</span>
+                      {data.engagementDeltaPct !== null ? (
+                        <span className={data.engagementDeltaPct >= 0 ? "font-semibold text-green-700" : "font-semibold text-red-600"}>
+                          {" "}({data.engagementDeltaPct >= 0 ? "+" : "−"}{formatBnNumber(Math.abs(data.engagementDeltaPct))}%)
+                        </span>
+                      ) : null}
+                    </span>
+                    {data.bestContentType ? (
+                      <span className="rounded-lg bg-slate-50 px-3 py-2">সেরা ধরন: <span className="font-semibold">{contentTypeLabel(data.bestContentType.kind)}</span> (গড় {formatBnNumber(data.bestContentType.avgEngagement, 1)})</span>
+                    ) : null}
+                    {data.bestTime ? (
+                      <span className="rounded-lg bg-slate-50 px-3 py-2">সেরা সময়: <span className="font-semibold">{weekdayNameBn(data.bestTime.dayOfWeek)} {formatHourBn(data.bestTime.hour)}</span></span>
+                    ) : null}
+                  </div>
+                  {data.topPosts.length > 0 ? (
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium">সেরা post (গত ৭ দিন)</div>
+                      {data.topPosts.map((t) => (
+                        <p key={t.id} className="truncate text-sm text-slate-600" title={t.captionExcerpt}>
+                          🏆 {t.captionExcerpt || "(caption নেই)"} — engagement <span className="font-semibold">{formatBnNumber(t.engagement)}</span>
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                  {data.hashtagMovers.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.hashtagMovers.map((m) => (
+                        <span key={m.tag} className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                          {m.tag} · গড় {formatBnNumber(m.currentAvg, 1)}{m.previousAvg === null ? " · নতুন" : ` · আগে ${formatBnNumber(m.previousAvg, 1)}`}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {!data.dataSufficient ? (
+                    <p className="text-xs text-amber-700">Data এখনো কম — গত ৭ দিনে engagement-data-সহ post মাত্র {formatBnNumber(data.current.scoredPosts)}টি, তাই Coach পরামর্শের বদলে শুধু এই অবস্থাটাই জানাচ্ছে।</p>
+                  ) : null}
+                </div>
+              );
+            })()}
+          </>
+        ) : (
+          <div className="soc-empty">
+            <span className="soc-empty-icon">🧭</span>
+            <p className="text-sm text-slate-500">Coach-এর হিসাব এখনো লোড হয়নি।</p>
+          </div>
+        )}
       </div>
 
       {/* SP7 performance strip + best time */}
