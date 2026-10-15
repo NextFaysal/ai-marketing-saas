@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchShopHome } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
-import { buildShopJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
+import { buildShopJsonLd, canonicalShopBase, canonicalShopUrlAt, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "./ProductCard";
 import { AffiliateRefCapture } from "./AffiliateRefCapture";
@@ -19,7 +19,9 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const home = await fetchShopHome(orgSlug);
   if (!home) return { title: shopT("bn").common.shopNotFound };
   const cover = home.featuredProducts[0]?.imageUrl ?? home.products[0]?.imageUrl ?? null;
-  const canonical = canonicalShopUrl(sitemapUrlBase(), orgSlug);
+  // TD7: the canonical URL lives on the shop's canonical HOST
+  // (verified custom domain, else the tenant subdomain) at its root.
+  const canonical = canonicalShopUrlAt(canonicalShopBase(home.organization));
   return {
     title: home.settings.shopName,
     description: home.settings.metaDescription ?? undefined,
@@ -69,6 +71,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
             buildShopJsonLd({
               base: sitemapUrlBase(),
               orgSlug,
+              canonicalBase: canonicalShopBase(home.organization),
               shopName: settings.shopName,
               description: settings.metaDescription,
               logoUrl: home.organization.logoUrl,

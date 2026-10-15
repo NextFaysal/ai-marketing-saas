@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchProductDetail, fetchProductReviewsSummary, fetchShopHome } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
-import { buildProductJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
+import { buildProductJsonLd, canonicalShopBase, canonicalShopUrlAt, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "../../ProductCard";
 import { ProductDetailClient } from "./ProductDetailClient";
@@ -20,7 +20,13 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   if (!detail) return { title: shopT("bn").common.productNotFound };
   const title = detail.product.seo.title ?? detail.product.name;
   const description = detail.product.seo.description ?? detail.product.description ?? home?.settings.metaDescription ?? undefined;
-  const canonical = canonicalShopUrl(sitemapUrlBase(), orgSlug, productSlug);
+  // TD7: canonical host base from the shop home payload's org
+  // (verified custom domain, else tenant subdomain); when the home
+  // payload is unavailable the subdomain rule still applies.
+  const canonical = canonicalShopUrlAt(
+    canonicalShopBase(home?.organization ?? { slug: orgSlug }),
+    productSlug,
+  );
   return {
     title: home ? `${title} — ${home.settings.shopName}` : title,
     description: description ?? undefined,
@@ -40,6 +46,9 @@ export default async function ProductPage({ params }: { params: Params }) {
   const { orgSlug, productSlug } = await params;
   const detail = await fetchProductDetail(orgSlug, productSlug);
   if (!detail) notFound();
+  // TD7: the product payload's organization has no custom-domain
+  // fields; the (React-cached) shop home payload carries them.
+  const home = await fetchShopHome(orgSlug);
   const { product, related } = detail;
   const locale = shopLocaleOf(detail.settings?.locale);
   const t = shopT(locale);
@@ -58,6 +67,7 @@ export default async function ProductPage({ params }: { params: Params }) {
             buildProductJsonLd({
               base: sitemapUrlBase(),
               orgSlug,
+              canonicalBase: canonicalShopBase(home?.organization ?? { slug: orgSlug }),
               product,
               reviewsSummary,
             }),
