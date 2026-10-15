@@ -107,9 +107,9 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     kind === "user" ? "users" : kind === "org" ? "building" : kind === "order" ? "card" : "search";
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[12vh]" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-2 pt-[6vh] sm:px-4 sm:pt-[12vh]" role="dialog" aria-modal="true" aria-label="Command palette">
       <div className="aoverlay absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onKeyDown={onKeyDown}>
+      <div className="apalette-panel relative w-full max-w-xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onKeyDown={onKeyDown}>
         <div className="flex items-center gap-2.5 border-b border-slate-800 px-4">
           <span className="text-slate-400"><NavIcon name="search" size={18} /></span>
           <input

@@ -312,7 +312,7 @@ table.atable-v3 thead th { @apply sticky top-0 z-10; }
 }
 .aquickbar-item:focus-visible { outline: 2px solid var(--a-focus-ring); outline-offset: -2px; }
 .aquickbar-active { @apply text-white; }
-.aquickbar-badge { @apply absolute right-[18%] top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white; }
+.aquickbar-badge { @apply absolute -right-2.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white; }
 /* Pages inside AdminShell reserve room so the bar never covers
    content (the shell adds .ahas-quickbar to <main> below lg). */
 @media (max-width: 1023.5px) {

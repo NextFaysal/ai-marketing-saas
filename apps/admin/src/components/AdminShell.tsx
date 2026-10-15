@@ -329,8 +329,21 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   const initials = (adminEmail || "A").slice(0, 2).toUpperCase();
   const navProps = { counts, favorites, recents, openGroups, onToggleGroup: toggleGroup, onTogglePin: togglePin };
 
+  // ADNX6: mobile bottom quick bar items — hrefs/icons/countKeys
+  // all come from the single nav source (./nav.tsx); the pending
+  // badge reuses the shell's existing nav-counts (absent = none).
+  const quickItems: { href: string; label: string; icon: NavItemDef["icon"]; countKey?: NavItemDef["countKey"] }[] = [
+    { href: "/", label: "হোম", icon: "home" },
+    { href: "/payouts", label: "Payouts", icon: "wallet", countKey: "pendingPayouts" },
+    { href: "/tickets", label: "Tickets", icon: "ticket", countKey: "openTickets" },
+    { href: "/health", label: "Health", icon: "activity", countKey: "failedJobs24h" },
+  ];
+
   return (
     <div className="min-h-screen">
+      {/* ADNX6: skip link — first focusable element, jumps past
+          the nav to the main landmark. */}
+      <a href="#admin-main" className="askip-link">মূল Content-এ যান</a>
       {/* Mobile top bar */}
       <div className="aglass fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-slate-800 px-4 py-3 lg:hidden">
         <button aria-label="মেনু খুলুন" className="abtn-secondary !px-2.5" onClick={() => setDrawer(true)}>☰</button>
@@ -379,7 +392,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 pb-10 pt-[76px] sm:px-6 lg:p-8">
+        <main id="admin-main" className="ahas-quickbar min-w-0 flex-1 px-4 pb-10 pt-[76px] sm:px-6 lg:p-8">
           <div className="mx-auto w-full max-w-[1440px]">
             <div className="mb-6 flex flex-wrap items-center gap-3">
               <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">{title}</h1>
@@ -406,6 +419,29 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           </div>
         </main>
       </div>
+      {/* ADNX6: mobile bottom quick bar — below lg only (the
+          .aquickbar class hides it at lg+), safe-area aware, and
+          never on /login because login pages do not render this
+          shell at all. "আরও" opens the existing mobile drawer. */}
+      <nav className="aquickbar" aria-label="দ্রুত কাজ">
+        {quickItems.map((item) => {
+          const count = item.countKey && counts ? counts[item.countKey] : undefined;
+          const active = isActivePath(pathname, item.href);
+          return (
+            <a key={item.href} href={item.href} className={`aquickbar-item ${active ? "aquickbar-active" : ""}`} aria-current={active ? "page" : undefined}>
+              <span className="relative">
+                <NavIcon name={item.icon} size={20} />
+                {typeof count === "number" && count > 0 ? <span className="aquickbar-badge">{count}</span> : null}
+              </span>
+              <span>{item.label}</span>
+            </a>
+          );
+        })}
+        <button type="button" className="aquickbar-item" onClick={() => setDrawer(true)} aria-label="আরও — পুরো মেনু খুলুন">
+          <NavIcon name="list" size={20} />
+          <span>আরও</span>
+        </button>
+      </nav>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* ADNX3: the single toast + modal-dialog hosts for every page */}
       <ToastHost />
