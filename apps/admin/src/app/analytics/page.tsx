@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState } from "@/components/ui";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 
 interface SeriesMonth { month: string; collectedMinor: string; newOrgs: number; newUsers: number; newSubscriptions: number; orders: number; orderRevenueMinor: string }
@@ -17,8 +18,19 @@ export default function AnalyticsPage() {
   const [ai, setAi] = React.useState<AiCost | null>(null);
   const [msg, setMsg] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  // ADX11: period window — verdict: the series endpoint is
+  // month-bucketed (GET /admin/analytics/series?months=N); there is
+  // NO day-level (৭/৩০/৯০ দিন) data in it, so the selector is a
+  // client-side window over the already-loaded monthly series,
+  // labelled as such below. No buckets are fabricated.
+  const [win, setWin] = React.useState(12);
 
+  // ADX12: loadDone distinguishes "still loading" from "the
+  // series fetch failed" — before, a failed series fetch left the
+  // KPI skeletons spinning forever.
+  const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadDone(false);
     const [s, t, h, a] = await Promise.all([
       apiFetch<Series>("/admin/analytics/series?months=12").catch(() => null),
       apiFetch<Tenant[]>("/admin/analytics/top-tenants?limit=10").catch(() => []),
@@ -27,6 +39,7 @@ export default function AnalyticsPage() {
     ]);
     if (s) setSeries(s);
     setTenants(t); setHealth(h.scores); setAi(a);
+    setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -47,7 +60,8 @@ export default function AnalyticsPage() {
     finally { setBusy(false); }
   }
 
-  const maxCollected = series ? Math.max(1, ...series.months.map((m) => Number(m.collectedMinor))) : 1;
+  const months = series ? series.months.slice(-win) : [];
+  const maxCollected = Math.max(1, ...months.map((m) => Number(m.collectedMinor)));
   const providers = ai ? [...new Set([...Object.keys(ai.rates), ...ai.rows.map((r) => r.provider)])] : [];
   const bandBadge = (band: string) => band === "good" ? "abadge-green" : band === "watch" ? "abadge-amber" : "abadge-red";
 
@@ -55,7 +69,8 @@ export default function AnalyticsPage() {
     <AdminShell title="💹 Platform Analytics">
       {msg ? <p className="mb-4 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
 
-      {!series ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="askel h-[104px]" />)}</div> : (
+      {!series && loadDone ? <div className="mb-4"><ErrorState message="Analytics Series লোড হয়নি — KPI ও চার্ট দেখানো যাচ্ছে না।" onRetry={load} /></div> : null}
+      {!series && !loadDone ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="askel h-[104px]" />)}</div> : !series ? null : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { icon: "💰", label: "বর্তমান MRR", value: formatMinorStr(series.current.mrrMinor), sub: `${series.current.activeSubscriptions}টি ACTIVE সাবস্ক্রিপশন` },
@@ -74,10 +89,17 @@ export default function AnalyticsPage() {
 
       {series ? (
         <div className="acard mt-5">
-          <div className="mb-1 font-semibold">মাসভিত্তিক চিত্র (শেষ ১২ মাস)</div>
-          <p className="mb-3 text-xs text-slate-500">বার = সংগৃহীত পেমেন্ট (আসল SaasPayment রেকর্ড থেকে)। Paid Share একটি বর্তমান Snapshot অনুপাত — Cohort Conversion নয়।</p>
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="font-semibold">মাসভিত্তিক চিত্র (শেষ {win} মাস)</span>
+            <span className="ml-auto flex gap-1.5">
+              {[3, 6, 12].map((n) => (
+                <button key={n} type="button" onClick={() => setWin(n)} className={win === n ? "abtn !px-2.5 !py-1 text-xs" : "abtn-secondary !px-2.5 !py-1 text-xs"}>শেষ {n} মাস</button>
+              ))}
+            </span>
+          </div>
+          <p className="mb-3 text-xs text-slate-500">বার = সংগৃহীত পেমেন্ট (আসল SaasPayment রেকর্ড থেকে)। Paid Share একটি বর্তমান Snapshot অনুপাত — Cohort Conversion নয়। সময়-বাছাইটি লোড করা মাসিক Series-এর ওপরের Window — এই Endpoint-এ দিনভিত্তিক (৭/৩০/৯০ দিন) হিসাব নেই, তাই তা বানানো হয়নি।</p>
           <div className="mb-4 space-y-1.5">
-            {series.months.map((m) => (
+            {months.map((m) => (
               <div key={m.month} className="flex items-center gap-3 text-xs">
                 <span className="w-16 shrink-0 text-slate-400">{m.month}</span>
                 <div className="h-4 flex-1 overflow-hidden rounded bg-slate-800">
@@ -91,7 +113,7 @@ export default function AnalyticsPage() {
             <table className="atable">
               <thead><tr><th className="ath">মাস</th><th className="ath">সংগ্রহ</th><th className="ath">নতুন Org</th><th className="ath">নতুন User</th><th className="ath">নতুন Subscription</th><th className="ath">Tenant Order</th><th className="ath">Tenant আয়</th></tr></thead>
               <tbody>
-                {[...series.months].reverse().map((m) => (
+                {[...months].reverse().map((m) => (
                   <tr key={m.month}>
                     <td className="atd font-medium">{m.month}</td><td className="atd">{formatMinorStr(m.collectedMinor)}</td>
                     <td className="atd">{m.newOrgs}</td><td className="atd">{m.newUsers}</td><td className="atd">{m.newSubscriptions}</td>

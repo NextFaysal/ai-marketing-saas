@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState } from "@/components/ui";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -18,6 +19,33 @@ const AUDIENCES: { value: string; label: string }[] = [
   { value: "plan_FREE", label: "FREE প্ল্যান" }, { value: "plan_STARTER", label: "STARTER প্ল্যান" }, { value: "plan_GROWTH", label: "GROWTH প্ল্যান" }, { value: "plan_AGENCY", label: "AGENCY প্ল্যান" },
 ];
 
+// ADX9: Config Hub sections. Settled §৭ decision: ONE page, in-page
+// sub-nav + hash deep-links, no new routes. Every block that exists
+// on this page maps to exactly one section (see the DB3 acceptance
+// doc for the full mapping table).
+const SETTING_SECTIONS: { id: string; icon: string; label: string; sub: string }[] = [
+  { id: "general", icon: "🧭", label: "সাধারণ", sub: "প্ল্যাটফর্ম অবস্থা · Plan দাম ও Limits · Kill Switch · Maintenance" },
+  { id: "ai", icon: "🤖", label: "AI ও মিডিয়া", sub: "LLM · Image Generation" },
+  { id: "apps", icon: "🔌", label: "অ্যাপ সংযোগ", sub: "Meta · TikTok · Google · LinkedIn" },
+  { id: "messaging", icon: "✉️", label: "বার্তা", sub: "SMTP · SMS" },
+  { id: "payment", icon: "💳", label: "পেমেন্ট", sub: "SSLCommerz · bKash · Wallet" },
+  { id: "flags", icon: "🚩", label: "Flags ও Plan Defaults", sub: "Plan Feature Defaults" },
+  { id: "announce", icon: "📣", label: "ঘোষণা", sub: "Announcements" },
+];
+const SECTION_IDS = SETTING_SECTIONS.map((s) => s.id);
+const BLOCK_SECTION: Record<string, string> = {
+  "config-llm": "ai", "config-image": "ai",
+  "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-linkedin": "apps",
+  "config-smtp": "messaging", "config-sms": "messaging",
+  "config-sslcommerz": "payment", "config-bkash": "payment", "config-wallet": "payment",
+};
+const HASH_ALIAS: Record<string, string> = {
+  "ai-llm": "config-llm", "ai-image": "config-image",
+  "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-linkedin": "config-linkedin",
+  "messaging-smtp": "config-smtp", "messaging-sms": "config-sms",
+  "payment-sslcommerz": "config-sslcommerz", "payment-bkash": "config-bkash", "payment-wallet": "config-wallet",
+};
+
 interface PlatformConfigView {
   llm: { source: string; provider: string | null; model: string | null; secretConfigured: boolean };
   metaApp: { source: string; appId: string | null; graphVersion: string | null; appSecretConfigured: boolean; adLibraryTokenConfigured: boolean };
@@ -33,14 +61,25 @@ interface PlatformConfigView {
   note: string;
 }
 
-function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
+function PlatformConfigSection({ setMsg, section, highlightId }: { setMsg: (m: string) => void; section: string; highlightId: string | null }) {
   const [cfg, setCfg] = React.useState<PlatformConfigView | null>(null);
   const [busy, setBusy] = React.useState("");
+  // ADX12: config-load failure state — before, the whole config
+  // hub silently vanished (the section returned null) on failure.
+  const [cfgFailed, setCfgFailed] = React.useState(false);
   const loadCfg = React.useCallback(async () => {
     const v = await apiFetch<PlatformConfigView>("/admin/platform-config").catch(() => null);
+    setCfgFailed(v === null);
     if (v) setCfg(v);
   }, []);
   React.useEffect(() => { loadCfg(); }, [loadCfg]);
+  // ADX9: a hash deep-link (#payment-bkash) scrolls its block into
+  // view once the config has loaded and its section is visible.
+  React.useEffect(() => {
+    if (!cfg || !highlightId) return;
+    const t = setTimeout(() => document.getElementById(highlightId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    return () => clearTimeout(t);
+  }, [cfg, highlightId]);
   async function patch(area: string, body: Record<string, unknown>, ok: string) {
     setBusy(area);
     try { setCfg(await apiFetch<PlatformConfigView>(`/admin/platform-config/${area}`, { method: "PATCH", body: JSON.stringify(body) })); setMsg(ok); }
@@ -65,16 +104,24 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
   }
   const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
   const secretPh = (set: boolean) => (set ? "সেট করা আছে — বদলাতে নতুন মান দিন, খালি রাখলে আগেরটাই থাকবে" : "এখনো সেট করা হয়নি");
-  if (!cfg) return null;
+  const hubHidden = !["ai", "apps", "messaging", "payment"].includes(section);
+  if (!cfg) return (
+    <div className={`mt-4 ${hubHidden ? "hidden" : ""}`}>
+      {cfgFailed
+        ? <ErrorState message="Platform Config লোড হয়নি — আবার চেষ্টা করুন।" onRetry={loadCfg} />
+        : <p className="text-sm text-slate-500">Config লোড হচ্ছে…</p>}
+    </div>
+  );
   const srcBadge = (src: string) => src === "admin" ? <span className="abadge-green">Admin Console থেকে সেট</span> : src === "env" ? <span className="abadge-amber">Server Env থেকে আসছে</span> : <span className="abadge-red">সেট করা নেই</span>;
   return (
-    <div className="mt-4 space-y-4">
+    <div className={`mt-4 space-y-4 ${hubHidden ? "hidden" : ""}`}>
       <div>
         <h2 className="text-lg font-semibold">🔌 Dynamic Platform Config (Milestone 33)</h2>
         <p className="text-sm text-slate-400">এখানে সেট করলেই পুরো প্ল্যাটফর্মে কার্যকর — সার্ভার Restart লাগে না। Secret কখনো দেখানো হয় না; শুধু "সেট আছে কিনা" দেখা যায়। Tenant রা নিজেদের WooCommerce/Courier/Account নিজেরাই সেট করে — এগুলো শুধু প্ল্যাটফর্ম-পর্যায়ের সেটিং।</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="acard space-y-3">
+      <div className={`grid gap-4 lg:grid-cols-2 ${section === "ai" ? "" : "hidden"}`}>
+        <div id="config-llm" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-llm" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">🤖 AI / LLM</span>{srcBadge(cfg.llm.source)}</div>
           <label className="block text-sm">Provider
             <select id="pc-llm-provider" className="ainput mt-1" defaultValue={cfg.llm.provider ?? ""}>
@@ -89,7 +136,7 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">Test সফল মানে আসল Provider উত্তর দিয়েছে — Dev Template কখনো পাস হিসেবে গণনা হয় না।</p>
         </div>
-        <div className="acard space-y-3">
+        <div id="config-image" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-image" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">🖼️ AI Image Generation</span>{srcBadge(cfg.image.source)}</div>
           <label className="block text-sm">Provider
             <select id="pc-image-provider" className="ainput mt-1" defaultValue={cfg.image.provider ?? ""}>
@@ -104,7 +151,9 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">সেভ করার সময় একটি আসল ছোট্ট ছবি তৈরি করে যাচাই করা হয় — যাচাই ব্যর্থ হলে সেটিং সেভ হয় না এবং Provider-এর Error হুবহু দেখানো হয়।</p>
         </div>
-        <div className="acard space-y-3">
+      </div>
+      <div className={`grid gap-4 lg:grid-cols-2 ${section === "apps" ? "" : "hidden"}`}>
+        <div id="config-meta" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-meta" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">📘 Platform Meta App</span>{srcBadge(cfg.metaApp.source)}</div>
           <label className="block text-sm">App ID<input id="pc-meta-appid" className="ainput mt-1" defaultValue={cfg.metaApp.appId ?? ""} /></label>
           <label className="block text-sm">App Secret<input id="pc-meta-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.metaApp.appSecretConfigured)} /></label>
@@ -117,7 +166,50 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">সেভ করার সময় Meta-র কাছ থেকে App Access Token নিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, Meta-র Error হুবহু দেখানো হয়। Tenant রা নিজের অ্যাপের Secret না দিলে Webhook যাচাইয়ে এই Platform Secret-ই ব্যবহৃত হয়। প্রতিটি Tenant এর Ad Account Token আলাদাই থাকে।</p>
         </div>
-        <div className="acard space-y-3">
+        <div id="config-tiktok" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-tiktok" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">🎵 TikTok App (Social Posts — SP8)</span>{srcBadge(cfg.tiktokApp.source)}</div>
+          <label className="block text-sm">Client Key<input id="pc-tt-key" className="ainput mt-1" defaultValue={cfg.tiktokApp.clientKey ?? ""} placeholder="TikTok Developer Portal-এর App Client Key" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-tt-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.tiktokApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-tt-redirect" className="ainput mt-1" defaultValue={cfg.tiktokApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/tiktok/callback" /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-tt-audited" type="checkbox" defaultChecked={cfg.tiktokApp.audited} />
+            App Audit সম্পন্ন (Direct Post চালু হবে — শুধু TikTok সত্যিই অনুমোদন দিলে টিক দিন)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("tiktok", { clientKey: val("pc-tt-key"), clientSecret: val("pc-tt-secret") || undefined, redirectUri: val("pc-tt-redirect"), audited: (document.getElementById("pc-tt-audited") as HTMLInputElement)?.checked ?? false }, "TikTok App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-tiktok")}>{busy === "test-tiktok" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("tiktok", { clear: true }, "TikTok App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে TikTok-এর invalid_client বনাম code-error উত্তরের পার্থক্য দেখা হয়) — পূর্ণ প্রমাণ আসল User OAuth-এই হয়। এটি পুরো প্ল্যাটফর্মের ONE app — Tenant রা নিজেদের TikTok Creator অ্যাকাউন্ট OAuth দিয়ে যুক্ত করে। TikTok Developer Portal-এ Redirect URI ঠিক এটাই নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/tiktok/callback</code> (অথবা উপরে নিজে যা দিলেন)। Audit না হলে পোস্ট Creator-এর Inbox-এ যায় — কখনোই "Published" বলা হয় না।</p>
+        </div>
+        <div id="config-google" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">▶️ Google App — YouTube (Social Posts — SP9)</span>{srcBadge(cfg.googleApp.source)}</div>
+          <label className="block text-sm">Client ID<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect") }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
+          <p className="text-xs text-slate-500">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
+        </div>
+        <div id="config-linkedin" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-linkedin" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">💼 LinkedIn App — Page Connect + পোস্টিং (Connect Center — CC20)</span>{srcBadge(cfg.linkedinApp.source)}</div>
+          <label className="block text-sm">Client ID<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder="LinkedIn Developer App Client ID" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-li-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.linkedinApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-li-redirect" className="ainput mt-1" defaultValue={cfg.linkedinApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/linkedin/callback" /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("linkedin", { clientId: val("pc-li-id"), clientSecret: val("pc-li-secret") || undefined, redirectUri: val("pc-li-redirect") }, "LinkedIn App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-linkedin")}>{busy === "test-linkedin" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, "LinkedIn App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy refresh token পাঠিয়ে LinkedIn-এর invalid_client বনাম token-error উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা Community Management API অনুমোদন প্রমাণ করে না। LinkedIn Developer Portal-এ App বানিয়ে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/linkedin/callback</code> (অথবা উপরে নিজে যা দিলেন)। সৎ সীমা: Page-এ লাইভ পোস্টিংয়ের জন্য এই App-এ LinkedIn-এর <b>Community Management API</b> অনুমোদন লাগবে — অনুমোদন ছাড়া কানেক্ট চললেও পোস্ট LinkedIn প্রত্যাখ্যান করবে, এবং সেই আসল বার্তাটাই tenant দেখবে।</p>
+        </div>
+      </div>
+      <div className={`grid gap-4 lg:grid-cols-2 ${section === "messaging" ? "" : "hidden"}`}>
+        <div id="config-smtp" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-smtp" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">✉️ Email (SMTP)</span>{srcBadge(cfg.smtp.source)}</div>
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-sm">Host<input id="pc-smtp-host" className="ainput mt-1" defaultValue={cfg.smtp.host ?? ""} /></label>
@@ -133,7 +225,7 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("smtp", { clear: true }, "SMTP Admin সেটিং মোছা হয়েছে।")}>মুছুন</button>
           </div>
         </div>
-        <div className="acard space-y-3">
+        <div id="config-sms" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-sms" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">📱 SMS (SSL Wireless)</span>{srcBadge(cfg.sms.source)}</div>
           <label className="block text-sm">Sender ID<input id="pc-sms-sender" className="ainput mt-1" defaultValue={cfg.sms.senderId ?? ""} /></label>
           <label className="block text-sm">API Token<input id="pc-sms-token" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sms.secretConfigured)} /></label>
@@ -146,7 +238,9 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">{cfg.note}</p>
         </div>
-        <div className="acard space-y-3">
+      </div>
+      <div className={`grid gap-4 lg:grid-cols-2 ${section === "payment" ? "" : "hidden"}`}>
+        <div id="config-sslcommerz" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-sslcommerz" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">💳 SSLCommerz (সাবস্ক্রিপশন পেমেন্ট)</span>{srcBadge(cfg.sslcommerz.source)}</div>
           <label className="block text-sm">Store ID<input id="pc-ssl-store" className="ainput mt-1" defaultValue={cfg.sslcommerz.storeId ?? ""} placeholder="যেমন: qosprey_live / sandbox demo store" /></label>
           <label className="block text-sm">Store Password<input id="pc-ssl-pass" type="password" className="ainput mt-1" placeholder={secretPh(cfg.sslcommerz.secretConfigured)} /></label>
@@ -161,7 +255,7 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">যাচাই = আসল session-init পরীক্ষা (একটি মেয়াদোত্তীর্ণ-হয়ে-যাওয়া session তৈরি হয়, কোনো টাকা কাটে না) — তাই সেভের সময় স্বয়ংক্রিয় যাচাই হয় না, এই বোতামেই যাচাই করুন। প্ল্যান সক্রিয় হয় শুধুমাত্র যাচাইকৃত IPN + Gateway Validation সফল হলে — Browser Success পেজ দিয়ে নয়। IPN URL হিসেবে Gateway প্যানেলে সেট করুন: <code>https://api.qosprey.com/public/payments/sslcommerz/ipn</code></p>
         </div>
-        <div className="acard space-y-3">
+        <div id="config-bkash" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-bkash" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">📱 bKash (Tokenized Checkout)</span>{srcBadge(cfg.bkash.source)}</div>
           <label className="block text-sm">App Key<input id="pc-bk-key" className="ainput mt-1" defaultValue={cfg.bkash.appKey ?? ""} placeholder="bKash Merchant App Key" /></label>
           <label className="block text-sm">Username<input id="pc-bk-user" className="ainput mt-1" defaultValue={cfg.bkash.username ?? ""} placeholder="Merchant Username" /></label>
@@ -178,7 +272,7 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">সেভ করার সময় আসল Token Grant দিয়ে স্বয়ংক্রিয় যাচাই হয় — ব্যর্থ হলে সেটিং সেভ হয় না, bKash-এর Error হুবহু দেখানো হয় (প্রাপ্ত Token সংরক্ষণ করা হয় না)। Callback URL bKash প্যানেলে/চুক্তিতে লাগবে: <code>https://api.qosprey.com/public/payments/bkash/callback</code> — প্ল্যান সক্রিয় হয় শুধুমাত্র Server-to-Server Execute এ Completed নিশ্চিত হলে; Browser Redirect একা যথেষ্ট নয়।</p>
         </div>
-        <div className="acard space-y-3">
+        <div id="config-wallet" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-wallet" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">🏦 Wallet — প্ল্যাটফর্ম পেমেন্ট ফি (CC10)</span>{srcBadge(cfg.wallet.source)}</div>
           <label className="block text-sm">ফি (basis points — 200 = 2%)<input id="pc-wallet-fee" type="number" min={0} max={10000} step={1} className="ainput mt-1" defaultValue={cfg.wallet.feeBps} /></label>
           <label className="block text-sm">Four-eyes payout সীমা (minor unit — যেমন 50000 = ৳500; খালি = নিয়ম বন্ধ)<input id="pc-wallet-foureyes" type="number" min={0} step={1} className="ainput mt-1" defaultValue={cfg.wallet.payoutFourEyesThresholdMinor ?? ""} placeholder="খালি রাখলে four-eyes নিয়ম বন্ধ" /></label>
@@ -190,47 +284,8 @@ function PlatformConfigSection({ setMsg }: { setMsg: (m: string) => void }) {
           </div>
           <p className="text-xs text-slate-500">এই ফি শুধু প্ল্যাটফর্ম গেটওয়ে (উপরের SSLCommerz/bKash — প্ল্যাটফর্মের অ্যাকাউন্ট) দিয়ে আসা Tenant পেমেন্টে কাটা হয়: যাচাইকৃত পেমেন্টের মুহূর্তে তখনকার হারেই হিসাব হয়, Tenant-এর Wallet-এ নিট অংশ জমা হয় (ledger-এ ফি আলাদা row)। সেট না থাকলে ফি 0 — কখনো অনুমান করা হয় না। Tenant-এর নিজের গেটওয়ের (CC9) টাকায় কোনো ফি নেই। Payout পরিচালনা: Wallet Payouts পেজে।</p>
         </div>
-        <div className="acard space-y-3">
-          <div className="flex items-center justify-between"><span className="font-semibold">🎵 TikTok App (Social Posts — SP8)</span>{srcBadge(cfg.tiktokApp.source)}</div>
-          <label className="block text-sm">Client Key<input id="pc-tt-key" className="ainput mt-1" defaultValue={cfg.tiktokApp.clientKey ?? ""} placeholder="TikTok Developer Portal-এর App Client Key" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-tt-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.tiktokApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-tt-redirect" className="ainput mt-1" defaultValue={cfg.tiktokApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/tiktok/callback" /></label>
-          <label className="flex items-center gap-2 text-sm">
-            <input id="pc-tt-audited" type="checkbox" defaultChecked={cfg.tiktokApp.audited} />
-            App Audit সম্পন্ন (Direct Post চালু হবে — শুধু TikTok সত্যিই অনুমোদন দিলে টিক দিন)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("tiktok", { clientKey: val("pc-tt-key"), clientSecret: val("pc-tt-secret") || undefined, redirectUri: val("pc-tt-redirect"), audited: (document.getElementById("pc-tt-audited") as HTMLInputElement)?.checked ?? false }, "TikTok App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-tiktok")}>{busy === "test-tiktok" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("tiktok", { clear: true }, "TikTok App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
-          </div>
-          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে TikTok-এর invalid_client বনাম code-error উত্তরের পার্থক্য দেখা হয়) — পূর্ণ প্রমাণ আসল User OAuth-এই হয়। এটি পুরো প্ল্যাটফর্মের ONE app — Tenant রা নিজেদের TikTok Creator অ্যাকাউন্ট OAuth দিয়ে যুক্ত করে। TikTok Developer Portal-এ Redirect URI ঠিক এটাই নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/tiktok/callback</code> (অথবা উপরে নিজে যা দিলেন)। Audit না হলে পোস্ট Creator-এর Inbox-এ যায় — কখনোই "Published" বলা হয় না।</p>
-        </div>
-        <div className="acard space-y-3">
-          <div className="flex items-center justify-between"><span className="font-semibold">▶️ Google App — YouTube (Social Posts — SP9)</span>{srcBadge(cfg.googleApp.source)}</div>
-          <label className="block text-sm">Client ID<input id="pc-gg-id" className="ainput mt-1" defaultValue={cfg.googleApp.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-gg-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-gg-redirect" className="ainput mt-1" defaultValue={cfg.googleApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/youtube/callback" /></label>
-          <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google", { clientId: val("pc-gg-id"), clientSecret: val("pc-gg-secret") || undefined, redirectUri: val("pc-gg-redirect") }, "Google App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-google")}>{busy === "test-google" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("google", { clear: true }, "Google App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
-          </div>
-          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
-          <p className="text-xs text-slate-500">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
-        </div>
-        <div className="acard space-y-3">
-          <div className="flex items-center justify-between"><span className="font-semibold">💼 LinkedIn App — Page Connect + পোস্টিং (Connect Center — CC20)</span>{srcBadge(cfg.linkedinApp.source)}</div>
-          <label className="block text-sm">Client ID<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder="LinkedIn Developer App Client ID" /></label>
-          <label className="block text-sm">Client Secret<input id="pc-li-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.linkedinApp.secretConfigured)} /></label>
-          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-li-redirect" className="ainput mt-1" defaultValue={cfg.linkedinApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/linkedin/callback" /></label>
-          <div className="flex flex-wrap gap-2">
-            <button className="abtn" disabled={busy !== ""} onClick={() => patch("linkedin", { clientId: val("pc-li-id"), clientSecret: val("pc-li-secret") || undefined, redirectUri: val("pc-li-redirect") }, "LinkedIn App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
-            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-linkedin")}>{busy === "test-linkedin" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
-            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, "LinkedIn App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
-          </div>
-          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy refresh token পাঠিয়ে LinkedIn-এর invalid_client বনাম token-error উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা Community Management API অনুমোদন প্রমাণ করে না। LinkedIn Developer Portal-এ App বানিয়ে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/linkedin/callback</code> (অথবা উপরে নিজে যা দিলেন)। সৎ সীমা: Page-এ লাইভ পোস্টিংয়ের জন্য এই App-এ LinkedIn-এর <b>Community Management API</b> অনুমোদন লাগবে — অনুমোদন ছাড়া কানেক্ট চললেও পোস্ট LinkedIn প্রত্যাখ্যান করবে, এবং সেই আসল বার্তাটাই tenant দেখবে।</p>
-        </div>
+      </div>
+
       </div>
     </div>
   );
@@ -246,8 +301,36 @@ export default function SettingsPage() {
   const [annStartsAt, setAnnStartsAt] = React.useState("");
   const [annEndsAt, setAnnEndsAt] = React.useState("");
   const [aiOrgIds, setAiOrgIds] = React.useState("");
+  // ADX9: Config Hub — active section + hash deep-link target.
+  const [section, setSection] = React.useState("general");
+  const [highlightId, setHighlightId] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    const apply = () => {
+      const raw = window.location.hash.replace(/^#/, "");
+      if (!raw) return;
+      const block = HASH_ALIAS[raw] ?? (BLOCK_SECTION[raw] ? raw : null);
+      if (block) { setSection(BLOCK_SECTION[block]); setHighlightId(block); return; }
+      if (SECTION_IDS.includes(raw)) { setSection(raw); setHighlightId(null); }
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  React.useEffect(() => {
+    if (!highlightId) return;
+    const t = setTimeout(() => setHighlightId(null), 4000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
+  const selectSection = (id: string) => {
+    setSection(id); setHighlightId(null);
+    try { window.history.replaceState(null, "", `#${id}`); } catch { /* ignore */ }
+  };
+  // ADX12: a failed settings load used to sit on "লোড হচ্ছে…"
+  // forever; it now gets an error state + retry (below).
+  const [loadFailed, setLoadFailed] = React.useState(false);
   const load = React.useCallback(async () => {
     const settings = await apiFetch<Settings>("/admin/settings").catch(() => null);
+    setLoadFailed(settings === null);
     if (settings) { setS(settings); setAiOrgIds(settings.killSwitches.aiDisabledOrgIds.join(", ")); }
     setAnns(await apiFetch<Announcement[]>("/admin/announcements").catch(() => []));
   }, []);
@@ -257,11 +340,28 @@ export default function SettingsPage() {
     try { setS(await apiFetch<Settings>("/admin/settings", { method: "PATCH", body: JSON.stringify(patch) })); setMsg(ok); }
     catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
   }
-  if (!s) return <AdminShell title="⚙️ Settings & Flags"><p className="text-slate-400">লোড হচ্ছে…</p></AdminShell>;
+  if (!s) return <AdminShell title="⚙️ Settings & Flags">{loadFailed ? <ErrorState message="Settings লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-slate-400">লোড হচ্ছে…</p>}</AdminShell>;
   return (
     <AdminShell title="⚙️ Settings & Flags">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <aside className="shrink-0 self-start lg:sticky lg:top-4 lg:w-64">
+          <nav className="acard space-y-1 !p-3" aria-label="Settings বিভাগ">
+            <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Config Hub — বিভাগ</div>
+            {SETTING_SECTIONS.map((sec) => (
+              <button key={sec.id} type="button" onClick={() => selectSection(sec.id)} className={`anav w-full ${section === sec.id ? "anav-active" : ""}`}>
+                <span className="text-base leading-none">{sec.icon}</span>
+                <span className="min-w-0">
+                  <span className="block truncate">{sec.label}</span>
+                  <span className={`block truncate text-[11px] ${section === sec.id ? "text-indigo-200" : "text-slate-500"}`}>{sec.sub}</span>
+                </span>
+              </button>
+            ))}
+          </nav>
+          <p className="mt-2 px-1 text-xs leading-relaxed text-slate-500">সরাসরি লিংকও চলে — যেমন <code>/settings#payment-bkash</code> দিলে page ওই block-এই খুলবে। সব বিভাগের Save/Test বার্তা উপরের একই জায়গায় আসে।</p>
+        </aside>
+        <div className="min-w-0 flex-1">
+      <div className={section === "general" ? "space-y-4" : "hidden"}>
         <div className="acard space-y-4">
           <div className="font-semibold">প্ল্যাটফর্ম অবস্থা</div>
           <label className="flex items-center justify-between text-sm">Maintenance Mode (Tenant অ্যাপে নোটিশ যাবে)
@@ -339,7 +439,6 @@ export default function SettingsPage() {
             <p className="mt-1 text-xs text-slate-500">সেভ করলে সব Tier স্পষ্টভাবে Setting হিসেবে সংরক্ষিত হবে — এরপর Badge-এ Setting দেখাবে। কোনো একটা Tier আবার Code Default-এ ফেরাতে চাইলে ওই Tier-এর "Code Default-এ ফেরান" বোতাম — শুধু ওই Tier-এর entry-ই মুছবে, বাকিগুলো যেমন ছিল তেমনই থাকবে (কারণ + Audit বাধ্যতামূলক)।</p>
           </div>
         </div>
-        <div className="space-y-4">
           <div className="acard space-y-3">
             <div className="font-semibold">🚨 Kill Switch (Incident Mode)</div>
             <label className="flex items-center justify-between text-sm">সব Broadcast সাময়িক বন্ধ
@@ -348,6 +447,8 @@ export default function SettingsPage() {
               <input className="ainput mt-1" value={aiOrgIds} onChange={(e) => setAiOrgIds(e.target.value)} placeholder="org-id-1, org-id-2" /></label>
             <button className="abtn-secondary" onClick={() => save({ killSwitches: { broadcastsPaused: s.killSwitches.broadcastsPaused, aiDisabledOrgIds: aiOrgIds.split(",").map((x) => x.trim()).filter(Boolean) } }, "AI kill switch সেভ হয়েছে।")}>সেভ করুন</button>
           </div>
+      </div>
+      <div className={section === "announce" ? "" : "hidden"}>
           <div className="acard space-y-3">
             <div className="font-semibold">📣 Announcement (Targeted — M41)</div>
             <input className="ainput" placeholder="শিরোনাম" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -382,11 +483,16 @@ export default function SettingsPage() {
               ))}
             </ul>
           </div>
+      </div>
+      <div className={section === "flags" ? "" : "hidden"}>
+        <PlanFlagDefaultsCard setMsg={setMsg} />
+      </div>
+      <PlatformConfigSection setMsg={setMsg} section={section} highlightId={highlightId} />
+      <div className={section === "general" ? "" : "hidden"}>
+        <MaintenanceAndSafety setMsg={setMsg} />
+      </div>
         </div>
       </div>
-      <PlanFlagDefaultsCard setMsg={setMsg} />
-      <PlatformConfigSection setMsg={setMsg} />
-      <MaintenanceAndSafety setMsg={setMsg} />
     </AdminShell>
   );
 }

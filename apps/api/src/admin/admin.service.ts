@@ -71,6 +71,51 @@ export class AdminService {
     return { api: "ok", db, time: new Date().toISOString() };
   }
 
+  /**
+   * ADX3 (Admin UX DB1): the ONLY new endpoint of the ADX package —
+   * the counts behind the sidebar badges and the Attention Bell.
+   * Honesty contract (docs/admin-ux-architecture.md §4–§5): every
+   * field is counted from real rows, and a field that cannot be
+   * sourced is OMITTED from the response — never zero-filled, never
+   * estimated. The client renders nothing for an absent field.
+   */
+  async navCounts(now = new Date()) {
+    const out: Record<string, number> = {};
+    const since24h = new Date(now.getTime() - 86400000);
+    const [payouts, tickets, failed, alerts, overdue] = await Promise.allSettled([
+      // PayoutRequest.status: pending | approved | paid | rejected | cancelled
+      (this.prisma as any).payoutRequest.count({ where: { status: "pending" } }),
+      // SupportTicket.status: open | pending | resolved | closed —
+      // both non-terminal states need an operator (an admin reply
+      // moves open → pending; the tenant can re-open a pending one).
+      (this.prisma as any).supportTicket.count({ where: { status: { in: ["open", "pending"] } } }),
+      // Failed jobs — the same definition as overview() (FAILED
+      // sync jobs in 24h + automation runs in "error" in 24h).
+      // Both use `startedAt`: overview() originally filtered
+      // SyncJob by `updatedAt`, a field the model does not have,
+      // which silently zeroed its count; DB2 FIX-0 corrected
+      // overview() to this same field. All-or-nothing: a partial
+      // sum would UNDERSTATE failures, so either query failing
+      // omits the whole field.
+      Promise.all([
+        (this.prisma as any).syncJob.count({ where: { status: "FAILED", startedAt: { gte: since24h } } }),
+        (this.prisma as any).automationRun.count({ where: { status: "error", createdAt: { gte: since24h } } }),
+      ]).then(([s, a]) => s + a),
+      // Alerts are computed, not stored — reuse alertsBoard() so the
+      // badge can never disagree with the Alerts page.
+      this.alertsBoard().then((a) => a.length),
+      // Overdue = exactly the list the Billing page shows; reuse
+      // billingSummary() instead of re-implementing its definition.
+      this.billingSummary().then((b) => b.overdue.length),
+    ]);
+    if (payouts.status === "fulfilled") out.pendingPayouts = payouts.value;
+    if (tickets.status === "fulfilled") out.openTickets = tickets.value;
+    if (failed.status === "fulfilled") out.failedJobs24h = failed.value;
+    if (alerts.status === "fulfilled") out.activeAlerts = alerts.value;
+    if (overdue.status === "fulfilled") out.overdueSubscriptions = overdue.value;
+    return out;
+  }
+
   async overview() {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -95,7 +140,12 @@ export class AdminService {
     let aiCalls = 0, aiTokens = 0;
     for (const r of ai as any[]) { aiCalls++; aiTokens += Number(r.inputTokens ?? 0) + Number(r.outputTokens ?? 0); }
     const [failedSync, failedRuns] = await Promise.all([
-      (this.prisma as any).syncJob.count({ where: { status: "FAILED", updatedAt: { gte: since24h } } }).catch(() => 0),
+      // DB2 FIX-0: the SyncJob model has no `updatedAt` field (schema:
+      // startedAt/completedAt only). Filtering by it made Prisma throw
+      // and the .catch(() => 0) below silently zeroed the live
+      // failed-sync count. `startedAt` is the field navCounts() and
+      // every other failed-sync query in this service already use.
+      (this.prisma as any).syncJob.count({ where: { status: "FAILED", startedAt: { gte: since24h } } }).catch(() => 0),
       (this.prisma as any).automationRun.count({ where: { status: "error", createdAt: { gte: since24h } } }).catch(() => 0),
     ]);
     const recentAdminActions = await (this.prisma as any).auditLog.findMany({

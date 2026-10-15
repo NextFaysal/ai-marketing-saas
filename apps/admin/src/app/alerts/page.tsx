@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 
 interface Alert { kind: string; severity: string; organizationId: string; organizationName: string; detail: string; at: string }
@@ -18,9 +19,15 @@ export default function AlertsPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  // ADX12: a failed board load used to be indistinguishable from
+  // "no alerts" (the 🎉 empty card showed on an outage). Load
+  // failure now gets its own error state + retry; the empty card
+  // renders only after a successful load.
+  const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
-    try { setAlerts(await apiFetch<Alert[]>("/admin/alerts")); } catch { /* honest empty */ }
+    try { setAlerts(await apiFetch<Alert[]>("/admin/alerts")); setLoadError(""); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : "Alert লোড ব্যর্থ হয়েছে"); }
     setLoaded(true);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -46,9 +53,25 @@ export default function AlertsPage() {
       <p className="amut" style={{ marginBottom: 12 }}>সব Alert আসল ডেটা থেকে এই মুহূর্তে হিসাব করা — ভাঙা Integration, বারবার ব্যর্থ Sync, Past Due, শেষের পথে Trial। Nudge ইমেইল শুধু Gateway নিশ্চিত করলেই "পাঠানো হয়েছে" বলা হয়।</p>
       {error ? <p className="anote" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</p> : null}
       {note ? <p className="anote">{note}</p> : null}
-      {loaded && alerts.length === 0 ? <div className="acard"><p className="amut">🎉 এই মুহূর্তে কোনো Alert নেই।</p></div> : null}
-      <div className="space-y-2">
-        {alerts.map((a, i) => (
+      {!loaded ? <div className="askel-table" /> : null}
+      {loaded && loadError ? <ErrorState message={`Alert লোড হয়নি: ${loadError}`} onRetry={load} /> : null}
+      {loaded && !loadError && alerts.length === 0 ? <div className="acard"><p className="amut">🎉 এই মুহূর্তে কোনো Alert নেই।</p></div> : null}
+      {/* ADX8: severity অনুযায়ী group — severity payload-এর নিজের
+          field; আজকের badge-ধাঁচই (high → HIGH, বাকি সব → MEDIUM)।
+          Alert computed (stored নয়), তাই কোনো acknowledge অবস্থা
+          ডেটাতেই নেই — এখানে শুধু group করা হয়েছে, ack অবস্থা
+          বানানো হয়নি। */}
+      {(["high", "medium"] as const).map((sev) => {
+        const group = alerts.filter((a) => (a.severity === "high" ? "high" : "medium") === sev);
+        if (group.length === 0) return null;
+        return (
+          <div key={sev} className="mb-4">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="abadge" style={sev === "high" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#fef3c7", color: "#92400e" }}>{sev === "high" ? "HIGH" : "MEDIUM"}</span>
+              <span className="text-sm text-slate-400">{group.length}টি Alert</span>
+            </div>
+            <div className="space-y-2">
+              {group.map((a, i) => (
           <div key={`${a.organizationId}-${a.kind}-${i}`} className="acard flex-col sm:flex-row" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <span className="abadge" style={a.severity === "high" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#fef3c7", color: "#92400e" }}>{a.severity === "high" ? "HIGH" : "MEDIUM"}</span>
             <div style={{ flex: 1, minWidth: 220 }}>
@@ -59,8 +82,11 @@ export default function AlertsPage() {
             <button className="abtn abtn-primary w-full sm:w-auto" onClick={() => nudge(a)}>📧 Nudge পাঠান</button>
             <button className="abtn w-full sm:w-auto" onClick={() => nudgeOnboarding(a)}>Onboarding Nudge</button>
           </div>
-        ))}
-      </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </AdminShell>
   );
 }

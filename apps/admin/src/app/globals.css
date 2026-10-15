@@ -100,3 +100,111 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) {
   .adrawer, .aoverlay, .askel::after { transition: none; animation: none; }
 }
+
+/* ============================================================
+   Design System v3 (ADX4, DB2) — EXTENDS v2, never replaces it.
+   Every v2 class above keeps working unchanged. v3 adds tokens,
+   page/filter/tab/drawer/state patterns and Table v2 affordances
+   that DB2/DB3 pages adopt one by one.
+   ============================================================ */
+
+:root {
+  /* Spacing scale (4px base) */
+  --a-sp-1: 4px; --a-sp-2: 8px; --a-sp-3: 12px; --a-sp-4: 16px; --a-sp-5: 20px; --a-sp-6: 24px; --a-sp-8: 32px;
+  /* Radius scale */
+  --a-r-sm: 8px; --a-r-md: 12px; --a-r-lg: 16px; --a-r-xl: 20px;
+  /* Surface tiers: base < raised < overlay */
+  --a-surface-base: #020617;            /* slate-950 */
+  --a-surface-raised: #0f172a;          /* slate-900 */
+  --a-surface-overlay: #1e293b;         /* slate-800 */
+  /* Semantic colours (mirror the .abadge-* palette) */
+  --a-success: #34d399; --a-warning: #fbbf24; --a-danger: #f87171; --a-info: #818cf8; --a-neutral: #94a3b8;
+  /* Typography scale */
+  --a-fs-page: 22px; --a-fs-section: 15px; --a-fs-body: 13.5px; --a-fs-small: 12px;
+}
+
+/* ---------- Page header pattern ---------- */
+.apage-head { @apply mb-5 flex flex-wrap items-start gap-3; }
+.apage-head-main { @apply min-w-0 flex-1; }
+.apage-head-title { font-size: var(--a-fs-page); @apply font-bold tracking-tight text-slate-100; }
+.apage-head-sub { @apply mt-0.5 text-sm text-slate-400; }
+.apage-head-actions { @apply ml-auto flex flex-wrap items-center gap-2; }
+
+/* ---------- Filter bar ---------- */
+.afilter { @apply flex flex-col gap-2 border-b border-slate-800 p-4 sm:flex-row sm:flex-wrap sm:items-center; }
+.afilter .ainput { @apply sm:w-auto; }
+.afilter-label { @apply text-xs font-medium uppercase tracking-wide text-slate-500; }
+
+/* ---------- Tabs ---------- */
+.atabs { @apply flex flex-wrap gap-1 border-b border-slate-800; }
+.atab { @apply inline-flex items-center gap-1.5 border-b-2 border-transparent px-3.5 py-2.5 text-sm font-medium text-slate-400 transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60; }
+.atab-active { @apply border-indigo-400 text-white; }
+.atab-panel { @apply pt-4; }
+
+/* ---------- Detail drawer (right-side quick view) ---------- */
+.adrawer-scrim { @apply fixed inset-0 z-50 bg-black/70; transition: opacity 200ms ease; }
+.adrawer-detail { @apply fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] flex-col border-l border-slate-700 bg-slate-900 shadow-2xl; transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
+.adrawer-head { @apply flex items-start gap-3 border-b border-slate-800 px-5 py-4; }
+.adrawer-body { @apply min-w-0 flex-1 overflow-y-auto px-5 py-4; }
+.adrawer-foot { @apply border-t border-slate-800 px-5 py-3.5; }
+
+/* ---------- Empty / error states ---------- */
+.aempty { @apply flex flex-col items-center gap-1.5 px-4 py-10 text-center; }
+.aempty-title { @apply text-sm font-medium text-slate-300; }
+.aempty-sub { @apply max-w-sm text-xs text-slate-500; }
+.aerror { @apply rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3.5 text-sm text-red-200; }
+
+/* ---------- Skeleton extensions ---------- */
+.askel-line { @apply askel h-3.5 w-full; }
+.askel-card { @apply askel h-[118px]; }
+.askel-table { @apply askel h-56 w-full; }
+
+/* ---------- Keyboard hint + count badge ---------- */
+.akbd { @apply inline-flex items-center rounded-md border border-slate-700 bg-slate-800 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-slate-300; }
+.abadge-count { @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold text-white; }
+
+/* ---------- Table v2 affordances ---------- */
+table.atable-sticky thead th { @apply sticky top-0 z-10; }
+.ath-sort { @apply inline-flex cursor-pointer items-center gap-1 text-inherit hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60; }
+.ath-sort-ind { @apply text-[9px] text-indigo-300; }
+table.atable-compact .atd { @apply px-3 py-1.5 text-[13px]; }
+table.atable-compact .ath { @apply px-3 py-1.5; }
+table.atable-comfortable .atd { @apply px-4 py-3.5; }
+.atable-row-actions { @apply opacity-0 transition; }
+tr.arow:hover .atable-row-actions, tr.arow:focus-within .atable-row-actions { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .adrawer-detail, .adrawer-scrim { transition: none; }
+}
+
+/* ============================================================
+   ADX12 (DB4) — mobile card form for SIMPLE tables (opt-in).
+   A table that adds .atable-cards renders as stacked cards on
+   narrow screens: the header row hides and each cell shows its
+   column label from the cell's data-label attribute. Opt-in per
+   table, because it only works when every cell carries a
+   data-label and the row's content is plain text/badges (the
+   Admins roster is the first adopter). Wider screens and all
+   other tables keep the established horizontal-scroll behaviour.
+   ============================================================ */
+@media (max-width: 640px) {
+  table.atable.atable-cards { display: block; overflow-x: visible; white-space: normal; }
+  table.atable.atable-cards thead { display: none; }
+  table.atable.atable-cards tbody { display: block; }
+  table.atable.atable-cards tbody tr { display: block; padding: 10px 14px; }
+  table.atable.atable-cards td.atd { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 3px 0; white-space: normal; }
+  table.atable.atable-cards td.atd::before { content: attr(data-label); flex-shrink: 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgb(100 116 139); }
+  table.atable.atable-cards td.atd:not([data-label])::before { content: none; }
+}
+
+/* ============================================================
+   ADX14 (DB4) — density personalization. AdminShell stores the
+   operator's choice in localStorage and mirrors it onto
+   <html data-admin-density="compact">; comfortable is the
+   default and needs no rules (it is exactly the v2/v3 look).
+   Compact reuses the same metrics as table.atable-compact.
+   Append-only: no legacy selector is changed.
+   ============================================================ */
+html[data-admin-density="compact"] table.atable .atd { padding-top: 6px; padding-bottom: 6px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
+html[data-admin-density="compact"] table.atable .ath { padding-top: 6px; padding-bottom: 6px; padding-left: 12px; padding-right: 12px; }
+html[data-admin-density="compact"] .anav { padding-top: 6px; padding-bottom: 6px; }

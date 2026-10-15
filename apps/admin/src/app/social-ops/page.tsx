@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -79,9 +80,15 @@ export default function SocialOpsPage() {
   const [social, setSocial] = React.useState<SocialBoard | null>(null);
   const [ads, setAds] = React.useState<AdsBoard | null>(null);
   const [msg, setMsg] = React.useState("");
+  // ADX12: loadDone separates "still loading" from "board load
+  // failed" — before, a failed board fetch showed "লোড হচ্ছে…"
+  // forever in every card of that board.
+  const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadDone(false);
     setSocial(await apiFetch<SocialBoard>("/admin/system/social-board").catch(() => null));
     setAds(await apiFetch<AdsBoard>("/admin/system/ads-board").catch(() => null));
+    setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -101,6 +108,10 @@ export default function SocialOpsPage() {
     }
   }
 
+  // ADX12: per-board pending slot (loading vs failed + retry).
+  const pending = (label: string) => loadDone
+    ? <ErrorState message={`${label} লোড হয়নি — আবার চেষ্টা করুন।`} onRetry={load} />
+    : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>;
   return (
     <AdminShell title="📣 Social & Ads Ops">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
@@ -108,9 +119,17 @@ export default function SocialOpsPage() {
         Operator action (AB3): নিচের Retry/যাচাই বোতামগুলো Tenant পাশের নিজের service দিয়েই কাজ করে — ব্যর্থ হলে Provider-এর আসল ভুলটাই দেখাবে।
         সীমা: কোনো Account <b>Disconnect/Reconnect Admin থেকে করা যায় না</b> — Reconnect-এ Tenant-এর নিজের OAuth লাগে, Tenant-কে তার অ্যাকাউন্টে গিয়ে আবার কানেক্ট করতে হবে।
       </p>
+      {/* ADX11: দুটি স্পষ্ট বিভাগ — Social Accounts আগে (Error
+          Account ও ব্যর্থ Post-ই এই বিভাগের প্রথম বিষয়), তারপর
+          Ad Accounts। কার্ডগুলোর ক্রম আগের মতোই; বিভাগ-শিরোনাম
+          শুধু গঠনটি স্পষ্ট করে। */}
+      <div className="mb-3 flex flex-wrap items-baseline gap-2">
+        <h2 className="text-base font-semibold">👥 Social Accounts</h2>
+        <span className="text-xs text-slate-500">Error অবস্থার Account ও ব্যর্থ Post আগে — Retry প্রতিটি Row থেকেই</span>
+      </div>
       <div className="acard mb-4">
         <div className="mb-2 font-semibold">📣 Social <span className="text-xs font-normal text-slate-500">(সব Tenant মিলিয়ে — শুধু Metadata, কোনো Token/Credential কখনো দেখানো হয় না)</span></div>
-        {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!social ? pending("Social Board") : (
           <div className="space-y-3">
             <div className="text-sm">Social Account মোট: <b>{social.accounts.total.toLocaleString("bn-BD")}</b></div>
             <div className="space-y-1">
@@ -127,7 +146,7 @@ export default function SocialOpsPage() {
 
       <div className="acard mb-4 overflow-hidden p-0">
         <div className="border-b border-slate-800 p-4 font-semibold">Social Account — Error অবস্থায় ({social?.errorAccounts.length ?? "…"})</div>
-        {!social ? <p className="p-4 text-sm text-slate-500">লোড হচ্ছে…</p> : social.errorAccounts.length === 0 ? (
+        {!social ? <div className="p-4">{pending("Social Board")}</div> : social.errorAccounts.length === 0 ? (
           <p className="p-4 text-sm text-emerald-300">কোনো Social Account Error অবস্থায় নেই।</p>
         ) : (
           <table className="atable">
@@ -149,13 +168,13 @@ export default function SocialOpsPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="acard">
           <div className="mb-2 font-semibold">ব্যর্থ Post ({social?.posts.failed.length ?? "…"})</div>
-          {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!social ? pending("Social Board") : (
             <PostRows items={social.posts.failed} emptyText="কোনো ব্যর্থ Post নেই।" action={{ label: "আবার Publish চেষ্টা", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/retry`, "ব্যর্থ Post আবার চেষ্টা") }} />
           )}
         </div>
         <div className="acard">
           <div className="mb-2 font-semibold">Creator-এর কাছে পাঠানো, ৪৮ ঘণ্টার বেশি অপেক্ষমাণ ({social?.posts.sentToCreatorStale.count ?? "…"})</div>
-          {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!social ? pending("Social Board") : (
             <>
               <PostRows items={social.posts.sentToCreatorStale.items} emptyText="অপেক্ষমাণ কোনো Post নেই।" />
               <p className="mt-2 text-xs text-slate-500">এই তালিকা শুধু দেখার জন্য — Postটি Creator-এর সাড়ার অপেক্ষায়, retry করার কোনো পথ নেই।</p>
@@ -164,7 +183,7 @@ export default function SocialOpsPage() {
         </div>
         <div className="acard">
           <div className="mb-2 font-semibold">Publishing-এ আটকে আছে (&gt;১৫ মিনিট) ({social?.posts.stuckPublishing.count ?? "…"})</div>
-          {!social ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!social ? pending("Social Board") : (
             <>
               <PostRows items={social.posts.stuckPublishing.items} emptyText="আটকে থাকা কোনো Post নেই।" action={{ label: "Publish sweep চালান", run: (p) => opsAction(`/admin/system/social-board/posts/${p.id}/recover-stuck`, "আটকে থাকা Post recovery") }} />
               <p className="mt-2 text-xs text-slate-500">Sweep-টি ওই Org-এর — stale claim recovery-সহ Org-এর সব due Post প্রসেস হয়, শুধু এই Postটি নয় (৫ মিনিটের automation job যে পথে চলে, হুবহু সেই পথ)।</p>
@@ -173,9 +192,13 @@ export default function SocialOpsPage() {
         </div>
       </div>
 
-      <div className="acard mt-4">
+      <div className="mb-3 mt-6 flex flex-wrap items-baseline gap-2">
+        <h2 className="text-base font-semibold">📢 Ad Accounts</h2>
+        <span className="text-xs text-slate-500">মনোযোগ দরকার এমন Account আগে — Sync Retry Row থেকেই</span>
+      </div>
+      <div className="acard">
         <div className="mb-2 font-semibold">📢 বিজ্ঞাপন অ্যাকাউন্ট <span className="text-xs font-normal text-slate-500">(সব Tenant মিলিয়ে)</span></div>
-        {!ads ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!ads ? pending("Ads Board") : (
           <div className="space-y-3">
             <div className="text-sm">Ad Account মোট: <b>{ads.total.toLocaleString("bn-BD")}</b> · Sync Disabled: <b>{ads.syncDisabledCount.toLocaleString("bn-BD")}</b></div>
             <div className="space-y-1">
@@ -192,7 +215,7 @@ export default function SocialOpsPage() {
 
       <div className="acard mt-4 overflow-hidden p-0">
         <div className="border-b border-slate-800 p-4 font-semibold">বিজ্ঞাপন অ্যাকাউন্ট — মনোযোগ দরকার ({ads?.broken.length ?? "…"}) <span className="text-xs font-normal text-slate-500">Error আগে, তারপর Platform Disabled/Restricted</span></div>
-        {!ads ? <p className="p-4 text-sm text-slate-500">লোড হচ্ছে…</p> : ads.broken.length === 0 ? (
+        {!ads ? <div className="p-4">{pending("Ads Board")}</div> : ads.broken.length === 0 ? (
           <p className="p-4 text-sm text-emerald-300">কোনো Ad Account-এ সমস্যা নেই।</p>
         ) : (
           <table className="atable">

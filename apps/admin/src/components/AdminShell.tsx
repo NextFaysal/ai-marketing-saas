@@ -2,78 +2,190 @@
 import React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { apiFetch, getAdminToken, setAdminToken } from "@/lib/api";
+import {
+  ALL_NAV_ITEMS, LS_KEYS, NAV_GROUPS, NavIcon, groupTitleForPath, isActivePath,
+  lsGetArray, lsSet, navItemForPath,
+  type NavCounts, type NavItemDef,
+} from "./nav";
+import { useNavCounts } from "./useNavCounts";
+import AttentionBell from "./AttentionBell";
+import CommandPalette from "./CommandPalette";
 
-const NAV_GROUPS: { title: string; items: { label: string; icon: string; href: string }[] }[] = [
-  {
-    title: "প্রধান",
-    items: [
-      { label: "Command Center", icon: "📊", href: "/" },
-      { label: "Analytics", icon: "💹", href: "/analytics" },
-    ],
-  },
-  {
-    title: "ব্যবস্থাপনা",
-    items: [
-      { label: "Users", icon: "👤", href: "/users" },
-      { label: "Organizations", icon: "🏢", href: "/orgs" },
-      { label: "SaaS Billing", icon: "💳", href: "/billing" },
-      { label: "Wallet Payouts", icon: "🏦", href: "/payouts" },
-      { label: "Support Tickets", icon: "🎫", href: "/tickets" },
-      { label: "Audit Trail", icon: "🧾", href: "/audit" },
-    ],
-  },
-  {
-    title: "প্ল্যাটফর্ম",
-    items: [
-      { label: "Settings & Config", icon: "⚙️", href: "/settings" },
-      { label: "Platform Health", icon: "💚", href: "/health" },
-      { label: "Social & Ads Ops", icon: "📣", href: "/social-ops" },
-      { label: "Proactive Alerts", icon: "🚨", href: "/alerts" },
-      { label: "System & Reliability", icon: "🖥", href: "/system" },
-      { label: "Growth Ops", icon: "📈", href: "/growth" },
-      { label: "Usage & Cost", icon: "📈", href: "/usage" },
-      { label: "Security", icon: "🔐", href: "/security" },
-      { label: "Admins", icon: "🧑‍💼", href: "/admins" },
-    ],
-  },
-];
+// ADX2 (Admin UX DB1): Navigation v2 — 7 collapsible task groups
+// (docs/admin-ux-architecture.md §2), persisted group state with the
+// active route's group auto-opened (§৭ decision 2), ⭐ প্রিয় pins and
+// 🕘 সাম্প্রতিক recents persisted in localStorage, distinct SVG icon
+// per item (./nav.tsx), badge slots fed by ADX3's nav-counts
+// (absent count ⇒ nothing renders — never a fabricated number).
+// Role-aware de-emphasis from the plan was SKIPPED: the login flow
+// stores body.user = { id, email, name, isSuperAdmin } — AuthService
+// .issueToken() never sends adminTier to the client, so there is no
+// honest tier to style from (see architecture doc §2.2).
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(`${href}/`);
+function countOf(item: NavItemDef, counts: NavCounts | null): number | undefined {
+  if (!counts || !item.countKey) return undefined;
+  const v = counts[item.countKey];
+  return typeof v === "number" ? v : undefined;
 }
 
-function NavContent({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+function NavRow({
+  item, counts, collapsed, pinned, onTogglePin, onNavigate,
+}: {
+  item: NavItemDef; counts: NavCounts | null; collapsed: boolean;
+  pinned: boolean; onTogglePin: (href: string) => void; onNavigate?: () => void;
+}) {
   const pathname = usePathname() ?? "/";
+  const active = isActivePath(pathname, item.href);
+  const count = countOf(item, counts);
+  const showBadge = count !== undefined && count > 0;
   return (
-    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
-      {NAV_GROUPS.map((group) => (
-        <div key={group.title}>
-          {collapsed
-            ? <div className="mx-2 border-t border-slate-800 pb-1 pt-4 first:border-0" />
-            : <div className="anav-group">{group.title}</div>}
-          {group.items.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              title={collapsed ? item.label : undefined}
-              className={`anav ${isActive(pathname, item.href) ? "anav-active" : ""} ${collapsed ? "justify-center px-2" : ""}`}
-            >
-              <span className="text-base leading-none">{item.icon}</span>
-              {!collapsed ? <span className="truncate">{item.label}</span> : null}
-            </a>
+    <div className="group/row relative flex items-center">
+      <a
+        href={item.href}
+        onClick={onNavigate}
+        title={collapsed ? (showBadge ? `${item.label} (${count})` : item.label) : undefined}
+        className={`anav relative flex-1 ${active ? "anav-active" : ""} ${collapsed ? "justify-center px-2" : ""}`}
+      >
+        <span className="relative">
+          <NavIcon name={item.icon} />
+          {collapsed && showBadge ? (
+            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{count}</span>
+          ) : null}
+        </span>
+        {!collapsed ? <span className="truncate">{item.label}</span> : null}
+        {!collapsed && showBadge ? (
+          <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500/90 px-1.5 text-[11px] font-bold text-white">{count}</span>
+        ) : null}
+      </a>
+      {!collapsed ? (
+        <button
+          type="button"
+          aria-label={pinned ? `${item.label} প্রিয় থেকে সরান` : `${item.label} প্রিয়তে রাখুন`}
+          title={pinned ? "প্রিয় থেকে সরান" : "⭐ প্রিয়তে রাখুন"}
+          onClick={() => onTogglePin(item.href)}
+          className={`mr-1 shrink-0 rounded-md p-1 transition ${pinned ? "text-amber-300" : "text-slate-600 opacity-0 hover:text-slate-300 focus:opacity-100 group-hover/row:opacity-100"}`}
+        >
+          <NavIcon name="star" size={14} filled={pinned} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+interface NavContentProps {
+  collapsed: boolean;
+  counts: NavCounts | null;
+  favorites: string[];
+  recents: string[];
+  openGroups: Record<string, boolean>;
+  onToggleGroup: (title: string) => void;
+  onTogglePin: (href: string) => void;
+  onNavigate?: () => void;
+}
+
+function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggleGroup, onTogglePin, onNavigate }: NavContentProps) {
+  const favItems = favorites.map((h) => ALL_NAV_ITEMS.find((i) => i.href === h)).filter((x): x is NavItemDef => !!x);
+  const recentItems = recents.map((h) => ALL_NAV_ITEMS.find((i) => i.href === h)).filter((x): x is NavItemDef => !!x);
+  return (
+    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label="Admin navigation">
+      {!collapsed && favItems.length === 0 ? (
+        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-600">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
+      ) : null}
+      {!collapsed && favItems.length > 0 ? (
+        <div>
+          <div className="anav-group flex items-center gap-1.5"><NavIcon name="star" size={12} /> প্রিয়</div>
+          {favItems.map((item) => (
+            <NavRow key={`fav-${item.href}`} item={item} counts={counts} collapsed={false} pinned onTogglePin={onTogglePin} onNavigate={onNavigate} />
           ))}
         </div>
-      ))}
+      ) : null}
+      {!collapsed && recentItems.length > 0 ? (
+        <div>
+          <div className="anav-group flex items-center gap-1.5"><NavIcon name="clock" size={12} /> সাম্প্রতিক</div>
+          {recentItems.map((item) => (
+            <NavRow key={`recent-${item.href}`} item={item} counts={counts} collapsed={false} pinned={favorites.includes(item.href)} onTogglePin={onTogglePin} onNavigate={onNavigate} />
+          ))}
+        </div>
+      ) : null}
+      {NAV_GROUPS.map((group) => {
+        const groupTotal = group.items.reduce((sum, i) => sum + (countOf(i, counts) ?? 0), 0);
+        const open = !!openGroups[group.title];
+        if (collapsed) {
+          return (
+            <div key={group.title}>
+              <div className="mx-2 border-t border-slate-800 pb-1 pt-4 first:border-0" />
+              {group.items.map((item) => (
+                <NavRow key={item.href} item={item} counts={counts} collapsed pinned={false} onTogglePin={onTogglePin} onNavigate={onNavigate} />
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div key={group.title}>
+            <button
+              type="button"
+              onClick={() => onToggleGroup(group.title)}
+              aria-expanded={open}
+              className="anav-group flex w-full items-center gap-1.5 rounded-md text-left transition hover:text-slate-300"
+            >
+              <span className="truncate">{group.title}</span>
+              {groupTotal > 0 ? (
+                <span className="inline-flex items-center justify-center rounded-full bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-white">{groupTotal}</span>
+              ) : null}
+              <span className={`ml-auto inline-block transition-transform ${open ? "rotate-90" : ""}`}><NavIcon name="chevron" size={13} /></span>
+            </button>
+            {open ? group.items.map((item) => (
+              <NavRow key={item.href} item={item} counts={counts} collapsed={false} pinned={favorites.includes(item.href)} onTogglePin={onTogglePin} onNavigate={onNavigate} />
+            )) : null}
+          </div>
+        );
+      })}
     </nav>
+  );
+}
+
+// ADX14: density personalization — comfortable (default, the
+// v2/v3 look) or compact (denser tables/nav). Persisted in
+// localStorage and mirrored to <html data-admin-density> by the
+// shell effect; the CSS lives in globals.css (ADX14 section).
+// Purely presentational: fresh/blocked storage = comfortable.
+type Density = "comfortable" | "compact";
+function DensityToggle({ density, onChange, collapsed }: { density: Density; onChange: (d: Density) => void; collapsed: boolean }) {
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="anav mb-1 w-full justify-center"
+        title={`ঘনত্ব: ${density === "compact" ? "Compact" : "স্বাভাবিক"} — বদলাতে চাপুন`}
+        aria-label="ঘনত্ব বদলান"
+        onClick={() => onChange(density === "compact" ? "comfortable" : "compact")}
+      >
+        <NavIcon name="list" size={16} />
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 px-2 pb-1.5" role="group" aria-label="ঘনত্ব বাছাই">
+      <span className="text-[11px] text-slate-500">ঘনত্ব:</span>
+      {(["comfortable", "compact"] as const).map((d) => (
+        <button
+          key={d}
+          type="button"
+          aria-pressed={density === d}
+          className={density === d ? "abtn !px-2 !py-0.5 text-[11px]" : "abtn-secondary !px-2 !py-0.5 text-[11px]"}
+          onClick={() => onChange(d)}
+        >
+          {d === "comfortable" ? "স্বাভাবিক" : "Compact"}
+        </button>
+      ))}
+    </div>
   );
 }
 
 function Brand({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={`flex items-center gap-3 px-5 pb-2 pt-5 ${collapsed ? "justify-center px-2" : ""}`}>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-lg shadow-[0_10px_24px_-8px_rgb(99_102_241/0.9)]">🛡</span>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-[0_10px_24px_-8px_rgb(99_102_241/0.9)]"><NavIcon name="shield" size={20} /></span>
       {!collapsed ? (
         <div className="min-w-0">
           <div className="truncate text-[15px] font-bold tracking-tight">Qosprey Admin</div>
@@ -86,11 +198,32 @@ function Brand({ collapsed }: { collapsed: boolean }) {
 
 export default function AdminShell({ children, title }: { children: React.ReactNode; title: string }) {
   const router = useRouter();
+  const pathname = usePathname() ?? "/";
   const [ready, setReady] = React.useState(false);
   const [adminEmail, setAdminEmail] = React.useState("");
   const [q, setQ] = React.useState("");
   const [drawer, setDrawer] = React.useState(false);
   const [collapsed, setCollapsed] = React.useState(false);
+  // ADX3: live counts from GET /admin/nav-counts (null = unknown;
+  // badges and the bell render nothing while unknown).
+  const counts = useNavCounts();
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
+
+  // Ctrl+K / Cmd+K toggles the command palette from anywhere.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  const [density, setDensity] = React.useState<Density>("comfortable");
+  const [favorites, setFavorites] = React.useState<string[]>([]);
+  const [recents, setRecents] = React.useState<string[]>([]);
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     (async () => {
@@ -99,7 +232,15 @@ export default function AdminShell({ children, title }: { children: React.ReactN
         await apiFetch("/admin/health");
         const me = JSON.parse(localStorage.getItem("admin_user") ?? "{}");
         setAdminEmail(me.email ?? "");
-        setCollapsed(localStorage.getItem("admin_nav_collapsed") === "1");
+        setCollapsed(localStorage.getItem(LS_KEYS.collapsed) === "1");
+        const storedDensity = localStorage.getItem(LS_KEYS.density);
+        if (storedDensity === "compact" || storedDensity === "comfortable") setDensity(storedDensity);
+        setFavorites(lsGetArray(LS_KEYS.favorites).filter((h) => ALL_NAV_ITEMS.some((i) => i.href === h)));
+        setRecents(lsGetArray(LS_KEYS.recent).filter((h) => ALL_NAV_ITEMS.some((i) => i.href === h)).slice(0, 5));
+        let storedGroups: Record<string, boolean> = {};
+        try { const v = JSON.parse(localStorage.getItem(LS_KEYS.groups) ?? "{}"); if (v && typeof v === "object") storedGroups = v; } catch { /* ignore */ }
+        const activeGroup = groupTitleForPath(window.location.pathname);
+        setOpenGroups({ ...storedGroups, ...(activeGroup ? { [activeGroup]: true } : {}) });
         setReady(true);
       } catch {
         setAdminToken(null);
@@ -108,10 +249,62 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     })();
   }, [router]);
 
+  // Auto-open the active route's group on navigation (§৭ decision 2:
+  // the current page is never hidden inside a folded group) and
+  // record the visit in সাম্প্রতিক (max 5, most-recent first).
+  React.useEffect(() => {
+    if (!ready) return;
+    const activeGroup = groupTitleForPath(pathname);
+    if (activeGroup) {
+      setOpenGroups((prev) => {
+        if (prev[activeGroup]) return prev;
+        const next = { ...prev, [activeGroup]: true };
+        lsSet(LS_KEYS.groups, next);
+        return next;
+      });
+    }
+    const item = navItemForPath(pathname);
+    if (item) {
+      setRecents((prev) => {
+        const next = [item.href, ...prev.filter((h) => h !== item.href)].slice(0, 5);
+        if (next.join("|") === prev.join("|")) return prev;
+        lsSet(LS_KEYS.recent, next);
+        return next;
+      });
+    }
+  }, [pathname, ready]);
+
+  // ADX14: mirror the density onto <html> so the globals.css
+  // compact rules apply app-wide (tables, nav) incl. drawers/modals.
+  React.useEffect(() => {
+    try { document.documentElement.dataset.adminDensity = density; } catch { /* ignore */ }
+  }, [density]);
+
+  function changeDensity(d: Density) {
+    setDensity(d);
+    try { localStorage.setItem(LS_KEYS.density, d); } catch { /* ignore */ }
+  }
+
   function toggleCollapsed() {
     setCollapsed((c) => {
-      try { localStorage.setItem("admin_nav_collapsed", c ? "0" : "1"); } catch { /* ignore */ }
+      try { localStorage.setItem(LS_KEYS.collapsed, c ? "0" : "1"); } catch { /* ignore */ }
       return !c;
+    });
+  }
+
+  function toggleGroup(title: string) {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [title]: !prev[title] };
+      lsSet(LS_KEYS.groups, next);
+      return next;
+    });
+  }
+
+  function togglePin(href: string) {
+    setFavorites((prev) => {
+      const next = prev.includes(href) ? prev.filter((h) => h !== href) : [...prev, href];
+      lsSet(LS_KEYS.favorites, next);
+      return next;
     });
   }
 
@@ -133,21 +326,22 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   }
 
   const initials = (adminEmail || "A").slice(0, 2).toUpperCase();
+  const navProps = { counts, favorites, recents, openGroups, onToggleGroup: toggleGroup, onTogglePin: togglePin };
 
   return (
     <div className="min-h-screen">
       {/* Mobile top bar */}
       <div className="aglass fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-slate-800 px-4 py-3 lg:hidden">
         <button aria-label="মেনু খুলুন" className="abtn-secondary !px-2.5" onClick={() => setDrawer(true)}>☰</button>
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500">🛡</span>
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white"><NavIcon name="shield" size={16} /></span>
         <div className="min-w-0">
           <div className="truncate text-sm font-bold">Qosprey Admin</div>
           <div className="truncate text-[11px] text-slate-500">{adminEmail}</div>
         </div>
-        <button className="abtn-secondary ml-auto !px-2.5" aria-label="লগ আউট" onClick={logout}>🚪</button>
+        <button className="abtn-secondary ml-auto !px-2.5" aria-label="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /></button>
       </div>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer — the exact same NavContent as the desktop sidebar */}
       {drawer ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="aoverlay absolute inset-0 bg-black/70" onClick={() => setDrawer(false)} />
@@ -156,10 +350,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
               <Brand collapsed={false} />
               <button aria-label="মেনু বন্ধ করুন" className="abtn-secondary mt-4 !px-2.5" onClick={() => setDrawer(false)}>✕</button>
             </div>
-            <NavContent collapsed={false} onNavigate={() => setDrawer(false)} />
+            <NavContent collapsed={false} {...navProps} onNavigate={() => setDrawer(false)} />
             <div className="border-t border-slate-800 p-3 text-xs text-slate-500">
               <div className="truncate px-2 pb-1">{adminEmail}</div>
-              <button className="anav w-full" onClick={logout}>🚪 লগ আউট</button>
+              <DensityToggle density={density} onChange={changeDensity} collapsed={false} />
+              <button className="anav w-full" onClick={logout}><NavIcon name="logout" size={16} /> লগ আউট</button>
             </div>
           </aside>
         </div>
@@ -169,12 +364,16 @@ export default function AdminShell({ children, title }: { children: React.ReactN
         {/* Desktop sidebar */}
         <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-slate-800 bg-slate-900/50 lg:flex ${collapsed ? "w-[84px]" : "w-64"}`}>
           <Brand collapsed={collapsed} />
-          <NavContent collapsed={collapsed} />
+          <NavContent collapsed={collapsed} {...navProps} />
           <div className="border-t border-slate-800 p-3">
             {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-500">{adminEmail}</div> : null}
+            <DensityToggle density={density} onChange={changeDensity} collapsed={collapsed} />
             <div className={`flex ${collapsed ? "flex-col gap-1" : "items-center gap-1"}`}>
-              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="Sidebar ছোট/বড় করুন" onClick={toggleCollapsed}>{collapsed ? "»" : "«"} {!collapsed ? <span>ছোট করুন</span> : null}</button>
-              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="লগ আউট" onClick={logout}>🚪 {!collapsed ? <span>লগ আউট</span> : null}</button>
+              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="Sidebar ছোট/বড় করুন" onClick={toggleCollapsed}>
+                <span className={`inline-block ${collapsed ? "" : "rotate-180"}`}><NavIcon name="chevron" size={15} /></span>
+                {!collapsed ? <span>ছোট করুন</span> : null}
+              </button>
+              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /> {!collapsed ? <span>লগ আউট</span> : null}</button>
             </div>
           </div>
         </aside>
@@ -191,6 +390,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
                   <input className="ainput w-44 sm:w-64" placeholder="🔍 User, Org, Order খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
                   <button className="abtn-secondary">খুঁজুন</button>
                 </form>
+                <button type="button" onClick={() => setPaletteOpen(true)} className="abtn-secondary hidden items-center gap-2 md:inline-flex" aria-label="Command palette খুলুন (Ctrl+K)">
+                  <NavIcon name="command" size={15} />
+                  <span className="text-xs text-slate-400">Ctrl K</span>
+                </button>
+                <AttentionBell counts={counts} />
                 <div className="hidden items-center gap-2.5 rounded-full border border-slate-800 bg-slate-900/70 py-1 pl-1 pr-3 md:flex" title={adminEmail}>
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[11px] font-bold">{initials}</span>
                   <span className="max-w-[180px] truncate text-xs text-slate-300">{adminEmail}</span>
@@ -201,6 +405,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           </div>
         </main>
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

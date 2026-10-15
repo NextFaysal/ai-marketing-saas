@@ -1,6 +1,9 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState } from "@/components/ui";
+import { useNavCounts, presentCounts } from "@/components/useNavCounts";
+import type { NavCounts } from "@/components/nav";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -11,27 +14,64 @@ interface Overview {
   recentAdminActions: { id: string; action: string; entityType: string; entityId?: string | null; createdAt: string }[];
 }
 
+interface SeriesMonth { month: string; collectedMinor: string; newOrgs: number; newUsers: number; newSubscriptions: number; orders: number; orderRevenueMinor: string }
+interface Series { months: SeriesMonth[] }
+
+/** ADX5: TODAY row config — one card per nav-counts field, each
+ *  linking to its queue page. Same labels as the Attention Bell. */
+const TODO_ROWS: Record<keyof NavCounts, { label: string; href: string; hint: string }> = {
+  pendingPayouts: { label: "অপেক্ষমাণ Payout", href: "/payouts", hint: "সিদ্ধান্ত বাকি" },
+  openTickets: { label: "খোলা Ticket", href: "/tickets", hint: "open + pending" },
+  failedJobs24h: { label: "ব্যর্থ Job (২৪ ঘণ্টা)", href: "/health", hint: "Health-এ Retry" },
+  activeAlerts: { label: "সক্রিয় Alert", href: "/alerts", hint: "Proactive Alerts" },
+  overdueSubscriptions: { label: "বকেয়া Subscription", href: "/billing", hint: "Billing-এ তালিকা" },
+};
+
+/** Task-first order (ADX5): fix problems → pay out → bill → guard → configure. */
 const QUICK_ACTIONS = [
-  { icon: "💳", label: "বিলিং ও পেমেন্ট", sub: "MRR, ওভারডিউ, ম্যানুয়াল পেমেন্ট", href: "/billing" },
   { icon: "💚", label: "Platform Health", sub: "ব্যর্থ Job, ইন্টিগ্রেশন অবস্থা", href: "/health" },
-  { icon: "⚙️", label: "Dynamic Config", sub: "LLM, Meta App, SMTP, SSLCommerz", href: "/settings" },
+  { icon: "🏦", label: "Wallet Payouts", sub: "অপেক্ষমাণ অনুরোধ, Approve / Mark Paid", href: "/payouts" },
+  { icon: "💳", label: "বিলিং ও পেমেন্ট", sub: "MRR, ওভারডিউ, ম্যানুয়াল পেমেন্ট", href: "/billing" },
   { icon: "🔐", label: "Security ও 2FA", sub: "Admin তালিকা, সেশন রিভোক", href: "/security" },
+  { icon: "⚙️", label: "Dynamic Config", sub: "LLM, Meta App, SMTP, SSLCommerz", href: "/settings" },
 ];
 
 export default function OverviewPage() {
   const [data, setData] = React.useState<Overview | null>(null);
   const [dbOk, setDbOk] = React.useState<boolean | null>(null);
   const [error, setError] = React.useState("");
-  React.useEffect(() => {
+  const [series, setSeries] = React.useState<Series | null>(null);
+  const counts = useNavCounts();
+  // ADX12: the load is a named callback so the error state can
+  // offer a real retry (before, an overview failure was terminal
+  // until a manual page reload).
+  const loadAll = React.useCallback(() => {
+    setError("");
     apiFetch<Overview>("/admin/overview").then(setData).catch((e) => setError(e.message));
     apiFetch<{ db: string }>("/admin/health").then((h) => setDbOk(h.db === "ok")).catch(() => setDbOk(false));
+    // ADX5 comparison source: M37's monthly buckets. Failure simply
+    // means no previous-month reference is shown (never invented).
+    apiFetch<Series>("/admin/analytics/series?months=3").then(setSeries).catch(() => setSeries(null));
   }, []);
+  React.useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Previous-month reference — ONLY for orders/revenue, the two
+  // overview figures whose definitions match the series buckets
+  // exactly (calendar-month, cancelled/refunded excluded). The
+  // current month is incomplete, so this is shown as a plain
+  // reference value ("গত মাস: …"), never as a % change or trend.
+  const nowD = new Date();
+  const curKey = `${nowD.getUTCFullYear()}-${String(nowD.getUTCMonth() + 1).padStart(2, "0")}`;
+  const curIdx = series ? series.months.findIndex((m) => m.month === curKey) : -1;
+  const prevMonth = series && curIdx > 0 ? series.months[curIdx - 1] : null;
+
+  const todoPresent = presentCounts(counts);
 
   const failedTotal = data ? data.failedSyncJobs24h + data.failedAutomationRuns24h : 0;
   const cards = data ? [
     { icon: "🏢", label: "মোট Organization", value: String(data.organizations), sub: `নতুন (৩০ দিন): ${data.newOrganizations30d}` },
     { icon: "👤", label: "মোট User", value: String(data.users), sub: `নতুন (৩০ দিন): ${data.newUsers30d}` },
-    { icon: "🧾", label: "এই মাসের Order", value: String(data.monthOrders), sub: `আয় ${formatMinorStr(data.monthOrderRevenueMinor)} · সব Tenant` },
+    { icon: "🧾", label: "এই মাসের Order", value: String(data.monthOrders), sub: `আয় ${formatMinorStr(data.monthOrderRevenueMinor)} · সব Tenant${prevMonth ? ` · গত মাস: ${prevMonth.orders}টি Order, আয় ${formatMinorStr(prevMonth.orderRevenueMinor)}` : ""}` },
     { icon: "📣", label: "Ad Spend (Tracked)", value: formatMinorStr(data.monthAdSpendMinor), sub: "এই মাস · Campaign-level, সব Tenant" },
     { icon: "🤖", label: "AI ব্যবহার (এই মাস)", value: `${data.monthAiCalls} কল`, sub: `${data.monthAiTokens.toLocaleString()} টোকেন` },
     { icon: failedTotal > 0 ? "⚠️" : "✅", label: "ব্যর্থ Job (২৪ ঘণ্টা)", value: String(failedTotal), sub: `Sync ${data.failedSyncJobs24h} · Automation ${data.failedAutomationRuns24h}` },
@@ -60,12 +100,35 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
+      {/* ADX5: আজকের করণীয় — one card per AVAILABLE nav-count.
+          When nav-counts is unavailable the whole row is absent:
+          unknown is never dressed up as an all-clear. A genuine 0
+          shows the calm state of that queue. */}
+      {todoPresent.length > 0 ? (
+        <div className="mb-5">
+          <div className="mb-2.5 text-sm font-semibold text-slate-300">আজকের করণীয়</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {todoPresent.map(([key, value]) => {
+              const row = TODO_ROWS[key];
+              const calm = value === 0;
+              return (
+                <a key={key} href={row.href} className={`acard acard-hover block !p-4 ${calm ? "" : "border-red-500/40"}`}>
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{row.label}</div>
+                  <div className={`mt-1.5 text-[26px] font-bold leading-none tracking-tight ${calm ? "text-emerald-300" : "text-red-300"}`}>{value}</div>
+                  <div className="mt-1.5 text-xs text-slate-500">{calm ? "কিছু বাকি নেই" : row.hint} →</div>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <div className="mb-4"><ErrorState message={error} onRetry={loadAll} /></div> : null}
 
       {/* KPI cards */}
       {!data && !error ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="askel h-[118px]" />)}
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="askel-card" />)}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

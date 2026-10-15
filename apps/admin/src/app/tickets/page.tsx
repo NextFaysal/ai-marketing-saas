@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
+import { EmptyState, ErrorState, SavedViewsBar } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -24,9 +25,16 @@ export default function TicketsPage() {
   const [reply, setReply] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  // ADX12: list loading / load-failure states — before, the initial
+  // load and a failed load both showed the "no tickets" card.
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
-    try { setTickets(await apiFetch<Ticket[]>(`/admin/tickets${filter ? `?status=${filter}` : ""}`)); } catch { /* honest empty */ }
+    setLoading(true);
+    try { setTickets(await apiFetch<Ticket[]>(`/admin/tickets${filter ? `?status=${filter}` : ""}`)); setLoadError(""); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : "Ticket তালিকা লোড ব্যর্থ হয়েছে"); }
+    finally { setLoading(false); }
   }, [filter]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -36,6 +44,16 @@ export default function TicketsPage() {
   const open = async (id: string) => {
     try { setSelected(await apiFetch<Ticket>(`/admin/tickets/${id}`)); } catch (e) { setError(e instanceof Error ? e.message : "Ticket খোলা যায়নি"); }
   };
+
+  // ADX10: inbox ordering — জরুরি (high priority) আগে, তারপর সর্বশেষ
+  // বার্তার সময় অনুযায়ী নতুন আগে। সাজানো এই পেজে লোড করা
+  // তালিকার ওপরেই (সার্ভারের filter আগের মতোই)।
+  const shown = [...tickets].sort((a, b) => {
+    const pa = a.priority === "high" ? 0 : 1;
+    const pb = b.priority === "high" ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+  });
 
   const sendReply = async () => {
     if (!selected || !reply.trim()) return;
@@ -65,10 +83,22 @@ export default function TicketsPage() {
           <button key={f || "all"} onClick={() => setFilter(f)} className={filter === f ? "abtn abtn-primary" : "abtn"}>{f ? STATUS_LABEL[f] : "সব"}</button>
         ))}
       </div>
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2" style={{ alignItems: "start" }}>
-        <div className="space-y-2">
-          {tickets.length === 0 ? <div className="acard"><p className="amut">এই ফিল্টারে কোনো Ticket নেই।</p></div> : null}
-          {tickets.map((t) => (
+      {/* ADX14: saved views — this page's only filter state is the
+          status filter, so a view is a named status preset. */}
+      <div className="mb-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40">
+        <SavedViewsBar
+          page="tickets"
+          current={{ filter }}
+          onApply={(s) => setFilter(s.filter ?? "")}
+        />
+      </div>
+      <p className="amut" style={{ marginBottom: 8 }}>তালিকা এই পেজেই সাজানো: জরুরি Ticket আগে, তারপর সর্বশেষ বার্তা অনুযায়ী।</p>
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(300px,400px)_1fr]" style={{ alignItems: "start" }}>
+        <div className={`space-y-2 ${selected ? "hidden lg:block" : ""}`}>
+          {loading && tickets.length === 0 ? <><div className="askel h-20" /><div className="askel h-20" /><div className="askel h-20" /></> : null}
+          {!loading && loadError && tickets.length === 0 ? <div className="acard"><ErrorState message={`Ticket লোড হয়নি: ${loadError}`} onRetry={load} /></div> : null}
+          {!loading && !loadError && shown.length === 0 ? <div className="acard"><EmptyState title="এই ফিল্টারে কোনো Ticket নেই।" sub="অন্য status বেছে নিন, অথবা সব Ticket দেখতে ওপরের 'সব' ফিল্টারটি চাপুন।" /></div> : null}
+          {shown.map((t) => (
             <button key={t.id} onClick={() => open(t.id)} className="acard" style={{ display: "block", width: "100%", textAlign: "left", cursor: "pointer", ...(selected?.id === t.id ? { outline: "2px solid #6366f1" } : {}) }}>
               <div className="flex items-center justify-between gap-2">
                 <b style={{ fontSize: 14 }}>{t.priority === "high" ? "🔴 " : ""}{t.subject}</b>
@@ -78,9 +108,10 @@ export default function TicketsPage() {
             </button>
           ))}
         </div>
-        <div className="acard">
+        <div className={`acard ${selected ? "" : "hidden lg:block"}`}>
           {!selected ? <p className="amut">একটি Ticket বেছে নিন।</p> : (
             <>
+              <button className="abtn w-full sm:w-auto lg:hidden" style={{ marginBottom: 10 }} onClick={() => setSelected(null)}>← তালিকায় ফিরুন</button>
               <div className="ahead">
                 <h3 style={{ margin: 0 }}>{selected.subject}</h3>
                 <span className="abadge">{STATUS_LABEL[selected.status] ?? selected.status}</span>

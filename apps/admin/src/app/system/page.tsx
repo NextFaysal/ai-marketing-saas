@@ -2,6 +2,7 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
+import { ErrorState, Tabs } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -76,6 +77,11 @@ export default function SystemPage() {
   const [whProvider, setWhProvider] = React.useState("");
   const [whErrorsOnly, setWhErrorsOnly] = React.useState(false);
   const [whDetail, setWhDetail] = React.useState<WebhookEventDetail | null>(null);
+  // ADX8: the page's cards regrouped into tabs (content unchanged).
+  // "logs" is a declared sixth tab — the Activity Log card exists on
+  // the page today and needs a home; the plan's five tabs cover the
+  // other ten cards exactly.
+  const [tab, setTab] = React.useState("deploy");
 
   async function loadWebhooks(provider = whProvider, errorsOnly = whErrorsOnly) {
     const params = new URLSearchParams();
@@ -89,7 +95,12 @@ export default function SystemPage() {
     setWhDetail(detail);
   }
 
+  // ADX12: loadDone separates "still loading" from "load failed"
+  // for every null-gated card below — before, a failed fetch left
+  // its card on "লোড হচ্ছে…" forever.
+  const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
+    setLoadDone(false);
     setEnvCheck(await apiFetch<EnvCheck>("/admin/system/env-check").catch(() => null));
     setVersion(await apiFetch<Version>("/admin/system/version").catch(() => null));
     setQueues(await apiFetch<Queues>("/admin/system/queues").catch(() => null));
@@ -101,6 +112,7 @@ export default function SystemPage() {
     setBackup(bk);
     if (bk?.info) { setBkLocation(bk.info.location); setBkNote(bk.info.note); setBkAt(bk.info.lastBackupAt ? String(bk.info.lastBackupAt).slice(0, 16) : ""); }
     await loadWebhooks("", false);
+    setLoadDone(true);
   }, []);
   React.useEffect(() => { load(); }, [load]);
   React.useEffect(() => {
@@ -129,18 +141,44 @@ export default function SystemPage() {
     }
   }
 
+  // ADX12: per-card pending slot (loading vs failed + retry).
+  const pending = (label: string) => loadDone
+    ? <ErrorState message={`${label} লোড হয়নি — আবার চেষ্টা করুন।`} onRetry={load} />
+    : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>;
+
   return (
     <AdminShell title="🖥 System & Reliability">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      {/* ADX8: the AA1 deploy-readiness banner moved to page level —
+          identical text/logic as inside the env card before, now
+          visible regardless of the active tab (it already was the
+          first thing on the page; tabbing must not hide it). */}
+      {envCheck ? (
+        envCheck.summary.requiredMissing > 0 ? (
+          <p className="mb-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">⚠️ {envCheck.summary.requiredMissing}টি বাধ্যতামূলক জিনিস বাকি — deploy/redeploy-এর আগে Dokploy-এর Environment ট্যাবে বসান।</p>
+        ) : (
+          <p className="mb-3 rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">✅ সব বাধ্যতামূলক env API প্রসেসে আছে ({envCheck.summary.requiredPresent}/{envCheck.summary.requiredTotal})।</p>
+        )
+      ) : null}
+      <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur">
+        <Tabs
+          tabs={[
+            { id: "deploy", label: "🚀 Deploy Readiness" },
+            { id: "queues", label: "📬 Queues", badge: dlq?.pending ?? undefined },
+            { id: "errors", label: "🔥 Errors", badge: errors?.totalErrors ?? undefined },
+            { id: "backup", label: "💾 Backup" },
+            { id: "webhooks", label: "🪝 Webhooks" },
+            { id: "logs", label: "📜 Activity Log" },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+      </div>
+      {tab === "deploy" ? (<>
       <div className="acard mb-4 space-y-2">
         <div className="font-semibold">🚀 Deploy প্রস্তুতি <span className="text-xs font-normal text-slate-500">(শুধু আছে/নেই — কোনো মান কখনো দেখানো হয় না)</span></div>
-        {!envCheck ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!envCheck ? pending("Deploy Readiness") : (
           <div className="space-y-2">
-            {envCheck.summary.requiredMissing > 0 ? (
-              <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">⚠️ {envCheck.summary.requiredMissing}টি বাধ্যতামূলক জিনিস বাকি — deploy/redeploy-এর আগে Dokploy-এর Environment ট্যাবে বসান।</p>
-            ) : (
-              <p className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">✅ সব বাধ্যতামূলক env API প্রসেসে আছে ({envCheck.summary.requiredPresent}/{envCheck.summary.requiredTotal})।</p>
-            )}
             <div className="space-y-1">
               {envCheck.apiEnv.map((e) => (
                 <div key={e.name} className="flex flex-wrap items-baseline gap-2 text-sm">
@@ -172,10 +210,9 @@ export default function SystemPage() {
           </div>
         )}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="acard space-y-2">
+      <div className="acard space-y-2">
           <div className="font-semibold">🚀 Version ও Deploy</div>
-          {!version ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!version ? pending("Version তথ্য") : (
             <div className="space-y-1 text-sm">
               <div>Version: <b>{version.appVersion}</b> · Git: <b>{version.gitSha ? version.gitSha.slice(0, 10) : "সেট নেই (GIT_SHA env)"}</b></div>
               <div>Node: {version.nodeVersion} · পরিবেশ: {version.environment}</div>
@@ -186,9 +223,11 @@ export default function SystemPage() {
             </div>
           )}
         </div>
+      </>) : null}
+      {tab === "queues" ? (<>
         <div className="acard space-y-2">
           <div className="font-semibold">📬 Queue Monitor</div>
-          {!queues ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!queues ? pending("Queue তথ্য") : (
             <div className="space-y-1.5 text-sm">
               <div>Scheduled Job: মোট {queues.scheduledJobs.total} · চালু {queues.scheduledJobs.enabled} · <b>এখন Due {queues.scheduledJobs.dueNow}</b></div>
               {queues.scheduledJobs.recentlyFailed.map((j, i) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ {j.name} ({j.type}) — {j.lastError}</div>)}
@@ -241,11 +280,10 @@ export default function SystemPage() {
             </div>
           )}
         </div>
-      </div>
 
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">💬 Inbox Health (Unified Inbox U6)</div>
-        {!inboxHealth ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!inboxHealth ? pending("Inbox Health") : (
           <div className="space-y-1.5 text-sm">
             <div>ব্যর্থ Send (২৪ ঘণ্টা): <b>{inboxHealth.failedSends24h}</b> · Webhook Error (২৪ ঘণ্টা): <b>{inboxHealth.webhookErrors24h}</b></div>
             {inboxHealth.latestFailures?.map((f: any, i: number) => <div key={i} className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-xs">⚠ Send ব্যর্থ — {f.error ?? ""}</div>)}
@@ -264,7 +302,7 @@ export default function SystemPage() {
 
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">☠️ Dead-Letter Queue (M57) {dlq ? `— মুলতুবি ${dlq.pending}টি` : ""}</div>
-        {!dlq ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : dlq.entries.length === 0 ? (
+        {!dlq ? pending("DLQ তথ্য") : dlq.entries.length === 0 ? (
           <p className="text-sm text-slate-500">কোনো Dead-letter Job নেই — সব নির্ধারিত Job সফল বা Retry তে আছে।</p>
         ) : (
           <div className="space-y-1.5">
@@ -285,7 +323,8 @@ export default function SystemPage() {
         )}
         <p className="mt-2 text-[11px] text-slate-500">Worker ৩ বার ব্যর্থ হলে Job এখানে আসে। Replay করলে আবার Queue তে (বা Inline) চলবে।</p>
       </div>
-
+      </>) : null}
+      {tab === "webhooks" ? (<>
       <div className="acard mt-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="font-semibold">🪝 Webhook Events</span>
@@ -319,10 +358,11 @@ export default function SystemPage() {
           </div>
         ) : null}
       </div>
-
+      </>) : null}
+      {tab === "errors" ? (<>
       <div className="acard mt-4">
         <div className="mb-2 font-semibold">🔥 Error Summary (শেষ {errors?.windowHours ?? 24} ঘণ্টা) — মোট {errors?.totalErrors ?? "…"}</div>
-        {!errors ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+        {!errors ? pending("Error Summary") : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {errors.sources.map((s) => (
               <div key={s.source} className="rounded-xl border border-slate-800 p-3">
@@ -334,11 +374,12 @@ export default function SystemPage() {
           </div>
         )}
       </div>
-
-      <div className="grid gap-4 lg:grid-cols-2 mt-4">
+      </>) : null}
+      {tab === "backup" ? (<>
+      <div className="grid gap-4 lg:grid-cols-2">
         <div className="acard">
           <div className="mb-2 font-semibold">🗄 Database Growth <span className="text-xs font-normal text-slate-500">({growth?.source ?? "…"})</span></div>
-          {!growth ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : (
+          {!growth ? pending("Database Growth") : (
             <table className="atable">
               <thead><tr><th className="ath">Table</th><th className="ath">আনুমানিক Row</th><th className="ath">আকার</th></tr></thead>
               <tbody>{growth.tables.slice(0, 15).map((t) => (
@@ -373,8 +414,9 @@ export default function SystemPage() {
           </div>
         </div>
       </div>
-
-      <div className="acard mt-4">
+      </>) : null}
+      {tab === "logs" ? (<>
+      <div className="acard">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="font-semibold">📜 Activity Log (Audit Trail)</span>
           <input className="ainput max-w-xs" placeholder="Action দিয়ে খুঁজুন — যেমন payment" value={logQ} onChange={(e) => setLogQ(e.target.value)} />
@@ -388,6 +430,7 @@ export default function SystemPage() {
         </table>
         {logs.length === 0 ? <p className="p-3 text-sm text-slate-500">কোনো Log নেই।</p> : null}
       </div>
+      </>) : null}
     </AdminShell>
   );
 }

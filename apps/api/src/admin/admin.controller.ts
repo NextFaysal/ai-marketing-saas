@@ -250,6 +250,9 @@ export class AdminController {
 
   @Get("health") health() { return this.admin.health(); }
   @Get("overview") overview() { return this.admin.overview(); }
+  // ADX3: sidebar badge / Attention Bell counts — read-only, every
+  // field honestly sourced or omitted (see AdminService.navCounts).
+  @Get("nav-counts") navCounts() { return this.admin.navCounts(); }
 
   @Get("users") users(@Query("q") q?: string, @Query("page") page?: string, @Query("take") take?: string) {
     return this.admin.listUsers(q, Number(page ?? 1) || 1, Math.min(100, Number(take ?? 25) || 25));

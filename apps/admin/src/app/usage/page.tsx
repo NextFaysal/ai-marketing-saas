@@ -2,6 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
+import { EmptyState, ErrorState, SortableTh, type SortDir } from "@/components/ui";
 
 interface Row { organizationId: string; name: string; status: string; aiCalls30d: number; aiTokens30d: number; deliveries30d: number; broadcastsTotal: number; workflowRuns30d: number; courierShipmentsTotal: number; orders30d: number; storageBytes: number; mediaAssets: number }
 
@@ -15,13 +16,42 @@ function formatBytes(n: number): string {
 
 export default function UsagePage() {
   const [rows, setRows] = React.useState<Row[]>([]);
-  React.useEffect(() => { apiFetch<Row[]>("/admin/usage").then(setRows).catch(() => setRows([])); }, []);
+  // ADX12: loading + load-error states for the ranking table —
+  // before, load-in-flight and load-failed both read as
+  // "কোনো Organization নেই"।
+  const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState("");
+  const load = React.useCallback(async () => {
+    setLoading(true); setLoadError("");
+    try { setRows(await apiFetch<Row[]>("/admin/usage")); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : "Usage লোড ব্যর্থ হয়েছে"); }
+    finally { setLoading(false); }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  // ADX11: per-org ranking — sortable by every numeric column,
+  // client-side over the loaded rows only (default = server order).
+  // Money verdict: neither this payload nor the ai-detail payload
+  // carries a cost field, so this table ranks USAGE, not cost; the
+  // money view stays on Analytics' operator-rate AI-cost board.
+  const [sortKey, setSortKey] = React.useState("");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+  const onSort = (k: string) => {
+    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(k); setSortDir("desc"); }
+  };
+  const shown = React.useMemo(() => {
+    if (!sortKey) return rows;
+    const f = (r: Row) => Number((r as unknown as Record<string, unknown>)[sortKey] ?? 0);
+    return [...rows].sort((a, b) => (sortDir === "asc" ? f(a) - f(b) : f(b) - f(a)));
+  }, [rows, sortKey, sortDir]);
+  const th = (label: string, key: string) => <SortableTh label={label} sortKey={key} current={sortKey} dir={sortDir} onSort={onSort} />;
   return (
     <AdminShell title="📈 Usage & Cost (শেষ ৩০ দিন)">
+      <p className="mb-3 text-sm text-slate-400">Org অনুযায়ী ব্যবহারের Ranking — যেকোনো সংখ্যার Header-এ ক্লিক করে বেশি→কম / কম→বেশি সাজান (সাজানো এই পেজে লোড করা Row-র ওপরেই)।</p>
       <div className="acard overflow-hidden p-0">
-        <table className="atable">
-          <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">AI কল</th><th className="ath">AI টোকেন</th><th className="ath">Message Delivery</th><th className="ath">Broadcast</th><th className="ath">Workflow Run</th><th className="ath">Courier</th><th className="ath">Order</th><th className="ath">Storage</th></tr></thead>
-          <tbody>{rows.map((r) => (
+        <table className="atable atable-sticky">
+          <thead className="bg-slate-900"><tr><th className="ath">Organization</th>{th("AI কল", "aiCalls30d")}{th("AI টোকেন", "aiTokens30d")}{th("Message Delivery", "deliveries30d")}{th("Broadcast", "broadcastsTotal")}{th("Workflow Run", "workflowRuns30d")}{th("Courier", "courierShipmentsTotal")}{th("Order", "orders30d")}{th("Storage", "storageBytes")}</tr></thead>
+          <tbody>{shown.map((r) => (
             <tr key={r.organizationId} className="border-t border-slate-800">
               <td className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.name}</a>{r.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{r.status}</span> : null}</td>
               <td className="atd">{r.aiCalls30d}</td><td className="atd">{r.aiTokens30d.toLocaleString()}</td>
@@ -31,7 +61,9 @@ export default function UsagePage() {
             </tr>
           ))}</tbody>
         </table>
-        {rows.length === 0 ? <p className="p-4 text-sm text-slate-500">কোনো Organization নেই।</p> : null}
+        {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
+        {!loading && loadError ? <div className="p-4"><ErrorState message={`Usage লোড হয়নি: ${loadError}`} onRetry={load} /></div> : null}
+        {!loading && !loadError && rows.length === 0 ? <EmptyState title="কোনো Organization নেই।" sub="Organization তৈরি হলে তাদের ব্যবহার এখানে Ranking আকারে দেখা যাবে।" /> : null}
       </div>
       <p className="mt-3 text-xs text-slate-500">AI খরচ টাকায় দেখানো হয়নি — প্রোভাইডার অনুযায়ী টোকেনের দাম বদলায়; এখানে শুধু প্রকৃত ব্যবহার (কল ও টোকেন) দেখানো হচ্ছে।</p>
       <AiFeatureSection />
@@ -60,7 +92,19 @@ function AiFeatureSection() {
   React.useEffect(() => { load(days); }, [days, load]);
 
   const f = filter.trim().toLowerCase();
-  const shown = f ? rows.filter((r) => r.orgName.toLowerCase().includes(f) || r.organizationId.toLowerCase().includes(f)) : rows;
+  const filtered = f ? rows.filter((r) => r.orgName.toLowerCase().includes(f) || r.organizationId.toLowerCase().includes(f)) : rows;
+  const [sortKey, setSortKey] = React.useState("");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+  const onSort = (k: string) => {
+    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(k); setSortDir("desc"); }
+  };
+  const shown = React.useMemo(() => {
+    if (!sortKey) return filtered;
+    const g = (r: AiRow) => Number((r as unknown as Record<string, unknown>)[sortKey] ?? 0);
+    return [...filtered].sort((a, b) => (sortDir === "asc" ? g(a) - g(b) : g(b) - g(a)));
+  }, [filtered, sortKey, sortDir]);
+  const th = (label: string, key: string) => <SortableTh label={label} sortKey={key} current={sortKey} dir={sortDir} onSort={onSort} />;
 
   async function downloadCsv() {
     const token = getAdminToken();
@@ -90,7 +134,7 @@ function AiFeatureSection() {
       </div>
       <div className="acard overflow-hidden p-0">
         <table className="atable">
-          <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">Feature</th><th className="ath">কল</th><th className="ath">Input টোকেন</th><th className="ath">Output টোকেন</th><th className="ath">মোট টোকেন</th><th className="ath">Estimated কল</th></tr></thead>
+          <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">Feature</th>{th("কল", "calls")}{th("Input টোকেন", "inputTokens")}{th("Output টোকেন", "outputTokens")}{th("মোট টোকেন", "totalTokens")}{th("Estimated কল", "estimatedCalls")}</tr></thead>
           <tbody>{shown.map((r) => (
             <tr key={`${r.organizationId}|${r.feature}`} className="border-t border-slate-800">
               <td className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.orgName}</a></td>

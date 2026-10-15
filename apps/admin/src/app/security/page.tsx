@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell, { reasonPrompt } from "@/components/AdminShell";
+import { ErrorState, Tabs } from "@/components/ui";
 import { apiFetch, setAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useRouter } from "next/navigation";
@@ -17,12 +18,23 @@ export default function SecurityPage() {
   const [msg, setMsg] = React.useState("");
   const [enroll, setEnroll] = React.useState<{ secret: string; otpauthUrl: string; qrDataUrl?: string } | null>(null);
   const [code, setCode] = React.useState("");
-  const load = React.useCallback(async () => { setData(await apiFetch<SecurityData>("/admin/security").catch(() => null)); }, []);
+  // ADX12: a failed security load used to sit on "লোড হচ্ছে…"
+  // forever; it now gets an error state + retry.
+  const [loadFailed, setLoadFailed] = React.useState(false);
+  const load = React.useCallback(async () => {
+    const d = await apiFetch<SecurityData>("/admin/security").catch(() => null);
+    setLoadFailed(d === null);
+    setData(d);
+  }, []);
   React.useEffect(() => { load(); }, [load]);
   // AP2: view-as sessions (server-side registry).
   const [vaSessions, setVaSessions] = React.useState<{ id: string; adminEmail: string; organizationId: string; mode: string; active: boolean; expiresAt: string; createdAt: string }[]>([]);
   const loadSessions = React.useCallback(async () => { setVaSessions(await apiFetch<{ id: string; adminEmail: string; organizationId: string; mode: string; active: boolean; expiresAt: string; createdAt: string }[]>("/admin/view-as/sessions").catch(() => [])); }, []);
   React.useEffect(() => { loadSessions(); }, [loadSessions]);
+  // ADX10: existing cards regrouped into tabs (content unchanged;
+  // the revoke-my-sessions block moves from the TOTP card into the
+  // Sessions tab, handler identical).
+  const [tab, setTab] = React.useState("totp");
   async function revokeSession(id: string) {
     try { await apiFetch(`/admin/view-as/sessions/${id}/revoke`, { method: "POST" }); setMsg("✅ View-As সেশন বাতিল হয়েছে — ওই Token আর কাজ করবে না।"); await loadSessions(); }
     catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
@@ -36,10 +48,22 @@ export default function SecurityPage() {
       await load();
     } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
   }
-  if (!data) return <AdminShell title="🔐 Security"><p className="text-slate-400">লোড হচ্ছে…</p></AdminShell>;
+  if (!data) return <AdminShell title="🔐 Security">{loadFailed ? <ErrorState message="Security তথ্য লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-slate-400">লোড হচ্ছে…</p>}</AdminShell>;
   return (
     <AdminShell title="🔐 Security">
       {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur">
+        <Tabs
+          tabs={[
+            { id: "totp", label: "🔐 Allowlist ও TOTP" },
+            { id: "sessions", label: "👁️ Sessions", badge: vaSessions.filter((x) => x.active).length },
+            { id: "access", label: "🔑 Admin Access" },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+      </div>
+      {tab === "totp" ? (<>
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="acard space-y-3">
           <div className="font-semibold">আমার Two-Factor Authentication (TOTP)</div>
@@ -77,17 +101,6 @@ export default function SecurityPage() {
               }}>TOTP বন্ধ করুন</button>
             </div>
           ) : null}
-          <div className="border-t border-slate-800 pt-3">
-            <div className="mb-1 font-medium">আমার সব Session বাতিল করুন</div>
-            <p className="mb-2 text-xs text-slate-500">ডিভাইস হারালে বা সন্দেহ হলে — সব লগইন (এটাসহ) বাতিল হয়ে যাবে, আবার লগইন করতে হবে।</p>
-            <button className="abtn-secondary" onClick={async () => {
-              const r = reasonPrompt("Revoke My Sessions");
-              if (!r) return;
-              await apiFetch("/admin/security/revoke-my-sessions", { method: "POST", body: JSON.stringify({ reason: r }) });
-              setAdminToken(null);
-              router.replace("/login");
-            }}>🚫 সব Session বাতিল</button>
-          </div>
         </div>
         <div className="acard space-y-3">
           <div className="font-semibold">Platform Admin বৃন্দ</div>
@@ -106,7 +119,9 @@ export default function SecurityPage() {
           <p className="text-xs text-slate-500">সব Admin হারিয়ে গেলে একমাত্র উদ্ধার পথ: সার্ভার Shell থেকে <code>node scripts/grant-admin.mjs &lt;email&gt;</code> — এটি TOTP রিসেট করে দেয় (Break-Glass) এবং Audit এ রেকর্ড থাকে।</p>
         </div>
       </div>
-      <div className="acard mt-4 space-y-3">
+      </>) : null}
+      {tab === "sessions" ? (<>
+      <div className="acard space-y-3">
         <div className="font-semibold">👁️ View-As সেশন <span className="text-xs font-normal text-slate-400">(Admin Polish AP2 — Server-side Revocation)</span></div>
         <p className="text-xs text-slate-500">সেশন বাতিল করলে ওই View-As Token সঙ্গে সঙ্গে অকার্যকর হয়ে যাবে — Token-এর ৩০ মিনিট মেয়াদের অপেক্ষা করতে হবে না।</p>
         {vaSessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সেশন নেই।</p> : (
@@ -120,8 +135,19 @@ export default function SecurityPage() {
           </ul>
         )}
       </div>
-
-      <ApiKeysAndAnomalies />
+      <div className="acard mt-4 space-y-3">
+        <div className="font-semibold">🚫 আমার সব Session বাতিল করুন</div>
+        <p className="text-xs text-slate-500">ডিভাইস হারালে বা সন্দেহ হলে — সব লগইন (এটাসহ) বাতিল হয়ে যাবে, আবার লগইন করতে হবে।</p>
+        <button className="abtn-secondary" onClick={async () => {
+          const r = reasonPrompt("Revoke My Sessions");
+          if (!r) return;
+          await apiFetch("/admin/security/revoke-my-sessions", { method: "POST", body: JSON.stringify({ reason: r }) });
+          setAdminToken(null);
+          router.replace("/login");
+        }}>🚫 সব Session বাতিল</button>
+      </div>
+      </>) : null}
+      {tab === "access" ? <ApiKeysAndAnomalies /> : null}
     </AdminShell>
   );
 }
