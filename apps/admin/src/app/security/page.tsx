@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
-import AdminShell, { reasonPrompt } from "@/components/AdminShell";
-import { ErrorState, Tabs } from "@/components/ui";
+import AdminShell, { reasonDialog } from "@/components/AdminShell";
+import { ErrorState, Tabs, askInput } from "@/components/ui";
 import { apiFetch, setAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useRouter } from "next/navigation";
@@ -139,7 +139,7 @@ export default function SecurityPage() {
         <div className="font-semibold">🚫 আমার সব Session বাতিল করুন</div>
         <p className="text-xs text-slate-500">ডিভাইস হারালে বা সন্দেহ হলে — সব লগইন (এটাসহ) বাতিল হয়ে যাবে, আবার লগইন করতে হবে।</p>
         <button className="abtn-secondary" onClick={async () => {
-          const r = reasonPrompt("Revoke My Sessions");
+          const r = await reasonDialog("Revoke My Sessions");
           if (!r) return;
           await apiFetch("/admin/security/revoke-my-sessions", { method: "POST", body: JSON.stringify({ reason: r }) });
           setAdminToken(null);
@@ -206,8 +206,8 @@ function ApiKeysAndAnomalies() {
               <span><b>{k.name}</b><span className="block text-xs text-slate-500">{k.keyPrefix}… · তৈরি {fmtDateTime(k.createdAt)} · শেষ ব্যবহার {k.lastUsedAt ? fmtDateTime(k.lastUsedAt) : "কখনো নয়"}</span><span className="block text-xs text-indigo-300">{!k.scopes?.length ? "Scope: legacy — পূর্ণ ক্ষমতা" : `Scope: ${k.scopes.join(", ")}`}</span></span>
               {k.revokedAt ? <span className="abadge-red">বাতিল</span> : (
                 <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
-                  const reason = window.prompt("Key বাতিলের কারণ (Audit এ থাকবে):");
-                  if (!reason || reason.trim().length < 3) return;
+                  const reason = await askInput({ title: "Key বাতিলের কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                  if (!reason) return;
                   await apiFetch(`/admin/security/api-keys/${k.id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
                   setMsg("Key বাতিল হয়েছে।"); await load();
                 }}>বাতিল করুন</button>

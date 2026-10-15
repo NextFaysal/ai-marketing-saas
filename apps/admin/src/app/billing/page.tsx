@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs } from "@/components/ui";
+import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { API_URL, apiFetch, formatMinorStr, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -70,11 +70,11 @@ export default function BillingPage() {
 
   async function refund(p: Payment) {
     const remaining = formatMinorStr(p.netMinor ?? p.amountMinor);
-    const amountStr = window.prompt(`Refund পরিমাণ (টাকা) — খালি রাখলে পুরো বাকি অংশ (৳ ${remaining}) ফেরত হবে:`, "");
+    const amountStr = await askInput({ title: "Refund পরিমাণ (টাকা)", description: `খালি রাখলে পুরো বাকি অংশ (৳ ${remaining}) ফেরত হবে:`, inputLabel: "পরিমাণ (টাকা)", inputOptional: true, confirmLabel: "এগিয়ে যান" });
     if (amountStr === null) return;
-    const reason = window.prompt("Refund এর কারণ (Audit এ থাকবে):");
-    if (!reason || reason.trim().length < 3) return;
-    const revoke = window.confirm("সাবস্ক্রিপশনের Access বন্ধ করবেন? OK = সাবস্ক্রিপশন PAST_DUE হবে; Cancel = শুধু টাকা ফেরতের রেকর্ড।");
+    const reason = await askInput({ title: "Refund এর কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
+    const revoke = await askConfirm({ title: "সাবস্ক্রিপশনের Access বন্ধ করবেন?", description: "“Access বন্ধ করুন” = সাবস্ক্রিপশন PAST_DUE হবে; “শুধু ফেরত” = শুধু টাকা ফেরতের রেকর্ড (Refund এগিয়ে যাবে)।", confirmLabel: "Access বন্ধ করুন", cancelLabel: "শুধু ফেরত", danger: true });
     try {
       const taka = amountStr.trim() ? Number(amountStr) : null;
       const out = await apiFetch<any>(`/admin/payments/${p.id}/refund`, {
@@ -117,8 +117,8 @@ export default function BillingPage() {
   }
 
   async function toggleCoupon(c: Coupon) {
-    const reason = window.prompt(c.active ? "Coupon নিষ্ক্রিয় করার কারণ:" : "Coupon আবার চালু করার কারণ:");
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await askInput({ title: c.active ? "Coupon নিষ্ক্রিয় করার কারণ:" : "Coupon আবার চালু করার কারণ:", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       await apiFetch(`/admin/coupons/${c.id}/status`, { method: "POST", body: JSON.stringify({ active: !c.active, reason }) });
       setMsg("Coupon অবস্থা বদলেছে।");
@@ -237,8 +237,8 @@ export default function BillingPage() {
                 }}>✉ পাঠান</button>
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => refund(p)}>↩ Refund</button>
                 <button className="abtn-danger !px-2 !py-1 text-xs" onClick={async () => {
-                  const reason = window.prompt("পেমেন্ট মুছে ফেলার কারণ (Audit এ Snapshot থাকবে):");
-                  if (!reason || reason.trim().length < 3) return;
+                  const reason = await askInput({ title: "পেমেন্ট মুছে ফেলার কারণ (Audit এ Snapshot থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                  if (!reason) return;
                   try { await apiFetch(`/admin/payments/${p.id}`, { method: "DELETE", body: JSON.stringify({ reason }) }); setMsg("পেমেন্ট মোছা হয়েছে (Snapshot Audit এ আছে)।"); await load(); }
                   catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ"); }
                 }}>মুছুন</button>

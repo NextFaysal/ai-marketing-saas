@@ -1,9 +1,9 @@
 "use client";
 import React from "react";
 import { useParams } from "next/navigation";
-import AdminShell, { reasonPrompt } from "@/components/AdminShell";
+import AdminShell, { reasonDialog } from "@/components/AdminShell";
 import Breadcrumb from "@/components/Breadcrumb";
-import { ErrorState, Tabs } from "@/components/ui";
+import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -59,7 +59,7 @@ export default function OrgDetailPage() {
   }, [id]);
   React.useEffect(() => { load(); }, [load]);
   async function setStatus(status: string, label: string) {
-    const r = reasonPrompt(label);
+    const r = await reasonDialog(label);
     if (!r) return;
     try {
       await apiFetch(`/admin/orgs/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason: r }) });
@@ -124,10 +124,10 @@ export default function OrgDetailPage() {
                 }}>⬇ সম্পূর্ণ Data Export (JSON)</button>
                 {data.status === "DELETED" ? (
                   <button className="abtn-danger" onClick={async () => {
-                    const typed = window.prompt(`স্থায়ীভাবে মুছতে Org এর নাম হুবহু লিখুন: "${data.name}" — এটি আর ফেরানো যাবে না। আগে Export নিয়ে রাখুন।`);
+                    const typed = await askInput({ title: "স্থায়ীভাবে মুছুন", description: `স্থায়ীভাবে মুছতে Org এর নাম হুবহু লিখুন: "${data.name}" — এটি আর ফেরানো যাবে না। আগে Export নিয়ে রাখুন।`, inputLabel: "Org এর নাম", confirmLabel: "এগিয়ে যান", danger: true });
                     if (typed !== data.name) { setMsg("নাম মেলেনি — স্থায়ী Deletion বাতিল।"); return; }
-                    const reason = window.prompt("স্থায়ী Deletion এর কারণ (Audit Certificate এ থাকবে):");
-                    if (!reason || reason.trim().length < 3) return;
+                    const reason = await askInput({ title: "স্থায়ী Deletion এর কারণ (Audit Certificate এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "স্থায়ীভাবে মুছুন", danger: true });
+                    if (!reason) return;
                     try {
                       const out = await apiFetch<any>(`/admin/orgs/${id}/delete-permanent`, { method: "POST", body: JSON.stringify({ confirmName: typed, reason }) });
                       setMsg(`স্থায়ীভাবে মোছা হয়েছে। Certificate: ${Object.entries(out.certificate).map(([k, v]) => `${k}:${v}`).join(", ")}`);
@@ -154,8 +154,8 @@ export default function OrgDetailPage() {
               <label className="text-xs text-slate-400">মেয়াদ শেষ
                 <input id="sub-end" className="ainput mt-1 w-40" type="date" defaultValue={data.subscription?.currentPeriodEnd ? new Date(data.subscription.currentPeriodEnd).toISOString().slice(0, 10) : ""} /></label>
               <button className="abtn-secondary" onClick={async () => {
-                const reason = window.prompt("Subscription বদলের কারণ (Audit এ থাকবে):");
-                if (!reason || reason.trim().length < 3) return;
+                const reason = await askInput({ title: "Subscription বদলের কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                if (!reason) return;
                 const plan = (document.getElementById("sub-plan") as HTMLSelectElement).value;
                 const status = (document.getElementById("sub-status") as HTMLSelectElement).value;
                 const end = (document.getElementById("sub-end") as HTMLInputElement).value;
@@ -216,8 +216,8 @@ export default function OrgDetailPage() {
                   <div key={c.id} className="flex items-center justify-between rounded bg-slate-800 px-2 py-1.5 text-sm">
                     <span>{c.channel} · {c.contactName ?? "—"} · {c.messageCount} বার্তা</span>
                     <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => {
-                      const reason = window.prompt("বার্তার বডি দেখার কারণ (Audit এ থাকবে):");
-                      if (!reason || reason.trim().length < 3) return;
+                      const reason = await askInput({ title: "বার্তার বডি দেখার কারণ (Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                      if (!reason) return;
                       try {
                         const out: any = await apiFetch(`/admin/orgs/${id}/support-view/conversations/${c.id}/messages`, { method: "POST", body: JSON.stringify({ reason }) });
                         setConvMessages(out.messages);
@@ -259,9 +259,9 @@ function ViewAsCard({ orgId }: { orgId: string }) {
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const start = async (mode: "read" | "write") => {
-    const reason = window.prompt(`View-As (${mode === "write" ? "WRITE" : "Read-only"}) শুরুর কারণ — Audit এ থাকবে:`);
-    if (!reason || reason.trim().length < 3) return;
-    if (mode === "write" && !window.confirm("Write মোডে Tenant ওয়ার্কস্পেসে পরিবর্তন করা যাবে। নিশ্চিত তো?")) return;
+    const reason = await askInput({ title: `View-As (${mode === "write" ? "WRITE" : "Read-only"}) শুরুর কারণ — Audit এ থাকবে:`, inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
+    if (mode === "write" && !(await askConfirm({ title: "নিশ্চিত তো?", description: "Write মোডে Tenant ওয়ার্কস্পেসে পরিবর্তন করা যাবে।", confirmLabel: "Write View-As শুরু করুন", danger: true }))) return;
     setBusy(true); setErr("");
     try {
       const out = await apiFetch<{ url: string; targetUser: { email: string; role: string } }>(`/admin/orgs/${orgId}/view-as`, { method: "POST", body: JSON.stringify({ mode, reason }) });

@@ -1,9 +1,9 @@
 "use client";
 import React from "react";
 import { useParams } from "next/navigation";
-import AdminShell, { reasonPrompt } from "@/components/AdminShell";
+import AdminShell, { reasonDialog } from "@/components/AdminShell";
 import Breadcrumb from "@/components/Breadcrumb";
-import { ErrorState, Tabs } from "@/components/ui";
+import { ErrorState, Tabs, askConfirm, askInput } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -59,13 +59,13 @@ export default function UserDetailPage() {
           <span className={data.status === "ACTIVE" ? "abadge-green" : "abadge-amber"}>{data.status}</span>
           {data.isSuperAdmin ? <span className="abadge-slate">🛡 Admin ({data.adminTier ?? "SUPER"})</span> : null}
           <div className="ml-auto flex flex-wrap gap-2">
-            {data.status !== "ACTIVE" ? <button className="abtn" onClick={() => { const r = reasonPrompt("Activate User"); if (r) act(`/admin/users/${id}/status`, { status: "ACTIVE", reason: r }, "User সক্রিয় হয়েছে।"); }}>✅ সক্রিয় করুন</button> : null}
-            {data.status === "ACTIVE" ? <button className="abtn-secondary" onClick={() => { const r = reasonPrompt("Suspend User"); if (r) act(`/admin/users/${id}/status`, { status: "SUSPENDED", reason: r }, "User Suspend হয়েছে — লগইন বন্ধ থাকবে।"); }}>⏸ Suspend করুন</button> : null}
-            {data.status !== "DELETED" ? <button className="abtn-danger" onClick={() => { const r = reasonPrompt("Soft-Delete User"); if (r && window.confirm("নিশ্চিত? Soft-delete — পরে ফেরত আনা যাবে।")) act(`/admin/users/${id}/status`, { status: "DELETED", reason: r }, "User Soft-Delete হয়েছে।"); }}>🗑 Soft-Delete</button> : null}
+            {data.status !== "ACTIVE" ? <button className="abtn" onClick={async () => { const r = await reasonDialog("Activate User"); if (r) act(`/admin/users/${id}/status`, { status: "ACTIVE", reason: r }, "User সক্রিয় হয়েছে।"); }}>✅ সক্রিয় করুন</button> : null}
+            {data.status === "ACTIVE" ? <button className="abtn-secondary" onClick={async () => { const r = await reasonDialog("Suspend User"); if (r) act(`/admin/users/${id}/status`, { status: "SUSPENDED", reason: r }, "User Suspend হয়েছে — লগইন বন্ধ থাকবে।"); }}>⏸ Suspend করুন</button> : null}
+            {data.status !== "DELETED" ? <button className="abtn-danger" onClick={async () => { const r = await reasonDialog("Soft-Delete User"); if (!r) return; const ok = await askConfirm({ title: "নিশ্চিত?", description: "Soft-delete — পরে ফেরত আনা যাবে।", confirmLabel: "Soft-Delete করুন", danger: true }); if (ok) act(`/admin/users/${id}/status`, { status: "DELETED", reason: r }, "User Soft-Delete হয়েছে।"); }}>🗑 Soft-Delete</button> : null}
             <button className="abtn-secondary" onClick={() => act(`/admin/users/${id}/force-reset`, undefined, "Reset লিংক তৈরি হয়েছে (নিচে) — যাচাইকৃত মাধ্যমে User কে দিন।")}>🔑 Password Reset লিংক</button>
-            <button className="abtn-secondary" onClick={() => { const r = reasonPrompt("Revoke All Sessions"); if (r) act(`/admin/users/${id}/revoke-sessions`, { reason: r }, "User এর সব Session বাতিল হয়েছে।"); }}>🚫 Session বাতিল করুন</button>
-            {!data.isSuperAdmin ? <button className="abtn-secondary" onClick={() => { const tier = window.prompt("Tier দিন: SUPER / SUPPORT / FINANCE", "SUPPORT"); if (!tier) return; const r = reasonPrompt("Grant Admin"); if (r) act(`/admin/users/${id}/grant`, { tier: tier.toUpperCase(), reason: r }, "Admin দেওয়া হয়েছে।"); }}>🛡 Admin করুন</button> : null}
-            {data.isSuperAdmin ? <button className="abtn-danger" onClick={() => { const r = reasonPrompt("Revoke Admin"); if (r) act(`/admin/users/${id}/revoke`, { reason: r }, "Admin ক্ষমতা কেড়ে নেওয়া হয়েছে।"); }}>🛡 Admin কেড়ে নিন</button> : null}
+            <button className="abtn-secondary" onClick={async () => { const r = await reasonDialog("Revoke All Sessions"); if (r) act(`/admin/users/${id}/revoke-sessions`, { reason: r }, "User এর সব Session বাতিল হয়েছে।"); }}>🚫 Session বাতিল করুন</button>
+            {!data.isSuperAdmin ? <button className="abtn-secondary" onClick={async () => { const tier = await askInput({ title: "Tier দিন: SUPER / SUPPORT / FINANCE", inputLabel: "Tier", initialValue: "SUPPORT", confirmLabel: "এগিয়ে যান" }); if (!tier) return; const r = await reasonDialog("Grant Admin"); if (r) act(`/admin/users/${id}/grant`, { tier: tier.toUpperCase(), reason: r }, "Admin দেওয়া হয়েছে।"); }}>🛡 Admin করুন</button> : null}
+            {data.isSuperAdmin ? <button className="abtn-danger" onClick={async () => { const r = await reasonDialog("Revoke Admin"); if (r) act(`/admin/users/${id}/revoke`, { reason: r }, "Admin ক্ষমতা কেড়ে নেওয়া হয়েছে।"); }}>🛡 Admin কেড়ে নিন</button> : null}
           </div>
         </div>
         {resetPath ? <div className="mt-2.5 break-all rounded-lg bg-slate-800 p-3 text-xs">Reset লিংক (১ ঘণ্টা বৈধ, একবার ব্যবহারযোগ্য):<br /><span className="text-indigo-300">{resetPath}</span><br /><span className="text-slate-500">Tenant অ্যাপের ঠিকানার সাথে যুক্ত করে পাঠান, যেমন: https://your-domain{resetPath}</span></div> : null}

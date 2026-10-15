@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { DataTable, FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, askInput, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -36,8 +36,8 @@ export default function OrgsPage() {
   React.useEffect(() => { load(); }, [load]);
 
   const bulk = async (status: string) => {
-    const reason = window.prompt(`Bulk ${status} — ${selected.length}টি Org — কারণ (প্রতিটির Audit এ থাকবে):`);
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await askInput({ title: `Bulk ${status} — ${selected.length}টি Org`, description: "কারণ (প্রতিটির Audit এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       const out = await apiFetch<{ succeeded: number; total: number }>(`/admin/orgs/bulk-status`, { method: "POST", body: JSON.stringify({ organizationIds: selected, status, reason }) });
       setBulkMsg(`${out.succeeded}/${out.total} টি Org ${status} হয়েছে।`);

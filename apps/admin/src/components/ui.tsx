@@ -241,26 +241,27 @@ export function SortableTh({ label, sortKey, current, dir, onSort, className = "
 
 // ---------------------------------------------------------------- ConfirmModal
 /**
- * The v3 replacement for window.prompt/alert on reason-required
- * actions, going forward. Same contract as AdminShell's
- * reasonPrompt (a reason of ≥3 chars is mandatory when
- * `inputRequired` — e.g. audit-logged actions), but rendered as a
- * proper modal with an inline input instead of a browser prompt.
- * reasonPrompt itself is untouched and keeps working for pages
- * that have not adopted this component yet.
+ * The modal for reason-required and destructive actions (the
+ * ADNX3 replacement for browser dialogs across the console).
+ * Contract: a reason of ≥3 chars is mandatory when
+ * `inputRequired` — e.g. audit-logged actions — and the modal
+ * itself blocks submission until the input is valid.
  */
-export function ConfirmModal({ open, title, description, inputLabel, inputPlaceholder, inputRequired = false, inputOptional = false, confirmLabel = "নিশ্চিত করুন", danger = false, busy = false, onCancel, onConfirm }: {
+export function ConfirmModal({ open, title, description, inputLabel, inputPlaceholder, inputRequired = false, inputOptional = false, initialValue = "", confirmLabel = "নিশ্চিত করুন", cancelLabel = "বাতিল", danger = false, busy = false, onCancel, onConfirm }: {
   open: boolean;
   title: string;
   description?: string;
   /** When set, a text input is shown (note / reference / reason). */
   inputLabel?: string;
   inputPlaceholder?: string;
-  /** Input must be ≥3 chars (reasonPrompt contract). */
+  /** Input must be ≥3 chars (the reason contract). */
   inputRequired?: boolean;
   /** Input may be left empty (e.g. an optional approval note). */
   inputOptional?: boolean;
+  /** Pre-filled input value (ADNX3, e.g. a default tier). */
+  initialValue?: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   danger?: boolean;
   busy?: boolean;
   onCancel: () => void;
@@ -270,7 +271,8 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
   const [error, setError] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
-    if (open) { setValue(""); setError(""); setTimeout(() => inputRef.current?.focus(), 30); }
+    if (open) { setValue(initialValue); setError(""); setTimeout(() => inputRef.current?.focus(), 30); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open ]);
   React.useEffect(() => {
     if (!open) return;
@@ -300,11 +302,149 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
           ) : null}
           {error ? <p className="mt-2 text-sm text-red-300">{error}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
-            <button type="button" className="abtn-secondary" onClick={onCancel} disabled={busy}>বাতিল</button>
+            <button type="button" className="abtn-secondary" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
             <button type="button" className={danger ? "abtn-danger" : "abtn"} onClick={submit} disabled={busy}>{busy ? "হচ্ছে…" : confirmLabel}</button>
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- Toast (ADNX3)
+/**
+ * ADNX3: the ONE toast system for the console. A tiny module-level
+ * store (same pattern as the dialog store below) so any page can
+ * call `toast(...)` without prop drilling; <ToastHost/> is mounted
+ * once by AdminShell. Auto-dismisses after 6s; an optional action
+ * button (e.g. retry) runs the caller's own callback — the toast
+ * itself never invents behaviour. Pages that already show inline
+ * result banners keep them; toast is the pattern for NEW feedback
+ * and for the feedback that used to ride browser dialogs.
+ */
+export type ToastKind = "success" | "error" | "info";
+export interface ToastItem { id: number; kind: ToastKind; message: string; actionLabel?: string; onAction?: () => void }
+
+let toastSeq = 0;
+let toastItems: ToastItem[] = [];
+const toastListeners = new Set<(items: ToastItem[]) => void>();
+function emitToasts() { for (const l of toastListeners) l([...toastItems]); }
+
+export function dismissToast(id: number) {
+  toastItems = toastItems.filter((t) => t.id !== id);
+  emitToasts();
+}
+
+export function toast(message: string, kind: ToastKind = "success", action?: { label: string; run: () => void }) {
+  const id = ++toastSeq;
+  toastItems = [...toastItems, { id, kind, message, actionLabel: action?.label, onAction: action?.run }];
+  emitToasts();
+  setTimeout(() => dismissToast(id), 6000);
+}
+
+/** Hook form of the same single implementation. */
+export function useToast() { return toast; }
+
+export function ToastHost() {
+  const [items, setItems] = React.useState<ToastItem[]>([]);
+  React.useEffect(() => {
+    const l = (v: ToastItem[]) => setItems(v);
+    toastListeners.add(l);
+    return () => { toastListeners.delete(l); };
+  }, []);
+  if (items.length === 0) return null;
+  return (
+    <div className="atoast-wrap" aria-live="polite">
+      {items.map((t) => (
+        <div key={t.id} className={`atoast atoast-${t.kind}`} role="status">
+          <span className="min-w-0 flex-1">{t.message}</span>
+          {t.actionLabel ? (
+            <button type="button" className="atoast-action" onClick={() => { t.onAction?.(); dismissToast(t.id); }}>{t.actionLabel}</button>
+          ) : null}
+          <button type="button" className="atoast-action" aria-label="বন্ধ করুন" onClick={() => dismissToast(t.id)}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Global dialogs (ADNX3)
+/**
+ * ADNX3: promise-based modal dialogs over the ONE ConfirmModal
+ * above, mounted once by AdminShell as <DialogHost/>. They replace
+ * every browser dialog in the console:
+ *   askConfirm(...) → Promise<boolean>  (dismiss = false; callers
+ *     that must distinguish "chose the negative option" from
+ *     "aborted" use explicit button labels — see billing refund)
+ *   askInput(...)   → Promise<string|null> (null = cancelled; with
+ *     inputRequired the modal blocks until ≥3 chars, so a returned
+ *     string is always valid — the old "short reason, then an
+ *     error popup" step no longer exists)
+ *   askReason(action) → Promise<string|null> — the audit-reason
+ *     dialog: same wording contract as before ("কারণ লিখুন (Audit
+ *     এ থাকবে)"), rendered as a modal instead of a browser prompt.
+ * One dialog at a time: callers await each before opening the
+ * next (the converted flows already do — they were sequential
+ * browser dialogs before).
+ */
+interface DialogRequest {
+  title: string; description?: string;
+  inputLabel?: string; inputPlaceholder?: string; inputRequired?: boolean; inputOptional?: boolean; initialValue?: string;
+  confirmLabel: string; cancelLabel?: string; danger?: boolean;
+  resolve: (v: string | boolean | null) => void;
+}
+let dialogCurrent: DialogRequest | null = null;
+const dialogListeners = new Set<(d: DialogRequest | null) => void>();
+function emitDialog() { for (const l of dialogListeners) l(dialogCurrent); }
+
+function openDialog(req: Omit<DialogRequest, "resolve">): Promise<string | boolean | null> {
+  return new Promise((resolve) => { dialogCurrent = { ...req, resolve }; emitDialog(); });
+}
+
+export function askConfirm(opts: { title: string; description?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean> {
+  return openDialog({ title: opts.title, description: opts.description, confirmLabel: opts.confirmLabel ?? "নিশ্চিত করুন", cancelLabel: opts.cancelLabel, danger: opts.danger })
+    .then((v) => v === true);
+}
+
+export function askInput(opts: { title: string; description?: string; inputLabel: string; inputPlaceholder?: string; inputRequired?: boolean; inputOptional?: boolean; initialValue?: string; confirmLabel?: string; danger?: boolean }): Promise<string | null> {
+  return openDialog({ ...opts, confirmLabel: opts.confirmLabel ?? "নিশ্চিত করুন" })
+    .then((v) => (typeof v === "string" ? v : null));
+}
+
+export function askReason(action: string): Promise<string | null> {
+  return askInput({
+    title: action,
+    description: "এই কাজের কারণ লিখুন (Audit এ থাকবে):",
+    inputLabel: "কারণ",
+    inputRequired: true,
+    confirmLabel: "এগিয়ে যান",
+  });
+}
+
+export function DialogHost() {
+  const [req, setReq] = React.useState<DialogRequest | null>(null);
+  React.useEffect(() => {
+    const l = (d: DialogRequest | null) => setReq(d);
+    dialogListeners.add(l);
+    return () => { dialogListeners.delete(l); };
+  }, []);
+  if (!req) return null;
+  const finish = (v: string | boolean | null) => { dialogCurrent = null; emitDialog(); req.resolve(v); };
+  return (
+    <ConfirmModal
+      open
+      title={req.title}
+      description={req.description}
+      inputLabel={req.inputLabel}
+      inputPlaceholder={req.inputPlaceholder}
+      inputRequired={req.inputRequired}
+      inputOptional={req.inputOptional}
+      initialValue={req.initialValue}
+      confirmLabel={req.confirmLabel}
+      cancelLabel={req.cancelLabel}
+      danger={req.danger}
+      onCancel={() => finish(req.inputLabel ? null : false)}
+      onConfirm={(v) => finish(req.inputLabel ? v : true)}
+    />
   );
 }

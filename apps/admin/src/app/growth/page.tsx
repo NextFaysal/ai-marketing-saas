@@ -2,7 +2,7 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs } from "@/components/ui";
+import { ErrorState, Tabs, askConfirm } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -127,7 +127,7 @@ export default function GrowthPage() {
             </select></label>
           <button className="abtn" onClick={async () => {
             if (!subject.trim() || !body.trim()) return;
-            if (!confirm(`"${subject}" — এই Campaign টি পাঠাতে চান?`)) return;
+            if (!(await askConfirm({ title: `"${subject}" — এই Campaign টি পাঠাতে চান?`, confirmLabel: "পাঠান" }))) return;
             try {
               const r = await apiFetch<Campaign & { note?: string }>("/admin/campaigns", { method: "POST", body: JSON.stringify({ subject, body, audience: aud }) });
               setMsg(`Campaign শেষ: ${r.sent}/${r.recipients} সফল, ${r.failed} ব্যর্থ।${r.note ? " " + r.note : ""}`);
@@ -328,7 +328,7 @@ export default function GrowthPage() {
                 <span><b>{e.title}</b>{e.version ? ` · ${e.version}` : ""} · {e.published ? "✅ প্রকাশিত" : "খসড়া"}</span>
                 <span className="flex shrink-0 gap-1">
                   <button className="abtn-secondary !px-2 !py-0.5" onClick={async () => { await apiFetch(`/admin/changelog/${e.id}`, { method: "PATCH", body: JSON.stringify({ published: !e.published }) }); await load(); }}>{e.published ? "লুকান" : "প্রকাশ"}</button>
-                  <button className="abtn-danger !px-2 !py-0.5" onClick={async () => { if (confirm("মুছে ফেলবেন?")) { await apiFetch(`/admin/changelog/${e.id}`, { method: "DELETE" }); await load(); } }}>মুছুন</button>
+                  <button className="abtn-danger !px-2 !py-0.5" onClick={async () => { if (await askConfirm({ title: "মুছে ফেলবেন?", confirmLabel: "মুছুন", danger: true })) { await apiFetch(`/admin/changelog/${e.id}`, { method: "DELETE" }); await load(); } }}>মুছুন</button>
                 </span>
               </li>
             ))}

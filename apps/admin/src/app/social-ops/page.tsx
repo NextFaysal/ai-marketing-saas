@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState } from "@/components/ui";
+import { ErrorState, askInput } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -96,8 +96,8 @@ export default function SocialOpsPage() {
   // service পথেই যায় (আলাদা Admin logic নয়), কারণ বাধ্যতামূলক
   // (Audit-এ থাকে), আর API/Provider-এর ফল বা ভুল হুবহু দেখানো হয়।
   async function opsAction(path: string, label: string) {
-    const reason = window.prompt(`${label} — কারণ (Audit-এ থাকবে):`);
-    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    const reason = await askInput({ title: label, description: "কারণ (Audit-এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       const out = await apiFetch<any>(path, { method: "POST", body: JSON.stringify({ reason }) });
       const detail = out?.result?.error ?? out?.note ?? (out?.sweep ? `Sweep: recovered ${out.sweep.recovered}, published ${out.sweep.published}, failed ${out.sweep.failed} · Post এখন: ${out.postStatusAfter ?? "—"}` : "সম্পন্ন হয়েছে");

@@ -2,7 +2,7 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs } from "@/components/ui";
+import { ErrorState, Tabs, askInput } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -123,8 +123,8 @@ export default function SystemPage() {
   // থাকে), API-র ফলাফল হুবহু দেখানো হয়। Drain/Delete জাতীয় কোনো
   // ধ্বংসাত্মক action এখানে নেই।
   async function queueAction(queue: string, action: "pause" | "resume" | "retry-failed") {
-    const reason = window.prompt(`${queue} queue — ${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`);
-    if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া এই action করা যাবে না।"); return; }
+    const reason = await askInput({ title: `${queue} queue`, description: `${action === "pause" ? "Pause" : action === "resume" ? "Resume" : "ব্যর্থ Job আবার চেষ্টা"} করার কারণ (Audit-এ থাকবে):`, inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+    if (!reason) return;
     try {
       const out = await apiFetch<any>(`/admin/system/queues/${queue}/${action}`, { method: "POST", body: JSON.stringify({ reason }) });
       if (out.available === false) {

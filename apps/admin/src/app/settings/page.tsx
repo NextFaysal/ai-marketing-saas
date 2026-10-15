@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState } from "@/components/ui";
+import { ErrorState, askConfirm, askInput } from "@/components/ui";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -410,9 +410,9 @@ export default function SettingsPage() {
                     {fromSetting ? <span className="abadge-green">Setting</span> : <span className="abadge-amber">Default</span>}
                     {fromSetting ? (
                       <button className="abtn-secondary ml-auto !px-2 !py-0.5 text-xs" onClick={async () => {
-                        if (!confirm(`${tier} প্ল্যানের সেভ করা Limits মুছে Code Default-এ ফেরাতে চান? অন্য প্ল্যানের Limits বদলাবে না।`)) return;
-                        const reason = window.prompt("Default-এ ফেরানোর কারণ (Audit-এ থাকবে):");
-                        if (!reason || reason.trim().length < 3) { if (reason !== null) setMsg("কারণ ছাড়া Default-এ ফেরানো যাবে না।"); return; }
+                        if (!(await askConfirm({ title: `${tier} প্ল্যানের সেভ করা Limits মুছে Code Default-এ ফেরাতে চান?`, description: "অন্য প্ল্যানের Limits বদলাবে না।", confirmLabel: "Default-এ ফেরান", danger: true }))) return;
+                        const reason = await askInput({ title: "Default-এ ফেরানোর কারণ (Audit-এ থাকবে):", inputLabel: "কারণ", inputRequired: true, confirmLabel: "এগিয়ে যান" });
+                        if (!reason) return;
                         try {
                           const out = await apiFetch<{ cleared: boolean; note?: string }>(`/admin/settings/plan-limits/${tier}/clear`, { method: "POST", body: JSON.stringify({ reason }) });
                           setMsg(out.cleared ? `✅ ${tier} — সেভ করা Limits মোছা হয়েছে, এখন থেকে Code Default কার্যকর।` : `⚠ ${tier}: ${out.note ?? "কোনো বদল হয়নি"}`);

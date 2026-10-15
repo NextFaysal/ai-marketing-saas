@@ -8,6 +8,7 @@ import {
   type NavCounts, type NavItemDef,
 } from "./nav";
 import { useNavCounts } from "./useNavCounts";
+import { DialogHost, ToastHost, askReason } from "./ui";
 import AttentionBell from "./AttentionBell";
 import CommandPalette from "./CommandPalette";
 
@@ -406,12 +407,20 @@ export default function AdminShell({ children, title }: { children: React.ReactN
         </main>
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {/* ADNX3: the single toast + modal-dialog hosts for every page */}
+      <ToastHost />
+      <DialogHost />
     </div>
   );
 }
 
-export function reasonPrompt(action: string): string | null {
-  const reason = window.prompt(`"${action}" — এই কাজের কারণ লিখুন (Audit এ থাকবে):`);
-  if (!reason || reason.trim().length < 3) { window.alert("কারণ ছাড়া এই কাজ করা যাবে না।"); return null; }
-  return reason.trim();
+/**
+ * ADNX3: the audit-reason dialog, awaited by callers. Replaces
+ * the old synchronous browser-prompt helper — same contract
+ * (a ≥3-char reason or null when cancelled; the modal itself
+ * blocks a short reason, so no second error step exists).
+ * Pages import it from here as before, now with `await`.
+ */
+export function reasonDialog(action: string): Promise<string | null> {
+  return askReason(action).then((v) => (v ? v.trim() : null));
 }
