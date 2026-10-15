@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { registerSchema, createOrganizationSchema, inviteMemberSchema, parseMoneyToMinor, formatMinor } from "./index";
+import { registerSchema, createOrganizationSchema, inviteMemberSchema, parseMoneyToMinor, formatMinor, checkSlugLocally, isReservedSlug, shopSubdomainHost } from "./index";
 
 describe("contracts", () => {
   it("rejects short passwords", () => {
@@ -13,6 +13,55 @@ describe("contracts", () => {
   });
   it("cannot invite an OWNER via invite schema", () => {
     expect(inviteMemberSchema.safeParse({ email: "x@y.com", role: "OWNER" }).success).toBe(false);
+  });
+});
+
+describe("TD1 slug rules", () => {
+  it("accepts ordinary shop slugs", () => {
+    for (const slug of ["my-store", "dhaka-fashion", "shop123", "a-b-c", "mirpur-electronics-2"]) {
+      expect(createOrganizationSchema.safeParse({ name: "My Store", slug }).success, slug).toBe(true);
+      expect(checkSlugLocally(slug)).toEqual({ ok: true });
+    }
+  });
+  it("rejects hyphen misuse and bad shapes", () => {
+    for (const slug of ["-my-store", "my-store-", "my--store", "My-Store", "my_store", "ab", "a".repeat(61), "দোকান"]) {
+      expect(createOrganizationSchema.safeParse({ name: "My Store", slug }).success, slug).toBe(false);
+      expect(checkSlugLocally(slug)).toEqual({ ok: false, reason: "invalid" });
+    }
+  });
+  it("reserves system names", () => {
+    for (const slug of ["app", "dashboard", "api", "media", "www", "login"]) {
+      expect(isReservedSlug(slug), slug).toBe(true);
+      expect(checkSlugLocally(slug)).toEqual({ ok: false, reason: "reserved" });
+    }
+  });
+  it("reserves misleading names incl. the owner's examples", () => {
+    for (const slug of ["fake", "orgnail", "qosprey", "verified", "original"]) {
+      expect(isReservedSlug(slug), slug).toBe(true);
+    }
+  });
+  it("reserves future-product names", () => {
+    for (const slug of ["pay", "wallet", "ads", "ai", "inbox", "crm"]) {
+      expect(isReservedSlug(slug), slug).toBe(true);
+    }
+  });
+  it("substring rule catches admin/support/official-shaped names", () => {
+    for (const slug of ["my-admin-shop", "admin1", "supportbd", "officialstore", "dhaka-official-shop"]) {
+      expect(isReservedSlug(slug), slug).toBe(true);
+      expect(checkSlugLocally(slug)).toEqual({ ok: false, reason: "reserved" });
+    }
+    // ...but ordinary names that merely rhyme are not caught.
+    expect(isReservedSlug("administerial")).toBe(true); // contains "admin" — documented trade-off
+    expect(isReservedSlug("fashion-hub")).toBe(false);
+    expect(isReservedSlug("said-shop")).toBe(false); // "ai" is exact-only, not a substring rule
+  });
+  it("honours caller-supplied extra reserved names (SUPER additions)", () => {
+    expect(isReservedSlug("brand-xyz", ["Brand-XYZ"])).toBe(true);
+    expect(checkSlugLocally("brand-xyz", ["brand-xyz"])).toEqual({ ok: false, reason: "reserved" });
+    expect(isReservedSlug("brand-xyz")).toBe(false);
+  });
+  it("builds the shop subdomain host", () => {
+    expect(shopSubdomainHost("dhaka-fashion")).toBe("dhaka-fashion.qosprey.com");
   });
 });
 
