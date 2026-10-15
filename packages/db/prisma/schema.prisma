@@ -205,6 +205,7 @@ model Organization {
   // link clicks → orders. Association only, never attribution.
   socialLinkWindowDays Int       @default(7)
   socialAutoDraftConfig SocialAutoDraftConfig?
+  socialSyndicationSeen SocialSyndicationSeen[]
   socialLinkClicks SocialLinkClick[]
   // CX12a: Practice Mode — while true, the org can rehearse the
   // full AI reply + order flow on practice conversations/orders;
@@ -5740,6 +5741,10 @@ model SocialPost {
   // or "review:<reviewId>").
   autoDraftKind   String?
   autoDraftRef    String?
+  // SN10: caption test pairing — two posts (same account + media,
+  // different captions) share one captionTestId; the comparison in
+  // Analytics reads the pair. Null = not part of a caption test.
+  captionTestId   String?
   // SU8: YouTube-specific metadata (title override / tags /
   // category / Shorts marker), a cover/thumbnail asset, and the
   // FB Page photo-story flag. All optional; null/false = the
@@ -5778,6 +5783,24 @@ model SocialPost {
   @@index([organizationId, status])
   @@index([socialAccountId])
   @@index([organizationId, seriesId])
+  @@index([organizationId, captionTestId])
+}
+
+// SN8: one row per syndication item the sweep has already turned
+// into a draft (or definitively accounted for), so an RSS item or
+// a YouTube upload is never drafted twice. The sweep only writes
+// a row AFTER its draft exists — items skipped by the daily cap
+// stay unseen and are retried on a later run.
+model SocialSyndicationSeen {
+  id             String       @id @default(uuid())
+  organizationId String
+  source         String // rss | youtube
+  externalId     String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, source, externalId])
+  @@index([organizationId, source])
 }
 
 // SU9: an internal team note on a post. Notes are collaboration
@@ -5878,6 +5901,12 @@ model SocialAutoDraftConfig {
   saleEnabled    Boolean       @default(false)
   backInStockEnabled Boolean  @default(false)
   reviewMilestoneEnabled Boolean @default(false)
+  // SN8: syndication sources feed the SAME engine (same cap,
+  // same target account) — drafts only, dedupe via
+  // SocialSyndicationSeen. Both default OFF.
+  rssEnabled     Boolean      @default(false)
+  rssFeedUrl     String?
+  youtubeEnabled Boolean      @default(false)
   maxDraftsPerDay Int          @default(3)
   // Preferred target account; null = the org's first connected
   // meta_page account. SetNull if the account row is deleted.
