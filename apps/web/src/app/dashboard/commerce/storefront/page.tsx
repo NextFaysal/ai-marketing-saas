@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { BD_DISTRICTS } from "@repo/contracts";
+import { BD_DISTRICTS, shopSubdomainHost } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
@@ -624,6 +624,49 @@ export default function StorefrontStaffPage() {
           </>
         ) : null}
       </div>
+
+      {/* TD8: shop addresses — subdomain + custom domain + canonical */}
+      <section className="card space-y-3 p-5">
+        <div className="font-semibold">আপনার দোকানের ঠিকানা</div>
+        {(() => {
+          const subdomainHost = shopSubdomainHost(state.organization.slug);
+          const subdomainUrl = `https://${subdomainHost}`;
+          const canonicalHost = verified && customDomain ? customDomain : subdomainHost;
+          return (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold">সাবডোমেইন:</span>
+                <span className="font-mono font-bold text-indigo-700">{subdomainUrl}</span>
+                <button type="button" onClick={() => copyText(subdomainUrl, "সাবডোমেইন ঠিকানা")} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">কপি করুন</button>
+                <a href={subdomainUrl} target="_blank" rel="noreferrer" className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">খুলুন ↗</a>
+                {canonicalHost === subdomainHost ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold">কাস্টম ডোমেইন:</span>
+                {customDomain ? (
+                  <>
+                    <span className="font-mono font-bold">{`https://${customDomain}`}</span>
+                    {verified ? (
+                      <span className="text-emerald-700">যাচাই হয়েছে{domain.verifiedAt ? ` (${new Date(domain.verifiedAt).toLocaleString("bn-BD")})` : ""}</span>
+                    ) : (
+                      <span className="text-amber-700">এখনো যাচাই হয়নি — নিচের “কাস্টম ডোমেইন” ধাপে যাচাই করুন</span>
+                    )}
+                    {verified && canonicalHost === customDomain ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+                  </>
+                ) : (
+                  <span className="text-slate-500">কোনো কাস্টম ডোমেইন সেট করা নেই — আপাতত সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।</span>
+                )}
+              </div>
+              <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                দুই ঠিকানাতেই একই দোকান খোলে; প্রধান (canonical) ঠিকানাটাই সার্চ ইঞ্জিন ও শেয়ারে ব্যবহৃত হয় —
+                কাস্টম ডোমেইন যাচাই করা থাকলে সেটাই প্রধান, নইলে সাবডোমেইন। মনে রাখবেন: দোকান পরিচালনার প্যানেলে
+                লগইন শুধু <b>app.qosprey.com</b> থেকে হয় — দোকানের ঠিকানায় কোনো লগইন পেজ নেই, প্যানেলের পথে গেলে
+                স্বয়ংক্রিয়ভাবে app.qosprey.com-এ পাঠিয়ে দেওয়া হয়।
+              </p>
+            </>
+          );
+        })()}
+      </section>
 
       {/* Settings */}
       <section className="card space-y-4 p-5">
