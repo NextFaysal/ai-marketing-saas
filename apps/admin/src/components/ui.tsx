@@ -312,6 +312,102 @@ export function ConfirmModal({ open, title, description, inputLabel, inputPlaceh
   );
 }
 
+// ---------------------------------------------------------------- Chart (ADNX5)
+/**
+ * ADNX5: the ONE lightweight chart for the console — hand-rolled
+ * SVG, NO chart dependency (owner decision, plan §১১/৪). Two
+ * variants: "bar" (vertical columns) and "line" (polyline +
+ * points). Values come only from data the caller already loaded;
+ * the component never fetches or invents.
+ * - Hover/tap (and keyboard focus) on a bar/point selects it and
+ *   the readout line under the chart shows its EXACT value,
+ *   formatted by the caller's formatValue; each mark also carries
+ *   a native <title> tooltip.
+ * - Colours come from the v4 tokens (--a-status-info for the
+ *   series, --a-status-warning for the selected mark).
+ * - Accessible fallback: the "ডেটা টেবিল" toggle renders the same
+ *   numbers as a real table (DataTable card pattern), and the SVG
+ *   itself is role="img" with a summary label — screen-reader and
+ *   small-screen users are never dependent on the drawing.
+ */
+export interface ChartPoint { label: string; value: number }
+
+export function Chart({ variant = "bar", points, formatValue, seriesLabel }: {
+  variant?: "bar" | "line";
+  points: ChartPoint[];
+  formatValue: (v: number) => string;
+  seriesLabel: string;
+}) {
+  const [active, setActive] = React.useState<number | null>(null);
+  const [showTable, setShowTable] = React.useState(false);
+  if (points.length === 0) return <EmptyState title="চার্টের কোনো ডেটা নেই।" />;
+  const W = 640, H = 240, PADX = 10, TOP = 18, BOTTOM = 30;
+  const innerW = W - PADX * 2, innerH = H - TOP - BOTTOM;
+  const max = Math.max(0, ...points.map((p) => p.value));
+  const slot = innerW / points.length;
+  const x = (i: number) => PADX + slot * i + slot / 2;
+  const y = (v: number) => TOP + innerH - (max > 0 ? (v / max) * innerH : 0);
+  const activeIdx = active ?? points.length - 1;
+  const ap = points[activeIdx];
+  const linePts = points.map((p, i) => `${x(i)},${y(p.value)}`).join(" ");
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
+        aria-label={`${seriesLabel} চার্ট — মোট ${points.length}টি মান; একই সংখ্যা নিচের ডেটা টেবিলে আছে।`}
+        onMouseLeave={() => setActive(null)}>
+        <line x1={PADX} y1={TOP + innerH} x2={W - PADX} y2={TOP + innerH} stroke="#334155" strokeWidth="1" />
+        {variant === "line" && points.length > 1 ? (
+          <polyline points={linePts} fill="none" stroke="var(--a-status-info)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        ) : null}
+        {points.map((p, i) => variant === "bar" ? (
+          <g key={p.label}>
+            <rect
+              x={x(i) - Math.min(48, slot * 0.6) / 2} y={y(p.value)}
+              width={Math.min(48, slot * 0.6)} height={Math.max(0, TOP + innerH - y(p.value))}
+              rx="4" tabIndex={0} role="button" aria-label={`${p.label}: ${formatValue(p.value)}`}
+              fill={i === activeIdx ? "var(--a-status-warning)" : "var(--a-status-info)"}
+              className="cursor-pointer outline-none focus-visible:opacity-80 hover:opacity-80"
+              onMouseEnter={() => setActive(i)} onClick={() => setActive(i)} onFocus={() => setActive(i)}
+            ><title>{`${p.label}: ${formatValue(p.value)}`}</title></rect>
+            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill="#94a3b8">{p.label}</text>
+          </g>
+        ) : (
+          <g key={p.label}>
+            <circle
+              cx={x(i)} cy={y(p.value)} r={i === activeIdx ? 5.5 : 4} tabIndex={0} role="button"
+              aria-label={`${p.label}: ${formatValue(p.value)}`}
+              fill={i === activeIdx ? "var(--a-status-warning)" : "var(--a-status-info)"}
+              className="cursor-pointer outline-none hover:opacity-80"
+              onMouseEnter={() => setActive(i)} onClick={() => setActive(i)} onFocus={() => setActive(i)}
+            ><title>{`${p.label}: ${formatValue(p.value)}`}</title></circle>
+            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill="#94a3b8">{p.label}</text>
+          </g>
+        ))}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs" aria-live="polite">
+        <span className="font-medium text-slate-200">{ap.label}: {formatValue(ap.value)}</span>
+        <span className="text-slate-400">বার/পয়েন্টে hover, tap বা focus করলে সেই মানটি এখানে দেখা যাবে।</span>
+        <button type="button" className="abtn-secondary ml-auto !px-2 !py-1 text-xs" aria-expanded={showTable} onClick={() => setShowTable((s) => !s)}>
+          {showTable ? "ডেটা টেবিল লুকান" : "ডেটা টেবিল দেখুন"}
+        </button>
+      </div>
+      {showTable ? (
+        <div className="mt-2">
+          <DataTable>
+            <thead><tr><th className="ath">{seriesLabel}</th><th className="ath">মান</th></tr></thead>
+            <tbody>{points.map((p) => (
+              <tr key={p.label} className="border-t border-slate-800">
+                <td data-label={seriesLabel} className="atd">{p.label}</td>
+                <td data-label="মান" className="atd">{formatValue(p.value)}</td>
+              </tr>
+            ))}</tbody>
+          </DataTable>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- Toast (ADNX3)
 /**
  * ADNX3: the ONE toast system for the console. A tiny module-level
