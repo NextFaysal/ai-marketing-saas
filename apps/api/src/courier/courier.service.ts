@@ -13,8 +13,8 @@ import { EmailProvider } from "../messaging/email.provider";
 import { newTrackingToken, trackingLinkFor } from "./tracking-token";
 import { buildPdf, shippingLabelPage, invoicePage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import { buildCourierPerformance } from "./courier-performance";
 import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
+import { CourierRulesService } from "./courier-rules.service";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -63,6 +63,11 @@ export class CourierService {
     @Optional() private readonly sms?: SmsProvider,
     @Optional() private readonly email?: EmailProvider,
     @Optional() private readonly ndr?: CourierNdrService,
+    // EC22: appended LAST + @Optional (same discipline as the
+    // deps above) — courier auto-selection rules. Existing specs
+    // constructing CourierService positionally keep working; when
+    // absent, booking behaves exactly as before.
+    @Optional() private readonly rules?: CourierRulesService,
   ) {}
 
   private providerOf(value?: string): Provider {
@@ -125,8 +130,66 @@ export class CourierService {
   async getConnection(organizationId: string, providerValue?: string) {
     const provider = this.providerOf(providerValue);
     const integration = await this.integration(organizationId, provider);
-    if (!integration) return { provider, connected: false };
-    return { provider, connected: integration.status === "CONNECTED", status: integration.status, connectedAt: integration.createdAt };
+    if (!integration) return { provider, id: null, connected: false, trackingUrlTemplate: null };
+    return {
+      provider,
+      // EC22: the Integration row id — the web rule form uses it
+      // as a rule's courierAccountId.
+      id: integration.id ?? null,
+      connected: integration.status === "CONNECTED", status: integration.status, connectedAt: integration.createdAt,
+      trackingUrlTemplate: integration.trackingUrlTemplate ?? null,
+    };
+  }
+
+  /**
+   * EC22: the customer-facing courier tracking URL for a shipment,
+   * built from the courier account's stored template
+   * (Integration.trackingUrlTemplate, "{trackingId}" placeholder).
+   * No template (or no tracking code) => null — a URL is never
+   * invented. Defensive: any lookup failure also yields null, so
+   * list/public views never break over a missing template.
+   */
+  async trackingUrlForShipment(organizationId: string, shipment: any): Promise<string | null> {
+    if (!shipment?.trackingCode) return null;
+    try {
+      const integration = await this.integration(organizationId, shipment.provider);
+      const template = integration?.trackingUrlTemplate;
+      if (!template) return null;
+      return template.split("{trackingId}").join(encodeURIComponent(shipment.trackingCode));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * EC22: set (or clear, with null/empty) a courier account's
+   * tracking URL template. The template must carry the
+   * "{trackingId}" placeholder so a real code can be substituted.
+   */
+  async setTrackingTemplate(organizationId: string, actorId: string, providerValue: string | undefined, template: string | null | undefined) {
+    const provider = this.providerOf(providerValue);
+    const integration = await this.integration(organizationId, provider);
+    if (!integration) {
+      throw new NotFoundException("এই কুরিয়ার অ্যাকাউন্টটি যুক্ত নেই — আগে Courier Connect করুন");
+    }
+    const trimmed = typeof template === "string" ? template.trim() : "";
+    let value: string | null;
+    if (!trimmed) {
+      value = null;
+    } else {
+      if (!trimmed.includes("{trackingId}")) {
+        throw new BadRequestException("ট্র্যাকিং URL টেমপ্লেটে {trackingId} থাকতে হবে — যেমন https://courier.example/track/{trackingId}");
+      }
+      value = trimmed;
+    }
+    await (this.prisma as any).integration.update({
+      where: { id: integration.id }, data: { trackingUrlTemplate: value },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "courier.tracking_template_updated",
+      entityType: "Integration", entityId: integration.id, metadata: { provider },
+    });
+    return this.getConnection(organizationId, provider);
   }
 
   async getConnections(organizationId: string) {
@@ -314,9 +377,35 @@ export class CourierService {
     pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
     redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
   }) {
-    const provider = this.providerOf(dto.provider);
+    // providerOf validates an explicit provider (and yields the
+    // historical default, steadfast, when none is given).
+    let provider = this.providerOf(dto.provider);
     const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
     if (!order) throw new NotFoundException("Order not found in this organization");
+    // CX12a: a practice order must never become a real parcel —
+    // refused BEFORE any provider client is built or called.
+    if ((order as any).isPractice) {
+      throw new BadRequestException("এটি একটি প্র্যাক্টিস অর্ডার — প্র্যাক্টিস অর্ডারে কুরিয়ার বুকিং করা যায় না");
+    }
+    // EC22: when staff did NOT choose a provider, the org's
+    // courier rules may choose one from the order's real facts.
+    // An explicit dto.provider ALWAYS wins (no evaluation runs).
+    // No match — or a rules lookup failure — falls back to the
+    // default provider exactly as before; a rules problem must
+    // never block a booking staff asked for.
+    let appliedRule: { ruleId: string; ruleName: string } | null = null;
+    if ((dto.provider === undefined || dto.provider === null) && this.rules) {
+      try {
+        const facts = await this.rules.factsForOrder(organizationId, order);
+        const match = await this.rules.evaluate(organizationId, facts);
+        if (match && PROVIDERS.includes(match.provider as Provider)) {
+          provider = match.provider as Provider;
+          appliedRule = { ruleId: match.rule.id, ruleName: match.rule.name };
+        }
+      } catch (e) {
+        this.logger.warn(`courier rule evaluation failed for order ${order.id}: ${e instanceof Error ? e.message : "unknown"}`);
+      }
+    }
     const active = await (this.prisma as any).courierShipment.findFirst({
       where: { organizationId, orderId: order.id, provider },
     });
@@ -416,8 +505,18 @@ export class CourierService {
         consignmentId, trackingCode, invoice, status,
         codAmountMinor: BigInt(Math.round(codMajor * 100)),
         recipientName, recipientPhone, recipientAddress, lastCheckedAt: new Date(),
+        // EC22: record WHICH rule chose this courier (null when
+        // staff chose explicitly or no rule matched).
+        ...(appliedRule ? { courierRuleId: appliedRule.ruleId } : {}),
       },
     });
+    if (appliedRule) {
+      await this.audit.log({
+        organizationId, userId: actorId, action: "courier_auto_selected", entityType: "CourierShipment",
+        entityId: shipment.id,
+        metadata: { ruleId: appliedRule.ruleId, ruleName: appliedRule.ruleName, provider, orderId: order.id, shipmentId: shipment.id },
+      });
+    }
     await this.audit.log({
       organizationId, userId: actorId, action: "courier.shipment.booked", entityType: "CourierShipment",
       entityId: shipment.id, metadata: { provider, orderId: order.id, trackingCode, deliveryFeeMajor },
@@ -577,7 +676,12 @@ export class CourierService {
     const rows = await (this.prisma as any).courierShipment.findMany({
       where: { organizationId, ...(orderId ? { orderId } : {}) }, orderBy: { createdAt: "desc" }, take: 100,
     });
-    return rows.map((r: any) => this.serialize(r));
+    // EC22: each row gains its courier tracking URL (null when the
+    // account has no template — never an invented link).
+    return Promise.all(rows.map(async (r: any) => ({
+      ...this.serialize(r),
+      trackingUrl: await this.trackingUrlForShipment(organizationId, r),
+    })));
   }
 
   async syncShipment(organizationId: string, shipmentId: string) {
@@ -708,6 +812,9 @@ export class CourierService {
     return {
       provider: shipment.provider,
       trackingCode: shipment.trackingCode ?? null,
+      // EC22: direct courier-site tracking link when the account
+      // carries a template; null otherwise (page shows the number).
+      trackingUrl: await this.trackingUrlForShipment(shipment.organizationId, shipment),
       status: shipment.status,
       invoice: shipment.invoice ?? null,
       orderNumber: order?.externalNumber ?? null,
@@ -769,6 +876,10 @@ export class CourierService {
       where: { id: shipment.orderId, organizationId },
       include: { customer: { select: { phone: true, email: true } } },
     }).catch(() => null);
+    // CX12a defense-in-depth: practice orders can hold no shipment
+    // (booking refuses them), but if one ever did, no customer
+    // update of any kind (chat / SMS / email) may leave for it.
+    if ((order as any)?.isPractice) return;
     let link: string | null = null;
     try {
       const token = await this.ensureTrackingToken(organizationId, shipment);

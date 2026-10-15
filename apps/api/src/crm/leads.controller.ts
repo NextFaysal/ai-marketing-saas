@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { LeadsService } from "./leads.service";
-import { CreateLeadDto, UpdateLeadDto, AddNoteDto, MergeLeadDto, ImportLeadsCsvDto, UpdateAssignmentSettingDto } from "./leads.dto";
+import { CreateLeadDto, UpdateLeadDto, AddNoteDto, MergeLeadDto, ImportLeadsCsvDto, UpdateAssignmentSettingDto, UpdateFollowUpDefaultsDto } from "./leads.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -40,6 +40,18 @@ export class LeadsController {
   @Patch("assignment-setting") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   updateAssignmentSetting(@Param("organizationId") orgId: string, @Body() dto: UpdateAssignmentSettingDto) {
     return this.leads.updateAssignmentSetting(orgId, dto.strategy);
+  }
+
+  /** CX10: per-stage follow-up default intervals (hours). Same
+   * shape as the assignment setting: reads follow the controller's
+   * PermissionArea; writes are OWNER/ADMIN only. Declared before
+   * ":leadId" so the literal route wins. */
+  @Get("followup-setting")
+  followUpSetting(@Param("organizationId") orgId: string) { return this.leads.getFollowUpSetting(orgId); }
+
+  @Patch("followup-setting") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  updateFollowUpSetting(@Param("organizationId") orgId: string, @Body() dto: UpdateFollowUpDefaultsDto) {
+    return this.leads.updateFollowUpSetting(orgId, dto.followUpDefaultsByStage ?? null);
   }
 
   /** CRM C3: bulk CSV import (same dialect as the orders importer). */

@@ -6,7 +6,8 @@ import { decryptJson, encryptJson } from "../integrations/crypto";
 import {
   effectiveGoogleAppConfig, effectiveTiktokAppConfig, ensurePlatformConfig, socialOAuthRedirectUri,
 } from "../common/platform-config";
-import { TikTokClient, type TikTokTokenSet } from "./tiktok.client";
+import { TikTokClient, type TikTokTokenSet, type TikTokAppCreds } from "./tiktok.client";
+import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { YouTubeClient, type GoogleTokenSet, type YouTubeChannel } from "./youtube.client";
 import { PermanentPublishError } from "./social-publish.service";
 
@@ -16,6 +17,15 @@ import { PermanentPublishError } from "./social-publish.service";
  * pastes a token), here the OPERATOR registers one app in the
  * Admin Panel (platform-config `tiktokApp` / `googleApp`) and
  * tenants authorize their own accounts on the platform's site.
+ *
+ * CC4 (Connect Center) adds the second TikTok path: a tenant may
+ * connect through their OWN TikTok app (CC3 TenantAppConfig)
+ * instead. The choice is bound into the OAuth state's payload,
+ * the callback exchanges with the same app, the account and its
+ * Integration carry appSource "own", and token refresh resolves
+ * the tenant app's credentials. YouTube/Google stays
+ * platform-only — CC3 built no Google own-app config, so no
+ * own-app path is claimed for it.
  *
  * State discipline (SocialOAuthState table): the `state` value is
  * the row id — 32 random bytes, base64url. It binds org + user +
@@ -44,6 +54,10 @@ export const TOKEN_REFRESH_SKEW_MS = 60_000;
 
 export const TIKTOK_NOT_CONFIGURED_MSG =
   "TikTok app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন (Admin Panel → Platform Config → TikTok App)।";
+/** CC4: appSource "own" was chosen but this org has no TikTok
+ * app of its own saved in the Connect Center (CC3). */
+export const OWN_TIKTOK_NOT_CONFIGURED_MSG =
+  "নিজের TikTok অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার TikTok অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।";
 export const GOOGLE_NOT_CONFIGURED_MSG =
   "Google app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন (Admin Panel → Platform Config → Google App)।";
 
@@ -144,6 +158,7 @@ export class SocialOAuthService {
       id: row.id, platform: row.platform, externalId: row.externalId,
       name: row.name, username: row.username ?? null, pictureUrl: row.pictureUrl ?? null,
       status: row.status, lastError: row.lastError ?? null,
+      appSource: row.appSource ?? "platform",
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
   }
@@ -161,10 +176,16 @@ export class SocialOAuthService {
     platform: string; provider: string; externalId: string;
     name: string; username?: string | null; pictureUrl?: string | null;
     credential: Record<string, unknown>;
+    /** CC4: "own" when the OAuth ran under the tenant's own app
+     * (CC3 TenantAppConfig); defaults to "platform". Recorded on
+     * BOTH the Integration and the SocialAccount so the token
+     * refresh path and the Connect Center read the same truth. */
+    appSource?: string;
   }) {
     const prisma = this.prisma as any;
+    const appSource = args.appSource === "own" ? "own" : "platform";
     const integration = await prisma.integration.create({
-      data: { organizationId: args.organizationId, provider: args.provider, status: "CONNECTED", externalAccountId: args.externalId },
+      data: { organizationId: args.organizationId, provider: args.provider, status: "CONNECTED", externalAccountId: args.externalId, appSource },
     });
     await prisma.integrationCredential.create({
       data: { integrationId: integration.id, encryptedData: encryptJson(args.credential) },
@@ -173,18 +194,18 @@ export class SocialOAuthService {
       where: { organizationId_platform_externalId: { organizationId: args.organizationId, platform: args.platform, externalId: args.externalId } },
       update: {
         name: args.name, username: args.username ?? undefined, pictureUrl: args.pictureUrl ?? undefined,
-        integrationId: integration.id, status: "connected", lastError: null,
+        integrationId: integration.id, status: "connected", lastError: null, appSource,
       },
       create: {
         organizationId: args.organizationId, platform: args.platform, externalId: args.externalId,
         name: args.name, username: args.username ?? null, pictureUrl: args.pictureUrl ?? null,
-        integrationId: integration.id, status: "connected", createdById: args.actorId,
+        integrationId: integration.id, status: "connected", createdById: args.actorId, appSource,
       },
     });
     await this.audit.log({
       organizationId: args.organizationId, userId: args.actorId, action: "social.account_connected",
       entityType: "SocialAccount", entityId: account.id,
-      metadata: { platform: args.platform, via: "oauth" },
+      metadata: { platform: args.platform, via: "oauth", appSource },
     });
     await this.supersedePreviousOAuthIntegrations(args.organizationId, args.actorId, args.provider, args.externalId, integration.id);
     return account;
@@ -264,12 +285,25 @@ export class SocialOAuthService {
       await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
       let fresh: TikTokTokenSet | GoogleTokenSet;
       if (account.platform === "tiktok") {
-        const cfg = effectiveTiktokAppConfig();
-        if (!cfg) throw new Error(TIKTOK_NOT_CONFIGURED_MSG);
-        fresh = await this.tiktok.refreshAccessToken(
-          { clientKey: cfg.clientKey, clientSecret: cfg.clientSecret, redirectUri: socialOAuthRedirectUri("tiktok", cfg.redirectUri) },
-          String(cred.refreshToken),
-        );
+        // CC4: an account connected under the tenant's OWN app
+        // refreshes against THAT app — the platform app's secret
+        // would be rejected by TikTok for this grant. A deleted
+        // own config is terminal, like a removed platform config.
+        if ((account as any).appSource === "own") {
+          const own = await resolveTenantAppConfig(this.prisma, organizationId, "tiktok");
+          if (!own) throw new Error("নিজের TikTok অ্যাপের কনফিগ পাওয়া যাচ্ছে না — কানেক্ট সেন্টারে নিজের TikTok অ্যাপটি আবার কনফিগার করুন, তারপর অ্যাকাউন্টটি রি-কানেক্ট করুন।");
+          fresh = await this.tiktok.refreshAccessToken(
+            { clientKey: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("tiktok") },
+            String(cred.refreshToken),
+          );
+        } else {
+          const cfg = effectiveTiktokAppConfig();
+          if (!cfg) throw new Error(TIKTOK_NOT_CONFIGURED_MSG);
+          fresh = await this.tiktok.refreshAccessToken(
+            { clientKey: cfg.clientKey, clientSecret: cfg.clientSecret, redirectUri: socialOAuthRedirectUri("tiktok", cfg.redirectUri) },
+            String(cred.refreshToken),
+          );
+        }
       } else if (account.platform === "youtube") {
         const cfg = effectiveGoogleAppConfig();
         if (!cfg) throw new Error(GOOGLE_NOT_CONFIGURED_MSG);
@@ -320,7 +354,33 @@ export class SocialOAuthService {
    * video.publish joins ONLY when the operator declared the app
    * audited (config-driven, default upload-only).
    */
-  async tiktokConnectUrl(organizationId: string, userId: string): Promise<{ url: string }> {
+  async tiktokConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
+    if (appSource != null && !["platform", "own"].includes(appSource)) {
+      throw new BadRequestException("appSource must be platform or own");
+    }
+    // CC4: the tenant's OWN TikTok app (CC3 TenantAppConfig). The
+    // choice is bound into the OAuth state's payload, so the
+    // public callback — which receives no appSource parameter —
+    // exchanges the code with the SAME app. The redirect URI is
+    // the platform callback route: the tenant must register that
+    // exact URL in their own TikTok app console.
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "tiktok");
+      if (!own) throw new BadRequestException(OWN_TIKTOK_NOT_CONFIGURED_MSG);
+      const state = await this.createState(organizationId, userId, "tiktok", "connect", { appSource: "own" });
+      const params = new URLSearchParams({
+        client_key: own.appId,
+        // The tenant app's audit state is not ours to declare:
+        // request only the scopes an unaudited app may use.
+        // video.publish (direct post) stays platform-app-only
+        // until the tenant app carries its own audited flag.
+        scope: "user.info.basic,video.upload",
+        response_type: "code",
+        redirect_uri: socialOAuthRedirectUri("tiktok"),
+        state,
+      });
+      return { url: `https://www.tiktok.com/v2/auth/authorize/?${params.toString()}` };
+    }
     await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
     const cfg = effectiveTiktokAppConfig();
     if (!cfg) throw new BadRequestException(TIKTOK_NOT_CONFIGURED_MSG);
@@ -336,6 +396,25 @@ export class SocialOAuthService {
       state,
     });
     return { url: `https://www.tiktok.com/v2/auth/authorize/?${params.toString()}` };
+  }
+
+  /** CC4: the TikTok app credentials a connect/callback must use
+   * for one app source: the tenant's own config for "own" (null
+   * when it has been deleted since the flow started), the
+   * operator's platform config otherwise (null when unset). */
+  private async tiktokCredsFor(organizationId: string, appSource: string): Promise<TikTokAppCreds | null> {
+    if (appSource === "own") {
+      const own = await resolveTenantAppConfig(this.prisma, organizationId, "tiktok");
+      if (!own) return null;
+      return { clientKey: own.appId, clientSecret: own.appSecret, redirectUri: socialOAuthRedirectUri("tiktok") };
+    }
+    await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
+    const cfg = effectiveTiktokAppConfig();
+    if (!cfg) return null;
+    return {
+      clientKey: cfg.clientKey, clientSecret: cfg.clientSecret,
+      redirectUri: socialOAuthRedirectUri("tiktok", cfg.redirectUri),
+    };
   }
 
   /**
@@ -358,13 +437,18 @@ export class SocialOAuthService {
       if (!stateRow) {
         return this.webRedirect({ social_error: "Connect লিংকটি মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — Social Posts পেজ থেকে আবার Connect করুন।" });
       }
-      await ensurePlatformConfig(this.prisma as any).catch(() => undefined);
-      const cfg = effectiveTiktokAppConfig();
-      if (!cfg) return this.webRedirect({ social_error: TIKTOK_NOT_CONFIGURED_MSG });
-      const creds = {
-        clientKey: cfg.clientKey, clientSecret: cfg.clientSecret,
-        redirectUri: socialOAuthRedirectUri("tiktok", cfg.redirectUri),
-      };
+      // CC4: the app source rides in the state's sealed payload —
+      // the callback exchanges with the SAME app that minted the
+      // authorize URL. A since-deleted own config fails honestly.
+      const appSource = (stateRow as any).payload?.appSource === "own" ? "own" : "platform";
+      const creds = await this.tiktokCredsFor(stateRow.organizationId, appSource);
+      if (!creds) {
+        return this.webRedirect({
+          social_error: appSource === "own"
+            ? "নিজের TikTok অ্যাপের কনফিগ পাওয়া যাচ্ছে না — কানেক্ট সেন্টারে আবার কনফিগার করে তারপর Connect করুন।"
+            : TIKTOK_NOT_CONFIGURED_MSG,
+        });
+      }
       let tokens: TikTokTokenSet;
       try {
         tokens = await this.tiktok.exchangeCode(creds, query.code);
@@ -381,6 +465,7 @@ export class SocialOAuthService {
         organizationId: stateRow.organizationId, actorId: stateRow.userId,
         platform: "tiktok", provider: "tiktok_social",
         externalId: user.openId, name: user.displayName, pictureUrl: user.avatarUrl,
+        appSource,
         credential: {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken ?? null,

@@ -28,11 +28,12 @@ export class ExecutiveService {
     const [newCustomers, rfm, statusGroups, campaignsRun, topItems] = await Promise.all([
       p.customer.count({ where: { organizationId, createdAt: { gte: from, lt: toExclusive } } }).catch(() => 0),
       computeRfm(this.prisma, organizationId).catch(() => []),
-      p.order.groupBy({ by: ["status"], where: { organizationId, createdAt: { gte: from, lt: toExclusive } }, _count: { _all: true } }).catch(() => []),
+      // CX12a: executive analytics never count practice orders.
+      p.order.groupBy({ by: ["status"], where: { organizationId, isPractice: false, createdAt: { gte: from, lt: toExclusive } }, _count: { _all: true } }).catch(() => []),
       this.custom.run(organizationId, { dimension: "campaign", metrics: ["spend", "conversions", "cpa"], from: fromStr, to: toStr, rangePreset: fromStr && toStr ? undefined : "last_30d" }).catch(() => null),
       p.orderItem.groupBy({
         by: ["name"],
-        where: { order: { organizationId, status: { notIn: ["cancelled", "refunded", "failed"] }, OR: [{ placedAt: { gte: from, lt: toExclusive } }, { placedAt: null, createdAt: { gte: from, lt: toExclusive } }] } },
+        where: { order: { organizationId, isPractice: false, status: { notIn: ["cancelled", "refunded", "failed"] }, OR: [{ placedAt: { gte: from, lt: toExclusive } }, { placedAt: null, createdAt: { gte: from, lt: toExclusive } }] } },
         _sum: { quantity: true, totalMinor: true }, orderBy: { _sum: { totalMinor: "desc" } }, take: 5,
       }).catch(() => []),
     ]);

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { SocialCommentsService } from "./social-comments.service";
 import { 
   ListCommentsQueryDto, 
@@ -7,6 +7,8 @@ import {
   UpdateReplySettingsDto, 
   IngestExternalCommentDto,
   BulkActionDto,
+  PrivateReplyCommentDto,
+  AssignCommentDto,
 } from "./social-comments.dto";
 import { CurrentUser, AuthUser, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -72,6 +74,41 @@ export class SocialCommentsController {
     @Body() dto: ReplyCommentDto,
   ) {
     return this.service.sendReply(orgId, user.userId, commentId, dto);
+  }
+
+  @Post(":commentId/private-reply")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  privateReply(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("commentId") commentId: string,
+    @Body() dto: PrivateReplyCommentDto,
+  ) {
+    return this.service.sendPrivateReply(orgId, user.userId, commentId, dto.message);
+  }
+
+  @Delete(":commentId")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("commentId") commentId: string,
+  ) {
+    return this.service.deleteComment(orgId, user.userId, commentId);
+  }
+
+  @Patch(":commentId/assign")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  assign(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("commentId") commentId: string,
+    @Body() dto: AssignCommentDto,
+  ) {
+    return this.service.assignComment(orgId, user.userId, commentId, dto.assignedUserId ?? null);
   }
 
   @Patch(":commentId/status")

@@ -6,9 +6,18 @@ import { IntegrationsService } from "../integrations/integrations.service";
 import { RiskService } from "./risk.service";
 import { EventsService } from "../common/events.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { OrderPushService } from "../commerce/order-push.service";
 import { minorToMajor, toCsv } from "../imports/csv";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import type { CreateManualOrderDto, UpdateOrderDto, MergeOrdersDto, AssignAgentDto, BulkAssignAgentDto, StaffScoreboardQueryDto } from "./orders.dto";
+import type {
+  AdvanceVerificationDto,
+  CreateManualOrderDto,
+  UpdateOrderDto,
+  MergeOrdersDto,
+  AssignAgentDto,
+  BulkAssignAgentDto,
+  StaffScoreboardQueryDto,
+} from "./orders.dto";
 import { phoneKey } from "./risk-score";
 
 function pubOrder(o: any) {
@@ -16,6 +25,13 @@ function pubOrder(o: any) {
     ...o,
     subtotalMinor: o.subtotalMinor?.toString(), shippingMinor: o.shippingMinor?.toString(),
     discountMinor: o.discountMinor?.toString(), taxMinor: o.taxMinor?.toString(),
+    // EC16: the promotion/referral split of discountMinor.
+    promotionDiscountMinor: o.promotionDiscountMinor?.toString() ?? "0",
+    referralDiscountMinor: o.referralDiscountMinor?.toString() ?? "0",
+    // EC29: gift-wrap charge as a string (other gift fields —
+    // giftPromotionId / giftSkipped / giftMessage — ride the
+    // spread above untouched).
+    giftWrapMinor: o.giftWrapMinor?.toString() ?? "0",
     totalMinor: o.totalMinor?.toString(), refundedMinor: o.refundedMinor?.toString(),
     items: o.items?.map((i: any) => ({ ...i, priceMinor: i.priceMinor?.toString(), totalMinor: i.totalMinor?.toString() })),
   };
@@ -55,6 +71,10 @@ export class OrdersService {
     // partial deployments keep working.
     @Optional() private readonly inventory?: InventoryService,
     @Optional() private readonly events?: EventsService,
+    // EC5: store push orchestration — appended LAST + @Optional
+    // (same discipline as the S2 hooks; every call is wrapped so a
+    // store problem can never break the local order flow).
+    @Optional() private readonly orderPush?: OrderPushService,
   ) {}
 
   /**
@@ -147,7 +167,8 @@ export class OrdersService {
     const hasStatus = dto.status !== undefined;
     const hasRefund = dto.refund !== undefined && dto.refund !== null;
     const hasNote = dto.internalNote !== undefined;
-    if (!hasStatus && !hasRefund && !hasNote) {
+    const hasAddress = dto.address !== undefined;
+    if (!hasStatus && !hasRefund && !hasNote && !hasAddress) {
       throw new BadRequestException("কিছুই পাঠানো হয়নি — status, refund অথবা internalNote-এর যেকোনো একটি পাঠান");
     }
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
@@ -209,6 +230,9 @@ export class OrdersService {
         noteCleared = trimmed === "";
       }
     }
+    if (hasAddress) {
+      data.address = dto.address === null ? null : String(dto.address).trim() || null;
+    }
     if (Object.keys(data).length > 0) {
       await (this.prisma as any).order.update({ where: { id: order.id }, data });
     }
@@ -258,7 +282,197 @@ export class OrdersService {
         entityType: "Order", entityId: orderId, metadata: { cleared: noteCleared },
       }).catch(() => undefined);
     }
+    if (hasAddress) {
+      await this.audit?.log({
+        organizationId, userId: actorId, action: "orders.address_updated",
+        entityType: "Order", entityId: orderId, metadata: {},
+      }).catch(() => undefined);
+    }
 
+    // --- EC5 store pushes (failure-isolated; the local change
+    // above stands whatever the store does). internalNote is
+    // NEVER pushed — there is deliberately no hook for it. ---
+    if (this.orderPush) {
+      if (statusChanges) {
+        try { await this.orderPush.enqueueStatus(organizationId, orderId, finalStatus); } catch { /* isolated */ }
+      }
+      if (hasRefund && refundAmount !== null) {
+        // The refund GATE (Store.refundPushEnabled, default off)
+        // is enforced inside enqueueRefund — not here.
+        try { await this.orderPush.enqueueRefund(organizationId, orderId, { amountMinor: refundAmount.toString(), reason: dto.refund?.reason }); } catch { /* isolated */ }
+      }
+      if (hasAddress && data.address) {
+        try { await this.orderPush.enqueueAddress(organizationId, orderId, String(data.address)); } catch { /* isolated */ }
+      }
+    }
+
+    return this.getOne(organizationId, orderId);
+  }
+
+  /** EC5: turn this chat/manual order into a store draft order. */
+  async createStoreDraft(organizationId: string, actorId: string, orderId: string, storeId?: string) {
+    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    const order = await this.orderPush.createStoreDraft(organizationId, actorId, orderId, storeId);
+    return pubOrder({ ...order, items: (await (this.prisma as any).orderItem.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? [] });
+  }
+
+  /** EC5: send a customer-visible note to the store order.
+   * Distinct from internalNote, which never leaves the SaaS. */
+  async pushStoreNote(organizationId: string, actorId: string, orderId: string, note: string) {
+    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    const result = await this.orderPush.enqueueNote(organizationId, orderId, note);
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.store_note_queued",
+      entityType: "Order", entityId: orderId, metadata: {},
+    }).catch(() => undefined);
+    return result;
+  }
+
+  // ---------- EC19: staff-recorded advance verification ----------
+
+  /** All PaymentVerification rows for one order (newest first),
+   * serialized with BigInt money as strings. A missing delegate
+   * (partial deployment) degrades to an empty list. */
+  private async verificationRowsForOrder(organizationId: string, orderId: string): Promise<any[]> {
+    const table = (this.prisma as any).paymentVerification;
+    if (!table?.findMany) return [];
+    const rows = await table
+      .findMany({ where: { organizationId, orderId }, orderBy: { createdAt: "desc" } })
+      .catch(() => []);
+    return rows ?? [];
+  }
+
+  private serializeVerification(row: any) {
+    return {
+      ...row,
+      amountMinor: row.amountMinor != null ? String(row.amountMinor) : null,
+      expectedAmountMinor: row.expectedAmountMinor != null ? String(row.expectedAmountMinor) : null,
+    };
+  }
+
+  /** Sum of APPROVED verification amounts (null amounts count 0). */
+  private approvedAdvanceSum(rows: any[]): bigint {
+    let sum = 0n;
+    for (const row of rows) {
+      if (row.status !== "approved") continue;
+      if (row.amountMinor === null || row.amountMinor === undefined) continue;
+      try { sum += BigInt(row.amountMinor as any); } catch { /* unparseable stored amount counts 0 */ }
+    }
+    return sum;
+  }
+
+  /** Resolve the DeliverySlot row for an order (org-scoped),
+   * failure-isolated: any problem yields null, never a 500. */
+  private async deliverySlotForOrder(organizationId: string, order: any): Promise<any | null> {
+    if (!order?.deliverySlotId) return null;
+    try {
+      const table = (this.prisma as any).deliverySlot;
+      if (!table?.findFirst) return null;
+      const slot = await table.findFirst({ where: { id: order.deliverySlotId, organizationId } });
+      if (!slot) return null;
+      return {
+        id: slot.id, label: slot.label, startTime: slot.startTime, endTime: slot.endTime,
+        date: order.deliveryDate ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** EC30: resolve the PickupPoint row for an order (org-scoped,
+   * any status — a since-deactivated point still displays),
+   * failure-isolated exactly like deliverySlotForOrder. */
+  private async pickupPointForOrder(organizationId: string, order: any): Promise<any | null> {
+    if (!order?.pickupPointId) return null;
+    try {
+      const table = (this.prisma as any).pickupPoint;
+      if (!table?.findFirst) return null;
+      const point = await table.findFirst({ where: { id: order.pickupPointId, organizationId } });
+      if (!point) return null;
+      return {
+        id: point.id, name: point.name, address: point.address, district: point.district,
+        phone: point.phone ?? null,
+        feeMinor: point.feeMinor != null ? String(point.feeMinor) : "0",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * EC19: record an advance the customer paid directly to the
+   * merchant (bKash/Nagad/…) and that the recording staff member
+   * has verified. Backed by a PaymentVerification row created
+   * already "approved" (source "manual_advance") — the staff
+   * member IS the verifier; there is no gateway involved. The
+   * amount may never exceed what is still due on the order.
+   */
+  async recordAdvanceVerification(organizationId: string, actorId: string, orderId: string, dto: AdvanceVerificationDto) {
+    const order = await (this.prisma as any).order.findFirst({
+      where: { id: orderId, organizationId },
+    });
+    if (!order) throw new NotFoundException("Order not found in this organization");
+
+    let amount: bigint;
+    try { amount = BigInt(dto.amountMinor as any); } catch { amount = 0n; }
+    if (amount <= 0n) {
+      throw new BadRequestException("Advance amount must be a positive amount in minor units");
+    }
+
+    const table = (this.prisma as any).paymentVerification;
+    if (!table?.create) throw new BadRequestException("Payment verification is not available in this deployment");
+
+    const existingRows: any[] = table.findMany
+      ? ((await table.findMany({ where: { organizationId, orderId } }).catch(() => [])) ?? [])
+      : [];
+    const paidSoFar = this.approvedAdvanceSum(existingRows);
+    const total = BigInt(order.totalMinor ?? 0);
+    const due = total > paidSoFar ? total - paidSoFar : 0n;
+    if (amount > due) {
+      throw new BadRequestException(
+        `Advance ${amount.toString()} exceeds the amount still due on this order (${due.toString()})`,
+      );
+    }
+
+    if (dto.reference) {
+      let duplicate: any = null;
+      if (table.findFirst) {
+        duplicate = await table.findFirst({
+          where: { organizationId, trxId: dto.reference, status: "approved" },
+        }).catch(() => null);
+      } else if (table.findMany) {
+        const rows = (await table.findMany({ where: { organizationId } }).catch(() => [])) ?? [];
+        duplicate = rows.find((r: any) => r.trxId === dto.reference && r.status === "approved") ?? null;
+      }
+      if (duplicate) {
+        throw new BadRequestException("This transaction reference has already been recorded as a verified payment");
+      }
+    }
+
+    const row = await table.create({
+      data: {
+        organizationId,
+        orderId,
+        conversationId: order.conversationId ?? order.codConversationId ?? null,
+        messageId: null,
+        provider: dto.method,
+        trxId: dto.reference ?? null,
+        amountMinor: amount,
+        expectedAmountMinor: order.totalMinor ?? null,
+        verdict: "matched",
+        status: "approved",
+        source: "manual_advance",
+        reviewedById: actorId,
+        createdById: actorId,
+        modelProvider: "manual_staff",
+        note: dto.note ?? null,
+      },
+    });
+    await this.audit?.log({
+      organizationId, userId: actorId, action: "orders.advance_verification_recorded",
+      entityType: "PaymentVerification", entityId: row.id,
+      metadata: { orderId, amountMinor: amount.toString(), method: dto.method },
+    }).catch(() => undefined);
     return this.getOne(organizationId, orderId);
   }
 
@@ -267,11 +481,15 @@ export class OrdersService {
     try { this.events?.emit(event, { organizationId, context }); } catch { /* fire-and-forget */ }
   }
 
-  async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number }) {
+  async list(organizationId: string, q: { status?: string; isCod?: boolean; page?: number; pageSize?: number; includePractice?: boolean }) {
     const page = Math.max(1, q.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
     const where: any = {
       organizationId,
+      // CX12a: practice orders are excluded by default; only an
+      // explicit includePractice (the "প্র্যাক্টিস অর্ডার দেখান"
+      // filter) surfaces them.
+      ...(q.includePractice ? {} : { isPractice: false }),
       ...(q.status ? { status: q.status } : {}),
       ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
     };
@@ -302,6 +520,53 @@ export class OrdersService {
           duplicateOrderIds: phoneGroups.get(p)!.filter((id) => id !== item.id),
         };
       }
+    }
+    // EC18: attach the chosen delivery slot per row (one batched
+    // fetch for the page). Failure-isolated: rows ship with a null
+    // slot rather than failing the listing.
+    try {
+      const slotIds = [...new Set(items.map((o: any) => o.deliverySlotId).filter(Boolean).map((x: any) => String(x)))];
+      const slotById = new Map<string, any>();
+      if (slotIds.length > 0) {
+        const table = (this.prisma as any).deliverySlot;
+        const slots = table?.findMany
+          ? ((await table.findMany({ where: { organizationId, id: { in: slotIds } } }).catch(() => [])) ?? [])
+          : [];
+        for (const slot of slots) slotById.set(String(slot.id), slot);
+      }
+      items.forEach((o: any, idx: number) => {
+        const slot = o.deliverySlotId ? slotById.get(String(o.deliverySlotId)) : null;
+        (mapped[idx] as any).deliverySlot = slot
+          ? { id: slot.id, label: slot.label, startTime: slot.startTime, endTime: slot.endTime, date: o.deliveryDate ?? null }
+          : null;
+      });
+    } catch {
+      for (const item of mapped) (item as any).deliverySlot = null;
+    }
+    // EC30: attach the chosen pickup point per row (one batched
+    // fetch for the page), mirroring the delivery slot attach.
+    try {
+      const pointIds = [...new Set(items.map((o: any) => o.pickupPointId).filter(Boolean).map((x: any) => String(x)))];
+      const pointById = new Map<string, any>();
+      if (pointIds.length > 0) {
+        const table = (this.prisma as any).pickupPoint;
+        const points = table?.findMany
+          ? ((await table.findMany({ where: { organizationId, id: { in: pointIds } } }).catch(() => [])) ?? [])
+          : [];
+        for (const point of points) pointById.set(String(point.id), point);
+      }
+      items.forEach((o: any, idx: number) => {
+        const point = o.pickupPointId ? pointById.get(String(o.pickupPointId)) : null;
+        (mapped[idx] as any).pickupPoint = point
+          ? {
+              id: point.id, name: point.name, address: point.address, district: point.district,
+              phone: point.phone ?? null,
+              feeMinor: point.feeMinor != null ? String(point.feeMinor) : "0",
+            }
+          : null;
+      });
+    } catch {
+      for (const item of mapped) (item as any).pickupPoint = null;
     }
     // M50: light risk summary per row (band + score). Enrichment must
     // never break the listing — on any failure rows ship without it.
@@ -353,6 +618,8 @@ export class OrdersService {
     }
     const where: any = {
       organizationId,
+      // CX12a: exports never include practice orders.
+      isPractice: false,
       ...(q.status ? { status: q.status } : {}),
       ...(q.isCod !== undefined ? { isCod: q.isCod } : {}),
     };
@@ -399,6 +666,20 @@ export class OrdersService {
     });
     if (!o) throw new NotFoundException("Order not found in this organization");
     const out: any = pubOrder(o);
+    // EC19: payment verifications + advance/due math. The paid
+    // advance is the sum of APPROVED rows only, capped at the
+    // order total; the due is what remains (>= 0).
+    const verificationRows = await this.verificationRowsForOrder(organizationId, orderId);
+    const total = BigInt(o.totalMinor ?? 0);
+    const paidSum = this.approvedAdvanceSum(verificationRows);
+    const advancePaid = paidSum > total ? total : paidSum;
+    out.paymentVerifications = verificationRows.map((row: any) => this.serializeVerification(row));
+    out.advancePaidMinor = advancePaid.toString();
+    out.amountDueMinor = (total - advancePaid).toString();
+    // EC18: the chosen delivery slot, when one was picked.
+    out.deliverySlot = await this.deliverySlotForOrder(organizationId, o);
+    // EC30: the chosen pickup point, when the order is a pickup.
+    out.pickupPoint = await this.pickupPointForOrder(organizationId, o);
     if (this.risk) {
       try { out.risk = await this.risk.forOrder(organizationId, o); } catch { /* advisory only */ }
     }
@@ -414,11 +695,12 @@ export class OrdersService {
   }
 
   async stats(organizationId: string) {
+    // CX12a: dashboard order stats never count practice orders.
     const grouped = await (this.prisma as any).order.groupBy({
-      by: ["status"], where: { organizationId }, _count: true, _sum: { totalMinor: true },
+      by: ["status"], where: { organizationId, isPractice: false }, _count: true, _sum: { totalMinor: true },
     });
     const cod = await (this.prisma as any).order.groupBy({
-      by: ["isCod"], where: { organizationId }, _count: true,
+      by: ["isCod"], where: { organizationId, isPractice: false }, _count: true,
     });
     const byStatus = grouped.map((g: any) => ({
       status: g.status, count: g._count, totalMinor: (g._sum.totalMinor ?? 0n).toString(),

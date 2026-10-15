@@ -80,6 +80,12 @@ export class OrganizationsController {
   @UseGuards(TenantGuard)
   onboarding(@Param("organizationId") id: string) { return this.orgs.getOnboarding(id); }
 
+  /** CX12a: Setup Guide — the guided setup steps, every one
+   * computed from real rows (see OrganizationsService.getSetupGuide). */
+  @Get(":organizationId/setup-guide")
+  @UseGuards(TenantGuard)
+  setupGuide(@Param("organizationId") id: string) { return this.orgs.getSetupGuide(id); }
+
   @Post(":organizationId/members/:userId/totp-reset")
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER")

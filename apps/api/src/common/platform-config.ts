@@ -41,6 +41,13 @@ export interface TiktokAppConfig { clientKey: string; clientSecret: string; redi
 /** SP9: the OPERATOR's Google app for YouTube (same one-app
  * model). Tenants OAuth their own Google accounts into it. */
 export interface GoogleAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
+/** CC10: platform-payment wallet settings. `feeBps` is the
+ * platform fee on PLATFORM-gateway payments, in basis points
+ * (200 = 2%). It is read at the moment a verified payment is
+ * credited — the fee applied is the CURRENT configured value,
+ * computed server-side. Absent/invalid config means feeBps 0:
+ * a fee is never invented. */
+export interface WalletConfig { feeBps: number }
 
 export interface PlatformConfigSnapshot {
   llm: LlmConfig | null;
@@ -52,12 +59,13 @@ export interface PlatformConfigSnapshot {
   image: ImageConfig | null;
   tiktokApp: TiktokAppConfig | null;
   googleApp: GoogleAppConfig | null;
+  wallet: WalletConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -66,8 +74,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -96,12 +104,13 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
     readKey(prisma, "imageConfig"),
     readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
+    readKey(prisma, "walletConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -153,7 +162,11 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         redirectUri: googleRaw.redirectUri ? String(googleRaw.redirectUri) : undefined,
       }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, loadedAt: Date.now() };
+  const walletFeeBps = Number(walletRaw?.feeBps);
+  const wallet: WalletConfig | null = walletRaw && Number.isInteger(walletFeeBps) && walletFeeBps >= 0 && walletFeeBps <= 10_000
+    ? { feeBps: walletFeeBps }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, wallet, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -248,6 +261,15 @@ export function effectiveBkashConfig(): (BkashConfig & { source: "admin" | "env"
     };
   }
   return null;
+}
+
+/** CC10: the CURRENT platform wallet fee in basis points, from
+ * the admin-configured walletConfig (snapshot, refreshed on
+ * admin writes + the scheduler tick — the M33 pattern). No valid
+ * config ⇒ 0. A fee is never invented or hardcoded. */
+export function effectiveWalletFeeBps(): number {
+  const feeBps = Number(snapshot.wallet?.feeBps);
+  return Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= 10_000 ? feeBps : 0;
 }
 
 export function bkashBase(cfg: BkashConfig): string {

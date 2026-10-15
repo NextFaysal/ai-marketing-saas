@@ -13,39 +13,29 @@ import { SocialCommentsController } from "./social-comments.controller";
 import { SocialCommentsService } from "./social-comments.service";
 import { AiInstructionsController } from "./ai-instructions.controller";
 import { AiInstructionsService } from "./ai-instructions.service";
+import { PracticeController } from "./practice.controller";
+import { PracticeService } from "./practice.service";
 import { OrdersModule } from "../orders/orders.module";
 import { CrmModule } from "../crm/crm.module";
 import { InventoryModule } from "../inventory/inventory.module";
+import { MessagingModule } from "../messaging/messaging.module";
 
 import { PracticeModeController } from "./practice-mode.controller";
 import { PracticeModeService } from "./practice-mode.service";
+import { CustomersModule } from "../customers/customers.module";
 
 @Module({
   // CRM C5: CrmModule provides LeadAssignmentService for the
   // leads the inbox ingestion paths create (CrmModule imports
   // nothing itself, so this adds no module cycle).
-  imports: [OrdersModule, CrmModule, InventoryModule],
-  controllers: [
-    InboxController,
-    MetaWebhookController,
-    WebchatAdminController,
-    PublicChatController,
-    TelegramWebhookController,
-    SocialCommentsController,
-    AiInstructionsController,
-    PracticeModeController,
-  ],
-  providers: [
-    InboxService,
-    WebchatService,
-    RealtimeService,
-    LlmFactory,
-    TelegramService,
-    EmailChannelService,
-    SocialCommentsService,
-    AiInstructionsService,
-    PracticeModeService,
-  ],
+  // MS2: MessagingModule provides MessagingService for the
+  // WhatsApp STOP/START preference hook (no cycle).
+  // IN2: CustomersModule provides CustomersService (the canonical
+  // customer merge/unmerge) for the inbox merge endpoints. It
+  // imports Orders + Crm only — no cycle back into Inbox.
+  imports: [OrdersModule, CrmModule, InventoryModule, MessagingModule, CustomersModule],
+  controllers: [InboxController, MetaWebhookController, WebchatAdminController, PublicChatController, TelegramWebhookController, SocialCommentsController, AiInstructionsController, PracticeController, PracticeModeController],
+  providers: [InboxService, WebchatService, RealtimeService, LlmFactory, TelegramService, EmailChannelService, SocialCommentsService, AiInstructionsService, PracticeService, PracticeModeService],
   exports: [InboxService, RealtimeService, TelegramService, EmailChannelService, SocialCommentsService, PracticeModeService],
 })
 export class InboxModule {}

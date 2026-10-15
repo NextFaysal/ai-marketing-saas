@@ -1,5 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseFilters, UseGuards, UseInterceptors } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { KnowledgeService } from "./knowledge.service";
+import { MAX_FILE_BYTES } from "./extract";
+import { MulterErrorFilter } from "./multer-error.filter";
 import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -39,9 +42,17 @@ export class KnowledgeController {
     return this.knowledge.createDoc(orgId, user.userId, dto);
   }
 
-  // CX9: Knowledge Document file upload endpoint
   @Post("knowledge-documents/upload") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
-  uploadDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: IngestKnowledgeFileDto) {
+  @UseFilters(MulterErrorFilter)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_FILE_BYTES } }))
+  uploadDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @UploadedFile() file: Express.Multer.File) {
+    return this.knowledge.uploadDocFile(orgId, user.userId, file);
+  }
+
+  // CX9 (owner series): Knowledge Document JSON ingest endpoint —
+  // distinct path from the multipart upload above so both survive.
+  @Post("knowledge-documents/ingest") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  ingestDoc(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: IngestKnowledgeFileDto) {
     return this.knowledge.ingestFile(orgId, user.userId, dto);
   }
 

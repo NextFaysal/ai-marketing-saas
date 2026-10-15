@@ -14,6 +14,10 @@
  *   by Telegram itself (its error shows verbatim).
  */
 import { useEffect, useRef, useState } from "react";
+import { API_URL, getToken } from "@/lib/api";
+import { getOrganizationId } from "@/lib/org";
+import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { CHANNEL_DOT, CHANNEL_META, initialsOf, money } from "@/lib/inbox-format";
 
 export const EMOJIS: string[] = [
   "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "🙂", "😉", "😎",
@@ -168,5 +172,101 @@ export function VoiceRecorder({
     <button type="button" className="btn-secondary btn-sm" disabled={disabled} onClick={() => void start()} title="ভয়েস মেসেজ রেকর্ড করুন">
       🎙️ ভয়েস
     </button>
+  );
+}
+
+// ---- IN9c: presentational components extracted from the inbox
+// page (props-only; no page state is shared — behaviour unchanged).
+
+// ---- Unified Inbox U1: channel identity chip ----
+export function ChannelChip({ channel, lg }: { channel: string; lg?: boolean }) {
+  const m = CHANNEL_META[channel] ?? { label: channel, emoji: "💬", cls: "bg-slate-100 text-slate-600 ring-slate-200" };
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ring-1 ${m.cls} ${lg ? "text-xs" : "text-[10px]"}`}>{m.emoji} {m.label}</span>;
+}
+
+export function ConvAvatar({ name, phone, channel }: { name?: string | null; phone?: string | null; channel: string }) {
+  return (
+    <span className="conv-avatar" aria-hidden="true">
+      {initialsOf(name ?? phone)}
+      <span className={`conv-dot ${CHANNEL_DOT[channel] ?? "bg-slate-400"}`} />
+    </span>
+  );
+}
+
+/** Fetches protected media bytes through the API proxy and renders them. */
+export function MediaView({ convId, message }: { convId: string; message: { id: string; type: string; content?: string | null } }) {
+  const orgId = getOrganizationId();
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/organizations/${orgId}/inbox/conversations/${convId}/messages/${message.id}/media`, {
+          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+        });
+        if (!res.ok) throw new Error("media");
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setUrl(objectUrl);
+      } catch { if (!cancelled) setFailed(true); }
+    })();
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [orgId, convId, message.id]);
+
+  if (failed) return <span className="text-xs opacity-70">[মিডিয়া লোড হয়নি: {message.type}]</span>;
+  if (!url) return <span className="skeleton inline-block h-24 w-44 align-middle" role="status" aria-label="মিডিয়া লোড হচ্ছে" />;
+  if (message.type === "image" || message.type === "sticker") return <img src={url} alt={message.content ?? "ছবি"} className="max-h-56 rounded-lg" />;
+  if (message.type === "audio") return <audio controls src={url} className="max-w-[240px]" />;
+  if (message.type === "video") return <video controls src={url} className="max-h-56 rounded-lg" />;
+  return <a href={url} target="_blank" rel="noreferrer" className="underline">📎 ফাইল খুলুন ({message.type})</a>;
+}
+
+/** Inbox Next-Gen P2: live courier tracking widget. The status
+ * string is the courier's own words (stored verbatim); the
+ * stepper follows the documented mapping in lib/courier-status —
+ * an unmapped status renders the courier's words alone, with no
+ * stepper guess. Sync calls the existing manual sync endpoint and
+ * surfaces provider errors verbatim (handled by the caller). */
+export function ShipmentWidget({ shipment, currency, syncing, onSync }: {
+  shipment: { id: string; trackingCode?: string | null; status: string; provider: string; codAmountMinor?: string | null; lastCheckedAt?: string | null };
+  currency: string;
+  syncing: boolean;
+  onSync: () => void;
+}) {
+  const view = courierStatusView(shipment.status);
+  return (
+    <div className="mt-2 rounded-xl bg-slate-50/70 p-2.5 shadow-sm ring-1 ring-slate-200/70">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="font-semibold">🚚 {shipment.provider}{shipment.trackingCode ? ` · ${shipment.trackingCode}` : ""}</span>
+        <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title="কুরিয়ারের কাছ থেকে এখনই সর্বশেষ স্ট্যাটাস আনুন">
+          {syncing ? "আপডেট হচ্ছে…" : "🔄 এখনই আপডেট করুন"}
+        </button>
+      </div>
+      {view.kind === "progress" ? (
+        <div className="mt-2">
+          <div className="flex items-center gap-1">
+            {COURIER_STEP_LABELS.map((label, i) => (
+              <div key={label} className="flex flex-1 flex-col items-center gap-1">
+                <div className={`h-1.5 w-full rounded-full shadow-sm ${i <= view.step ? "bg-gradient-to-r from-emerald-500 to-teal-400" : "bg-slate-200"}`} />
+                <span className={`text-center text-[9px] leading-tight ${i === view.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
+              </div>
+            ))}
+          </div>
+          {view.partial ? <div className="mt-1 text-[11px] font-medium text-amber-600">আংশিক ডেলিভার্ড — কিছু পণ্য পৌঁছেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div> : null}
+        </div>
+      ) : view.kind === "returned" ? (
+        <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">↩️ পার্সেল রিটার্ন এসেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+      ) : view.kind === "cancelled" ? (
+        <div className="mt-1.5 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">✖️ শিপমেন্ট বাতিল হয়েছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
+      ) : (
+        <div className="mt-1.5 text-[11px] text-slate-500">কুরিয়ারের স্ট্যাটাস: <b>{shipment.status}</b></div>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+        <span>সর্বশেষ যাচাই: {shipment.lastCheckedAt ? new Date(shipment.lastCheckedAt).toLocaleString("bn-BD") : "এখনো যাচাই হয়নি"}</span>
+        {shipment.codAmountMinor && Number(shipment.codAmountMinor) > 0 ? <span>COD: <b className="text-slate-600">{money(shipment.codAmountMinor, currency)}</b></span> : null}
+      </div>
+    </div>
   );
 }

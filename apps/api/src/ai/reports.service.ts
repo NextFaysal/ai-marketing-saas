@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AnalyticsService } from "../analytics/analytics.service";
-import { LlmFactory } from "./llm/llm.factory";
+import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { ToolsService } from "./tools.service";
 import { formatMinor } from "@repo/contracts";
 
@@ -82,7 +82,7 @@ export class ReportsService {
     if (!["daily", "weekly", "monthly"].includes(type)) throw new BadRequestException("type must be daily, weekly or monthly");
     const language: ReportLanguage = input.language ?? "bn";
     const data = await this.buildData(organizationId, type, input.date);
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     let title: string;
     let content: string;

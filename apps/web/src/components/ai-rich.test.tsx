@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AiRichAnswer, buildRichBlocks, hasStoppedMarker, visibleToolCalls } from "./ai-rich";
+import { AiRichAnswer, AiToolTransparency, buildRichBlocks, hasStoppedMarker, visibleToolCalls } from "./ai-rich";
 
 const overview = {
   tool: "get_analytics_overview", status: "success",
@@ -122,5 +122,26 @@ describe("AiRichAnswer (rendered markup)", () => {
   it("renders nothing when there is nothing renderable", () => {
     expect(renderToStaticMarkup(<AiRichAnswer toolCalls={[{ tool: "get_anomalies", status: "success" }]} />)).toBe("");
     expect(renderToStaticMarkup(<AiRichAnswer toolCalls={null} />)).toBe("");
+  });
+});
+
+describe("AiToolTransparency (GV1 shared component)", () => {
+  it("renders tool chips with status, hides __ markers, shows the stopped chip", () => {
+    const html = renderToStaticMarkup(
+      <AiToolTransparency toolCalls={[
+        { tool: "get_analytics_overview", status: "success" },
+        { tool: "get_campaign_performance", status: "error" },
+        { tool: "__stopped", status: "stopped" },
+      ]} />,
+    );
+    expect(html).toContain("get_analytics_overview");
+    expect(html).toContain("get_campaign_performance");
+    expect(html).toContain("থামানো হয়েছে");
+    expect(html).not.toContain("__stopped");
+  });
+  it("renders nothing without visible tools or a stop marker", () => {
+    expect(renderToStaticMarkup(<AiToolTransparency toolCalls={[]} />)).toBe("");
+    expect(renderToStaticMarkup(<AiToolTransparency toolCalls={null} />)).toBe("");
+    expect(renderToStaticMarkup(<AiToolTransparency toolCalls={[{ tool: "__stopped", status: "stopped" }]} />)).toContain("থামানো হয়েছে");
   });
 });

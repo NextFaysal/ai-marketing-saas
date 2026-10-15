@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
 import { Public } from "../common/decorators";
 import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, MinLength } from "class-validator";
 import { AdminService } from "./admin.service";
+import { WalletService } from "../connections/wallet.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
 
 class StatusDto {
@@ -130,6 +131,20 @@ class TiktokAppConfigDto {
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
+class PayoutDecisionDto {
+  @IsOptional() @IsString() note?: string;
+}
+class PayoutMarkPaidDto {
+  @IsString() @MinLength(1) payoutRef!: string;
+}
+class WalletAdjustDto {
+  @IsString() @MinLength(1) amountMinor!: string;
+  @IsString() @MinLength(1) note!: string;
+}
+class WalletConfigDto {
+  @IsOptional() @IsInt() feeBps?: number;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
 class GoogleAppConfigDto {
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
@@ -210,7 +225,16 @@ export class AdminController {
     private readonly automation: AutomationService,
     private readonly integrations: IntegrationsService,
     private readonly paymentsSvc: PaymentsService,
+    // Optional in the signature so older spec constructions with
+    // four arguments keep compiling; Nest always injects it via
+    // the ConnectionsModule import in AdminModule.
+    @Optional() private readonly wallet?: WalletService,
   ) {}
+
+  private walletSvc(): WalletService {
+    if (!this.wallet) throw new Error("WalletService is not wired into AdminController");
+    return this.wallet;
+  }
 
   @Get("health") health() { return this.admin.health(); }
   @Get("overview") overview() { return this.admin.overview(); }
@@ -273,6 +297,23 @@ export class AdminController {
   updateTiktokConfig(@Req() req: any, @Body() dto: TiktokAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "tiktok", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/google") @AdminTier("SUPER")
   updateGoogleConfig(@Req() req: any, @Body() dto: GoogleAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "google", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/wallet") @AdminTier("SUPER")
+  updateWalletConfig(@Req() req: any, @Body() dto: WalletConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "wallet", dto as unknown as Record<string, unknown>, req.ip); }
+
+  // ---- CC10: tenant wallet payouts (platform payment) ----
+  // Money-moving admin surface: SUPER or FINANCE tier. Every
+  // action is validated inside WalletService transactions and
+  // audited there with the acting admin's id.
+  @Get("payout-requests") @AdminTier("SUPER", "FINANCE")
+  payoutRequests(@Query("status") status?: string) { return this.walletSvc().adminListPayoutRequests(status); }
+  @Post("payout-requests/:id/approve") @AdminTier("SUPER", "FINANCE")
+  approvePayout(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutDecisionDto) { return this.walletSvc().adminDecidePayout(req.adminUser, id, "approve", dto.note); }
+  @Post("payout-requests/:id/reject") @AdminTier("SUPER", "FINANCE")
+  rejectPayout(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutDecisionDto) { return this.walletSvc().adminDecidePayout(req.adminUser, id, "reject", dto.note); }
+  @Post("payout-requests/:id/mark-paid") @AdminTier("SUPER", "FINANCE")
+  markPayoutPaid(@Req() req: any, @Param("id") id: string, @Body() dto: PayoutMarkPaidDto) { return this.walletSvc().adminMarkPaid(req.adminUser, id, dto.payoutRef); }
+  @Post("wallets/:organizationId/adjust") @AdminTier("SUPER", "FINANCE")
+  adjustWallet(@Req() req: any, @Param("organizationId") organizationId: string, @Body() dto: WalletAdjustDto) { return this.walletSvc().adminAdjustWallet(req.adminUser, organizationId, dto); }
   @Post("platform-config/test-llm") @AdminTier("SUPER")
   testLlm() { return this.admin.testLlm(); }
   @Post("platform-config/test-image") @AdminTier("SUPER")

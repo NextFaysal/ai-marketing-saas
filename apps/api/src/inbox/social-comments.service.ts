@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { decryptJson } from "../integrations/crypto";
+import { MetaMessagingClient, MessagingSecrets } from "./meta-messaging.client";
 import { CommentClassifier } from "./comment-classifier";
 import { CommentHumanizer } from "./comment-humanizer";
 import { 
@@ -81,12 +83,148 @@ export class SocialCommentsService {
     return updated;
   }
 
+  // ----- IN8: Meta Graph layer for comment actions -----
+  // Before IN8 every comment action below was DB-only: hide just
+  // flipped the local status, "replies" were stored text that
+  // never reached Meta, there was no delete path at all, and
+  // isPrivateDmSent was set from the AI plan without any send.
+  // Now each platform action goes through MetaMessagingClient's
+  // Graph comment methods FIRST and the local row changes only
+  // when Graph confirms (2xx + the documented confirmation body).
+  // Graph failures surface verbatim and leave the row untouched.
+
+  /** Integration providers that can carry a Page/IG comment token,
+   * in preference order for the comment's platform. TikTok/YouTube
+   * have no wired Graph comment path — honestly none. */
+  private graphProvidersFor(platform: string): string[] {
+    if (platform === "instagram") return ["instagram", "messenger", "meta"];
+    if (platform === "facebook") return ["messenger", "meta", "instagram"];
+    return [];
+  }
+
+  /** Seam for specs: build the real client (they substitute a
+   * real client over a fake fetch, so the HTTP shape is proven). */
+  protected createGraphClient(secrets: MessagingSecrets): MetaMessagingClient {
+    return new MetaMessagingClient(secrets);
+  }
+
+  private async graphClientFor(organizationId: string, platform: string): Promise<MetaMessagingClient> {
+    const providers = this.graphProvidersFor(platform);
+    if (!providers.length) {
+      throw new BadRequestException(`Meta Graph comment actions are not available for platform "${platform}" — no Graph comment API path is wired for it, so nothing was sent or changed`);
+    }
+    const findFirst = (this.prisma as any).integration?.findFirst;
+    const integration = findFirst
+      ? await findFirst.call((this.prisma as any).integration, {
+          where: { organizationId, provider: { in: providers }, status: "CONNECTED" },
+          orderBy: { createdAt: "desc" },
+          include: { credential: true },
+        }).catch(() => null)
+      : null;
+    if (!integration?.credential) {
+      throw new BadRequestException("No connected Meta (Messenger/Instagram) integration for this organization — the comment action cannot reach Meta Graph, so nothing was sent or changed");
+    }
+    const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
+    if (!secrets?.accessToken) throw new BadRequestException("The connected Meta integration has no access token — the comment action cannot reach Meta Graph, so nothing was sent or changed");
+    return this.createGraphClient(secrets);
+  }
+
+  private graphMeta(comment: any, patch: Record<string, unknown>): Record<string, unknown> {
+    const meta = ((comment?.metadata as any) ?? {}) as Record<string, unknown>;
+    return { ...meta, graph: { ...(((meta as any).graph as any) ?? {}), ...patch } };
+  }
+
+  /**
+   * IN8c helper: send a private reply via Graph and, ONLY on
+   * Graph confirmation, find/create the inbox conversation for
+   * the commenter and attach a context NOTE (post + comment +
+   * Graph id). No ChannelMessage is fabricated — the DM lives on
+   * Meta; the note is our internal context record. Never throws:
+   * the outcome is returned for honest recording by the caller.
+   */
+  private async attemptPrivateDm(
+    organizationId: string,
+    actorId: string,
+    comment: any,
+    messageText: string,
+    client: MetaMessagingClient,
+  ): Promise<{ sent: boolean; messageId?: string; conversationId?: string; error?: string }> {
+    let messageId: string;
+    try {
+      messageId = (await client.privateReplyToComment(comment.externalCommentId, messageText)).messageId;
+    } catch (e) {
+      return { sent: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    // Graph confirmed the DM. Link context in the inbox.
+    try {
+      const p = this.prisma as any;
+      const channel = comment.platform === "instagram" ? "instagram" : "messenger";
+      const externalContactId = comment.authorSocialId || `comment:${comment.externalCommentId}`;
+      let conv = await p.channelConversation?.findFirst?.({ where: { organizationId, channel, externalContactId } }).catch(() => null);
+      if (!conv && p.channelConversation?.create) {
+        conv = await p.channelConversation.create({
+          data: {
+            organizationId, channel, externalContactId,
+            contactName: comment.authorName ?? null, status: "open",
+          },
+        });
+      }
+      if (conv?.id && p.conversationNote?.create) {
+        await p.conversationNote.create({
+          data: {
+            organizationId, conversationId: conv.id, authorUserId: actorId || "system",
+            content: `Comment → DM (IN8): private reply sent from a ${comment.platform} comment on post ${comment.externalPostId}${comment.postTitle ? ` ("${comment.postTitle}")` : ""}. Comment by ${comment.authorName}: "${String(comment.commentText ?? "").slice(0, 300)}" — Graph private reply id ${messageId}.`,
+          },
+        }).catch(() => undefined);
+      }
+      return { sent: true, messageId, conversationId: conv?.id };
+    } catch (e) {
+      // The DM itself WAS confirmed by Graph; only our context
+      // link failed — report both facts, never hide either.
+      return { sent: true, messageId, error: `DM confirmed by Meta (id ${messageId}) but linking its inbox conversation failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  /**
+   * IN8a/IN8d: the ingest auto-hide (hide-words / spam) now goes
+   * through the same Graph layer as a manual hide. The local
+   * HIDDEN status stays immediate (it is the safety action), but
+   * the Graph outcome is recorded verbatim on metadata.graphHide —
+   * ok:false with Meta's (or the no-integration) error means the
+   * comment is hidden in OUR queue only, and the record says so.
+   * Never throws: webhook ingest must not break on this.
+   */
+  private async attemptGraphAutoHide(organizationId: string, comment: any): Promise<any> {
+    try {
+      if ((comment.metadata as any)?.graphHide?.ok) return comment;
+      let outcome: Record<string, unknown>;
+      try {
+        const client = await this.graphClientFor(organizationId, comment.platform);
+        await client.setCommentHidden(comment.externalCommentId, true);
+        outcome = { attempted: true, ok: true, at: new Date().toISOString(), source: "auto_hide" };
+      } catch (e) {
+        outcome = { attempted: true, ok: false, error: e instanceof Error ? e.message : String(e), at: new Date().toISOString(), source: "auto_hide" };
+      }
+      const updated = await (this.prisma as any).socialComment.update({
+        where: { id: comment.id },
+        data: { metadata: { ...((comment.metadata as any) ?? {}), graphHide: outcome } },
+      }).catch(() => null);
+      return updated ?? comment;
+    } catch {
+      return comment;
+    }
+  }
+
   async listComments(organizationId: string, query: ListCommentsQueryDto) {
     const where: any = { organizationId };
     if (query.platform) where.platform = query.platform;
     if (query.status) where.status = query.status;
     if (query.sentiment) where.sentiment = query.sentiment;
     if (query.intent) where.intent = query.intent;
+    // IN8b: the comments queue supports assignment filtering —
+    // a specific assignee, or the unassigned pile.
+    if (query.assignedUserId) where.assignedUserId = query.assignedUserId;
+    if (String((query as any).unassigned ?? "") === "true") where.assignedUserId = null;
     if (query.search) {
       where.OR = [
         { commentText: { contains: query.search, mode: "insensitive" } },
@@ -99,7 +237,7 @@ export class SocialCommentsService {
     const limit = Math.max(1, Math.min(100, Number(query.limit || 25)));
     const skip = (page - 1) * limit;
 
-    const [items, total, pendingCount, spamCount] = await Promise.all([
+    const [items, total, pendingCount, spamCount, hiddenCount, hiddenSpamCount] = await Promise.all([
       (this.prisma as any).socialComment.findMany({
         where,
         orderBy: { createdAt: "desc" },
@@ -109,6 +247,12 @@ export class SocialCommentsService {
       (this.prisma as any).socialComment.count({ where }),
       (this.prisma as any).socialComment.count({ where: { organizationId, status: "PENDING" } }),
       (this.prisma as any).socialComment.count({ where: { organizationId, sentiment: "SPAM" } }),
+      // IN8d: the auto-hide report is counted from real rows only:
+      // hiddenCount = every locally HIDDEN comment; hiddenSpamCount
+      // = the spam-classified subset (the auto-hide population).
+      // Per-comment Graph confirmation lives on metadata.graphHide.
+      (this.prisma as any).socialComment.count({ where: { organizationId, status: "HIDDEN" } }).catch(() => 0),
+      (this.prisma as any).socialComment.count({ where: { organizationId, status: "HIDDEN", sentiment: "SPAM" } }).catch(() => 0),
     ]);
 
     return {
@@ -119,6 +263,8 @@ export class SocialCommentsService {
       stats: {
         pendingCount,
         spamCount,
+        hiddenCount,
+        hiddenSpamCount,
       },
     };
   }
@@ -254,11 +400,14 @@ export class SocialCommentsService {
         // applied at ingest — the plan is retained (metadata +
         // privateDmText) and aiReplyDueAt schedules the sweep
         // that will compose the final (possibly batched) reply.
-        // Delay 0 (or auto-reply off, or a hidden comment) keeps
-        // the pre-CX3 values exactly.
-        replyText: aiReplyEffective && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? aiPlan.publicCommentReply : null,
-        repliedAt: aiReplyEffective && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? new Date() : null,
-        isPrivateDmSent: aiReplyEffective && settings.sendPrivateDm && initialStatus !== "HIDDEN" && !(settings.replyDelaySeconds > 0) ? aiPlan.shouldSendDm : false,
+        // IN8: even with delay 0 the reply is no longer "applied"
+        // here — the row is created unreplied and
+        // attemptInstantGraphReply (below, right after the
+        // upsert) posts it through Graph; replyText/repliedAt/
+        // isPrivateDmSent are set only on Graph confirmation.
+        replyText: null,
+        repliedAt: null,
+        isPrivateDmSent: false,
         privateDmText: aiPlan.privateDmText,
         aiReplyDueAt: aiReplyEffective && initialStatus !== "HIDDEN" && settings.replyDelaySeconds > 0 ? new Date(Date.now() + settings.replyDelaySeconds * 1000) : null,
         confidenceScore: classification.confidenceScore,
@@ -283,6 +432,20 @@ export class SocialCommentsService {
       }
     }
 
+    // IN8: a comment hidden at ingest (hide-word / spam, with
+    // autoHideSpam on) is ALSO hidden through the Graph layer;
+    // the outcome is recorded on metadata.graphHide either way.
+    let finalComment = comment;
+    if (initialStatus === "HIDDEN") {
+      finalComment = await this.attemptGraphAutoHide(organizationId, comment);
+    } else if (aiReplyEffective && !(settings.replyDelaySeconds > 0) && !finalComment.replyText && finalComment.status === "PENDING") {
+      // IN8: delay-0 instant reply — posted through Graph now
+      // (attemptInstantGraphReply records/re-due on failure).
+      // The guards keep a webhook redelivery of an already
+      // replied comment from ever sending twice.
+      finalComment = await this.attemptInstantGraphReply(organizationId, settings, finalComment, aiPlan);
+    }
+
     // Auto-create Lead in CRM if intent is PRICE_QUERY or BARGAIN (High-intent buyer prospect)
     if (classification.intent === "PRICE_QUERY" || classification.intent === "PRODUCT_INFO" || classification.intent === "BARGAIN") {
       try {
@@ -303,7 +466,63 @@ export class SocialCommentsService {
       }
     }
 
-    return comment;
+    return finalComment;
+  }
+
+  /**
+   * IN8: the delay-0 ingest reply, posted through Graph at
+   * ingest. Uses the plan ingest already composed. On Graph
+   * confirmation the row gets exactly the values the pre-IN8
+   * instant path stored (replyText, repliedAt, DM flag) plus the
+   * Graph ids. On failure the row stays PENDING/unreplied, the
+   * verbatim error is recorded, and the comment is re-due in 60s
+   * so the CX3 sweep retries it (attempts capped there at 3).
+   * Never throws — webhook ingest must not break on a send.
+   */
+  private async attemptInstantGraphReply(organizationId: string, settings: any, comment: any, aiPlan: any): Promise<any> {
+    try {
+      let client: MetaMessagingClient;
+      let graphReplyId: string;
+      try {
+        client = await this.graphClientFor(organizationId, comment.platform);
+        graphReplyId = (await client.replyToComment(comment.externalCommentId, aiPlan.publicCommentReply)).commentId;
+      } catch (e) {
+        const updated = await (this.prisma as any).socialComment.update({
+          where: { id: comment.id },
+          data: {
+            aiReplyDueAt: new Date(Date.now() + 60_000),
+            metadata: this.graphMeta(comment, {
+              replyError: e instanceof Error ? e.message : String(e),
+              replyAttempts: 1,
+              replyErrorAt: new Date().toISOString(),
+            }),
+          },
+        }).catch(() => null);
+        return updated ?? comment;
+      }
+      let dm: { sent: boolean; messageId?: string; conversationId?: string; error?: string } = { sent: false };
+      if (settings.sendPrivateDm && aiPlan.shouldSendDm && aiPlan.privateDmText) {
+        dm = await this.attemptPrivateDm(organizationId, "system", comment, aiPlan.privateDmText, client);
+      }
+      const updated = await (this.prisma as any).socialComment.update({
+        where: { id: comment.id },
+        data: {
+          replyText: aiPlan.publicCommentReply,
+          repliedAt: new Date(),
+          isPrivateDmSent: dm.sent,
+          ...(dm.conversationId ? { dmConversationId: dm.conversationId } : {}),
+          metadata: this.graphMeta(comment, {
+            replyId: graphReplyId,
+            repliedAt: new Date().toISOString(),
+            ...(dm.messageId ? { privateReplyId: dm.messageId } : {}),
+            ...(dm.error ? { privateReplyError: dm.error } : {}),
+          }),
+        },
+      }).catch(() => null);
+      return updated ?? comment;
+    } catch {
+      return comment;
+    }
   }
 
   /**
@@ -316,7 +535,7 @@ export class SocialCommentsService {
    * package item gates with the channel AI schedule: keep any
    * pre-reply check immediately before calling this method.
    */
-  private async applyDueCommentReply(organizationId: string, settings: any, fresh: any): Promise<{ batched: number }> {
+  private async applyDueCommentReply(organizationId: string, settings: any, fresh: any): Promise<{ batched: number; graphFailed?: boolean }> {
     const p = this.prisma as any;
     const earlier = await p.socialComment.findMany({
       where: {
@@ -329,6 +548,38 @@ export class SocialCommentsService {
       },
       orderBy: { createdAt: "asc" },
     }).catch(() => []);
+    const batchText = [...(earlier as any[]), fresh].map((c: any) => c.commentText).join("\n").slice(0, 1200);
+    const plan = await this.buildReplyPlan(organizationId, settings, {
+      authorName: fresh.authorName,
+      commentText: batchText,
+      postTitle: fresh.postTitle ?? undefined,
+    });
+    // IN8: the reply is POSTED through the Graph layer first.
+    // Only a Graph-confirmed reply may mark anything AUTO_REPLIED
+    // (before IN8 this stored reply text that never left our DB).
+    // On failure nothing is claimed or marked: the error is
+    // recorded verbatim and the comment is re-due in 60s, up to
+    // 3 attempts, after which it stays PENDING for a human.
+    let client: MetaMessagingClient;
+    let graphReplyId: string;
+    try {
+      client = await this.graphClientFor(organizationId, fresh.platform);
+      graphReplyId = (await client.replyToComment(fresh.externalCommentId, plan.aiPlan.publicCommentReply)).commentId;
+    } catch (e) {
+      const attempts = Number(((fresh.metadata as any)?.graph?.replyAttempts ?? 0)) + 1;
+      await p.socialComment.update({
+        where: { id: fresh.id },
+        data: {
+          aiReplyDueAt: attempts < 3 ? new Date(Date.now() + 60_000) : null,
+          metadata: this.graphMeta(fresh, {
+            replyError: e instanceof Error ? e.message : String(e),
+            replyAttempts: attempts,
+            replyErrorAt: new Date().toISOString(),
+          }),
+        },
+      }).catch(() => undefined);
+      return { batched: 0, graphFailed: true };
+    }
     const covered: any[] = [];
     for (const e of earlier as any[]) {
       const c = await p.socialComment.updateMany({
@@ -337,20 +588,27 @@ export class SocialCommentsService {
       }).catch(() => ({ count: 0 }));
       if (c?.count) covered.push(e);
     }
-    const batchText = [...covered, fresh].map((c: any) => c.commentText).join("\n").slice(0, 1200);
-    const plan = await this.buildReplyPlan(organizationId, settings, {
-      authorName: fresh.authorName,
-      commentText: batchText,
-      postTitle: fresh.postTitle ?? undefined,
-    });
+    // IN8c: the plan's private DM is a real Graph private reply
+    // now — isPrivateDmSent is set only when Meta confirms it.
+    let dm: { sent: boolean; messageId?: string; conversationId?: string; error?: string } = { sent: false };
+    if (settings.sendPrivateDm && plan.aiPlan.shouldSendDm && plan.aiPlan.privateDmText) {
+      dm = await this.attemptPrivateDm(organizationId, "system", fresh, plan.aiPlan.privateDmText, client);
+    }
     await p.socialComment.update({
       where: { id: fresh.id },
       data: {
         status: "AUTO_REPLIED",
         replyText: plan.aiPlan.publicCommentReply,
         repliedAt: new Date(),
-        isPrivateDmSent: settings.sendPrivateDm ? plan.aiPlan.shouldSendDm : false,
+        isPrivateDmSent: dm.sent,
         privateDmText: plan.aiPlan.privateDmText,
+        ...(dm.conversationId ? { dmConversationId: dm.conversationId } : {}),
+        metadata: this.graphMeta(fresh, {
+          replyId: graphReplyId,
+          repliedAt: new Date().toISOString(),
+          ...(dm.messageId ? { privateReplyId: dm.messageId } : {}),
+          ...(dm.error ? { privateReplyError: dm.error } : {}),
+        }),
       },
     });
     for (const e of covered) {
@@ -403,6 +661,10 @@ export class SocialCommentsService {
         // the team to answer manually.
         if (await this.aiScheduleBlocksFor(organizationId, fresh.platform)) { skipped++; continue; }
         const applied = await this.applyDueCommentReply(organizationId, settings, fresh);
+        // IN8: a Graph failure is NOT a fired reply — the comment
+        // was re-due (or left PENDING after 3 attempts) inside
+        // applyDueCommentReply and counts as skipped here.
+        if (applied.graphFailed) { skipped++; continue; }
         fired++;
         batched += applied.batched;
       } catch {
@@ -475,11 +737,36 @@ export class SocialCommentsService {
     };
   }
 
+  /**
+   * IN8: manual reply — the public reply is posted through Graph
+   * FIRST (POST /{comment-id}/comments). The row is marked
+   * MANUALLY_REPLIED only when Meta returns the new comment id;
+   * a Graph failure throws verbatim and changes nothing. An
+   * optional private DM rides the same request: it is attempted
+   * through the private-reply endpoint after the public reply
+   * lands, and a DM failure is reported on the return value
+   * (privateDmError) with isPrivateDmSent left false — the public
+   * reply's success is never used to dress up a failed DM.
+   */
   async sendReply(organizationId: string, actorId: string, commentId: string, dto: ReplyCommentDto) {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
     if (!comment) throw new NotFoundException("Comment not found");
+
+    const client = await this.graphClientFor(organizationId, comment.platform);
+    let graphReplyId: string;
+    try {
+      graphReplyId = (await client.replyToComment(comment.externalCommentId, dto.replyText)).commentId;
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : String(e));
+    }
+
+    let dm: { sent: boolean; messageId?: string; conversationId?: string; error?: string } = { sent: false };
+    const dmText = dto.privateDmText ?? comment.privateDmText;
+    if (dto.sendPrivateDm && dmText) {
+      dm = await this.attemptPrivateDm(organizationId, actorId, comment, dmText, client);
+    }
 
     const updated = await (this.prisma as any).socialComment.update({
       where: { id: commentId },
@@ -487,8 +774,15 @@ export class SocialCommentsService {
         status: "MANUALLY_REPLIED",
         replyText: dto.replyText,
         repliedAt: new Date(),
-        isPrivateDmSent: dto.sendPrivateDm ?? comment.isPrivateDmSent,
-        privateDmText: dto.privateDmText ?? comment.privateDmText,
+        isPrivateDmSent: dm.sent ? true : comment.isPrivateDmSent,
+        privateDmText: dmText ?? comment.privateDmText,
+        ...(dm.conversationId ? { dmConversationId: dm.conversationId } : {}),
+        metadata: this.graphMeta(comment, {
+          replyId: graphReplyId,
+          repliedAt: new Date().toISOString(),
+          ...(dm.messageId ? { privateReplyId: dm.messageId } : {}),
+          ...(dm.error ? { privateReplyError: dm.error } : {}),
+        }),
       },
     });
 
@@ -500,6 +794,101 @@ export class SocialCommentsService {
       entityId: comment.id,
     });
 
+    return { ...updated, graphReplyId, ...(dm.error ? { privateDmError: dm.error } : {}) };
+  }
+
+  /**
+   * IN8c: standalone "DM করুন" — one Graph private reply to this
+   * comment (POST /{comment-id}/private_replies). On confirmation
+   * the comment is flagged DM-sent and linked to the inbox
+   * conversation attemptPrivateDm created/found (with its context
+   * note). On ANY Graph failure (incl. Meta's window/already-used
+   * errors) this throws verbatim, no conversation is created and
+   * no flag is set.
+   */
+  async sendPrivateReply(organizationId: string, actorId: string, commentId: string, message: string) {
+    const comment = await (this.prisma as any).socialComment.findFirst({
+      where: { id: commentId, organizationId },
+    });
+    if (!comment) throw new NotFoundException("Comment not found");
+    if (comment.isPrivateDmSent) {
+      throw new BadRequestException("A private reply was already sent for this comment — Meta allows only one private reply per comment");
+    }
+    const client = await this.graphClientFor(organizationId, comment.platform);
+    const dm = await this.attemptPrivateDm(organizationId, actorId, comment, message, client);
+    if (!dm.sent) throw new BadRequestException(dm.error ?? "Private reply failed");
+    const updated = await (this.prisma as any).socialComment.update({
+      where: { id: commentId },
+      data: {
+        isPrivateDmSent: true,
+        privateDmText: message,
+        ...(dm.conversationId ? { dmConversationId: dm.conversationId } : {}),
+        metadata: this.graphMeta(comment, {
+          privateReplyId: dm.messageId,
+          privateReplyAt: new Date().toISOString(),
+          ...(dm.error ? { dmLinkError: dm.error } : {}),
+        }),
+      },
+    });
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "social_comments.private_replied",
+      entityType: "SocialComment",
+      entityId: comment.id,
+    });
+    return { ...updated, graphPrivateReplyId: dm.messageId, dmConversationId: dm.conversationId ?? updated.dmConversationId ?? null, ...(dm.error ? { dmLinkWarning: dm.error } : {}) };
+  }
+
+  /** IN8: delete on the platform — DELETE /{comment-id}; the
+   * local DELETED status is set only on Graph's {success:true}. */
+  async deleteComment(organizationId: string, actorId: string, commentId: string) {
+    const comment = await (this.prisma as any).socialComment.findFirst({
+      where: { id: commentId, organizationId },
+    });
+    if (!comment) throw new NotFoundException("Comment not found");
+    const client = await this.graphClientFor(organizationId, comment.platform);
+    try {
+      await client.deleteComment(comment.externalCommentId);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : String(e));
+    }
+    const updated = await (this.prisma as any).socialComment.update({
+      where: { id: commentId },
+      data: {
+        status: "DELETED",
+        metadata: this.graphMeta(comment, { deletedAt: new Date().toISOString(), deletedBy: actorId }),
+      },
+    });
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: "social_comments.deleted",
+      entityType: "SocialComment",
+      entityId: comment.id,
+    });
+    return updated;
+  }
+
+  /** IN8b: assign/unassign a queued comment (plain user id; the
+   * comments queue is the assignment surface — SLA/snooze stay
+   * conversation-only, see the schema note). */
+  async assignComment(organizationId: string, actorId: string, commentId: string, assignedUserId: string | null) {
+    const comment = await (this.prisma as any).socialComment.findFirst({
+      where: { id: commentId, organizationId },
+    });
+    if (!comment) throw new NotFoundException("Comment not found");
+    const updated = await (this.prisma as any).socialComment.update({
+      where: { id: commentId },
+      data: { assignedUserId },
+    });
+    await this.audit.log({
+      organizationId,
+      userId: actorId,
+      action: assignedUserId ? "social_comments.assigned" : "social_comments.unassigned",
+      entityType: "SocialComment",
+      entityId: comment.id,
+    });
     return updated;
   }
 
@@ -509,6 +898,36 @@ export class SocialCommentsService {
     });
     if (!comment) throw new NotFoundException("Comment not found");
 
+    // IN8: HIDDEN is a platform action now — POST /{comment-id}
+    // {is_hidden:true} must confirm before the local status moves;
+    // un-hiding (back to PENDING from HIDDEN) confirms the same
+    // way with is_hidden:false. ESCALATED is our own triage state
+    // (Meta has no such concept) and stays a local transition.
+    if (status === "HIDDEN" && comment.status !== "HIDDEN") {
+      const client = await this.graphClientFor(organizationId, comment.platform);
+      try {
+        await client.setCommentHidden(comment.externalCommentId, true);
+      } catch (e) {
+        throw new BadRequestException(e instanceof Error ? e.message : String(e));
+      }
+      return (this.prisma as any).socialComment.update({
+        where: { id: commentId },
+        data: { status, metadata: this.graphMeta(comment, { hiddenAt: new Date().toISOString(), hiddenVia: "manual" }) },
+      });
+    }
+    if (status === "PENDING" && comment.status === "HIDDEN") {
+      const client = await this.graphClientFor(organizationId, comment.platform);
+      try {
+        await client.setCommentHidden(comment.externalCommentId, false);
+      } catch (e) {
+        throw new BadRequestException(e instanceof Error ? e.message : String(e));
+      }
+      return (this.prisma as any).socialComment.update({
+        where: { id: commentId },
+        data: { status, metadata: this.graphMeta(comment, { unhiddenAt: new Date().toISOString() }) },
+      });
+    }
+
     return (this.prisma as any).socialComment.update({
       where: { id: commentId },
       data: { status },
@@ -517,6 +936,10 @@ export class SocialCommentsService {
 
   async executeBulkAction(organizationId: string, actorId: string, commentIds: string[], action: "AI_REPLY_ALL" | "HIDE_ALL" | "MARK_RESOLVED") {
     let affected = 0;
+    // IN8: bulk hide/reply go through the same Graph layer as the
+    // single actions; per-item failures are collected verbatim
+    // and those rows are left untouched (never counted affected).
+    const failed: { id: string; error: string }[] = [];
     const settings = await this.getSettings(organizationId);
 
     for (const id of commentIds) {
@@ -526,11 +949,17 @@ export class SocialCommentsService {
       if (!c) continue;
 
       if (action === "HIDE_ALL") {
-        await (this.prisma as any).socialComment.update({
-          where: { id },
-          data: { status: "HIDDEN" },
-        });
-        affected++;
+        try {
+          const client = await this.graphClientFor(organizationId, c.platform);
+          await client.setCommentHidden(c.externalCommentId, true);
+          await (this.prisma as any).socialComment.update({
+            where: { id },
+            data: { status: "HIDDEN", metadata: this.graphMeta(c, { hiddenAt: new Date().toISOString(), hiddenVia: "bulk" }) },
+          });
+          affected++;
+        } catch (e) {
+          failed.push({ id, error: e instanceof Error ? e.message : String(e) });
+        }
       } else if (action === "MARK_RESOLVED") {
         await (this.prisma as any).socialComment.update({
           where: { id },
@@ -538,18 +967,35 @@ export class SocialCommentsService {
         });
         affected++;
       } else if (action === "AI_REPLY_ALL") {
-        const suggestion = await this.generateAiSuggestion(organizationId, id);
-        await (this.prisma as any).socialComment.update({
-          where: { id },
-          data: {
-            status: "AUTO_REPLIED",
-            replyText: suggestion.aiPlan.publicCommentReply,
-            repliedAt: new Date(),
-            isPrivateDmSent: settings.sendPrivateDm && suggestion.aiPlan.shouldSendDm,
-            privateDmText: suggestion.aiPlan.privateDmText,
-          },
-        });
-        affected++;
+        try {
+          const suggestion = await this.generateAiSuggestion(organizationId, id);
+          const client = await this.graphClientFor(organizationId, c.platform);
+          const graphReplyId = (await client.replyToComment(c.externalCommentId, suggestion.aiPlan.publicCommentReply)).commentId;
+          let dm: { sent: boolean; messageId?: string; conversationId?: string; error?: string } = { sent: false };
+          if (settings.sendPrivateDm && suggestion.aiPlan.shouldSendDm && suggestion.aiPlan.privateDmText) {
+            dm = await this.attemptPrivateDm(organizationId, actorId, c, suggestion.aiPlan.privateDmText, client);
+          }
+          await (this.prisma as any).socialComment.update({
+            where: { id },
+            data: {
+              status: "AUTO_REPLIED",
+              replyText: suggestion.aiPlan.publicCommentReply,
+              repliedAt: new Date(),
+              isPrivateDmSent: dm.sent,
+              privateDmText: suggestion.aiPlan.privateDmText,
+              ...(dm.conversationId ? { dmConversationId: dm.conversationId } : {}),
+              metadata: this.graphMeta(c, {
+                replyId: graphReplyId,
+                repliedAt: new Date().toISOString(),
+                ...(dm.messageId ? { privateReplyId: dm.messageId } : {}),
+                ...(dm.error ? { privateReplyError: dm.error } : {}),
+              }),
+            },
+          });
+          affected++;
+        } catch (e) {
+          failed.push({ id, error: e instanceof Error ? e.message : String(e) });
+        }
       }
     }
 
@@ -561,7 +1007,7 @@ export class SocialCommentsService {
       entityId: organizationId,
     });
 
-    return { success: true, affected };
+    return { success: true, affected, failed };
   }
 
   async seedDemoFeedIfEmpty(organizationId: string) {

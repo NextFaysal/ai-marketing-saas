@@ -1,6 +1,16 @@
 import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { CreateManualOrderDto, UpdateOrderDto, MergeOrdersDto, AssignAgentDto, BulkAssignAgentDto, StaffScoreboardQueryDto } from "./orders.dto";
+import {
+  AdvanceVerificationDto,
+  CreateManualOrderDto,
+  CreateStoreDraftDto,
+  StoreNoteDto,
+  UpdateOrderDto,
+  MergeOrdersDto,
+  AssignAgentDto,
+  BulkAssignAgentDto,
+  StaffScoreboardQueryDto,
+} from "./orders.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -66,10 +76,12 @@ export class OrdersController {
   }
 
   @Get()
-  list(@Param("organizationId") orgId: string, @Query() q: { status?: string; cod?: string; page?: string; pageSize?: string }) {
+  list(@Param("organizationId") orgId: string, @Query() q: { status?: string; cod?: string; page?: string; pageSize?: string; practice?: string }) {
     return this.orders.list(orgId, {
       status: q.status, isCod: q.cod === undefined ? undefined : q.cod === "true",
       page: q.page ? Number(q.page) : undefined, pageSize: q.pageSize ? Number(q.pageSize) : undefined,
+      // CX12a: ?practice=1 is the explicit "প্র্যাক্টিস অর্ডার দেখান" filter.
+      includePractice: q.practice === "1" || q.practice === "true",
     });
   }
 
@@ -89,6 +101,24 @@ export class OrdersController {
 
   @Get(":orderId")
   getOne(@Param("organizationId") orgId: string, @Param("orderId") id: string) { return this.orders.getOne(orgId, id); }
+
+  /** EC19: record a staff-verified advance payment on an order. */
+  @Post(":orderId/advance-verification") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  recordAdvanceVerification(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: AdvanceVerificationDto) {
+    return this.orders.recordAdvanceVerification(orgId, user.userId, id, dto);
+  }
+
+  /** EC5: create a draft order in the connected store. */
+  @Post(":orderId/create-store-draft") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  createStoreDraft(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: CreateStoreDraftDto) {
+    return this.orders.createStoreDraft(orgId, user.userId, id, dto?.storeId);
+  }
+
+  /** EC5: push a customer-visible note to the store order. */
+  @Post(":orderId/store-note") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  pushStoreNote(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: StoreNoteDto) {
+    return this.orders.pushStoreNote(orgId, user.userId, id, dto.note);
+  }
 
   /** Sales & Data S2: order actions — status change, refund
    * recording, internal note (each independently optional). */

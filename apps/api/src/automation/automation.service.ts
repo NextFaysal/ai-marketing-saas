@@ -9,6 +9,7 @@ import { ReportsService } from "../ai/reports.service";
 import { CompetitorsService } from "../competitors/competitors.service";
 import { CampaignsService } from "../campaigns/campaigns.service";
 import { EmailProvider } from "../messaging/email.provider";
+import { MessagingService } from "../messaging/messaging.service";
 import { AudiencesService } from "../audiences/audiences.service";
 import { InboxService } from "../inbox/inbox.service";
 import { EmailChannelService } from "../inbox/channels/email.service";
@@ -18,21 +19,37 @@ import { PaymentsService } from "../payments/payments.service";
 import { SocialPublishService } from "../social/social-publish.service";
 import { SocialCommentsService } from "../inbox/social-comments.service";
 import { CourierService } from "../courier/courier.service";
+import { ReviewsService } from "../orders/reviews.service";
+import { OrderChaseService } from "../orders/order-chase.service";
 import { ReportExportService } from "../reports/report-export.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { refreshPlatformConfig } from "../common/platform-config";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { platformSetting, effectiveLimits } from "../common/platform-settings";
+import { SyncOutboxService } from "../commerce/sync-outbox.service";
+import { CatalogPushService } from "../commerce/catalog-push.service";
+import { SubscriptionsService } from "../subscriptions/subscriptions.service";
+import { RetentionService } from "../storefront/retention.service";
+import { InstallmentsService } from "../installments/installments.service";
 
 export const JOB_TYPES = [
-  "woo_products", "woo_orders", "shopify_products", "shopify_orders",
+  "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
   "meta_insights", "google_insights", "tiktok_insights",
   "daily_report", "daily_briefing", "competitor_ads", "competitor_scan", "competitor_multi_sync", "weekly_ads_report", "monthly_report", "saved_report_delivery", "meta_status_sync", "audience_refresh", "dayparting",
   "subscription_sweep", "dunning_reminders", "billing_reminders", "audit_retention",
   "inbox_assignment_sweep", "email_sync", "inbox_retention",
-  "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due",
+  "lead_followup_sweep", "auto_renew", "ad_spend_watchdog", "social_publish_due", "broadcast_send_sweep",
   "inbox_autoreply_sweep", "comment_autoreply_sweep", "handover_timer_sweep",
-  "courier_auto_sync", "inbox_chase_sweep",
+  "courier_auto_sync", "review_request_sweep", "order_chase_sweep", "inbox_chase_sweep", "sync_outbox", "sale_schedule", "inbox_sla_sweep",
+  // EC24c: commerce (customer) subscription renewals — distinct
+  // from the SaaS billing "subscription_sweep" above.
+  "commerce_subscription_sweep",
+  // EC28: wishlist price-drop alerts (sweep detection — price
+  // writes have no single choke point).
+  "wishlist_price_alert_sweep",
+  // EC31: installment due reminders (due_soon / overdue SMS,
+  // exactly once per item per state).
+  "installment_due_sweep",
 ] as const;
 
 
@@ -57,6 +74,12 @@ export interface JobTemplate {
 export const JOB_TEMPLATES: JobTemplate[] = [
   { key: "woo_orders_sync", name: "WooCommerce Orders Sync (টেমপ্লেট)", type: "woo_orders", targetKind: "integration", intervalMinutes: 30,
     descriptionBn: "বেছে নেওয়া WooCommerce স্টোরের অর্ডারগুলো প্রতি ৩০ মিনিটে Sync হবে — নতুন অর্ডার ও স্ট্যাটাসের পরিবর্তন এখানে চলে আসবে।" },
+  { key: "woo_customers_sync", name: "WooCommerce Customers Sync (টেমপ্লেট)", type: "woo_customers", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
+  { key: "woo_reviews_sync", name: "WooCommerce Reviews Sync (টেমপ্লেট)", type: "woo_reviews", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের পণ্যের রিভিউগুলো Sync হবে — যেসব পণ্য এখানে ম্যাপ করা আছে শুধু সেগুলোর রিভিউ আসবে; ম্যাপ না থাকা পণ্যের রিভিউ বাদ যাবে। Shopify স্টোরে রিভিউর কোনো উৎস (মেটাফিল্ড) না থাকলে ফলাফলে unsupported দেখাবে।" },
+  { key: "shopify_customers_sync", name: "Shopify Customers Sync (টেমপ্লেট)", type: "shopify_customers", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া Shopify স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
   { key: "daily_briefing", name: "Daily AI Briefing (টেমপ্লেট)", type: "daily_briefing", targetKind: "org", intervalMinutes: 1440,
     descriptionBn: "প্রতিদিন একবার AI ব্রিফিং তৈরি হবে — গত দিনের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ, সঙ্গে গুরুত্বপূর্ণ অস্বাভাবিক পরিবর্তনের (Anomaly) সতর্কতা।" },
   { key: "daily_report", name: "Daily AI Report (টেমপ্লেট)", type: "daily_report", targetKind: "org", intervalMinutes: 1440,
@@ -91,8 +114,26 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ১ মিনিটে: টাইমড অ্যাসাইনমেন্টের সময় শেষ হয়ে গেলে যাচাই হবে — দায়িত্বপ্রাপ্ত এজেন্ট এর মধ্যে উত্তর দিয়ে থাকলে অ্যাসাইনমেন্ট স্বাভাবিক হয়ে থাকবে, উত্তর না দিয়ে থাকলে কথোপকথনটি AI-এর কাছে ফেরত যাবে (Autopilot আবার চালু হবে)।" },
   { key: "courier_auto_sync", name: "Courier Auto-Sync (টেমপ্লেট)", type: "courier_auto_sync", targetKind: "org", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: শেষ হয়নি এমন সব শিপমেন্টের স্ট্যাটাস কুরিয়ারের কাছ থেকে একে একে যাচাই হবে (সর্বশেষ ২০০টি); স্ট্যাটাস বদলালে গ্রাহক ট্র্যাকিং কার্ড পাবেন — চ্যাটে, না থাকলে SMS, না হলে ইমেইলে। একটি শিপমেন্ট ব্যর্থ হলে বাকিগুলো থামবে না; ফলাফলে ব্যর্থগুলো গণনা থাকবে।" },
+  { key: "review_request_sweep", name: "Review Request Sweep (টেমপ্লেট)", type: "review_request_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: ডেলিভারি হওয়া অর্ডারের রিভিউ জিজ্ঞাসা পাঠানো হবে — Inbox সেটিংসে Review Request চালু থাকলে এবং সেটিংসের বিলম্ব (ঘণ্টা) পার হলে। জিজ্ঞাসা যায় চ্যাটে, না থাকলে SMS, না হলে ইমেইলে (রিভিউ লিংকসহ)। যেসব অর্ডারে কোনো চ্যানেলই নেই সেগুলো pending অবস্থায় থেকে যাবে — পাঠানো হয়েছে বলে কখনো দেখানো হবে না।" },
+  { key: "broadcast_send_sweep", name: "Broadcast Send Sweep (টেমপ্লেট)", type: "broadcast_send_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: সময় হয়ে যাওয়া শিডিউল করা Broadcast পাঠানো হবে এবং মাঝপথে আটকে যাওয়া (বাধাপড়া) Broadcast আবার চালু হবে — প্রতি রানে Broadcast প্রতি সর্বোচ্চ ২০০ জন প্রাপক। এই Job চালু না থাকলে শিডিউল করা Broadcast পাঠানো হবে না।" },
+  { key: "order_chase_sweep", name: "Order Chase Sweep (টেমপ্লেট)", type: "order_chase_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া গ্রাহকদের আলতো করে মনে করিয়ে দেওয়া হবে — শুধুমাত্র Inbox সেটিংসে 'To Chase' চালু থাকলে (ডিফল্ট বন্ধ)। প্রথম অনুস্মারক সেটিংসের প্রথম বিলম্বের পর, তারপর সেটিংসের ব্যবধানে, সর্বোচ্চ সেটিংসের বার পর্যন্ত; Quiet Hours সম্মান করা হয়। গ্রাহক উত্তর দিলে, অর্ডার সম্পূর্ণ হলে, মানুষ দায়িত্ব নিলে বা গ্রাহক থামতে বললে অনুসরণ সঙ্গে সঙ্গে বন্ধ হয়।" },
   { key: "inbox_chase_sweep", name: "Incomplete Order Chase (টেমপ্লেট)", type: "inbox_chase_sweep", targetKind: "org", intervalMinutes: 15,
     descriptionBn: "প্রতি ১৫ মিনিটে: চ্যাটে অসম্পূর্ণ অর্ডার রেখে যাওয়া গ্রাহকদের ভদ্র ফলো-আপ পাঠাবে এবং আটকে থাকা বট সেশনগুলো সময়মতো পরিচালনা করবে।" },
+  { key: "sync_outbox_process", name: "Store Sync Outbox (টেমপ্লেট)", type: "sync_outbox", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে স্টোরে পাঠানোর অপেক্ষমাণ পরিবর্তনগুলো (Sync Outbox) প্রসেস হবে; যে কাজ সংশ্লিষ্ট প্ল্যাটফর্মে এখনো সমর্থিত নয় তা failed হিসেবে verbatim কারণসহ থেকে যাবে, কখনো সফল দেখানো হবে না" },
+  { key: "commerce_subscription_sweep", name: "Commerce Subscription Renewal (টেমপ্লেট)", type: "commerce_subscription_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সময় হয়ে যাওয়া গ্রাহক সাবস্ক্রিপশনগুলোর জন্য COD নবায়ন অর্ডার তৈরি হবে (ডেলিভারি চার্জ ছাড়া)। পরপর ৫ বার ব্যর্থ হলে সাবস্ক্রিপশনটি স্বয়ংক্রিয়ভাবে বিরতি পাবে।" },
+  { key: "wishlist_price_alert_sweep", name: "Wishlist Price-Drop Alerts (টেমপ্লেট)", type: "wishlist_price_alert_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: উইশলিস্টে থাকা পণ্যের দাম যোগ করার সময়ের দামের (বা সর্বশেষ জানানো দামের) চেয়ে কমে গেলে গ্রাহককে SMS-এ জানানো হবে — একই দামে একবারই, আরও কমলে আবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
+  { key: "installment_due_sweep", name: "Installment Due Reminders (টেমপ্লেট)", type: "installment_due_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সক্রিয় কিস্তি প্ল্যানের মেয়াদ আসন্ন (আজ থেকে ২ দিনের মধ্যে) বা পার হয়ে যাওয়া অপaid কিস্তির জন্য গ্রাহককে SMS-এ একবার করে মনে করিয়ে দেওয়া হবে — প্রতিটি কিস্তির প্রতিটি অবস্থায় ঠিক একবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
+  { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।" },
+  { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: প্রথম উত্তরের অপেক্ষায় থাকা কথোপকথনের SLA যাচাই হবে (সীমা = Inbox সেটিংসের স্তরভিত্তিক নিয়ম: VIP → Channel অনুযায়ী → সাধারণ)। সীমার ৭৫% পেরোলে দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পাবেন; Breach-এর পর সেটিংসের Escalation বিলম্ব পেরোলে Team Lead জরুরি সতর্কতা পাবেন (সেটিংসে বন্ধ করা যায়); Auto-Reassign সেটিংসে চালু থাকলেই কেবল কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে। প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় এবং Audit-এ লেখা থাকে।" },
 ];
 
 export const RULE_METRICS = [
@@ -138,6 +179,37 @@ export class AutomationService implements OnModuleInit {
     // (already here) + MessagingModule; nothing imports
     // AutomationModule back, so this adds no cycle.
     @Optional() private readonly courier?: CourierService,
+    // CX12b: review request sweep — OrdersModule is imported by
+    // AutomationModule for this; ReviewsService takes the inbox
+    // as a structural sender (no service-level cycle).
+    @Optional() private readonly reviews?: ReviewsService,
+    // CX7: order chase sweep — OrdersModule already imported
+    // here (ReviewsService); the service takes the inbox as a
+    // structural sender, same as ReviewsService (no cycle).
+    @Optional() private readonly orderChase?: OrderChaseService,
+    @Optional() private readonly outbox?: SyncOutboxService,
+    // EC3/EC4: scheduled-sale boundary sweep — CommerceModule is
+    // already imported by AutomationModule (SyncOutboxService),
+    // and CatalogPushService is exported from it.
+    @Optional() private readonly catalogPush?: CatalogPushService,
+    // MS1: broadcast send sweep — MessagingModule is already
+    // imported by AutomationModule (EmailProvider), so this adds
+    // no module cycle.
+    @Optional() private readonly messaging?: MessagingService,
+    // EC24c: commerce subscription renewals — SubscriptionsModule
+    // imports IntegrationsModule + AuditModule only, and nothing
+    // in it imports AutomationModule, so this adds no cycle
+    // (same pattern as catalogPush via CommerceModule).
+    @Optional() private readonly commerceSubscriptions?: SubscriptionsService,
+    // EC28: wishlist price-drop sweep — StorefrontModule is
+    // imported by AutomationModule for this; its chain
+    // (Integrations/Commerce/Messaging) never imports
+    // AutomationModule back, so this adds no cycle.
+    @Optional() private readonly retention?: RetentionService,
+    // EC31: installment due reminders — InstallmentsModule
+    // imports AuditModule + StorefrontModule only, and nothing
+    // in it imports AutomationModule, so this adds no cycle.
+    @Optional() private readonly installments?: InstallmentsService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -548,6 +620,9 @@ export class AutomationService implements OnModuleInit {
       case "woo_orders": return this.integrations.syncOrders(orgId, actor, job.targetId);
       case "shopify_products": return this.shopify.syncProducts(orgId, actor, job.targetId);
       case "shopify_orders": return this.shopify.syncOrders(orgId, actor, job.targetId);
+      case "woo_customers": return this.integrations.syncCustomers(orgId, actor, job.targetId);
+      case "woo_reviews": return this.integrations.syncReviews(orgId, actor, job.targetId);
+      case "shopify_customers": return this.shopify.syncCustomers(orgId, actor, job.targetId);
       // AD5: scheduled insights syncs go through the job entry
       // point so a sync-disabled account is SKIPPED (the skip
       // marker becomes the run result) instead of failing the job.
@@ -601,13 +676,29 @@ export class AutomationService implements OnModuleInit {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
         return this.inbox.runHandoverSweeps(orgId);
       }
+      case "inbox_sla_sweep": {
+        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        return this.inbox.runSlaSweeps(orgId);
+      }
       case "courier_auto_sync": {
         if (!this.courier) throw new BadRequestException("Courier service is not available in this deployment");
         return this.courier.syncAll(orgId);
       }
+      case "review_request_sweep": {
+        if (!this.reviews) throw new BadRequestException("Reviews service is not available in this deployment");
+        return this.reviews.runReviewSweep(orgId, this.inbox);
+      }
+      case "order_chase_sweep": {
+        if (!this.orderChase) throw new BadRequestException("Order chase service is not available in this deployment");
+        return this.orderChase.runOrderChaseSweep(orgId, this.inbox);
+      }
       case "inbox_chase_sweep": {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
         return this.inbox.runChaseSweep(orgId);
+      }
+      case "broadcast_send_sweep": {
+        if (!this.messaging) throw new BadRequestException("Messaging service is not available in this deployment");
+        return this.messaging.runDueBroadcasts(orgId);
       }
       case "auto_renew": {
         if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");
@@ -630,6 +721,11 @@ export class AutomationService implements OnModuleInit {
         return this.campaigns.applyDayparting(orgId, actor);
       }
       case "audit_retention": return this.runAuditRetention();
+      case "sync_outbox": return this.outbox ? this.outbox.processDueForOrg(orgId) : { skipped: "sync outbox unavailable" };
+      case "sale_schedule": return this.catalogPush ? this.catalogPush.processSaleBoundariesForOrg(orgId) : { skipped: "catalog push unavailable" };
+      case "commerce_subscription_sweep": return this.commerceSubscriptions ? this.commerceSubscriptions.runDueForOrg(orgId) : { skipped: "commerce subscriptions unavailable" };
+      case "wishlist_price_alert_sweep": return this.retention ? this.retention.runWishlistPriceAlerts(orgId) : { skipped: "retention service unavailable" };
+      case "installment_due_sweep": return this.installments ? this.installments.runDueRemindersForOrg(orgId) : { skipped: "installments unavailable" };
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);

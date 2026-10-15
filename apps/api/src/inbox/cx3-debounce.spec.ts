@@ -319,6 +319,17 @@ function commentsSetup(replyDelaySeconds = 25) {
   };
   const audit = { calls: [] as any[], log: jest.fn(async (e: any) => { audit.calls.push(e); }) };
   const service = new SocialCommentsService(db as any, audit as any);
+  // IN8 seam: comment replies/hides are Graph-first now — a reply
+  // is only applied when Meta confirms. These CX3 fixtures stub
+  // the Graph client as confirming so the debounce/batch/claim
+  // semantics stay the subject under test (the Graph layer itself
+  // is proven in in8-comments.spec.ts).
+  (service as any).graphClientFor = async () => ({
+    replyToComment: async () => ({ commentId: "graph-reply-1" }),
+    privateReplyToComment: async () => ({ messageId: "graph-dm-1" }),
+    setCommentHidden: async () => ({ success: true }),
+    deleteComment: async () => ({ success: true }),
+  });
   return { service, db, audit, replySettings, comments, leads };
 }
 const dto = (over: Row = {}): any => ({

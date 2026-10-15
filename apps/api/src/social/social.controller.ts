@@ -64,9 +64,11 @@ export class SocialController {
   // (the browser goes to TikTok; the callback lands on the public
   // SocialOAuthCallbackController). Not operator-configured → an
   // honest Bengali 400 from the service, never a broken URL.
+  // CC4: ?appSource=own connects through the tenant's OWN TikTok
+  // app (Connect Center → নিজের অ্যাপ) instead of the platform's.
   @Get("accounts/tiktok/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
-  tiktokConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
-    return this.oauth.tiktokConnectUrl(orgId, user.userId);
+  tiktokConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.tiktokConnectUrl(orgId, user.userId, appSource);
   }
 
   // SP9: YouTube OAuth connect — same shape. With MORE THAN ONE

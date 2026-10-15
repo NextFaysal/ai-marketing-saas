@@ -54,6 +54,9 @@ export default function LeadsPage() {
   const [cfBusy, setCfBusy] = useState(false);
   const [assignStrategy, setAssignStrategy] = useState("off");
   const [assignBusy, setAssignBusy] = useState(false);
+  // CX10: per-stage follow-up default intervals (hours, as typed).
+  const [followUpDefaults, setFollowUpDefaults] = useState<Record<string, string>>({});
+  const [followUpBusy, setFollowUpBusy] = useState(false);
   const [funnelDays, setFunnelDays] = useState(30);
   const [funnel, setFunnel] = useState<{ days: number; sources: FunnelRow[]; totals: FunnelRow } | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -88,6 +91,19 @@ export default function LeadsPage() {
 
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<{ followUpDefaultsByStage: Record<string, number> | null }>(`/organizations/${orgId}/leads/followup-setting`)
+      .then((s) => {
+        const raw: Record<string, string> = {};
+        for (const stage of STAGES) {
+          const v = s.followUpDefaultsByStage?.[stage];
+          raw[stage] = v != null ? String(v) : "";
+        }
+        setFollowUpDefaults(raw);
+      }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<{ days: number; sources: FunnelRow[]; totals: FunnelRow }>(`/organizations/${orgId}/crm/funnel?days=${funnelDays}`)
       .then(setFunnel).catch(() => undefined);
   }, [funnelDays]);
@@ -102,6 +118,24 @@ export default function LeadsPage() {
       setNotice("স্বয়ংক্রিয় অ্যাসাইনের নিয়ম সেভ হয়েছে।");
     } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
     finally { setAssignBusy(false); }
+  }
+
+  // CX10: save per-stage follow-up defaults. Empty input = no
+  // automatic follow-up for that stage; the server validates the
+  // stage keys and the 1..8760 hour range and its 400 shows below.
+  async function saveFollowUpDefaults() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setFollowUpBusy(true); setError("");
+    try {
+      const payload: Record<string, number> = {};
+      for (const stage of STAGES) {
+        const raw = (followUpDefaults[stage] ?? "").trim();
+        if (raw) payload[stage] = Number(raw);
+      }
+      await apiFetch(`/organizations/${orgId}/leads/followup-setting`, { method: "PATCH", body: JSON.stringify({ followUpDefaultsByStage: payload }) });
+      setNotice("ফলোআপের সময়সীমা সেভ হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    finally { setFollowUpBusy(false); }
   }
 
   async function create(e: React.FormEvent) {
@@ -318,6 +352,36 @@ export default function LeadsPage() {
               ? "পালাক্রমে: যোগ্য সদস্যরা একে একে নতুন Lead পাবেন। যার শিফট চলছে না তাকে এড়িয়ে যাওয়া হবে — তবে সবাই শিফটের বাইরে থাকলে পালা সবার মধ্যেই ঘুরবে, কোনো Lead আটকে থাকবে না।"
               : "সবচেয়ে কম খোলা Lead: যার কাছে Won/Lost হয়নি এমন খোলা Lead সবচেয়ে কম, নতুন Lead তার কাছে যাবে; সমান হলে আগে যোগ দেওয়া সদস্য পাবেন। শিফটের নিয়ম এখানেও একইভাবে প্রযোজ্য।"}
         </p>
+      </div>
+
+      <div className="card space-y-3 p-4">
+        <div className="font-semibold">⏰ স্টেজ অনুযায়ী স্বয়ংক্রিয় ফলোআপের সময়</div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {([
+            ["new", "নতুন"],
+            ["contacted", "যোগাযোগ হয়েছে"],
+            ["qualified", "যোগ্য"],
+            ["proposal", "প্রস্তাব পাঠানো হয়েছে"],
+            ["won", "জিতেছে (Won)"],
+            ["lost", "হারিয়েছে (Lost)"],
+          ] as const).map(([stage, label]) => (
+            <label key={stage} className="block text-sm">{label} — কত ঘণ্টা পরে
+              <input type="number" min={1} max={8760} step={1} className={inputCls} placeholder="খালি = নেই"
+                value={followUpDefaults[stage] ?? ""}
+                onChange={(e) => setFollowUpDefaults({ ...followUpDefaults, [stage]: e.target.value })} />
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500">
+          খালি = স্বয়ংক্রিয় ফলোআপ নেই। Lead তৈরি হলে বা Stage বদলালে, সেই Stage-এর ঘণ্টা অনুযায়ী পরবর্তী ফলোআপের তারিখ নিজে থেকে বসে যাবে।
+          Lead-এ হাতে তারিখ বসিয়ে দিলে সবসময় সেটাই থাকবে — এই নিয়ম তা বদলায় না। Stage বদলের সময় ওই Stage-এর নিয়ম না থাকলে আগের তারিখটাই থেকে যায় (মুছে যায় না)।
+          শুধু Owner/Admin এই সেটিং বদলাতে পারেন।
+        </p>
+        <div>
+          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold" disabled={followUpBusy} onClick={saveFollowUpDefaults}>
+            {followUpBusy ? "সেভ হচ্ছে..." : "সেভ"}
+          </button>
+        </div>
       </div>
 
       <div className="card space-y-4 p-5">

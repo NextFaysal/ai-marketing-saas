@@ -114,13 +114,40 @@ export class TelegramService {
   async connect(organizationId: string, actorId: string, dto: { botToken: string }) {
     const account = await new TelegramAdapter().verifyCredentials({ botToken: dto.botToken });
     const webhookSecret = createHash("sha256").update(`${organizationId}:${account.externalAccountId}:${Date.now()}`).digest("hex").slice(0, 48);
-    const integration = await (this.prisma as any).integration.create({
-      data: { organizationId, provider: "telegram", status: "CONNECTED", externalAccountId: account.externalAccountId },
-    });
     const secrets: TelegramSecrets = { botToken: dto.botToken, webhookSecret };
-    await (this.prisma as any).integrationCredential.create({
-      data: { integrationId: integration.id, encryptedData: encryptJson(secrets) },
+    // CC7 (Connect Center): keyed by (organizationId, provider,
+    // externalAccountId) — the external id here is the bot's own
+    // numeric id from Telegram's verified getMe response, never
+    // user-typed text. Reconnecting the SAME bot refreshes its row
+    // + sealed credential in place (and re-registers the webhook
+    // below against the same integration id, with the fresh
+    // webhook secret); a SECOND, different bot gets its own row
+    // and coexists — the CC2 discipline connectMessaging got in B1.
+    const existing = await (this.prisma as any).integration.findFirst({
+      where: { organizationId, provider: "telegram", externalAccountId: account.externalAccountId },
     });
+    let integration = existing;
+    if (existing) {
+      integration = await (this.prisma as any).integration.update({
+        where: { id: existing.id },
+        data: { status: "CONNECTED", lastError: null },
+      });
+      const refreshed = await (this.prisma as any).integrationCredential
+        .update({ where: { integrationId: existing.id }, data: { encryptedData: encryptJson(secrets) } })
+        .catch(() => null);
+      if (!refreshed) {
+        await (this.prisma as any).integrationCredential.create({
+          data: { integrationId: existing.id, encryptedData: encryptJson(secrets) },
+        });
+      }
+    } else {
+      integration = await (this.prisma as any).integration.create({
+        data: { organizationId, provider: "telegram", status: "CONNECTED", externalAccountId: account.externalAccountId },
+      });
+      await (this.prisma as any).integrationCredential.create({
+        data: { integrationId: integration.id, encryptedData: encryptJson(secrets) },
+      });
+    }
     let webhook: { registered: boolean; url?: string; error?: string } = { registered: false };
     const base = (process.env.PUBLIC_API_URL ?? "").replace(/\/$/, "");
     if (base.startsWith("https://")) {
@@ -136,9 +163,9 @@ export class TelegramService {
     }
     await this.audit.log({
       organizationId, userId: actorId, action: "inbox.telegram.connected", entityType: "Integration",
-      entityId: integration.id, metadata: { bot: account.displayName, webhookRegistered: webhook.registered },
+      entityId: integration.id, metadata: { bot: account.displayName, webhookRegistered: webhook.registered, reconnected: Boolean(existing) },
     });
-    return { integrationId: integration.id, bot: account.displayName, webhook };
+    return { integrationId: integration.id, bot: account.displayName, webhook, reconnected: Boolean(existing) };
   }
 
   /** Inbound webhook: authenticity = the per-integration secret

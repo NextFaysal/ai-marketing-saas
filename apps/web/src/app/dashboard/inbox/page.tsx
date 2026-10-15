@@ -1,21 +1,47 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { API_URL, apiFetch, getToken } from "@/lib/api";
+import Link from "next/link";
+import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { subscribeInboxStream } from "@/lib/inbox-stream";
 import { EmptyState } from "@repo/ui";
-import { EmojiPickerPanel, VoiceRecorder } from "@/components/inbox-extras";
 import { ContactAvatar } from "@/components/inbox-avatar";
+import { ChannelChip, ConvAvatar, EmojiPickerPanel, MediaView, ShipmentWidget, VoiceRecorder } from "@/components/inbox-extras";
 import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
-import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
 import { mergeTimeline } from "@/lib/timeline";
+import { SNOOZE_PRESETS, isActivelySnoozed, snoozeBodyForCustom, snoozeBodyForMinutes } from "@/lib/snooze";
+import { PRODUCT_MATCH_HONESTY, productMatchDraftText, type ProductCandidateView } from "@/lib/cx8";
+import { EMPTY_UI_FILTERS, hasAdvancedFilters, savedToUiFilters, splitSnippet, uiFiltersToParams, uiFiltersToSaved, type InboxUiFilters } from "@/lib/inbox-in1";
+import { CONVERSATION_OUTCOMES, MACRO_STEP_LABELS, PIPELINE_STAGES, bulkReplySummary, formatMacroRunResult, macroRunStepLines, macroStepSummary, type MacroRunResult, type MacroStep } from "@/lib/inbox-in3";
+import { parseSlaMinutesInput, slaChipInfo } from "@/lib/inbox-in4";
+import { AGENT_REACTIONS, canSendReaction, deliveryTick, parseMessageReactions, quoteReachesCustomer } from "@/lib/inbox-in6";
+import { NEXT_ACTION_ICONS, handoverSummaryNotice, isRunnableAction, proposalAcceptPatch, type NextActionResponse } from "@/lib/inbox-in7";
+import { COURIER_RISK_BAND_BN, HANDOVER_REASON_LABELS, MOOD_TITLE, clampPane, dayLabel, initialsOf, money, relTime, renderQuick } from "@/lib/inbox-format";
+import { appendConversationPage, getDraftStorage, loadComposerDraft, saveComposerDraft } from "@/lib/inbox-in9";
+
+/** IN1: a message-search hit + a saved view, as the API returns them. */
+interface MessageSearchResult {
+  messageId: string; conversationId: string; direction: string; type: string;
+  matchedField: string; snippet: string; matchStart: number; matchLength: number;
+  createdAt: string; channel?: string | null; contactName?: string | null; contactPhone?: string | null;
+}
+interface SavedView { id: string; name: string; filters: Record<string, unknown>; shared: boolean; mine: boolean }
+/** IN3: a macro as the API returns it (steps already validated). */
+interface Macro { id: string; name: string; steps: MacroStep[]; shared: boolean; mine: boolean }
+/** IN3: one builder row — every field optional in the draft; the
+ * save handler converts only the fields its type needs, mirroring
+ * the server's strict validation (which still has the final say). */
+interface MacroStepDraft { type: string; quickReplyId: string; assignedUserId: string; tag: string; stage: string; outcome: string; minutes: number }
+const emptyMacroStep = (): MacroStepDraft => ({ type: "reply", quickReplyId: "", assignedUserId: "me", tag: "", stage: "talking", outcome: "", minutes: 120 });
 
 /** Inbox Next-Gen P1: browser-upload cap. Mirrors the API's decoded
  * cap (MEDIA_UPLOAD_MAX_BYTES = 2MB in InboxService). */
 const MEDIA_UPLOAD_MAX_BYTES = 2_000_000;
-const clampPane = (v: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(v)));
 
 interface WaWindow { open: boolean; expiresAt: string | null }
+interface AiScheduleWindow { days: number[]; start: string; end: string }
+interface AiScheduleEntry { enabled: boolean; windows: AiScheduleWindow[] }
+type AiScheduleMap = Record<string, AiScheduleEntry>;
 interface Conversation {
   id: string; channel: string; contactName?: string | null; contactPhone?: string | null;
   status: string; unreadCount: number; lastMessagePreview?: string | null; lastMessageAt?: string | null;
@@ -26,147 +52,109 @@ interface Conversation {
   createdAt?: string;
   priority?: string; sentimentFlag?: string | null; firstResponseAt?: string | null;
   spamFlag?: boolean; spamReason?: string | null;
+  // IN10a: OUR system-level block (never a platform block).
+  blockedAt?: string | null; blockedByUserId?: string | null; blockReason?: string | null;
   autoReplyPaused?: boolean;
   pipelineStage?: string;
   outcome?: string | null;
   csatRating?: number | null; csatSentAt?: string | null;
   summaryText?: string | null; summaryProvider?: string | null; summaryAt?: string | null;
+  // CX4/CX5 (ported): handover queue + snooze + timed assignment.
+  snoozedUntil?: string | null; handoverReason?: string | null; handoverAt?: string | null;
+  assignmentKind?: string | null; assignedUntil?: string | null; isPractice?: boolean;
+  updatedAt?: string;
+  aiScheduleActive?: boolean;
+  // IN4: server-computed SLA position (layered policy) — the
+  // card chip renders this verdict, never a re-derived deadline.
+  slaState?: "warning" | "breached" | null; slaDueAt?: string | null; slaEffectiveMinutes?: number | null;
 }
 interface Message {
   id: string; direction: string; content?: string | null; type: string; status: string;
   error?: string | null; createdAt: string; sentByAiDraft: boolean;
+  sentWithAiAssist?: boolean; quickReplyId?: string | null;
   mediaId?: string | null; mediaUrl?: string | null;
   mediaStorageKey?: string | null; mediaContentType?: string | null;
   intent?: string | null; intentConfidence?: number | null; autoReply?: boolean;
   sentiment?: "positive" | "negative" | null;
   transcription?: string | null; transcriptionProvider?: string | null;
+  transcriptionStatus?: string | null;
+  // IN6: lifecycle — deliveryStatus is set ONLY on real platform
+  // confirmation; quote is the server-resolved quoted snippet.
+  deliveryStatus?: string | null; deliveredAt?: string | null; readAt?: string | null;
+  replyToMessageId?: string | null;
+  quote?: { id: string; direction?: string; snippet?: string; unavailable?: boolean } | null;
+  reactions?: unknown;
+  pinnedAt?: string | null; pinnedBy?: string | null;
 }
+interface PinnedMessage { id: string; snippet: string; pinnedAt: string; pinnedBy?: string | null }
 interface PaymentVerification { id: string; messageId: string; verdict: string; provider?: string | null; trxId?: string | null; amountMinor?: string | null; expectedAmountMinor?: string | null; flags?: string[] | null }
 interface Draft { id: string; content: string; provider: string; createdAt: string }
 interface Note { id: string; content: string; authorUserId: string; createdAt: string }
-interface QuickReply { id: string; title: string; content: string }
-interface WaTemplate { id: string; name: string; language: string; category?: string | null; bodyText?: string | null }
+interface QuickReply { id: string; title: string; content: string; timesUsed?: number }
+interface WaTemplate { id: string; name: string; language: string; category?: string | null; bodyText?: string | null; status?: string | null; qualityRating?: string | null }
 interface Member { id: string; role: string; user: { id: string; name?: string | null; email: string } }
 interface ContextData {
   customer: { id: string; name?: string | null; phone?: string | null; email?: string | null; createdAt: string } | null;
   lead: { id: string; stage: string; source: string; valueMinor?: string | null; tags?: string[] } | null;
   orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; currency: string; totalMinor: string; createdAt: string; codConfirmationStatus?: string | null; shipment?: { id: string; trackingCode?: string | null; status: string; provider: string; consignmentId?: string | null; codAmountMinor?: string | null; lastCheckedAt?: string | null } | null }[];
   lifetime: { orderCount: number; totalSpentMinor: string; currency: string } | null;
+  courierRecord?: { decided: number; delivered: number; successRatePct: number | null; riskBand: string; riskScore: number | null } | null;
+  // IN2: identity unification — duplicates are flagged ONLY on a
+  // real identifier match (phone last-10 / email); a PSID alone
+  // never produces a candidate. merges are the reversible IN2
+  // records into this customer.
+  identity?: {
+    customerId: string | null;
+    duplicates: { conversationId: string | null; channel: string | null; contactName: string | null; contactPhone: string | null; customerId: string | null; customerName: string | null; matchReasons: string[]; lastMessageAt: string | null }[];
+    linkedConversations: { id: string; channel: string; status: string; contactName: string | null; lastMessageAt: string | null; lastMessagePreview: string | null }[];
+    merges: { id: string; sourceCustomerId: string; targetCustomerId: string; sourceName: string | null; sourcePhone: string | null; ordersMoved: number; conversationsMoved: number; createdAt: string }[];
+  } | null;
 }
 
-const MOOD_TITLE = "কীওয়ার্ড-ভিত্তিক আনুমানিক সংকেত — সাম্প্রতিক গ্রাহক-বার্তার শব্দ দেখে হিসাব করা, মনের অবস্থা নয়";
 
-const money = (minor?: string | null, currency = "BDT") =>
-  minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
-// ---- Unified Inbox U1: channel identity + day separators ----
-const CHANNEL_META: Record<string, { label: string; emoji: string; cls: string }> = {
-  whatsapp: { label: "WhatsApp", emoji: "🟢", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-  messenger: { label: "Messenger", emoji: "🔵", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
-  instagram: { label: "Instagram", emoji: "🟣", cls: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200" },
-  webchat: { label: "Live Chat", emoji: "🌐", cls: "bg-slate-100 text-slate-600 ring-slate-200" },
-  tiktok: { label: "TikTok", emoji: "⚫", cls: "bg-slate-900 text-white ring-slate-700" },
-  telegram: { label: "Telegram", emoji: "✈️", cls: "bg-cyan-50 text-cyan-700 ring-cyan-200" },
-  email: { label: "Email", emoji: "✉️", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
-};
-function ChannelChip({ channel, lg }: { channel: string; lg?: boolean }) {
-  const m = CHANNEL_META[channel] ?? { label: channel, emoji: "💬", cls: "bg-slate-100 text-slate-600 ring-slate-200" };
-  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ring-1 ${m.cls} ${lg ? "text-xs" : "text-[10px]"}`}>{m.emoji} {m.label}</span>;
-}
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const yday = new Date(); yday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "আজ";
-  if (d.toDateString() === yday.toDateString()) return "গতকাল";
-  return d.toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric" });
+
+/** IN10c: Analytics v2 payload — every number compute-on-read
+ * over real rows (see docs/in10-acceptance.md definitions). */
+interface InboxAnalytics {
+  days: number; timezone: string;
+  heatmap: { matrix: number[][]; hourTotals: number[]; peakHour: { hour: number; count: number } | null };
+  channels: { channel: string; activeConversations: number; convertedConversations: number; conversationsStarted: number; conversionPct: number | null }[];
+  trend: { date: string; newConversations: number; inboundMessages: number; avgFirstResponseMinutes: number | null; resolvedCount: number; avgResolutionMinutes: number | null }[];
+  intents: { intent: string; count: number; pct: number | null }[];
+  totals: { inboundMessages: number; classifiedMessages: number; conversationsStarted: number; chatOrders: number };
 }
 
-function renderQuick(content: string, conv: Conversation): string {
-  const name = conv.contactName ?? "";
-  return content
-    .replaceAll("{{firstName}}", name.split(" ")[0] ?? "")
-    .replaceAll("{{contactName}}", name)
-    .replaceAll("{{phone}}", conv.contactPhone ?? "");
+// UX1 Q2: one soft two-tone beep (WebAudio, no asset). The context
+// is created lazily on first use; if the browser keeps it suspended
+// (autoplay policy before any user gesture) the beep is simply
+// silent — never an error, never a fake "played".
+let beepCtx: AudioContext | null = null;
+function beepOnce() {
+  try {
+    if (typeof window === "undefined") return;
+    const AC = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!AC) return;
+    beepCtx ??= new AC();
+    // Suspended (autoplay policy): kick a resume for next time and
+    // stay silent for this one.
+    if (beepCtx.state === "suspended") { void beepCtx.resume().catch(() => undefined); return; }
+    const t0 = beepCtx.currentTime;
+    for (const [i, freq] of [880, 660].entries()) {
+      const osc = beepCtx.createOscillator();
+      const gain = beepCtx.createGain();
+      osc.type = "sine"; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t0 + i * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.08, t0 + i * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.14 + 0.13);
+      osc.connect(gain).connect(beepCtx.destination);
+      osc.start(t0 + i * 0.14); osc.stop(t0 + i * 0.14 + 0.14);
+    }
+  } catch { /* sound is best-effort */ }
 }
 
-/** Fetches protected media bytes through the API proxy and renders them. */
-function MediaView({ convId, message }: { convId: string; message: Message }) {
-  const orgId = getOrganizationId();
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/organizations/${orgId}/inbox/conversations/${convId}/messages/${message.id}/media`, {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (!res.ok) throw new Error("media");
-        const blob = await res.blob();
-        objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) setUrl(objectUrl);
-      } catch { if (!cancelled) setFailed(true); }
-    })();
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [orgId, convId, message.id]);
-
-  if (failed) return <span className="text-xs opacity-70">[মিডিয়া লোড হয়নি: {message.type}]</span>;
-  if (!url) return <span className="text-xs opacity-70">মিডিয়া লোড হচ্ছে...</span>;
-  if (message.type === "image" || message.type === "sticker") return <img src={url} alt={message.content ?? "ছবি"} className="max-h-56 rounded-lg" />;
-  if (message.type === "audio") return <audio controls src={url} className="max-w-[240px]" />;
-  if (message.type === "video") return <video controls src={url} className="max-h-56 rounded-lg" />;
-  return <a href={url} target="_blank" rel="noreferrer" className="underline">📎 ফাইল খুলুন ({message.type})</a>;
-}
-
-/** Inbox Next-Gen P2: live courier tracking widget. The status
- * string is the courier's own words (stored verbatim); the
- * stepper follows the documented mapping in lib/courier-status —
- * an unmapped status renders the courier's words alone, with no
- * stepper guess. Sync calls the existing manual sync endpoint and
- * surfaces provider errors verbatim (handled by the caller). */
-function ShipmentWidget({ shipment, currency, syncing, onSync }: {
-  shipment: { id: string; trackingCode?: string | null; status: string; provider: string; codAmountMinor?: string | null; lastCheckedAt?: string | null };
-  currency: string;
-  syncing: boolean;
-  onSync: () => void;
-}) {
-  const view = courierStatusView(shipment.status);
-  return (
-    <div className="mt-1.5 rounded-lg bg-white p-2 ring-1 ring-slate-200">
-      <div className="flex flex-wrap items-center justify-between gap-1">
-        <span className="font-semibold">🚚 {shipment.provider}{shipment.trackingCode ? ` · ${shipment.trackingCode}` : ""}</span>
-        <button className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold hover:bg-slate-200 disabled:opacity-50" disabled={syncing} onClick={onSync} title="কুরিয়ারের কাছ থেকে এখনই সর্বশেষ স্ট্যাটাস আনুন">
-          {syncing ? "আপডেট হচ্ছে…" : "🔄 এখনই আপডেট করুন"}
-        </button>
-      </div>
-      {view.kind === "progress" ? (
-        <div className="mt-2">
-          <div className="flex items-center gap-1">
-            {COURIER_STEP_LABELS.map((label, i) => (
-              <div key={label} className="flex flex-1 flex-col items-center gap-1">
-                <div className={`h-1.5 w-full rounded-full ${i <= view.step ? "bg-emerald-500" : "bg-slate-200"}`} />
-                <span className={`text-center text-[9px] leading-tight ${i === view.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
-              </div>
-            ))}
-          </div>
-          {view.partial ? <div className="mt-1 text-[11px] font-medium text-amber-600">আংশিক ডেলিভার্ড — কিছু পণ্য পৌঁছেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div> : null}
-        </div>
-      ) : view.kind === "returned" ? (
-        <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">↩️ পার্সেল রিটার্ন এসেছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
-      ) : view.kind === "cancelled" ? (
-        <div className="mt-1.5 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">✖️ শিপমেন্ট বাতিল হয়েছে (কুরিয়ারের স্ট্যাটাস: {shipment.status})</div>
-      ) : (
-        <div className="mt-1.5 text-[11px] text-slate-500">কুরিয়ারের স্ট্যাটাস: <b>{shipment.status}</b></div>
-      )}
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
-        <span>সর্বশেষ যাচাই: {shipment.lastCheckedAt ? new Date(shipment.lastCheckedAt).toLocaleString("bn-BD") : "এখনো যাচাই হয়নি"}</span>
-        {shipment.codAmountMinor && Number(shipment.codAmountMinor) > 0 ? <span>COD: <b className="text-slate-600">{money(shipment.codAmountMinor, currency)}</b></span> : null}
-      </div>
-    </div>
-  );
-}
+// IN9c: ChannelChip / ConvAvatar / MediaView / ShipmentWidget now
+// live in components/inbox-extras (props-only, extracted verbatim).
 
 /**
  * Audio chime synthesizer using Web Audio API (Zero external assets needed)
@@ -216,6 +204,35 @@ export default function InboxPage() {
   const [active, setActive] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  // IN6: composer quote target + server-provided pinned list +
+  // which message's reaction picker is open.
+  const [quoteTarget, setQuoteTarget] = useState<Message | null>(null);
+  const [pinnedMessages, setPinnedMessages] = useState<PinnedMessage[]>([]);
+  const [reactionFor, setReactionFor] = useState<string | null>(null);
+  const [productMatch, setProductMatch] = useState<{ messageId: string; loading?: boolean; available?: boolean; message?: string; candidates?: ProductCandidateView[] } | null>(null);
+
+  async function findProductsForMessage(m: Message) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setProductMatch({ messageId: m.id, loading: true });
+    setError("");
+    try {
+      const out = await apiFetch<{ available: boolean; message?: string; candidates?: ProductCandidateView[] }>(
+        `/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/recognize-product`,
+        { method: "POST" },
+      );
+      setProductMatch({ messageId: m.id, available: out.available, message: out.message, candidates: out.candidates ?? [] });
+    } catch (e) {
+      setProductMatch(null);
+      setError(e instanceof Error ? e.message : "Failed");
+    }
+  }
+
+  function insertProductMatchDraft(candidate: ProductCandidateView) {
+    const text = productMatchDraftText(candidate);
+    setReply((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${text}`);
+    setProductMatch(null);
+    focusComposer();
+  }
   const [context, setContext] = useState<ContextData | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   // P3: composer mode — "reply" is customer-visible, "note" is an
@@ -244,21 +261,83 @@ export default function InboxPage() {
   const [tplVars, setTplVars] = useState("");
   const [tplId, setTplId] = useState("");
   const [tagInput, setTagInput] = useState("");
-  const [filters, setFilters] = useState({ q: "", channel: "", status: "", assignee: "", tag: "", unreadOnly: false, sort: "recent", spamOnly: false });
+  // UX1 Q3: last-used filters persist per agent (same localStorage
+  // pattern as the pane widths) — merged over the defaults so a
+  // stale/partial saved object can never break the shape.
+  const [filters, setFilters] = useState(() => {
+    const base: InboxUiFilters = { ...EMPTY_UI_FILTERS };
+    try { const raw = localStorage.getItem("inbox.filters"); if (raw) return { ...base, ...JSON.parse(raw) }; } catch { /* defaults */ }
+    return base;
+  });
   // Inbox Next-Gen P2: smart folders (server-side counts — the
   // list page itself is capped, so its length would lie) + bulk
   // selection state.
-  const [smartFolder, setSmartFolder] = useState<"" | "sla" | "vip">("");
-  const [folderCounts, setFolderCounts] = useState<{ all: number; mine: number; unassigned: number; slaBreach: number; vip: number; vipThresholdMinor: string | null; slaFirstResponseMinutes: number } | null>(null);
+  const [smartFolder, setSmartFolder] = useState<"" | "sla" | "vip" | "handover" | "snoozed">(() => {
+    try { const v = localStorage.getItem("inbox.folder"); return v === "sla" || v === "vip" || v === "handover" || v === "snoozed" ? v : ""; } catch { return ""; }
+  });
+  useEffect(() => { try { localStorage.setItem("inbox.folder", smartFolder); } catch { /* best-effort */ } }, [smartFolder]);
+  // CX5: action-bar menu state (snooze / timer / mobile more).
+  const [folderCounts, setFolderCounts] = useState<{ all: number; mine: number; unassigned: number; slaBreach: number; vip: number; handover: number; snoozed: number; vipThresholdMinor: string | null; slaFirstResponseMinutes: number; slaByChannel?: Record<string, number>; slaVipMinutes?: number | null } | null>(null);
+  // IN1: message search + advanced filter panel + saved views.
+  const [showAdv, setShowAdv] = useState(false);
+  const [msgQ, setMsgQ] = useState("");
+  const [msgResults, setMsgResults] = useState<MessageSearchResult[] | null>(null);
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
+  const [aiAssistUsed, setAiAssistUsed] = useState(false);
+  const [usedQuickReplyId, setUsedQuickReplyId] = useState<string | null>(null);
+  // UX1 Q2/Q3: org-wide unread total drives the tab-title badge.
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => {
+    const original = "ইনবক্স";
+    document.title = unreadTotal > 0 ? `(${unreadTotal}) ইনবক্স` : original;
+    return () => { document.title = original; };
+  }, [unreadTotal]);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState("");
+  const [saveViewShared, setSaveViewShared] = useState(false);
+  const loadSavedViews = useCallback(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<SavedView[]>(`/organizations/${orgId}/inbox/saved-views`).then(setSavedViews).catch(() => undefined);
+  }, []);
+  useEffect(() => { loadSavedViews(); }, [loadSavedViews]);
+  // CX5: one-row action bar menu state (snooze / timer / mobile more).
+  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const [showTimerMenu, setShowTimerMenu] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [snoozeCustom, setSnoozeCustom] = useState("");
+  // CX4: 30s tick so handover waiting / timed chips move.
+  const [handoverTick, setHandoverTick] = useState(() => Date.now());
+  useEffect(() => { const tm = setInterval(() => setHandoverTick(Date.now()), 30000); return () => clearInterval(tm); }, []);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAssign, setBulkAssign] = useState("");
   const [bulkTag, setBulkTag] = useState("");
-  const [connectForm, setConnectForm] = useState({ channel: "whatsapp", accessToken: "", appSecret: "", verifyToken: "", phoneNumberId: "", pageId: "" });
+  // IN3: macros + bulk reply.
+  const [macros, setMacros] = useState<Macro[]>([]);
+  const [showMacroMenu, setShowMacroMenu] = useState(false);
+  const [macroResult, setMacroResult] = useState<MacroRunResult | null>(null);
+  const [macroName, setMacroName] = useState("");
+  const [macroShared, setMacroShared] = useState(false);
+  const [macroDraft, setMacroDraft] = useState<MacroStepDraft[]>([emptyMacroStep()]);
+  const [bulkQrId, setBulkQrId] = useState("");
+  const [bulkTplId, setBulkTplId] = useState("");
+  // CC4: appSource arrives from the Connect Center ("নিজের অ্যাপ
+  // দিয়ে" deep-link sets ?appSource=own); the form's select can
+  // still change it. "own" uses the tenant's Meta app saved in
+  // the Connect Center — its secret, not a re-typed one.
+  const [connectForm, setConnectForm] = useState(() => ({
+    channel: "whatsapp", accessToken: "", appSecret: "", verifyToken: "", phoneNumberId: "", pageId: "",
+    appSource: typeof window !== "undefined" && new URLSearchParams(window.location.search).get("appSource") === "own" ? "own" : "platform",
+  }));
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [qrForm, setQrForm] = useState({ title: "", content: "" });
   const [tplForm, setTplForm] = useState({ name: "", language: "bn", category: "UTILITY", bodyText: "" });
-  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null; reassignAfterMinutes?: number | null; escalationTeamId?: string | null; perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null; retentionDays?: number | null } | null>(null);
+  const [settings, setSettings] = useState<{ autoReplyMode: string; confidenceThreshold: number; perIntent: Record<string, string>; smartAssign: string; slaFirstResponseMinutes: number; botEnabled?: boolean; botDeliveryChargeMinor?: number | null; reassignAfterMinutes?: number | null; escalationTeamId?: string | null; perChannelModes?: Record<string, string>; escalationThresholdMinor?: number | null; retentionDays?: number | null; aiReplyDelaySeconds?: number; aiReplyDelayByChannel?: Record<string, number>; aiScheduleByChannel?: AiScheduleMap; reviewRequestEnabled?: boolean; reviewRequestDelayHours?: number; chaseEnabled?: boolean; chaseFirstDelayMinutes?: number; chaseIntervalMinutes?: number; chaseMaxAttempts?: number; chaseQuietHoursRespect?: boolean; chaseQuietStartHour?: number; chaseQuietEndHour?: number; maxChaseAttempts?: number; chaseMessage?: string | null; slaByChannel?: Record<string, number>; slaVipMinutes?: number | null; slaEscalateAfterMinutes?: number; slaLeadAlertEnabled?: boolean; slaAutoReassignEnabled?: boolean } | null>(null);
+  const [scheduleDraft, setScheduleDraft] = useState<AiScheduleMap | null>(null);
   const [botSession, setBotSession] = useState<{ id: string; state: string; status: string } | null>(null);
   const [verifications, setVerifications] = useState<PaymentVerification[]>([]);
   const [presence, setPresence] = useState<{ userId: string; name: string; typing: boolean }[]>([]);
@@ -329,6 +408,11 @@ export default function InboxPage() {
   }, [reply, composerMode, active?.id]);
 
   const [report, setReport] = useState<any>(null);
+  // IN10b/c: note PII masking opt-in + Analytics v2 state.
+  const [noteMask, setNoteMask] = useState(false);
+  const [analytics, setAnalytics] = useState<InboxAnalytics | null>(null);
+  const [analyticsDays, setAnalyticsDays] = useState(7);
+  const [blockReason, setBlockReason] = useState("");
   // Milestone 73: my performance + my signature (self-service).
   const [myPerf, setMyPerf] = useState<any>(null);
   const [mySig, setMySig] = useState<{ signature: string; enabled: boolean }>({ signature: "", enabled: false });
@@ -409,6 +493,9 @@ export default function InboxPage() {
   const [orderShip, setOrderShip] = useState("60");
   const [orderAddress, setOrderAddress] = useState("");
   const [orderCod, setOrderCod] = useState(true);
+  // IN7b/c: the AI next-action proposal for the open thread —
+  // display-only until the agent clicks (nothing auto-runs).
+  const [nextAction, setNextAction] = useState<NextActionResponse | null>(null);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -424,31 +511,79 @@ export default function InboxPage() {
   const activeRef = useRef<Conversation | null>(null);
   const listTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // IN9a: cursor pagination state. nextCursor mirrors the API
+  // envelope (null = no older page exists); the ref copy lets the
+  // scroll sentinel + load-more guard read the freshest value
+  // without re-binding the observer on every page.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const nextCursorRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  const listParamsRef = useRef<URLSearchParams | null>(null);
+  const applyNextCursor = useCallback((c: string | null) => {
+    nextCursorRef.current = c;
+    setNextCursor(c);
+  }, []);
+  // IN9d: which conversation the composer text currently belongs
+  // to — drafts are saved/restored per conversation, and this ref
+  // stops a restore for conversation B from ever being written
+  // under conversation A's key during the switch render.
+  const replyOwnerRef = useRef<string | null>(null);
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { apiFetch<any>("/auth/me").then((j) => setMyId(j?.id ?? j?.user?.id ?? null)).catch(() => undefined); }, []);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadConversations = useCallback(async (f = filters, folderOverride?: string) => {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const params = new URLSearchParams();
-    if (f.q) params.set("q", f.q);
-    if (f.channel) params.set("channel", f.channel);
-    if (f.status) params.set("status", f.status);
-    if (f.assignee) params.set("assignee", f.assignee);
-    if (f.tag) params.set("tag", f.tag);
-    if (f.unreadOnly) params.set("unread", "1");
-    if (f.spamOnly) params.set("spam", "1");
-    if (f.sort !== "recent") params.set("sort", f.sort);
-    // P2: the SLA/VIP smart folder rides as its own parameter and
-    // AND-composes with the filters above (server-side).
+    // P2 + IN1b: ALL list params (incl. the advanced date/amount/
+    // intent/sentiment filters and the smart folder, which
+    // AND-composes server-side) are built by the tested helper.
     const effFolder = folderOverride !== undefined ? folderOverride : smartFolder;
-    if (effFolder) params.set("folder", effFolder);
-    try { setConversations(await apiFetch<Conversation[]>(`/organizations/${orgId}/inbox/conversations?${params.toString()}`)); }
+    const params = uiFiltersToParams(f, effFolder);
+    // IN9a: the first page is fetched in cursor mode (cursor=""),
+    // which returns { items, nextCursor } — pages beyond the first
+    // 100 are reachable via loadMoreConversations. A legacy bare
+    // array (older API) is still accepted and simply has no next
+    // page. listParamsRef remembers the exact filter set so
+    // load-more pages can never drift from the visible list.
+    params.set("cursor", "");
+    listParamsRef.current = params;
+    try {
+      const res = await apiFetch<Conversation[] | { items: Conversation[]; nextCursor: string | null }>(`/organizations/${orgId}/inbox/conversations?${params.toString()}`);
+      if (Array.isArray(res)) { setConversations(res); applyNextCursor(null); }
+      else { setConversations(res.items ?? []); applyNextCursor(res.nextCursor ?? null); }
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     try { setIntegrations(await apiFetch<any[]>(`/organizations/${orgId}/inbox/integrations`)); } catch { /* none */ }
     // P2: folder counts are server-side totals (see counts endpoint).
-    try { setFolderCounts(await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/counts`)); } catch { /* counts are additive */ }
-  }, [filters, smartFolder]);
+    try { const c = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/counts`); setFolderCounts(c); setUnreadTotal(typeof c?.unreadTotal === "number" ? c.unreadTotal : 0); } catch { /* counts are additive */ }
+  }, [filters, smartFolder, applyNextCursor]);
+
+  // IN9a: fetch the NEXT cursor page for the CURRENT filter set
+  // and append it (de-duplicated by the tested helper). A stale
+  // response — the list was refreshed/filtered while this page was
+  // in flight — is dropped by checking the cursor is still the
+  // live one. A failure keeps the cursor, so the sentinel/button
+  // simply offers the same page again; nothing is marked loaded
+  // that was not actually returned.
+  const loadMoreConversations = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const cursor = nextCursorRef.current;
+    const base = listParamsRef.current;
+    if (!cursor || !base || loadingMoreRef.current) return;
+    loadingMoreRef.current = true; setLoadingMore(true);
+    try {
+      const params = new URLSearchParams(base);
+      params.set("cursor", cursor);
+      const res = await apiFetch<Conversation[] | { items: Conversation[]; nextCursor: string | null }>(`/organizations/${orgId}/inbox/conversations?${params.toString()}`);
+      if (nextCursorRef.current !== cursor) return; // superseded by a refresh
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      if (items.length) setConversations((prev) => appendConversationPage(prev, items));
+      applyNextCursor(Array.isArray(res) ? null : (res.nextCursor ?? null));
+      setVisibleCount((c) => c + 40);
+    } catch { /* cursor kept — the next sentinel hit / click retries */ }
+    finally { loadingMoreRef.current = false; setLoadingMore(false); }
+  }, [applyNextCursor]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
   useEffect(() => { const mine = agentStates.find((a) => a.userId === myId); if (mine?.status) setMyStatus(mine.status); }, [agentStates, myId]);
@@ -490,10 +625,25 @@ export default function InboxPage() {
   // U1: progressive list rendering
   useEffect(() => {
     const el = sentinelRef.current; if (!el) return;
-    const ob = new IntersectionObserver((es) => { if (es[0]?.isIntersecting) setVisibleCount((c) => c + 40); }, { rootMargin: "240px" });
+    const ob = new IntersectionObserver((es) => {
+      if (!es[0]?.isIntersecting) return;
+      setVisibleCount((c) => c + 40);
+      if (nextCursorRef.current) void loadMoreConversations();
+    }, { rootMargin: "240px" });
     ob.observe(el);
     return () => ob.disconnect();
-  }, [conversations.length]);
+  }, [conversations.length, nextCursor, loadMoreConversations]);
+
+  // IN9d: persist the composer draft per conversation (UX1-style
+  // localStorage, best-effort). The replyOwnerRef guard ties the
+  // text to the conversation it was restored/typed for; an empty
+  // text removes the draft — which is exactly what a successful
+  // send leaves behind (the send path clears `reply` itself, and
+  // a failed send's text survives in the pending bubble instead).
+  useEffect(() => {
+    if (!active || replyOwnerRef.current !== active.id) return;
+    saveComposerDraft(getDraftStorage(), active.id, reply);
+  }, [reply, active?.id]);
   // U1: keyboard-first operation
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -516,6 +666,7 @@ export default function InboxPage() {
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<QuickReply[]>(`/organizations/${orgId}/inbox/quick-replies`).then(setQuickReplies).catch(() => undefined);
+    apiFetch<Macro[]>(`/organizations/${orgId}/inbox/macros`).then(setMacros).catch(() => undefined);
     apiFetch<WaTemplate[]>(`/organizations/${orgId}/inbox/whatsapp-templates`).then((t) => { setTemplates(t); if (t[0]) setTplId(t[0].id); }).catch(() => undefined);
     apiFetch<Member[]>(`/organizations/${orgId}/members`).then(setMembers).catch(() => undefined);
     apiFetch<any>(`/organizations/${orgId}/inbox/settings`).then(setSettings).catch(() => undefined);
@@ -563,16 +714,21 @@ export default function InboxPage() {
   /** P2 smart folders: "সব / আমার / অনির্ধারিত" drive the existing
    * assignee filter; "sla" / "vip" set the server-side folder,
    * which AND-composes with whatever filters are active. */
-  function applyFolder(folderVal: "" | "sla" | "vip", assigneeVal?: string) {
+  function applyFolder(folderVal: "" | "sla" | "vip" | "handover" | "snoozed", assigneeVal?: string) {
     setVisibleCount(40); setFocusedIdx(0);
     setSmartFolder(folderVal);
     setSelectedIds(new Set());
+    // IN4d: the SLA-risk sort belongs to the handover queue —
+    // leaving the folder restores the default order so the
+    // persisted filters never carry it into other folders.
+    const effective = folderVal !== "handover" && filters.sort === "sla_risk" ? { ...filters, sort: "recent" } : filters;
+    if (effective !== filters) setFilters(effective);
     if (assigneeVal !== undefined) {
-      const next = { ...filters, assignee: assigneeVal };
+      const next = { ...effective, assignee: assigneeVal };
       setFilters(next);
       loadConversations(next, folderVal);
     } else {
-      loadConversations(filters, folderVal);
+      loadConversations(effective, folderVal);
     }
   }
 
@@ -618,6 +774,97 @@ export default function InboxPage() {
     finally { setBusy(""); }
   }
 
+  /** IN3: run a macro on the open conversation. The server runs
+   * each step through the real action path and reports per-step
+   * results — the panel below shows exactly what happened,
+   * including where a failed run stopped. */
+  async function runMacroOnActive(macro: Macro) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setShowMacroMenu(false); setBusy("macro"); setError(""); setMacroResult(null);
+    try {
+      const r = await apiFetch<MacroRunResult>(`/organizations/${orgId}/inbox/macros/${macro.id}/run`, {
+        method: "POST", body: JSON.stringify({ conversationId: active.id }),
+      });
+      setMacroResult(r);
+      if (r.success) setNotice(formatMacroRunResult(r));
+      else setError(formatMacroRunResult(r));
+      await refreshActive();
+      loadConversations();
+      // A reply step may have consumed a quick reply — refresh counts.
+      apiFetch<QuickReply[]>(`/organizations/${orgId}/inbox/quick-replies`).then(setQuickReplies).catch(() => undefined);
+    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো চালানো যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN3: build a macro from the builder rows. Conversion keeps
+   * only the fields each step type needs; the server validates
+   * strictly and its error is shown verbatim. */
+  async function createMacroFromBuilder() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const name = macroName.trim();
+    if (!name) { setError("ম্যাক্রোর একটি নাম দিন।"); return; }
+    const steps: MacroStep[] = [];
+    for (const d of macroDraft) {
+      if (d.type === "reply") { if (!d.quickReplyId) { setError("Reply ধাপের জন্য Quick Reply বেছে নিন।"); return; } steps.push({ type: "reply", quickReplyId: d.quickReplyId }); }
+      else if (d.type === "assign") steps.push({ type: "assign", assignedUserId: d.assignedUserId === "__none__" ? null : d.assignedUserId });
+      else if (d.type === "tag") { if (!d.tag.trim()) { setError("Tag ধাপে ট্যাগ লিখুন।"); return; } steps.push({ type: "tag", tag: d.tag.trim() }); }
+      else if (d.type === "pipeline") steps.push({ type: "pipeline", stage: d.stage });
+      else if (d.type === "close") steps.push({ type: "close", ...(d.outcome ? { outcome: d.outcome } : {}) });
+      else if (d.type === "snooze") steps.push({ type: "snooze", minutes: d.minutes });
+    }
+    setBusy("macro-create"); setError("");
+    try {
+      const created = await apiFetch<Macro>(`/organizations/${orgId}/inbox/macros`, {
+        method: "POST", body: JSON.stringify({ name, shared: macroShared, steps }),
+      });
+      setMacros((prev) => [created, ...prev]);
+      setMacroName(""); setMacroShared(false); setMacroDraft([emptyMacroStep()]);
+      setNotice(`ম্যাক্রো তৈরি হয়েছে: ${created.name}`);
+    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো তৈরি যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function deleteMacroById(macro: Macro) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("macro-delete"); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/macros/${macro.id}`, { method: "DELETE" });
+      setMacros((prev) => prev.filter((m) => m.id !== macro.id));
+      setNotice(`ম্যাক্রো মোছা হয়েছে: ${macro.name}`);
+    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো মোছা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN3c: bulk reply — ONE POST to the bulk-reply endpoint.
+   * Failures stay selected with their reasons, like bulk actions;
+   * a WhatsApp window-closed item fails on the server before any
+   * send and is reported, never dressed as sent. */
+  async function runBulkReply(via: "quick" | "template") {
+    const orgId = getOrganizationId(); if (!orgId || selectedIds.size === 0) return;
+    if (via === "quick" && !bulkQrId) { setError("বাল্ক রিপ্লাইয়ের জন্য একটি Quick Reply বেছে নিন।"); return; }
+    if (via === "template" && !bulkTplId) { setError("বাল্ক রিপ্লাইয়ের জন্য একটি Template বেছে নিন।"); return; }
+    setBusy("bulk-reply"); setError("");
+    try {
+      const r = await apiFetch<{ results: { id: string; ok: boolean; error?: string }[]; succeeded: number; failed: number }>(
+        `/organizations/${orgId}/inbox/conversations/bulk-reply`,
+        {
+          method: "POST",
+          body: JSON.stringify({ ids: [...selectedIds], ...(via === "quick" ? { quickReplyId: bulkQrId } : { templateId: bulkTplId }) }),
+        },
+      );
+      const failed = r.results.filter((x) => !x.ok);
+      setNotice(bulkReplySummary(r.succeeded, r.failed));
+      if (failed.length) {
+        setError(`পাঠানো যায়নি ${failed.length}টি: ${failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ")}`);
+        setSelectedIds(new Set(failed.map((x) => x.id)));
+      } else {
+        setSelectedIds(new Set());
+      }
+      loadConversations();
+    } catch (e) { setError(e instanceof Error ? e.message : "বাল্ক রিপ্লাই ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
   /** P2 courier widget: manual sync through the existing courier
    * endpoint; provider errors surface verbatim. */
   async function syncShipment(shipmentId: string) {
@@ -631,7 +878,67 @@ export default function InboxPage() {
     finally { setBusy(""); }
   }
 
-  async function openConversation(conv: Conversation) {
+  /** IN1a: search INSIDE messages via the API; results are real
+   * rows from this org only (the server scopes them). */
+  async function runMessageSearch() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const q = msgQ.trim();
+    if (q.length < 2) { setError("মেসেজ খুঁজতে অন্তত ২টি অক্ষর লিখুন।"); return; }
+    setMsgBusy(true); setError("");
+    try {
+      const r = await apiFetch<{ query: string; results: MessageSearchResult[] }>(`/organizations/${orgId}/inbox/messages/search?q=${encodeURIComponent(q)}&limit=30`);
+      setMsgResults(r.results);
+    } catch (e) { setError(e instanceof Error ? e.message : "Search ব্যর্থ"); setMsgResults(null); }
+    finally { setMsgBusy(false); }
+  }
+
+  /** IN1a: open the hit's conversation and scroll to the message.
+   * The thread loads the newest 100 messages — an older hit is
+   * reported honestly instead of pretending the jump worked. */
+  async function openSearchResult(hit: MessageSearchResult) {
+    setMsgResults(null);
+    await openConversation({ id: hit.conversationId } as Conversation, hit.messageId);
+  }
+
+  /** IN1c: apply a saved view — its stored filters replace the
+   * current ones (folder included), exactly like re-typing them. */
+  function applySavedView(view: SavedView) {
+    const { filters: next, folder } = savedToUiFilters(view.filters);
+    setVisibleCount(40); setFocusedIdx(0);
+    setSmartFolder(folder as "" | "sla" | "vip" | "handover" | "snoozed");
+    setFilters(next);
+    setNotice(`ভিউ চালু: ${view.name}`);
+    loadConversations(next, folder);
+  }
+
+  async function saveCurrentView() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const name = saveViewName.trim();
+    if (!name) { setError("ভিউয়ের একটি নাম দিন।"); return; }
+    setBusy("save-view"); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/saved-views`, {
+        method: "POST",
+        body: JSON.stringify({ name, shared: saveViewShared, filters: uiFiltersToSaved(filters, smartFolder) }),
+      });
+      setSaveViewOpen(false); setSaveViewName(""); setSaveViewShared(false);
+      setNotice(`ভিউ সেভ হয়েছে: ${name}${saveViewShared ? " (টিমের সবাই দেখতে পাবে)" : ""}`);
+      loadSavedViews();
+    } catch (e) { setError(e instanceof Error ? e.message : "ভিউ সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function deleteSavedView(view: SavedView) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/saved-views/${view.id}`, { method: "DELETE" });
+      setNotice(`ভিউ মোছা হয়েছে: ${view.name}`);
+      loadSavedViews();
+    } catch (e) { setError(e instanceof Error ? e.message : "ভিউ মোছা ব্যর্থ"); }
+  }
+
+  async function openConversation(conv: Conversation, focusMessageId?: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setError("");
     // P3: ghost / tone state never carries across conversations.
@@ -639,13 +946,35 @@ export default function InboxPage() {
     ghostAbortRef.current?.abort();
     setPrevReply(null); setShowToneMenu(false); setComposerMode("reply");
     try {
-      const res = await apiFetch<{ conversation: Conversation; messages: Message[]; drafts: Draft[]; context: ContextData; botSession?: { id: string; state: string; status: string } | null }>(`/organizations/${orgId}/inbox/conversations/${conv.id}`);
-      setActive(res.conversation); setMessages(res.messages); setDrafts(res.drafts); setContext(res.context); setBotSession(res.botSession ?? null);
+      const res = await apiFetch<{ conversation: Conversation; messages: Message[]; drafts: Draft[]; pinnedMessages?: PinnedMessage[]; context: ContextData; botSession?: { id: string; state: string; status: string } | null }>(`/organizations/${orgId}/inbox/conversations/${conv.id}`);
+      setActive(res.conversation); setMessages(res.messages); setDrafts(res.drafts); setPinnedMessages(res.pinnedMessages ?? []); setQuoteTarget(null); setReactionFor(null); setNextAction(null); setContext(res.context); setBotSession(res.botSession ?? null);
+      // IN9d: restore THIS conversation's composer draft ("" when
+      // none). The owner ref is set first so the save effect can
+      // never write the restored text under another conversation.
+      replyOwnerRef.current = res.conversation.id;
+      setReply(loadComposerDraft(getDraftStorage(), res.conversation.id));
       apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${conv.id}/command-profile`).then(setProfile).catch(() => setProfile(null));
       setNotes(await apiFetch<Note[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/notes`).catch(() => []));
       setVerifications(await apiFetch<PaymentVerification[]>(`/organizations/${orgId}/inbox/conversations/${conv.id}/payment-verifications`).catch(() => []));
       setMobileChat(true);
       setMobileTab("chat");
+// IN1a: a search jump highlights + scrolls to the message —
+      // but only when it is inside the loaded newest-100 window;
+      // otherwise the agent is told plainly (no fake jump).
+      if (focusMessageId) {
+        if (res.messages.some((m) => m.id === focusMessageId)) {
+          setHighlightMsgId(focusMessageId);
+          setTimeout(() => {
+            document.getElementById(`msg-${focusMessageId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }, 180);
+        } else {
+          setHighlightMsgId(null);
+          setNotice("কথোপকথনটি খোলা হয়েছে — খোঁজা মেসেজটি সাম্প্রতিক ১০০টি মেসেজের চেয়ে পুরোনো, তাই সরাসরি সেখানে যাওয়া যায়নি।");
+        }
+      } else {
+        setHighlightMsgId(null);
+      }
+
       if (conv.unreadCount > 0) {
         await apiFetch(`/organizations/${orgId}/inbox/conversations/${conv.id}/read`, { method: "POST" });
         loadConversations();
@@ -655,12 +984,147 @@ export default function InboxPage() {
 
   async function refreshActive() { if (active) await openConversation(active); }
 
-  async function patchConversation(patch: Partial<Conversation>) {
+  /** IN2: merge a duplicate customer INTO this conversation's
+   * customer (agent-confirmed, reversible). The API moves the
+   * rows and writes the undo record; here we only confirm + act. */
+  async function mergeDuplicate(sourceCustomerId: string, sourceLabel: string) {
+    const orgId = getOrganizationId(); if (!orgId || !active || !context?.identity?.customerId) return;
+    if (!window.confirm(`"${sourceLabel}"-এর Customer রেকর্ডটি এই গ্রাহকের রেকর্ডে মার্জ করবেন? সব অর্ডার ও কথোপকথন এই রেকর্ডের নিচে চলে আসবে — কোনো কিছু মোছা হবে না, এবং পরে আনমার্জ করা যাবে।`)) return;
+    setBusy("identity"); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/merge-customer`, {
+        method: "POST", body: JSON.stringify({ sourceCustomerId, targetCustomerId: context.identity.customerId }),
+      });
+      setNotice("Customer মার্জ হয়েছে — প্রয়োজনে নিচের তালিকা থেকে আনমার্জ করা যাবে।");
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "মার্জ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN2: link THIS unlinked conversation to an existing
+   * customer (used when the thread has no customer yet but a
+   * duplicate candidate was found by phone/email). */
+  async function linkToCustomer(customerId: string, label: string) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    if (!window.confirm(`এই কথোপকথনটি "${label}" Customer রেকর্ডের সাথে যুক্ত করবেন?`)) return;
+    setBusy("identity"); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/link-customer`, {
+        method: "POST", body: JSON.stringify({ customerId }),
+      });
+      setNotice("কথোপকথনটি Customer-এর সাথে যুক্ত হয়েছে।");
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "লিংক ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN2: undo a recorded merge from the survivor's panel. */
+  async function unmergeCustomer(sourceCustomerId: string, sourceLabel: string) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    if (!window.confirm(`"${sourceLabel}"-এর মার্জ বাতিল করবেন? যেসব অর্ডার/কথোপকথন মার্জে সরেছিল, সেগুলো আগের রেকর্ডে ফিরে যাবে।`)) return;
+    setBusy("identity"); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/unmerge-customer`, {
+        method: "POST", body: JSON.stringify({ sourceCustomerId }),
+      });
+      setNotice("মার্জ বাতিল হয়েছে — রেকর্ডগুলো আগের অবস্থায় ফিরেছে।");
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "আনমার্জ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN10a: block/unblock — OUR system only. Future messages
+   * land in the Spam queue and no bot/AI runs for the thread. */
+  async function setBlocked(blocked: boolean) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    if (blocked && !window.confirm("এই গ্রাহককে আমাদের সিস্টেমে ব্লক করবেন? ভবিষ্যৎ মেসেজ Spam কিউতে যাবে এবং Bot/AI আর চলবে না। (এটি প্ল্যাটফর্মের ব্লক নয় — Messenger/WhatsApp-এ গ্রাহক এখনো মেসেজ পাঠাতে পারবেন।)")) return;
+    setBusy("block"); setError("");
+    try {
+      const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}/block`, {
+        method: "POST", body: JSON.stringify({ blocked, reason: blocked ? blockReason.trim() || undefined : undefined }),
+      });
+      setActive((a) => (a ? { ...a, ...updated } : a));
+      setBlockReason("");
+      setNotice(blocked ? "গ্রাহক ব্লক হয়েছে — মেসেজ এখন Spam কিউতে যাবে।" : "ব্লক তোলা হয়েছে।");
+      void loadConversations();
+    } catch (e) { setError(e instanceof Error ? e.message : "ব্লক ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN10c: load Analytics v2 for the manage view. */
+  async function loadAnalytics(days: number) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setAnalyticsDays(days); setBusy("analytics");
+    try { setAnalytics(await apiFetch<InboxAnalytics>(`/organizations/${orgId}/inbox/analytics?days=${days}`)); }
+    catch (e) { setError(e instanceof Error ? e.message : "Analytics লোড ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN6d/6b: scroll + highlight a message in the open thread
+   * (same mechanism the IN1 search jump uses). */
+  function jumpToMessage(id: string) {
+    if (!messagesRef.current.some((m) => m.id === id)) {
+      setNotice("মেসেজটি সাম্প্রতিক মেসেজগুলোর মধ্যে নেই — সরাসরি সেখানে যাওয়া যায়নি।");
+      return;
+    }
+    setHighlightMsgId(id);
+    setTimeout(() => {
+      document.getElementById(`msg-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 60);
+  }
+
+  /** IN6d: pin/unpin — server is org-scoped + audited; the list
+   * refreshes from the server response, never local invention. */
+  async function togglePin(m: Message) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/pin`, { method: "POST", body: JSON.stringify({ pinned: !m.pinnedAt }) });
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  /** IN6c: agent reaction — offered only on Messenger/Instagram
+   * (canSendReaction); the API confirms with Meta BEFORE storing,
+   * so a failure here is Meta's verbatim refusal, shown as-is. */
+  async function sendReaction(m: Message, emoji: string | null) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setReactionFor(null);
+    try {
+      await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/react`, { method: "POST", body: JSON.stringify({ emoji }) });
+      await refreshActive();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  async function patchConversation(patch: Partial<Conversation> & { assignForMinutes?: number }) {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
     try {
       const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}`, { method: "PATCH", body: JSON.stringify(patch) });
       setActive({ ...active, ...updated });
       loadConversations();
+      // IN7a: an assignee change is a handover — the API reports
+      // the AI summary outcome separately; surface it honestly
+      // and refresh so the summary note shows in the timeline.
+      const hsNote = handoverSummaryNotice((updated as any).handoverSummary);
+      if (hsNote) { setNotice(hsNote); void refreshActive(); }
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+  }
+
+  /** CX5: action-bar POST actions (snooze / unsnooze / take-over /
+   * back-to-ai) — merge the returned row into `active` and reload
+   * the list (a snoozed row leaves the current list view). */
+  async function conversationAction(action: "snooze" | "unsnooze" | "take-over" | "back-to-ai", body?: unknown) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    try {
+      const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}/${action}`, {
+        method: "POST", ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      setActive({ ...active, ...updated });
+      loadConversations();
+      // IN7a: take-over carries the handover-summary outcome.
+      if (action === "take-over") {
+        const hsNote = handoverSummaryNotice((updated as any).handoverSummary);
+        if (hsNote) { setNotice(hsNote); void refreshActive(); }
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
 
@@ -723,6 +1187,60 @@ export default function InboxPage() {
     }
   }
 
+async function snoozeWith(body: { minutes: number } | { until: string } | null) {
+    if (!body) { setError("Snooze-এর সময় ঠিকমতো দিন — কমপক্ষে ৫ মিনিট বা ভবিষ্যতের একটি সময়।"); return; }
+    setShowSnoozeMenu(false); setShowMoreMenu(false);
+    await conversationAction("snooze", body);
+    setNotice("😴 কথোপকথনটি Snooze করা হয়েছে — সময় হলে তালিকায় আবার দেখা যাবে।");
+  }
+
+  // CX5: action-bar segment renderers (snooze / timer menus).
+  const cx5Btn = "rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium transition hover:bg-slate-200";
+  const cx5Menu = "absolute left-0 top-full z-20 mt-1 flex w-64 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg";
+  const cx5MenuItem = "rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100 disabled:opacity-50";
+  const timerRemaining = active?.assignmentKind === "timed" && active?.assignedUntil
+    ? Math.max(0, Math.ceil((new Date(active.assignedUntil).getTime() - handoverTick) / 60000)) : null;
+  const renderAssignSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.assignedUserId ?? ""}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label="Assign করুন">
+      <option value="">👤 কেউ নয়</option>
+      {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
+    </select>
+  );
+  const renderLeadSelect = () => (
+    <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.pipelineStage ?? "new"}
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ pipelineStage: e.target.value }); }} title="Pipeline Stage" aria-label="Lead Stage">
+      <option value="new">🎯 🆕 New Lead</option><option value="talking">🎯 💬 Talking</option>
+      <option value="ordered">🎯 🛒 Ordered</option><option value="delivered">🎯 ✅ Delivered</option><option value="repeat">🎯 🔁 Repeat</option>
+    </select>
+  );
+
+
+  const renderSnoozeControls = () => (
+    <>
+      {SNOOZE_PRESETS.map((p) => (
+        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} পরে</button>
+      ))}
+      <span className="mt-1 flex items-center gap-1 border-t border-slate-100 pt-1.5">
+        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label="কাস্টম Snooze সময়" />
+        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>Snooze করুন</button>
+      </span>
+      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">Snooze AI বন্ধ করে না — কথোপকথন শুধু তালিকা থেকে সরে থাকে।</span>
+    </>
+  );
+  const renderTimerControls = () => (
+    <>
+      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">⏱️ আরও {timerRemaining} মিনিট বাকি (timed)</span> : null}
+      {([15, 30, 60, 120, 240] as const).map((n) => (
+        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{n} মিনিটের জন্য আমার কাছে</button>
+      ))}
+      {timerRemaining !== null ? (
+        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>টাইমার বাতিল</button>
+      ) : null}
+    </>
+  );
+
+
   async function connect(e: React.FormEvent) {
     e.preventDefault();
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -741,13 +1259,57 @@ export default function InboxPage() {
     // addNote() there, and this guard is the belt-and-braces check.
     if (composerMode === "note") return;
     const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim()) return;
+    const convId = active.id;
+    const content = reply;
+    // CX11ac: attribution snapshot for THIS send (the flags are
+    // reset only on success).
+    const sendAiAssisted = aiAssistUsed;
+    const sendQuickReplyId = usedQuickReplyId;
+    // UX1 Q5: instant local pending bubble. It is labelled
+    // "পাঠানো হচ্ছে…" (status "sending") and only ever replaced by
+    // the server's real message row — it never poses as sent. The
+    // composer clears immediately; the BUBBLE keeps the content, so
+    // a failure is retried from the bubble, not re-typed.
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // IN6b: the quote target rides this send; the pending bubble
+    // shows the same quoted snippet the thread will show.
+    const sendQuote = quoteTarget;
+    const temp: Message = { id: tempId, direction: "out", content, type: "text", status: "sending", createdAt: new Date().toISOString(), sentByAiDraft: false, replyToMessageId: sendQuote?.id ?? null, quote: sendQuote ? { id: sendQuote.id, direction: sendQuote.direction, snippet: String(sendQuote.content ?? `[${sendQuote.type}]`).slice(0, 140) } : null };
+    setMessages((m) => [...m, temp]);
+    setReply(""); setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
     setBusy("send"); setError("");
     try {
-      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${active.id}/messages`, { method: "POST", body: JSON.stringify({ content: reply }) });
-      setMessages((m) => [...m, msg]); setReply(""); setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = "";
+      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content, aiAssisted: sendAiAssisted || undefined, quickReplyId: sendQuickReplyId ?? undefined, replyToMessageId: sendQuote?.id ?? undefined }) });
+      setQuoteTarget(null);
+      setAiAssistUsed(false); setUsedQuickReplyId(null);
+      setMessages((prev) => {
+        // The realtime stream may have delivered the real row first.
+        if (prev.some((m) => m.id === msg.id)) return prev.filter((m) => m.id !== tempId);
+        return prev.map((m) => (m.id === tempId ? msg : m));
+      });
       loadConversations();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
+  }
+
+  async function retryLocalSend(tempId: string) {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    const local = messagesRef.current.find((m) => m.id === tempId);
+    if (!local?.content || local.status !== "failed") return;
+    const convId = active.id;
+    setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: "sending" } : m)));
+    setError("");
+    try {
+      const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content: local.content }) });
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev.filter((m) => m.id !== tempId);
+        return prev.map((m) => (m.id === tempId ? msg : m));
+      });
+      loadConversations();
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m)));
+      setError(e instanceof Error ? e.message : "Failed");
+    }
   }
 
   async function sendImage() {
@@ -918,6 +1480,54 @@ export default function InboxPage() {
     finally { setBusy(""); }
   }
 
+  /** IN7b: fetch the AI next-action proposal for the open
+   * thread. The endpoint is suggestion-only — fetching it sends
+   * nothing and changes nothing. */
+  async function loadNextAction() {
+    const orgId = getOrganizationId(); if (!orgId || !active) return;
+    setBusy("next-action"); setError("");
+    try {
+      const res = await apiFetch<NextActionResponse>(`/organizations/${orgId}/inbox/conversations/${active.id}/next-action`, { method: "POST" });
+      setNextAction(res);
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(""); }
+  }
+
+  /** IN7b: run the proposed action through its EXISTING path —
+   * the same handlers the toolbar/panels already use. Only ever
+   * runs on an explicit click; wait_customer has no run. */
+  async function runNextAction() {
+    const orgId = getOrganizationId(); if (!orgId || !active || !nextAction?.proposal) return;
+    const action = nextAction.proposal.action;
+    if (action === "share_tracking") {
+      setBusy("track"); setError("");
+      try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+      catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
+    } else if (action === "cod_confirm") {
+      const order = (context?.orders ?? []).find((o) => o.isCod && o.codConfirmationStatus !== "awaiting" && o.codConfirmationStatus !== "confirmed");
+      if (!order) { setError("COD কনফার্মেশনের মতো কোনো অর্ডার এই কথোপকথনে নেই।"); return; }
+      await requestCod(order.id);
+    } else if (action === "create_order") {
+      setOrderOpen(true);
+      setNotice("🧾 Order প্যানেল খোলা হয়েছে — যাচাই করে Order তৈরি করুন।");
+    } else if (action === "reply_manually") {
+      replyRef.current?.focus();
+    } else if (action === "resolve") {
+      await patchConversation({ status: "closed" });
+    }
+  }
+
+  /** IN7c: accept the tag/stage proposal — applied ONLY here, on
+   * this click, through the normal updateConversation path. */
+  async function acceptNextActionProposal() {
+    if (!active || !nextAction?.proposal) return;
+    const patch = proposalAcceptPatch(nextAction.proposal, active.tags ?? []);
+    if (!patch) { setNotice("গ্রহণ করার মতো নতুন Tag/Stage প্রস্তাব নেই।"); return; }
+    await patchConversation(patch);
+    setNextAction(null);
+    setNotice("✅ প্রস্তাবিত Tag/Stage বসানো হয়েছে।");
+  }
+
   function insertProductSnippet(prod: { name: string; priceMinor: string; currency: string; stockQuantity?: number | null }) {
     const price = money(prod.priceMinor, prod.currency);
     const stock = prod.stockQuantity == null ? "" : prod.stockQuantity > 0 ? `, স্টকে ${prod.stockQuantity}টি আছে` : ", আপাতত স্টক শেষ";
@@ -997,8 +1607,8 @@ export default function InboxPage() {
     const orgId = getOrganizationId(); if (!orgId || !active || !reply.trim()) return;
     setBusy("note"); setError("");
     try {
-      const note = await apiFetch<Note>(`/organizations/${orgId}/inbox/conversations/${active.id}/notes`, { method: "POST", body: JSON.stringify({ content: reply }) });
-      setNotes((n) => [...n, note]); setReply(""); setIAmTyping(false);
+      const note = await apiFetch<Note>(`/organizations/${orgId}/inbox/conversations/${active.id}/notes`, { method: "POST", body: JSON.stringify({ content: reply, maskSensitive: noteMask }) });
+      setNotes((n) => [...n, note]); setReply(""); setIAmTyping(false); setNoteMask(false);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
   }
@@ -1053,7 +1663,20 @@ export default function InboxPage() {
   }
 
   const inputCls = "input mt-1";
-  const statusIcon = (m: Message) => m.direction === "in" ? "" : m.status === "failed" ? " · ব্যর্থ" : m.status === "read" ? " · পঠিত" : m.status === "delivered" ? " · পৌঁছেছে" : " · পাঠানো হয়েছে";
+  const statusIcon = (m: Message) => {
+    if (m.direction === "in") return "";
+    if (m.status === "sending") return " · পাঠানো হচ্ছে…";
+    if (m.status === "failed") return " · ব্যর্থ";
+    // IN6a: on Meta channels + webchat the tick comes ONLY from
+    // the platform-confirmed deliveryStatus — no status, no tick.
+    // (Telegram/Email have no confirmed source: nothing shown.)
+    if (["whatsapp", "messenger", "instagram", "webchat"].includes(active?.channel ?? "")) {
+      const tick = deliveryTick(active?.channel, m);
+      if (!tick) return "";
+      return ` · ${tick.glyph ? `${tick.glyph} ` : ""}${tick.label}`;
+    }
+    return " · পাঠানো হয়েছে";
+  };
   const memberName = (userId?: string | null) => {
     const m = members.find((x) => x.user.id === userId);
     return m ? (m.user.name ?? m.user.email) : userId ? "টিম সদস্য" : "কেউ নয়";
@@ -1468,6 +2091,27 @@ export default function InboxPage() {
             </button>
           </div>
         </div>
+        {viewMode === "list" ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([
+              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
+              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং কার্যকর সীমা পেরিয়ে গেছে (সাধারণ সীমা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিট; Channel/VIP স্তর সেটিংসে থাকলে সেটাই প্রযোজ্য)`, onClick: () => applyFolder("sla") },
+              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
+              { key: "handover", label: "🤝 Handover কিউ", active: smartFolder === "handover", count: folderCounts?.handover, title: "মানুষের হাতে থাকা (Autopilot থেমে) কথোপকথন — সবচেয়ে বেশি অপেক্ষা করা আগে", onClick: () => applyFolder("handover") },
+              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: "Snooze করা কথোপকথন — জাগার সময় অনুযায়ী সাজানো, সময় হলে নিজে থেকে তালিকায় ফিরবে", onClick: () => applyFolder("snoozed") },
+            ]).map((chip) => (
+              <button key={chip.key} title={chip.title} onClick={chip.onClick}
+                className={`stat-chip ${chip.active ? "stat-chip-active" : ""} ${chip.key === "sla" && (chip.count ?? 0) > 0 && !chip.active ? "stat-chip-danger" : ""}`}>
+                {chip.label}{chip.count !== undefined && chip.count !== null ? <span className="stat-chip-count">{chip.count}</span> : null}
+              </button>
+            ))}
+            <span className="ml-1 min-w-0 truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</span>
+          </div>
+        ) : (
+          <p className="truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</p>
+        )}
       </div>
       {error ? (
         <div className="shrink-0 flex items-center justify-between rounded-xl border border-red-200 bg-red-50/90 px-4 py-2.5 text-xs text-red-700 shadow-xs">
@@ -1824,6 +2468,123 @@ export default function InboxPage() {
               />
             </div>
           ) : null}
+
+<input
+            className="rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none"
+            placeholder="🏷️ Tag দিয়ে ফিল্টার (যেমন vip, repeat)..."
+            value={filters.tag}
+            onChange={(e) => onFilter({ tag: e.target.value })}
+          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([
+              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
+              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি (থ্রেশহোল্ড: ইনবক্স সেটিংস)`, onClick: () => applyFolder("sla") },
+              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
+              { key: "handover", label: "🤝 Handover কিউ", active: smartFolder === "handover", count: folderCounts?.handover, title: "মানুষের হাতে থাকা (Autopilot থেমে) কথোপকথন — সবচেয়ে বেশি অপেক্ষা করা আগে", onClick: () => applyFolder("handover") },
+              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: "Snooze করা কথোপকথন — জাগার সময় অনুযায়ী সাজানো, সময় হলে নিজে থেকে তালিকায় ফিরবে", onClick: () => applyFolder("snoozed") },
+            ]).map((chip) => (
+              <button key={chip.key} title={chip.title} onClick={chip.onClick}
+                className={`stat-chip ${chip.active ? "stat-chip-active" : ""} ${chip.key === "sla" && (chip.count ?? 0) > 0 && !chip.active ? "stat-chip-danger" : ""}`}>
+                {chip.label}{chip.count !== undefined && chip.count !== null ? <span className="stat-chip-count">{chip.count}</span> : null}
+              </button>
+            ))}
+          </div>
+          {/* IN1a: search INSIDE messages (content + voice transcript) */}
+          <div className="shrink-0">
+            <div className="flex gap-1.5">
+              <input className="input min-w-0 flex-1" placeholder="মেসেজের ভেতরে খুঁজুন (যেমন: ডেলিভারি চার্জ)" value={msgQ}
+                onChange={(e) => setMsgQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void runMessageSearch(); }} />
+              <button className="btn-secondary btn-sm shrink-0" disabled={msgBusy} onClick={() => void runMessageSearch()}>{msgBusy ? "খুঁজছি…" : "🔎 মেসেজে খুঁজুন"}</button>
+            </div>
+            {msgResults !== null ? (
+              <div className="mt-1.5 max-h-64 space-y-1 overflow-y-auto rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[11px] font-bold text-slate-600">{msgResults.length}টি মেসেজ মিলেছে</span>
+                  <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setMsgResults(null)}>বন্ধ করুন</button>
+                </div>
+                {msgResults.length === 0 ? <p className="px-1 py-1 text-[11px] text-slate-400">কোনো মেসেজে এই লেখা পাওয়া যায়নি।</p> : msgResults.map((r) => {
+                  const parts = splitSnippet(r.snippet, r.matchStart, r.matchLength);
+                  return (
+                    <button key={r.messageId} className="block w-full rounded-xl px-2 py-1.5 text-left hover:bg-indigo-50" onClick={() => void openSearchResult(r)}>
+                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+                        <span className="truncate">{r.contactName ?? r.contactPhone ?? "গ্রাহক"}</span>
+                        {r.channel ? <ChannelChip channel={r.channel} /> : null}
+                        <span className="ml-auto shrink-0 font-normal text-slate-400">{new Date(r.createdAt).toLocaleString("bn-BD")}</span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-slate-500">
+                        {r.direction === "out" ? "➡️ " : ""}{parts.before}{parts.match ? <mark className="rounded bg-amber-200 px-0.5">{parts.match}</mark> : null}{parts.after}
+                        {r.matchedField === "transcription" ? <span className="ml-1 text-slate-400">(ভয়েসের লেখা থেকে)</span> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+          {/* IN1b: advanced filters */}
+          <div className="shrink-0">
+            <button className={`toggle-pill ${showAdv || hasAdvancedFilters(filters) ? "toggle-pill-active" : ""}`} onClick={() => setShowAdv((v) => !v)}>
+              ⚙️ বিস্তারিত ফিল্টার{hasAdvancedFilters(filters) ? " •" : ""}
+            </button>
+            {showAdv ? (
+              <div className="mt-1.5 space-y-1.5 rounded-2xl bg-slate-50 p-2 ring-1 ring-slate-200">
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">তারিখ</label>
+                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateFrom} onChange={(e) => onFilter({ dateFrom: e.target.value })} aria-label="শুরুর তারিখ" />
+                  <span className="text-slate-400">–</span>
+                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateTo} onChange={(e) => onFilter({ dateTo: e.target.value })} aria-label="শেষ তারিখ" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">অর্ডার ৳</label>
+                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder="কমপক্ষে" value={filters.amountMin} onChange={(e) => onFilter({ amountMin: e.target.value })} aria-label="সর্বনিম্ন অর্ডার মূল্য (টাকা)" />
+                  <span className="text-slate-400">–</span>
+                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder="সর্বোচ্চ" value={filters.amountMax} onChange={(e) => onFilter({ amountMax: e.target.value })} aria-label="সর্বোচ্চ অর্ডার মূল্য (টাকা)" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">বিষয়</label>
+                  <select className="filter-select min-w-0 flex-1" value={filters.intent} onChange={(e) => onFilter({ intent: e.target.value })} aria-label="Intent">
+                    <option value="">সব বিষয়</option>
+                    <option value="price">দাম</option><option value="stock">স্টক</option><option value="delivery">ডেলিভারি</option>
+                    <option value="order_status">অর্ডারের অবস্থা</option><option value="payment">পেমেন্ট</option>
+                    <option value="complaint">অভিযোগ</option><option value="order_intent">অর্ডার করতে চায়</option><option value="greeting">শুভেচ্ছা</option>
+                  </select>
+                  <select className="filter-select min-w-0 flex-1" value={filters.sentiment} onChange={(e) => onFilter({ sentiment: e.target.value })} aria-label="Sentiment">
+                    <option value="">সব মনোভাব</option>
+                    <option value="positive">😃 ইতিবাচক</option><option value="neutral">😐 স্বাভাবিক</option><option value="negative">😡 অসন্তুষ্ট</option>
+                  </select>
+                </div>
+                <p className="text-[10px] text-slate-400">অর্ডার মূল্য = কথোপকথনের সর্বশেষ লিংকড অর্ডার; মনোভাব = কীওয়ার্ড-ভিত্তিক আনুমানিক সংকেত।</p>
+                {hasAdvancedFilters(filters) ? (
+                  <button className="text-[11px] font-semibold text-red-600 hover:underline" onClick={() => onFilter({ dateFrom: "", dateTo: "", amountMin: "", amountMax: "", intent: "", sentiment: "" })}>বিস্তারিত ফিল্টার মুছুন</button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {/* IN1c: saved views */}
+          <div className="shrink-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {savedViews.map((v) => (
+                <span key={v.id} className="stat-chip" title={v.shared ? "টিমের সবার ভিউ" : "শুধু আমার ভিউ"}>
+                  <button className="font-semibold" onClick={() => applySavedView(v)}>⭐ {v.name}{v.shared ? " · টিম" : ""}</button>
+                  {v.mine ? <button className="ml-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" onClick={() => void deleteSavedView(v)}>✕</button> : null}
+                </span>
+              ))}
+              <button className="toggle-pill" onClick={() => setSaveViewOpen((v) => !v)}>＋ বর্তমান ফিল্টার ভিউ হিসেবে সেভ</button>
+            </div>
+            {saveViewOpen ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-2xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
+                <input className="input min-w-0 flex-1 !py-1" placeholder="ভিউয়ের নাম (যেমন: ঢাকার VIP অপঠিত)" value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} maxLength={80} />
+                <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  <input type="checkbox" checked={saveViewShared} onChange={(e) => setSaveViewShared(e.target.checked)} /> টিমের সবাই দেখবে
+                </label>
+                <button className="btn-primary btn-sm" disabled={busy === "save-view"} onClick={() => void saveCurrentView()}>সেভ করুন</button>
+              </div>
+            ) : null}
+          </div>
+
           {selectedIds.size > 0 ? (
             <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
               <div className="flex items-center justify-between gap-2">
@@ -1843,9 +2604,34 @@ export default function InboxPage() {
                 <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("mark-read")}>পঠিত</button>
                 <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-red-600 ring-1 ring-red-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("close")}>বন্ধ করুন</button>
               </div>
+              {/* IN3c: bulk reply — the same quick reply / template to
+                  every selected conversation. WhatsApp window-closed
+                  items fail on the server before any send. */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-indigo-100 pt-1.5">
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkQrId} onChange={(e) => setBulkQrId(e.target.value)} aria-label="বাল্ক রিপ্লাই Quick Reply">
+                  <option value="">— Quick Reply —</option>
+                  {quickReplies.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
+                </select>
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("quick")}>💬 বাল্ক রিপ্লাই</button>
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkTplId} onChange={(e) => setBulkTplId(e.target.value)} aria-label="বাল্ক Template">
+                  <option value="">— Template —</option>
+                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
+                </select>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("template")}>🧩 Template পাঠান</button>
+                <span className="text-[10px] text-indigo-400">WhatsApp-এ Window বন্ধ থাকলে Quick Reply যাবে না — Template ব্যবহার করুন।</span>
+              </div>
             </div>
           ) : selectMode ? (
             <div className="shrink-0 text-[11px] text-slate-400">বাল্ক মোড চালু — কার্ডে ক্লিক করে কথোপকথন বেছে নিন।</div>
+          ) : null}
+          {/* IN4d: handover queue ordering — longest wait (default)
+              or SLA risk (effective deadline order, server-side). */}
+          {smartFolder === "handover" ? (
+            <div className="flex shrink-0 items-center gap-1.5 pt-1 text-[11px]">
+              <span className="text-slate-400">সাজান:</span>
+              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort !== "sla_risk" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200"}`} onClick={() => onFilter({ sort: "recent" })}>বেশি অপেক্ষা আগে</button>
+              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort === "sla_risk" ? "bg-red-600 text-white ring-red-600" : "bg-white text-slate-600 ring-slate-200"}`} title="স্তরভিত্তিক SLA deadline অনুযায়ী — যার সময় সবচেয়ে আগে শেষ হচ্ছে/হয়েছে সে আগে" onClick={() => onFilter({ sort: "sla_risk" })}>⏰ SLA ঝুঁকি আগে</button>
+            </div>
           ) : null}
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pt-1 pr-0.5">
             {conversations.length === 0 ? (
@@ -1855,6 +2641,10 @@ export default function InboxPage() {
                 <EmptyState title="কোনো VIP কথোপকথন নেই" description="থ্রেশহোল্ডের সমান বা বড় সর্বশেষ অর্ডারওয়ালা কোনো কথোপকথন এখন নেই।" />
               ) : smartFolder === "sla" ? (
                 <EmptyState title="🎉 কোনো SLA breach নেই" description="প্রথম জবাবের অপেক্ষায় থ্রেশহোল্ডের বেশি সময় ধরে কোনো কথোপকথন আটকে নেই।" />
+              ) : smartFolder === "handover" ? (
+                <EmptyState title="🎉 Handover কিউ ফাঁকা" description="Autopilot থেমে মানুষের হাতে অপেক্ষা করা কোনো কথোপকথন এখন নেই।" />
+              ) : smartFolder === "snoozed" ? (
+                <EmptyState title="😴 কোনো Snoozed কথোপকথন নেই" description="Snooze করা কথোপকথন সময় হলে নিজে থেকে তালিকায় ফিরে আসবে।" />
               ) : (
                 <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
               )
@@ -1943,6 +2733,18 @@ export default function InboxPage() {
                         </span>
                       ) : null}
 
+                      {isActivelySnoozed(c.snoozedUntil) ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700 ring-1 ring-indigo-200" title={`Snoozed — ${new Date(c.snoozedUntil as string).toLocaleString("bn-BD")} পর্যন্ত`}>
+                          😴 Snoozed
+                        </span>
+                      ) : null}
+
+                      {smartFolder === "handover" && c.handoverReason ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700 ring-1 ring-amber-200">
+                          {HANDOVER_REASON_LABELS[c.handoverReason] ?? c.handoverReason} · {Math.max(0, Math.floor((handoverTick - new Date(c.handoverAt ?? c.updatedAt ?? handoverTick).getTime()) / 60000))} মিনিট অপেক্ষা
+                        </span>
+                      ) : null}
+
                       {c.channel === "whatsapp" && c.whatsappWindow ? (
                         c.whatsappWindow.open ? (
                           <span className="text-emerald-600 font-medium" title="২৪ ঘণ্টার ফ্রি-ফর্ম উইন্ডো খোলা">🟢 Window</span>
@@ -1974,7 +2776,13 @@ export default function InboxPage() {
                 </button>
               );
             })}
-            {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">আরও কথোপকথন লোড হচ্ছে… ({conversations.length - visibleCount} বাকি)</div> : null}
+            {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">আরও কথোপকথন লোড হচ্ছে… ({conversations.length - visibleCount} বাকি)</div> : nextCursor ? (
+              <div ref={sentinelRef} className="py-2 text-center">
+                <button className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50" disabled={loadingMore} onClick={() => void loadMoreConversations()}>
+                  {loadingMore ? "লোড হচ্ছে…" : "আরও কথোপকথন লোড করুন"}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -2256,6 +3064,93 @@ export default function InboxPage() {
                 </div>
               </div>
 
+              {/* Thread Action Controls */}
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5 rounded-xl bg-slate-50/80 p-2 text-xs ring-1 ring-slate-100">
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400 font-medium ml-1">স্টেজ:</span>
+                  <select
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
+                    value={active.pipelineStage ?? "new"}
+                    onChange={(e) => patchConversation({ pipelineStage: e.target.value })}
+                    title="Pipeline Stage"
+                  >
+                    <option value="new">🆕 New</option>
+                    <option value="talking">💬 Talking</option>
+                    <option value="ordered">🛒 Ordered</option>
+                    <option value="delivered">✅ Delivered</option>
+                    <option value="repeat">🔁 Repeat</option>
+                  </select>
+                </div>
+
+                <div className="h-4 w-px bg-slate-200 mx-1" />
+
+                {/* CX5 (ported): Later / Take over / Back to AI / Timer */}
+                {isActivelySnoozed(active.snoozedUntil) ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="rounded-lg bg-indigo-50 px-2.5 py-1.5 font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200/70">😴 {new Date(active.snoozedUntil as string).toLocaleString("bn-BD")} পর্যন্ত snoozed</span>
+                    <button className={cx5Btn} onClick={() => void conversationAction("unsnooze")}>এখনই জাগান</button>
+                  </span>
+                ) : (
+                  <span className="relative hidden sm:inline-flex">
+                    <button className={cx5Btn} onClick={() => { setShowSnoozeMenu((v) => !v); setShowTimerMenu(false); }}>😴 Later</button>
+                    {showSnoozeMenu ? <span className={cx5Menu}>{renderSnoozeControls()}</span> : null}
+                  </span>
+                )}
+                <button className={cx5Btn} onClick={() => void conversationAction("take-over")}>🙋 Take over</button>
+                {active.autoReplyPaused ? (
+                  <button className="rounded-lg bg-emerald-50 px-2.5 py-1.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200/70 transition hover:bg-emerald-100" onClick={() => void conversationAction("back-to-ai")}>🤖 Back to AI</button>
+                ) : null}
+                <span className="relative hidden sm:inline-flex">
+                  <button className={cx5Btn} onClick={() => { setShowTimerMenu((v) => !v); setShowSnoozeMenu(false); }}>⏱️ Timer{timerRemaining !== null ? ` (${timerRemaining}মি)` : ""}</button>
+                  {showTimerMenu ? <span className={cx5Menu}>{renderTimerControls()}</span> : null}
+                </span>
+                <span className="relative inline-flex">
+                  <button className={cx5Btn} onClick={() => { setShowMacroMenu((v) => !v); setShowSnoozeMenu(false); setShowTimerMenu(false); }} title="এক click-এ ধারাবাহিক কাজ (উত্তর + অ্যাসাইন + ট্যাগ + …)">⚡ ম্যাক্রো</button>
+                  {showMacroMenu ? (
+                    <span className={cx5Menu}>
+                      <span className="px-2 pt-1 text-[11px] font-bold text-slate-400">এই কথোপকথনে চালান</span>
+                      {macros.length === 0 ? <span className="px-2 py-1.5 text-xs text-slate-400">কোনো ম্যাক্রো নেই — Manage ট্যাবে তৈরি করুন।</span> : macros.map((m) => (
+                        <button key={m.id} className={cx5MenuItem} disabled={busy === "macro"} onClick={() => void runMacroOnActive(m)}>
+                          ⚡ {m.name}{m.shared ? " · টিম" : ""}
+                          <span className="block truncate text-[10px] font-normal text-slate-400">{m.steps.map((s) => macroStepSummary(s, { quickReplyTitle: (id) => quickReplies.find((q) => q.id === id)?.title, memberName: (id) => members.find((mm) => mm.user.id === id)?.user.name ?? undefined })).join(" → ")}</span>
+                        </button>
+                      ))}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="hidden sm:inline-flex">{renderAssignSelect()}</span>
+                <span className="hidden sm:inline-flex">{renderLeadSelect()}</span>
+                <span className="relative inline-flex sm:hidden">
+                  <button className={cx5Btn} onClick={() => setShowMoreMenu((v) => !v)} aria-label="আরও অ্যাকশন">⋯ আরও</button>
+                  {showMoreMenu ? (
+                    <span className={`${cx5Menu} !w-72`}>
+                      {!isActivelySnoozed(active.snoozedUntil) ? (<><span className="px-2 pt-1 text-[11px] font-bold text-slate-400">😴 Later</span>{renderSnoozeControls()}</>) : null}
+                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">⏱️ Timer</span>
+                      {renderTimerControls()}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+
+              {/* IN3: the last macro run's per-step report */}
+              {macroResult && macroResult.conversationId === active.id ? (
+                <div className={`shrink-0 rounded-xl p-2.5 text-xs ring-1 ${macroResult.success ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-red-50 text-red-800 ring-red-200"}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold">{formatMacroRunResult(macroResult)}</span>
+                    <button className="shrink-0 font-semibold hover:underline" onClick={() => setMacroResult(null)}>বন্ধ</button>
+                  </div>
+                  <ul className="mt-1 space-y-0.5">
+                    {macroRunStepLines(macroResult).map((line, i) => <li key={i}>{line}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+
+              <div className="flex shrink-0 flex-wrap gap-1.5 lg:hidden">
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
+                {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
+              </div>
+
               {mobileTab === "customer" ? (
                 <div className="min-h-0 flex-1 overflow-y-auto p-1 lg:hidden">
                   {renderCustomerContent(false)}
@@ -2307,6 +3202,15 @@ export default function InboxPage() {
                 );
               })()}
               <div className="space-y-3 rounded-2xl bg-slate-50/70 p-3 sm:p-4 ring-1 ring-slate-100">
+              {pinnedMessages.length ? (
+                <div className="rounded-xl bg-amber-50 px-2.5 py-1.5 ring-1 ring-amber-200">
+                  <div className="text-[10px] font-bold text-amber-700">📌 Pinned ({pinnedMessages.length})</div>
+                  {pinnedMessages.map((p) => (
+                    <button key={p.id} type="button" className="block w-full truncate text-left text-[11px] text-amber-800 hover:underline" title="এই মেসেজে যান" onClick={() => jumpToMessage(p.id)}>{p.snippet}</button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="thread-canvas thread-scroll flex flex-col gap-2 rounded-2xl p-3 ring-1 ring-inset ring-slate-200/50">
                 {timeline.map((item, i) => {
                   const prevDay = i > 0 ? new Date(timeline[i - 1].at).toDateString() : null;
                   const thisDay = new Date(item.at).toDateString();
@@ -2348,140 +3252,111 @@ export default function InboxPage() {
                   }
                   const m = item.message;
                   const isIncoming = m.direction === "in";
+                  const prevItem = i > 0 ? timeline[i - 1] : null;
+                  const grouped = Boolean(prevItem && prevItem.kind === "message" && prevItem.message.direction === m.direction && prevDay === thisDay);
 
                   return (
                     <React.Fragment key={m.id}>
                       {daySep}
-                      <div className={`flex ${isIncoming ? "justify-start" : "justify-end"} my-1 items-end gap-2`}>
-                        {isIncoming && (
-                          <div className="shrink-0 mb-1">
-                            <ContactAvatar name={active.contactName ?? active.contactPhone} channel={active.channel} size="sm" />
-                          </div>
-                        )}
-                        <div
-                          className={`relative max-w-[85%] sm:max-w-[75%] px-4 py-2.5 shadow-xs transition-all ${
-                            isIncoming
-                              ? "inbox-bubble-in border border-slate-200/90 bg-white text-slate-800"
-                              : m.status === "failed"
-                              ? "inbox-bubble-out bg-red-50 border border-red-200 text-red-800"
-                              : m.sentByAiDraft || m.autoReply
-                              ? "inbox-bubble-ai text-white"
-                              : "inbox-bubble-out text-white"
-                          }`}
-                        >
-                          {/* AI Badge on top corner if sent by AI */}
-                          {!isIncoming && (m.sentByAiDraft || m.autoReply) && (
-                            <span className="absolute -top-2.5 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[9px] font-black text-white shadow-xs ring-2 ring-white">
-                              AI
-                            </span>
-                          )}
-
-                          {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? (
-                            <div className="mb-2 overflow-hidden rounded-xl">
-                              <MediaView convId={active.id} message={m} />
-                            </div>
-                          ) : null}
-
-                          {m.content ? (
-                            <div className="whitespace-pre-wrap text-[13.5px] leading-relaxed break-words font-normal">
-                              {m.type === "template" ? `🧩 ${m.content}` : m.content}
-                            </div>
-                          ) : (m.mediaId || m.mediaUrl || m.mediaStorageKey) ? null : (
-                            <div className="italic text-xs opacity-75">[{m.type}]</div>
-                          )}
-
-                          {/* Footer metadata */}
-                          <div className={`mt-1.5 flex flex-wrap items-center gap-1 text-[10px] ${
-                            isIncoming ? "text-slate-400" : "text-white/80"
-                          }`}>
-                            <span>
-                              {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            {!isIncoming && (
-                              <span className="font-medium">
-                                {m.status === "read" ? " · ✓✓ পঠিত" : m.status === "delivered" ? " · ✓✓ পৌঁছেছে" : m.status === "failed" ? " · ⚠️ ব্যর্থ" : " · ✓ পাঠানো"}
-                              </span>
-                            )}
-                            {m.sentByAiDraft ? <span className="rounded bg-black/10 px-1">AI Draft</span> : null}
-                            {m.autoReply ? <span className="rounded bg-black/10 px-1">🤖 অটো</span> : null}
-
-                            {isIncoming && m.intent && m.intent !== "other" ? (
-                              <span className="ml-1 rounded-md bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-600 ring-1 ring-indigo-200/60" title={`কনফিডেন্স ${m.intentConfidence ?? 0}%`}>
-                                💡 {m.intent} ({m.intentConfidence}%)
-                              </span>
-                            ) : null}
-
-                            {isIncoming && m.content ? (
-                              <button
-                                className="ml-1 font-semibold text-indigo-500 hover:text-indigo-700 hover:underline"
-                                onClick={() => translateMsg(m)}
-                              >
-                                🌐 অনুবাদ
-                              </button>
-                            ) : null}
-                          </div>
-
-                          {m.error ? <div className="mt-1 text-xs text-red-500 font-medium">⚠️ {m.error}</div> : null}
-                          {translations[m.id] ? (
-                            <div className="mt-2 rounded-xl border border-indigo-100 bg-indigo-50/70 p-2 text-xs italic text-indigo-900">
-                              🌐 {translations[m.id]}
-                            </div>
-                          ) : null}
-                          {m.transcription ? (
-                            <div className="mt-2 rounded-xl bg-slate-100/90 p-2 text-xs text-slate-700">
-                              🎙️ {m.transcription} <span className="text-slate-400">({m.transcriptionProvider})</span>
-                            </div>
-                          ) : null}
-
-                          {isIncoming && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "audio" && !m.transcription ? (
-                            <button
-                              className="mt-2 flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-100 transition disabled:opacity-50"
-                              disabled={busy !== ""}
-                              onClick={async () => {
-                                const orgId = getOrganizationId(); if (!orgId || !active) return;
-                                setBusy("transcribe");
-                                try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/transcribe`, { method: "POST" }); await refreshActive(); }
-                                catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-                                finally { setBusy(""); }
-                              }}
-                            >
-                              <span>🎙️</span> <span>ভয়েস লেখায় রূপান্তর করুন</span>
-                            </button>
-                          ) : null}
-
-                          {isIncoming && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (() => {
-                            const v = verifications.find((x) => x.messageId === m.id);
-                            return v ? (
-                              <div className={`mt-2 rounded-xl p-2 text-xs font-medium ring-1 ${
-                                v.verdict === "matched"
-                                  ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
-                                  : v.verdict === "amount_mismatch" || v.verdict === "duplicate_trxid"
-                                  ? "bg-red-50 text-red-800 ring-red-200"
-                                  : "bg-amber-50 text-amber-800 ring-amber-200"
-                              }`}>
-                                💳 পেমেন্ট যাচাই: <b>{v.verdict}</b>
-                                {v.trxId ? ` · TrxID: ${v.trxId}` : ""}
-                                {v.amountMinor ? ` · ${money(v.amountMinor)}` : ""}
-                                {v.expectedAmountMinor ? ` (প্রত্যাশিত ${money(v.expectedAmountMinor)})` : ""}
-                                {v.flags?.length ? ` · ⚠️ ${v.flags.join(", ")}` : ""}
-                              </div>
-                            ) : (
-                              <button
-                                className="mt-2 flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-100 transition disabled:opacity-50"
-                                disabled={busy !== ""}
-                                onClick={async () => {
-                                  const orgId = getOrganizationId(); if (!orgId || !active) return;
-                                  setBusy("verify");
-                                  try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/verify-payment`, { method: "POST" }); await refreshActive(); }
-                                  catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-                                  finally { setBusy(""); }
-                                }}
-                              >
-                                <span>💳</span> <span>পেমেন্ট স্ক্রিনশট যাচাই</span>
-                              </button>
-                            );
-                          })() : null}
+                      <div id={`msg-${m.id}`} className={`${m.direction === "in" ? "flex justify-start" : "flex justify-end"} items-end gap-2${grouped ? " -mt-1" : ""}`}>
+                      {isIncoming ? (<div className="mb-1 shrink-0"><ContactAvatar name={active.contactName ?? active.contactPhone} channel={active.channel} size="sm" /></div>) : null}
+                    <div className={`max-w-[80%] ${m.direction === "in" ? "inbox-msg-in" : m.status === "failed" ? "inbox-msg-failed" : "inbox-msg-out"}${m.status === "sending" ? " opacity-70" : ""}${highlightMsgId === m.id ? " ring-2 ring-amber-400" : ""}`}>
+                      {m.quote ? (
+                        <button type="button" className="mb-1 block w-full rounded border-l-4 border-indigo-300 bg-white/60 px-1.5 py-1 text-left text-[11px] text-slate-500" title="আসল মেসেজে যান" onClick={() => jumpToMessage(m.quote!.id)}>
+                          {m.quote.unavailable ? "↩️ quote করা মেসেজটি পাওয়া যাচ্ছে না" : <>↩️ {m.quote.direction === "in" ? "গ্রাহক" : "আপনি"}: {m.quote.snippet}</>}
+                        </button>
+                      ) : null}
+                      {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
+                      {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl || m.mediaStorageKey) ? null : <div>[{m.type}]</div>}
+                      <div className={`mt-0.5 text-[10px] ${m.direction === "in" ? "text-slate-400" : "opacity-75"}`}>
+                        {new Date(m.createdAt).toLocaleTimeString()}{(() => { const t = m.direction === "out" ? deliveryTick(active.channel, m) : null; return t?.blue ? <span className="font-bold text-sky-500">{` · ${t.glyph} ${t.label}`}</span> : statusIcon(m); })()}{m.sentByAiDraft ? " · AI Draft থেকে" : ""}{m.autoReply ? " · 🤖 অটো-রিপ্লাই" : ""}{!m.autoReply && !m.sentByAiDraft && m.sentWithAiAssist ? " · AI-সহায়তায়" : ""}
+                        {m.direction === "in" && m.intent && m.intent !== "other" ? <span className="ml-1 rounded bg-indigo-50 px-1 py-px font-semibold text-indigo-600" title={`আস্থা ${m.intentConfidence ?? 0}%`}>{m.intent} · {m.intentConfidence}%</span> : null}
+                        {m.direction === "in" && m.content ? <button className="ml-1 font-semibold text-indigo-500 hover:underline" onClick={() => translateMsg(m)}>অনুবাদ</button> : null}
+                        {m.error ? <div className="text-red-600">{m.error}</div> : null}
+                        {m.status === "failed" && m.id.startsWith("local-") ? <button className="ml-1 font-bold text-red-600 underline hover:text-red-700" onClick={() => void retryLocalSend(m.id)}>↻ আবার পাঠান</button> : null}
+                      </div>
+                      {(() => { const rs = parseMessageReactions(m.reactions); return rs.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {rs.map((r, i) => <span key={i} className="rounded-full bg-white/80 px-1.5 py-px text-[11px] ring-1 ring-slate-200" title={r.actor === "page" ? "আপনাদের reaction" : "গ্রাহকের reaction"}>{r.emoji}</span>)}
                         </div>
+                      ) : null; })()}
+                      {!m.id.startsWith("local-") ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-400">
+                          <button type="button" className="hover:text-indigo-600" title="এই মেসেজ quote করে উত্তর দিন" onClick={() => { setQuoteTarget(m); setComposerMode("reply"); replyRef.current?.focus(); }}>↩️ Quote</button>
+                          <button type="button" className="hover:text-indigo-600" title={m.pinnedAt ? "Pin তোলা" : "Pin করুন"} onClick={() => void togglePin(m)}>{m.pinnedAt ? "📌 Pinned · তোলা" : "📌 Pin"}</button>
+                          {canSendReaction(active.channel) ? (
+                            <span className="relative">
+                              <button type="button" className="hover:text-indigo-600" title="Reaction পাঠান (Messenger/Instagram)" onClick={() => setReactionFor(reactionFor === m.id ? null : m.id)}>😊 React</button>
+                              {reactionFor === m.id ? (
+                                <span className="absolute bottom-5 left-0 z-20 flex gap-0.5 rounded-full bg-white px-1.5 py-1 shadow ring-1 ring-slate-200">
+                                  {AGENT_REACTIONS.map((e) => <button key={e} type="button" className="text-sm hover:scale-125" onClick={() => void sendReaction(m, e)}>{e}</button>)}
+                                  {parseMessageReactions(m.reactions).some((r) => r.actor === "page") ? <button type="button" className="text-[10px] text-red-500" onClick={() => void sendReaction(m, null)}>তোলা</button> : null}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {translations[m.id] ? <div className="mt-1 rounded bg-white/70 px-1.5 py-1 text-[11px] italic text-slate-600">🌐 {translations[m.id]}</div> : null}
+                      {m.transcription ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-600">🎙️ {m.transcription} <span className="text-slate-400">({m.transcriptionProvider})</span></div> : null}
+                      {!m.transcription && m.transcriptionStatus === "failed" ? <div className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[11px] text-amber-700">🎙️ ভয়েস মেসেজ — ট্রান্সক্রিপ্ট পাওয়া যায়নি</div> : null}
+                      {!m.transcription && m.transcriptionStatus === "unavailable" ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-500">🎙️ ভয়েস মেসেজ — ট্রান্সক্রিপ্ট উপলব্ধ নয়</div> : null}
+                      {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "audio" && !m.transcription ? (
+                        <button className="mt-1 text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={async () => {
+                          const orgId = getOrganizationId(); if (!orgId || !active) return;
+                          setBusy("transcribe");
+                          try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/transcribe`, { method: "POST" }); await refreshActive(); }
+                          catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+                          finally { setBusy(""); }
+                        }}>🎙️ ভয়েস লেখায় রূপান্তর করুন</button>
+                      ) : null}
+                      {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (() => {
+                        const v = verifications.find((x) => x.messageId === m.id);
+                        return v ? (
+                          <div className={`mt-1 rounded px-1.5 py-1 text-[11px] font-medium ${v.verdict === "matched" ? "bg-green-100 text-green-800" : v.verdict === "amount_mismatch" || v.verdict === "duplicate_trxid" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
+                            💳 যাচাই: {v.verdict}{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ${money(v.amountMinor)}` : ""}{v.expectedAmountMinor ? ` / প্রত্যাশিত ${money(v.expectedAmountMinor)}` : ""}{v.flags?.length ? ` · ⚠️ ${v.flags.join(", ")}` : ""}
+                          </div>
+                        ) : (
+                          <button className="mt-1 text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={async () => {
+                            const orgId = getOrganizationId(); if (!orgId || !active) return;
+                            setBusy("verify");
+                            try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/verify-payment`, { method: "POST" }); await refreshActive(); }
+                            catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+                            finally { setBusy(""); }
+                          }}>💳 পেমেন্ট স্ক্রিনশট যাচাই করুন</button>
+                        );
+                      })() : null}
+                                              {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (
+                        <div className="mt-1">
+                          <button className="text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== "" || productMatch?.loading} onClick={() => void findProductsForMessage(m)}>
+                            {productMatch?.messageId === m.id && productMatch.loading ? "🔍 ছবি পড়া হচ্ছে..." : "🔍 ছবি দিয়ে প্রোডাক্ট খুঁজুন"}
+                          </button>
+                          {productMatch?.messageId === m.id && !productMatch.loading ? (
+                            <div className="mt-1 space-y-1.5 rounded bg-white/80 px-2 py-2 text-[11px] text-slate-700">
+                              <p className="font-medium text-slate-500">{PRODUCT_MATCH_HONESTY}</p>
+                              {productMatch.available === false ? (
+                                <p className="text-amber-700">{productMatch.message ?? "AI ছবি পড়া এখন সেটআপ করা নেই"}</p>
+                              ) : (productMatch.candidates ?? []).length === 0 ? (
+                                <p>এই ছবির বর্ণনার সাথে catalog-এ কোনো প্রোডাক্ট মেলেনি। প্রোডাক্ট তালিকা (🛍️) থেকে হাতে বেছে নিন।</p>
+                              ) : (
+                                (productMatch.candidates ?? []).map((c) => (
+                                  <div key={c.productId} className="flex items-center gap-2 rounded bg-slate-50 px-1.5 py-1">
+                                    {c.imageUrl ? <img src={c.imageUrl} alt={c.name} className="h-9 w-9 shrink-0 rounded object-cover" /> : <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-slate-200 text-base">🛍️</span>}
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate font-semibold">{c.name}</span>
+                                      <span className="block">{c.priceText}</span>
+                                      <span className="block text-slate-400">{c.reasons.join(" · ")}</span>
+                                    </span>
+                                    <button className="shrink-0 rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white hover:bg-indigo-500" title="কম্পোজারে খসড়া বসান — পাঠানো হবে না, আপনি দেখে তবেই পাঠাবেন" onClick={() => insertProductMatchDraft(c)}>কম্পোজারে বসান</button>
+                                  </div>
+                                ))
+                              )}
+                              <button className="text-slate-400 hover:underline" onClick={() => setProductMatch(null)}>বন্ধ করুন</button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      </div>
                       </div>
                     </React.Fragment>
                   );
@@ -2501,6 +3376,8 @@ export default function InboxPage() {
                   <p className="mt-1 whitespace-pre-wrap text-sm">{d.content}</p>
                 </div>
               ))}
+
+              </div>
 
               </div>
 
@@ -2546,7 +3423,16 @@ export default function InboxPage() {
                     <span className="text-[11px] text-emerald-600 font-medium">🟢 উইন্ডো খোলা ({windowLeft(active.whatsappWindow)})</span>
                   ) : null}
                 </div>
-
+                {composerMode === "reply" && quoteTarget ? (
+                  <div className="mb-2 flex items-start gap-2 rounded-lg border-l-4 border-indigo-300 bg-indigo-50 px-2 py-1.5 text-xs text-slate-600">
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-semibold text-indigo-700">↩️ {quoteTarget.direction === "in" ? "গ্রাহকের" : "আপনার"} মেসেজে quote করে উত্তর</span>
+                      <span className="block truncate">{String(quoteTarget.content ?? `[${quoteTarget.type}]`).slice(0, 140)}</span>
+                      {active && !quoteReachesCustomer(active.channel) ? <span className="block text-amber-600">এই চ্যানেলে quote শুধু আমাদের থ্রেডেই দেখা যাবে — গ্রাহকের কাছে quote হিসেবে যাবে না।</span> : null}
+                    </span>
+                    <button type="button" className="shrink-0 font-bold text-slate-400 hover:text-slate-600" title="Quote বাদ দিন" onClick={() => setQuoteTarget(null)}>✕</button>
+                  </div>
+                ) : null}
                 {composerMode === "reply" && showQuick && quickMatches.length ? (
                   <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-52 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
                     <div className="px-2 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">⚡ কুইক রিপ্লাই মিল</div>
@@ -2575,37 +3461,67 @@ export default function InboxPage() {
                     ))}
                   </div>
                 ) : null}
-
-                {/* Textarea Box with Ghost Text Overlay */}
-                <div className="relative">
-                  {ghostVisible ? (
-                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm leading-relaxed">
-                      <span className="invisible">{reply}</span><span className="text-slate-400/90 font-medium">{ghost}</span>
-                    </div>
+                <div className="flex items-end gap-2">
+                  <div className="relative flex-1">
+                    {ghostVisible ? (
+                      <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words border border-transparent px-3 py-2 text-sm leading-5">
+                        <span className="invisible">{reply}</span><span className="text-slate-400">{ghost}</span>
+                      </div>
+                    ) : null}
+                    <textarea id="inbox-reply" ref={replyRef} rows={2} className={`input relative z-10 max-h-36 w-full flex-1 resize-y ${ghostVisible ? "bg-transparent" : ""} ${composerMode === "note" ? "border-amber-300 bg-amber-50 focus:border-amber-400 focus:ring-amber-400/20" : ""}`} placeholder={composerMode === "note" ? "টিমের জন্য প্রাইভেট নোট লিখুন — গ্রাহক কখনোই দেখবে না…" : "উত্তর লিখুন... ( / চাপলে Quick Reply · Enter = পাঠান, Shift+Enter = নতুন লাইন )"} value={reply}
+                      onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setUsedQuickReplyId(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
+                      onBlur={() => setIAmTyping(false)}
+                      onFocus={() => { if (composerMode === "reply" && reply.startsWith("/")) setShowQuick(true); }}
+                      onPaste={(e) => {
+                        if (composerMode !== "reply") return;
+                        const files = Array.from(e.clipboardData?.files ?? []);
+                        if (files.length) { e.preventDefault(); void sendMediaFiles(files); }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Tab" && ghostVisible) { e.preventDefault(); const accepted = reply + ghost; setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = ""; setAiAssistUsed(true); setReply(accepted); focusComposer(accepted.length, accepted.length); return; }
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (composerMode === "note") { void addNote(); } else { void sendReply(); } }
+                        if (e.key === "Escape") { setGhost(""); ghostForRef.current = ""; setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); }
+                      }} />
+                  </div>
+                  <button className={`${composerMode === "note" ? "btn-warning" : "btn-primary"} disabled:opacity-50`} disabled={busy !== ""} onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}>{composerMode === "note" ? (busy === "note" ? "যোগ হচ্ছে..." : "নোট যোগ করুন") : busy === "send" ? "পাঠাচ্ছি..." : "পাঠান"}</button>
+                </div>
+                {composerMode === "note" ? (
+                  <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-amber-700" title="চালু থাকলে নোট সংরক্ষণের আগেই ফোন নম্বর, কার্ড-জাতীয় সংখ্যা ও TrxID মাস্ক হয়ে যাবে — আসল লেখা কোথাও থাকবে না। টাকার অঙ্ক ও অর্ডার নম্বর মাস্ক হয় না।">
+                    <input type="checkbox" checked={noteMask} onChange={(e) => setNoteMask(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" />
+                    🔒 সংবেদনশীল তথ্য মাস্ক করুন (ফোন / TrxID / কার্ড)
+                  </label>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="composer-group"><span className="composer-group-label">যোগ করুন</span>
+                  <button className="btn-secondary btn-sm" title="Quick Reply ( / চাপলেও আসে )" onClick={() => setShowQuick((s) => !s)}>⚡</button>
+                  <button className="btn-secondary btn-sm" title="ইমোজি" onClick={() => setShowEmoji((s) => !s)}>😀</button>
+                  {active.channel === "whatsapp" ? (
+                    <>
+                      <button className="btn-secondary btn-sm font-bold" title="বোল্ড — *লেখা* (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("bold")}>B</button>
+                      <button className="btn-secondary btn-sm italic" title="ইটালিক — _লেখা_ (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("italic")}>I</button>
+                      <button className="btn-secondary btn-sm" title="বুলেট তালিকা" onClick={() => applyFormat("list")}>• লিস্ট</button>
+                    </>
                   ) : null}
-                  <textarea
-                    id="inbox-reply"
-                    ref={replyRef}
-                    rows={2}
-                    className={`relative z-10 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-0 ${
-                      composerMode === "note" ? "text-amber-950 placeholder:text-amber-600/60" : "text-slate-900 placeholder:text-slate-400"
-                    }`}
-                    placeholder={composerMode === "note" ? "টিমের জন্য প্রাইভেট নোট লিখুন — গ্রাহক কখনোই দেখবে না…" : "উত্তর লিখুন... ( / চাপলে Quick Reply · Enter = পাঠান, Shift+Enter = নতুন লাইন )"}
-                    value={reply}
-                    onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
-                    onBlur={() => setIAmTyping(false)}
-                    onFocus={() => { if (composerMode === "reply" && reply.startsWith("/")) setShowQuick(true); }}
-                    onPaste={(e) => {
-                      if (composerMode !== "reply") return;
-                      const files = Array.from(e.clipboardData?.files ?? []);
-                      if (files.length) { e.preventDefault(); void sendMediaFiles(files); }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Tab" && ghostVisible) { e.preventDefault(); const accepted = reply + ghost; setGhost(""); ghostForRef.current = ""; ghostLastFetchRef.current = ""; setReply(accepted); focusComposer(accepted.length, accepted.length); return; }
-                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (composerMode === "note") { void addNote(); } else { void sendReply(); } }
-                      if (e.key === "Escape") { setGhost(""); ghostForRef.current = ""; setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); }
-                    }}
-                  />
+                  <button className="btn-secondary btn-sm" title="পণ্য বেছে স্নিপেট বসান" onClick={() => setShowPicker((s) => !s)}>🛍️</button>
+                  <button className="btn-secondary btn-sm" title="URL দিয়ে ছবি পাঠান" onClick={() => setShowImage((s) => !s)}>🖼️</button>
+                  </span><span className="composer-group composer-group-ai"><span className="composer-group-label">AI</span>
+                  <button className="btn-ai btn-sm" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
+                  <span className="relative inline-flex">
+                    <button className="btn-ai btn-sm" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>✨ টোন বদলান</button>
+                    {showToneMenu ? (
+                      <span className="absolute bottom-full left-0 z-20 mb-1 flex w-40 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg">
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("polite")}>মার্জিত</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("professional")}>পেশাদার</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("sales")}>সেলস-বান্ধব</button>
+                      </span>
+                    ) : null}
+                  </span>
+                  {prevReply !== null ? (
+                    <button className="btn-secondary btn-sm" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>↩ আগের লেখায় ফিরুন</button>
+                  ) : null}
+                  {busy === "media" ? <span className="text-xs font-medium text-slate-500">ফাইল পাঠানো হচ্ছে…</span> : null}
+                  {busy === "tone" ? <span className="text-xs font-medium text-slate-500">টোন বদলানো হচ্ছে…</span> : null}
+                  </span>
                 </div>
 
                 {ghostVisible ? (
@@ -2860,10 +3776,12 @@ export default function InboxPage() {
                   <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? "পাঠাচ্ছি..." : "ছবি পাঠান"}</button>
                 </div>
               ) : null}
-                </>
-              )}
-            </div>
-          ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
+                  </>
+                )}
+              </div>
+          ) : (
+            <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>
+          )}
         </div>
 
         {/* ---- Customer context + controls + notes ----
@@ -2944,6 +3862,47 @@ export default function InboxPage() {
                 <label className="block">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)
                   <input className="input mt-1" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} />
                 </label>
+                {/* IN4: layered SLA + the active escalation chain.
+                    Priority: VIP সীমা → Channel সীমা → উপরের সাধারণ
+                    সীমা। Chain চলতে Automations-এ "Inbox SLA Sweep"
+                    job চালু থাকতে হবে। */}
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-2.5">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">⏰ SLA স্তর ও Escalation Chain (IN4)</div>
+                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                    {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                      <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
+                        <input className="input mt-0.5" type="number" min={1} max={10080} placeholder="সাধারণ" value={settings.slaByChannel?.[ch] ?? ""} onChange={(e) => {
+                          const slaByChannel = { ...(settings.slaByChannel ?? {}) };
+                          const parsed = parseSlaMinutesInput(e.target.value);
+                          if (parsed === null) delete slaByChannel[ch]; else if (parsed !== undefined) slaByChannel[ch] = parsed;
+                          setSettings({ ...settings, slaByChannel });
+                        }} onBlur={() => saveSettings({ slaByChannel: settings.slaByChannel ?? {} })} />
+                        <span className="text-[10px] text-slate-400">মিনিট (ফাঁকা = সাধারণ সীমা)</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                    <label className="block text-xs">VIP সীমা (মিনিট, ফাঁকা = স্তর নেই)
+                      <input className="input mt-0.5" type="number" min={1} max={10080} placeholder="—" value={settings.slaVipMinutes ?? ""} onChange={(e) => setSettings({ ...settings, slaVipMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ slaVipMinutes: settings.slaVipMinutes ?? null })} />
+                      <span className="text-[10px] text-slate-400">VIP = Escalation থ্রেশহোল্ডের ওপরের অর্ডারওয়ালা কথোপকথন</span>
+                    </label>
+                    <label className="block text-xs">Breach-এর কত মিনিট পর Escalation
+                      <input className="input mt-0.5" type="number" min={1} max={1440} value={settings.slaEscalateAfterMinutes ?? 30} onChange={(e) => setSettings({ ...settings, slaEscalateAfterMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaEscalateAfterMinutes: settings.slaEscalateAfterMinutes ?? 30 })} />
+                    </label>
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={settings.slaLeadAlertEnabled ?? true} onChange={(e) => { setSettings({ ...settings, slaLeadAlertEnabled: e.target.checked }); saveSettings({ slaLeadAlertEnabled: e.target.checked }); }} />
+                    Escalation-এ Team Lead-কে জরুরি সতর্কতা (Escalation টিমের Lead; না থাকলে কথোপকথনের টিমের Lead, তারপর Owner/Admin)
+                  </label>
+                  <label className="mt-1.5 flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={settings.slaAutoReassignEnabled ?? false} onChange={(e) => { setSettings({ ...settings, slaAutoReassignEnabled: e.target.checked }); saveSettings({ slaAutoReassignEnabled: e.target.checked }); }} />
+                    Auto-Reassign — Escalation পয়েন্টে কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে (Away/ছুটির-সময়ের বাইরের এজেন্ট কখনো নয়)
+                  </label>
+                  <p className="mt-1.5 text-[11px] text-slate-500">সীমার ৭৫% পেরোলেই দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পান (কার্ডে হলুদ ⏰ চিহ্ন)। Chain কার্যকর হতে Automations পেজ থেকে &apos;Inbox SLA Sweep&apos; job চালু থাকতে হবে — প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় ও Audit-এ থাকে।</p>
+                </div>
+                <label className="setting-row"><span className="setting-row-label">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)</span>
+                  <span className="setting-row-control"><input className="input" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} /></span>
+                </label>
                 <label className="block">Retention — বন্ধ কথোপকথন মোছা (দিন, ফাঁকা = কখনো নয়)
                   <input className="input mt-1" type="number" min={7} max={3650} placeholder="বন্ধ" value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} />
                   <span className="text-[11px] text-slate-400">Automation এ "Inbox Retention" Job চালালে মেয়াদ শেষ বন্ধ Thread মুছে যাবে (খোলা Thread কখনো নয়)।</span>
@@ -2954,6 +3913,111 @@ export default function InboxPage() {
                     {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </label>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">⏳ উত্তরের আগে অপেক্ষা</div>
+                <label className="block text-xs">অপেক্ষা (সেকেন্ড, 0–600)
+                  <input className="input mt-0.5" type="number" min={0} max={600} value={settings.aiReplyDelaySeconds ?? 0} onChange={(e) => setSettings({ ...settings, aiReplyDelaySeconds: Number(e.target.value) })} onBlur={() => saveSettings({ aiReplyDelaySeconds: settings.aiReplyDelaySeconds ?? 0 })} />
+                </label>
+                <p className="mt-1 text-[11px] text-slate-400">0 = সঙ্গে সঙ্গে উত্তর (আগের আচরণ)। 30–60 সেকেন্ড রাখলে customer পরপর কয়েকটি message পাঠালে AI সবগুলো পড়ে একটাই উত্তর দেবে। কার্যকর হতে Automations পেজ থেকে &apos;Inbox Auto-Reply Sweep&apos; job চালু থাকতে হবে। অভিযোগ বা মানুষের অনুরোধ এলে অপেক্ষা না করে সঙ্গে সঙ্গে টিমের কাছে যাবে।</p>
+                <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
+                    <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
+                      <input className="input mt-0.5" type="number" min={0} max={600} placeholder="গ্লোবাল" value={settings.aiReplyDelayByChannel?.[ch] ?? ""} onChange={(e) => {
+                        const aiReplyDelayByChannel = { ...(settings.aiReplyDelayByChannel ?? {}) };
+                        if (e.target.value === "" || Number(e.target.value) === 0) delete aiReplyDelayByChannel[ch]; else aiReplyDelayByChannel[ch] = Number(e.target.value);
+                        setSettings({ ...settings, aiReplyDelayByChannel });
+                      }} onBlur={() => saveSettings({ aiReplyDelayByChannel: settings.aiReplyDelayByChannel ?? {} })} />
+                      <span className="text-[10px] text-slate-400">সেকেন্ড (ফাঁকা/0 = org মান)</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">⭐ ডেলিভারির পর রিভিউ রিকোয়েস্ট</div>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={settings.reviewRequestEnabled ?? false} onChange={(e) => { setSettings({ ...settings, reviewRequestEnabled: e.target.checked }); saveSettings({ reviewRequestEnabled: e.target.checked }); }} />
+                  রিভিউ রিকোয়েস্ট চালু — ডেলিভারি হলে গ্রাহককে রেটিং চাওয়া হবে (চ্যাটে, না থাকলে SMS/ইমেইলে রিভিউ লিংক)
+                </label>
+                <label className="mt-2 block text-xs">ডেলিভারির কত ঘণ্টা পর জিজ্ঞাসা পাঠানো হবে (0–168)
+                  <input className="input mt-0.5" type="number" min={0} max={168} value={settings.reviewRequestDelayHours ?? 24} onChange={(e) => setSettings({ ...settings, reviewRequestDelayHours: Number(e.target.value) })} onBlur={() => saveSettings({ reviewRequestDelayHours: settings.reviewRequestDelayHours ?? 24 })} />
+                </label>
+                <p className="mt-1 text-[11px] text-slate-400">কার্যকর হতে Automations পেজ থেকে &apos;Review Request Sweep&apos; job চালু থাকতে হবে। গ্রাহক চ্যাটে শুধু ১–৫ (বা ১-৫) সংখ্যা পাঠালে রেটিং রেকর্ড হয়; পরের একটি বার্তা মন্তব্য হিসেবে থাকে। যেসব অর্ডারে কোনো চ্যানেলই নেই, সেগুলোর রিকোয়েস্ট Orders পেজে &quot;এখনো পাঠানো হয়নি&quot; হিসেবে দেখা যাবে — পাঠানো হয়েছে বলে দেখানো হবে না।</p>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">🎯 To Chase — থেমে যাওয়া অর্ডারের অনুস্মারক</div>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={settings.chaseEnabled ?? false} onChange={(e) => { setSettings({ ...settings, chaseEnabled: e.target.checked }); saveSettings({ chaseEnabled: e.target.checked }); }} />
+                  To Chase চালু — অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া গ্রাহককে আলতো করে মনে করিয়ে দেওয়া হবে
+                </label>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <label className="block text-xs">প্রথম অনুস্মারক কত মিনিট পর (15–1440)
+                    <input className="input mt-0.5" type="number" min={15} max={1440} value={settings.chaseFirstDelayMinutes ?? 60} onChange={(e) => setSettings({ ...settings, chaseFirstDelayMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseFirstDelayMinutes: settings.chaseFirstDelayMinutes ?? 60 })} />
+                  </label>
+                  <label className="block text-xs">পরের অনুস্মারকের ব্যবধান (মিনিট, 60–2880)
+                    <input className="input mt-0.5" type="number" min={60} max={2880} value={settings.chaseIntervalMinutes ?? 240} onChange={(e) => setSettings({ ...settings, chaseIntervalMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseIntervalMinutes: settings.chaseIntervalMinutes ?? 240 })} />
+                  </label>
+                  <label className="block text-xs">সর্বোচ্চ কতবার (1–5)
+                    <input className="input mt-0.5" type="number" min={1} max={5} value={settings.chaseMaxAttempts ?? 3} onChange={(e) => setSettings({ ...settings, chaseMaxAttempts: Number(e.target.value) })} onBlur={() => saveSettings({ chaseMaxAttempts: settings.chaseMaxAttempts ?? 3 })} />
+                  </label>
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={settings.chaseQuietHoursRespect ?? true} onChange={(e) => { setSettings({ ...settings, chaseQuietHoursRespect: e.target.checked }); saveSettings({ chaseQuietHoursRespect: e.target.checked }); }} />
+                  Quiet Hours সম্মান করুন — এই সময়ে কোনো অনুস্মারক যাবে না (আপনার দোকানের সময় অঞ্চল অনুযায়ী)
+                </label>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="block text-xs">Quiet শুরু (ঘণ্টা, 0–23)
+                    <input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietStartHour ?? 22} onChange={(e) => setSettings({ ...settings, chaseQuietStartHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietStartHour: settings.chaseQuietStartHour ?? 22 })} />
+                  </label>
+                  <label className="block text-xs">Quiet শেষ (ঘণ্টা, 0–23)
+                    <input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietEndHour ?? 8} onChange={(e) => setSettings({ ...settings, chaseQuietEndHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietEndHour: settings.chaseQuietEndHour ?? 8 })} />
+                  </label>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">কার্যকর হতে Automations পেজ থেকে &apos;Order Chase Sweep&apos; job চালু থাকতে হবে। গ্রাহক উত্তর দিলে, অর্ডার সম্পূর্ণ হলে, কোনো এজেন্ট দায়িত্ব নিলে, অথবা গ্রাহক &quot;থামুন&quot; জাতীয় কিছু লিখলে অনুসরণ সঙ্গে সঙ্গে বন্ধ হয়ে যায়। পাঠাতে ব্যর্থ হলে সেই চেষ্টা গণনা হয় না — পরের Sweep-এ আবার চেষ্টা হবে। তালিকা Orders পেজের &quot;🎯 To Chase&quot; অংশে দেখা যাবে।</p>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">🗓️ Channelভিত্তিক AI সময়সূচি</div>
+                {(() => {
+                  const draft: AiScheduleMap = scheduleDraft ?? settings.aiScheduleByChannel ?? {};
+                  const setEntry = (ch: string, entry: AiScheduleEntry) => setScheduleDraft({ ...draft, [ch]: entry });
+                  return (
+                    <>
+                      {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => {
+                        const entry: AiScheduleEntry = draft[ch] ?? { enabled: false, windows: [] };
+                        const setWindow = (wi: number, w: AiScheduleWindow) => setEntry(ch, { ...entry, windows: entry.windows.map((x, i) => (i === wi ? w : x)) });
+                        return (
+                          <div key={ch} className="mt-2 rounded-lg border border-slate-200 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <ChannelChip channel={ch} />
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input type="checkbox" checked={entry.enabled} onChange={(e) => setEntry(ch, { ...entry, enabled: e.target.checked })} /> সময়সূচি চালু
+                              </label>
+                            </div>
+                            {entry.windows.map((w, wi) => (
+                              <div key={wi} className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                                <span className="flex flex-wrap gap-1">
+                                  {(["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"] as const).map((label, d) => {
+                                    const on = w.days.includes(d);
+                                    return (
+                                      <button key={d} type="button" className={`rounded px-1.5 py-0.5 ring-1 ring-inset ${on ? "bg-brand-500 font-semibold text-white ring-brand-500" : "bg-slate-100 text-slate-600 ring-slate-200"}`} onClick={() => setWindow(wi, { ...w, days: on ? w.days.filter((x) => x !== d) : [...w.days, d].sort((a, b) => a - b) })}>{label}</button>
+                                    );
+                                  })}
+                                </span>
+                                <input className="input w-auto" type="time" value={w.start} onChange={(e) => setWindow(wi, { ...w, start: e.target.value })} />
+                                <span className="text-slate-400">–</span>
+                                <input className="input w-auto" type="time" value={w.end} onChange={(e) => setWindow(wi, { ...w, end: e.target.value })} />
+                                <button type="button" className="rounded bg-slate-100 px-2 py-1 font-medium text-slate-600" onClick={() => setEntry(ch, { ...entry, windows: entry.windows.filter((_, i) => i !== wi) })}>✕ সরান</button>
+                              </div>
+                            ))}
+                            <button type="button" className="mt-2 rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700" onClick={() => setEntry(ch, { ...entry, windows: [...entry.windows, { days: [0, 1, 2, 3, 4], start: "09:00", end: "22:00" }] })}>+ সময় যোগ করুন</button>
+                          </div>
+                        );
+                      })}
+                      <button type="button" className="mt-2 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white" onClick={async () => { await saveSettings({ aiScheduleByChannel: draft }); setScheduleDraft(null); }}>💾 সময়সূচি সেভ করুন</button>
+                      <p className="mt-1 text-[11px] text-slate-400">সময়সূচি চালু থাকলে AI শুধু নির্ধারিত সময়েই auto-reply ও order নেবে। সময়ের বাইরে message এলে AI উত্তর দেবে না — টিমের জন্য অপেক্ষা করবে (পরে নিজে থেকে উত্তর যাবে না)। অভিযোগ/মানুষের অনুরোধের escalation সময়সূচির বাইরেও সঙ্গে সঙ্গে হবে। Organization-এর timezone অনুযায়ী সময় ধরা হয়। চালু করে কোনো সময় না দিলে AI ওই channel-এ বন্ধ থাকবে।</p>
+                    </>
+                  );
+                })()}
               </div>
               <div>
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Channel অনুযায়ী Autopilot মোড (ফাঁকা = গ্লোবাল)</div>
@@ -3199,8 +4263,110 @@ export default function InboxPage() {
           ) : <p className="text-xs text-slate-400">রিপোর্ট লোড হচ্ছে...</p>}
         </div>
 
-        <div className={`card space-y-3 p-5 ${manageTab === "teams" ? "block xl:col-span-2" : "hidden"}`}>
-          <div className="section-title">👥 টিম ও এজেন্ট</div>
+        {/* IN10c: Analytics v2 — সব সংখ্যা আসল row থেকে
+            compute-on-read; সংজ্ঞা docs/in10-acceptance.md-তে। */}
+        <div id="inbox-manage-analytics" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">📈</span><div className="section-title">Inbox Analytics v2</div></div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-500">পরিসর:</span>
+            {[7, 30].map((d) => (
+              <button key={d} className={`rounded-lg px-2.5 py-1 font-semibold ring-1 ${analyticsDays === d ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`} disabled={busy !== ""} onClick={() => void loadAnalytics(d)}>শেষ {d} দিন</button>
+            ))}
+            <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void loadAnalytics(analyticsDays)}>{busy === "analytics" ? "লোড হচ্ছে..." : analytics ? "↻ আবার লোড" : "লোড করুন"}</button>
+            {analytics ? <span className="text-slate-400">সময় অঞ্চল: {analytics.timezone} · হিসাব সরাসরি সংরক্ষিত মেসেজ/অর্ডার থেকে</span> : null}
+          </div>
+          {analytics ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="ctx-tile"><div className="ctx-tile-label">আগত মেসেজ</div><div className="ctx-tile-value">{analytics.totals.inboundMessages}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">নতুন কথোপকথন</div><div className="ctx-tile-value">{analytics.totals.conversationsStarted}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">চ্যাট-লিংকড অর্ডার</div><div className="ctx-tile-value">{analytics.totals.chatOrders}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">Intent শনাক্ত মেসেজ</div><div className="ctx-tile-value">{analytics.totals.classifiedMessages}</div></div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold text-slate-500">🔥 ব্যস্ত সময় (ঘণ্টা অনুযায়ী আগত মেসেজ){analytics.heatmap.peakHour ? <span className="font-normal text-slate-400"> — সবচেয়ে ব্যস্ত: {analytics.heatmap.peakHour.hour}:০০ ({analytics.heatmap.peakHour.count}টি)</span> : null}</div>
+                {(() => { const max = Math.max(1, ...analytics.heatmap.hourTotals); return (
+                  <div className="flex h-16 items-end gap-[2px]" role="img" aria-label="ঘণ্টা অনুযায়ী মেসেজের বার চার্ট">
+                    {analytics.heatmap.hourTotals.map((n, h) => (
+                      <div key={h} className="flex flex-1 flex-col items-center gap-0.5" title={`${h}:০০ — ${n}টি মেসেজ`}>
+                        <div className="w-full rounded-t bg-indigo-500/80" style={{ height: `${Math.max(4, (n / max) * 100)}%` }} />
+                        <span className="text-[9px] text-slate-400">{h % 3 === 0 ? h : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                ); })()}
+                {(() => { const max = Math.max(1, ...analytics.heatmap.matrix.flat()); const dayNames = ["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"]; return (
+                  <div className="mt-2 space-y-[2px]" aria-label="সপ্তাহের দিন ও ঘণ্টার হিটম্যাপ">
+                    {analytics.heatmap.matrix.map((row, wd) => (
+                      <div key={wd} className="flex items-center gap-[2px]">
+                        <span className="w-12 shrink-0 text-[10px] text-slate-400">{dayNames[wd]}</span>
+                        {row.map((n, h) => (
+                          <span key={h} className="h-3 flex-1 rounded-[3px]" style={{ backgroundColor: `rgba(79,70,229,${n === 0 ? 0.05 : 0.15 + 0.85 * (n / max)})` }} title={`${dayNames[wd]} ${h}:০০ — ${n}টি`} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ); })()}
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-xs font-semibold text-slate-500">চ্যানেল অনুযায়ী কনভার্সন (সক্রিয় কথোপকথনের মধ্যে চ্যাট-লিংকড অর্ডারসহ)</div>
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">চ্যানেল</th><th className="py-1 pr-2 font-semibold">সক্রিয়</th><th className="py-1 pr-2 font-semibold">অর্ডার হয়েছে</th><th className="py-1 font-semibold">হার</th></tr></thead>
+                    <tbody>
+                      {analytics.channels.map((c) => (
+                        <tr key={c.channel} className="border-t border-slate-100">
+                          <td className="py-1 pr-2 font-medium">{c.channel}</td>
+                          <td className="py-1 pr-2">{c.activeConversations}</td>
+                          <td className="py-1 pr-2">{c.convertedConversations}</td>
+                          <td className="py-1 font-semibold">{c.conversionPct != null ? `${c.conversionPct}%` : "—"}</td>
+                        </tr>
+                      ))}
+                      {analytics.channels.length === 0 ? <tr><td colSpan={4} className="py-2 text-slate-400">এই পরিসরে কোনো কথোপকথন নেই</td></tr> : null}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <div className="mb-1 text-xs font-semibold text-slate-500">Intent ভাঙন (শনাক্ত মেসেজের মধ্যে)</div>
+                  <div className="space-y-1">
+                    {analytics.intents.map((it) => (
+                      <div key={it.intent} className="flex items-center gap-2 text-xs">
+                        <span className="w-24 shrink-0 truncate font-medium">{it.intent}</span>
+                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full bg-emerald-500/80" style={{ width: `${it.pct ?? 0}%` }} /></span>
+                        <span className="w-16 shrink-0 text-right text-slate-500">{it.count}টি{it.pct != null ? ` · ${it.pct}%` : ""}</span>
+                      </div>
+                    ))}
+                    {analytics.intents.length === 0 ? <p className="text-xs text-slate-400">এই পরিসরে শনাক্ত intent নেই</p> : null}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold text-slate-500">প্রতিদিনের প্রবণতা (প্রথম উত্তর ও সমাধান)</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">তারিখ</th><th className="py-1 pr-2 font-semibold">নতুন</th><th className="py-1 pr-2 font-semibold">আগত মেসেজ</th><th className="py-1 pr-2 font-semibold">গড় প্রথম উত্তর</th><th className="py-1 pr-2 font-semibold">সমাধান</th><th className="py-1 font-semibold">গড় সমাধান সময়</th></tr></thead>
+                    <tbody>
+                      {analytics.trend.map((r) => (
+                        <tr key={r.date} className="border-t border-slate-100">
+                          <td className="py-1 pr-2 font-medium">{r.date}</td>
+                          <td className="py-1 pr-2">{r.newConversations}</td>
+                          <td className="py-1 pr-2">{r.inboundMessages}</td>
+                          <td className="py-1 pr-2">{r.avgFirstResponseMinutes != null ? `${r.avgFirstResponseMinutes} মিনিট` : "—"}</td>
+                          <td className="py-1 pr-2">{r.resolvedCount}</td>
+                          <td className="py-1">{r.avgResolutionMinutes != null ? `${r.avgResolutionMinutes} মিনিট` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">গড় শুধু যেসব কথোপকথনে সেই মাপ আছে তাদের ওপর — নমুনা না থাকলে "—"। বাতিল অর্ডার কনভার্সনে ধরা হয় না।</p>
+              </div>
+            </div>
+          ) : <p className="text-xs text-slate-400">"লোড করুন" চাপলে এই পরিসরের আসল মেসেজ/কথোপকথন/অর্ডার থেকে হিসাব দেখা যাবে।</p>}
+        </div>
+
+        <div id="inbox-manage-teams" className="manage-card fade-rise scroll-mt-20 space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">👥</span><div className="section-title">টিম ও এজেন্ট</div></div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-slate-500">আমার অবস্থা:</span>
             {([["online", "🟢 Online"], ["busy", "🟠 ব্যস্ত"], ["away", "⚪ Away"]] as const).map(([v, label]) => (
@@ -3308,6 +4474,11 @@ export default function InboxPage() {
       </div>
 
       <div className={`${viewMode === "manage" && manageTab === "channels" ? "block" : "hidden"} space-y-4`}>
+        <div className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-800 ring-1 ring-inset ring-indigo-100">
+          🔗 <b>কানেক্ট সেন্টার:</b> সব চ্যানেল ও অ্যাকাউন্ট এখন এক জায়গা থেকেও কানেক্ট করা যায় —{" "}
+          <Link href="/dashboard/connections#cc-forms-messaging" className="font-semibold underline">কানেক্ট সেন্টারে চ্যানেল কানেক্ট করুন →</Link>{" "}
+          (WhatsApp/Messenger/Instagram, Telegram, Email — পাশাপাশি স্টোর, কুরিয়ার, বিজ্ঞাপন অ্যাকাউন্ট ও নিজের অ্যাপের কনফিগও সেখানে। এই পেজের ফ্লো আগের মতোই চলবে।)
+        </div>
         <div className="card space-y-4 p-5">
           <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
           <div className="grid gap-4 lg:grid-cols-3">
@@ -3387,6 +4558,13 @@ export default function InboxPage() {
             </label>
             <label className="block text-sm">Access Token<input className={inputCls} type="password" value={connectForm.accessToken} onChange={(e) => setConnectForm({ ...connectForm, accessToken: e.target.value })} required /></label>
             <label className="block text-sm">App Secret (প্ল্যাটফর্ম অ্যাপ ব্যবহার করলে খালি রাখুন)<input className={inputCls} type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder="নিজের Meta অ্যাপ থাকলে দিন" /></label>
+            <label className="block text-sm">কোন অ্যাপ দিয়ে কানেক্ট?
+              <select className={inputCls} value={connectForm.appSource} onChange={(e) => setConnectForm({ ...connectForm, appSource: e.target.value })}>
+                <option value="platform">আমাদের (প্ল্যাটফর্মের) Meta অ্যাপ</option>
+                <option value="own">নিজের Meta অ্যাপ (কানেক্ট সেন্টারে কনফিগার করা)</option>
+              </select>
+              {connectForm.appSource === "own" ? <span className="mt-1 block text-xs text-slate-400">নিজের অ্যাপ বেছে নিলে App Secret লাগবে না — কানেক্ট সেন্টারে সেভ করা আপনার অ্যাপের Secret-ই ব্যবহৃত হবে। সেখানে অ্যাপ কনফিগার করা না থাকলে কানেক্ট ব্যর্থ হবে।</span> : null}
+            </label>
             <label className="block text-sm">Verify Token (নিজে ঠিক করুন)<input className={inputCls} value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></label>
             <label className="block text-sm">Phone Number ID (WhatsApp)<input className={inputCls} value={connectForm.phoneNumberId} onChange={(e) => setConnectForm({ ...connectForm, phoneNumberId: e.target.value })} /></label>
             <label className="block text-sm">Page ID (Messenger/Instagram)<input className={inputCls} value={connectForm.pageId} onChange={(e) => setConnectForm({ ...connectForm, pageId: e.target.value })} /></label>
@@ -3415,13 +4593,81 @@ export default function InboxPage() {
           </form>
         </div>
 
-        <div className="card space-y-3 p-5">
-          <div className="section-title">🧩 WhatsApp Template রেজিস্ট্রি</div>
-          <p className="text-xs text-slate-500">Meta তে আগে থেকে অনুমোদিত Template গুলো এখানে রেজিস্ট্রি করুন (নাম ও ভাষা হুবহু Meta এর মতো হতে হবে)। ২৪ ঘণ্টার Window বন্ধ থাকলে Inbox থেকে এগুলোই পাঠানো যাবে। Template আসলে অনুমোদিত না হলে Meta এর এররটাই দেখানো হবে।</p>
+        <div className="manage-card fade-rise space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🎬</span><div className="section-title">ম্যাক্রো — এক click-এ ধারাবাহিক কাজ</div></div>
+          <p className="text-xs text-slate-500">প্রতিদিনের পুনরাবৃত্ত কাজ একবার বানিয়ে রাখুন: কথোপকথন খুলে ⚡ ম্যাক্রো থেকে চালালেই ধাপগুলো একে একে হবে (উত্তর পাঠানো, অ্যাসাইন, ট্যাগ, স্টেজ, বন্ধ, Snooze)। কোনো ধাপ ব্যর্থ হলে ম্যাক্রো সেখানেই থামবে এবং কোন ধাপে কেন থেমেছে তা দেখাবে — অর্ধেক চলাকে সফল বলা হবে না। শেয়ার করা ম্যাক্রো টিমের সবাই চালাতে পারে, বদলাতে পারে শুধু যিনি বানিয়েছেন।</p>
+          <div className="space-y-1.5">
+            {macros.map((m) => (
+              <div key={m.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50">
+                <div className="min-w-0">
+                  <span className="font-semibold">{m.name}</span>
+                  {m.shared ? <span className="badge-slate ml-1">টিম</span> : null}
+                  {!m.mine ? <span className="badge-slate ml-1">অন্যের তৈরি</span> : null}
+                  <span className="block truncate text-xs text-slate-500">{m.steps.map((s) => macroStepSummary(s, { quickReplyTitle: (id) => quickReplies.find((q) => q.id === id)?.title, memberName: (id) => members.find((mm) => mm.user.id === id)?.user.name ?? undefined })).join(" → ")}</span>
+                </div>
+                {m.mine ? <button className="shrink-0 text-xs text-red-500" disabled={busy === "macro-delete"} onClick={() => void deleteMacroById(m)}>মুছুন</button> : null}
+              </div>
+            ))}
+            {macros.length === 0 ? <p className="text-xs text-slate-400">এখনো কোনো ম্যাক্রো নেই — নিচে প্রথমটি বানান।</p> : null}
+          </div>
+          <div className="space-y-2 rounded-xl bg-indigo-50/60 p-2.5 ring-1 ring-indigo-100">
+            <input className="input" placeholder="ম্যাক্রোর নাম (যেমন: অর্ডার কনফার্ম + ফলোআপ)" value={macroName} onChange={(e) => setMacroName(e.target.value)} maxLength={80} />
+            <div className="space-y-1.5">
+              {macroDraft.map((d, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="w-12 shrink-0 font-semibold text-slate-500">ধাপ {i + 1}</span>
+                  <select className="input !w-auto !py-1" value={d.type} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, type: e.target.value } : x)))}>
+                    {Object.entries(MACRO_STEP_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select>
+                  {d.type === "reply" ? (
+                    <select className="input !w-auto !py-1" value={d.quickReplyId} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, quickReplyId: e.target.value } : x)))}>
+                      <option value="">— Quick Reply বেছে নিন —</option>
+                      {quickReplies.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
+                    </select>
+                  ) : null}
+                  {d.type === "assign" ? (
+                    <select className="input !w-auto !py-1" value={d.assignedUserId} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, assignedUserId: e.target.value } : x)))}>
+                      <option value="me">নিজেকে (যিনি চালাবেন)</option>
+                      <option value="__none__">অ্যাসাইন তুলে নিন</option>
+                      {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
+                    </select>
+                  ) : null}
+                  {d.type === "tag" ? <input className="input !w-32 !py-1" placeholder="ট্যাগ…" value={d.tag} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, tag: e.target.value } : x)))} /> : null}
+                  {d.type === "pipeline" ? (
+                    <select className="input !w-auto !py-1" value={d.stage} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, stage: e.target.value } : x)))}>
+                      {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  ) : null}
+                  {d.type === "close" ? (
+                    <select className="input !w-auto !py-1" value={d.outcome} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, outcome: e.target.value } : x)))}>
+                      <option value="">Outcome ছাড়া</option>
+                      {CONVERSATION_OUTCOMES.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : null}
+                  {d.type === "snooze" ? (
+                    <input className="input !w-24 !py-1" type="number" min={5} max={10080} value={d.minutes} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, minutes: Number(e.target.value) } : x)))} aria-label="Snooze মিনিট" />
+                  ) : null}
+                  {macroDraft.length > 1 ? <button className="text-red-500" onClick={() => setMacroDraft((prev) => prev.filter((_, xi) => xi !== i))}>✕</button> : null}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-secondary btn-sm" disabled={macroDraft.length >= 10} onClick={() => setMacroDraft((prev) => [...prev, emptyMacroStep()])}>＋ ধাপ যোগ করুন</button>
+              <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                <input type="checkbox" checked={macroShared} onChange={(e) => setMacroShared(e.target.checked)} /> টিমের সবাই চালাতে পারবে
+              </label>
+              <button className="btn-primary btn-sm" disabled={busy === "macro-create"} onClick={() => void createMacroFromBuilder()}>ম্যাক্রো তৈরি করুন</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="manage-card fade-rise space-y-3">
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🧩</span><div className="section-title">WhatsApp Template রেজিস্ট্রি</div></div>
+          <p className="text-xs text-slate-500">Meta তে আগে থেকে অনুমোদিত Template গুলো এখানে রেজিস্ট্রি করুন (নাম ও ভাষা হুবহু Meta এর মতো হতে হবে)। ২৪ ঘণ্টার Window বন্ধ থাকলে Inbox থেকে এগুলোই পাঠানো যাবে। Template আসলে অনুমোদিত না হলে Meta এর এররটাই দেখানো হবে। Meta থেকে Template Sync ও নতুন Template জমা (Submit) করা যায় Messaging পেজের &quot;WhatsApp Templates (Meta)&quot; অংশে — অবস্থা (Status) ব্যাজ এখানেও দেখা যায়।</p>
           <div className="space-y-1.5">
             {templates.map((t) => (
-              <div key={t.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <div className="min-w-0"><span className="font-semibold">{t.name}</span> <span className="badge-slate">{t.language}</span> {t.category ? <span className="badge-brand">{t.category}</span> : null}<span className="block truncate text-xs text-slate-500">{t.bodyText ?? ""}</span></div>
+              <div key={t.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50 transition hover:ring-slate-300">
+                <div className="min-w-0"><span className="font-semibold">{t.name}</span> <span className="badge-slate">{t.language}</span> {t.category ? <span className="badge-brand">{t.category}</span> : null} {t.status === "APPROVED" ? <span className="badge-green">✅ Meta অনুমোদিত</span> : t.status === "PENDING" ? <span className="badge-amber">⏳ অপেক্ষমাণ</span> : t.status === "REJECTED" ? <span className="badge-red">❌ প্রত্যাখ্যাত</span> : t.status === "NOT_ON_META" ? <span className="badge-slate">Meta-তে আর নেই</span> : t.status ? <span className="badge-slate">{t.status}</span> : <span className="badge-slate">Meta-তে যাচাই হয়নি</span>}{t.qualityRating ? <span className="badge-slate">মান: {t.qualityRating}</span> : null}<span className="block truncate text-xs text-slate-500">{t.bodyText ?? ""}</span></div>
                 <button className="text-xs text-red-500" onClick={() => deleteTpl(t.id)}>মুছুন</button>
               </div>
             ))}

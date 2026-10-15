@@ -11,14 +11,23 @@ import { MessagingModule } from "../messaging/messaging.module";
 import { ProposalsService } from "./proposals.service";
 import { ProactiveService } from "./proactive.service";
 import { CreativeStudioService } from "./creative-studio.service";
+import { VisionService } from "./vision.service";
+import { PromptsService } from "./prompts.service";
+import { MentionsService } from "./mentions.service";
+import { AssistantApiService } from "./assistant-api.service";
+import { AssistantApiController } from "./assistant-api.controller";
+import { AssistantApproveController } from "./assistant-approve.controller";
 
 import { CompetitorsModule } from "../competitors/competitors.module";
+import { ProductsModule } from "../products/products.module";
+import { InventoryModule } from "../inventory/inventory.module";
+import { CommerceModule } from "../commerce/commerce.module";
 
 @Module({
-  imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule],
-  controllers: [AiController],
-  providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService],
-  exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory],
+  imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule, ProductsModule, InventoryModule, CommerceModule],
+  controllers: [AiController, AssistantApiController, AssistantApproveController],
+  providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService, VisionService, PromptsService, MentionsService, AssistantApiService],
+  exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory, VisionService],
 })
 
 export class AiModule {}

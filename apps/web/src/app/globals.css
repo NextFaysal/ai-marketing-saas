@@ -193,7 +193,6 @@
   .msg-bubble-own { @apply rounded-tr-md text-white; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
   .date-sep { @apply flex items-center gap-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400; }
   .date-sep::before, .date-sep::after { content: ""; height: 1px; flex: 1; background: rgba(226, 232, 240, 0.8); }
-<<<<<<< HEAD
 
   /* ---------- Inbox Design v2 primitives (additive) ---------- */
 
@@ -435,6 +434,144 @@
   .skeleton::after { animation: none; }
 }
 
+/* ---------- AI Assistant Design v2 primitives (AP1, additive) ---------- */
+/* Plain CSS on the brand tokens (no @apply) so this block can live at
+   the end of the file without touching any existing rule. Values in
+   these components always come from stored tool-result displays. */
+.ai-rich { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.ai-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.ai-stat-tile { border-radius: 14px; background: #ffffff; padding: 10px 12px; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); display: flex; flex-direction: column; gap: 2px; }
+.ai-stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); }
+.ai-stat-value { font-size: 17px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; color: var(--ink-strong); word-break: break-word; }
+.ai-stat-hint { font-size: 11px; color: var(--ink-faint); }
+.ai-delta-up { color: #047857; font-weight: 700; }
+.ai-delta-down { color: #dc2626; font-weight: 700; }
+.ai-bars { display: flex; flex-direction: column; gap: 7px; border-radius: 14px; background: #ffffff; padding: 10px 12px; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); }
+.ai-bar-row { display: grid; grid-template-columns: minmax(70px, 34%) 1fr auto; align-items: center; gap: 8px; font-size: 12px; }
+.ai-bar-label { color: var(--ink-body); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-bar-track { height: 8px; border-radius: 9999px; background: #f1f5f9; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.6); }
+.ai-bar-fill { display: block; height: 100%; border-radius: 9999px; background-image: linear-gradient(90deg, var(--brand-from), var(--brand-to)); transition: width 0.5s ease; }
+.ai-bar-value { color: var(--ink-strong); font-weight: 700; white-space: nowrap; }
+.ai-table-wrap { overflow-x: auto; border-radius: 14px; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.8); }
+.ai-table { width: 100%; font-size: 13px; }
+.ai-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); background: #f8fafc; }
+.ai-table td { padding: 8px 12px; border-top: 1px solid #f1f5f9; color: var(--ink-body); }
+.ai-tool-card { margin-top: 10px; border-radius: 14px; background: rgba(255, 255, 255, 0.75); box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.9); padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-tool-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 9999px; background: #f1f5f9; padding: 2px 8px; font-size: 11px; font-weight: 600; color: var(--ink-body); }
+.ai-tool-status { border-radius: 9999px; padding: 1px 6px; font-size: 10px; font-weight: 700; }
+.ai-tool-status-ok { background: #ecfdf5; color: #047857; }
+.ai-tool-status-err { background: #fef2f2; color: #b91c1c; }
+.ai-tool-status-stopped { background: #fffbeb; color: #b45309; }
+.ai-stream-caret::after { content: "▍"; margin-left: 1px; color: var(--brand-from); animation: ai-caret-blink 1s steps(2, start) infinite; }
+.ai-step-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted); }
+.ai-step-dot { width: 8px; height: 8px; border-radius: 9999px; flex-shrink: 0; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); animation: ai-caret-blink 1.1s ease-in-out infinite; }
+.ai-composer-shell { border-radius: 24px; background: #ffffff; padding: 10px; box-shadow: var(--shadow-pop); border: 1px solid rgba(226, 232, 240, 0.8); }
+.ai-tag-chip { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 7px; font-size: 10px; font-weight: 700; background: var(--brand-soft); color: var(--brand-from); }
+@keyframes ai-caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+
+/* ---------- AI Assistant Design v3 primitives (additive) ---------- */
+/* Modern refresh of the AP1 Design v2 surface. Plain CSS on the same
+   brand tokens (--brand-from/--brand-to) so white-label keeps flowing.
+   No data logic lives here; every value shown still comes from the
+   page's real state and stored tool-result displays. */
+.ai3-hero { position: relative; overflow: hidden; border-radius: 24px; color: #fff; padding: 20px; background-image: radial-gradient(560px 240px at 88% -30%, rgba(255,255,255,0.24), transparent 60%), linear-gradient(120deg, var(--brand-from), var(--brand-to)); box-shadow: 0 16px 40px -16px var(--brand-ring), var(--shadow-card-v2); }
+.ai3-orb { display: flex; height: 52px; width: 52px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 18px; background: rgba(255,255,255,0.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28); backdrop-filter: blur(4px); font-size: 24px; }
+.ai3-hero-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 3px 10px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25); color: #fff; }
+.ai3-hero-badge-warn { background: rgba(251,191,36,0.28); }
+.ai3-rail { position: sticky; top: 16px; align-self: flex-start; border-radius: 24px; background: #fff; border: 1px solid rgba(226,232,240,0.85); box-shadow: var(--shadow-card-v2); padding: 12px; max-height: calc(100dvh - 32px); overflow-y: auto; }
+.ai3-conv { position: relative; border-radius: 16px; padding: 10px 12px; border: 1px solid transparent; transition: all .15s ease; }
+.ai3-conv:hover { background: #f8fafc; border-color: rgba(226,232,240,0.8); }
+.ai3-conv-active { border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 75%); box-shadow: var(--shadow-card-v2); }
+.ai3-conv-active::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 9999px; background-image: linear-gradient(180deg, var(--brand-from), var(--brand-to)); }
+.ai3-conv-actions { opacity: 0; transition: opacity .15s ease; }
+.ai3-conv:hover .ai3-conv-actions, .ai3-conv:focus-within .ai3-conv-actions, .ai3-conv-active .ai3-conv-actions { opacity: 1; }
+@media (hover: none) { .ai3-conv-actions { opacity: 1; } }
+.ai3-act-btn { border-radius: 8px; border: 1px solid rgba(226,232,240,0.9); background: #fff; padding: 2px 7px; font-size: 11px; transition: all .12s ease; }
+.ai3-act-btn:hover { border-color: var(--brand-ring); background: var(--brand-soft); }
+.ai3-act-btn-danger { border-color: #fecaca; color: #dc2626; }
+.ai3-act-btn-danger:hover { background: #fef2f2; border-color: #fca5a5; }
+.ai3-canvas { border-radius: 24px; border: 1px solid rgba(226,232,240,0.85); box-shadow: var(--shadow-card-v2); background: radial-gradient(700px 260px at 50% -80px, var(--brand-soft), transparent 65%), #fbfcfe; padding: 18px; }
+.ai3-avatar { display: flex; height: 34px; width: 34px; flex-shrink: 0; user-select: none; align-items: center; justify-content: center; border-radius: 12px; font-size: 15px; font-weight: 700; color: #fff; box-shadow: 0 4px 12px -4px rgba(15,23,42,0.3); }
+.ai3-avatar-ai { background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+.ai3-avatar-user { background: linear-gradient(135deg, #334155, #64748b); }
+.ai3-bubble-ai { max-width: 88%; border-radius: 20px; border-top-left-radius: 6px; background: #fff; border: 1px solid rgba(226,232,240,0.9); box-shadow: 0 2px 10px -4px rgba(15,23,42,0.08); padding: 12px 16px; }
+.ai3-bubble-user { max-width: 85%; border-radius: 20px; border-top-right-radius: 6px; color: #fff; padding: 10px 16px; box-shadow: 0 8px 20px -8px var(--brand-ring); background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+@media (min-width: 640px) { .ai3-bubble-ai { max-width: 82%; } }
+.ai3-suggest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.ai3-suggest-card { display: flex; align-items: flex-start; gap: 10px; text-align: left; border-radius: 18px; background: #fff; border: 1px solid rgba(226,232,240,0.9); padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--ink-body); box-shadow: 0 1px 3px rgba(15,23,42,0.05); transition: all .15s ease; min-height: 44px; }
+.ai3-suggest-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-card-v2); border-color: var(--brand-ring); background: linear-gradient(180deg, var(--brand-soft), #ffffff 80%); }
+.ai3-suggest-icon { display: flex; height: 30px; width: 30px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 10px; background: var(--brand-soft); font-size: 14px; }
+.ai3-composer-v3 { position: sticky; bottom: 12px; z-index: 20; border-radius: 26px; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); padding: 10px; box-shadow: var(--shadow-pop); border: 1px solid rgba(226,232,240,0.9); }
+.ai3-composer-v3:focus-within { border-color: var(--brand-ring); box-shadow: var(--shadow-pop), 0 0 0 4px color-mix(in srgb, var(--brand-from) 12%, transparent); }
+.ai3-textarea { flex: 1; min-height: 44px; max-height: 140px; resize: none; border: 0; background: transparent; padding: 10px 12px; font-size: 14px; color: var(--ink-strong); outline: none; }
+.ai3-textarea::placeholder { color: var(--ink-faint); }
+.ai3-send-btn { display: inline-flex; min-height: 44px; min-width: 52px; align-items: center; justify-content: center; gap: 6px; border-radius: 16px; padding: 10px 18px; font-size: 14px; font-weight: 700; color: #fff; box-shadow: 0 8px 20px -8px var(--brand-ring); transition: all .15s ease; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); }
+.ai3-send-btn:hover { filter: brightness(1.1); }
+.ai3-send-btn:active { transform: scale(0.97); }
+.ai3-send-btn:disabled { opacity: .5; pointer-events: none; }
+.ai3-stop-btn { display: inline-flex; min-height: 44px; min-width: 64px; align-items: center; justify-content: center; border-radius: 16px; padding: 10px 18px; font-size: 14px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #dc2626, #f87171); transition: all .15s ease; }
+.ai3-stop-btn:active { transform: scale(0.97); }
+.ai3-follow-chip { border-radius: 9999px; padding: 7px 14px; font-size: 13px; font-weight: 600; color: var(--ink-body); background: var(--brand-soft); border: 1px solid transparent; transition: all .15s ease; min-height: 36px; }
+.ai3-follow-chip:hover { border-color: var(--brand-ring); transform: translateY(-1px); }
+.ai3-panel { border-radius: 24px; background: #fff; border: 1px solid rgba(226,232,240,0.85); box-shadow: var(--shadow-card-v2); padding: 16px; }
+.ai3-panel-icon { display: flex; height: 36px; width: 36px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 12px; background: var(--brand-soft); font-size: 16px; }
+.ai3-prop-card { border-radius: 18px; border: 1px solid rgba(226,232,240,0.9); background: linear-gradient(180deg, #fff, #fbfcfe); padding: 12px 14px; transition: all .15s ease; }
+.ai3-prop-card:hover { border-color: var(--brand-ring); box-shadow: var(--shadow-card-v2); }
+.ai3-recap { border-radius: 20px; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: linear-gradient(120deg, var(--brand-soft), #ffffff 70%); border: 1px solid var(--brand-ring); }
+.ai3-usage-tile { border-radius: 16px; background: #f8fafc; box-shadow: inset 0 0 0 1px rgba(226,232,240,0.7); padding: 10px 12px; }
+.ai3-typing { display: inline-flex; gap: 4px; align-items: center; padding: 4px 2px; }
+.ai3-typing span { width: 7px; height: 7px; border-radius: 9999px; background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); animation: ai-caret-blink 1.1s ease-in-out infinite; }
+.ai3-typing span:nth-child(2) { animation-delay: .18s; }
+.ai3-typing span:nth-child(3) { animation-delay: .36s; }
+/* v3 polish over the AP1 rich-answer blocks (same class names, later
+   rules win): softer tiles, gradient stat accent. */
+.ai-stat-tile { border-radius: 16px; box-shadow: inset 0 0 0 1px rgba(226,232,240,0.8), 0 1px 3px rgba(15,23,42,0.04); position: relative; overflow: hidden; }
+.ai-stat-tile::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background-image: linear-gradient(90deg, var(--brand-from), var(--brand-to)); opacity: .75; }
+.ai-bars { border-radius: 16px; }
+.ai-table-wrap { border-radius: 16px; }
+.ai-tool-card { border-radius: 9999px; background: #f8fafc; }
+
+/* ---------- Global Assistant primitives (2026-10-12, additive) ---------- */
+/* Floating access to the AI Assistant on every dashboard page.
+   Brand-token based like the ai3-* block, so white-label flows.
+   On mobile the panel is a bottom sheet and the FAB sits above the
+   fixed MobileBottomNav (h-16 + safe area); on lg it docks right. */
+.ga-fab { position: fixed; right: 16px; bottom: 84px; z-index: 55; display: inline-flex; align-items: center; gap: 8px; min-height: 52px; padding: 12px 18px; border-radius: 9999px; color: #fff; box-shadow: 0 14px 34px -10px var(--brand-ring), var(--shadow-pop); background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to)); transition: all .15s ease; }
+.ga-fab:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.ga-fab:active { transform: scale(0.97); }
+@media (min-width: 1024px) { .ga-fab { bottom: 24px; right: 24px; } }
+.ga-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(3px); display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 640px) { .ga-backdrop { align-items: flex-end; justify-content: flex-end; padding: 20px; } }
+.ga-panel { display: flex; flex-direction: column; width: 100%; height: min(78dvh, 720px); background: #fbfcfe; border-radius: 26px 26px 0 0; overflow: hidden; box-shadow: var(--shadow-pop); }
+@media (min-width: 640px) { .ga-panel { width: 408px; height: min(660px, calc(100dvh - 40px)); border-radius: 26px; } }
+.ga-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; color: #fff; background-image: radial-gradient(420px 160px at 90% -40%, rgba(255,255,255,0.24), transparent 60%), linear-gradient(120deg, var(--brand-from), var(--brand-to)); }
+.ga-head-btn { display: inline-flex; align-items: center; min-height: 32px; border-radius: 9999px; padding: 5px 11px; font-size: 12px; font-weight: 700; color: #fff; background: rgba(255,255,255,0.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25); transition: all .12s ease; white-space: nowrap; }
+.ga-head-btn:hover { background: rgba(255,255,255,0.28); }
+.ga-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; background: radial-gradient(600px 220px at 50% -60px, var(--brand-soft), transparent 65%), #fbfcfe; }
+.ga-composer { border-top: 1px solid rgba(226,232,240,0.9); background: rgba(255,255,255,0.95); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+.ga-fab-badge { position: absolute; top: -7px; right: -5px; display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 9999px; padding: 0 6px; background: #fff; color: #dc2626; font-size: 11px; font-weight: 800; box-shadow: 0 2px 8px rgba(15,23,42,0.25), inset 0 0 0 1.5px #fecaca; }
+
+/* ---------- Prompt picker (GV3/G4, additive) ---------- */
+/* Anchored above the host composer; hosts are positioned elements
+   (.ai3-composer-v3 is sticky, .ga-composer gets relative here). */
+.ga-composer { position: relative; }
+.prompt-picker { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 8px); z-index: 30; border-radius: 18px; background: #fff; border: 1px solid rgba(226, 232, 240, 0.9); box-shadow: var(--shadow-pop); overflow: hidden; }
+.prompt-picker-row { display: flex; align-items: center; gap: 8px; border-radius: 12px; padding: 8px 10px; cursor: pointer; }
+.prompt-picker-row-active { background: var(--brand-soft); }
+
+/* ---------- Select-to-ask bubble (G6, additive) ---------- */
+.ga-ask-bubble { position: fixed; z-index: 60; transform: translate(-50%, -100%); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 700; color: #fff; background: var(--grad-brand); box-shadow: var(--shadow-pop); border: none; cursor: pointer; white-space: nowrap; }
+.ga-ask-bubble:hover { filter: brightness(1.07); }
+
+/* ---------- Message attachment chip (AP2, additive) ---------- */
+.ai-attach { margin-top: 8px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(255, 255, 255, 0.65); padding: 6px 10px; max-width: 100%; }
+.ai-attach-summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; font-weight: 700; list-style: none; }
+.ai-attach-summary::-webkit-details-marker { display: none; }
+.ai-attach-text { margin-top: 6px; max-height: 160px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px; line-height: 1.55; color: var(--ink-2); }
+
+/* AP7: persona picker inside the global panel header */
+.ga-persona-select { margin-top: 4px; max-width: 170px; border-radius: 8px; border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.14); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 6px; }
+.ga-persona-select option { color: #0f172a; }
 .ai-composer-shell { border-radius: 24px; background: #ffffff; padding: 10px; box-shadow: var(--shadow-pop); border: 1px solid rgba(226, 232, 240, 0.8); }
 .ai-tag-chip { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 7px; font-size: 10px; font-weight: 700; background: var(--brand-soft); color: var(--brand-from); }
 @keyframes ai-caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }

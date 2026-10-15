@@ -1,4 +1,4 @@
-import { sanitizePlan, keywordPlan, detectLanguage } from "./planner";
+import { sanitizePlan, keywordPlan, detectLanguage, ALLOWED_TOOLS, TOOL_ROLES } from "./planner";
 
 describe("sanitizePlan - the prompt-injection boundary", () => {
   it("drops unknown and write tools even when a model asks for them", () => {
@@ -76,5 +76,51 @@ describe("detectLanguage", () => {
   it("detects Bengali script", () => {
     expect(detectLanguage("আজ বিক্রি কত?")).toBe("bn");
     expect(detectLanguage("How were sales today?")).toBe("en");
+  });
+});
+
+describe("GV3 starter prompts — every starter maps to a real tool", () => {
+  // Mirror of STARTER_PROMPTS in apps/web/src/lib/ai-prompts.ts.
+  // Keep the two lists in sync: a starter that plans zero tools
+  // would dead-end in the dev-template path, so it must not ship.
+  const STARTERS = [
+    "গত ৭ দিনে বিক্রি কেমন ছিল?",
+    "আমার সবচেয়ে ভালো ক্যাম্পেইন কোনগুলো?",
+    "কোন অর্ডারগুলোর ফলো-আপ দরকার?",
+    "কোনো অস্বাভাবিক কিছু ঘটেছে কি?",
+    "কোন পণ্যে সবচেয়ে বেশি লাভ হয়?",
+    "কাস্টমার সেগমেন্টগুলো দেখাও",
+    "স্টকের অবস্থা কেমন?",
+    "কুরিয়ারদের পারফরম্যান্স কেমন?",
+    "Which products have the best margin?",
+  ];
+  it("each starter yields at least one planned tool call", () => {
+    for (const s of STARTERS) {
+      if (keywordPlan(s).length === 0) throw new Error(`starter maps to no tool: ${s}`);
+    }
+  });
+});
+
+describe("AP3 registry + new tools", () => {
+  it("every catalog tool is executable-named and roles derive into TOOL_ROLES", () => {
+    expect(ALLOWED_TOOLS).toContain("get_order_detail");
+    expect(ALLOWED_TOOLS).toContain("get_sales_forecast");
+    expect(TOOL_ROLES["get_usage_summary"]).toEqual(["OWNER", "ADMIN"]);
+    expect(TOOL_ROLES["get_crm_pipeline"]).toBeUndefined(); // unrestricted
+    expect(new Set(ALLOWED_TOOLS).size).toBe(ALLOWED_TOOLS.length);
+  });
+  it("keywordPlan reaches the new tools", () => {
+    expect(keywordPlan("অর্ডার #1042 এর বিবরণ দাও").some((c) => c.tool === "get_order_detail")).toBe(true);
+    expect(keywordPlan("লিড পাইপলাইন দেখাও").some((c) => c.tool === "get_crm_pipeline")).toBe(true);
+    expect(keywordPlan("আটকে থাকা পার্সেল কোনগুলো?").some((c) => c.tool === "get_courier_rollup")).toBe(true);
+    expect(keywordPlan("আগামী ১৪ দিনের বিক্রির পূর্বাভাস দাও").some((c) => c.tool === "get_sales_forecast")).toBe(true);
+    expect(keywordPlan("টিমের পারফরম্যান্স কেমন?").some((c) => c.tool === "get_team_performance")).toBe(true);
+  });
+  it("sanitizePlan clamps forecast args and bounds query strings", () => {
+    const [fc] = sanitizePlan([{ tool: "get_sales_forecast", args: { days: 99, scenarioGrowthPct: 500 } }]);
+    expect(fc.args.days).toBe(30);
+    expect(fc.args.scenarioGrowthPct).toBe(100);
+    const [od] = sanitizePlan([{ tool: "get_order_detail", args: { query: "x".repeat(300) } }]);
+    expect(String(od.args.query)).toHaveLength(100);
   });
 });

@@ -9,5 +9,6 @@ import { MessagingModule } from "../messaging/messaging.module";
   imports: [AttributionModule, MessagingModule],
   controllers: [TrackingController, AbandonedCartsController],
   providers: [TrackingService, AbandonedCartsService],
+  exports: [AbandonedCartsService],
 })
 export class TrackingModule {}

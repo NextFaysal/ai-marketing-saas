@@ -1,7 +1,14 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { CatalogPushService } from "../commerce/catalog-push.service";
+import { EventsService } from "../common/events.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+
+/** EC28: emitted on a stock transition 0 → >0 so the storefront
+ * retention service can fire back-in-stock alerts. The
+ * EventsService dispatch is failure-isolated by design. */
+export const STOCK_INCREASED_EVENT = "inventory.stock_increased";
 
 /**
  * Sales & Data S1 — Inventory Movement.
@@ -39,13 +46,71 @@ export interface PlacedItemInput {
   productId: string | null;
   variantId?: string | null;
   quantity: number;
+  /** EC24a: pre-order line — skipped entirely (no decrement, no
+   * movement): the stock may not exist yet. See commerce/ec24.ts. */
+  isPreorder?: boolean;
 }
 
 @Injectable()
 export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    // EC4: optional so existing 2-arg constructions (specs, legacy
+    // wiring) keep working; when present, absolute balances after a
+    // local stock change are pushed to connected stores.
+    @Optional() private readonly catalogPush?: CatalogPushService,
+    // EC28: optional event bus for the back-in-stock hook; LAST
+    // param so existing positional constructions keep working.
+    @Optional() private readonly events?: EventsService,
+  ) {}
+
+  /** EC28 — emit the restock transition (0 → >0 only). Never throws. */
+  private emitStockIncreased(
+    organizationId: string,
+    productId: string,
+    variant: { id?: string | null; sku?: string | null } | null,
+    prevBalance: number,
+    balanceAfter: number,
+  ): void {
+    if (!this.events) return;
+    if (!(prevBalance <= 0 && balanceAfter > 0)) return;
+    try {
+      this.events.emit(STOCK_INCREASED_EVENT, {
+        organizationId,
+        productId,
+        variantId: variant?.id ?? null,
+        variantSku: variant?.sku ?? null,
+        prevBalance,
+        balanceAfter,
+      });
+    } catch {
+      /* the event bus never breaks a stock write */
+    }
+  }
+
+  /**
+   * EC4 — notify the commerce layer that a local balance changed,
+   * so it can enqueue an outbound inventory push. `quantity` is the
+   * ABSOLUTE balance after the change, not a delta. Fully
+   * failure-isolated: a push-enqueue problem never breaks the stock
+   * write that triggered it.
+   */
+  private async notifyStockPush(
+    organizationId: string,
+    productId: string,
+    variantId: string | null,
+    balanceAfter: number,
+  ): Promise<void> {
+    if (!this.catalogPush) return;
+    try {
+      await this.catalogPush.enqueueInventoryPush(organizationId, productId, variantId, balanceAfter);
+    } catch (e) {
+      this.logger.warn(`stock push enqueue failed for product ${productId}: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+  }
 
   resolveThreshold(product: { lowStockThreshold?: number | null }): number {
     return product.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
@@ -68,6 +133,8 @@ export class InventoryService {
     let decremented = 0;
     let skipped = 0;
     for (const line of lines) {
+      // EC24a: preorder lines never touch stock (counted as skipped).
+      if ((line as any).isPreorder) { skipped++; continue; }
       if (!line.productId || !line.quantity || line.quantity <= 0) { skipped++; continue; }
       const variantId = line.variantId ?? null;
       // Idempotency: one order_placed movement per
@@ -99,6 +166,11 @@ export class InventoryService {
         decremented++;
         const product = await (this.prisma as any).product.findFirst({ where: { id: line.productId, organizationId } });
         if (product) await this.maybeLowStockAlert(organizationId, product, variant, prev, balanceAfter);
+        await this.notifyStockPush(organizationId, line.productId, variantId, balanceAfter);
+        // EC4: bundle expansion keys off the PARENT product,
+        // regardless of which variant of it sold — composition is
+        // defined per parent product.
+        await this.decrementBundleComponents(organizationId, orderId, line.productId, line.quantity);
       } else {
         const product = await (this.prisma as any).product.findFirst({ where: { id: line.productId, organizationId } });
         if (!product || product.stockQuantity == null) { skipped++; continue; }
@@ -115,9 +187,110 @@ export class InventoryService {
         });
         decremented++;
         await this.maybeLowStockAlert(organizationId, product, null, prev, balanceAfter);
+        await this.notifyStockPush(organizationId, line.productId, null, balanceAfter);
+        await this.decrementBundleComponents(organizationId, orderId, line.productId, line.quantity);
       }
     }
     return { decremented, skipped };
+  }
+
+  /**
+   * EC4 — bundle component decrement. When a sold product is a
+   * bundle parent, each component is decremented by
+   * (component quantity × sold line quantity) under reason
+   * "bundle_component", keyed idempotently by
+   * (orderId, reason, componentProductId, componentVariantId).
+   *
+   * Rules carried over from S1: untracked component rows are
+   * skipped with NO product↔variant fallback; negative balances
+   * are recorded truthfully (no clamping).
+   *
+   * ONE LEVEL ONLY: component decrements written here do NOT
+   * trigger their own bundle expansion — a component that is
+   * itself a bundle parent does not cascade. Do not recurse.
+   *
+   * Bundle work is NOT counted in applyOrderPlaced's
+   * { decremented, skipped } — those counts describe the SOLD
+   * lines only (existing S1 specs assert them).
+   *
+   * Fully failure-isolated: a missing BundleItem table (older
+   * fakes / pre-migration DBs) or any bundle error is logged and
+   * treated as "no bundle work" — it must never break order
+   * placement.
+   */
+  private async decrementBundleComponents(
+    organizationId: string,
+    orderId: string,
+    parentProductId: string,
+    lineQuantity: number,
+  ): Promise<void> {
+    try {
+      const bundleTable = (this.prisma as any).bundleItem;
+      if (!bundleTable?.findMany) return;
+      const items = await bundleTable.findMany({
+        where: { organizationId, parentProductId },
+      }).catch(() => null);
+      if (!items) return;
+      for (const item of items as any[]) {
+        try {
+          const needed = (item.quantity as number) * lineQuantity;
+          if (!needed || needed <= 0) continue;
+          const componentProductId = item.componentProductId as string;
+          const componentVariantId = (item.componentVariantId ?? null) as string | null;
+          // Idempotency: one bundle_component movement per
+          // (order, component product, component variant).
+          const already = await (this.prisma as any).stockMovement.findFirst({
+            where: { orderId, reason: "bundle_component", productId: componentProductId, variantId: componentVariantId },
+          });
+          if (already) continue;
+
+          if (componentVariantId) {
+            const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: componentVariantId } });
+            // Variant gone or untracked at variant level — skip,
+            // deliberately NO fallback to the component product row.
+            if (!variant || variant.stockQuantity == null) continue;
+            const prev = variant.stockQuantity as number;
+            const balanceAfter = prev - needed;
+            await (this.prisma as any).productVariant.update({
+              where: { id: variant.id }, data: { stockQuantity: balanceAfter },
+            });
+            await (this.prisma as any).stockMovement.create({
+              data: {
+                organizationId, productId: componentProductId, variantId: componentVariantId,
+                delta: -needed, balanceAfter, reason: "bundle_component", orderId,
+              },
+            });
+            const componentProduct = await (this.prisma as any).product.findFirst({
+              where: { id: componentProductId, organizationId },
+            });
+            if (componentProduct) await this.maybeLowStockAlert(organizationId, componentProduct, variant, prev, balanceAfter);
+            await this.notifyStockPush(organizationId, componentProductId, componentVariantId, balanceAfter);
+          } else {
+            const componentProduct = await (this.prisma as any).product.findFirst({
+              where: { id: componentProductId, organizationId },
+            });
+            if (!componentProduct || componentProduct.stockQuantity == null) continue;
+            const prev = componentProduct.stockQuantity as number;
+            const balanceAfter = prev - needed;
+            await (this.prisma as any).product.update({
+              where: { id: componentProduct.id }, data: { stockQuantity: balanceAfter },
+            });
+            await (this.prisma as any).stockMovement.create({
+              data: {
+                organizationId, productId: componentProductId, variantId: null,
+                delta: -needed, balanceAfter, reason: "bundle_component", orderId,
+              },
+            });
+            await this.maybeLowStockAlert(organizationId, componentProduct, null, prev, balanceAfter);
+            await this.notifyStockPush(organizationId, componentProductId, null, balanceAfter);
+          }
+        } catch (e) {
+          this.logger.warn(`bundle component decrement failed for parent ${parentProductId}: ${e instanceof Error ? e.message : "unknown"}`);
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`bundle expansion failed for parent ${parentProductId}: ${e instanceof Error ? e.message : "unknown"}`);
+    }
   }
 
   /** Lines for an order from its CURRENT OrderItem rows, with the
@@ -135,7 +308,7 @@ export class InventoryService {
         }).catch(() => null);
         variantId = variant?.id ?? null;
       }
-      lines.push({ productId: item.productId ?? null, variantId, quantity: item.quantity });
+      lines.push({ productId: item.productId ?? null, variantId, quantity: item.quantity, isPreorder: !!item.isPreorder });
     }
     return lines;
   }
@@ -153,8 +326,11 @@ export class InventoryService {
     });
     if (sameReason) return { restored: 0, skipped: 0 };
 
+    // EC4: the placed set includes bundle component movements —
+    // restoring an order restores its components too, replaying
+    // the exact placed quantities (never the order's items).
     const placed = await (this.prisma as any).stockMovement.findMany({
-      where: { orderId, reason: "order_placed" },
+      where: { orderId, reason: { in: ["order_placed", "bundle_component"] } },
     });
     if (!placed.length) return { restored: 0, skipped: 0 };
     // An order restored once (either reason) must never restore
@@ -189,6 +365,9 @@ export class InventoryService {
           },
         });
         restored++;
+        await this.notifyStockPush(organizationId, movement.productId, movement.variantId, balanceAfter);
+        // EC28: cancel/return restore is a stock-increase path too.
+        this.emitStockIncreased(organizationId, movement.productId, variant, (variant.stockQuantity as number), balanceAfter);
       } else {
         const product = await (this.prisma as any).product.findFirst({ where: { id: movement.productId, organizationId } });
         if (!product || product.stockQuantity == null) { skipped++; continue; }
@@ -203,6 +382,8 @@ export class InventoryService {
           },
         });
         restored++;
+        await this.notifyStockPush(organizationId, movement.productId, null, balanceAfter);
+        this.emitStockIncreased(organizationId, movement.productId, null, product.stockQuantity as number, balanceAfter);
       }
     }
     return { restored, skipped };
@@ -214,7 +395,7 @@ export class InventoryService {
     organizationId: string,
     actorUserId: string,
     productId: string,
-    input: { variantId?: string | null; delta?: number | null; setTo?: number | null; note?: string | null },
+    input: { variantId?: string | null; delta?: number | null; setTo?: number | null; note?: string | null; reason?: string },
   ) {
     const hasDelta = input.delta !== undefined && input.delta !== null;
     const hasSetTo = input.setTo !== undefined && input.setTo !== null;
@@ -258,7 +439,7 @@ export class InventoryService {
     const movement = await (this.prisma as any).stockMovement.create({
       data: {
         organizationId, productId, variantId: variant?.id ?? null,
-        delta: appliedDelta, balanceAfter: newBalance, reason: "manual_adjustment",
+        delta: appliedDelta, balanceAfter: newBalance, reason: input.reason ?? "manual_adjustment",
         actorUserId, note: input.note ?? null,
       },
     });
@@ -268,6 +449,11 @@ export class InventoryService {
       metadata: { productId, variantId: variant?.id ?? null, delta: appliedDelta, balanceAfter: newBalance },
     });
     await this.maybeLowStockAlert(organizationId, product, variant, current, newBalance);
+    await this.notifyStockPush(organizationId, productId, variant?.id ?? null, newBalance);
+    // EC28: adjust() is the single choke point for manual adjust,
+    // purchase-receive, stock counts and return restock — a
+    // 0 → >0 transition here fires the back-in-stock hook.
+    this.emitStockIncreased(organizationId, productId, variant, current, newBalance);
     return { productId, variantId: variant?.id ?? null, stockQuantity: newBalance, movement };
   }
 
@@ -294,6 +480,8 @@ export class InventoryService {
     incoming: number | null,
   ): Promise<void> {
     if (previous == null || incoming == null || previous === incoming) return;
+    // EC4: NO stock-push notification here — this balance came IN
+    // from a store sync; pushing it back out would loop.
     await (this.prisma as any).stockMovement.create({
       data: {
         organizationId, productId, variantId: variantId ?? null,

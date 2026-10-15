@@ -1,10 +1,10 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
 interface Policy { id: string; type: string; title: string; content: string }
-interface Doc { id: string; title: string; content: string; kind: string }
+interface Doc { id: string; title: string; content: string; kind: string; source?: string }
 
 const POLICY_TYPES = ["shipping", "delivery", "refund", "return", "cancellation", "payment", "custom"];
 
@@ -16,6 +16,9 @@ export default function KnowledgePage() {
   const [notice, setNotice] = useState("");
   const [policyForm, setPolicyForm] = useState({ type: "shipping", title: "", content: "" });
   const [docForm, setDocForm] = useState({ title: "", content: "" });
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
 
   const orgId = typeof window !== "undefined" ? getOrganizationId() : null;
 
@@ -52,6 +55,32 @@ export default function KnowledgePage() {
     e.preventDefault(); if (!orgId) return;
     await apiFetch(`/organizations/${orgId}/knowledge-documents`, { method: "POST", body: JSON.stringify({ ...docForm, kind: "faq" }) });
     setDocForm({ title: "", content: "" }); await load();
+  }
+  async function uploadDocFile(e: React.FormEvent) {
+    e.preventDefault(); if (!orgId || !uploadFile) return;
+    setUploading(true); setUploadError("");
+    try {
+      const form = new FormData();
+      form.append("file", uploadFile);
+      const token = getToken();
+      const res = await fetch(`${API_URL}/organizations/${orgId}/knowledge-documents/upload`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? `আপলোড ব্যর্থ হয়েছে (${res.status})`);
+      }
+      const result = await res.json();
+      setNotice(`ফাইল থেকে ${result.documentsCreated}টি ডকুমেন্ট তৈরি হয়েছে`);
+      setUploadFile(null);
+      await load();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "আপলোড ব্যর্থ হয়েছে");
+    } finally {
+      setUploading(false);
+    }
   }
 
   const inputCls = "input mt-1";
@@ -98,13 +127,36 @@ export default function KnowledgePage() {
         <div className="font-semibold">FAQ ও জ্ঞান ডকুমেন্ট</div>
         {docs.length === 0 ? <p className="mt-2 text-sm text-slate-500">এখনো কোনো ডকুমেন্ট নেই।</p> : (
           <ul className="mt-3 space-y-2">
-            {docs.map((d) => <li key={d.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-medium">{d.title}</span><div className="text-slate-600">{d.content}</div></li>)}
+            {docs.map((d) => (
+              <li key={d.id} className="rounded-lg bg-slate-50 p-3 text-sm">
+                <span className="font-medium">{d.title}</span>{" "}
+                {d.source && d.source.startsWith("file:")
+                  ? <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">📄 {d.source.slice(5)}</span>
+                  : <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">✍️ হাতে লেখা</span>}
+                <div className="text-slate-600">{d.content}</div>
+              </li>
+            ))}
           </ul>
         )}
         <form onSubmit={addDoc} className="mt-4 grid grid-cols-2 gap-3">
           <input className="rounded-lg border px-3 py-2 text-sm" placeholder="প্রশ্ন / শিরোনাম" value={docForm.title} onChange={(e) => setDocForm({ ...docForm, title: e.target.value })} required />
           <input className="rounded-lg border px-3 py-2 text-sm" placeholder="উত্তর / বিস্তারিত" value={docForm.content} onChange={(e) => setDocForm({ ...docForm, content: e.target.value })} required />
           <button className="rounded-lg border px-4 py-2 text-sm font-semibold">FAQ যোগ করুন</button>
+        </form>
+        <form onSubmit={uploadDocFile} className="mt-4 border-t pt-4">
+          <div className="text-sm font-medium">ফাইল থেকে যোগ করুন (PDF, DOCX, TXT, MD — সর্বোচ্চ ১০MB)</div>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept=".pdf,.txt,.md,.docx"
+              className="text-sm"
+              onChange={(e) => { setUploadFile(e.target.files?.[0] ?? null); setUploadError(""); }}
+            />
+            <button className="rounded-lg border px-4 py-2 text-sm font-semibold" disabled={!uploadFile || uploading}>
+              {uploading ? "আপলোড হচ্ছে…" : "ফাইল আপলোড করুন"}
+            </button>
+          </div>
+          {uploadError ? <p className="mt-2 text-sm text-red-600">{uploadError}</p> : null}
         </form>
       </div>
     </div>

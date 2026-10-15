@@ -6,7 +6,7 @@ import { EventsService } from "../common/events.service";
 import { AuditService } from "../audit/audit.service";
 import { minorToMajor, parseLeadsCsv, toCsv } from "../imports/csv";
 import { CustomFieldsService, renderCustomFieldValue } from "./custom-fields.service";
-import { classifyDue, dhakaDayKey, dhakaDayStartUtc, followUpNotificationText } from "./lead-followups";
+import { classifyDue, dhakaDayKey, dhakaDayStartUtc, followUpDateFor, followUpNotificationText, normalizeFollowUpDefaults, validateFollowUpDefaults } from "./lead-followups";
 import { scoreLead, type LeadScore } from "./lead-score";
 import { LeadAssignmentService } from "./lead-assignment.service";
 
@@ -14,6 +14,11 @@ export const LEAD_STAGES = ["new", "contacted", "qualified", "proposal", "won", 
 export const LEAD_SOURCES = ["manual", "whatsapp", "messenger", "woocommerce", "website"] as const;
 
 // CX10: Default stage follow-up intervals in days
+// Integration note: the owner's CX10 variant stamped follow-ups
+// from this static map unconditionally. The integrated behaviour
+// is the settings-driven CX10 (per-org CrmSetting hours; no setting
+// → no stamp, per the platform's opt-in discipline). This map is
+// retained as the SUGGESTED defaults for the settings UI.
 export const DEFAULT_STAGE_FOLLOWUP_DAYS: Record<string, number> = {
   new: 1,
   contacted: 3,
@@ -109,6 +114,16 @@ export class LeadsService {
       throw new BadRequestException("Custom fields are not available in this deployment");
     }
     const explicitOwner = dto.ownerUserId !== undefined;
+    // CX10: no explicit follow-up date → the org's per-stage
+    // default (CrmSetting.followUpDefaultsByStage) stamps
+    // now + hours for the created stage, when one exists. An
+    // explicit date (manual DTO or a CSV row's date — the importer
+    // passes it through this same path) ALWAYS wins.
+    let nextFollowUpAt: Date | null = dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null;
+    if (!dto.nextFollowUpAt) {
+      const stamped = followUpDateFor(await this.followUpSetting(organizationId), dto.stage ?? "new", new Date());
+      if (stamped) nextFollowUpAt = stamped;
+    }
     const lead = await (this.prisma as any).lead.create({
       data: {
         organizationId, name: dto.name, phone: dto.phone ?? null, email: dto.email?.toLowerCase() ?? null,
@@ -123,11 +138,7 @@ export class LeadsService {
         ownerUserId: explicitOwner ? dto.ownerUserId : actorId,
         tags: dto.tags ? normalizeTags(dto.tags) : [],
         customFields,
-        nextFollowUpAt: dto.nextFollowUpAt
-          ? new Date(dto.nextFollowUpAt)
-          : DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage ?? "new"] != null
-            ? new Date(Date.now() + DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage ?? "new"] * 86400000)
-            : null,
+        nextFollowUpAt,
       },
     });
     await this.log(lead.id, actorId, "created", `Lead created (source: ${lead.source})`);
@@ -155,6 +166,48 @@ export class LeadsService {
 
   async updateAssignmentSetting(organizationId: string, strategy: string) {
     return this.assigner.updateSetting(organizationId, strategy);
+  }
+
+  // ---------- CX10: per-stage follow-up default intervals ----------
+
+  /** The org's CrmSetting row, or null when there is none (or the
+   * table is absent from a partial test fake) — null means "no
+   * defaults", i.e. pre-CX10 behaviour. Defensive like the
+   * assignment service's reads. */
+  private async followUpSetting(organizationId: string): Promise<any | null> {
+    try {
+      const row = await (this.prisma as any).crmSetting?.findUnique({ where: { organizationId } });
+      return row ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getFollowUpSetting(organizationId: string) {
+    const row = await this.followUpSetting(organizationId);
+    return { followUpDefaultsByStage: normalizeFollowUpDefaults(row?.followUpDefaultsByStage) };
+  }
+
+  /** Validates strictly (Bengali 400 on a bad stage / hours), then
+   * upserts ONLY the followUpDefaultsByStage field on the org's
+   * CrmSetting row — the assignment strategy/cursor are untouched.
+   * An empty map (or null) clears the defaults back to null. */
+  async updateFollowUpSetting(organizationId: string, raw: unknown) {
+    let cleaned: ReturnType<typeof validateFollowUpDefaults>;
+    try {
+      cleaned = validateFollowUpDefaults(raw);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : "Invalid follow-up defaults");
+    }
+    const value = Object.keys(cleaned).length ? cleaned : null;
+    const p = this.prisma as any;
+    const existing = await p.crmSetting.findUnique({ where: { organizationId } }).catch(() => null);
+    if (existing) {
+      await p.crmSetting.update({ where: { organizationId }, data: { followUpDefaultsByStage: value } });
+    } else {
+      await p.crmSetting.create({ data: { organizationId, followUpDefaultsByStage: value } });
+    }
+    return { followUpDefaultsByStage: value };
   }
 
   async list(organizationId: string, filters: { stage?: string; source?: string; search?: string; sort?: string } = {}) {
@@ -560,10 +613,15 @@ export class LeadsService {
     const fromStage = lead.stage;
     const stageChanged = dto.stage && dto.stage !== fromStage;
     if (dto.stage) { data.stage = dto.stage; data.lastContactedAt = new Date(); }
-    if (dto.nextFollowUpAt !== undefined) {
-      data.nextFollowUpAt = dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null;
-    } else if (stageChanged && dto.stage && DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage] != null) {
-      data.nextFollowUpAt = new Date(Date.now() + DEFAULT_STAGE_FOLLOWUP_DAYS[dto.stage] * 86400000);
+    if (dto.nextFollowUpAt !== undefined) data.nextFollowUpAt = dto.nextFollowUpAt ? new Date(dto.nextFollowUpAt) : null;
+    // CX10: a stage change WITHOUT an explicit nextFollowUpAt in
+    // the same update re-stamps from the NEW stage's default, when
+    // one exists. No default → data.nextFollowUpAt stays unset, so
+    // the existing value is kept verbatim — including on won/lost
+    // (a stage change never silently clears a follow-up).
+    if (stageChanged && dto.nextFollowUpAt === undefined) {
+      const stamped = followUpDateFor(await this.followUpSetting(organizationId), dto.stage!, new Date());
+      if (stamped) data.nextFollowUpAt = stamped;
     }
     const updated = await (this.prisma as any).lead.update({ where: { id: leadId }, data });
     if (stageChanged) {

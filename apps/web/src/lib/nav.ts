@@ -1,7 +1,7 @@
 export interface NavItem {
   label: string;
   href: string;
-  icon: string;
+  icon?: string;
   badge?: string;
   ready: boolean;
   phase?: string;
@@ -9,14 +9,16 @@ export interface NavItem {
 
 // Main navigation from the product spec. `ready` items exist in this milestone;
 // the rest are visibly planned and disabled, never fake-functional.
-export const NAV_ITEMS: readonly NavItem[] = [
+export const NAV_ITEMS = [
   { label: "Overview", href: "/dashboard", icon: "📊", ready: true },
   { label: "এজেন্সি পোর্টফোলিও", href: "/dashboard/portfolio", icon: "🏢", ready: true },
   { label: "AI Assistant", href: "/dashboard/ai", icon: "🤖", ready: true },
   { label: "Business Knowledge", href: "/dashboard/knowledge", icon: "🧠", ready: true },
   { label: "Products", href: "/dashboard/products", icon: "🛍️", ready: true },
   { label: "Stores & Integrations", href: "/dashboard/integrations", icon: "🔌", ready: true },
+  { label: "কানেক্ট সেন্টার", href: "/dashboard/connections", icon: "🔗", ready: true },
   { label: "Orders", href: "/dashboard/orders", icon: "📦", ready: true },
+  { label: "POS / কাউন্টার বিক্রি", href: "/dashboard/pos", icon: "🧾", ready: true },
   { label: "Advertising Accounts", href: "/dashboard/ad-accounts", icon: "🎯", ready: true },
   { label: "Campaigns", href: "/dashboard/campaigns", icon: "🚀", ready: true },
   { label: "Social Posts", href: "/dashboard/social-posts", icon: "📣", ready: true },
@@ -29,7 +31,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Profit Intelligence", href: "/dashboard/profit", icon: "💎", ready: true },
   { label: "Competitor Analysis", href: "/dashboard/competitors", icon: "🔭", ready: true },
   { label: "Inbox", href: "/dashboard/inbox", icon: "💬", ready: true },
-  { label: "AI Instructions", href: "/dashboard/ai-instructions", icon: "⚙️", ready: true },
+  { label: "AI Instructions", href: "/dashboard/ai-instructions", icon: "🤖", ready: true },
   { label: "Social Comments AI", href: "/dashboard/comments", icon: "💬", ready: true },
   { label: "Leads & CRM", href: "/dashboard/leads", icon: "🧲", ready: true },
   { label: "Customers 360", href: "/dashboard/customers", icon: "👤", ready: true },
@@ -41,6 +43,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "রেফারেল প্রোগ্রাম", href: "/dashboard/referral", icon: "🎁", ready: true },
   { label: "Support", href: "/dashboard/support", icon: "🎫", ready: true },
   { label: "আপডেটসমূহ", href: "/dashboard/changelog", icon: "✨", ready: true },
+  { label: "Setup Guide", href: "/dashboard/setup", icon: "🧭", ready: true },
   { label: "Team Settings", href: "/dashboard/team", icon: "👥", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", icon: "⚙️", ready: true },
 ] as const;

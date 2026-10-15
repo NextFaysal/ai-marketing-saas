@@ -65,6 +65,114 @@ export function classifyDue(nextFollowUpAt: Date | string | null | undefined, no
   return { bucket: "overdue", daysOverdue, label: `${daysOverdue} দিন পেরিয়ে গেছে` };
 }
 
+// ---------- CX10: per-stage follow-up default intervals ----------
+
+/**
+ * CX10 — Per-stage follow-up defaults (org settings).
+ *
+ * Stored on CrmSetting.followUpDefaultsByStage as JSON keyed by
+ * Lead stage, values in HOURS: { "new": 24, "contacted": 72 }.
+ * Semantics (enforced in LeadsService.create / .update):
+ *  - a lead CREATED without an explicit nextFollowUpAt, or whose
+ *    STAGE CHANGES without an explicit nextFollowUpAt in the same
+ *    update, is stamped now + the (new) stage's default hours —
+ *    only when a default exists for that stage;
+ *  - an explicit DTO date ALWAYS wins;
+ *  - no default for the stage → nothing changes (create: null;
+ *    stage change: the existing value is kept — including on the
+ *    terminal stages won/lost, so a stage change never silently
+ *    CLEARS a follow-up the user set);
+ *  - no setting at all (every pre-CX10 org) → behaviour is
+ *    exactly as before CX10.
+ *
+ * The stage vocabulary mirrors LEAD_STAGES in leads.service.ts
+ * (kept as a local literal so this pure module stays cycle-free).
+ */
+export const FOLLOW_UP_STAGES = ["new", "contacted", "qualified", "proposal", "won", "lost"] as const;
+
+/** Hours bounds for one stage default: 1 hour .. 1 year. */
+export const FOLLOW_UP_MIN_HOURS = 1;
+export const FOLLOW_UP_MAX_HOURS = 8760;
+
+export type FollowUpDefaults = Partial<Record<(typeof FOLLOW_UP_STAGES)[number], number>>;
+
+function isValidHours(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= FOLLOW_UP_MIN_HOURS && v <= FOLLOW_UP_MAX_HOURS;
+}
+
+/** The raw map inside whatever the caller hands us: a CrmSetting
+ * row ({ followUpDefaultsByStage }), the JSON value itself, or
+ * anything else (→ null). */
+function rawDefaultsMap(setting: unknown): Record<string, unknown> | null {
+  if (!setting || typeof setting !== "object" || Array.isArray(setting)) return null;
+  const s = setting as Record<string, unknown>;
+  const inner = "followUpDefaultsByStage" in s ? s.followUpDefaultsByStage : s;
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return null;
+  return inner as Record<string, unknown>;
+}
+
+/**
+ * Lenient READ-path normalizer: returns only the valid entries
+ * (known stage + integer hours in range), or null when nothing
+ * valid remains. Used for display and by followUpDefaultFor, so a
+ * hand-corrupted stored value degrades to "no default" instead of
+ * ever producing a nonsense date.
+ */
+export function normalizeFollowUpDefaults(raw: unknown): FollowUpDefaults | null {
+  const map = rawDefaultsMap(raw);
+  if (!map) return null;
+  const out: FollowUpDefaults = {};
+  for (const stage of FOLLOW_UP_STAGES) {
+    const v = map[stage];
+    if (isValidHours(v)) out[stage] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Strict WRITE-path validator for the settings endpoint. Returns
+ * the cleaned map (possibly empty = "no defaults"). A null VALUE
+ * for a stage means "no default for this stage" and is dropped.
+ * Throws a plain Error with a Bengali message on anything invalid;
+ * the service wraps it in BadRequestException (400), matching the
+ * CRM settings endpoints' honest-error style.
+ */
+export function validateFollowUpDefaults(raw: unknown): FollowUpDefaults {
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("followUpDefaultsByStage একটি অবজেক্ট হতে হবে — যেমন { \"new\": 24 } (ঘণ্টায়)।");
+  }
+  const out: FollowUpDefaults = {};
+  for (const [stage, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(FOLLOW_UP_STAGES as readonly string[]).includes(stage)) {
+      throw new Error(`অজানা Lead Stage: "${stage}"। বৈধ Stage: ${FOLLOW_UP_STAGES.join(", ")}।`);
+    }
+    if (v === null) continue; // explicit "no default for this stage"
+    if (!isValidHours(v)) {
+      throw new Error(`Stage "${stage}"-এর ফলোআপ সময় পূর্ণসংখ্যা ঘণ্টায় ${FOLLOW_UP_MIN_HOURS}–${FOLLOW_UP_MAX_HOURS} এর মধ্যে হতে হবে (পেয়েছি: ${JSON.stringify(v)})।`);
+    }
+    out[stage as (typeof FOLLOW_UP_STAGES)[number]] = v;
+  }
+  return out;
+}
+
+/**
+ * The default interval (hours) for `stage` from a CrmSetting row
+ * (or the raw JSON map), or null when there is none. Pure.
+ */
+export function followUpDefaultFor(setting: unknown, stage: string): number | null {
+  const map = normalizeFollowUpDefaults(setting);
+  if (!map) return null;
+  const v = (map as Record<string, unknown>)[stage];
+  return isValidHours(v) ? v : null;
+}
+
+/** now + the stage default, or null when the stage has none. */
+export function followUpDateFor(setting: unknown, stage: string, now: Date): Date | null {
+  const hours = followUpDefaultFor(setting, stage);
+  return hours === null ? null : new Date(now.getTime() + hours * 3600 * 1000);
+}
+
 /** Verbatim notification copy for one due lead (Bengali). */
 export function followUpNotificationText(lead: { name: string; phone?: string | null; stage: string }, due: DueState): { title: string; body: string } {
   const phonePart = lead.phone ? `, ফোন: ${lead.phone}` : "";

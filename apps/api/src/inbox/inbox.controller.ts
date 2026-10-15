@@ -5,8 +5,8 @@ import { RealtimeService } from "./realtime.service";
 import { TelegramService } from "./channels/telegram.service";
 import { EmailChannelService } from "./channels/email.service";
 import { TIKTOK_APPLICATION_PACK } from "./channels/channel-adapter";
-import { AddNoteDto, AgentScheduleDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMediaDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, UpdateSignatureDto, RebalanceDto, WhatsAppTemplateDto } from "./inbox.dto";
-import { BulkConversationsDto, GhostDto, SendProductDto, SnoozeConversationDto, ToneRewriteDto } from "./inbox.dto";
+import { AddNoteDto, AgentScheduleDto, AgentStateDto, CodConfirmationDto, ConnectEmailDto, ConnectMessagingDto, ConnectTelegramDto, RefundRequestDto, CreateChatOrderDto, QuickReplyDto, SendTemplateDto, SendImageDto, SendMediaDto, SendMessageDto, TeamDto, TeamMembersDto, TranslateMessageDto, UpdateConversationDto, UpdateInboxSettingsDto, UpdateTeamDto, SendDraftDto, UpdateSignatureDto, RebalanceDto, WhatsAppTemplateDto, UpdateWhatsAppWabaDto, SubmitWhatsAppTemplateDto } from "./inbox.dto";
+import { BlockConversationDto, BulkConversationsDto, BulkReplyDto, CreateMacroDto, CreateSavedViewDto, GhostDto, LinkCustomerDto, MergeCustomerDto, PinMessageDto, ReactMessageDto, RunMacroDto, SendProductDto, SnoozeConversationDto, ToneRewriteDto, UnmergeCustomerDto, UpdateMacroDto, UpdateSavedViewDto } from "./inbox.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -66,12 +66,12 @@ export class InboxController {
     return this.inbox.searchMedia(orgId, { type, q, days: days ? Number(days) : undefined });
   }
   @Get("export")
-  async exportInbox(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
-    return this.inbox.exportInbox(orgId, { from, to });
+  async exportInbox(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.inbox.exportInbox(orgId, { from, to }, user.userId);
   }
   @Get("conversations/:conversationId/export")
-  async exportConversation(@Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Query("format") format?: string) {
-    const out = await this.inbox.exportConversation(orgId, conversationId, format === "csv" ? "csv" : "json");
+  async exportConversation(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Query("format") format?: string) {
+    const out = await this.inbox.exportConversation(orgId, conversationId, format === "csv" ? "csv" : "json", user.userId);
     return new StreamableFile(Buffer.from(out.body, "utf8"), { type: out.contentType, disposition: `attachment; filename="${out.filename}"` });
   }
   @Get("conversations/:conversationId/messages/:messageId/media-url")
@@ -148,6 +148,12 @@ export class InboxController {
     return this.inbox.connectMessaging(orgId, user.userId, dto);
   }
 
+  // MS6: set/clear the WABA id on the connected WhatsApp integration.
+  @Patch("whatsapp-waba") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  updateWhatsAppWaba(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: UpdateWhatsAppWabaDto) {
+    return this.inbox.updateWhatsAppWabaId(orgId, user.userId, dto?.wabaId ?? null);
+  }
+
   @Get("settings")
   settings(@Param("organizationId") orgId: string) { return this.inbox.getSettings(orgId); }
 
@@ -168,13 +174,88 @@ export class InboxController {
   conversations(
     @CurrentUser() user: AuthUser, @Param("organizationId") orgId: string,
     @Query("status") status?: string, @Query("channel") channel?: string,
-    @Query("q") q?: string, @Query("unread") unread?: string,
+    @Query("q") q?: string, @Query("unread") unread?: string, @Query("spam") spam?: string,
     @Query("assignee") assignee?: string, @Query("tag") tag?: string, @Query("sort") sort?: string,
     @Query("folder") folder?: string,
+    // IN1b: advanced filters (additive; amounts are MINOR units).
+    @Query("dateFrom") dateFrom?: string, @Query("dateTo") dateTo?: string,
+    @Query("amountMin") amountMin?: string, @Query("amountMax") amountMax?: string,
+    @Query("intent") intent?: string, @Query("sentiment") sentiment?: string,
+    // IN9a: cursor pagination is opt-in — the param must be PRESENT
+    // ("" = first page) for the { items, nextCursor } envelope;
+    // absent keeps the legacy bare-array response untouched.
+    @Query("cursor") cursor?: string, @Query("limit") limit?: string,
   ) {
+    const num = (v?: string) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined);
     return this.inbox.listConversations(orgId, {
-      status, channel, q, unreadOnly: unread === "1", assignee, tag, sort, folder,
+      status, channel, q, unreadOnly: unread === "1", spamOnly: spam === "1", assignee, tag, sort, folder,
+      dateFrom, dateTo, amountMin: num(amountMin), amountMax: num(amountMax), intent, sentiment,
+      ...(cursor !== undefined ? { cursor: cursor === "" ? null : cursor, limit: num(limit) } : {}),
     }, user.userId);
+  }
+
+  // IN1a: search INSIDE message text + transcriptions (org-scoped).
+  @Get("messages/search")
+  searchMessages(@Param("organizationId") orgId: string, @Query("q") q?: string, @Query("limit") limit?: string) {
+    return this.inbox.searchMessages(orgId, q ?? "", { limit: limit ? Number(limit) : undefined });
+  }
+
+  // IN1c: saved views — own + team-shared; writes are creator-only
+  // (the service enforces ownership; roles gate who can write at all).
+  @Get("saved-views")
+  savedViews(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.listSavedViews(orgId, user.userId);
+  }
+
+  @Post("saved-views") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  createSavedView(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSavedViewDto) {
+    return this.inbox.createSavedView(orgId, user.userId, dto);
+  }
+
+  @Patch("saved-views/:viewId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  updateSavedView(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("viewId") viewId: string, @Body() dto: UpdateSavedViewDto) {
+    return this.inbox.updateSavedView(orgId, user.userId, viewId, dto);
+  }
+
+  @Delete("saved-views/:viewId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  deleteSavedView(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("viewId") viewId: string) {
+    return this.inbox.deleteSavedView(orgId, user.userId, viewId);
+  }
+
+  // IN3: macros — own + team-shared; writes are creator-only
+  // (the service enforces ownership). Run executes the steps on
+  // one conversation through the real action paths and reports
+  // per-step results (a failed step stops the run, honestly).
+  @Get("macros")
+  macros(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.listMacros(orgId, user.userId);
+  }
+
+  @Post("macros") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  createMacro(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateMacroDto) {
+    return this.inbox.createMacro(orgId, user.userId, dto);
+  }
+
+  @Patch("macros/:macroId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  updateMacro(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("macroId") macroId: string, @Body() dto: UpdateMacroDto) {
+    return this.inbox.updateMacro(orgId, user.userId, macroId, dto);
+  }
+
+  @Delete("macros/:macroId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  deleteMacro(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("macroId") macroId: string) {
+    return this.inbox.deleteMacro(orgId, user.userId, macroId);
+  }
+
+  @Post("macros/:macroId/run") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  runMacro(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("macroId") macroId: string, @Body() dto: RunMacroDto) {
+    return this.inbox.runMacro(orgId, user.userId, macroId, dto.conversationId);
+  }
+
+  // IN3c: bulk reply — one quick reply / template to many
+  // conversations, per-item honest results.
+  @Post("conversations/bulk-reply") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  bulkReply(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkReplyDto) {
+    return this.inbox.bulkReplyConversations(orgId, user.userId, dto);
   }
 
   // Inbox Next-Gen P2: smart-folder counts (server-side; the list
@@ -215,14 +296,67 @@ export class InboxController {
     return this.inbox.createWhatsAppTemplate(orgId, dto);
   }
 
+  // MS6: literal routes declared before the :templateId delete so
+  // "sync"/"submit" are never read as template ids.
+  @Post("whatsapp-templates/sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  syncTemplates(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.inbox.syncWhatsAppTemplates(orgId, user.userId);
+  }
+
+  @Post("whatsapp-templates/submit") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  submitTemplate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SubmitWhatsAppTemplateDto) {
+    return this.inbox.submitWhatsAppTemplate(orgId, user.userId, dto);
+  }
+
   @Delete("whatsapp-templates/:templateId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   deleteTemplate(@Param("organizationId") orgId: string, @Param("templateId") id: string) {
     return this.inbox.deleteWhatsAppTemplate(orgId, id);
   }
 
   @Get("conversations/:conversationId")
-  conversation(@Param("organizationId") orgId: string, @Param("conversationId") id: string) {
-    return this.inbox.getConversation(orgId, id);
+  conversation(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.getConversation(orgId, id, user.userId);
+  }
+
+  /** IN10c: Inbox Analytics v2 — compute-on-read over real rows
+   * (heatmap / channel conversion / response trend / intents). */
+  @Get("analytics")
+  analytics(@Param("organizationId") orgId: string, @Query("days") days?: string) {
+    return this.inbox.getInboxAnalytics(orgId, Math.min(90, Math.max(1, Number(days ?? 7) || 7)));
+  }
+
+  /** IN10b: this conversation's audit trail (who viewed/exported/
+   * acted) — leads and managers only, it is an oversight view. */
+  @Get("conversations/:conversationId/audit") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  conversationAudit(@Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.listConversationAudit(orgId, id);
+  }
+
+  /** IN2: merge two customer records from this conversation
+   * (agent-confirmed, reversible — CustomersService does the
+   * work; the service ties one side to this thread). */
+  @Post("conversations/:conversationId/merge-customer") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  mergeCustomer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: MergeCustomerDto) {
+    return this.inbox.mergeCustomerFromConversation(orgId, user.userId, id, dto);
+  }
+
+  /** IN2: undo a merge from the survivor's conversation. */
+  @Post("conversations/:conversationId/unmerge-customer") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  unmergeCustomer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: UnmergeCustomerDto) {
+    return this.inbox.unmergeCustomerFromConversation(orgId, user.userId, id, dto);
+  }
+
+  /** IN2: link an unlinked conversation to an existing customer. */
+  @Post("conversations/:conversationId/link-customer") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  linkCustomer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: LinkCustomerDto) {
+    return this.inbox.linkConversationCustomer(orgId, user.userId, id, dto);
+  }
+
+  /** IN10a: block/unblock this conversation's customer — OUR
+   * system-level block only; the platform is never involved. */
+  @Post("conversations/:conversationId/block") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  blockConversation(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: BlockConversationDto) {
+    return this.inbox.setConversationBlocked(orgId, user.userId, id, dto);
   }
 
   @Post("conversations/:conversationId/orders") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
@@ -238,6 +372,15 @@ export class InboxController {
   @Post("conversations/:conversationId/summary") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   summarize(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
     return this.inbox.summarizeConversation(orgId, user.userId, id);
+  }
+
+  /** IN7b/c: AI suggested next action + tag/stage proposals.
+   * Suggestion-only — this endpoint sends nothing and writes
+   * nothing; accepting a proposal goes through the normal
+   * PATCH conversation path. */
+  @Post("conversations/:conversationId/next-action") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  nextAction(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string) {
+    return this.inbox.suggestNextAction(orgId, user.userId, id);
   }
 
   @Post("conversations/:conversationId/messages/:messageId/verify-payment") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
@@ -292,7 +435,7 @@ export class InboxController {
 
   @Post("conversations/:conversationId/notes") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   addNote(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: AddNoteDto) {
-    return this.inbox.addNote(orgId, user.userId, id, dto.content);
+    return this.inbox.addNote(orgId, user.userId, id, dto.content, { maskSensitive: Boolean(dto.maskSensitive) });
   }
 
   @Post("conversations/:conversationId/send-template") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
@@ -356,7 +499,20 @@ export class InboxController {
 
   @Post("conversations/:conversationId/messages") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   send(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto) {
-    return this.inbox.sendReply(orgId, user.userId, id, dto.content, { signature: true, aiAssisted: dto.aiAssisted, quickReplyId: dto.quickReplyId });
+    return this.inbox.sendReply(orgId, user.userId, id, dto.content, { signature: true, aiAssisted: dto.aiAssisted, quickReplyId: dto.quickReplyId, replyToMessageId: dto.replyToMessageId });
+  }
+
+  /** IN6d: pin/unpin — DB feature, org-scoped + audited in service. */
+  @Post("conversations/:conversationId/messages/:messageId/pin") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  pinMessage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Param("messageId") messageId: string, @Body() dto: PinMessageDto) {
+    return this.inbox.setMessagePinned(orgId, user.userId, conversationId, messageId, Boolean(dto.pinned));
+  }
+
+  /** IN6c: agent reaction — real Meta send on Messenger/IG only;
+   * the service refuses other channels honestly. */
+  @Post("conversations/:conversationId/messages/:messageId/react") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  reactMessage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") conversationId: string, @Param("messageId") messageId: string, @Body() dto: ReactMessageDto) {
+    return this.inbox.reactToMessage(orgId, user.userId, conversationId, messageId, dto.emoji ?? null);
   }
 
   // Milestone 73 (Team T4): agent self-service.

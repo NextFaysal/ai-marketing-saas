@@ -36,6 +36,15 @@ export const STEP_TYPES = [
   "notify_channel", "ai_generate",
 ] as const;
 
+/**
+ * MS2: a step that was deliberately NOT executed (e.g. the
+ * recipient opted out of messaging) — logged in the run's
+ * stepsLog as "skipped" with the reason, never as "ok" (nothing
+ * was sent) and never as "failed" (no provider failure happened,
+ * and the run does not count as failed for it).
+ */
+export class StepSkippedError extends Error {}
+
 /** Workflows W3: webhook targets must be public https
  *  endpoints. Blocks loopback/private IP literals and
  *  local names; redirects are refused at fetch time. */
@@ -172,6 +181,14 @@ export class WorkflowsService implements OnModuleInit {
   private scanTimer?: ReturnType<typeof setInterval>;
 
   onModuleInit() {
+    // MS8: register as messaging's workflow-creator port so
+    // journey presets install through THIS service's real
+    // create/update (validator included) without messaging ever
+    // importing workflows. Defensive typeof check: unit specs
+    // build this service against messaging stubs that may not
+    // carry the registration method.
+    const register = (this.messaging as any)?.registerWorkflowCreator;
+    if (typeof register === "function") register.call(this.messaging, this);
     for (const [event, trigger] of Object.entries(EVENT_TO_TRIGGER)) {
       this.events.on(event, (payload) => this.handleTrigger(trigger, payload));
     }
@@ -981,8 +998,12 @@ export class WorkflowsService implements OnModuleInit {
               const detail = await this.executeStep(organizationId, run.id, sub, context);
               stepsLog.push({ step: sub.type, status: "ok", detail, branch: arm });
             } catch (e) {
-              anyFailed = true;
-              stepsLog.push({ step: sub.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed", branch: arm });
+              if (e instanceof StepSkippedError) {
+                stepsLog.push({ step: sub.type, status: "skipped", detail: e.message, branch: arm });
+              } else {
+                anyFailed = true;
+                stepsLog.push({ step: sub.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed", branch: arm });
+              }
             }
           }
           continue;
@@ -990,8 +1011,12 @@ export class WorkflowsService implements OnModuleInit {
         const detail = await this.executeStep(organizationId, run.id, step, context);
         stepsLog.push({ step: step.type, status: "ok", detail });
       } catch (e) {
-        anyFailed = true;
-        stepsLog.push({ step: step.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed" });
+        if (e instanceof StepSkippedError) {
+          stepsLog.push({ step: step.type, status: "skipped", detail: e.message });
+        } else {
+          anyFailed = true;
+          stepsLog.push({ step: step.type, status: "failed", detail: e instanceof Error ? e.message : "Step failed" });
+        }
       }
     }
     await (this.prisma as any).workflowRun.update({
@@ -1017,6 +1042,8 @@ export class WorkflowsService implements OnModuleInit {
         channel, recipient, subject: template.subject, body: template.body,
         vars: context, workflowRunId: runId,
       });
+      // MS2: an opt-out skip is not a send and not a failure.
+      if (result.status === "skipped") throw new StepSkippedError(result.error ?? "Recipient opted out");
       if (result.status !== "sent") throw new Error(result.error ?? "Send failed");
       return `${channel} sent to ${result.address} (provider id ${result.providerMessageId})`;
     }

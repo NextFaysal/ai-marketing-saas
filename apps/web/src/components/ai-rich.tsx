@@ -214,6 +214,50 @@ export function buildRichBlocks(toolCalls: readonly AiToolCallEntry[] | null | u
   return blocks;
 }
 
+/**
+ * Tool transparency card (GV1/G2): which tools an answer was
+ * grounded in, plus the stopped marker. Extracted from the AI page
+ * (where it was a page-local function) so the page and the Global
+ * Assistant panel render the identical card from one implementation.
+ * Renders nothing when there are no visible tools and no stop marker.
+ */
+/**
+ * AP2: the attachment chip on a user bubble — shows the attached
+ * file's name and, expandable, the exact extracted text / vision
+ * description the assistant was given (it is stored on the
+ * message, so this stays truthful after a reload).
+ */
+export function AiMessageAttachment({ name, kind, text }: { name: string; kind: string; text?: string | null }) {
+  return (
+    <details className="ai-attach">
+      <summary className="ai-attach-summary">
+        <span aria-hidden="true">{kind === "image" ? "🖼️" : "📎"}</span>
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        {kind === "image" ? <span className="badge badge-slate">AI বর্ণনা</span> : null}
+      </summary>
+      {text ? <pre className="ai-attach-text">{text}</pre> : null}
+    </details>
+  );
+}
+
+export function AiToolTransparency({ toolCalls }: { toolCalls?: readonly { tool: string; status?: string }[] | null }) {
+  const visible = visibleToolCalls(toolCalls);
+  const stopped = hasStoppedMarker(toolCalls);
+  if (visible.length === 0 && !stopped) return null;
+  return (
+    <div className="ai-tool-card">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">ব্যবহৃত টুল</span>
+      {visible.map((t, i) => (
+        <span key={`${t.tool}-${i}`} className="ai-tool-chip">
+          {t.tool}
+          <span className={`ai-tool-status ${t.status === "success" ? "ai-tool-status-ok" : "ai-tool-status-err"}`}>{t.status}</span>
+        </span>
+      ))}
+      {stopped ? <span className="ai-tool-chip"><span className="ai-tool-status ai-tool-status-stopped">থামানো হয়েছে</span></span> : null}
+    </div>
+  );
+}
+
 export function AiRichAnswer({ toolCalls }: { toolCalls?: readonly AiToolCallEntry[] | null }) {
   const blocks = buildRichBlocks(toolCalls);
   if (blocks.length === 0) return null;

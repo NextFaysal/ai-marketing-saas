@@ -1,9 +1,16 @@
-import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, HttpException, NotFoundException, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { ReportsService, ReportType, ReportLanguage } from "./reports.service";
 import { ChatService } from "./chat.service";
 import { ToolsService } from "./tools.service";
-import { GenerateReportDto, CreateConversationDto, SendMessageDto, UpdateRecommendationDto, UpdateConversationDto, CreateProposalDto, UpdateProactiveSettingsDto, GenerateCreativeDto, CreateCreativeDraftDto } from "./ai.dto";
+import { GenerateReportDto, CreateConversationDto, SendMessageDto, UpdateRecommendationDto, UpdateConversationDto, CreateProposalDto, UpdateProactiveSettingsDto, GenerateCreativeDto, CreateCreativeDraftDto, CreateSavedPromptDto, UpdateSavedPromptDto, BulkApproveDto, CreateAssistantApiKeyDto } from "./ai.dto";
 import { ProposalsService } from "./proposals.service";
+import { AssistantApiService } from "./assistant-api.service";
+import { approvalLinkSecret, mintApprovalToken } from "./approval-links";
+import { PromptsService } from "./prompts.service";
+import { MentionsService } from "./mentions.service";
+import { VisionService } from "./vision.service";
+import { processChatAttachment, ATTACHMENT_MAX_BYTES } from "./chat-attachments";
 import { ProactiveService } from "./proactive.service";
 import { CreativeStudioService } from "./creative-studio.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
@@ -19,8 +26,12 @@ export class AiController {
     private readonly chat: ChatService,
     private readonly tools: ToolsService,
     private readonly proposals: ProposalsService,
+    private readonly prompts: PromptsService,
+    private readonly mentions: MentionsService,
     private readonly proactive: ProactiveService,
     private readonly creative: CreativeStudioService,
+    private readonly vision: VisionService,
+    private readonly apiKeys: AssistantApiService,
   ) {}
 
   // ----- Reports -----
@@ -57,7 +68,7 @@ export class AiController {
   // ----- Chat -----
   @Post("chat/conversations")
   createConversation(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateConversationDto) {
-    return this.chat.createConversation(orgId, user.userId, dto.title);
+    return this.chat.createConversation(orgId, user.userId, dto.title, dto.persona);
   }
 
   @Get("chat/conversations")
@@ -86,8 +97,8 @@ export class AiController {
   }
 
   @Post("chat/conversations/:conversationId/messages")
-  sendMessage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto) {
-    return this.chat.sendMessage(orgId, user.userId, id, dto.content);
+  sendMessage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto, @Req() req: any) {
+    return this.chat.sendMessage(orgId, user.userId, id, dto.content, dto.pageContext, dto.entity, dto.attachment, req?.membership?.role);
   }
 
   /**
@@ -102,7 +113,7 @@ export class AiController {
    */
   @Post("chat/conversations/:conversationId/messages/stream")
   async sendMessageStream(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("conversationId") id: string, @Body() dto: SendMessageDto, @Req() req: any, @Res() res: any) {
-    const gen = this.chat.sendMessageStream(orgId, user.userId, id, dto.content);
+    const gen = this.chat.sendMessageStream(orgId, user.userId, id, dto.content, dto.pageContext, dto.entity, dto.attachment, (req as any)?.membership?.role);
     let current: IteratorResult<any>;
     try {
       current = await gen.next();
@@ -153,14 +164,99 @@ export class AiController {
     return this.proposals.propose(orgId, user.userId, dto);
   }
 
+  // AP7: mint a signed one-time approval link for a proposal
+  // (e.g. to paste into Telegram). Disabled honestly when the
+  // server has no link secret configured.
+  @Post("proposals/:proposalId/approval-link") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  async approvalLink(@Param("organizationId") orgId: string, @Param("proposalId") proposalId: string, @Req() req: any) {
+    const secret = approvalLinkSecret();
+    if (!secret) throw new BadRequestException("অনুমোদন লিংক চালু নেই — সার্ভারে ASSISTANT_LINK_SECRET (বা INTERNAL_JOB_SECRET) সেট করা হয়নি।");
+    const row = await this.proposals.list(orgId);
+    if (!(row as any[]).some((r) => r.id === proposalId)) throw new NotFoundException("Proposal not found");
+    const { token, expiresAt } = mintApprovalToken(secret, proposalId);
+    const proto = (req?.headers?.["x-forwarded-proto"] as string) || req?.protocol || "https";
+    const host = req?.headers?.host as string;
+    const base = (process.env.APP_PUBLIC_API_URL || `${proto}://${host}`).replace(/\/$/, "");
+    return { url: `${base}/assistant-approve/${proposalId}?token=${token}`, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
+  @Post("proposals/bulk-approve") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  bulkApproveProposals(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkApproveDto, @Req() req: any) {
+    return this.proposals.approveMany(orgId, user.userId, dto.ids, (req as any)?.membership?.role);
+  }
+
   @Post("proposals/:proposalId/approve") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
-  approveProposal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("proposalId") id: string) {
-    return this.proposals.approve(orgId, user.userId, id);
+  approveProposal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("proposalId") id: string, @Req() req: any) {
+    return this.proposals.approve(orgId, user.userId, id, (req as any)?.membership?.role);
   }
 
   @Post("proposals/:proposalId/reject") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   rejectProposal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("proposalId") id: string) {
     return this.proposals.reject(orgId, user.userId, id);
+  }
+
+  // ----- AP2: chat attachment processing (extract / describe) -----
+  @Post("chat/attachments")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: ATTACHMENT_MAX_BYTES } }))
+  async chatAttachment(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new HttpException("কোনো ফাইল পাওয়া যায়নি", 400);
+    return processChatAttachment(orgId, user.userId, file, this.vision);
+  }
+
+  // ----- G6: @-mention entity search -----
+  @Get("mentions")
+  searchMentions(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("q") q?: string, @Query("type") type?: string) {
+    return this.mentions.search(orgId, q ?? "", type);
+  }
+
+  // ----- Saved prompts (GV3 / Global Assistant v2 G4) -----
+  // Per-user "/" picker library; the service scopes every call to
+  // organizationId + userId.
+  @Get("prompts")
+  listPrompts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.prompts.list(orgId, user.userId);
+  }
+
+  @Post("prompts")
+  createPrompt(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateSavedPromptDto) {
+    return this.prompts.create(orgId, user.userId, dto);
+  }
+
+  @Patch("prompts/:promptId")
+  updatePrompt(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("promptId") id: string, @Body() dto: UpdateSavedPromptDto) {
+    return this.prompts.update(orgId, user.userId, id, dto);
+  }
+
+  @Delete("prompts/:promptId")
+  deletePrompt(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("promptId") id: string) {
+    return this.prompts.remove(orgId, user.userId, id);
+  }
+
+  // ----- AP7: Assistant API key management (OWNER/ADMIN) -----
+  @Post("api-keys") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  createApiKey(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateAssistantApiKeyDto) {
+    return this.apiKeys.createKey(orgId, user.userId, dto.name);
+  }
+
+  @Get("api-keys") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  listApiKeys(@Param("organizationId") orgId: string) {
+    return this.apiKeys.listKeys(orgId);
+  }
+
+  @Delete("api-keys/:keyId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  revokeApiKey(@Param("organizationId") orgId: string, @Param("keyId") keyId: string) {
+    return this.apiKeys.revokeKey(orgId, keyId);
+  }
+
+  // ----- AP6: opportunity radar + assistant task inbox -----
+  @Get("opportunities")
+  opportunities(@Param("organizationId") orgId: string) {
+    return this.proactive.computeOpportunityRadar(orgId).then((lines) => ({ lines }));
+  }
+
+  @Get("task-inbox")
+  taskInbox(@Param("organizationId") orgId: string) {
+    return this.proactive.taskInbox(orgId);
   }
 
   // ----- Proactive assistant (Milestone 48) -----

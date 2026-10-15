@@ -1,6 +1,6 @@
 import { BadRequestException, HttpException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { LlmFactory } from "../ai/llm/llm.factory";
+import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { estimateTokens } from "../ai/llm/llm.types";
 import { policyFindingsForText } from "../campaigns/policy-check";
 import { formatMinor } from "@repo/contracts";
@@ -139,7 +139,7 @@ export class SocialAiService {
     }
     const factsText = facts.join("\n");
 
-    const provider = this.llm.getProvider();
+    const provider = await providerForOrg(this.llm, organizationId);
 
     let captions: string[] = [];
     let notice: string | undefined;

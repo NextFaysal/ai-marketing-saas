@@ -130,3 +130,124 @@ describe("ProposalsService (M47 write actions with approval)", () => {
     await expect(svc.approve("org-1", "owner-1", "nope")).rejects.toThrow(/not found/i);
   });
 });
+
+describe("ProposalsService AP5 (resume / follow-up / quick reply / bulk / dry-run)", () => {
+  function setup5() {
+    const pausedPlan = { id: "plan-3", organizationId: "org-1", name: "Winter Sale", status: "published", externalCampaignId: "camp-ext-3", metaStatus: "PAUSED" };
+    const activePlan = { id: "plan-1", organizationId: "org-1", name: "Eid Sale", status: "published", externalCampaignId: "camp-ext-1", metaStatus: "ACTIVE" };
+    const adSet = { id: "adset-1", planId: "plan-3", name: "Winter Ad Set", externalAdSetId: "adset-ext-1" };
+    const prisma: any = {
+      campaignPlan: makeTable([pausedPlan, activePlan]),
+      campaignAdSet: makeTable([adSet]),
+      whatsAppTemplate: makeTable(),
+      aIActionProposal: makeTable(),
+      aIAction: makeTable(),
+      lead: makeTable([{ id: "lead-1", organizationId: "org-1", name: "Karim", mergedIntoId: null, nextFollowUpAt: null }]),
+      leadActivity: makeTable(),
+      quickReply: makeTable(),
+    };
+    const audit: any = { log: async () => undefined };
+    const campaignCalls: any[] = [];
+    const campaigns: any = {
+      setMetaStatus: async (...args: any[]) => { campaignCalls.push(["setMetaStatus", ...args]); return { id: args[2], metaStatus: args[3] }; },
+      setAdSetStatus: async (...args: any[]) => { campaignCalls.push(["setAdSetStatus", ...args]); return { adSetId: args[3], target: args[4] }; },
+    };
+    const svc = new ProposalsService(prisma, audit, campaigns, undefined);
+    return { svc, prisma, campaignCalls };
+  }
+
+  it("resume_campaign requires PAUSED and records before → after on execute", async () => {
+    const { svc, campaignCalls } = setup5();
+    await expect(svc.propose("org-1", "u1", { type: "resume_campaign", planId: "plan-1" })).rejects.toThrow(/PAUSED নয়/);
+    const row: any = await svc.propose("org-1", "u1", { type: "resume_campaign", planId: "plan-3" });
+    expect(row.preview).toContain("আবার ACTIVE");
+    const done: any = await svc.approve("org-1", "owner-1", row.id);
+    expect(done.status).toBe("executed");
+    expect(done.result.before).toBe("PAUSED");
+    expect(done.result.after).toBe("ACTIVE");
+    expect(campaignCalls[0][4]).toBe("ACTIVE");
+  });
+
+  it("pause_campaign now also records the dry-run before → after", async () => {
+    const { svc } = setup5();
+    const row: any = await svc.propose("org-1", "u1", { type: "pause_campaign", planId: "plan-1" });
+    const done: any = await svc.approve("org-1", "owner-1", row.id);
+    expect(done.result.before).toBe("ACTIVE");
+    expect(done.result.after).toBe("PAUSED");
+  });
+
+  it("create_followup_task sets the CRM follow-up + activity on approval only", async () => {
+    const { svc, prisma } = setup5();
+    const row: any = await svc.propose("org-1", "u1", { type: "create_followup_task", leadId: "lead-1", dueAt: "2026-10-20", note: "দাম জানাতে হবে" });
+    expect(prisma.lead.rows[0].nextFollowUpAt).toBeNull(); // nothing before approval
+    const done: any = await svc.approve("org-1", "owner-1", row.id);
+    expect(done.status).toBe("executed");
+    expect(prisma.lead.rows[0].nextFollowUpAt).toBeInstanceOf(Date);
+    expect(prisma.leadActivity.rows).toHaveLength(1);
+  });
+
+  it("create_quick_reply saves (never sends) on approval", async () => {
+    const { svc, prisma } = setup5();
+    const row: any = await svc.propose("org-1", "u1", { type: "create_quick_reply", title: "ডেলিভারি চার্জ", content: "ঢাকায় ৬০ টাকা" });
+    expect(prisma.quickReply.rows).toHaveLength(0);
+    const done: any = await svc.approve("org-1", "owner-1", row.id);
+    expect(done.status).toBe("executed");
+    expect(prisma.quickReply.rows[0].title).toBe("ডেলিভারি চার্জ");
+  });
+
+  it("approveMany executes each item independently and reports per-item outcomes", async () => {
+    const { svc, prisma } = setup5();
+    const a: any = await svc.propose("org-1", "u1", { type: "create_quick_reply", title: "A", content: "a" });
+    const b: any = await svc.propose("org-1", "u1", { type: "create_followup_task", leadId: "lead-1", dueAt: "2026-10-21" });
+    const out = await svc.approveMany("org-1", "owner-1", [a.id, b.id, "missing-id", a.id]);
+    expect(out.executed).toBe(2);
+    // duplicate ids are de-duplicated up front; the missing id errors per-item
+    expect(out.failed).toBe(1);
+    expect(out.results.map((r) => r.status)).toEqual(["executed", "executed", "error"]);
+    expect(prisma.quickReply.rows).toHaveLength(1);
+  });
+
+  it("chat detection: 'চালু করে দাও' + paused plan name creates a resume proposal", async () => {
+    const { svc } = setup5();
+    const row: any = await svc.detectFromChat("org-1", "u1", "conv-1", "Winter Sale ক্যাম্পেইনটা আবার চালু করে দাও");
+    expect(row?.type).toBe("resume_campaign");
+  });
+});
+
+describe("ProposalsService AP7 autonomy level 2", () => {
+  function setup7(level: number) {
+    const prisma: any = {
+      campaignPlan: makeTable(), campaignAdSet: makeTable(), whatsAppTemplate: makeTable(),
+      aIActionProposal: makeTable(), aIAction: makeTable(),
+      lead: makeTable([{ id: "lead-1", organizationId: "org-1", name: "Karim", mergedIntoId: null, nextFollowUpAt: null }]),
+      leadActivity: makeTable(), quickReply: makeTable(),
+      aIProactiveSetting: makeTable([{ id: "st1", organizationId: "org-1", autonomyLevel: level }]),
+    };
+    const auditCalls: any[] = [];
+    const audit: any = { log: async (x: any) => { auditCalls.push(x); } };
+    const svc = new ProposalsService(prisma, audit, undefined, undefined);
+    return { svc, prisma, auditCalls };
+  }
+
+  it("level 2 auto-executes a quick-reply proposal and marks it autonomous", async () => {
+    const { svc, prisma, auditCalls } = setup7(2);
+    const row: any = await svc.propose("org-1", "u1", { type: "create_quick_reply", title: "দাম", content: "৫০০ টাকা" });
+    expect(row.status).toBe("executed");
+    expect(row.result.autonomous).toBe(true);
+    expect(prisma.quickReply.rows).toHaveLength(1);
+    expect(auditCalls.some((a) => a.action === "ai.proposal_approved" && a.metadata?.autonomous === true)).toBe(true);
+  });
+
+  it("level 0 (default) leaves the same proposal pending", async () => {
+    const { svc, prisma } = setup7(0);
+    const row: any = await svc.propose("org-1", "u1", { type: "create_quick_reply", title: "দাম", content: "৫০০ টাকা" });
+    expect(row.status).toBe("proposed");
+    expect(prisma.quickReply.rows).toHaveLength(0);
+  });
+
+  it("level 2 never auto-executes money-affecting types (broadcast draft stays pending)", async () => {
+    const { svc } = setup7(2);
+    const row: any = await svc.propose("org-1", "u1", { type: "create_broadcast_draft", name: "Offer", channel: "sms", body: "hi" });
+    expect(row.status).toBe("proposed");
+  });
+});

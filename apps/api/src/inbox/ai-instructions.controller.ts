@@ -74,4 +74,12 @@ export class AiInstructionsController {
   updateUnansweredStatus(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateUnansweredStatusDto) {
     return this.desk.updateUnansweredStatus(orgId, user.userId, id, dto.status);
   }
+
+  /** IN7e: AI draft proposal for one unanswered question —
+   * display-only; accepting it goes through the existing
+   * knowledge-create / Desk-draft paths from the UI. */
+  @Post("unanswered/:id/draft-proposal") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  draftProposal(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.desk.draftUnansweredProposal(orgId, user.userId, id);
+  }
 }

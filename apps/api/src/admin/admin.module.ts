@@ -7,9 +7,10 @@ import { AutomationModule } from "../automation/automation.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { PaymentsModule } from "../payments/payments.module";
 import { AuthModule } from "../auth/auth.module";
+import { ConnectionsModule } from "../connections/connections.module";
 
 @Module({
-  imports: [AutomationModule, IntegrationsModule, PaymentsModule, AuthModule],
+  imports: [AutomationModule, IntegrationsModule, PaymentsModule, AuthModule, ConnectionsModule],
   controllers: [AdminController, PublicStatusController],
   providers: [AdminService, SuperAdminGuard],
   exports: [AdminService],
