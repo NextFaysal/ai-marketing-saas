@@ -15,6 +15,7 @@ import {
   NOTIFICATION_CATEGORIES, canRevokeOwnSession, isCategoryEnabled, toggleMutedCategory,
   type LoginHistoryRow, type OwnSession,
 } from "@/lib/gb6-team";
+import { BusinessKnowledgeSection } from "./knowledge-section";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
@@ -449,6 +450,7 @@ const HUB_NAV = [
   { id: "hub-delivery", icon: "🚚", label: "ডেলিভারি ও রিটার্ন" },
   { id: "hub-payment", icon: "💳", label: "পেমেন্ট" },
   { id: "hub-ai", icon: "🤖", label: "AI এর আচরণ" },
+  { id: "hub-knowledge", icon: "📚", label: "Business Knowledge" },
   { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
   { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
   { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
@@ -1131,8 +1133,8 @@ function BusinessHub() {
       <div className="sticky bottom-3 z-20 sm:bottom-4">
         <div className="card flex flex-col gap-2.5 p-3.5 shadow-card-hover sm:flex-row sm:items-center sm:p-4">
           <button className="btn-primary min-h-[44px] w-full sm:w-auto" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "💾 ব্যবসার তথ্য সংরক্ষণ করুন"}</button>
-          <a href="/dashboard/knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">📚 নীতিমালা ও FAQ (Knowledge)</a>
-          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">নীতিমালা ও FAQ Knowledge পেজে সম্পাদনা হয় — Completeness এ সেগুলোও ধরা হয়।</span>
+          <a href="#hub-knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">📚 নীতিমালা ও FAQ (Knowledge)</a>
+          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">নীতিমালা ও FAQ এই পেজের Business Knowledge সেকশনে সম্পাদনা হয় — Completeness এ সেগুলোও ধরা হয়।</span>
         </div>
       </div>
     </div>
@@ -1447,6 +1449,7 @@ export default function SettingsPage() {
           <BusinessHub />
 
           <OrgVerificationCard />
+          <BusinessKnowledgeSection />
 
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
             <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />

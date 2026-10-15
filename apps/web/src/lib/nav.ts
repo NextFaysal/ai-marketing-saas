@@ -16,7 +16,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: "overview", ready: true },
   { label: "এজেন্সি পোর্টফোলিও", href: "/dashboard/portfolio", icon: "portfolio", ready: true },
   { label: "AI Assistant", href: "/dashboard/ai", icon: "aiAssistant", ready: true },
-  { label: "Business Knowledge", href: "/dashboard/knowledge", icon: "knowledge", ready: true },
   { label: "Products", href: "/dashboard/products", icon: "products", ready: true },
   { label: "ইনভেন্টরি ফোরকাস্টিং", href: "/dashboard/inventory", icon: "inventoryForecast", ready: true },
   { label: "Stores & Integrations", href: "/dashboard/integrations", icon: "integrations", ready: true },

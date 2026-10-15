@@ -35,7 +35,7 @@ const GROUPS: NavGroup[] = [
     id: "core",
     title: "সারসংক্ষেপ ও AI",
     icon: "groupCore",
-    hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio", "/dashboard/knowledge"],
+    hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio"],
   },
   {
     id: "commerce",

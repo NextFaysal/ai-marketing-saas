@@ -795,7 +795,7 @@ export default function AiAssistantPage() {
                 {profileInfo?.replyLanguage ? <span className="text-slate-400"> · উত্তরের ভাষা: {profileInfo.replyLanguage === "bn" ? "বাংলা" : profileInfo.replyLanguage === "en" ? "English" : profileInfo.replyLanguage}</span> : null}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Link className="btn btn-secondary btn-sm" href="/dashboard/knowledge">Knowledge পেজ</Link>
+                <Link className="btn btn-secondary btn-sm" href="/dashboard/settings#hub-knowledge">Business Knowledge</Link>
                 <Link className="btn btn-secondary btn-sm" href="/dashboard/ai-instructions">AI নির্দেশনা</Link>
                 <Link className="btn btn-secondary btn-sm" href="/dashboard/settings">Business সেটিংস</Link>
               </div>
