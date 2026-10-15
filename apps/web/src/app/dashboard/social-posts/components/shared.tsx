@@ -12,6 +12,7 @@ import type { MediaQueryFilters } from "@/lib/social-media-library";
 import type { MonthCell } from "@/lib/social-calendar";
 import type { TimeseriesBar } from "@/lib/social-analytics";
 import type { SocialShareLink, SocialShareLinkCreated, YouTubePlaylistOption } from "@/lib/social-posts-sn";
+import type { CoachResponse, StockConfigStatus, StockSearchItem } from "@/lib/social-stock-coach";
 
 // ---------------------------------------------------------------------------
 // SP2 contract types (docs/social-posts-package-plan.md, SP1 API contract).
@@ -51,6 +52,9 @@ export interface MediaAsset {
   prompt?: string | null;
   derivedFromId?: string | null;
   sourceUrl?: string | null;
+  // SN5: stock credit line (e.g. "Photo by X on Pexels") — shown
+  // on the library tile and preserved on derived assets.
+  attribution?: string | null;
   // SU3: Media Library v2 — folder + tags (folderId "none"-filtered
   // server-side; null here means folderless).
   folderId?: string | null;
@@ -728,6 +732,28 @@ export interface SocialPageCtx {
   loadAssetUsage: any;
   cropAsset: any;
   captureAssetCover: any;
+  // SN5: stock media (Pexels) + brand overlay.
+  stockStatus: StockConfigStatus | null;
+  setStockStatus: React.Dispatch<React.SetStateAction<StockConfigStatus | null>>;
+  stockKeyInput: string;
+  setStockKeyInput: React.Dispatch<React.SetStateAction<string>>;
+  saveStockKey: any;
+  deleteStockKey: any;
+  stockQuery: string;
+  setStockQuery: React.Dispatch<React.SetStateAction<string>>;
+  stockKind: "photo" | "video";
+  setStockKind: React.Dispatch<React.SetStateAction<"photo" | "video">>;
+  stockResults: StockSearchItem[];
+  stockSearched: boolean;
+  searchStock: any;
+  importStockItem: any;
+  overlayPos: Record<string, string>;
+  setOverlayPos: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  brandOverlayFor: any;
+  loadStockStatus: any;
+  // SN9: performance coach.
+  coach: CoachResponse | null;
+  loadCoach: any;
   toggleBulkSelected: any;
   runBulkAction: any;
   importProductImage: any;

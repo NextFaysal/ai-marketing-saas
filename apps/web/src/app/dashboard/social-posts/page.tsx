@@ -65,6 +65,12 @@ import {
   type SocialShareLinkCreated,
   type YouTubePlaylistOption,
 } from "@/lib/social-posts-sn";
+import type {
+  CoachResponse,
+  StockConfigStatus,
+  StockSearchItem,
+  StockSearchResult,
+} from "@/lib/social-stock-coach";
 import { EmptyState } from "@repo/ui";
 
 // SU11: the contract types, status constants, MediaThumb and
@@ -158,6 +164,16 @@ export default function SocialPostsPage() {
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkFolderId, setBulkFolderId] = useState("");
   const [assetAspect, setAssetAspect] = useState<Record<string, MediaAspect>>({});
+  // SN5: stock media (Pexels, the org's own key) + brand overlay.
+  const [stockStatus, setStockStatus] = useState<StockConfigStatus | null>(null);
+  const [stockKeyInput, setStockKeyInput] = useState("");
+  const [stockQuery, setStockQuery] = useState("");
+  const [stockKind, setStockKind] = useState<"photo" | "video">("photo");
+  const [stockResults, setStockResults] = useState<StockSearchItem[]>([]);
+  const [stockSearched, setStockSearched] = useState(false);
+  const [overlayPos, setOverlayPos] = useState<Record<string, string>>({});
+  // SN9: the weekly performance coach (latest digest + preview).
+  const [coach, setCoach] = useState<CoachResponse | null>(null);
   // PP3: product-image import in the composer picker (reuses the
   // SP3 aiProducts list — same products endpoint, one fetch).
   const [importProductId, setImportProductId] = useState("");
@@ -446,6 +462,19 @@ export default function SocialPostsPage() {
     setMediaLimits(await apiFetch<{ imageMaxBytes: number; videoMaxBytes: number }>(`/organizations/${orgId}/social/media/limits`));
   }, []);
 
+  // SN5: stock key status (configured + last-4 only — the key
+  // itself never comes back from the API).
+  const loadStockStatus = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setStockStatus(await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`));
+  }, []);
+
+  // SN9: latest coach digest + live preview.
+  const loadCoach = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setCoach(await apiFetch<CoachResponse>(`/organizations/${orgId}/social/insights/coach`));
+  }, []);
+
   // SP8/SP9: OAuth return landing — the callback redirects here
   // with social_connected / social_error. Show the outcome once,
   // refresh the account list, then strip the params so a reload
@@ -518,9 +547,11 @@ export default function SocialPostsPage() {
       loadMembers().catch(() => undefined);
       loadAccountHealth().catch(() => undefined);
       loadFailureGroups().catch(() => undefined);
+      loadStockStatus().catch(() => undefined);
+      loadCoach().catch(() => undefined);
       apiFetch<{ id: string }>("/auth/me").then((me) => setMyUserId(me.id)).catch(() => undefined);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-  }, [loadAccounts, loadPosts, loadAssets, loadImageStatus, loadInsightsSummary, loadSocialSettings, loadAutoDraftSettings, loadPlatformModes, loadMediaLimits, loadPostingSlots, loadMediaFolders, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadMembers, loadAccountHealth, loadFailureGroups]);
+  }, [loadAccounts, loadPosts, loadAssets, loadImageStatus, loadInsightsSummary, loadSocialSettings, loadAutoDraftSettings, loadPlatformModes, loadMediaLimits, loadPostingSlots, loadMediaFolders, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadMembers, loadAccountHealth, loadFailureGroups, loadStockStatus, loadCoach]);
 
   // SU11: keep the API-side post filters in a ref for loadPosts,
   // and reload from the FIRST page whenever a filter changes
@@ -1062,6 +1093,81 @@ export default function SocialPostsPage() {
       setAssets((prev) => [cover, ...prev.filter((a) => a.id !== cover.id)]);
       setNotice(`“${cover.name}” Cover ছবি তৈরি হয়েছে।`);
     } catch (e) { setError(e instanceof Error ? e.message : "Cover তোলা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // SN5: save the org's Pexels key — the API verifies it with a
+  // real Pexels call first; a failed verification saves nothing
+  // and the server's verbatim reason lands in the error banner.
+  async function saveStockKey() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!stockKeyInput.trim()) { setError("Pexels API key দিন।"); return; }
+    setBusy("stock-key-save"); setError(""); setNotice("");
+    try {
+      const status = await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, {
+        method: "PUT", body: JSON.stringify({ apiKey: stockKeyInput.trim() }),
+      });
+      setStockStatus(status);
+      setStockKeyInput("");
+      setNotice("Pexels key যাচাই হয়ে সংরক্ষিত হয়েছে — এখন stock ছবি/ভিডিও খুঁজতে পারবেন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key সংরক্ষণ ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  async function deleteStockKey() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("stock-key-delete"); setError(""); setNotice("");
+    try {
+      setStockStatus(await apiFetch<StockConfigStatus>(`/organizations/${orgId}/social/media/stock/config`, { method: "DELETE" }));
+      setStockResults([]);
+      setStockSearched(false);
+      setNotice("Pexels key মুছে ফেলা হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "Pexels key মোছা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  async function searchStock() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("stock-search"); setError(""); setNotice("");
+    try {
+      const qs = new URLSearchParams({ kind: stockKind });
+      if (stockQuery.trim()) qs.set("q", stockQuery.trim());
+      const res = await apiFetch<StockSearchResult>(`/organizations/${orgId}/social/media/stock/search?${qs.toString()}`);
+      setStockResults(res.items ?? []);
+      setStockSearched(true);
+    } catch (e) { setError(e instanceof Error ? e.message : "Stock খোঁজা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // SN5: import goes by stock id only — the API re-reads the
+  // item from Pexels and downloads through the guarded importer;
+  // the returned asset (with its credit) joins the grid.
+  async function importStockItem(item: StockSearchItem) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`stock-import-${item.stockId}`); setError(""); setNotice("");
+    try {
+      const asset = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/stock/import`, {
+        method: "POST", body: JSON.stringify({ stockId: item.stockId, kind: item.kind }),
+      });
+      setAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
+      setNotice(`“${asset.name}” Library-তে যোগ হয়েছে — credit asset-এ সংরক্ষিত আছে।`);
+    } catch (e) { setError(e instanceof Error ? e.message : "Stock import ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
+  }
+
+  // SN5: brand overlay — a NEW derived asset; the original tile
+  // stays untouched (same discipline as Crop).
+  async function brandOverlayFor(asset: MediaAsset) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const position = overlayPos[asset.id] ?? "bottom";
+    setBusy(`overlay-${asset.id}`); setError(""); setNotice("");
+    try {
+      const derived = await apiFetch<MediaAsset>(`/organizations/${orgId}/social/media/${asset.id}/brand-overlay`, {
+        method: "POST", body: JSON.stringify({ position }),
+      });
+      setAssets((prev) => [derived, ...prev.filter((a) => a.id !== derived.id)]);
+      setNotice("Brand overlay-সহ নতুন সংস্করণ তৈরি হয়েছে (আসলটি অপরিবর্তিত)");
+    } catch (e) { setError(e instanceof Error ? e.message : "Brand overlay ব্যর্থ হয়েছে"); }
     finally { setBusy(""); }
   }
 
@@ -2279,7 +2385,7 @@ export default function SocialPostsPage() {
 
   // SU11: the panel context — page.tsx keeps ALL state and
   // handlers; the components under components/ only render.
-  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, aiPlatformVariants, aiVariantDropped, translations, repurposeScriptByPost, repurposeOutlineByPost, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doScheduleValue, reschedulePostToDay, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, generatePlatformVariants, applyPlatformVariant, translateComposerText, generateRepurposeScript, generateCarouselOutline, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
+  const ctx = { accounts, setAccounts, posts, setPosts, assets, setAssets, error, setError, notice, setNotice, busy, setBusy, showConnect, setShowConnect, metaToken, setMetaToken, metaAppSource, setMetaAppSource, discovered, setDiscovered, pageSelected, setPageSelected, caption, setCaption, linkUrl, setLinkUrl, selectedMedia, setSelectedMedia, accountSelected, setAccountSelected, editingPostId, setEditingPostId, firstCommentText, setFirstCommentText, recurrenceFrequency, setRecurrenceFrequency, recurrenceInterval, setRecurrenceInterval, variantOverrides, setVariantOverrides, ytTitle, setYtTitle, ytTagsInput, setYtTagsInput, ytCategoryId, setYtCategoryId, ytIsShort, setYtIsShort, coverAssetId, setCoverAssetId, isStory, setIsStory, ytPlaylistId, setYtPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, deriveOpenId, setDeriveOpenId, deriveSelected, setDeriveSelected, deriveWarnings, setDeriveWarnings, postingSlots, setPostingSlots, slotAccountId, setSlotAccountId, slotWeekday, setSlotWeekday, slotTime, setSlotTime, evergreenForms, setEvergreenForms, showLibrary, setShowLibrary, mediaFolders, setMediaFolders, mediaFolderFilter, setMediaFolderFilter, mediaSearchInput, setMediaSearchInput, mediaTagInput, setMediaTagInput, mediaFiltersRef, usageByAsset, setUsageByAsset, bulkSelected, setBulkSelected, bulkFolderId, setBulkFolderId, assetAspect, setAssetAspect, importProductId, setImportProductId, importError, setImportError, showAiPanel, setShowAiPanel, aiProducts, setAiProducts, aiProductsLoaded, setAiProductsLoaded, aiProductId, setAiProductId, aiTopic, setAiTopic, aiLanguage, setAiLanguage, aiCount, setAiCount, aiVariants, setAiVariants, aiNotice, setAiNotice, aiHashtags, setAiHashtags, selectedHashtags, setSelectedHashtags, hashtagSets, setHashtagSets, hashtagSetName, setHashtagSetName, hashtagInsights, setHashtagInsights, planMonth, setPlanMonth, planPillars, setPlanPillars, planFocus, setPlanFocus, contentPlan, setContentPlan, planSelectedItems, setPlanSelectedItems, planAccountId, setPlanAccountId, scriptTopic, setScriptTopic, scriptProductId, setScriptProductId, aiScript, setAiScript, aiPlatformVariants, aiVariantDropped, translations, repurposeScriptByPost, repurposeOutlineByPost, imageStatus, setImageStatus, aiImagePrompt, setAiImagePrompt, aiImageProductId, setAiImageProductId, templateAssetId, setTemplateAssetId, templateHeadline, setTemplateHeadline, templateSubtext, setTemplateSubtext, templateProductId, setTemplateProductId, templatePoster, setTemplatePoster, filterQuery, setFilterQuery, filterStatus, setFilterStatus, filterAccountId, setFilterAccountId, orgTz, setOrgTz, viewMode, setViewMode, calCursor, setCalCursor, scheduleInputs, setScheduleInputs, selectedPostId, setSelectedPostId, platformModes, setPlatformModes, mediaLimits, setMediaLimits, youtubePick, setYoutubePick, insightsSummary, setInsightsSummary, analyticsTimeseries, setAnalyticsTimeseries, analyticsContentTypes, setAnalyticsContentTypes, analyticsAccounts, setAnalyticsAccounts, analyticsFollowers, setAnalyticsFollowers, reportMonth, setReportMonth, requireApproval, setRequireApproval, requireApprovalLoaded, setRequireApprovalLoaded, autoDraftForm, setAutoDraftForm, autoDraftLoaded, setAutoDraftLoaded, linkStatsById, setLinkStatsById, rejectOpenId, setRejectOpenId, rejectNotes, setRejectNotes, loadAccounts, loadPosts, loadInsightsSummary, loadAnalyticsTimeseries, loadAnalyticsContentTypes, loadAnalyticsAccounts, loadAnalyticsFollowers, loadSocialSettings, loadAutoDraftSettings, loadPostingSlots, loadAssets, loadMediaFolders, loadImageStatus, loadPlatformModes, loadMediaLimits, loadAiProducts, loadHashtagSets, loadHashtagInsights, applyContentPlan, loadContentPlans, onTokenChange, discoverPages, connectSelectedPages, disconnectAccount, connectOAuth, selectYouTubeChannel, resetComposer, startEdit, saveDraft, deletePost, clonePost, addToQueue, scheduleBestTime, evergreenFormFor, saveEvergreen, createPostingSlot, togglePostingSlot, deletePostingSlot, fmtInTz, doSchedule, doScheduleValue, reschedulePostToDay, doCancelSchedule, doPublishNow, upsertPost, refreshPostInsights, refreshAllInsights, downloadReport, derivePost, saveApprovalSetting, saveAutoDraftSettings, loadLinkStats, submitApproval, approvePost, rejectPost, toggleAiPanel, generateContentPlan, materializeContentPlan, generateAiScript, generateAiCopy, generatePlatformVariants, applyPlatformVariant, translateComposerText, generateRepurposeScript, generateCarouselOutline, toggleHashtag, applyHashtagSet, saveHashtagSet, useAiCaption, attachMedia, uploadMedia, rasterizeMedia, createMediaFolder, deleteMediaFolder, selectMediaFolder, applyMediaFilters, clearMediaFilters, updateAssetTags, changeAssetFolder, loadAssetUsage, cropAsset, captureAssetCover, stockStatus, setStockStatus, stockKeyInput, setStockKeyInput, stockQuery, setStockQuery, stockKind, setStockKind, stockResults, stockSearched, overlayPos, setOverlayPos, saveStockKey, deleteStockKey, searchStock, importStockItem, brandOverlayFor, coach, loadCoach, loadStockStatus, toggleBulkSelected, runBulkAction, importProductImage, generateAiImage, createTemplatePoster, currentPlatformFields, relativeLabel, renderApprovalBadge, renderSubmitApproval, renderSuBadges, renderCloneButton, renderDeriveButton, renderDerivePanel, renderEvergreenControls, renderInsights, renderLinkStats, renderPostActions, postsNextCursor, loadMorePosts, selectedPostIds, setSelectedPostIds, togglePostSelected,
   bulkRescheduleAt, setBulkRescheduleAt, runPostsBulk, csvImportResults, importPostsCsv,
   members, myUserId, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost,
   noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel,
