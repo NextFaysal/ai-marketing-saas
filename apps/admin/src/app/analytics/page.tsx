@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState } from "@/components/ui";
+import { Chart, DataTable, EmptyState, ErrorState, PageHead, toast } from "@/components/ui";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 
 interface SeriesMonth { month: string; collectedMinor: string; newOrgs: number; newUsers: number; newSubscriptions: number; orders: number; orderRevenueMinor: string }
@@ -16,7 +16,6 @@ export default function AnalyticsPage() {
   const [tenants, setTenants] = React.useState<Tenant[]>([]);
   const [health, setHealth] = React.useState<Health[]>([]);
   const [ai, setAi] = React.useState<AiCost | null>(null);
-  const [msg, setMsg] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   // ADX11: period window — verdict: the series endpoint is
   // month-bucketed (GET /admin/analytics/series?months=N); there is
@@ -52,22 +51,21 @@ export default function AnalyticsPage() {
       const taka = Number(el.value);
       if (Number.isFinite(taka) && taka > 0) rates[provider] = Math.round(taka * 100);
     }
-    setBusy(true); setMsg("");
+    setBusy(true);
     try {
       setAi(await apiFetch<AiCost>("/admin/analytics/ai-rates", { method: "PATCH", body: JSON.stringify({ rates }) }));
-      setMsg("AI Rate সেভ হয়েছে — আনুমানিক খরচ এখন থেকে দেখা যাবে।");
-    } catch (e) { setMsg(e instanceof Error ? e.message : "সেভ হয়নি"); }
+      toast("AI Rate সেভ হয়েছে — আনুমানিক খরচ এখন থেকে দেখা যাবে।");
+    } catch (e) { toast(e instanceof Error ? e.message : "সেভ হয়নি", "error"); }
     finally { setBusy(false); }
   }
 
   const months = series ? series.months.slice(-win) : [];
-  const maxCollected = Math.max(1, ...months.map((m) => Number(m.collectedMinor)));
   const providers = ai ? [...new Set([...Object.keys(ai.rates), ...ai.rows.map((r) => r.provider)])] : [];
   const bandBadge = (band: string) => band === "good" ? "abadge-green" : band === "watch" ? "abadge-amber" : "abadge-red";
 
   return (
     <AdminShell title="💹 Platform Analytics">
-      {msg ? <p className="mb-4 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <PageHead sub="MRR, Tenant Ranking, Health Score ও AI খরচ — আসল ডেটা থেকে।" />
 
       {!series && loadDone ? <div className="mb-4"><ErrorState message="Analytics Series লোড হয়নি — KPI ও চার্ট দেখানো যাচ্ছে না।" onRetry={load} /></div> : null}
       {!series && !loadDone ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="askel h-[104px]" />)}</div> : !series ? null : (
@@ -81,86 +79,84 @@ export default function AnalyticsPage() {
             <div key={c.label} className="astat acard-hover">
               <div className="flex items-center gap-3"><span className="astat-icon">{c.icon}</span><div className="text-xs font-medium uppercase tracking-wide text-slate-400">{c.label}</div></div>
               <div className="astat-value">{c.value}</div>
-              <div className="mt-1.5 text-xs text-slate-500">{c.sub}</div>
+              <div className="mt-1.5 text-xs text-slate-400">{c.sub}</div>
             </div>
           ))}
         </div>
       )}
 
       {series ? (
-        <div className="acard mt-5">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className="font-semibold">মাসভিত্তিক চিত্র (শেষ {win} মাস)</span>
-            <span className="ml-auto flex gap-1.5">
-              {[3, 6, 12].map((n) => (
-                <button key={n} type="button" onClick={() => setWin(n)} className={win === n ? "abtn !px-2.5 !py-1 text-xs" : "abtn-secondary !px-2.5 !py-1 text-xs"}>শেষ {n} মাস</button>
-              ))}
-            </span>
-          </div>
-          <p className="mb-3 text-xs text-slate-500">বার = সংগৃহীত পেমেন্ট (আসল SaasPayment রেকর্ড থেকে)। Paid Share একটি বর্তমান Snapshot অনুপাত — Cohort Conversion নয়। সময়-বাছাইটি লোড করা মাসিক Series-এর ওপরের Window — এই Endpoint-এ দিনভিত্তিক (৭/৩০/৯০ দিন) হিসাব নেই, তাই তা বানানো হয়নি।</p>
-          <div className="mb-4 space-y-1.5">
-            {months.map((m) => (
-              <div key={m.month} className="flex items-center gap-3 text-xs">
-                <span className="w-16 shrink-0 text-slate-400">{m.month}</span>
-                <div className="h-4 flex-1 overflow-hidden rounded bg-slate-800">
-                  <div className="h-full rounded bg-gradient-to-r from-indigo-500 to-fuchsia-500" style={{ width: `${Math.max(1.5, (Number(m.collectedMinor) / maxCollected) * 100)}%` }} />
-                </div>
-                <span className="w-24 shrink-0 text-right font-medium">{formatMinorStr(m.collectedMinor)}</span>
-              </div>
-            ))}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="atable">
-              <thead><tr><th className="ath">মাস</th><th className="ath">সংগ্রহ</th><th className="ath">নতুন Org</th><th className="ath">নতুন User</th><th className="ath">নতুন Subscription</th><th className="ath">Tenant Order</th><th className="ath">Tenant আয়</th></tr></thead>
-              <tbody>
-                {[...months].reverse().map((m) => (
-                  <tr key={m.month}>
-                    <td className="atd font-medium">{m.month}</td><td className="atd">{formatMinorStr(m.collectedMinor)}</td>
-                    <td className="atd">{m.newOrgs}</td><td className="atd">{m.newUsers}</td><td className="atd">{m.newSubscriptions}</td>
-                    <td className="atd">{m.orders}</td><td className="atd">{formatMinorStr(m.orderRevenueMinor)}</td>
-                  </tr>
+        <>
+          {/* ADNX12: the time-range (window) selector is sticky so
+              it stays reachable while the chart + tables scroll. */}
+          <div className="sticky top-0 z-20 -mx-1 mt-5 bg-slate-950/90 px-1 py-2 backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">সময়-পরিসর</span>
+              <span className="ml-auto flex gap-1.5">
+                {[3, 6, 12].map((n) => (
+                  <button key={n} type="button" onClick={() => setWin(n)} className={win === n ? "abtn !px-2.5 !py-1 text-xs" : "abtn-secondary !px-2.5 !py-1 text-xs"}>শেষ {n} মাস</button>
                 ))}
-              </tbody>
-            </table>
+              </span>
+            </div>
           </div>
-        </div>
+          <div className="acard">
+            <div className="mb-1 font-semibold">মাসভিত্তিক চিত্র (শেষ {win} মাস)</div>
+            <p className="mb-3 text-xs text-slate-400">বার = সংগৃহীত পেমেন্ট (আসল SaasPayment রেকর্ড থেকে)। Paid Share একটি বর্তমান Snapshot অনুপাত — Cohort Conversion নয়। সময়-বাছাইটি লোড করা মাসিক Series-এর ওপরের Window — এই Endpoint-এ দিনভিত্তিক (৭/৩০/৯০ দিন) হিসাব নেই, তাই তা বানানো হয়নি।</p>
+            {/* ADNX12: the hand-rolled bar rows are replaced by the
+                ADNX5 Chart (bar variant, same loaded series data,
+                exact-value readout + data-table fallback). */}
+            <Chart variant="bar" seriesLabel="সংগৃহীত পেমেন্ট" points={months.map((m) => ({ label: m.month, value: Number(m.collectedMinor) }))} formatValue={(v) => formatMinorStr(String(v))} />
+            <div className="mt-4">
+              <DataTable>
+                <thead><tr><th className="ath">মাস</th><th className="ath">সংগ্রহ</th><th className="ath">নতুন Org</th><th className="ath">নতুন User</th><th className="ath">নতুন Subscription</th><th className="ath">Tenant Order</th><th className="ath">Tenant আয়</th></tr></thead>
+                <tbody>
+                  {[...months].reverse().map((m) => (
+                    <tr key={m.month}>
+                      <td data-label="মাস" className="atd font-medium">{m.month}</td><td data-label="সংগ্রহ" className="atd">{formatMinorStr(m.collectedMinor)}</td>
+                      <td data-label="নতুন Org" className="atd">{m.newOrgs}</td><td data-label="নতুন User" className="atd">{m.newUsers}</td><td data-label="নতুন Subscription" className="atd">{m.newSubscriptions}</td>
+                      <td data-label="Tenant Order" className="atd">{m.orders}</td><td data-label="Tenant আয়" className="atd">{formatMinorStr(m.orderRevenueMinor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </DataTable>
+            </div>
+          </div>
+        </>
       ) : null}
 
       <div className="mt-5 grid gap-4 xl:grid-cols-2">
         <div className="acard">
           <div className="mb-3 font-semibold">🏆 Top Tenant (শেষ ৩০ দিনের আয় অনুযায়ী)</div>
-          {tenants.length === 0 ? <p className="text-sm text-slate-500">কোনো Tenant নেই।</p> : (
-            <div className="overflow-x-auto">
-              <table className="atable">
+          {tenants.length === 0 ? <EmptyState title="কোনো Tenant নেই।" /> : (
+              <DataTable>
                 <thead><tr><th className="ath">Organization</th><th className="ath">প্ল্যান</th><th className="ath">Order</th><th className="ath">আয় (৩০দিন)</th><th className="ath">AI টোকেন</th><th className="ath">মোট সংগ্রহ</th></tr></thead>
                 <tbody>
                   {tenants.map((t) => (
                     <tr key={t.organizationId}>
-                      <td className="atd"><a className="font-medium text-indigo-300 hover:text-indigo-200" href={`/orgs/${t.organizationId}`}>{t.name}</a><div className="text-xs text-slate-500">সদস্য {t.members}</div></td>
-                      <td className="atd">{t.plan ? <span className="abadge-indigo">{t.plan}</span> : "—"}</td>
-                      <td className="atd">{t.orders30d}</td>
-                      <td className="atd">{formatMinorStr(t.orderRevenue30dMinor)}</td>
-                      <td className="atd">{t.aiTokens30d.toLocaleString()}</td>
-                      <td className="atd">{formatMinorStr(t.collectedTotalMinor)}</td>
+                      <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:text-indigo-200" href={`/orgs/${t.organizationId}`}>{t.name}</a><div className="text-xs text-slate-400">সদস্য {t.members}</div></td>
+                      <td data-label="প্ল্যান" className="atd">{t.plan ? <span className="abadge-indigo">{t.plan}</span> : "—"}</td>
+                      <td data-label="Order" className="atd">{t.orders30d}</td>
+                      <td data-label="আয় (৩০দিন)" className="atd">{formatMinorStr(t.orderRevenue30dMinor)}</td>
+                      <td data-label="AI টোকেন" className="atd">{t.aiTokens30d.toLocaleString()}</td>
+                      <td data-label="মোট সংগ্রহ" className="atd">{formatMinorStr(t.collectedTotalMinor)}</td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+              </DataTable>
           )}
         </div>
 
         <div className="acard">
           <div className="mb-1 font-semibold">❤️ Tenant Health Score <span className="abadge-slate">Heuristic</span></div>
-          <p className="mb-3 text-xs text-slate-500">স্কোর একটি Triage সাহায্য — প্রতিটি কাটা পয়েন্টের কারণ দেখানো আছে। সবচেয়ে ঝুঁকিতে থাকা Tenant আগে।</p>
-          {health.length === 0 ? <p className="text-sm text-slate-500">কোনো Tenant নেই।</p> : (
+          <p className="mb-3 text-xs text-slate-400">স্কোর একটি Triage সাহায্য — প্রতিটি কাটা পয়েন্টের কারণ দেখানো আছে। সবচেয়ে ঝুঁকিতে থাকা Tenant আগে।</p>
+          {health.length === 0 ? <EmptyState title="কোনো Tenant নেই।" /> : (
             <div className="space-y-2.5">
               {health.slice(0, 10).map((h) => (
                 <div key={h.organizationId} className="rounded-xl border border-slate-800 bg-slate-900/60 px-3.5 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <a className="font-medium text-indigo-300 hover:text-indigo-200" href={`/orgs/${h.organizationId}`}>{h.name}</a>
                     <span className={bandBadge(h.band)}>{h.score}/100 · {h.band}</span>
-                    <span className="text-xs text-slate-500">{h.plan ?? "—"} · {h.subscriptionStatus ?? "—"} · নিষ্ক্রিয় {h.daysIdle} দিন</span>
+                    <span className="text-xs text-slate-400">{h.plan ?? "—"} · {h.subscriptionStatus ?? "—"} · নিষ্ক্রিয় {h.daysIdle} দিন</span>
                   </div>
                   {h.deductions.length > 0 ? (
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -176,7 +172,7 @@ export default function AnalyticsPage() {
 
       <div className="acard mt-5">
         <div className="mb-1 font-semibold">🤖 AI খরচ (আনুমানিক)</div>
-        <p className="mb-3 text-xs text-slate-500">{ai?.note ?? "টোকেন আসল AIUsageRecord থেকে। Provider Rate সেট না করলে টাকার হিসাব দেখানো হয় না — Dev Adapter এর Estimated টোকেন খরচে ধরা হয় না।"}</p>
+        <p className="mb-3 text-xs text-slate-400">{ai?.note ?? "টোকেন আসল AIUsageRecord থেকে। Provider Rate সেট না করলে টাকার হিসাব দেখানো হয় না — Dev Adapter এর Estimated টোকেন খরচে ধরা হয় না।"}</p>
         {providers.length > 0 ? (
           <div className="mb-4 flex flex-wrap items-end gap-2">
             {providers.map((provider) => (
@@ -187,24 +183,22 @@ export default function AnalyticsPage() {
             <button className="abtn" disabled={busy} onClick={saveRates}>Rate সেভ করুন</button>
           </div>
         ) : null}
-        {!ai || ai.rows.length === 0 ? <p className="text-sm text-slate-500">শেষ ৩০ দিনে কোনো AI ব্যবহার নেই।</p> : (
-          <div className="overflow-x-auto">
-            <table className="atable">
+        {!ai || ai.rows.length === 0 ? <EmptyState title="শেষ ৩০ দিনে কোনো AI ব্যবহার নেই।" /> : (
+            <DataTable>
               <thead><tr><th className="ath">Organization</th><th className="ath">Provider</th><th className="ath">কল</th><th className="ath">টোকেন (আসল)</th><th className="ath">টোকেন (Estimated)</th><th className="ath">আনুমানিক খরচ</th></tr></thead>
               <tbody>
                 {ai.rows.map((r) => (
                   <tr key={`${r.organizationId}-${r.provider}`}>
-                    <td className="atd font-medium">{r.organizationName}</td>
-                    <td className="atd">{r.provider}</td>
-                    <td className="atd">{r.calls}</td>
-                    <td className="atd">{r.tokens.toLocaleString()}</td>
-                    <td className="atd">{r.estimatedTokens.toLocaleString()}</td>
-                    <td className="atd">{r.estimatedCostMinor != null ? formatMinorStr(String(r.estimatedCostMinor)) : <span className="text-slate-500">Rate সেট নেই</span>}</td>
+                    <td data-label="Organization" className="atd font-medium">{r.organizationName}</td>
+                    <td data-label="Provider" className="atd">{r.provider}</td>
+                    <td data-label="কল" className="atd">{r.calls}</td>
+                    <td data-label="টোকেন (আসল)" className="atd">{r.tokens.toLocaleString()}</td>
+                    <td data-label="টোকেন (Estimated)" className="atd">{r.estimatedTokens.toLocaleString()}</td>
+                    <td data-label="আনুমানিক খরচ" className="atd">{r.estimatedCostMinor != null ? formatMinorStr(String(r.estimatedCostMinor)) : <span className="text-slate-400">Rate সেট নেই</span>}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+            </DataTable>
         )}
       </div>
 
@@ -221,15 +215,22 @@ interface OnboardingRow {
 
 function OnboardingBoard() {
   const [rows, setRows] = React.useState<OnboardingRow[] | null>(null);
-  React.useEffect(() => {
-    apiFetch<OnboardingRow[]>("/admin/onboarding-board").then(setRows).catch(() => setRows([]));
+  // ADNX12: a failed board load is no longer indistinguishable
+  // from "no organizations" — it gets its own error state + retry.
+  const [loadError, setLoadError] = React.useState("");
+  const load = React.useCallback(async () => {
+    setLoadError("");
+    try { setRows(await apiFetch<OnboardingRow[]>("/admin/onboarding-board")); }
+    catch (e) { setRows(null); setLoadError(e instanceof Error ? e.message : "Onboarding Board লোড ব্যর্থ হয়েছে"); }
   }, []);
+  React.useEffect(() => { load(); }, [load]);
   return (
     <div className="acard">
       <div className="mb-1 font-semibold">🚀 Onboarding Funnel — কোন Org কোন ধাপে আটকে আছে</div>
-      <p className="mb-3 text-sm text-slate-500">৭ ধাপের চেকলিস্ট (আসল ডেটা থেকে)। আটকে থাকা Org কে Org পেজ থেকে View-As করে সাহায্য করুন, অথবা Alerts পেজ থেকে Onboarding Nudge পাঠান।</p>
-      {rows === null ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
-        : rows.length === 0 ? <p className="text-sm text-slate-500">কোনো Organization নেই।</p> : (
+      <p className="mb-3 text-sm text-slate-400">৭ ধাপের চেকলিস্ট (আসল ডেটা থেকে)। আটকে থাকা Org কে Org পেজ থেকে View-As করে সাহায্য করুন, অথবা Alerts পেজ থেকে Onboarding Nudge পাঠান।</p>
+      {loadError ? <ErrorState message={`Onboarding Board লোড হয়নি: ${loadError}`} onRetry={load} />
+        : rows === null ? <div className="askel-table" />
+        : rows.length === 0 ? <EmptyState title="কোনো Organization নেই।" /> : (
           <div className="overflow-x-auto">
             <table className="atable">
               <thead><tr><th className="ath">Organization</th><th className="ath">প্ল্যান</th><th className="ath">অগ্রগতি</th><th className="ath">আটকে আছে</th><th className="ath">ধাপসমূহ</th></tr></thead>

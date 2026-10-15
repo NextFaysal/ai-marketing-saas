@@ -2,7 +2,7 @@
 
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState, Tabs, askConfirm } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, Tabs, askConfirm, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -42,7 +42,6 @@ export default function GrowthPage() {
   const [referrals, setReferrals] = React.useState<ReferralBoard | null>(null);
   const [refCampaigns, setRefCampaigns] = React.useState<RefCampaign[]>([]);
   const [feedback, setFeedback] = React.useState<FeedbackBoard | null>(null);
-  const [msg, setMsg] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [body, setBody] = React.useState("");
   const [aud, setAud] = React.useState("all");
@@ -71,6 +70,18 @@ export default function GrowthPage() {
   // Settings — the ADX9 📣 section), so no tab was invented for it;
   // Referral Program and Feedback get their own tabs instead.
   const [tab, setTab] = React.useState("campaigns");
+  // ADNX12: form pattern + honest list states — field-level errors
+  // (persistent until fixed, like NB2's billing form), a busy flag
+  // per submit, and a list-load error so a failed campaigns/
+  // changelog fetch is not read as "no campaigns".
+  const [campErr, setCampErr] = React.useState<{ subject?: string; body?: string }>({});
+  const [refCampErr, setRefCampErr] = React.useState<{ code?: string; label?: string }>({});
+  const [clErr, setClErr] = React.useState<{ title?: string; body?: string }>({});
+  const [sending, setSending] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
+  const [savingRef, setSavingRef] = React.useState(false);
+  const [publishing, setPublishing] = React.useState(false);
+  const [listError, setListError] = React.useState(false);
 
   // ADX12: loadDone separates "still loading" from "board load
   // failed" for the two null-gated boards (Referrals, Feedback) —
@@ -78,8 +89,9 @@ export default function GrowthPage() {
   const [loadDone, setLoadDone] = React.useState(false);
   const load = React.useCallback(async () => {
     setLoadDone(false);
-    setCampaigns(await apiFetch<Campaign[]>("/admin/campaigns").catch(() => []));
-    setEntries(await apiFetch<Changelog[]>("/admin/changelog").catch(() => []));
+    let listFailed = false;
+    setCampaigns(await apiFetch<Campaign[]>("/admin/campaigns").catch(() => { listFailed = true; return []; }));
+    setEntries(await apiFetch<Changelog[]>("/admin/changelog").catch(() => { listFailed = true; return []; }));
     const rb = await apiFetch<ReferralBoard>("/admin/referrals").catch(() => null);
     setReferrals(rb);
     if (rb) {
@@ -91,7 +103,8 @@ export default function GrowthPage() {
       setRefExpiry(String(c.creditExpiryDays));
       setRefMilestones(c.milestones.map((m) => ({ count: String(m.count), bonus: String(m.bonusMinor / 100) })));
     }
-    setRefCampaigns(await apiFetch<RefCampaign[]>("/admin/referrals/campaigns").catch(() => []));
+    setRefCampaigns(await apiFetch<RefCampaign[]>("/admin/referrals/campaigns").catch(() => { listFailed = true; return []; }));
+    setListError(listFailed);
     setFeedback(await apiFetch<FeedbackBoard>("/admin/feedback").catch(() => null));
     setLoadDone(true);
   }, []);
@@ -101,7 +114,8 @@ export default function GrowthPage() {
 
   return (
     <AdminShell title="📈 Growth Ops">
-      {msg ? <p className="mb-3 rounded-lg bg-indigo-500/10 p-3 text-sm text-indigo-200">{msg}</p> : null}
+      <PageHead sub="Campaign, Referral, Changelog ও Feedback — Tab অনুযায়ী ভাগ করা।" />
+      {listError ? <div className="mb-3"><ErrorState message="তালিকা লোড হয়নি — Campaign/Changelog তালিকা দেখানো যাচ্ছে না।" onRetry={load} /></div> : null}
       <div className="sticky top-0 z-20 -mx-1 mb-4 bg-slate-950/90 px-1 py-2 backdrop-blur">
         <Tabs
           tabs={[
@@ -118,22 +132,34 @@ export default function GrowthPage() {
         <div className="atab-panel grid items-start gap-4 lg:grid-cols-2">
         <div className="acard space-y-3">
           <div className="font-semibold">✉️ Tenant Email Campaign</div>
-          <p className="text-xs text-slate-500">আসল Email Provider দিয়ে পাঠানো হয় — প্রতিটি Org এর OWNER/ADMIN দের কাছে। Provider সেট না থাকলে Campaign শুরুই হবে না। সর্বোচ্চ 500 জন/Campaign।</p>
-          <input className="ainput" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
-          <textarea className="ainput" rows={4} placeholder="ইমেইলের বার্তা…" value={body} onChange={(e) => setBody(e.target.value)} />
+          <p className="text-xs text-slate-400">আসল Email Provider দিয়ে পাঠানো হয় — প্রতিটি Org এর OWNER/ADMIN দের কাছে। Provider সেট না থাকলে Campaign শুরুই হবে না। সর্বোচ্চ 500 জন/Campaign।</p>
+          <label className="block text-sm">Subject
+            <input className="ainput mt-1" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+          </label>
+          {campErr.subject ? <p className="text-xs text-red-300">{campErr.subject}</p> : null}
+          <label className="block text-sm">ইমেইলের বার্তা
+            <textarea className="ainput mt-1" rows={4} placeholder="ইমেইলের বার্তা…" value={body} onChange={(e) => setBody(e.target.value)} />
+          </label>
+          {campErr.body ? <p className="text-xs text-red-300">{campErr.body}</p> : null}
           <label className="block text-sm">Audience
             <select className="ainput mt-1" value={aud} onChange={(e) => setAud(e.target.value)}>
               {AUDIENCES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
             </select></label>
-          <button className="abtn" onClick={async () => {
-            if (!subject.trim() || !body.trim()) return;
+          <button className="abtn" disabled={sending} onClick={async () => {
+            const errs = { subject: subject.trim() ? undefined : "Subject লিখুন।", body: body.trim() ? undefined : "বার্তা লিখুন।" };
+            setCampErr(errs);
+            if (errs.subject || errs.body) return;
             if (!(await askConfirm({ title: `"${subject}" — এই Campaign টি পাঠাতে চান?`, confirmLabel: "পাঠান" }))) return;
+            setSending(true);
             try {
               const r = await apiFetch<Campaign & { note?: string }>("/admin/campaigns", { method: "POST", body: JSON.stringify({ subject, body, audience: aud }) });
-              setMsg(`Campaign শেষ: ${r.sent}/${r.recipients} সফল, ${r.failed} ব্যর্থ।${r.note ? " " + r.note : ""}`);
+              toast(`Campaign শেষ: ${r.sent}/${r.recipients} সফল, ${r.failed} ব্যর্থ।${r.note ? " " + r.note : ""}`);
               setSubject(""); setBody(""); await load();
-            } catch (e) { setMsg(e instanceof Error ? e.message : "পাঠানো যায়নি"); }
-          }}>Campaign পাঠান</button>
+            } catch (e) { toast(e instanceof Error ? e.message : "পাঠানো যায়নি", "error"); }
+            finally { setSending(false); }
+          }}>{sending ? "হচ্ছে…" : "Campaign পাঠান"}</button>
+          {!loadDone ? <div className="askel-table" /> : null}
+          {loadDone && campaigns.length === 0 ? <EmptyState title="এখনো কোনো Campaign পাঠানো হয়নি।" /> : null}
           <ul className="space-y-1.5">
             {campaigns.slice(0, 5).map((c) => (
               <li key={c.id} className="rounded-lg bg-slate-800 px-3 py-2 text-xs">
@@ -141,22 +167,39 @@ export default function GrowthPage() {
               </li>
             ))}
           </ul>
-          <p className="text-xs text-slate-500">পাঠানো Campaign সম্পাদনা বা মোছা যায় না — প্রতিটি Campaign-ই পাঠানোর পরের ইতিহাস (কে পেয়েছে, কত সফল/ব্যর্থ) হিসেবে সংরক্ষিত থাকে, ইতিহাস বদলানো হয় না। Draft Campaign বলে কিছু এই সিস্টেমে নেই — "Campaign পাঠান" চাপলেই তা সরাসরি পাঠানো হয়।</p>
+          <p className="text-xs text-slate-400">পাঠানো Campaign সম্পাদনা বা মোছা যায় না — প্রতিটি Campaign-ই পাঠানোর পরের ইতিহাস (কে পেয়েছে, কত সফল/ব্যর্থ) হিসেবে সংরক্ষিত থাকে, ইতিহাস বদলানো হয় না। Draft Campaign বলে কিছু এই সিস্টেমে নেই — "Campaign পাঠান" চাপলেই তা সরাসরি পাঠানো হয়।</p>
         </div>
 
         <div className="acard space-y-3">
           <div className="font-semibold">🏷️ Referral Campaigns</div>
-          <p className="text-xs text-slate-500">ক্যাম্পেইন কোডে সাইন আপ করলে নতুন Org নিজেই ক্রেডিট পায় (কোডের শর্ত সাইন আপের মুহূর্তে লক হয়ে যায়)। QOS- দিয়ে শুরু হওয়া কোড ব্যবহার করা যাবে না — ওটা User কোডের জন্য।</p>
+          <p className="text-xs text-slate-400">ক্যাম্পেইন কোডে সাইন আপ করলে নতুন Org নিজেই ক্রেডিট পায় (কোডের শর্ত সাইন আপের মুহূর্তে লক হয়ে যায়)। QOS- দিয়ে শুরু হওয়া কোড ব্যবহার করা যাবে না — ওটা User কোডের জন্য।</p>
           <div className="grid grid-cols-2 gap-2">
-            <input className="ainput" placeholder="কোড (যেমন EID2026)" value={campCode} onChange={(e) => setCampCode(e.target.value)} />
-            <input className="ainput" placeholder="লেবেল" value={campLabel} onChange={(e) => setCampLabel(e.target.value)} />
-            <input className="ainput" type="number" min={0} placeholder="Flat রিওয়ার্ড (টাকা)" value={campReward} onChange={(e) => setCampReward(e.target.value)} />
-            <input className="ainput" type="number" min={0} placeholder="Welcome (টাকা)" value={campBonus} onChange={(e) => setCampBonus(e.target.value)} />
-            <input className="ainput" type="number" min={1} placeholder="সর্বোচ্চ ব্যবহার" value={campMax} onChange={(e) => setCampMax(e.target.value)} />
-            <input className="ainput" type="date" value={campExpires} onChange={(e) => setCampExpires(e.target.value)} />
+            <label className="block text-xs">কোড
+              <input className="ainput mt-1" placeholder="কোড (যেমন EID2026)" value={campCode} onChange={(e) => setCampCode(e.target.value)} />
+            </label>
+            <label className="block text-xs">লেবেল
+              <input className="ainput mt-1" placeholder="লেবেল" value={campLabel} onChange={(e) => setCampLabel(e.target.value)} />
+            </label>
+            <label className="block text-xs">Flat রিওয়ার্ড (টাকা)
+              <input className="ainput mt-1" type="number" min={0} placeholder="Flat রিওয়ার্ড (টাকা)" value={campReward} onChange={(e) => setCampReward(e.target.value)} />
+            </label>
+            <label className="block text-xs">Welcome (টাকা)
+              <input className="ainput mt-1" type="number" min={0} placeholder="Welcome (টাকা)" value={campBonus} onChange={(e) => setCampBonus(e.target.value)} />
+            </label>
+            <label className="block text-xs">সর্বোচ্চ ব্যবহার
+              <input className="ainput mt-1" type="number" min={1} placeholder="সর্বোচ্চ ব্যবহার" value={campMax} onChange={(e) => setCampMax(e.target.value)} />
+            </label>
+            <label className="block text-xs">মেয়াদ শেষ (তারিখ)
+              <input className="ainput mt-1" type="date" value={campExpires} onChange={(e) => setCampExpires(e.target.value)} />
+            </label>
           </div>
-          <button className="abtn" onClick={async () => {
-            if (!campCode.trim() || !campLabel.trim()) return;
+          {refCampErr.code ? <p className="text-xs text-red-300">{refCampErr.code}</p> : null}
+          {refCampErr.label ? <p className="text-xs text-red-300">{refCampErr.label}</p> : null}
+          <button className="abtn" disabled={creating} onClick={async () => {
+            const errs = { code: campCode.trim() ? undefined : "কোড লিখুন।", label: campLabel.trim() ? undefined : "লেবেল লিখুন।" };
+            setRefCampErr(errs);
+            if (errs.code || errs.label) return;
+            setCreating(true);
             try {
               await apiFetch("/admin/referrals/campaigns", {
                 method: "POST",
@@ -169,9 +212,10 @@ export default function GrowthPage() {
                 }),
               });
               setCampCode(""); setCampLabel(""); setCampReward(""); setCampBonus(""); setCampMax(""); setCampExpires("");
-              setMsg("Campaign তৈরি হয়েছে।"); await load();
-            } catch (e) { setMsg(e instanceof Error ? e.message : "তৈরি হয়নি"); }
-          }}>Campaign তৈরি</button>
+              toast("Campaign তৈরি হয়েছে।"); await load();
+            } catch (e) { toast(e instanceof Error ? e.message : "তৈরি হয়নি", "error"); }
+            finally { setCreating(false); }
+          }}>{creating ? "হচ্ছে…" : "Campaign তৈরি"}</button>
           <ul className="space-y-1.5">
             {refCampaigns.map((c) => (
               <li key={c.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
@@ -180,7 +224,7 @@ export default function GrowthPage() {
                 <button className="abtn-secondary !px-2 !py-0.5 shrink-0" onClick={async () => { await apiFetch(`/admin/referrals/campaigns/${c.id}`, { method: "PATCH", body: JSON.stringify({ active: !c.active }) }); await load(); }}>{c.active ? "বন্ধ করুন" : "চালু করুন"}</button>
               </li>
             ))}
-            {refCampaigns.length === 0 ? <li className="text-xs text-slate-500">এখনো কোনো Campaign নেই।</li> : null}
+            {refCampaigns.length === 0 ? <li className="text-xs text-slate-400">এখনো কোনো Campaign নেই।</li> : null}
           </ul>
         </div>
         </div>
@@ -189,7 +233,7 @@ export default function GrowthPage() {
         <div className="atab-panel">
       <div className="acard mt-4 space-y-4">
         <div className="font-semibold">🎁 Referral Program — Advanced</div>
-        {!referrals ? (loadDone ? <ErrorState message="Referral Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>) : (
+        {!referrals ? (loadDone ? <ErrorState message="Referral Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="askel-table" />) : (
           <>
             <div className="grid grid-cols-2 gap-2 text-center lg:grid-cols-5">
               <div className="rounded-xl bg-slate-800 p-3"><div className="text-xl font-bold">{referrals.totals.signups}</div><div className="text-xs text-slate-400">রেফারেলে সাইনআপ</div></div>
@@ -224,7 +268,7 @@ export default function GrowthPage() {
                       <label key={t} className="block text-xs">{t} (টাকা)
                         <input className="ainput mt-1" type="number" min={0} value={refPerPlan[t] ?? ""} onChange={(e) => setRefPerPlan({ ...refPerPlan, [t]: e.target.value })} /></label>
                     ))}
-                    <p className="col-span-3 text-xs text-slate-500">খালি প্ল্যানে Flat অঙ্কটাই প্রযোজ্য হবে।</p>
+                    <p className="col-span-3 text-xs text-slate-400">খালি প্ল্যানে Flat অঙ্কটাই প্রযোজ্য হবে।</p>
                     <label className="block text-xs">Flat (fallback, টাকা)
                       <input className="ainput mt-1" type="number" min={0} value={refReward} onChange={(e) => setRefReward(e.target.value)} /></label>
                   </div>
@@ -249,7 +293,8 @@ export default function GrowthPage() {
                   ))}
                   <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => setRefMilestones([...refMilestones, { count: "", bonus: "" }])}>+ মাইলস্টোন যোগ</button>
                 </div>
-                <button className="abtn-secondary" onClick={async () => {
+                <button className="abtn-secondary" disabled={savingRef} onClick={async () => {
+                  setSavingRef(true);
                   try {
                     await apiFetch("/admin/referrals/config", {
                       method: "PATCH",
@@ -262,9 +307,10 @@ export default function GrowthPage() {
                         milestones: refMilestones.filter((m) => m.count && m.bonus).map((m) => ({ count: Math.round(Number(m.count)), bonusMinor: minor(m.bonus) })),
                       }),
                     });
-                    setMsg("Referral সেটিং সেভ হয়েছে।"); await load();
-                  } catch (e) { setMsg(e instanceof Error ? e.message : "সেভ হয়নি"); }
-                }}>সেভ করুন</button>
+                    toast("Referral সেটিং সেভ হয়েছে।"); await load();
+                  } catch (e) { toast(e instanceof Error ? e.message : "সেভ হয়নি", "error"); }
+                  finally { setSavingRef(false); }
+                }}>{savingRef ? "হচ্ছে…" : "সেভ করুন"}</button>
               </div>
 
               <div className="space-y-3">
@@ -276,19 +322,19 @@ export default function GrowthPage() {
                         <b>{r.referrerEmail ?? "ক্যাম্পেইন"}</b> · সাইন আপ {r.signups} · পেইড {r.rewarded} · কনভার্সন {r.conversionPercent ?? "—"}% · অর্জন {taka(r.earnedMinor)}
                       </li>
                     ))}
-                    {referrals.referrers.length === 0 ? <li className="text-xs text-slate-500">এখনো কোনো রেফারার নেই।</li> : null}
+                    {referrals.referrers.length === 0 ? <li className="text-xs text-slate-400">এখনো কোনো রেফারার নেই।</li> : null}
                   </ul>
                 </div>
                 <div className="rounded-xl bg-slate-800/60 p-3">
                   <div className="text-sm font-semibold">🛡️ অপব্যবহার পর্যবেক্ষণ</div>
-                  <p className="mt-1 text-xs text-slate-500">নিয়ম: ১০+ সাইন আপ কিন্তু ০ কনভার্সন, অথবা ২৪ ঘণ্টায় ৫+ সাইন আপ — এগুলো সংকেত মাত্র, প্রমাণ নয়।</p>
+                  <p className="mt-1 text-xs text-slate-400">নিয়ম: ১০+ সাইন আপ কিন্তু ০ কনভার্সন, অথবা ২৪ ঘণ্টায় ৫+ সাইন আপ — এগুলো সংকেত মাত্র, প্রমাণ নয়।</p>
                   <ul className="mt-2 space-y-1.5">
                     {referrals.flagged.map((r, i) => (
                       <li key={i} className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-200">
                         <b>{r.referrerEmail ?? "?"}</b> · সাইন আপ {r.signups} (২৪ ঘণ্টায় {r.signupsLast24h}) · পেইড {r.rewarded} · {r.flags.map((f) => FLAG_BN[f] ?? f).join(" · ")}
                       </li>
                     ))}
-                    {referrals.flagged.length === 0 ? <li className="text-xs text-slate-500">কোনো সন্দেহজনক নমুনা নেই।</li> : null}
+                    {referrals.flagged.length === 0 ? <li className="text-xs text-slate-400">কোনো সন্দেহজনক নমুনা নেই।</li> : null}
                   </ul>
                 </div>
                 <ul className="space-y-1.5">
@@ -309,19 +355,33 @@ export default function GrowthPage() {
         <div className="atab-panel">
         <div className="acard space-y-3">
           <div className="font-semibold">📰 Changelog Manager</div>
-          <p className="text-xs text-slate-500">প্রকাশিত Entry গুলো Tenant দের "আপডেটসমূহ" পেজে ও Public Changelog এ দেখায়।</p>
+          <p className="text-xs text-slate-400">প্রকাশিত Entry গুলো Tenant দের "আপডেটসমূহ" পেজে ও Public Changelog এ দেখায়।</p>
           <div className="flex gap-2">
-            <input className="ainput max-w-[120px]" placeholder="Version" value={clVersion} onChange={(e) => setClVersion(e.target.value)} />
-            <input className="ainput flex-1" placeholder="শিরোনাম" value={clTitle} onChange={(e) => setClTitle(e.target.value)} />
+            <label className="block text-xs">Version
+              <input className="ainput mt-1 max-w-[120px]" placeholder="Version" value={clVersion} onChange={(e) => setClVersion(e.target.value)} />
+            </label>
+            <label className="block flex-1 text-xs">শিরোনাম
+              <input className="ainput mt-1" placeholder="শিরোনাম" value={clTitle} onChange={(e) => setClTitle(e.target.value)} />
+            </label>
           </div>
-          <textarea className="ainput" rows={3} placeholder="কী নতুন এলো…" value={clBody} onChange={(e) => setClBody(e.target.value)} />
-          <button className="abtn" onClick={async () => {
-            if (!clTitle.trim() || !clBody.trim()) return;
+          {clErr.title ? <p className="text-xs text-red-300">{clErr.title}</p> : null}
+          <label className="block text-xs">কী নতুন এলো
+            <textarea className="ainput mt-1" rows={3} placeholder="কী নতুন এলো…" value={clBody} onChange={(e) => setClBody(e.target.value)} />
+          </label>
+          {clErr.body ? <p className="text-xs text-red-300">{clErr.body}</p> : null}
+          <button className="abtn" disabled={publishing} onClick={async () => {
+            const errs = { title: clTitle.trim() ? undefined : "শিরোনাম লিখুন।", body: clBody.trim() ? undefined : "বার্তা লিখুন।" };
+            setClErr(errs);
+            if (errs.title || errs.body) return;
+            setPublishing(true);
             try {
               await apiFetch("/admin/changelog", { method: "POST", body: JSON.stringify({ version: clVersion || undefined, title: clTitle, body: clBody, published: true }) });
-              setClTitle(""); setClBody(""); setClVersion(""); setMsg("Changelog প্রকাশ হয়েছে।"); await load();
-            } catch (e) { setMsg(e instanceof Error ? e.message : "হয়নি"); }
-          }}>প্রকাশ করুন</button>
+              setClTitle(""); setClBody(""); setClVersion(""); toast("Changelog প্রকাশ হয়েছে।"); await load();
+            } catch (e) { toast(e instanceof Error ? e.message : "হয়নি", "error"); }
+            finally { setPublishing(false); }
+          }}>{publishing ? "হচ্ছে…" : "প্রকাশ করুন"}</button>
+          {!loadDone ? <div className="askel-table" /> : null}
+          {loadDone && entries.length === 0 ? <EmptyState title="এখনো কোনো Changelog Entry নেই।" /> : null}
           <ul className="space-y-1.5">
             {entries.slice(0, 6).map((e) => (
               <li key={e.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs">
@@ -340,7 +400,7 @@ export default function GrowthPage() {
         <div className="atab-panel">
         <div className="acard space-y-3">
           <div className="font-semibold">💬 Feedback / NPS</div>
-          {!feedback ? (loadDone ? <ErrorState message="Feedback Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <p className="text-sm text-slate-500">লোড হচ্ছে…</p>) : (
+          {!feedback ? (loadDone ? <ErrorState message="Feedback Board লোড হয়নি — আবার চেষ্টা করুন।" onRetry={load} /> : <div className="askel-table" />) : (
             <>
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-xl bg-slate-800 p-3"><div className="text-xl font-bold">{feedback.summary.nps ?? "—"}</div><div className="text-xs text-slate-400">NPS Score</div></div>
@@ -355,7 +415,7 @@ export default function GrowthPage() {
                     {f.comment ? <span className="block text-slate-400">“{f.comment}”</span> : null}
                   </li>
                 ))}
-                {feedback.recent.length === 0 ? <li className="text-xs text-slate-500">এখনো কোনো Feedback আসেনি — Tenant রা Support পেজ থেকে দিতে পারে।</li> : null}
+                {feedback.recent.length === 0 ? <li className="text-xs text-slate-400">এখনো কোনো Feedback আসেনি — Tenant রা Support পেজ থেকে দিতে পারে।</li> : null}
               </ul>
             </>
           )}

@@ -2,7 +2,7 @@
 import React from "react";
 import AdminShell from "@/components/AdminShell";
 import { API_URL, apiFetch, getAdminToken } from "@/lib/api";
-import { EmptyState, ErrorState, SortableTh, type SortDir } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, SortableTh, type SortDir } from "@/components/ui";
 
 interface Row { organizationId: string; name: string; status: string; aiCalls30d: number; aiTokens30d: number; deliveries30d: number; broadcastsTotal: number; workflowRuns30d: number; courierShipmentsTotal: number; orders30d: number; storageBytes: number; mediaAssets: number }
 
@@ -47,6 +47,7 @@ export default function UsagePage() {
   const th = (label: string, key: string) => <SortableTh label={label} sortKey={key} current={sortKey} dir={sortDir} onSort={onSort} />;
   return (
     <AdminShell title="📈 Usage & Cost (শেষ ৩০ দিন)">
+      <PageHead sub="Org অনুযায়ী ব্যবহারের Ranking — Header-এ ক্লিক করে সাজান।" />
       <p className="mb-3 text-sm text-slate-400">Org অনুযায়ী ব্যবহারের Ranking — যেকোনো সংখ্যার Header-এ ক্লিক করে বেশি→কম / কম→বেশি সাজান (সাজানো এই পেজে লোড করা Row-র ওপরেই)।</p>
       <div className="acard overflow-hidden p-0">
         <table className="atable atable-sticky atable-cards atable-v3">
@@ -57,7 +58,7 @@ export default function UsagePage() {
               <td data-label="AI কল" className="atd">{r.aiCalls30d}</td><td data-label="AI টোকেন" className="atd">{r.aiTokens30d.toLocaleString()}</td>
               <td data-label="Message Delivery" className="atd">{r.deliveries30d}</td><td data-label="Broadcast" className="atd">{r.broadcastsTotal}</td>
               <td data-label="Workflow Run" className="atd">{r.workflowRuns30d}</td><td data-label="Courier" className="atd">{r.courierShipmentsTotal}</td><td data-label="Order" className="atd">{r.orders30d}</td>
-              <td data-label="Storage" className="atd">{formatBytes(r.storageBytes ?? 0)}<span className="block text-xs text-slate-500">{r.mediaAssets ?? 0}টি ফাইল</span></td>
+              <td data-label="Storage" className="atd">{formatBytes(r.storageBytes ?? 0)}<span className="block text-xs text-slate-400">{r.mediaAssets ?? 0}টি ফাইল</span></td>
             </tr>
           ))}</tbody>
         </table>
@@ -65,7 +66,7 @@ export default function UsagePage() {
         {!loading && loadError ? <div className="p-4"><ErrorState message={`Usage লোড হয়নি: ${loadError}`} onRetry={load} /></div> : null}
         {!loading && !loadError && rows.length === 0 ? <EmptyState title="কোনো Organization নেই।" sub="Organization তৈরি হলে তাদের ব্যবহার এখানে Ranking আকারে দেখা যাবে।" /> : null}
       </div>
-      <p className="mt-3 text-xs text-slate-500">AI খরচ টাকায় দেখানো হয়নি — প্রোভাইডার অনুযায়ী টোকেনের দাম বদলায়; এখানে শুধু প্রকৃত ব্যবহার (কল ও টোকেন) দেখানো হচ্ছে।</p>
+      <p className="mt-3 text-xs text-slate-400">AI খরচ টাকায় এখানে দেখানো হয়নি — এখানে শুধু প্রকৃত ব্যবহার (কল ও টোকেন) দেখানো হচ্ছে। টাকার হিসাব Analytics পেজের AI Cost বোর্ডে, শুধু Operator-এর নিজের সেট করা Rate (৳ / 1M টোকেন) দিয়েই — Rate সেট না থাকলে সেখানেও কোনো টাকার হিসাব দেখানো হয় না, অন্য কোনো দাম ধরা হয় না।</p>
       <AiFeatureSection />
     </AdminShell>
   );
@@ -82,12 +83,17 @@ function AiFeatureSection() {
   const [rows, setRows] = React.useState<AiRow[]>([]);
   const [filter, setFilter] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  // ADNX12: a failed ai-detail load gets its own error state —
+  // before it silently became the "no records" text below.
+  const [loadError, setLoadError] = React.useState("");
 
   const load = React.useCallback(async (d: number) => {
-    setLoading(true);
-    const out = await apiFetch<{ days: number; rows: AiRow[] }>(`/admin/usage/ai-detail?days=${d}`).catch(() => null);
-    setRows(out?.rows ?? []);
-    setLoading(false);
+    setLoading(true); setLoadError("");
+    try {
+      const out = await apiFetch<{ days: number; rows: AiRow[] }>(`/admin/usage/ai-detail?days=${d}`);
+      setRows(out?.rows ?? []);
+    } catch (e) { setRows([]); setLoadError(e instanceof Error ? e.message : "AI ব্যবহার লোড ব্যর্থ হয়েছে"); }
+    finally { setLoading(false); }
   }, []);
   React.useEffect(() => { load(days); }, [days, load]);
 
@@ -130,7 +136,7 @@ function AiFeatureSection() {
         </select>
         <input className="ainput px-2 py-1 text-sm sm:!w-64" placeholder="Org নাম বা ID দিয়ে ফিল্টার" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={downloadCsv}>⬇ CSV Export</button>
-        {loading ? <span className="text-xs text-slate-500">লোড হচ্ছে…</span> : null}
+        {loading ? <span className="text-xs text-slate-400">লোড হচ্ছে…</span> : null}
       </div>
       <div className="acard overflow-hidden p-0">
         <table className="atable atable-cards atable-v3">
@@ -147,9 +153,11 @@ function AiFeatureSection() {
             </tr>
           ))}</tbody>
         </table>
-        {shown.length === 0 ? <p className="p-4 text-sm text-slate-500">এই সময়সীমায় কোনো AI ব্যবহারের রেকর্ড নেই।</p> : null}
+        {loading && shown.length === 0 ? <div className="askel-table m-4" /> : null}
+        {!loading && loadError ? <div className="p-4"><ErrorState message={`AI ব্যবহার লোড হয়নি: ${loadError}`} onRetry={() => load(days)} /></div> : null}
+        {!loading && !loadError && shown.length === 0 ? <EmptyState title="এই সময়সীমায় কোনো AI ব্যবহারের রেকর্ড নেই।" /> : null}
       </div>
-      <p className="mt-3 text-xs text-slate-500">এখানে শুধু কল ও টোকেন — টাকার হিসাব Analytics পেজের AI Cost বোর্ডে (Operator-এর সেট করা Rate দিয়ে)। Estimated কল মানে ওই কলগুলোর টোকেন সংখ্যা Dev Adapter-এর আনুমানিক হিসাব — আসল Provider-এর মাপা সংখ্যা নয়, তাই আলাদা করে দেখানো হয়েছে।</p>
+      <p className="mt-3 text-xs text-slate-400">এখানে শুধু কল ও টোকেন — টাকার হিসাব Analytics পেজের AI Cost বোর্ডে (Operator-এর সেট করা Rate দিয়ে)। Estimated কল মানে ওই কলগুলোর টোকেন সংখ্যা Dev Adapter-এর আনুমানিক হিসাব — আসল Provider-এর মাপা সংখ্যা নয়, তাই আলাদা করে দেখানো হয়েছে।</p>
     </div>
   );
 }
