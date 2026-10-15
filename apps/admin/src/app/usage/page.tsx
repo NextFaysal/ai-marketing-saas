@@ -49,15 +49,15 @@ export default function UsagePage() {
     <AdminShell title="📈 Usage & Cost (শেষ ৩০ দিন)">
       <p className="mb-3 text-sm text-slate-400">Org অনুযায়ী ব্যবহারের Ranking — যেকোনো সংখ্যার Header-এ ক্লিক করে বেশি→কম / কম→বেশি সাজান (সাজানো এই পেজে লোড করা Row-র ওপরেই)।</p>
       <div className="acard overflow-hidden p-0">
-        <table className="atable atable-sticky">
+        <table className="atable atable-sticky atable-cards atable-v3">
           <thead className="bg-slate-900"><tr><th className="ath">Organization</th>{th("AI কল", "aiCalls30d")}{th("AI টোকেন", "aiTokens30d")}{th("Message Delivery", "deliveries30d")}{th("Broadcast", "broadcastsTotal")}{th("Workflow Run", "workflowRuns30d")}{th("Courier", "courierShipmentsTotal")}{th("Order", "orders30d")}{th("Storage", "storageBytes")}</tr></thead>
           <tbody>{shown.map((r) => (
             <tr key={r.organizationId} className="border-t border-slate-800">
-              <td className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.name}</a>{r.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{r.status}</span> : null}</td>
-              <td className="atd">{r.aiCalls30d}</td><td className="atd">{r.aiTokens30d.toLocaleString()}</td>
-              <td className="atd">{r.deliveries30d}</td><td className="atd">{r.broadcastsTotal}</td>
-              <td className="atd">{r.workflowRuns30d}</td><td className="atd">{r.courierShipmentsTotal}</td><td className="atd">{r.orders30d}</td>
-              <td className="atd">{formatBytes(r.storageBytes ?? 0)}<span className="block text-xs text-slate-500">{r.mediaAssets ?? 0}টি ফাইল</span></td>
+              <td data-label="Organization" className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.name}</a>{r.status !== "ACTIVE" ? <span className="abadge-amber ml-2">{r.status}</span> : null}</td>
+              <td data-label="AI কল" className="atd">{r.aiCalls30d}</td><td data-label="AI টোকেন" className="atd">{r.aiTokens30d.toLocaleString()}</td>
+              <td data-label="Message Delivery" className="atd">{r.deliveries30d}</td><td data-label="Broadcast" className="atd">{r.broadcastsTotal}</td>
+              <td data-label="Workflow Run" className="atd">{r.workflowRuns30d}</td><td data-label="Courier" className="atd">{r.courierShipmentsTotal}</td><td data-label="Order" className="atd">{r.orders30d}</td>
+              <td data-label="Storage" className="atd">{formatBytes(r.storageBytes ?? 0)}<span className="block text-xs text-slate-500">{r.mediaAssets ?? 0}টি ফাইল</span></td>
             </tr>
           ))}</tbody>
         </table>
@@ -133,17 +133,17 @@ function AiFeatureSection() {
         {loading ? <span className="text-xs text-slate-500">লোড হচ্ছে…</span> : null}
       </div>
       <div className="acard overflow-hidden p-0">
-        <table className="atable">
+        <table className="atable atable-cards atable-v3">
           <thead className="bg-slate-900"><tr><th className="ath">Organization</th><th className="ath">Feature</th>{th("কল", "calls")}{th("Input টোকেন", "inputTokens")}{th("Output টোকেন", "outputTokens")}{th("মোট টোকেন", "totalTokens")}{th("Estimated কল", "estimatedCalls")}</tr></thead>
           <tbody>{shown.map((r) => (
             <tr key={`${r.organizationId}|${r.feature}`} className="border-t border-slate-800">
-              <td className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.orgName}</a></td>
-              <td className="atd">{r.feature}</td>
-              <td className="atd">{r.calls.toLocaleString()}</td>
-              <td className="atd">{r.inputTokens.toLocaleString()}</td>
-              <td className="atd">{r.outputTokens.toLocaleString()}</td>
-              <td className="atd">{r.totalTokens.toLocaleString()}</td>
-              <td className="atd">{r.estimatedCalls > 0 ? <span className="abadge-amber">{r.estimatedCalls.toLocaleString()}</span> : 0}</td>
+              <td data-label="Organization" className="atd"><a className="text-indigo-300 hover:underline" href={`/orgs/${r.organizationId}`}>{r.orgName}</a></td>
+              <td data-label="Feature" className="atd">{r.feature}</td>
+              <td data-label="কল" className="atd">{r.calls.toLocaleString()}</td>
+              <td data-label="Input টোকেন" className="atd">{r.inputTokens.toLocaleString()}</td>
+              <td data-label="Output টোকেন" className="atd">{r.outputTokens.toLocaleString()}</td>
+              <td data-label="মোট টোকেন" className="atd">{r.totalTokens.toLocaleString()}</td>
+              <td data-label="Estimated কল" className="atd">{r.estimatedCalls > 0 ? <span className="abadge-amber">{r.estimatedCalls.toLocaleString()}</span> : 0}</td>
             </tr>
           ))}</tbody>
         </table>

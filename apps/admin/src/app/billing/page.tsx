@@ -217,17 +217,17 @@ export default function BillingPage() {
         <span className="font-semibold">সাম্প্রতিক পেমেন্ট</span>
         <button className="abtn-secondary !px-3 !py-1.5 text-xs" onClick={() => openAuthed("/admin/billing/export.csv", "payments-export.csv")}>⬇ CSV Export (হিসাবের জন্য)</button>
       </div>
-      <table className="atable">
+      <table className="atable atable-cards atable-v3">
         <thead className="bg-slate-900"><tr><th className="ath">তারিখ</th><th className="ath">Organization</th><th className="ath">পরিমাণ (নিট)</th><th className="ath">মাধ্যম</th><th className="ath">রেফারেন্স</th><th className="ath"></th></tr></thead>
         <tbody>{payments.map((p) => (
           <tr key={p.id} className="border-t border-slate-800">
-            <td className="atd text-slate-400">{fmtDateTime(p.createdAt)}</td>
-            <td className="atd">{p.organizationName ?? p.organizationId}</td>
-            <td className="atd">৳ {formatMinorStr(p.netMinor ?? p.amountMinor)}
+            <td data-label="তারিখ" className="atd text-slate-400">{fmtDateTime(p.createdAt)}</td>
+            <td data-label="Organization" className="atd">{p.organizationName ?? p.organizationId}</td>
+            <td data-label="পরিমাণ (নিট)" className="atd">৳ {formatMinorStr(p.netMinor ?? p.amountMinor)}
               {p.refundedMinor && p.refundedMinor !== "0" ? <div className="text-xs text-amber-300">ফেরত ৳ {formatMinorStr(p.refundedMinor)} (মোট ৳ {formatMinorStr(p.amountMinor)})</div> : null}
             </td>
-            <td className="atd">{p.method}</td>
-            <td className="atd text-slate-400">{p.reference ?? "—"}</td>
+            <td data-label="মাধ্যম" className="atd">{p.method}</td>
+            <td data-label="রেফারেন্স" className="atd text-slate-400">{p.reference ?? "—"}</td>
             <td className="atd">
               <div className="flex flex-wrap gap-1.5">
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => openAuthed(`/admin/payments/${p.id}/invoice`)}>🧾 Invoice</button>
@@ -257,15 +257,15 @@ export default function BillingPage() {
       <p className="mb-3 text-xs text-slate-500">Gateway Checkout গুলোর অবস্থা। <span className="text-amber-300">আটকে আছে</span> = ১ ঘণ্টার বেশি Initiated — "যাচাই করুন" Gateway এর নিজের রেকর্ড থেকে আবার নিশ্চিত করে (IPN হারিয়ে গেলে এটাই পুনরুদ্ধারের পথ)।</p>
       {checkouts.length === 0 ? <p className="text-sm text-slate-500">কোনো Online Checkout নেই।</p> : (
         <div className="overflow-x-auto">
-          <table className="atable">
+          <table className="atable atable-cards atable-v3">
             <thead><tr><th className="ath">সময়</th><th className="ath">Org / প্ল্যান</th><th className="ath">Gateway</th><th className="ath">পরিমাণ</th><th className="ath">অবস্থা</th><th className="ath"></th></tr></thead>
             <tbody>{checkouts.map((c) => (
               <tr key={c.id}>
-                <td className="atd text-slate-400">{fmtDateTime(c.createdAt)}</td>
-                <td className="atd">{c.organizationName ?? "—"}<div className="text-xs text-slate-500">{c.plan} · {c.tranId}{c.couponCode ? ` · 🎟 ${c.couponCode}` : ""}</div></td>
-                <td className="atd">{c.gateway}</td>
-                <td className="atd">৳ {formatMinorStr(c.amountMinor)}{c.discountMinor !== "0" ? <div className="text-xs text-slate-500">ছাড় ৳ {formatMinorStr(c.discountMinor)}</div> : null}</td>
-                <td className="atd">{c.status === "success" ? <span className="abadge-green">success</span> : c.stuck ? <span className="abadge-red">আটকে আছে</span> : <span className="abadge-slate">{c.status}</span>}</td>
+                <td data-label="সময়" className="atd text-slate-400">{fmtDateTime(c.createdAt)}</td>
+                <td data-label="Org / প্ল্যান" className="atd">{c.organizationName ?? "—"}<div className="text-xs text-slate-500">{c.plan} · {c.tranId}{c.couponCode ? ` · 🎟 ${c.couponCode}` : ""}</div></td>
+                <td data-label="Gateway" className="atd">{c.gateway}</td>
+                <td data-label="পরিমাণ" className="atd">৳ {formatMinorStr(c.amountMinor)}{c.discountMinor !== "0" ? <div className="text-xs text-slate-500">ছাড় ৳ {formatMinorStr(c.discountMinor)}</div> : null}</td>
+                <td data-label="অবস্থা" className="atd">{c.status === "success" ? <span className="abadge-green">success</span> : c.stuck ? <span className="abadge-red">আটকে আছে</span> : <span className="abadge-slate">{c.status}</span>}</td>
                 <td className="atd">{c.status === "initiated" ? <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => reconcile(c)}>যাচাই করুন</button> : null}</td>
               </tr>
             ))}</tbody>

@@ -89,16 +89,16 @@ export default function AuditPage() {
             }}
           />
         </div>
-        <table className="atable">
+        <table className="atable atable-cards atable-v3">
           <thead className="bg-slate-900"><tr><th className="ath">সময়</th><th className="ath">Action</th><th className="ath">Entity</th><th className="ath">Actor</th><th className="ath">IP</th><th className="ath">বিস্তারিত</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-800">
-              <td className="atd whitespace-nowrap text-slate-400">{fmtDateTime(r.createdAt)}</td>
-              <td className="atd font-medium">{r.action}</td>
-              <td className="atd text-slate-400">{r.entityType}{r.entityId ? ` · ${r.entityId.slice(0, 8)}…` : ""}</td>
-              <td className="atd text-slate-400">{r.userId ? `${r.userId.slice(0, 8)}…` : "—"}</td>
-              <td className="atd text-slate-400">{r.ipAddress ?? "—"}</td>
-              <td className="atd max-w-xs text-slate-500"><span className="inline-block max-w-[180px] truncate align-middle">{r.metadata ? JSON.stringify(r.metadata) : ""}</span><button type="button" className="abtn-secondary ml-2 !px-2 !py-0.5 text-xs" onClick={() => setDrawerRow(r)}>খুলুন</button></td>
+              <td data-label="সময়" className="atd whitespace-nowrap text-slate-400">{fmtDateTime(r.createdAt)}</td>
+              <td data-label="Action" className="atd font-medium">{r.action}</td>
+              <td data-label="Entity" className="atd text-slate-400">{r.entityType}{r.entityId ? ` · ${r.entityId.slice(0, 8)}…` : ""}</td>
+              <td data-label="Actor" className="atd text-slate-400">{r.userId ? `${r.userId.slice(0, 8)}…` : "—"}</td>
+              <td data-label="IP" className="atd text-slate-400">{r.ipAddress ?? "—"}</td>
+              <td data-label="বিস্তারিত" className="atd max-w-xs text-slate-500"><span className="inline-block max-w-[180px] truncate align-middle">{r.metadata ? JSON.stringify(r.metadata) : ""}</span><button type="button" className="abtn-secondary ml-2 !px-2 !py-0.5 text-xs" onClick={() => setDrawerRow(r)}>খুলুন</button></td>
             </tr>
           ))}</tbody>
         </table>

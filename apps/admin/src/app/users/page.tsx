@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -73,7 +73,7 @@ export default function UsersPage() {
             onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setAdminFilter(s.adminFilter ?? ""); }}
           />
         </div>
-        <table className="atable atable-sticky">
+        <DataTable>
           <thead className="bg-slate-900"><tr>
             <SortableTh label="User" sortKey="name" current={sortKey} dir={sortDir} onSort={onSort} />
             <SortableTh label="Org" sortKey="orgs" current={sortKey} dir={sortDir} onSort={onSort} />
@@ -84,15 +84,15 @@ export default function UsersPage() {
           </tr></thead>
           <tbody>{sorted.map((u) => (
             <tr key={u.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
-              <td className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/users/${u.id}`}>{u.name}</a><div className="text-xs text-slate-500">{u.email}{u.isSuperAdmin ? ` · 🛡 ${u.adminTier ?? "SUPER"}` : ""}</div></td>
-              <td className="atd">{u.organizationCount}</td>
-              <td className="atd"><span className={STATUS_BADGE(u.status)}>{u.status}</span></td>
-              <td className="atd text-slate-400">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "—"}</td>
-              <td className="atd text-slate-400">{fmtDateTime(u.createdAt, "date")}</td>
+              <td data-label="User" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/users/${u.id}`}>{u.name}</a><div className="text-xs text-slate-500">{u.email}{u.isSuperAdmin ? ` · 🛡 ${u.adminTier ?? "SUPER"}` : ""}</div></td>
+              <td data-label="Org" className="atd">{u.organizationCount}</td>
+              <td data-label="অবস্থা" className="atd"><span className={STATUS_BADGE(u.status)}>{u.status}</span></td>
+              <td data-label="শেষ লগইন" className="atd text-slate-400">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "—"}</td>
+              <td data-label="যোগ দিয়েছেন" className="atd text-slate-400">{fmtDateTime(u.createdAt, "date")}</td>
               <td className="atd"><button type="button" className="abtn-secondary atable-row-actions !px-2 !py-1 text-xs" onClick={() => setQuick(u)}>দ্রুত দেখুন</button></td>
             </tr>
           ))}</tbody>
-        </table>
+        </DataTable>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
         {sorted.length === 0 && !loading ? <EmptyState title="কোনো User পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>

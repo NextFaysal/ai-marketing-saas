@@ -131,16 +131,16 @@ export default function HealthPage() {
         </div>
         {!conns ? <div className="p-4">{pending("Connection তথ্য")}</div> : conns.connections.length === 0 ? <p className="p-4 text-sm text-slate-500">কোনো connection-ই নেই।</p> : (
           <div className="overflow-x-auto">
-            <table className="atable">
+            <table className="atable atable-cards atable-v3">
               <thead className="bg-slate-900"><tr><th className="ath">অবস্থা</th><th className="ath">Connection</th><th className="ath">Org</th><th className="ath">Check (পাস/ব্যর্থ/আংশিক)</th><th className="ath">Uptime</th><th className="ath">শেষ Check</th><th className="ath"></th></tr></thead>
               <tbody>{conns.connections.map((c) => (
                 <tr key={`${c.organizationId}-${c.targetType}-${c.targetId}`} className="border-t border-slate-800">
-                  <td className="atd">{c.boardStatus === "broken" ? <span className="abadge-red">ভাঙা</span> : c.boardStatus === "at_risk" ? <span className="abadge-amber">ঝুঁকিতে</span> : c.boardStatus === "ok" ? <span className="abadge-green">ঠিক আছে</span> : <span className="abadge-slate">তথ্য নেই</span>}{c.expiryBucket ? <div className="mt-1 text-xs text-amber-300">Token মেয়াদ: {c.tokenDaysLeft !== null && c.tokenDaysLeft < 0 ? "শেষ হয়ে গেছে" : `${c.tokenDaysLeft} দিন বাকি`}</div> : null}</td>
-                  <td className="atd">{c.displayName ?? c.provider ?? c.targetType}<div className="text-xs text-slate-500">{c.provider ?? ""} · {c.targetType}{c.targetStatus === "missing" ? " · (মুছে যাওয়া)" : ""}</div></td>
-                  <td className="atd"><a className="text-indigo-300 underline" href={`/orgs/${c.organizationId}`}>{c.organizationName}</a></td>
-                  <td className="atd">{c.checks > 0 ? `${c.checks} (${c.passed}/${c.failed}/${c.degraded})` : "—"}</td>
-                  <td className="atd">{c.uptimePct !== null ? `${c.uptimePct}%` : "তথ্য নেই"}</td>
-                  <td className="atd text-slate-400">{c.lastCheckedAt ? fmtDateTime(c.lastCheckedAt) : "কখনো নয়"}</td>
+                  <td data-label="অবস্থা" className="atd">{c.boardStatus === "broken" ? <span className="abadge-red">ভাঙা</span> : c.boardStatus === "at_risk" ? <span className="abadge-amber">ঝুঁকিতে</span> : c.boardStatus === "ok" ? <span className="abadge-green">ঠিক আছে</span> : <span className="abadge-slate">তথ্য নেই</span>}{c.expiryBucket ? <div className="mt-1 text-xs text-amber-300">Token মেয়াদ: {c.tokenDaysLeft !== null && c.tokenDaysLeft < 0 ? "শেষ হয়ে গেছে" : `${c.tokenDaysLeft} দিন বাকি`}</div> : null}</td>
+                  <td data-label="Connection" className="atd">{c.displayName ?? c.provider ?? c.targetType}<div className="text-xs text-slate-500">{c.provider ?? ""} · {c.targetType}{c.targetStatus === "missing" ? " · (মুছে যাওয়া)" : ""}</div></td>
+                  <td data-label="Org" className="atd"><a className="text-indigo-300 underline" href={`/orgs/${c.organizationId}`}>{c.organizationName}</a></td>
+                  <td data-label="Check (পাস/ব্যর্থ/আংশিক)" className="atd">{c.checks > 0 ? `${c.checks} (${c.passed}/${c.failed}/${c.degraded})` : "—"}</td>
+                  <td data-label="Uptime" className="atd">{c.uptimePct !== null ? `${c.uptimePct}%` : "তথ্য নেই"}</td>
+                  <td data-label="শেষ Check" className="atd text-slate-400">{c.lastCheckedAt ? fmtDateTime(c.lastCheckedAt) : "কখনো নয়"}</td>
                   <td className="atd">{c.boardStatus === "broken" ? <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => nudgeConn(c.organizationId)}>📧 Nudge</button> : null}</td>
                 </tr>
               ))}</tbody>
@@ -150,14 +150,14 @@ export default function HealthPage() {
       </div>
       <div className="acard mt-4 overflow-hidden p-0" id="health-scheduled">
         <div className="border-b border-slate-800 p-4 font-semibold">Scheduled Jobs (সব Tenant)</div>
-        <table className="atable">
+        <table className="atable atable-cards atable-v3">
           <thead className="bg-slate-900"><tr><th className="ath">Job</th><th className="ath">ধরন</th><th className="ath">অবস্থা</th><th className="ath">পরের Run</th><th className="ath"></th></tr></thead>
           <tbody>{(jobs?.scheduledJobs ?? []).map((j) => (
             <tr key={j.id} className="border-t border-slate-800">
-              <td className="atd">{j.name}<div className="text-xs text-slate-500">{j.organizationId.slice(0, 8)}…</div></td>
-              <td className="atd">{j.type}</td>
-              <td className="atd">{j.enabled ? (j.lastStatus === "error" ? <span className="abadge-red">error</span> : <span className="abadge-green">{j.lastStatus ?? "enabled"}</span>) : <span className="abadge-slate">disabled</span>}{j.lastError ? <div className="mt-1 max-w-md truncate text-xs text-red-300">{j.lastError}</div> : null}</td>
-              <td className="atd text-slate-400">{fmtDateTime(j.nextRunAt)}</td>
+              <td data-label="Job" className="atd">{j.name}<div className="text-xs text-slate-500">{j.organizationId.slice(0, 8)}…</div></td>
+              <td data-label="ধরন" className="atd">{j.type}</td>
+              <td data-label="অবস্থা" className="atd">{j.enabled ? (j.lastStatus === "error" ? <span className="abadge-red">error</span> : <span className="abadge-green">{j.lastStatus ?? "enabled"}</span>) : <span className="abadge-slate">disabled</span>}{j.lastError ? <div className="mt-1 max-w-md truncate text-xs text-red-300">{j.lastError}</div> : null}</td>
+              <td data-label="পরের Run" className="atd text-slate-400">{fmtDateTime(j.nextRunAt)}</td>
               <td className="atd"><button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => retry("scheduled_job", j.id)}>▶ এখন চালান</button></td>
             </tr>
           ))}</tbody>

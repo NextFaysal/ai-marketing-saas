@@ -49,7 +49,7 @@ export default function AdminsPage() {
       {/* ADX12: the roster is plain text/badges, so it opts into the
           mobile card form (.atable-cards + data-label per cell). */}
       <div className="acard overflow-hidden p-0">
-        <table className="atable atable-cards">
+        <table className="atable atable-cards atable-v3">
           <thead className="bg-slate-900"><tr>
             <th className="ath">নাম</th><th className="ath">Email</th><th className="ath">Tier</th><th className="ath">Status</th>
             <th className="ath">TOTP</th><th className="ath">সর্বশেষ Login</th><th className="ath">Admin হয়েছেন</th>

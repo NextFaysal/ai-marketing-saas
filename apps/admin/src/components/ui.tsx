@@ -194,6 +194,35 @@ export function SavedViewsBar({ page, current, onApply }: {
   );
 }
 
+// ---------------------------------------------------------------- DataTable v3 (ADNX2)
+/**
+ * ADNX2 DataTable v3 — the one table pattern for list pages.
+ * Wraps the table in .atable-wrap (its own horizontal scroll
+ * container, never page-level) and applies:
+ *  - .atable-cards (mobile card form) unless cards={false} — card
+ *    form only works when every cell carries a data-label equal
+ *    to its column header; adopting pages add those labels.
+ *  - .atable-sticky (sticky header) unless sticky={false};
+ *    SortableTh drops in as a normal child of the thead row.
+ *  - .atable-v3 marker for v4 card alignment tweaks.
+ * Density is inherited from the shell's data-admin-density.
+ * `empty` renders after the table (the page's EmptyState) so a
+ * zero-row table and its empty state are one pattern.
+ */
+export function DataTable({ children, cards = true, sticky = true, className = "", empty }: {
+  children: React.ReactNode; cards?: boolean; sticky?: boolean; className?: string; empty?: React.ReactNode;
+}) {
+  const cls = ["atable", "atable-v3", cards ? "atable-cards" : "", sticky ? "atable-sticky" : "", className].filter(Boolean).join(" ");
+  return (
+    <>
+      <div className="atable-wrap">
+        <table className={cls}>{children}</table>
+      </div>
+      {empty ?? null}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- SortableTh
 export type SortDir = "asc" | "desc";
 export function SortableTh({ label, sortKey, current, dir, onSort, className = "" }: {

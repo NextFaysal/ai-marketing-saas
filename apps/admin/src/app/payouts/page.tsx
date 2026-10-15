@@ -177,7 +177,7 @@ export default function PayoutsPage() {
         </p>
         {loading && rows.length === 0 ? <div className="askel-table" /> : loadError && rows.length === 0 ? <ErrorState message={`Payout লোড হয়নি: ${loadError}`} onRetry={load} /> : sorted.length === 0 ? <EmptyState title="কোনো অনুরোধ নেই।" sub="এই status-এ কোনো Payout অনুরোধ জমা নেই — অন্য status বেছে দেখুন।" /> : (
           <div className="overflow-x-auto">
-            <table className="atable atable-sticky">
+            <table className="atable atable-sticky atable-cards atable-v3">
               <thead>
                 <tr>
                   <th className="ath">Organization</th><th className="ath">পরিমাণ</th><th className="ath">মাধ্যম / গন্তব্য</th>
@@ -187,16 +187,16 @@ export default function PayoutsPage() {
               <tbody>
                 {sorted.map((r) => (
                   <tr key={r.id} className="border-t border-slate-800">
-                    <td className="atd">{r.organizationName ?? r.organizationId}<span className="block text-[11px] text-slate-500">{r.organizationId}</span></td>
-                    <td className="atd">৳ {formatMinorStr(r.amountMinor)}
+                    <td data-label="Organization" className="atd">{r.organizationName ?? r.organizationId}<span className="block text-[11px] text-slate-500">{r.organizationId}</span></td>
+                    <td data-label="পরিমাণ" className="atd">৳ {formatMinorStr(r.amountMinor)}
                       {fourEyes(r) ? <span className="abadge-amber mt-1 block w-fit" title="Four-eyes: এই পরিমাণ সেট করা সীমার সমান বা বেশি। Approved অবস্থায় যিনি Approve করেছেন তিনি Mark Paid করতে পারবেন না — অন্য Admin লাগবে।">⚖ Four-eyes সীমার ওপরে</span> : null}
                     </td>
-                    <td className="atd">{r.method}<span className="block text-[11px] text-slate-500">{destText(r.destination)}</span></td>
-                    <td className="atd">{STATUS_LABEL[r.status] ?? r.status}</td>
-                    <td className="atd"><StepStates row={r} /></td>
-                    <td className="atd text-slate-400">{fmtDateTime(r.createdAt)}</td>
-                    <td className="atd text-slate-400">{r.payoutRef ?? "—"}{r.adminNote ? <span className="block text-[11px]">{r.adminNote}</span> : null}</td>
-                    <td className="atd">
+                    <td data-label="মাধ্যম / গন্তব্য" className="atd">{r.method}<span className="block text-[11px] text-slate-500">{destText(r.destination)}</span></td>
+                    <td data-label="Status" className="atd">{STATUS_LABEL[r.status] ?? r.status}</td>
+                    <td data-label="ধাপ" className="atd"><StepStates row={r} /></td>
+                    <td data-label="তৈরি" className="atd text-slate-400">{fmtDateTime(r.createdAt)}</td>
+                    <td data-label="Ref / নোট" className="atd text-slate-400">{r.payoutRef ?? "—"}{r.adminNote ? <span className="block text-[11px]">{r.adminNote}</span> : null}</td>
+                    <td data-label="পদক্ষেপ" className="atd">
                       <div className="flex flex-wrap gap-1.5">
                         {r.status === "pending" ? <>
                           <button className="abtn !px-2 !py-1 text-xs" disabled={busy !== ""} onClick={() => setPendingAction({ row: r, kind: "approve" })}>Approve</button>

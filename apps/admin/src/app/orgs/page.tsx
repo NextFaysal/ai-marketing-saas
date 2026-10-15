@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import AdminShell from "@/components/AdminShell";
-import { FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
+import { DataTable, FilterBar, SortableTh, DetailDrawer, EmptyState, ErrorState, SavedViewsBar, type SortDir } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 
@@ -96,7 +96,7 @@ export default function OrgsPage() {
             onApply={(s) => { setQ(s.q ?? ""); setStatusFilter(s.statusFilter ?? ""); setPlanFilter(s.planFilter ?? ""); }}
           />
         </div>
-        <table className="atable atable-sticky">
+        <DataTable>
           <thead className="bg-slate-900"><tr><th className="ath"></th>
             <SortableTh label="Organization" sortKey="name" current={sortKey} dir={sortDir} onSort={onSort} />
             <th className="ath">Plan</th>
@@ -109,16 +109,16 @@ export default function OrgsPage() {
           <tbody>{sorted.map((o) => (
             <tr key={o.id} className="arow border-t border-slate-800 hover:bg-slate-800/40">
               <td className="atd"><input type="checkbox" checked={selected.includes(o.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, o.id] : selected.filter((x) => x !== o.id))} /></td>
-              <td className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-500">{o.slug} · {o.country}</div></td>
-              <td className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
-              <td className="atd">{o.memberCount}</td>
-              <td className="atd">{o.orderCount}</td>
-              <td className="atd"><span className={STATUS_BADGE(o.status)}>{o.status}</span></td>
-              <td className="atd text-slate-400">{fmtDateTime(o.createdAt, "date")}</td>
+              <td data-label="Organization" className="atd"><a className="font-medium text-indigo-300 hover:underline" href={`/orgs/${o.id}`}>{o.name}</a><div className="text-xs text-slate-500">{o.slug} · {o.country}</div></td>
+              <td data-label="Plan" className="atd">{o.subscription ? `${o.subscription.plan} (${o.subscription.status})` : "—"}</td>
+              <td data-label="সদস্য" className="atd">{o.memberCount}</td>
+              <td data-label="Order" className="atd">{o.orderCount}</td>
+              <td data-label="অবস্থা" className="atd"><span className={STATUS_BADGE(o.status)}>{o.status}</span></td>
+              <td data-label="তৈরি" className="atd text-slate-400">{fmtDateTime(o.createdAt, "date")}</td>
               <td className="atd"><button type="button" className="abtn-secondary atable-row-actions !px-2 !py-1 text-xs" onClick={() => setQuick(o)}>দ্রুত দেখুন</button></td>
             </tr>
           ))}</tbody>
-        </table>
+        </DataTable>
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
         {sorted.length === 0 && !loading && !error ? <EmptyState title="কোনো Organization পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>
