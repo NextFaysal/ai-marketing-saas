@@ -20,7 +20,7 @@ import type { CoachResponse, StockConfigStatus, StockSearchItem } from "@/lib/so
 
 export interface SocialAccount {
   id: string;
-  platform: "meta_page" | "instagram" | "tiktok" | "youtube";
+  platform: "meta_page" | "instagram" | "tiktok" | "youtube" | "linkedin_page" | "telegram" | "threads";
   externalId: string;
   name: string;
   username?: string | null;
@@ -174,6 +174,11 @@ export const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram",
   tiktok: "TikTok",
   youtube: "YouTube",
+  // CC20 shipped without its label (the chip fell back to the
+  // raw "linkedin_page" string) — fixed here alongside SN6/SN7.
+  linkedin_page: "LinkedIn Page",
+  telegram: "Telegram Channel",
+  threads: "Threads",
 };
 
 /** SP8/SP9: operator-app platform modes (booleans only, from
@@ -754,6 +759,16 @@ export interface SocialPageCtx {
   // SN9: performance coach.
   coach: CoachResponse | null;
   loadCoach: any;
+  // SN6: Telegram connect form (bot token + channel; the token
+  // lives in page state only until the connect call returns —
+  // it is never persisted client-side).
+  telegramTokenInput: string;
+  setTelegramTokenInput: React.Dispatch<React.SetStateAction<string>>;
+  telegramChannelInput: string;
+  setTelegramChannelInput: React.Dispatch<React.SetStateAction<string>>;
+  showTelegramConnect: boolean;
+  setShowTelegramConnect: React.Dispatch<React.SetStateAction<boolean>>;
+  connectTelegram: any;
   toggleBulkSelected: any;
   runBulkAction: any;
   importProductImage: any;

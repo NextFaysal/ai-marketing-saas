@@ -174,6 +174,12 @@ export default function SocialPostsPage() {
   const [overlayPos, setOverlayPos] = useState<Record<string, string>>({});
   // SN9: the weekly performance coach (latest digest + preview).
   const [coach, setCoach] = useState<CoachResponse | null>(null);
+  // SN6: Telegram connect form (bot token + channel). The token
+  // is held only until the connect call returns, then cleared —
+  // it is never stored anywhere client-side.
+  const [telegramTokenInput, setTelegramTokenInput] = useState("");
+  const [telegramChannelInput, setTelegramChannelInput] = useState("");
+  const [showTelegramConnect, setShowTelegramConnect] = useState(false);
   // PP3: product-image import in the composer picker (reuses the
   // SP3 aiProducts list — same products endpoint, one fetch).
   const [importProductId, setImportProductId] = useState("");
@@ -635,6 +641,29 @@ export default function SocialPostsPage() {
       setError(e instanceof Error ? e.message : "Connect শুরু করা যায়নি");
       setBusy("");
     }
+  }
+
+  // --- SN6 Telegram connect (bot token, NOT OAuth) ----------------------------
+  // Verify-before-save runs server-side (bot → channel → admin);
+  // a failure comes back as the API's Bengali 400 carrying
+  // Telegram's own message, shown verbatim through setError.
+  async function connectTelegram() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!telegramTokenInput.trim()) { setError("আগে Bot Token দিন — Telegram-এ @BotFather দিয়ে Bot বানালে Token পাওয়া যায়।"); return; }
+    if (!telegramChannelInput.trim()) { setError("Channel-এর Username (@সহ) অথবা numeric Chat ID দিন।"); return; }
+    setBusy("connect-telegram"); setError("");
+    try {
+      const res = await apiFetch<SocialAccount>(`/organizations/${orgId}/social/accounts/telegram/connect`, {
+        method: "POST",
+        body: JSON.stringify({ botToken: telegramTokenInput.trim(), channel: telegramChannelInput.trim() }),
+      });
+      setTelegramTokenInput("");
+      setTelegramChannelInput("");
+      setShowTelegramConnect(false);
+      setNotice(`Telegram Channel যুক্ত হয়েছে: “${res.name}” এখন সংযুক্ত।`);
+      await loadAccounts();
+    } catch (e) { setError(e instanceof Error ? e.message : "Telegram যুক্ত করা ব্যর্থ হয়েছে"); }
+    finally { setBusy(""); }
   }
 
   // SP9: finish a parked YouTube connect with the chosen channel.
@@ -2390,7 +2419,8 @@ export default function SocialPostsPage() {
   members, myUserId, detailOpenId, togglePostDetail, notesByPost, versionsByPost, timelineByPost,
   noteInputs, setNoteInputs, addPostNote, deletePostNote, restorePostVersion, assignPost, memberLabel,
   approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, shareLinksByPost, shareCreatedByPost, createShareLink, createGroupShareLink, revokeShareLink, requireClientApproval, saveRequireClientApproval,
-  loadAccountHealth, loadFailureGroups, filteredPosts, calCells, calBuckets, calMonthTitle, selectedPost, queuePosts, pendingApprovalPosts, hasPublishedOrInsights, analyticsBars, analyticsHasTimeseriesData, followerHasGrowth, connectedAccounts, composerTargets, showFirstCommentInput, inputCls, activeTab, setActiveTab };
+  loadAccountHealth, loadFailureGroups, filteredPosts, calCells, calBuckets, calMonthTitle, selectedPost, queuePosts, pendingApprovalPosts, hasPublishedOrInsights, analyticsBars, analyticsHasTimeseriesData, followerHasGrowth, connectedAccounts, composerTargets, showFirstCommentInput, inputCls, activeTab, setActiveTab,
+  telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram };
 
   const SU11_TABS = [
     { id: "composer", label: "✍️ Composer" },

@@ -596,7 +596,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                 <AccountAvatar name={a.name} pictureUrl={a.pictureUrl} platform={a.platform} />
                 <span className="font-medium">{a.name}</span>
                 <span className="badge-slate">{PLATFORM_LABELS[a.platform] ?? a.platform}</span>
-                {a.platform === "instagram" && a.username ? <span className="text-xs text-slate-500">@{a.username}</span> : null}
+                {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <span className="text-xs text-slate-500">@{a.username}</span> : null}
                 {!usable ? (
                   <span className="text-xs text-red-600">
                     ({ACCOUNT_STATUS_META[a.status]?.label ?? a.status}{a.lastError ? ` — ${a.lastError}` : ""})
@@ -612,6 +612,11 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
               {accounts.some((a) => a.platform === "tiktok" && a.status === "connected" && accountSelected[a.id]) && platformModes && !platformModes.tiktok.audited
                 ? " TikTok Inbox mode-এ ক্যাপশন সাথে যায় না — Creator-কে app-এ ক্যাপশন লিখতে হবে।"
                 : null}
+            </p>
+          ) : null}
+          {!editingPostId && accounts.some((a) => a.platform === "telegram" && a.status === "connected" && accountSelected[a.id]) ? (
+            <p className="rounded-lg bg-sky-50 p-2.5 text-xs text-sky-800">
+              ✈️ Telegram বেছে নিয়েছেন — শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>১০টি মিডিয়ার Media Group</strong> পাঠানো যায়। মিডিয়ার ক্যাপশন ১০২৪ অক্ষরের বেশি হলে পুরো লেখাটি আলাদা মেসেজ হিসেবে ঠিক পরেই যাবে। First Comment Telegram-এ পাঠানো হয় না (Discussion Group-এর পথ আলাদা)।
             </p>
           ) : null}
         </div>

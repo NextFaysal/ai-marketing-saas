@@ -38,7 +38,7 @@ function PlatformChip({ platform }: { platform?: string | null }) {
 const TOGGLE_CLS = "h-4 w-4 shrink-0 accent-[var(--brand-from)]";
 
 export function SettingsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, } = c;
+  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram, } = c;
   return (
 <>
       {/* Accounts strip — SD7: section card */}
@@ -59,8 +59,36 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
               onClick={() => connectOAuth("youtube")}>
               {busy === "connect-youtube" ? "Google-এ যাচ্ছে..." : "▶️ YouTube যুক্ত করুন"}
             </button>
+            <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => setShowTelegramConnect((s) => !s)}>
+              ✈️ Telegram Channel যুক্ত করুন
+            </button>
           </div>
         </div>
+        {showTelegramConnect ? (
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            <div className="text-sm font-semibold">✈️ Telegram Channel যুক্ত করুন (নিজের Bot দিয়ে)</div>
+            <ol className="list-decimal space-y-1 pl-5 text-xs text-slate-500">
+              <li>Telegram-এ <strong>@BotFather</strong>-এ গিয়ে একটি Bot বানান — সেখান থেকে পাওয়া <strong>Bot Token</strong>টি নিচে দিন।</li>
+              <li>আপনার Channel-এর Settings → Administrators-এ এই Bot-টিকে <strong>Admin</strong> করুন (Post Messages অনুমতিসহ)।</li>
+              <li>Channel-এর Username (@সহ) দিন — Private Channel হলে numeric Chat ID দিন।</li>
+            </ol>
+            <p className="text-xs text-slate-400">যুক্ত করার আগে যাচাই করা হয়: Bot Token ঠিক আছে কিনা, Channel পাওয়া যাচ্ছে কিনা, আর Bot-টি Channel-এর Admin কিনা। যেকোনো ধাপ ব্যর্থ হলে Telegram-এর নিজের বার্তাসহ কারণ দেখানো হবে এবং কিছুই সেভ হবে না। Tokenটি encrypted অবস্থায় সেভ থাকে — কখনো দেখানো হয় না।</p>
+            <form
+              onSubmit={(e) => { e.preventDefault(); void connectTelegram(); }}
+              className="flex flex-wrap items-end gap-2"
+            >
+              <label className="block min-w-[220px] flex-1 text-sm">Bot Token (BotFather থেকে)
+                <input type="password" className={inputCls} value={telegramTokenInput} onChange={(e) => setTelegramTokenInput(e.target.value)} placeholder="123456789:AA…" autoComplete="off" />
+              </label>
+              <label className="block min-w-[180px] text-sm">Channel Username / Chat ID
+                <input type="text" className={inputCls} value={telegramChannelInput} onChange={(e) => setTelegramChannelInput(e.target.value)} placeholder="@mychannel" autoComplete="off" />
+              </label>
+              <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
+                {busy === "connect-telegram" ? "যাচাই করে যুক্ত হচ্ছে..." : "যাচাই করে যুক্ত করুন"}
+              </button>
+            </form>
+          </div>
+        ) : null}
         {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured) ? (
           <p className="text-xs text-slate-400">
             {!platformModes.tiktok.configured ? "TikTok: Operator এখনো TikTok app configure করেননি — Connect করা যাচ্ছে না। " : null}
@@ -114,7 +142,7 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                     {health ? <HealthPill health={health.health} /> : null}
                   </div>
                   {health?.healthCheckedAt ? <div className="mt-0.5 text-[11px] text-slate-400">শেষ যাচাই: {new Date(health.healthCheckedAt).toLocaleString("bn-BD")}</div> : null}
-                  {a.platform === "instagram" && a.username ? <div className="text-xs text-slate-500">@{a.username}</div> : null}
+                  {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <div className="text-xs text-slate-500">@{a.username}</div> : null}
                   {a.platform === "tiktok" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       {platformModes?.tiktok.audited
@@ -125,6 +153,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                   {a.platform === "youtube" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       আপলোড YouTube-এ <strong>Private</strong> হিসেবে যায় — Google app যাচাই সম্পন্ন হলে Public করা যাবে। ভিডিও Channel-এর YouTube Studio-তে দেখা যাবে।
+                    </div>
+                  ) : null}
+                  {a.platform === "telegram" ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      পোস্ট Bot-এর মাধ্যমে Channel-এ যায় — Bot-টির Admin মর্যাদা তুলে নিলে প্রকাশ ব্যর্থ হবে (Telegram-এর বার্তাই দেখানো হবে)। সৎ সীমা: Telegram Bot API পোস্টের Views/Engagement দেয় না, তাই এই অ্যাকাউন্টের Insights পাওয়া যায় না।
                     </div>
                   ) : null}
                   {a.lastError ? (
