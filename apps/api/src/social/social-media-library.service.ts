@@ -10,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
+import { storedAssetPublicUrl } from "../storage/media-url";
 import type { BulkMediaDto, CreateMediaFolderDto, EditMediaAssetDto, UpdateMediaAssetDto, UpdateMediaFolderDto } from "./social.dto";
 
 const execFileAsync = promisify(execFile);
@@ -163,7 +164,7 @@ export class SocialMediaLibraryService {
     return {
       id: row.id, kind: row.kind, name: row.name, contentType: row.contentType,
       sizeBytes: row.sizeBytes, createdAt: row.createdAt,
-      publicUrl: row.publicToken ? `/public/media/${row.publicToken}` : null,
+      publicUrl: storedAssetPublicUrl(row),
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
       folderId: row.folderId ?? null,

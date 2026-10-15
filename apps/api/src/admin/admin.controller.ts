@@ -447,6 +447,9 @@ export class AdminController {
 
   @Get("usage") usage() { return this.admin.usageBoard(); }
 
+  // RB6/RM12: platform storage overview (StoredFile registry).
+  @Get("storage-overview") storageOverview() { return this.admin.storageOverview(); }
+
   // AA7: AI usage drill-down — per org x feature (tokens/calls only).
   @Get("usage/ai-detail") usageAiDetail(@Query("days") days?: string, @Query("organizationId") organizationId?: string) {
     return this.admin.aiUsageDetail(days ? Number(days) : undefined, organizationId || undefined);

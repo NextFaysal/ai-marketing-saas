@@ -164,6 +164,11 @@ export default function ProductsPage() {
   const [pushBatchResult, setPushBatchResult] = useState<{ results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[]; enqueued: number } | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
+  // RM4: external product-image mirror run state.
+  const [mirrorBusy, setMirrorBusy] = useState(false);
+  // RB6b (plan D3): auto-mirror opt-out toggle (null = not loaded yet).
+  const [autoMirror, setAutoMirror] = useState<boolean | null>(null);
+  const [autoMirrorBusy, setAutoMirrorBusy] = useState(false);
   // Sales & Data S1: stock adjustment dialog (adjustment form + movement history).
   const [stockFor, setStockFor] = useState<ProductItem | null>(null);
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -227,6 +232,18 @@ export default function ProductsPage() {
   }, []);
 
   useEffect(() => { loadEcMeta(); }, [loadEcMeta]);
+
+  // RB6b: read the auto-mirror opt-out (default ON server-side).
+  const loadMirrorSetting = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const s = await apiFetch<{ productImageAutoMirror: boolean }>(`/organizations/${orgId}/products/images/mirror-setting`);
+      setAutoMirror(s.productImageAutoMirror);
+    } catch { /* the toggle simply stays hidden if the read fails */ }
+  }, []);
+
+  useEffect(() => { loadMirrorSetting(); }, [loadMirrorSetting]);
 
   async function onDuplicate(p: ProductItem) {
     const orgId = getOrganizationId();
@@ -310,6 +327,48 @@ export default function ProductsPage() {
       setPushBatchResult(result);
     } catch (e) { setPushMsg(e instanceof Error ? e.message : "স্টোরে পাঠানো ব্যর্থ হয়েছে"); }
     finally { setPushBusy(false); }
+  }
+
+  // RM4: copy external product-image URLs into the org's own
+  // storage. The summary (incl. failed hosts) goes through the
+  // page's existing notice/error banners.
+  async function onMirrorExternalImages() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setMirrorBusy(true); setError(""); setNotice("বাইরের ছবি নিজের স্টোরেজে কপি করা হচ্ছে…");
+    try {
+      const r = await apiFetch<{ scanned: number; mirrored: number; deduped: number; failed: { productId: string; host: string; reason: string }[]; reviews?: { scanned: number; mirrored: number; failed: number } }>(
+        `/organizations/${orgId}/products/images/mirror-external`,
+        { method: "POST" },
+      );
+      const hosts = Array.from(new Set(r.failed.map((f) => f.host).filter(Boolean)));
+      setNotice(
+        `ছবি মিরর শেষ: ${r.scanned}টি যাচাই, ${r.mirrored}টি নতুন কপি, ${r.deduped}টি আগের কপিই পুনঃব্যবহৃত` +
+        (r.failed.length ? `, ${r.failed.length}টি ব্যর্থ${hosts.length ? ` (host: ${hosts.join(", ")})` : ""} — কারণ: ${r.failed[0].reason}` : "") +
+        (r.reviews && r.reviews.scanned ? ` রিভিউ ছবি: ${r.reviews.scanned}টি যাচাই, ${r.reviews.mirrored}টি কপি, ${r.reviews.failed}টি ব্যর্থ।` : "।"),
+      );
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "ছবি মিরর ব্যর্থ হয়েছে"); }
+    finally { setMirrorBusy(false); }
+  }
+
+  // RB6b (plan D3): flip the auto-mirror opt-out. The scheduled
+  // sweep honours this; the manual button above does not.
+  async function onToggleAutoMirror(next: boolean) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setAutoMirrorBusy(true); setError("");
+    try {
+      const s = await apiFetch<{ productImageAutoMirror: boolean }>(
+        `/organizations/${orgId}/products/images/mirror-setting`,
+        { method: "PATCH", body: JSON.stringify({ productImageAutoMirror: next }) },
+      );
+      setAutoMirror(s.productImageAutoMirror);
+      setNotice(s.productImageAutoMirror
+        ? "অটো-মিরর চালু করা হয়েছে — শিডিউল করা Job চললে বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি হবে।"
+        : "অটো-মিরর বন্ধ করা হয়েছে — শিডিউল করা Job আর ছবি কপি করবে না (হাতে চালানো মিরর বোতাম আগের মতোই কাজ করবে)।");
+    } catch (e) { setError(e instanceof Error ? e.message : "অটো-মিরর সেটিং বদলানো যায়নি"); }
+    finally { setAutoMirrorBusy(false); }
   }
 
   const loadReport = useCallback(async () => {
@@ -796,6 +855,29 @@ export default function ProductsPage() {
           >
             🗂️ ক্যাটাগরি
           </button>
+          <button
+            onClick={onMirrorExternalImages}
+            disabled={mirrorBusy}
+            title="বাইরের হোস্টে থাকা পণ্যের ছবি নিজের স্টোরেজে (R2) কপি করুন"
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+          >
+            {mirrorBusy ? "🪞 মিরর চলছে…" : "🪞 ছবি নিজের স্টোরেজে নিন"}
+          </button>
+          {autoMirror !== null ? (
+            <label
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
+              title="চালু থাকলে শিডিউল করা Job বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি করে"
+            >
+              <input
+                type="checkbox"
+                checked={autoMirror}
+                disabled={autoMirrorBusy}
+                onChange={(e) => onToggleAutoMirror(e.target.checked)}
+                className="h-3.5 w-3.5 accent-indigo-600"
+              />
+              অটো-মিরর
+            </label>
+          ) : null}
           <button
             onClick={openCreateModal}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm transition-all"

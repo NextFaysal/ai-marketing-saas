@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ProductsService } from "./products.service";
-import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, PushBatchDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto } from "./products.dto";
+import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, PushBatchDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto, PresignProductImageDto, CompleteProductImageDto, PresignDigitalFileDto, CompleteDigitalFileDto, SetProductImageAutoMirrorDto } from "./products.dto";
 import { CurrentUser, AuthUser, Roles, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -64,6 +64,29 @@ export class ProductsController {
     return this.products.pushBatch(orgId, user.userId, dto.productIds);
   }
 
+  /** RM4: copy external product-image URLs into the org's own R2
+   * bucket (per-item results in the response, never all-or-
+   * nothing). Static segment — declared BEFORE :productId, and
+   * restricted to OWNER/ADMIN (it rewrites catalog data org-wide). */
+  @Post("images/mirror-external") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  mirrorExternalImages(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.products.mirrorExternalProductImages(orgId, user.userId);
+  }
+
+  /** RB6b (plan D3): auto-mirror opt-out — the scheduled
+   * product_image_mirror_sweep reads this; the manual endpoint
+   * above ignores it. Default (no stored row) is ON. Static
+   * segments, declared BEFORE :productId like mirror-external. */
+  @Get("images/mirror-setting") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  getMirrorSetting(@Param("organizationId") orgId: string) {
+    return this.products.getProductImageAutoMirror(orgId);
+  }
+
+  @Patch("images/mirror-setting") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  setMirrorSetting(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SetProductImageAutoMirrorDto) {
+    return this.products.setProductImageAutoMirror(orgId, user.userId, dto.productImageAutoMirror);
+  }
+
   @Get("categories")
   listCategories(@Param("organizationId") orgId: string) {
     return this.products.listCategories(orgId);
@@ -115,6 +138,36 @@ export class ProductsController {
   @Post(":productId/images") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   addImage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string, @Body() dto: AddProductImageDto) {
     return this.products.addImage(orgId, user.userId, id, dto);
+  }
+
+  /** RM4: direct-to-R2 upload, step 1 — validate the declared
+   * file and hand back a presigned PUT URL for the quarantine key. */
+  @Post(":productId/images/presign") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  presignImage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string, @Body() dto: PresignProductImageDto) {
+    return this.products.presignProductImage(orgId, user.userId, id, dto);
+  }
+
+  /** RM4: direct-to-R2 upload, step 2 — verify the landed bytes
+   * (HEAD size + magic-byte sniff) and turn them into a gallery
+   * image, or refuse and remove them. */
+  @Post(":productId/images/complete") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  completeImage(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string, @Body() dto: CompleteProductImageDto) {
+    return this.products.completeProductImage(orgId, user.userId, id, dto);
+  }
+
+  /** RB6/RM9: digital product file upload, step 1 — validate the
+   * declared file (size cap + executable-extension blocklist) and
+   * hand back a presigned PUT URL for a PRIVATE quarantine key. */
+  @Post(":productId/digital-file/presign") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  presignDigitalFile(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string, @Body() dto: PresignDigitalFileDto) {
+    return this.products.presignDigitalFile(orgId, user.userId, id, dto);
+  }
+
+  /** RB6/RM9: step 2 — HEAD-verify the landed bytes and make the
+   * object the product's hosted digital file (private bucket). */
+  @Post(":productId/digital-file/complete") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  completeDigitalFile(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string, @Body() dto: CompleteDigitalFileDto) {
+    return this.products.completeDigitalFile(orgId, user.userId, id, dto);
   }
 
   @Patch(":productId/images/reorder") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)

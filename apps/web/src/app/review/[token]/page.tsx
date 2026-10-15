@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { mediaSrc } from "@/lib/media-src";
 
 interface ReviewPageData {
   status: string;
@@ -58,7 +59,7 @@ export default function PublicReviewPage() {
     <main className="mx-auto max-w-xl space-y-5 p-6">
       <header>
         {data?.branding?.logoUrl ? (
-          <img src={`${API_URL}${data.branding.logoUrl}`} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
+          <img src={mediaSrc(API_URL, data.branding.logoUrl) ?? ""} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
         ) : null}
         <p className="mt-2 text-xs uppercase tracking-wide" style={accent ? { color: accent } : undefined}>
           {data?.branding?.name ?? data?.business ?? "রিভিউ"}

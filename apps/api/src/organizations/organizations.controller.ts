@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile, UseGuards } from "@nestjs/common";
-import { Request } from "express";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
+import { Request, Response } from "express";
 import { OrganizationsService } from "./organizations.service";
 import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UploadLogoDto } from "./organizations.dto";
 import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
@@ -198,7 +198,15 @@ export class PublicBrandingController {
 
   @Public()
   @Get(":organizationId/logo")
-  async logo(@Param("organizationId") id: string) {
+  async logo(@Param("organizationId") id: string, @Res({ passthrough: true }) res: Response) {
+    // RB4/RM5: CDN-era rows redirect to the stored absolute URL
+    // (one release of grace for anything still linking here);
+    // legacy rows stream bytes exactly as before.
+    const redirect = await this.orgs.logoRedirectUrl(id);
+    if (redirect) {
+      res.redirect(302, redirect);
+      return undefined;
+    }
     const logo = await this.orgs.publicLogo(id);
     if (!logo) throw new NotFoundException("No logo for this organization");
     return new StreamableFile(logo.bytes, { type: logo.contentType, disposition: "inline" });

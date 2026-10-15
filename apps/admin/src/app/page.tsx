@@ -17,6 +17,37 @@ interface Overview {
 interface SeriesMonth { month: string; collectedMinor: string; newOrgs: number; newUsers: number; newSubscriptions: number; orders: number; orderRevenueMinor: string }
 interface Series { months: SeriesMonth[] }
 
+/** RB6/RM12: platform storage overview (StoredFile registry). */
+interface StorageSplit { objects: number; bytes: string }
+interface StorageOverview {
+  mode: "s3" | "local"; registryAvailable: boolean;
+  totalObjects: number; totalBytes: string;
+  trashedObjects: number; trashedBytes: string;
+  byBucket: ({ bucket: string } & StorageSplit)[];
+  byVisibility: ({ visibility: string } & StorageSplit)[];
+  bySurface: ({ surface: string } & StorageSplit)[];
+  topOrgs: { organizationId: string; name: string | null; objects: number; bytes: string }[];
+  truncated: boolean;
+}
+
+/** Decimal-string bytes -> human size (registry sums are BigInt
+ *  strings; formatting must never go through a lossy Number for
+ *  the integer part — TB-scale tenants stay exact). */
+function formatBytes(bytes: string): string {
+  let v: bigint;
+  try { v = BigInt(bytes); } catch { return "—"; }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let u = 0;
+  let scaled = v;
+  while (scaled >= 1024n && u < units.length - 1) { scaled = scaled / 1024n; u += 1; }
+  if (u === 0) return `${v} B`;
+  // One decimal from the remainder, integer math only.
+  let rem = v;
+  for (let i = 0; i < u - 1; i += 1) rem = rem / 1024n;
+  const tenth = Number((rem % 1024n) * 10n / 1024n);
+  return `${scaled}.${tenth} ${units[u]}`;
+}
+
 /** ADX5: TODAY row config — one card per nav-counts field, each
  *  linking to its queue page. Same labels as the Attention Bell. */
 const TODO_ROWS: Record<keyof NavCounts, { label: string; href: string; hint: string }> = {
@@ -41,6 +72,7 @@ export default function OverviewPage() {
   const [dbOk, setDbOk] = React.useState<boolean | null>(null);
   const [error, setError] = React.useState("");
   const [series, setSeries] = React.useState<Series | null>(null);
+  const [storage, setStorage] = React.useState<StorageOverview | null>(null);
   const counts = useNavCounts();
   // ADX12: the load is a named callback so the error state can
   // offer a real retry (before, an overview failure was terminal
@@ -52,6 +84,9 @@ export default function OverviewPage() {
     // ADX5 comparison source: M37's monthly buckets. Failure simply
     // means no previous-month reference is shown (never invented).
     apiFetch<Series>("/admin/analytics/series?months=3").then(setSeries).catch(() => setSeries(null));
+    // RM12 storage card: a failed/absent registry simply hides
+    // the card — storage numbers are never invented.
+    apiFetch<StorageOverview>("/admin/storage-overview").then(setStorage).catch(() => setStorage(null));
   }, []);
   React.useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -144,6 +179,59 @@ export default function OverviewPage() {
           ))}
         </div>
       )}
+
+      {/* RB6/RM12: Storage card — StoredFile registry totals.
+          Hidden entirely when the overview cannot be loaded. */}
+      {storage && storage.registryAvailable ? (
+        <div className="acard mt-5">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="font-semibold">🗄️ মিডিয়া স্টোরেজ</div>
+            {storage.mode === "s3" ? (
+              <span className="abadge-green">● Cloudflare R2 (Object Storage)</span>
+            ) : (
+              <span className="abadge-amber">● Local Disk — Redeploy-এ ঝুঁকি</span>
+            )}
+            {storage.truncated ? <span className="abadge-slate">আংশিক হিসাব (cap)</span> : null}
+            <span className="ml-auto text-xs text-slate-500">সূত্র: StoredFile রেজিস্ট্রি</span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">মোট ফাইল</div>
+              <div className="mt-1 text-[22px] font-bold leading-none">{storage.totalObjects.toLocaleString()}</div>
+              <div className="mt-1.5 text-xs text-slate-500">মোট {formatBytes(storage.totalBytes)}</div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Public / Private</div>
+              <div className="mt-1 text-sm text-slate-300">
+                {storage.byVisibility.map((v) => (
+                  <div key={v.visibility} className="flex justify-between gap-2 py-0.5">
+                    <span className="text-slate-400">{v.visibility === "public" ? "Public" : "Private"}</span>
+                    <span>{v.objects.toLocaleString()}টি · {formatBytes(v.bytes)}</span>
+                  </div>
+                ))}
+                {storage.byVisibility.length === 0 ? <span className="text-slate-500">কোনো ফাইল নেই</span> : null}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">শীর্ষ Organization</div>
+              <div className="mt-1 text-sm text-slate-300">
+                {storage.topOrgs.slice(0, 5).map((o) => (
+                  <div key={o.organizationId} className="flex justify-between gap-2 py-0.5">
+                    <span className="min-w-0 truncate text-slate-400">{o.name ?? o.organizationId.slice(0, 8)}</span>
+                    <span className="shrink-0">{formatBytes(o.bytes)}</span>
+                  </div>
+                ))}
+                {storage.topOrgs.length === 0 ? <span className="text-slate-500">কোনো ডেটা নেই</span> : null}
+              </div>
+            </div>
+          </div>
+          {storage.trashedObjects > 0 ? (
+            <div className="mt-3 border-t border-slate-800 pt-2.5 text-xs text-slate-500">
+              ট্র্যাশে {storage.trashedObjects.toLocaleString()}টি ফাইল ({formatBytes(storage.trashedBytes)}) — retention শেষ হলে Lifecycle Sweep আসলেই মুছবে।
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         {/* Recent admin activity — timeline */}

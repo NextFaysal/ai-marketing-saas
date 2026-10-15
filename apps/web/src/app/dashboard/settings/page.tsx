@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL } from "@/lib/api";
+import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
@@ -105,7 +106,7 @@ function BrandingCard() {
               <div className="mb-1 text-xs font-medium text-slate-500">লোগো (PNG/JPEG/WebP, সর্বোচ্চ ১.৫ MB)</div>
               <div className="flex items-center gap-3">
                 {org.logoUrl
-                  ? <img src={`${API_URL}${org.logoUrl}`} alt="লোগো" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
+                  ? <img src={mediaSrc(API_URL, org.logoUrl) ?? ""} alt="লোগো" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
                   : <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl font-black text-white">Q</span>}
                 <div className="space-y-2">
                   <label className="btn-secondary btn-sm cursor-pointer">

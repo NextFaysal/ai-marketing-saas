@@ -4,6 +4,7 @@ import { formatMinor } from "@repo/contracts";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { WishlistHeart } from "./WishlistHeart";
+import { MediaImage } from "@/components/media-image";
 
 export function priceText(minor: string): string {
   try {
@@ -32,8 +33,7 @@ export function ProductCard({ orgSlug, product, locale = "bn" }: { orgSlug: stri
   const inner = (
     <>
       {product.imageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={product.imageUrl} alt={product.name} className="aspect-square w-full object-cover" />
+        <MediaImage src={product.imageUrl} alt={product.name} width={640} height={640} sizes="(max-width: 768px) 50vw, 320px" className="aspect-square w-full object-cover" />
       ) : (
         <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-5xl">📦</div>
       )}

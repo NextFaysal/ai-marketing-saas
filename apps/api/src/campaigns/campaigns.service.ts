@@ -10,6 +10,7 @@ import { MetaPublishClient } from "./meta-publish.client";
 import { computeCreativeLeaderboard } from "../ads/creative-fatigue";
 import { policyFindingsForText } from "./policy-check";
 import { LlmFactory } from "../ai/llm/llm.factory";
+import { PublicMediaService } from "../storage/public-media.service";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
 
 export const OBJECTIVES = ["OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS"] as const;
@@ -61,6 +62,9 @@ export class CampaignsService implements OnModuleInit {
     // with three arguments keep working; the studio methods
     // refuse honestly when it is absent).
     @Optional() private readonly audiences?: AudiencesService,
+    // RB4/RM8: CDN URL preference for library-asset variants.
+    // LAST param + Optional, same discipline as audiences.
+    @Optional() private readonly publicMedia?: PublicMediaService,
   ) {}
 
   /** CB5: scheduled-launch scan tick (leader-claimed,
@@ -2235,9 +2239,32 @@ export class CampaignsService implements OnModuleInit {
         throw new BadRequestException("A video from the Social/Studio library cannot run as a Meta video ad directly — Meta needs a video uploaded through the Creative Library (which creates its Meta video id). Upload it there, then make the variant from the creative asset.");
       }
       if (!asset.publicToken) throw new BadRequestException("This media asset has no public link token — Meta could not fetch the image. Re-import it from the Social library so it carries a public URL.");
-      const apiBase = process.env.API_PUBLIC_URL?.replace(/\/$/, "");
-      if (!apiBase) throw new BadRequestException("API_PUBLIC_URL is not configured on this deployment — Meta could not fetch the media image, so the variant was not created");
-      const imageUrl = `${apiBase}/public/media/${asset.publicToken}`;
+      // RB4/RM8 item 6: prefer the CDN URL when the public-media
+      // helper can ensure one (object storage on; the bytes are
+      // copied to the public bucket first). The token above stays
+      // the gate — an asset the tenant never made public is never
+      // exposed via the CDN either. Helper null (local mode, copy
+      // failure) keeps the CN5 behaviour below exactly.
+      let imageUrl: string | null = null;
+      if (this.publicMedia && asset.storageKey) {
+        imageUrl = await this.publicMedia
+          .resolvePublicMediaUrl(
+            {
+              organizationId,
+              storageKey: asset.storageKey,
+              contentType: asset.contentType,
+              sizeBytes: asset.sizeBytes,
+              createdById: asset.createdById ?? null,
+            },
+            "social",
+          )
+          .catch(() => null);
+      }
+      if (!imageUrl) {
+        const apiBase = process.env.API_PUBLIC_URL?.replace(/\/$/, "");
+        if (!apiBase) throw new BadRequestException("API_PUBLIC_URL is not configured on this deployment — Meta could not fetch the media image, so the variant was not created");
+        imageUrl = `${apiBase}/public/media/${asset.publicToken}`;
+      }
       variant = await (this.prisma as any).campaignAd.create({ data: { ...base, name: dto.name ?? `${src.name} — Variant (${asset.name})`, format: "link", imageUrl, imageAssetId: null, videoAssetId: null, carouselCards: undefined } });
     }
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.ad_variant_created", entityType: "CampaignAd", entityId: variant.id, metadata: { sourceAdId: adId, creativeAssetId: dto.creativeAssetId ?? null, mediaAssetId: dto.mediaAssetId ?? null } }).catch(() => undefined);

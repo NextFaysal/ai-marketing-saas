@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
+import { storedAssetPublicUrl } from "../storage/media-url";
 
 /** Converts SVG bytes to PNG bytes (the real implementation is sharp). */
 export type SvgToPngConverter = (svgBytes: Buffer) => Promise<Buffer>;
@@ -55,7 +56,7 @@ export class SocialRasterService {
     return {
       id: row.id, kind: row.kind, name: row.name, contentType: row.contentType,
       sizeBytes: row.sizeBytes, createdAt: row.createdAt,
-      publicUrl: row.publicToken ? `/public/media/${row.publicToken}` : null,
+      publicUrl: storedAssetPublicUrl(row),
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
       derivedFromId: row.derivedFromId ?? null,

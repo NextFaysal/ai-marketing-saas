@@ -10,6 +10,7 @@ import { SocialOAuthService } from "./social-oauth.service";
 import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
 import { LinkedInClient } from "./linkedin.client";
+import { PublicMediaService } from "../storage/public-media.service";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -81,6 +82,7 @@ export class SocialPublishService {
   private readonly linkedinClient: LinkedInClient;
   private readonly raster: SocialRasterService;
   private readonly links?: SocialLinkService;
+  private readonly publicMedia?: PublicMediaService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -98,8 +100,12 @@ export class SocialPublishService {
     // SU6: tracked-link builder. LAST param + Optional so every
     // existing positional spec construction keeps working.
     @Optional() links?: SocialLinkService,
+    // RB4/RM5: public-bucket ensure + CDN URL for publish.
+    // LAST param + Optional, same discipline as links.
+    @Optional() publicMedia?: PublicMediaService,
   ) {
     this.links = links;
+    this.publicMedia = publicMedia;
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -382,6 +388,28 @@ export class SocialPublishService {
     }
     if (!token) {
       throw new PermanentPublishError("মিডিয়ার Public লিংক তৈরি করা যায়নি — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+    }
+    // RB4/RM5 (+ item 4 — video delivery rides the same helper):
+    // with object storage on, platforms fetch the asset from the
+    // CDN URL; the helper ensures the bytes are in the public
+    // bucket first and returns null on any doubt, in which case
+    // the SP1 API-stream URL below stands exactly as before.
+    // Range requests for video are served by Cloudflare/R2 on
+    // the CDN path.
+    if (this.publicMedia && asset.storageKey) {
+      const cdnUrl = await this.publicMedia
+        .resolvePublicMediaUrl(
+          {
+            organizationId: post.organizationId,
+            storageKey: asset.storageKey,
+            contentType: asset.contentType,
+            sizeBytes: asset.sizeBytes,
+            createdById: asset.createdById ?? null,
+          },
+          "social",
+        )
+        .catch(() => null);
+      if (cdnUrl) return cdnUrl;
     }
     return `${this.apiBase()}/public/media/${token}`;
   }

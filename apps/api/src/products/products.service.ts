@@ -65,6 +65,27 @@ import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 
+/** RM4: direct product-image upload limits. 10 MB matches the
+ * mirror's fetch cap; the type list is what the presign step
+ * accepts — the complete step then proves the real bytes against
+ * it by magic-byte sniff, so this list is a gate, not a trust. */
+export const PRODUCT_IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+export const PRODUCT_IMAGE_UPLOAD_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+/** RB6/RM9: digital product file upload (private bucket). A
+ * digital file can be almost anything a buyer downloads — ebook,
+ * archive, audio, software — so there is NO content-type list and
+ * NO magic-byte sniff; the gates are the size cap and an
+ * executable-extension blocklist (a hosted .exe/.sh/.html served
+ * back under our domain would be a malware/phishing vector). */
+export const DIGITAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
+/** At or below this size complete() reads the bytes back and
+ * records a real sha256 in the registry; above it the registry
+ * row honestly carries sha256 = null (HEAD size is still
+ * verified) instead of buffering a 100 MB file in API memory. */
+export const DIGITAL_FILE_SHA_MAX_BYTES = 10 * 1024 * 1024;
+export const DIGITAL_FILE_BLOCKED_EXTENSIONS = ["exe", "bat", "sh", "js", "html"] as const;
+
 /** EC23: a tax rate is basis points — integer 0..10000 or null. */
 export function validateTaxRateBps(v: unknown): number | null {
   if (v === undefined || v === null) return null;
@@ -130,7 +151,12 @@ function slugify(text: string): string {
 import { IntegrationsService } from "../integrations/integrations.service";
 import { EventsService } from "../common/events.service";
 import { PublicCheckoutOrderDto } from "./products.dto";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { StorageService } from "../storage/storage.service";
+import { StorageRegistryService } from "../storage/storage-registry.service";
+import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
+import { detectMediaKind } from "../inbox/media-sniff";
+import { ProductImageMirrorService } from "./product-image-mirror.service";
 
 @Injectable()
 export class ProductsService {
@@ -174,6 +200,14 @@ export class ProductsService {
     // positionally (the INT5 note above still holds), and the
     // SU5 events slot (8) is preserved; the stamp never throws.
     @Optional() private readonly affiliates?: AffiliatesService,
+    // RM4 (slots 11–13): the R2 storage layer for direct product
+    // image uploads + the external-URL mirror. LAST params +
+    // Optional, same discipline as every slot above — positional
+    // spec constructions without them keep working and the upload
+    // endpoints refuse honestly when storage is not wired.
+    @Optional() private readonly storage?: StorageService,
+    @Optional() private readonly storageRegistry?: StorageRegistryService,
+    @Optional() private readonly imageMirror?: ProductImageMirrorService,
   ) {}
 
   // ---------- EC3 shared helpers ----------
@@ -1356,6 +1390,19 @@ export class ProductsService {
     const before = await this.loadImages(productId);
     const wasFirst = before.length > 0 && before[0].id === imageId;
     await table.delete({ where: { id: imageId } });
+    // RM4: when the deleted row pointed at OUR CDN, flip its
+    // StoredFile registry row to trashed so storage accounting
+    // stops counting it. The object itself is deliberately NOT
+    // deleted here — object deletion + the trash-retention window
+    // belong to RM11's lifecycle job (another surface may still
+    // hold the same URL until then). External URLs have no
+    // registry row; the org-guarded update is then a plain no-op.
+    const deletedCdnKey = mediaKeyFromCdnUrl(image.url);
+    if (deletedCdnKey && this.storageRegistry) {
+      await this.storageRegistry
+        .markTrashed(organizationId, deletedCdnKey)
+        .catch(() => undefined);
+    }
     const remaining = await this.loadImages(productId);
     // Re-index positions contiguously after a removal.
     for (let idx = 0; idx < remaining.length; idx++) {
@@ -1374,6 +1421,323 @@ export class ProductsService {
       this.catalogPush!.enqueueForProductChange(organizationId, productId),
     );
     return { deleted: true, productId, imageId };
+  }
+
+  // ---------- RM4: direct-to-R2 product image upload ----------
+  //
+  // The plan §1.3 flow, product surface: presign (this service
+  // validates + hands out a quarantine PUT URL) -> the browser PUTs
+  // the bytes straight to R2 -> complete (HEAD size check, magic-
+  // byte sniff, copy to the immutable final key, StoredFile
+  // registration, gallery row through the SAME addImage path as
+  // URL-added images so the position-0 cover mirror rule is
+  // identical). Any failure after the bytes landed removes the
+  // objects it created and creates no row — never a partial state.
+
+  private productImageStorageOr400(): StorageService {
+    if (!this.storage || this.storage.mode !== "s3") {
+      throw new BadRequestException(
+        "সরাসরি ছবি আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি। আপাতত URL দিয়ে ছবি যোগ করুন।",
+      );
+    }
+    return this.storage;
+  }
+
+  private normalizeUploadType(contentType: unknown): string {
+    const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
+    if (!(PRODUCT_IMAGE_UPLOAD_CONTENT_TYPES as readonly string[]).includes(ct)) {
+      throw new BadRequestException("শুধু PNG, JPEG অথবা WebP ছবি আপলোড করা যাবে।");
+    }
+    return ct;
+  }
+
+  private normalizeUploadSize(sizeBytes: unknown): number {
+    const size = Number(sizeBytes);
+    if (!Number.isInteger(size) || size < 1) {
+      throw new BadRequestException("ছবির আকার (sizeBytes) সঠিক নয়।");
+    }
+    if (size > PRODUCT_IMAGE_UPLOAD_MAX_BYTES) {
+      throw new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ১০ MB পর্যন্ত আপলোড করা যাবে।");
+    }
+    return size;
+  }
+
+  async presignProductImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { fileName?: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const contentType = this.normalizeUploadType(dto?.contentType);
+    const sizeBytes = this.normalizeUploadSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    // Plan §1.2: uploads land in quarantine first; nothing under a
+    // final key exists until complete() has sniffed the real bytes.
+    const key = `_quarantine/${organizationId}/product/${randomUUID()}`;
+    const uploadUrl = storage.presignedPutUrl("public", key);
+    if (!uploadUrl) {
+      // mode was s3 at the check above, so this should not happen —
+      // but a null URL must never be dressed up as a real one.
+      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+    }
+    void actorId;
+    return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
+  }
+
+  async completeProductImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { key: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const contentType = this.normalizeUploadType(dto?.contentType);
+    const sizeBytes = this.normalizeUploadSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = String(dto?.key ?? "");
+    const quarantinePrefix = `_quarantine/${organizationId}/product/`;
+    if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
+      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+    }
+    const dropQuarantine = () => storage.delete("public", key).catch(() => undefined);
+
+    const head = await storage.head("public", key).catch(() => null);
+    if (!head) {
+      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+    }
+    if (head.sizeBytes !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+    }
+    const bytes = await storage.get("public", key).catch(() => null);
+    if (!bytes || bytes.length !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+    }
+    // Magic bytes decide, never the declaration (media-sniff
+    // discipline, same as inbox uploads and the PP3 import).
+    const detected = detectMediaKind(bytes);
+    if (!detected || detected.kind !== "image" || detected.contentType !== contentType) {
+      await dropQuarantine();
+      const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
+      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+    }
+
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const finalKey = `${organizationId}/product/${productId}/${randomUUID()}.${imageExtForContentType(detected.contentType)}`;
+    let registered = false;
+    try {
+      await storage.copy({ visibility: "public", key }, { visibility: "public", key: finalKey });
+      if (this.storageRegistry) {
+        await this.storageRegistry.register({
+          organizationId,
+          bucket: storage.bucketFor("public"),
+          key: finalKey,
+          visibility: "public",
+          surface: "product",
+          contentType: detected.contentType,
+          sizeBytes: bytes.length,
+          sha256,
+          status: "active",
+          createdById: actorId,
+          sourceRef: `product:${productId}`,
+        });
+        registered = true;
+      }
+      // The gallery row goes through addImage unchanged: same
+      // position rule (appended last) and the same position-0
+      // cover mirror into Product.imageUrl as URL-added images.
+      const image = await this.addImage(organizationId, actorId, productId, {
+        url: publicMediaUrl(finalKey),
+      });
+      await dropQuarantine();
+      return image;
+    } catch (e) {
+      // No partial state: whatever this completion created (final
+      // object, registry row) is undone before the error surfaces.
+      await storage.delete("public", finalKey).catch(() => undefined);
+      if (registered && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, finalKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      throw e;
+    }
+  }
+
+  // ---------- RB6/RM9: digital product file (private R2) -------
+  //
+  // The plan §1.3 flow on the PRIVATE bucket: presign a quarantine
+  // PUT -> the browser uploads straight to R2 -> complete HEAD-
+  // verifies the size, hashes small files, copies to the final
+  // key {orgId}/digital/{productId}/{uuid}.{ext} and points
+  // Product.digitalStorageKey at it (flipping `digital` on: a
+  // hosted file IS the digital product). The merchant-hosted
+  // digitalFileUrl stays untouched as the alternative; at reveal
+  // time (storefront digitalAccess) the R2 file wins and the
+  // buyer receives a 300-second presigned GET — the object is
+  // never public and no byte ever passes through this API.
+  // Replacing a file trashes the previous registry row (the
+  // object itself is RM11's lifecycle delete) but never deletes
+  // it inline, so a buyer mid-download is never cut off.
+
+  private normalizeDigitalFileName(fileName: unknown): { fileName: string; ext: string } {
+    const name = String(fileName ?? "").trim();
+    const base = name.split(/[\\/]/).pop() ?? "";
+    const dot = base.lastIndexOf(".");
+    const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+    if (!base || !ext) {
+      throw new BadRequestException("ফাইলের নামে এক্সটেনশন থাকতে হবে (যেমন .pdf, .zip)।");
+    }
+    if ((DIGITAL_FILE_BLOCKED_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new BadRequestException(`.${ext} ফাইল আপলোড করা যাবে না — নিরাপত্তার কারণে executable ফাইল (exe/bat/sh/js/html) নিষিদ্ধ।`);
+    }
+    return { fileName: base, ext };
+  }
+
+  private normalizeDigitalSize(sizeBytes: unknown): number {
+    const size = Number(sizeBytes);
+    if (!Number.isInteger(size) || size < 1) {
+      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+    }
+    if (size > DIGITAL_FILE_MAX_BYTES) {
+      throw new BadRequestException("ফাইলটি অনেক বড় — সর্বোচ্চ ১০০ MB পর্যন্ত আপলোড করা যাবে।");
+    }
+    return size;
+  }
+
+  async presignDigitalFile(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { fileName?: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const { fileName } = this.normalizeDigitalFileName(dto?.fileName);
+    const sizeBytes = this.normalizeDigitalSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = `_quarantine/${organizationId}/digital/${randomUUID()}`;
+    const uploadUrl = storage.presignedPutUrl("private", key);
+    if (!uploadUrl) {
+      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+    }
+    void actorId;
+    return { uploadUrl, key, fileName, sizeBytes, expiresInSeconds: 600 };
+  }
+
+  async completeDigitalFile(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { key: string; fileName?: string; sizeBytes: number },
+  ) {
+    const product = await this.getProductOr404(organizationId, productId);
+    const { ext } = this.normalizeDigitalFileName(dto?.fileName);
+    const sizeBytes = this.normalizeDigitalSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = String(dto?.key ?? "");
+    const quarantinePrefix = `_quarantine/${organizationId}/digital/`;
+    if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
+      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+    }
+    const dropQuarantine = () => storage.delete("private", key).catch(() => undefined);
+
+    const head = await storage.head("private", key).catch(() => null);
+    if (!head) {
+      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+    }
+    if (head.sizeBytes !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+    }
+    // Small files are read back for a REAL sha256 (the registry
+    // must be able to prove what was hosted); large files skip
+    // the read — sha256 stays null, documented in RM9's limits.
+    let sha256: string | null = null;
+    if (sizeBytes <= DIGITAL_FILE_SHA_MAX_BYTES) {
+      const bytes = await storage.get("private", key).catch(() => null);
+      if (!bytes || bytes.length !== sizeBytes) {
+        await dropQuarantine();
+        throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+      }
+      sha256 = createHash("sha256").update(bytes).digest("hex");
+    }
+    const contentType = head.contentType || "application/octet-stream";
+    const finalKey = `${organizationId}/digital/${productId}/${randomUUID()}.${ext}`;
+    let registered = false;
+    try {
+      await storage.copy({ visibility: "private", key }, { visibility: "private", key: finalKey });
+      if (this.storageRegistry) {
+        await this.storageRegistry.register({
+          organizationId,
+          bucket: storage.bucketFor("private"),
+          key: finalKey,
+          visibility: "private",
+          surface: "digital",
+          contentType,
+          sizeBytes,
+          sha256,
+          status: "active",
+          createdById: actorId,
+          sourceRef: `product:${productId}`,
+        });
+        registered = true;
+      }
+      const previousKey = (product as any).digitalStorageKey as string | null | undefined;
+      const updated = await (this.prisma as any).product.update({
+        where: { id: productId },
+        data: { digitalStorageKey: finalKey, digital: true },
+      });
+      if (previousKey && previousKey !== finalKey && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, previousKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      await this.audit.log({
+        organizationId, userId: actorId, action: "product.digital_file.upload",
+        entityType: "Product", entityId: productId,
+        metadata: { key: finalKey, sizeBytes, sha256 },
+      });
+      return {
+        productId, digital: true, digitalStorageKey: finalKey, sizeBytes, sha256,
+        product: updated,
+      };
+    } catch (e) {
+      await storage.delete("private", finalKey).catch(() => undefined);
+      if (registered && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, finalKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      throw e;
+    }
+  }
+
+  /** RM4 facade for the external-URL mirror (the work lives in
+   * ProductImageMirrorService; this keeps the controller's single
+   * service dependency, matching the rest of the controller). */
+  async mirrorExternalProductImages(organizationId: string, actorId: string) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return this.imageMirror.mirrorExternalImages(organizationId, actorId);
+  }
+
+  /** RB6b (plan D3): the auto-mirror opt-out — read side. The
+   * scheduled sweep honours it; the manual endpoint above does
+   * not (an explicit owner click is not "automatic"). */
+  async getProductImageAutoMirror(organizationId: string) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return { productImageAutoMirror: await this.imageMirror.autoMirrorEnabled(organizationId) };
+  }
+
+  /** RB6b (plan D3): the auto-mirror opt-out — write side
+   * (OWNER/ADMIN at the controller). */
+  async setProductImageAutoMirror(organizationId: string, actorId: string, enabled: boolean) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return this.imageMirror.setAutoMirrorEnabled(organizationId, enabled, actorId);
   }
 
   // ---------- EC3: categories & tags ----------

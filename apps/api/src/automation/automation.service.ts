@@ -38,6 +38,8 @@ import { WalletService } from "../connections/wallet.service";
 import { FulfillmentExcellenceService } from "../fulfillment/fulfillment-excellence.service";
 import { OrderAutomationService } from "../order-automation/order-automation.service";
 import { OrderAnalyticsService } from "../orders/order-analytics.service";
+import { MediaLifecycleService } from "../storage/media-lifecycle.service";
+import { ProductImageMirrorService } from "../products/product-image-mirror.service";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
@@ -80,6 +82,16 @@ export const JOB_TYPES = [
   // ON9: daily owner order digest (yesterday's figures by email;
   // SMS only when a real owner phone is on record).
   "owner_order_digest",
+  // RB6/RM11: media lifecycle sweep (trash purge past retention,
+  // abandoned _quarantine cleanup, orphan report, R2 backup when
+  // configured). Platform-level work like audit_retention — the
+  // job row's org is only the scheduler tenant.
+  "media_lifecycle_sweep",
+  // RB6b (plan D3/RM4): per-org automatic mirror of external
+  // product + review images into the org's own R2 bucket. Honours
+  // the org's auto-mirror opt-out (OrgFeatureFlag
+  // product_image_auto_mirror; default ON).
+  "product_image_mirror_sweep",
 ] as const;
 
 
@@ -132,6 +144,10 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতি ঘণ্টায়: সব Published Campaign Plan-এর Meta Status Sync হবে — Meta-তে বাইরে থেকে বদলালে এখানেও তা মিলে যাবে।" },
   { key: "audience_refresh", name: "Audience Refresh (টেমপ্লেট)", type: "audience_refresh", targetKind: "org", intervalMinutes: 360,
     descriptionBn: "প্রতি ৬ ঘণ্টায়: সব Audience-এর সদস্য তালিকা হালনাগাদ ডেটা দিয়ে Refresh হবে।" },
+  { key: "media_lifecycle_sweep", name: "Media Lifecycle Sweep (টেমপ্লেট)", type: "media_lifecycle_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: মিডিয়া লাইব্রেরির মেয়াদ-শেষ ট্র্যাশ আসলেই মোছা হবে, অসম্পূর্ণ আপলোডের পুরনো quarantine ফাইল পরিষ্কার হবে, হারানো/অনাথ ফাইলের রিপোর্ট তৈরি হবে, আর backup bucket সেট থাকলে registry স্ন্যাপশট ও নতুন প্রাইভেট ফাইলের কপি যাবে।" },
+  { key: "product_image_mirror_sweep", name: "Product Image Auto-Mirror (টেমপ্লেট)", type: "product_image_mirror_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: বাইরের হোস্টে থাকা প্রোডাক্ট ও রিভিউ ছবিগুলো নিজের Cloudflare R2 স্টোরেজে কপি হয়ে যাবে — বাইরের হোস্ট বন্ধ হলেও দোকানের ছবি অক্ষত থাকবে। পণ্য সেটিংসে অটো-মিরর বন্ধ করা থাকলে এই Job কিছুই করবে না।" },
   { key: "audit_retention", name: "Audit Retention (টেমপ্লেট)", type: "audit_retention", targetKind: "org", intervalMinutes: 10080,
     descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।" },
   { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
@@ -287,6 +303,15 @@ export class AutomationService implements OnModuleInit {
     @Optional() private readonly connectionMonitor?: ConnectionMonitorService,
     // CC26: wallet payout sweep — same module, same reasoning.
     @Optional() private readonly wallet?: WalletService,
+    // RB6/RM11: media lifecycle sweep — StorageModule imports
+    // nothing from AutomationModule (Prisma/Audit are global),
+    // so this adds no cycle.
+    @Optional() private readonly mediaLifecycle?: MediaLifecycleService,
+    // RB6b: product/review image auto-mirror — ProductsModule's
+    // import closure does not reach AutomationModule (verified),
+    // so this adds no cycle. Appended LAST so positional spec
+    // constructions keep their meaning.
+    @Optional() private readonly productImageMirror?: ProductImageMirrorService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -819,6 +844,8 @@ export class AutomationService implements OnModuleInit {
         return this.campaigns.applyDayparting(orgId, actor);
       }
       case "audit_retention": return this.runAuditRetention();
+      case "media_lifecycle_sweep": return this.mediaLifecycle ? this.mediaLifecycle.runSweep() : { skipped: "media lifecycle unavailable" };
+      case "product_image_mirror_sweep": return this.productImageMirror ? this.productImageMirror.runAutoMirror(orgId, actor) : { skipped: "product image mirror unavailable" };
       case "sync_outbox": return this.outbox ? this.outbox.processDueForOrg(orgId) : { skipped: "sync outbox unavailable" };
       case "sale_schedule": return this.catalogPush ? this.catalogPush.processSaleBoundariesForOrg(orgId) : { skipped: "catalog push unavailable" };
       case "commerce_subscription_sweep": return this.commerceSubscriptions ? this.commerceSubscriptions.runDueForOrg(orgId) : { skipped: "commerce subscriptions unavailable" };

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
+import { mediaSrc } from "@/lib/media-src";
 
 interface Report {
   kind?: string;
@@ -57,7 +58,7 @@ export default function PublicReportPage() {
             + brand name lead; the legal business name stays as the
             small line so the report's owner is never ambiguous. */}
         {report?.branding?.logoUrl ? (
-          <img src={`${API_URL}${report.branding.logoUrl}`} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
+          <img src={mediaSrc(API_URL, report.branding.logoUrl) ?? ""} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
         ) : null}
         <p className="mt-2 text-xs uppercase tracking-wide" style={accent ? { color: accent } : undefined}>
           {report?.branding?.name ?? report?.business ?? "Campaign Report"}

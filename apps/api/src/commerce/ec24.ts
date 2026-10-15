@@ -140,10 +140,15 @@ export function selectWholesaleTier(tiers: unknown, qty: number): WholesaleTier 
  * against the EFFECTIVE (merged) product state so an update that
  * only flips one flag still validates against stored values. */
 export function assertEc24Conditionals(effective: {
-  digital?: unknown; digitalFileUrl?: unknown;
+  digital?: unknown; digitalFileUrl?: unknown; digitalStorageKey?: unknown;
   subscriptionEnabled?: unknown; subscriptionIntervalDays?: unknown;
 }): void {
-  if (effective.digital && !String(effective.digitalFileUrl ?? "").trim()) {
+  // RB6/RM9: an R2-hosted file (digitalStorageKey) satisfies the
+  // "a digital product must have a file" rule exactly like the
+  // merchant-hosted URL does — the effective state carries the
+  // stored key, so later unrelated edits of an R2-backed digital
+  // product keep validating.
+  if (effective.digital && !String(effective.digitalFileUrl ?? "").trim() && !String(effective.digitalStorageKey ?? "").trim()) {
     throw new BadRequestException("ডিজিটাল পণ্য চালু করতে ফাইল URL আবশ্যক");
   }
   if (effective.subscriptionEnabled && !(Number(effective.subscriptionIntervalDays) >= 1)) {

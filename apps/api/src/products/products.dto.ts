@@ -111,6 +111,43 @@ export class AddProductImageDto {
 export class ReorderProductImagesDto {
   @IsArray() @IsString({ each: true }) imageIds!: string[];
 }
+/** RM4: step 1 of the direct-to-R2 upload — declare the file;
+ * the service validates type/size and returns a presigned PUT. */
+export class PresignProductImageDto {
+  @IsString() @MaxLength(255) fileName!: string;
+  @IsString() @MaxLength(100) contentType!: string;
+  @IsInt() @Min(1) sizeBytes!: number;
+}
+/** RM4: step 2 — the browser has PUT the bytes to the quarantine
+ * key; the service verifies HEAD size + magic bytes before the
+ * object becomes a gallery image. */
+export class CompleteProductImageDto {
+  @IsString() @MaxLength(500) key!: string;
+  @IsString() @MaxLength(100) contentType!: string;
+  @IsInt() @Min(1) sizeBytes!: number;
+}
+/** RB6b (plan D3): the auto-mirror opt-out toggle. True = the
+ * scheduled sweep mirrors external product/review images for
+ * this org (the default); false = the org opted out. */
+export class SetProductImageAutoMirrorDto {
+  @IsBoolean() productImageAutoMirror!: boolean;
+}
+/** RB6/RM9: step 1 of the digital-file upload — the merchant
+ * names the file; the service refuses executable extensions and
+ * hands back a presigned PUT URL for a PRIVATE quarantine key. */
+export class PresignDigitalFileDto {
+  @IsString() @MaxLength(255) fileName!: string;
+  @IsString() @MaxLength(100) contentType!: string;
+  @IsInt() @Min(1) sizeBytes!: number;
+}
+/** RB6/RM9: step 2 — the bytes are in quarantine; the service
+ * HEAD-verifies the size (and hashes small files) before the
+ * object becomes the product's hosted digital file. */
+export class CompleteDigitalFileDto {
+  @IsString() @MaxLength(500) key!: string;
+  @IsString() @MaxLength(255) fileName!: string;
+  @IsInt() @Min(1) sizeBytes!: number;
+}
 export class AddBundleItemDto {
   @IsString() componentProductId!: string;
   @IsOptional() @IsString() componentVariantId?: string | null;

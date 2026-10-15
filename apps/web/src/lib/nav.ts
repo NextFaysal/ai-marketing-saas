@@ -23,6 +23,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Campaigns", href: "/dashboard/campaigns", icon: "🚀", ready: true },
   { label: "Social Posts", href: "/dashboard/social-posts", icon: "📣", ready: true },
   { label: "Creatives", href: "/dashboard/creatives", icon: "🎨", ready: true },
+  { label: "Media Library", href: "/dashboard/media-library", icon: "🗂️", ready: true },
   { label: "Audiences", href: "/dashboard/audiences", icon: "👥", ready: true },
   { label: "Campaign Builder", href: "/dashboard/campaign-builder", icon: "⚡", ready: true },
   { label: "AI Creative Studio", href: "/dashboard/creative-studio", icon: "🪄", ready: true },

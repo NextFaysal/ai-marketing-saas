@@ -157,6 +157,7 @@ model Organization {
   mediaFolders   MediaFolder[]
   socialContentPlans SocialContentPlan[]
   mediaAssets    MediaAsset[]
+  storedFiles    StoredFile[]
   dailyAdMetrics DailyAdMetric[]
   dailyAggregates DailyMetricAggregate[]
   aiConversations AIConversation[]
@@ -413,6 +414,14 @@ model Product {
   digital            Boolean  @default(false)
   digitalFileUrl     String?
   digitalAccessLimit Int?
+  // RB6/RM9: the SAME digital file hosted in the platform's OWN
+  // private R2 bucket (the presign/complete upload flow in
+  // ProductsService). Holds the storage KEY, never a URL — buyers
+  // receive a short-lived presigned GET at reveal time (storefront
+  // digitalAccess), so the object is never public. When set it
+  // takes precedence over the merchant-hosted digitalFileUrl,
+  // which stays as the merchant-hosted alternative.
+  digitalStorageKey  String?
   // EC24c: subscription plan (COD/manual renewal ONLY — no
   // payment gateway auto-charge exists or is implied).
   subscriptionEnabled         Boolean @default(false)
@@ -6801,4 +6810,47 @@ model DeliveryAssignment {
   @@index([organizationId, riderId, status])
   @@index([organizationId, orderId])
   @@index([organizationId, assignedAt])
+}
+
+// RM3 (Cloudflare R2 Media Program): the central file registry —
+// ONE row for every object the platform stores, whichever surface
+// put it there (product, social, inbox, branding, creative, review,
+// digital, document). Older surfaces keep their own rows untouched
+// (MediaAsset, ChannelMessage.mediaStorageKey, Organization.logoUrl);
+// this table is the single source for storage accounting, lifecycle
+// (quarantine -> active -> trashed) and orphan/inventory sweeps.
+// Backfill of the older surfaces is RM10's job, not this model's.
+//
+// sizeBytes is BigInt on purpose: MediaAsset's Int caps a file at
+// ~2 GB, but the multipart path (RM2) exists precisely for objects
+// that can exceed that; a registry that overflows at 2 GB would
+// silently break for the largest files it is meant to track.
+// `key` is globally unique (keys embed the organization id by the
+// storage layer's naming convention), which makes re-registering
+// the same object an idempotent upsert instead of a duplicate row.
+model StoredFile {
+  id             String   @id @default(uuid())
+  organizationId String
+  bucket         String // R2 bucket name, or "local" in local-disk mode
+  key            String   @unique
+  visibility     String // public | private
+  surface        String // product | social | inbox | branding | creative | review | digital | document | other
+  contentType    String
+  sizeBytes      BigInt
+  width          Int?
+  height         Int?
+  sha256         String?
+  status         String   @default("active") // quarantine | active | trashed
+  createdById    String?
+  // The originating row on the owning surface, when there is one
+  // (e.g. "mediaAsset:<id>", "productImage:<id>"); null for objects
+  // registered without a surface row.
+  sourceRef      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, surface])
 }

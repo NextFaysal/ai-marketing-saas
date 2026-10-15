@@ -1,7 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { StorageService } from "../storage/storage.service";
+import { StorageRegistryService } from "../storage/storage-registry.service";
+import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
 import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, effectiveAccess, findUnknownAreas, normalizeOverrides } from "../common/permission-catalog";
@@ -14,7 +17,15 @@ const INVITABLE_ROLES: Role[] = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SU
 
 @Injectable()
 export class OrganizationsService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    // RB4/RM5: hash-versioned CDN logos. Optional + last so every
+    // positional spec construction keeps working; absent (or
+    // local storage mode) the M59 logo behaviour is unchanged.
+    @Optional() private readonly storage?: StorageService,
+    @Optional() private readonly storageRegistry?: StorageRegistryService,
+  ) {}
 
   async create(userId: string, dto: CreateOrganizationDto, ip?: string) {
     const slugTaken = await (this.prisma as any).organization.findUnique({ where: { slug: dto.slug } });
@@ -861,6 +872,12 @@ export class OrganizationsService {
   static readonly LOGO_MAX_BYTES = 1_500_000;
   static logoKey(organizationId: string) { return `branding/${organizationId}/logo`; }
   static logoPath(organizationId: string) { return `/public/branding/${organizationId}/logo`; }
+  /** RB4/RM5: the R2-era logo key — hash-versioned so a replaced
+   * logo is a NEW object (CDN caches can never serve the stale
+   * one) and the old object simply becomes lifecycle trash. */
+  static logoVersionedKey(organizationId: string, hash8: string, contentType: string) {
+    return `branding/${organizationId}/logo-${hash8}.${imageExtForContentType(contentType)}`;
+  }
 
   /** Magic-byte sniff: the declared content type must match the
    * actual bytes, so a renamed executable can never become a "logo". */
@@ -911,10 +928,39 @@ export class OrganizationsService {
     if (bytes.length > OrganizationsService.LOGO_MAX_BYTES) throw new BadRequestException("লোগোর সাইজ সর্বোচ্চ ১.৫ MB হতে পারবে");
     const sniffed = OrganizationsService.sniffLogoType(bytes);
     if (sniffed !== dto.contentType) throw new BadRequestException("ছবির আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না");
-    await this.mediaStore().put(OrganizationsService.logoKey(organizationId), bytes, dto.contentType);
+    // RB4/RM5: with object storage on, the logo lands in the
+    // PUBLIC bucket under a hash-versioned key and logoUrl stores
+    // the absolute CDN URL. Local mode keeps the M59 fixed-key +
+    // relative-path behaviour byte-for-byte.
+    let logoUrl = OrganizationsService.logoPath(organizationId);
+    if (this.storage?.mode === "s3") {
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const key = OrganizationsService.logoVersionedKey(organizationId, sha256.slice(0, 8), sniffed);
+      await this.storage.put("public", key, bytes, sniffed);
+      logoUrl = publicMediaUrl(key);
+      if (this.storageRegistry) {
+        await this.storageRegistry
+          .register({
+            organizationId,
+            bucket: this.storage.bucketFor("public"),
+            key,
+            visibility: "public",
+            surface: "branding",
+            contentType: sniffed,
+            sizeBytes: bytes.length,
+            sha256,
+            status: "active",
+            createdById: actorId,
+            sourceRef: null,
+          })
+          .catch(() => undefined);
+      }
+    } else {
+      await this.mediaStore().put(OrganizationsService.logoKey(organizationId), bytes, dto.contentType);
+    }
     const org = await (this.prisma as any).organization.update({
       where: { id: organizationId },
-      data: { logoUrl: OrganizationsService.logoPath(organizationId), logoContentType: dto.contentType },
+      data: { logoUrl, logoContentType: dto.contentType },
     });
     await this.audit.log({ organizationId, userId: actorId, action: "org.branding.logo_upload", entityType: "Organization", entityId: organizationId, metadata: { contentType: dto.contentType, bytes: bytes.length }, ipAddress: ip });
     return { logoUrl: org.logoUrl, logoContentType: org.logoContentType };
@@ -923,9 +969,27 @@ export class OrganizationsService {
   async removeLogo(organizationId: string, actorId: string, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
+    // RB4/RM5: a CDN-era logo's registry row is marked trashed
+    // (the object itself is deleted by RM11's lifecycle job);
+    // legacy rows carry no registry entry. Best-effort — removal
+    // of the logo from the org must not fail over bookkeeping.
+    const removedKey = org.logoUrl ? mediaKeyFromCdnUrl(org.logoUrl) : null;
+    if (removedKey && this.storageRegistry) {
+      await this.storageRegistry.markTrashed(organizationId, removedKey).catch(() => undefined);
+    }
     await (this.prisma as any).organization.update({ where: { id: organizationId }, data: { logoUrl: null, logoContentType: null } });
     await this.audit.log({ organizationId, userId: actorId, action: "org.branding.logo_remove", entityType: "Organization", entityId: organizationId, ipAddress: ip });
     return { logoUrl: null };
+  }
+
+  /** RB4/RM5: when the org's stored logoUrl is already an
+   * absolute CDN URL, the public branding route redirects there
+   * instead of streaming bytes through the API. Returns null for
+   * legacy relative rows (and orgs without a logo). */
+  async logoRedirectUrl(organizationId: string): Promise<string | null> {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org?.logoUrl) return null;
+    return mediaKeyFromCdnUrl(org.logoUrl) ? org.logoUrl : null;
   }
 
   /** Public logo bytes for the shared report page + shell. Returns
@@ -933,6 +997,15 @@ export class OrganizationsService {
   async publicLogo(organizationId: string): Promise<{ bytes: Buffer; contentType: string } | null> {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org?.logoUrl || !org?.logoContentType) return null;
+    // RB4: a CDN-era row reads its versioned key from the public
+    // bucket; the controller normally redirects before this is
+    // reached, so this is the belt-and-braces path.
+    const cdnKey = mediaKeyFromCdnUrl(org.logoUrl);
+    if (cdnKey && this.storage?.mode === "s3") {
+      const bytes = await this.storage.get("public", cdnKey).catch(() => null);
+      if (!bytes) return null;
+      return { bytes, contentType: org.logoContentType };
+    }
     const bytes = await this.mediaStore().get(OrganizationsService.logoKey(organizationId)).catch(() => null);
     if (!bytes) return null;
     return { bytes, contentType: org.logoContentType };

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
+import { MediaImage } from "@/components/media-image";
 
 interface Account { id: string; name: string; platform: string; integrationId?: string | null }
 interface Asset { id: string; kind: string; name: string; sourceUrl: string; status: string; externalHash?: string | null; externalVideoId?: string | null; error?: string | null; adAccountId: string }
@@ -73,6 +74,9 @@ export default function CreativesPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {assets.map((a) => (
             <div key={a.id} className="card space-y-2 p-4">
+              {a.kind === "image" && a.sourceUrl ? (
+                <MediaImage src={a.sourceUrl} alt={a.name} width={640} height={360} className="h-40 w-full rounded-lg object-cover" />
+              ) : null}
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{a.kind === "video" ? "🎬" : "🖼️"} {a.name}</span>
                 <span className={STATUS[a.status] ?? "badge-slate"}>{a.status}</span>

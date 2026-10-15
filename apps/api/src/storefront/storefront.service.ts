@@ -23,6 +23,7 @@ import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { hashShopSecret } from "./shop-auth.util";
 import { StorefrontDnsResolver, StorefrontRoutingFetcher } from "./storefront-dns";
 import { assertPreorderLimit, preorderInfo, selectWholesaleTier } from "../commerce/ec24";
+import { StorageService } from "../storage/storage.service";
 import type {
   CartContactDto,
   CheckoutDto,
@@ -119,6 +120,10 @@ export class StorefrontService {
     // ON4: checkout blocklist refusal. LAST param + Optional,
     // same discipline; absent keeps checkout exactly as before.
     @Optional() private readonly blockedPhones?: BlockedPhoneService,
+    // RB6/RM9: presigned digital downloads. LAST param + Optional,
+    // same discipline; absent (or local storage mode) keeps the
+    // EC24b merchant-hosted reveal exactly as before.
+    @Optional() private readonly storage?: StorageService,
   ) {}
 
   private t(name: string): any {
@@ -1821,9 +1826,30 @@ export class StorefrontService {
     } catch { /* bookkeeping must not withhold an earned link */ }
     return {
       links: lines
-        .filter((l) => !!l.product.digitalFileUrl)
-        .map((l) => ({ productName: l.product.name, url: String(l.product.digitalFileUrl) })),
+        .map((l) => ({ productName: l.product.name, url: this.digitalDownloadUrl(l.product) }))
+        .filter((l): l is { productName: any; url: string } => !!l.url),
     };
+  }
+
+  /** RB6/RM9: the download URL for ONE digital line, resolved
+   * only here — after every EC24b gate above has passed (order +
+   * phone match, delivery, access cap; the cap counter increments
+   * before this runs, exactly as for merchant-hosted links). An
+   * R2-hosted file (digitalStorageKey) wins and yields a 300s
+   * presigned GET from the PRIVATE bucket — the brief's "302
+   * redirect to presigned" realised at the reveal layer: this
+   * endpoint has never proxied bytes, it reveals URLs, and the
+   * revealed URL is now short-lived and unguessable instead of a
+   * permanent merchant link. Without object storage (or in local
+   * mode) the merchant-hosted URL is revealed exactly as EC24b
+   * did; a product with neither yields no link. */
+  private digitalDownloadUrl(product: any): string | null {
+    const key = product?.digitalStorageKey ? String(product.digitalStorageKey) : "";
+    if (key && this.storage && this.storage.mode === "s3") {
+      const url = this.storage.signedGetUrl("private", key, 300);
+      if (url) return url;
+    }
+    return product?.digitalFileUrl ? String(product.digitalFileUrl) : null;
   }
 
   async trackOrder(orgSlug: string, dto: TrackLookupDto) {

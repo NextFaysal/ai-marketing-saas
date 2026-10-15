@@ -7,6 +7,7 @@ import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
+import { MediaImage } from "@/components/media-image";
 import { StockAlertForm } from "../../StockAlertForm";
 
 export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
@@ -65,8 +66,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
       <div className="space-y-3">
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
           {image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={image} alt={product.name} className="aspect-square w-full object-cover" />
+            <MediaImage src={image} alt={product.name} width={1200} height={1200} priority sizes="(max-width: 768px) 100vw, 600px" className="aspect-square w-full object-cover" />
           ) : (
             <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-7xl">📦</div>
           )}
@@ -80,8 +80,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
                 onClick={() => setImage(src)}
                 className={`h-16 w-16 overflow-hidden rounded-xl border-2 ${src === image ? "border-indigo-600" : "border-slate-200"}`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt="" className="h-full w-full object-cover" />
+                <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
               </button>
             ))}
           </div>

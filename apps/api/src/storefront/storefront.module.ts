@@ -11,6 +11,7 @@ import { CommerceModule } from "../commerce/commerce.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { AffiliatesModule } from "../affiliates/affiliates.module";
 import { FraudModule } from "../fraud/fraud.module";
+import { StorageModule } from "../storage/storage.module";
 
 /**
  * EC8 native storefront. Imports follow the ProductsModule
@@ -19,7 +20,7 @@ import { FraudModule } from "../fraud/fraud.module";
  * graph stays acyclic.
  */
 @Module({
-  imports: [AuditModule, IntegrationsModule, CommerceModule, MessagingModule, AffiliatesModule, FraudModule],
+  imports: [AuditModule, IntegrationsModule, CommerceModule, MessagingModule, AffiliatesModule, FraudModule, StorageModule],
   controllers: [PublicShopController, StorefrontStaffController, ProductQuestionsStaffController],
   providers: [StorefrontService, DeliveryPricingService, ShopAccountService, RetentionService, StorefrontDnsResolver, StorefrontRoutingFetcher],
   // EC28: RetentionService is exported for the AutomationModule

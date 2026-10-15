@@ -27,6 +27,7 @@ import { computeAdAccountHealth } from "../ads/ad-health";
 import { SocialHealthService } from "../social/social-health.service";
 import { SocialPublishService } from "../social/social-publish.service";
 import { AdsService } from "../ads/ads.service";
+import { publicMediaServingEnabled } from "../storage/media-url";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -1151,6 +1152,125 @@ export class AdminService {
       });
     }
     return out;
+  }
+
+  /** RB6/RM12: platform storage overview, aggregated from the
+   * RM3 StoredFile registry — the same single source the tenant
+   * media library reads. Totals exclude trashed rows (reported
+   * separately: their bytes still occupy the bucket until the
+   * RM11 sweep purges them). All byte sums are decimal strings
+   * (BigInt-safe). Measurement only — quota values are the
+   * owner's to set (plan RM3), nothing here enforces or invents
+   * a limit. Aggregation prefers DB-side groupBy (AA6 pattern);
+   * delegates without it fall back to a capped findMany summed
+   * in JS, flagged with `truncated` when the cap is hit. */
+  async storageOverview() {
+    const mode = publicMediaServingEnabled() ? "s3" : "local";
+    const table = (this.prisma as any).storedFile;
+    const base = {
+      mode,
+      registryAvailable: Boolean(table),
+      totalObjects: 0,
+      totalBytes: "0",
+      trashedObjects: 0,
+      trashedBytes: "0",
+      byBucket: [] as any[],
+      byVisibility: [] as any[],
+      bySurface: [] as any[],
+      topOrgs: [] as any[],
+      truncated: false,
+    };
+    if (!table) return base;
+    const countOf = (g: any) => (typeof g?._count === "number" ? g._count : (g?._count?._all ?? 0));
+    const sumOf = (g: any) => BigInt(g?._sum?.sizeBytes ?? 0);
+    try {
+      if (typeof table.groupBy === "function") {
+        const live = { status: { not: "trashed" } };
+        const [byBucket, byVisibility, bySurface, byOrg, totalAgg, trashedAgg] = await Promise.all([
+          table.groupBy({ by: ["bucket"], where: live, _sum: { sizeBytes: true }, _count: { _all: true } }),
+          table.groupBy({ by: ["visibility"], where: live, _sum: { sizeBytes: true }, _count: { _all: true } }),
+          table.groupBy({ by: ["surface"], where: live, _sum: { sizeBytes: true }, _count: { _all: true } }),
+          table.groupBy({
+            by: ["organizationId"], where: live, _sum: { sizeBytes: true }, _count: { _all: true },
+            orderBy: { _sum: { sizeBytes: "desc" } }, take: 10,
+          }),
+          table.aggregate({ where: live, _sum: { sizeBytes: true }, _count: { _all: true } }),
+          table.aggregate({ where: { status: "trashed" }, _sum: { sizeBytes: true }, _count: { _all: true } }),
+        ]);
+        const shape = (rows: any[], key: string) =>
+          (rows ?? []).map((g: any) => ({ [key]: g[key], objects: countOf(g), bytes: sumOf(g).toString() }));
+        base.byBucket = shape(byBucket, "bucket");
+        base.byVisibility = shape(byVisibility, "visibility");
+        base.bySurface = shape(bySurface, "surface").sort((a: any, b: any) => Number(BigInt(b.bytes) - BigInt(a.bytes)));
+        base.totalObjects = countOf(totalAgg);
+        base.totalBytes = sumOf(totalAgg).toString();
+        base.trashedObjects = countOf(trashedAgg);
+        base.trashedBytes = sumOf(trashedAgg).toString();
+        base.topOrgs = await this.storageTopOrgs(byOrg ?? [], countOf, sumOf);
+        return base;
+      }
+      throw new Error("groupBy unavailable");
+    } catch {
+      // Fallback: capped findMany summed in JS (AA6 discipline).
+      try {
+        const CAP = 20000;
+        const rows: any[] = (await table.findMany({ take: CAP })) ?? [];
+        base.truncated = rows.length >= CAP;
+        const liveRows = rows.filter((r: any) => r.status !== "trashed");
+        const agg = (key: string) => {
+          const map = new Map<string, { objects: number; bytes: bigint }>();
+          for (const r of liveRows) {
+            const k = String(r[key] ?? "");
+            const e = map.get(k) ?? { objects: 0, bytes: 0n };
+            e.objects += 1;
+            e.bytes += BigInt(r.sizeBytes ?? 0);
+            map.set(k, e);
+          }
+          return [...map.entries()].map(([v, e]) => ({ [key]: v, objects: e.objects, bytes: e.bytes.toString() }));
+        };
+        base.byBucket = agg("bucket");
+        base.byVisibility = agg("visibility");
+        base.bySurface = agg("surface").sort((a: any, b: any) => Number(BigInt(b.bytes) - BigInt(a.bytes)));
+        base.totalObjects = liveRows.length;
+        base.totalBytes = liveRows.reduce((a: bigint, r: any) => a + BigInt(r.sizeBytes ?? 0), 0n).toString();
+        const trashed = rows.filter((r: any) => r.status === "trashed");
+        base.trashedObjects = trashed.length;
+        base.trashedBytes = trashed.reduce((a: bigint, r: any) => a + BigInt(r.sizeBytes ?? 0), 0n).toString();
+        const orgAgg = new Map<string, { objects: number; bytes: bigint }>();
+        for (const r of liveRows) {
+          const e = orgAgg.get(r.organizationId) ?? { objects: 0, bytes: 0n };
+          e.objects += 1;
+          e.bytes += BigInt(r.sizeBytes ?? 0);
+          orgAgg.set(r.organizationId, e);
+        }
+        const byOrg = [...orgAgg.entries()]
+          .map(([organizationId, e]) => ({ organizationId, _count: { _all: e.objects }, _sum: { sizeBytes: e.bytes } }))
+          .sort((a, b) => Number(b._sum.sizeBytes - a._sum.sizeBytes))
+          .slice(0, 10);
+        base.topOrgs = await this.storageTopOrgs(byOrg, countOf, sumOf);
+        return base;
+      } catch {
+        return { ...base, registryAvailable: false };
+      }
+    }
+  }
+
+  /** RM12 helper: attach org names to groupBy org rows. */
+  private async storageTopOrgs(byOrg: any[], countOf: (g: any) => number, sumOf: (g: any) => bigint) {
+    const ids = byOrg.map((g: any) => g.organizationId).filter(Boolean);
+    const names = new Map<string, string>();
+    if (ids.length) {
+      try {
+        const orgs: any[] = (await (this.prisma as any).organization.findMany({ where: { id: { in: ids } } })) ?? [];
+        for (const o of orgs) names.set(String(o.id), String(o.name ?? ""));
+      } catch { /* names are decoration; numbers still ship */ }
+    }
+    return byOrg.map((g: any) => ({
+      organizationId: g.organizationId,
+      name: names.get(String(g.organizationId)) ?? null,
+      objects: countOf(g),
+      bytes: sumOf(g).toString(),
+    }));
   }
 
   /** AA7 (C12): AI usage drill-down — per organization × feature

@@ -5,6 +5,7 @@ import { NAV_ITEMS } from "@/lib/nav";
 import { InstallButton } from "@/components/pwa";
 import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
+import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 
 interface NavGroup {
@@ -181,7 +182,7 @@ function Brand({ branding }: { branding?: OrgBrandingLite | null }) {
   return (
     <div className="flex items-center gap-3 px-4 pb-4 pt-5 border-b border-white/[0.06]">
       {branding?.logoUrl ? (
-        <img src={`${API_URL}${branding.logoUrl}`} alt="" className="h-10 w-10 shrink-0 rounded-2xl bg-white object-contain p-0.5 ring-1 ring-white/20 shadow-glow" />
+        <img src={mediaSrc(API_URL, branding.logoUrl) ?? ""} alt="" className="h-10 w-10 shrink-0 rounded-2xl bg-white object-contain p-0.5 ring-1 ring-white/20 shadow-glow" />
       ) : (
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-600 to-fuchsia-500 text-[18px] font-black text-white shadow-glow">
           {branded ? initial : "Q"}
@@ -617,7 +618,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             <div className="flex items-center gap-2.5 lg:hidden">
               {branding?.logoUrl ? (
-                <img src={`${API_URL}${branding.logoUrl}`} alt="" className="h-8 w-8 rounded-xl bg-white object-contain p-0.5 ring-1 ring-slate-200" />
+                <img src={mediaSrc(API_URL, branding.logoUrl) ?? ""} alt="" className="h-8 w-8 rounded-xl bg-white object-contain p-0.5 ring-1 ring-slate-200" />
               ) : (
                 <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-black text-white shadow-sm">
                   Q

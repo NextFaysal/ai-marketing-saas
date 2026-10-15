@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
 import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
 import { ReviewsBlock, type PublicReviewItem, type PublicReviewsSummary } from "@/components/product-reviews";
+import { MediaImage } from "@/components/media-image";
 
 // EC13 — public landing page client. Mirrors checkout/[slug]:
 // same-origin /backend fetches, the same fbq injection snippet,
@@ -529,8 +530,7 @@ export default function LandingClient({ slug }: { slug: string }) {
           <section key="hero" className="space-y-4">
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
               {heroImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={heroImage} alt={product.name} className="aspect-square w-full object-cover sm:aspect-[4/3]" />
+                <MediaImage src={heroImage} alt={product.name} priority sizes="(max-width: 1024px) 100vw, 1024px" className="aspect-square w-full object-cover sm:aspect-[4/3]" />
               ) : (
                 <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-7xl">📦</div>
               )}
@@ -544,8 +544,7 @@ export default function LandingClient({ slug }: { slug: string }) {
                     onClick={() => setHeroImage(src)}
                     className={`h-16 w-16 overflow-hidden rounded-xl border-2 ${src === heroImage ? "border-indigo-600" : "border-slate-200"}`}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
                   </button>
                 ))}
               </div>
@@ -592,8 +591,7 @@ export default function LandingClient({ slug }: { slug: string }) {
             <h2 className="text-xl font-black text-slate-900">পণ্যের ছবি</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {galleryImages.map((src) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={src} src={src} alt={product.name} className="aspect-square w-full rounded-2xl border border-slate-200 object-cover" />
+                <MediaImage key={src} src={src} alt={product.name} width={600} height={600} sizes="(max-width: 640px) 50vw, 320px" className="aspect-square w-full rounded-2xl border border-slate-200 object-cover" />
               ))}
             </div>
           </section>

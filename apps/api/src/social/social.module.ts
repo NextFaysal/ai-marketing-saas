@@ -14,9 +14,10 @@ import { SocialCommerceDraftService } from "./social-commerce-draft.service";
 import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
 import { AiModule } from "../ai/ai.module";
+import { StorageModule } from "../storage/storage.module";
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, StorageModule],
   controllers: [SocialController, PublicMediaController, SocialOAuthCallbackController, PublicSocialLinkController],
   providers: [SocialService, SocialAiService, SocialImageService, SocialPublishService, SocialInsightsService, SocialOAuthService, SocialRasterService, SocialImportService, SocialQueueService, SocialMediaLibraryService, SocialCommerceDraftService, SocialLinkService, SocialHealthService],
   // SocialHealthService exported for AdminModule (AB3 / AN13
