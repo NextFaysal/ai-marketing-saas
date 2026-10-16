@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
+import { MediaImage } from "@/components/media-image";
 import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
 import { shopLocaleOf, shopT, type ShopDict, type ShopLocale } from "@/lib/shop-i18n";
 
@@ -312,8 +313,7 @@ export default function TrackOrderPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-4">
           {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt={shopName} className="h-11 w-11 rounded-2xl border border-slate-200 object-cover" />
+            <MediaImage src={logoUrl} alt={shopName} width={88} height={88} className="h-11 w-11 rounded-2xl border border-slate-200 object-cover" />
           ) : (
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-black text-white" style={{ backgroundColor: accent }}>
               {shopName.slice(0, 1) || "📦"}

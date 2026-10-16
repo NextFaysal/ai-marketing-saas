@@ -531,8 +531,7 @@ export default function LandingClient({ slug }: { slug: string }) {
               <div className="text-sm font-black text-slate-900">সাথে এটাও যোগ করুন</div>
               <div className="flex items-center gap-3">
                 {upsell.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={upsell.imageUrl} alt={upsell.name} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />
+                  <MediaImage src={upsell.imageUrl} alt={upsell.name} width={128} height={128} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />
                 ) : (
                   <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-amber-100 text-2xl">📦</div>
                 )}
@@ -699,8 +698,7 @@ export default function LandingClient({ slug }: { slug: string }) {
             <h2 className="mt-3 text-xl font-black text-slate-900">{product.bumpTitle}</h2>
             <p className="mt-1 text-sm font-bold text-amber-900">মাত্র {taka(product.bumpPriceMinor)} অতিরিক্ত যোগ করে অর্ডারের সাথেই নিয়ে নিন</p>
             {product.bumpImageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={product.bumpImageUrl} alt={product.bumpTitle ?? ""} className="mx-auto mt-3 h-32 w-32 rounded-2xl border border-amber-200 object-cover" />
+              <MediaImage src={product.bumpImageUrl} alt={product.bumpTitle ?? ""} width={256} height={256} className="mx-auto mt-3 h-32 w-32 rounded-2xl border border-amber-200 object-cover" />
             ) : null}
             <button type="button" onClick={scrollToOrder} className="mt-4 rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-extrabold text-white hover:bg-amber-600">
               অফারসহ অর্ডার করুন

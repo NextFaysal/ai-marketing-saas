@@ -218,8 +218,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
                 className={`relative h-16 w-16 overflow-hidden rounded-xl border-2 ${slide === 0 ? "border-indigo-600" : "border-slate-200"}`}
               >
                 {product.video.posterUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={product.video.posterUrl} alt="" className="h-full w-full object-cover" />
+                  <MediaImage src={product.video.posterUrl} alt="" width={128} height={128} className="h-full w-full object-cover" />
                 ) : (
                   <span className="flex h-full w-full items-center justify-center bg-slate-900" />
                 )}
