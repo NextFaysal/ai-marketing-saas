@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { ResponsiveTable } from "@repo/ui";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { rangeForPreset } from "@/lib/orders-on9";
@@ -86,7 +87,10 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
 
         {data ? (
           data.members.length ? (
-            <div className="mt-4 overflow-x-auto">
+            <ResponsiveTable
+              className="mt-4"
+              table={
+                <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-slate-500">
                   <th className="py-1 pr-2">সদস্য</th>
@@ -133,7 +137,44 @@ export function OrderTeamPanel({ onClose, onViewAssignee }: {
                   </tr>
                 </tfoot>
               </table>
-            </div>
+                </div>
+              }
+              cards={
+                <>
+                  {data.members.map((m) => (
+                    <div key={m.userId} className="rounded-xl border bg-white p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-slate-900">{memberDisplayName(m)}</div>
+                          {m.email && m.name !== m.email ? <div className="text-xs text-slate-500">{m.email}</div> : null}
+                        </div>
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{roleLabel(m.role)}</span>
+                      </div>
+                      <dl className="mt-2 space-y-1 text-xs">
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">এখন খোলা (বর্তমান)</dt><dd className="font-medium">{m.assignedOpen}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">স্ট্যাটাস পরিবর্তন</dt><dd className="font-medium">{m.statusChanges}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">হোল্ড (+/−)</dt><dd className="font-medium">{formatHolds(m.holdsPlaced, m.holdsReleased)}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">COD কল</dt><dd className="font-medium">{m.codCalls}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">পিক সম্পন্ন</dt><dd className="font-medium">{m.picksDone}</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">মন্তব্য</dt><dd className="font-medium">{m.commentsPosted}</dd></div>
+                      </dl>
+                      <button type="button" className="btn-secondary btn-sm mt-3 inline-flex min-h-[44px] items-center" onClick={() => onViewAssignee(m.userId)}>অর্ডার দেখুন</button>
+                    </div>
+                  ))}
+                  <div className="rounded-xl border bg-slate-50 p-3 shadow-sm">
+                    <div className="font-bold text-slate-900">মোট</div>
+                    <dl className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">এখন খোলা (বর্তমান)</dt><dd className="font-semibold">{data.totals.assignedOpen}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">স্ট্যাটাস পরিবর্তন</dt><dd className="font-semibold">{data.totals.statusChanges}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">হোল্ড (+/−)</dt><dd className="font-semibold">{formatHolds(data.totals.holdsPlaced, data.totals.holdsReleased)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">COD কল</dt><dd className="font-semibold">{data.totals.codCalls}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">পিক সম্পন্ন</dt><dd className="font-semibold">{data.totals.picksDone}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">মন্তব্য</dt><dd className="font-semibold">{data.totals.commentsPosted}</dd></div>
+                    </dl>
+                  </div>
+                </>
+              }
+            />
           ) : <p className="mt-4 text-sm text-slate-500">এই সংগঠনে কোনো সক্রিয় টিম সদস্য নেই।</p>
         ) : <p className="mt-4 text-sm text-slate-500">লোড হচ্ছে…</p>}
       </div>
