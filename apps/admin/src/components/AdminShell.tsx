@@ -8,6 +8,7 @@ import {
   type NavCounts, type NavItemDef,
 } from "./nav";
 import { useNavCounts } from "./useNavCounts";
+import { DialogHost, ToastHost, askReason } from "./ui";
 import AttentionBell from "./AttentionBell";
 import CommandPalette from "./CommandPalette";
 
@@ -89,7 +90,7 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label="Admin navigation">
       {!collapsed && favItems.length === 0 ? (
-        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-600">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
+        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-400">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
       ) : null}
       {!collapsed && favItems.length > 0 ? (
         <div>
@@ -166,7 +167,7 @@ function DensityToggle({ density, onChange, collapsed }: { density: Density; onC
   }
   return (
     <div className="flex items-center gap-1 px-2 pb-1.5" role="group" aria-label="ঘনত্ব বাছাই">
-      <span className="text-[11px] text-slate-500">ঘনত্ব:</span>
+      <span className="text-[11px] text-slate-400">ঘনত্ব:</span>
       {(["comfortable", "compact"] as const).map((d) => (
         <button
           key={d}
@@ -189,7 +190,7 @@ function Brand({ collapsed }: { collapsed: boolean }) {
       {!collapsed ? (
         <div className="min-w-0">
           <div className="truncate text-[15px] font-bold tracking-tight">Qosprey Admin</div>
-          <div className="text-[11px] text-slate-500">SaaS Operator Console</div>
+          <div className="text-[11px] text-slate-400">SaaS Operator Console</div>
         </div>
       ) : null}
     </div>
@@ -328,15 +329,28 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   const initials = (adminEmail || "A").slice(0, 2).toUpperCase();
   const navProps = { counts, favorites, recents, openGroups, onToggleGroup: toggleGroup, onTogglePin: togglePin };
 
+  // ADNX6: mobile bottom quick bar items — hrefs/icons/countKeys
+  // all come from the single nav source (./nav.tsx); the pending
+  // badge reuses the shell's existing nav-counts (absent = none).
+  const quickItems: { href: string; label: string; icon: NavItemDef["icon"]; countKey?: NavItemDef["countKey"] }[] = [
+    { href: "/", label: "হোম", icon: "home" },
+    { href: "/payouts", label: "Payouts", icon: "wallet", countKey: "pendingPayouts" },
+    { href: "/tickets", label: "Tickets", icon: "ticket", countKey: "openTickets" },
+    { href: "/health", label: "Health", icon: "activity", countKey: "failedJobs24h" },
+  ];
+
   return (
     <div className="min-h-screen">
+      {/* ADNX6: skip link — first focusable element, jumps past
+          the nav to the main landmark. */}
+      <a href="#admin-main" className="askip-link">মূল Content-এ যান</a>
       {/* Mobile top bar */}
       <div className="aglass fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-slate-800 px-4 py-3 lg:hidden">
         <button aria-label="মেনু খুলুন" className="abtn-secondary !px-2.5" onClick={() => setDrawer(true)}>☰</button>
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white"><NavIcon name="shield" size={16} /></span>
         <div className="min-w-0">
           <div className="truncate text-sm font-bold">Qosprey Admin</div>
-          <div className="truncate text-[11px] text-slate-500">{adminEmail}</div>
+          <div className="truncate text-[11px] text-slate-400">{adminEmail}</div>
         </div>
         <button className="abtn-secondary ml-auto !px-2.5" aria-label="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /></button>
       </div>
@@ -351,7 +365,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
               <button aria-label="মেনু বন্ধ করুন" className="abtn-secondary mt-4 !px-2.5" onClick={() => setDrawer(false)}>✕</button>
             </div>
             <NavContent collapsed={false} {...navProps} onNavigate={() => setDrawer(false)} />
-            <div className="border-t border-slate-800 p-3 text-xs text-slate-500">
+            <div className="border-t border-slate-800 p-3 text-xs text-slate-400">
               <div className="truncate px-2 pb-1">{adminEmail}</div>
               <DensityToggle density={density} onChange={changeDensity} collapsed={false} />
               <button className="anav w-full" onClick={logout}><NavIcon name="logout" size={16} /> লগ আউট</button>
@@ -366,7 +380,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           <Brand collapsed={collapsed} />
           <NavContent collapsed={collapsed} {...navProps} />
           <div className="border-t border-slate-800 p-3">
-            {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-500">{adminEmail}</div> : null}
+            {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-400">{adminEmail}</div> : null}
             <DensityToggle density={density} onChange={changeDensity} collapsed={collapsed} />
             <div className={`flex ${collapsed ? "flex-col gap-1" : "items-center gap-1"}`}>
               <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="Sidebar ছোট/বড় করুন" onClick={toggleCollapsed}>
@@ -378,7 +392,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 pb-10 pt-[76px] sm:px-6 lg:p-8">
+        <main id="admin-main" className="ahas-quickbar min-w-0 flex-1 px-4 pb-10 pt-[76px] sm:px-6 lg:p-8">
           <div className="mx-auto w-full max-w-[1440px]">
             <div className="mb-6 flex flex-wrap items-center gap-3">
               <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">{title}</h1>
@@ -405,13 +419,44 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           </div>
         </main>
       </div>
+      {/* ADNX6: mobile bottom quick bar — below lg only (the
+          .aquickbar class hides it at lg+), safe-area aware, and
+          never on /login because login pages do not render this
+          shell at all. "আরও" opens the existing mobile drawer. */}
+      <nav className="aquickbar" aria-label="দ্রুত কাজ">
+        {quickItems.map((item) => {
+          const count = item.countKey && counts ? counts[item.countKey] : undefined;
+          const active = isActivePath(pathname, item.href);
+          return (
+            <a key={item.href} href={item.href} className={`aquickbar-item ${active ? "aquickbar-active" : ""}`} aria-current={active ? "page" : undefined}>
+              <span className="relative">
+                <NavIcon name={item.icon} size={20} />
+                {typeof count === "number" && count > 0 ? <span className="aquickbar-badge">{count}</span> : null}
+              </span>
+              <span>{item.label}</span>
+            </a>
+          );
+        })}
+        <button type="button" className="aquickbar-item" onClick={() => setDrawer(true)} aria-label="আরও — পুরো মেনু খুলুন">
+          <NavIcon name="list" size={20} />
+          <span>আরও</span>
+        </button>
+      </nav>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {/* ADNX3: the single toast + modal-dialog hosts for every page */}
+      <ToastHost />
+      <DialogHost />
     </div>
   );
 }
 
-export function reasonPrompt(action: string): string | null {
-  const reason = window.prompt(`"${action}" — এই কাজের কারণ লিখুন (Audit এ থাকবে):`);
-  if (!reason || reason.trim().length < 3) { window.alert("কারণ ছাড়া এই কাজ করা যাবে না।"); return null; }
-  return reason.trim();
+/**
+ * ADNX3: the audit-reason dialog, awaited by callers. Replaces
+ * the old synchronous browser-prompt helper — same contract
+ * (a ≥3-char reason or null when cancelled; the modal itself
+ * blocks a short reason, so no second error step exists).
+ * Pages import it from here as before, now with `await`.
+ */
+export function reasonDialog(action: string): Promise<string | null> {
+  return askReason(action).then((v) => (v ? v.trim() : null));
 }

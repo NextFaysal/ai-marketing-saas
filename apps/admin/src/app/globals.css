@@ -20,7 +20,7 @@ html { scroll-behavior: smooth; }
 
 body {
   @apply bg-slate-950 text-slate-100 antialiased;
-  font-family: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Inter Variable", Inter, "Hind Siliguri", "Noto Sans Bengali", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background-image:
     radial-gradient(56rem 34rem at 85% -10%, rgb(99 102 241 / 0.13), transparent 60%),
     radial-gradient(44rem 30rem at -10% 110%, rgb(217 70 239 / 0.07), transparent 60%);
@@ -56,7 +56,7 @@ body {
 .abtn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-b from-indigo-500 to-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-[0_8px_20px_-8px_rgb(99_102_241/0.8)] transition hover:from-indigo-400 hover:to-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50; }
 .abtn-secondary { @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-600 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 disabled:opacity-50; }
 .abtn-danger { @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600/90 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-50; }
-.ainput { @apply w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30; }
+.ainput { @apply w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30; }
 select.ainput { @apply appearance-none pr-8; }
 
 /* ---------- Badges ---------- */
@@ -85,7 +85,7 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 .anav { @apply flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800/80 hover:text-white; }
 .anav-active { @apply bg-gradient-to-r from-indigo-600/85 to-violet-600/70 text-white shadow-[0_10px_24px_-10px_rgb(99_102_241/0.9)] hover:from-indigo-600 hover:to-violet-600 hover:text-white; }
 .anav-off { @apply flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-600; }
-.anav-group { @apply px-3 pb-1.5 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-slate-500; }
+.anav-group { @apply px-3 pb-1.5 pt-4 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-slate-400; }
 
 /* Glass topbar / drawer surfaces */
 .aglass { background: rgb(2 6 23 / 0.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
@@ -133,7 +133,7 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 /* ---------- Filter bar ---------- */
 .afilter { @apply flex flex-col gap-2 border-b border-slate-800 p-4 sm:flex-row sm:flex-wrap sm:items-center; }
 .afilter .ainput { @apply sm:w-auto; }
-.afilter-label { @apply text-xs font-medium uppercase tracking-wide text-slate-500; }
+.afilter-label { @apply text-xs font-medium uppercase tracking-wide text-slate-400; }
 
 /* ---------- Tabs ---------- */
 .atabs { @apply flex flex-wrap gap-1 border-b border-slate-800; }
@@ -143,7 +143,10 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 
 /* ---------- Detail drawer (right-side quick view) ---------- */
 .adrawer-scrim { @apply fixed inset-0 z-50 bg-black/70; transition: opacity 200ms ease; }
-.adrawer-detail { @apply fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] flex-col border-l border-slate-700 bg-slate-900 shadow-2xl; transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
+/* ADNX10: full-screen on mobile (plan §৩ — drawer পূর্ণ পর্দা),
+   420px side panel from sm up. Applies to every DetailDrawer
+   (audit detail, orgs/users quick-view) — one shared pattern. */
+.adrawer-detail { @apply fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-slate-700 bg-slate-900 shadow-2xl sm:w-[420px] sm:max-w-[92vw]; transition: transform 240ms cubic-bezier(0.32, 0.72, 0.35, 1); }
 .adrawer-head { @apply flex items-start gap-3 border-b border-slate-800 px-5 py-4; }
 .adrawer-body { @apply min-w-0 flex-1 overflow-y-auto px-5 py-4; }
 .adrawer-foot { @apply border-t border-slate-800 px-5 py-3.5; }
@@ -151,7 +154,7 @@ table.atable tbody tr:last-child { border-bottom: 0; }
 /* ---------- Empty / error states ---------- */
 .aempty { @apply flex flex-col items-center gap-1.5 px-4 py-10 text-center; }
 .aempty-title { @apply text-sm font-medium text-slate-300; }
-.aempty-sub { @apply max-w-sm text-xs text-slate-500; }
+.aempty-sub { @apply max-w-sm text-xs text-slate-400; }
 .aerror { @apply rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3.5 text-sm text-red-200; }
 
 /* ---------- Skeleton extensions ---------- */
@@ -193,7 +196,7 @@ tr.arow:hover .atable-row-actions, tr.arow:focus-within .atable-row-actions { op
   table.atable.atable-cards tbody { display: block; }
   table.atable.atable-cards tbody tr { display: block; padding: 10px 14px; }
   table.atable.atable-cards td.atd { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 3px 0; white-space: normal; }
-  table.atable.atable-cards td.atd::before { content: attr(data-label); flex-shrink: 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgb(100 116 139); }
+  table.atable.atable-cards td.atd::before { content: attr(data-label); flex-shrink: 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgb(148 163 184); }
   table.atable.atable-cards td.atd:not([data-label])::before { content: none; }
 }
 
@@ -208,3 +211,119 @@ tr.arow:hover .atable-row-actions, tr.arow:focus-within .atable-row-actions { op
 html[data-admin-density="compact"] table.atable .atd { padding-top: 6px; padding-bottom: 6px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
 html[data-admin-density="compact"] table.atable .ath { padding-top: 6px; padding-bottom: 6px; padding-left: 12px; padding-right: 12px; }
 html[data-admin-density="compact"] .anav { padding-top: 6px; padding-bottom: 6px; }
+
+/* ============================================================
+   Design System v4 (ADNX1, NB1) — EXTENDS v2+v3, never replaces.
+   No legacy selector above is removed or renamed; the only v4
+   edits to earlier sections are contrast value fixes, recorded
+   in docs/admin-design-nb1-acceptance.md:
+   slate-500 small text measured 4.24:1 on slate-950 and 3.75:1
+   on slate-900 (below WCAG AA 4.5:1); slate-400 measures
+   7.87:1 / 6.96:1. Affected: .ainput placeholder, .anav-group,
+   .afilter-label, .aempty-sub, card-mode cell label colour.
+   ============================================================ */
+
+:root {
+  /* Typography scale (plan §৪: page 24 / section 16 / body 14 /
+     small 12.5 — v3 vars kept, values completed) */
+  --a-fs-page: 24px; --a-fs-section: 16px; --a-fs-body: 14px; --a-fs-small: 12.5px; --a-fs-caption: 11px;
+  --a-lh-tight: 1.25; --a-lh-body: 1.55; --a-lh-bn: 1.65;
+  /* Elevation scale */
+  --a-elev-1: 0 4px 16px -8px rgb(0 0 0 / 0.6);
+  --a-elev-2: 0 10px 36px -18px rgb(0 0 0 / 0.8);
+  --a-elev-3: 0 24px 60px -24px rgb(0 0 0 / 0.9);
+  /* Z-index scale (existing usage: topbar 40, drawer/modal 50,
+     palette 60 — v4 adds toast above all and the mobile bar) */
+  --a-z-sticky: 20; --a-z-topbar: 40; --a-z-quickbar: 40; --a-z-drawer: 50; --a-z-modal: 50; --a-z-palette: 60; --a-z-toast: 70;
+  /* Breakpoints (plan §৩ — CSS vars cannot drive media queries,
+     so these are the documented contract the queries below and
+     in pages follow): mobile-s 360, mobile 640, tablet 768,
+     laptop 1024, desktop 1280, wide 1536. */
+  --a-bp-mobile-s: 360px; --a-bp-mobile: 640px; --a-bp-tablet: 768px; --a-bp-laptop: 1024px; --a-bp-desktop: 1280px; --a-bp-wide: 1536px;
+  /* Focus ring token (the indigo ring the v2/v3 classes use) */
+  --a-focus-ring: rgb(129 140 248 / 0.65);
+  --a-touch-min: 44px;
+  /* Status-colour mapping — THE one mapping for the whole
+     console (badge classes on the right are the v2/v3 names):
+       success → emerald (.abadge-green)   warning → amber (.abadge-amber)
+       danger  → red     (.abadge-red)     info    → indigo (.abadge-indigo)
+       neutral → slate   (.abadge-slate)                            */
+  --a-status-success: #34d399; --a-status-warning: #fbbf24; --a-status-danger: #f87171; --a-status-info: #818cf8; --a-status-neutral: #94a3b8;
+}
+
+/* Bengali + Latin in one stack: Inter has no Bengali glyphs, so
+   Bengali text falls through to self-hosted Hind Siliguri
+   (layout.tsx imports the bengali subset, weights 400–700);
+   Latin and digits keep Inter Variable. Tabular figures keep
+   numeric columns aligned in both scripts. */
+body { font-variant-numeric: tabular-nums; line-height: var(--a-lh-body); }
+
+/* Explicit status classes (aliases of the badge palette, so new
+   code can name the MEANING instead of the colour). */
+.astatus-success { @apply abadge bg-emerald-500/15 text-emerald-300 ring-emerald-400/25; }
+.astatus-warning { @apply abadge bg-amber-500/15 text-amber-300 ring-amber-400/25; }
+.astatus-danger { @apply abadge bg-red-500/15 text-red-300 ring-red-400/25; }
+.astatus-info { @apply abadge bg-indigo-500/15 text-indigo-300 ring-indigo-400/25; }
+.astatus-neutral { @apply abadge bg-slate-500/15 text-slate-300 ring-slate-400/25; }
+
+/* Touch targets: on coarse pointers every button/nav row meets
+   the 44px minimum (plan §২.৫); desktop density is unchanged. */
+@media (pointer: coarse) {
+  .abtn, .abtn-secondary, .abtn-danger { min-height: var(--a-touch-min); }
+  .anav { min-height: var(--a-touch-min); }
+}
+
+/* ---------- Skip link (ADNX6) ---------- */
+.askip-link {
+  @apply fixed left-3 top-3 z-[70] -translate-y-24 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-lg transition;
+}
+.askip-link:focus-visible { @apply translate-y-0; outline: 2px solid var(--a-focus-ring); outline-offset: 2px; }
+
+/* ---------- Toast (ADNX3) ---------- */
+.atoast-wrap { @apply pointer-events-none fixed inset-x-0 bottom-[76px] z-[70] flex flex-col items-center gap-2 px-4 lg:bottom-6 lg:items-end lg:px-6; }
+.atoast {
+  @apply pointer-events-auto flex w-full max-w-md items-start gap-2.5 rounded-xl border px-4 py-3 text-sm shadow-2xl;
+  border-color: var(--a-border); background: var(--a-surface-overlay); color: #e2e8f0;
+  box-shadow: var(--a-elev-3); animation: atoast-in 180ms ease;
+}
+.atoast-success { border-color: rgb(52 211 153 / 0.45); }
+.atoast-error { border-color: rgb(248 113 113 / 0.5); }
+.atoast-info { border-color: rgb(129 140 248 / 0.45); }
+.atoast-action { @apply shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold text-indigo-300 transition hover:bg-slate-700 hover:text-white; }
+.atoast-action:focus-visible { outline: 2px solid var(--a-focus-ring); outline-offset: 1px; }
+@keyframes atoast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .atoast { animation: none; } }
+
+/* ---------- DataTable v3 shell (ADNX2) ---------- */
+.atable-wrap { @apply overflow-x-auto; }
+table.atable-v3 thead th { @apply sticky top-0 z-10; }
+@media (max-width: 640px) {
+  /* Card mode is driven by .atable-cards (v3/ADX12 block above);
+     v3 tables additionally top-align card values so multi-line
+     cell content (badges + sub-lines) reads as a record. */
+  table.atable.atable-v3 td.atd { align-items: flex-start; }
+}
+
+/* ---------- Mobile bottom quick bar (ADNX6) ---------- */
+.aquickbar {
+  @apply fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-slate-800 bg-slate-950/90 px-1 lg:hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.aquickbar-item {
+  @apply relative flex min-h-[52px] flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-[10.5px] font-medium text-slate-400 transition hover:text-white;
+}
+.aquickbar-item:focus-visible { outline: 2px solid var(--a-focus-ring); outline-offset: -2px; }
+.aquickbar-active { @apply text-white; }
+.aquickbar-badge { @apply absolute -right-2.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white; }
+/* Pages inside AdminShell reserve room so the bar never covers
+   content (the shell adds .ahas-quickbar to <main> below lg). */
+@media (max-width: 1023.5px) {
+  .ahas-quickbar { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+
+/* Command palette: near-full-screen sheet on small screens
+   (ADNX6 — the desktop centred panel is unchanged). */
+@media (max-width: 640px) {
+  .apalette-panel { max-height: 82vh; }
+}

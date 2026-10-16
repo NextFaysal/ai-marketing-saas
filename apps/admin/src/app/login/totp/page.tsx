@@ -33,15 +33,21 @@ export default function TotpPage() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
       <form onSubmit={submit} className="acard w-full max-w-sm space-y-4">
+        {/* ADNX14: same visual system as Login (acard surface,
+            abtn/ainput, gradient brand mark) and the PageHead
+            typography pattern for the heading (no AdminShell here).
+            The code field stays ONE input, exactly as the auth
+            flow has always had it — only sized for mobile: taller
+            tap target, numeric keyboard, one-time-code autofill. */}
         <div className="text-center">
-          <div className="text-3xl">🔐</div>
-          <h1 className="mt-1 text-xl font-bold sm:text-2xl">Two-Factor যাচাই</h1>
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl">🔐</div>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight">Two-Factor যাচাই</h1>
           <p className="text-sm text-slate-400">Authenticator অ্যাপের ৬ সংখ্যার কোডটি দিন। কোড ৫ মিনিটের মধ্যে দিতে হবে।</p>
         </div>
-        {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
-        <input className="ainput text-center text-2xl tracking-[0.4em]" placeholder="••••••" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoFocus />
+        {error ? <p className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300" role="alert">{error}</p> : null}
+        <input className="ainput !py-3.5 text-center text-2xl tracking-[0.4em]" placeholder="••••••" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" autoFocus />
         <button className="abtn w-full justify-center" disabled={busy || code.length !== 6}>{busy ? "যাচাই হচ্ছে…" : "প্রবেশ করুন"}</button>
-        <button type="button" className="w-full text-center text-xs text-slate-500 underline" onClick={() => router.replace("/login")}>আবার লগইন থেকে শুরু করুন</button>
+        <button type="button" className="w-full text-center text-xs text-slate-400 underline" onClick={() => router.replace("/login")}>আবার লগইন থেকে শুরু করুন</button>
       </form>
     </div>
   );

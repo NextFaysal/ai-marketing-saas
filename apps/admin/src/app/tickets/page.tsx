@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import AdminShell from "@/components/AdminShell";
-import { EmptyState, ErrorState, SavedViewsBar } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, SavedViewsBar, useLastFilters } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { subscribeAdminTicketStream } from "@/lib/support-stream";
@@ -116,6 +116,10 @@ export default function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [filter, setFilter] = useState<string>("");
+  // ADNX15: last-used filter persistence for the status filter
+  // (restored on mount, stored on change — the saved-views apply
+  // below is the same one-filter shape).
+  useLastFilters("tickets", { filter }, (s) => setFilter(s.filter ?? ""));
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [slaOnly, setSlaOnly] = useState(false);
   const [admins, setAdmins] = useState<Admin[]>([]);
@@ -418,6 +422,7 @@ export default function TicketsPage() {
 
   return (
     <AdminShell title="Support Tickets (Enterprise Desk)">
+      <PageHead sub="Tenant Support Ticket inbox — তালিকা থেকে বেছে একই পেজে কথোপকথন ও উত্তর।" />
       {error ? <p className="anote" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</p> : null}
       {note ? <p className="anote">{note}</p> : null}
 
@@ -664,12 +669,14 @@ export default function TicketsPage() {
           </div>
 
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-1.5">
+            {/* ADNX10: status filter chips become a horizontal rail on
+                mobile (no wrap stack), wrapping again from sm up. */}
+            <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
               {FILTERS.map((f) => (
                 <button
                   key={f || "all"}
                   onClick={() => setFilter(f)}
-                  className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-all ${
+                  className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-medium transition-all ${
                     filter === f
                       ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
                       : "border border-slate-800 bg-slate-900/70 text-slate-300 hover:bg-slate-800 hover:text-white"
@@ -805,8 +812,11 @@ export default function TicketsPage() {
               })}
             </div>
 
-            {/* Ticket Details & Action Panel */}
-            <div className={`acard ${selected ? "" : "hidden lg:block"}`}>
+            {/* Ticket Details & Action Panel.
+                ADNX10: mobile is a true two-step flow — step 2 is the
+                conversation as a full-screen sheet with the back action
+                at the top; lg keeps list + detail side by side. */}
+            <div className={`acard ${selected ? "max-lg:fixed max-lg:inset-0 max-lg:z-[45] max-lg:overflow-y-auto max-lg:rounded-none" : "hidden lg:block"}`}>
               {!selected ? (
                 <div className="p-8 text-center text-slate-400">
                   <p className="text-3xl">🎫</p>
@@ -815,7 +825,7 @@ export default function TicketsPage() {
               ) : (
                 <>
                   <button
-                    className="abtn mb-3 w-full sm:w-auto lg:hidden"
+                    className="abtn sticky top-0 z-10 mb-3 w-full sm:w-auto lg:hidden"
                     onClick={() => setSelected(null)}
                   >
                     ← তালিকায় ফিরুন

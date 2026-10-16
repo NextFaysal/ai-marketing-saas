@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
-import { ErrorState } from "@/components/ui";
+import { EmptyState, ErrorState, PageHead, toast } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 
 interface Alert { kind: string; severity: string; organizationId: string; organizationName: string; detail: string; at: string }
@@ -16,8 +16,9 @@ const KIND_LABEL: Record<string, string> = {
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [note, setNote] = useState("");
-  const [error, setError] = useState("");
+  // ADNX11: severity groups can be collapsed on mobile (desktop
+  // always shows them); default is expanded, as before.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [loaded, setLoaded] = useState(false);
   // ADX12: a failed board load used to be indistinguishable from
   // "no alerts" (the 🎉 empty card showed on an outage). Load
@@ -32,30 +33,32 @@ export default function AlertsPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // ADNX11: nudge feedback moves to toast (the old note/error
+  // banners carried only transient action results). The ADX12
+  // load-error honesty below is UNCHANGED — verified in this
+  // batch: a failed load still renders ErrorState + retry and
+  // the 🎉 empty card still renders only after a successful load.
   const nudge = async (a: Alert) => {
-    setError(""); setNote("");
     try {
       const res = await apiFetch<{ sent: number }>(`/admin/alerts/nudge`, { method: "POST", body: JSON.stringify({ organizationId: a.organizationId, kind: a.kind }) });
-      setNote(`${a.organizationName} — ${res.sent} জনকে Nudge ইমেইল পাঠানো হয়েছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "Nudge পাঠানো যায়নি (SMTP কনফিগ চেক করুন)"); }
+      toast(`${a.organizationName} — ${res.sent} জনকে Nudge ইমেইল পাঠানো হয়েছে।`);
+    } catch (e) { toast(e instanceof Error ? e.message : "Nudge পাঠানো যায়নি (SMTP কনফিগ চেক করুন)", "error"); }
   };
 
   const nudgeOnboarding = async (a: Alert) => {
-    setError(""); setNote("");
     try {
       const res = await apiFetch<{ sent: number }>(`/admin/alerts/nudge`, { method: "POST", body: JSON.stringify({ organizationId: a.organizationId, kind: "onboarding" }) });
-      setNote(`${a.organizationName} — Onboarding Nudge ${res.sent} জনকে পাঠানো হয়েছে।`);
-    } catch (e) { setError(e instanceof Error ? e.message : "Nudge পাঠানো যায়নি"); }
+      toast(`${a.organizationName} — Onboarding Nudge ${res.sent} জনকে পাঠানো হয়েছে।`);
+    } catch (e) { toast(e instanceof Error ? e.message : "Nudge পাঠানো যায়নি", "error"); }
   };
 
   return (
     <AdminShell title="Proactive Alerts">
+      <PageHead sub="আসল ডেটা থেকে এই মুহূর্তে হিসাব করা Alert — Severity অনুযায়ী সাজানো।" />
       <p className="amut" style={{ marginBottom: 12 }}>সব Alert আসল ডেটা থেকে এই মুহূর্তে হিসাব করা — ভাঙা Integration, বারবার ব্যর্থ Sync, Past Due, শেষের পথে Trial। Nudge ইমেইল শুধু Gateway নিশ্চিত করলেই "পাঠানো হয়েছে" বলা হয়।</p>
-      {error ? <p className="anote" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</p> : null}
-      {note ? <p className="anote">{note}</p> : null}
       {!loaded ? <div className="askel-table" /> : null}
       {loaded && loadError ? <ErrorState message={`Alert লোড হয়নি: ${loadError}`} onRetry={load} /> : null}
-      {loaded && !loadError && alerts.length === 0 ? <div className="acard"><p className="amut">🎉 এই মুহূর্তে কোনো Alert নেই।</p></div> : null}
+      {loaded && !loadError && alerts.length === 0 ? <div className="acard"><EmptyState title="🎉 এই মুহূর্তে কোনো Alert নেই।" /></div> : null}
       {/* ADX8: severity অনুযায়ী group — severity payload-এর নিজের
           field; আজকের badge-ধাঁচই (high → HIGH, বাকি সব → MEDIUM)।
           Alert computed (stored নয়), তাই কোনো acknowledge অবস্থা
@@ -66,14 +69,20 @@ export default function AlertsPage() {
         if (group.length === 0) return null;
         return (
           <div key={sev} className="mb-4">
+            {/* ADNX11: severity badges now use the ONE v4 status
+                mapping (high → astatus-danger, medium →
+                astatus-warning) instead of one-off inline colours;
+                the group header doubles as the mobile collapse
+                toggle (sm+ always shows the group). */}
             <div className="mb-2 flex items-center gap-2">
-              <span className="abadge" style={sev === "high" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#fef3c7", color: "#92400e" }}>{sev === "high" ? "HIGH" : "MEDIUM"}</span>
+              <span className={sev === "high" ? "astatus-danger" : "astatus-warning"}>{sev === "high" ? "HIGH" : "MEDIUM"}</span>
               <span className="text-sm text-slate-400">{group.length}টি Alert</span>
+              <button type="button" className="abtn-secondary ml-auto !px-2 !py-1 text-xs sm:hidden" aria-expanded={!collapsed[sev]} onClick={() => setCollapsed((c) => ({ ...c, [sev]: !c[sev] }))}>{collapsed[sev] ? "দেখুন ▼" : "লুকান ▲"}</button>
             </div>
-            <div className="space-y-2">
+            <div className={`space-y-2 ${collapsed[sev] ? "hidden sm:block" : ""}`}>
               {group.map((a, i) => (
           <div key={`${a.organizationId}-${a.kind}-${i}`} className="acard flex-col sm:flex-row" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span className="abadge" style={a.severity === "high" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#fef3c7", color: "#92400e" }}>{a.severity === "high" ? "HIGH" : "MEDIUM"}</span>
+            <span className={a.severity === "high" ? "astatus-danger" : "astatus-warning"}>{a.severity === "high" ? "HIGH" : "MEDIUM"}</span>
             <div style={{ flex: 1, minWidth: 220 }}>
               <b style={{ fontSize: 14 }}>{KIND_LABEL[a.kind] ?? a.kind} — {a.organizationName}</b>
               <p className="amut">{a.detail}</p>
