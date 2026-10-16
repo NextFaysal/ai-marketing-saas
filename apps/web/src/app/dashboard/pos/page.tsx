@@ -9,6 +9,7 @@ import {
 import {
   ScanDebouncer, barcodeDetectorSupported, normalizeScanCode,
 } from "@/lib/pos-scan";
+import { SHOP_ICONS } from "@/lib/icons";
 
 // AB4: lib/api.ts surfaces a network failure (non-GET) as this
 // exact message; an HTTP error carries the server's message
@@ -522,7 +523,7 @@ export default function PosPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="page-title">🧾 POS / কাউন্টার বিক্রি</h1>
+      <h1 className="page-title"><SHOP_ICONS.receipt className="mr-1 inline h-6 w-6 -translate-y-1" />POS / কাউন্টার বিক্রি</h1>
 
       {/* AB4: connection + outbox strip */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
@@ -634,7 +635,7 @@ export default function PosPage() {
                       <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">পরিশোধিত</span>
                     )}
                     <button type="button" className="ml-auto text-xs font-semibold text-indigo-600 hover:underline" onClick={() => printReceipt(o.id)}>
-                      🧾 রসিদ আবার প্রিন্ট
+                      <SHOP_ICONS.print className="mr-1 inline h-4 w-4 -translate-y-px" />রসিদ আবার প্রিন্ট
                     </button>
                   </li>
                 ))}
@@ -740,7 +741,7 @@ export default function PosPage() {
                 <div className="flex justify-between"><span>বাকি</span><span>{fmt(lastSale.receipt.dueMinor)}</span></div>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="btn-primary flex-1" onClick={() => printReceipt(lastSale.id)}>🧾 রসিদ প্রিন্ট</button>
+                <button type="button" className="btn-primary flex-1" onClick={() => printReceipt(lastSale.id)}><SHOP_ICONS.print className="mr-1 inline h-4 w-4 -translate-y-px" />রসিদ প্রিন্ট</button>
                 <button type="button" className="flex-1 rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>নতুন বিক্রি</button>
               </div>
             </div>

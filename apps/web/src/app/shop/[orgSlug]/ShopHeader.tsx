@@ -10,6 +10,7 @@ import {
   getShopSession,
 } from "@/lib/storefront-account";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { SHOP_ICONS } from "@/lib/icons";
 
 export function ShopHeader({
   orgSlug,
@@ -117,7 +118,7 @@ export function ShopHeader({
             className={`relative ${navLinkCls}`}
             aria-label={t.common.wishlist}
           >
-            ❤️ <span className="hidden sm:inline">{t.common.wishlist}</span>
+            <SHOP_ICONS.wishlist className="h-5 w-5" /> <span className="hidden sm:inline">{t.common.wishlist}</span>
             {wishCount > 0 ? (
               <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white">
                 {wishCount}
@@ -125,14 +126,14 @@ export function ShopHeader({
             ) : null}
           </Link>
           <Link href={`/shop/${orgSlug}/account`} className={navLinkCls}>
-            👤 {t.common.account}
+            <SHOP_ICONS.account className="h-5 w-5" /> {t.common.account}
           </Link>
           <Link
             href={`/shop/${orgSlug}/cart`}
             className="relative rounded-lg px-3 py-2 text-white"
             style={{ backgroundColor: accent }}
           >
-            🛒 {t.common.cart}
+            <SHOP_ICONS.cart className="h-5 w-5" /> {t.common.cart}
             {count > 0 ? (
               <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white">
                 {count}

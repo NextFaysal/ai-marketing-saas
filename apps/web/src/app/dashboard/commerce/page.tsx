@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import { COMMERCE_ICONS } from "@/lib/icons";
 
 // EC11 — Commerce Hub: one glance over every store. Every number on
 // this page comes from the commerce analytics endpoints
@@ -134,30 +135,30 @@ export default function CommerceHubPage() {
           সংখ্যা বানিয়ে দেখানো হয় না।
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link href="/dashboard/commerce/sync" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔄 Sync Center</Link>
-          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏷️ Discounts / কুপন</Link>
-          <Link href="/dashboard/commerce/promotions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🎁 প্রমোশন</Link>
-          <Link href="/dashboard/commerce/bundles" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧺 বান্ডল</Link>
-          <Link href="/dashboard/commerce/feeds" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📡 প্রোডাক্ট ফিড</Link>
-          <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🛒 Abandoned Carts</Link>
-          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏪 Storefront / দোকান</Link>
-          <Link href="/dashboard/commerce/landings" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🚀 ল্যান্ডিং পেজ</Link>
-          <Link href="/dashboard/commerce/reviews" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">⭐ রিভিউ মডারেশন</Link>
-          <Link href="/dashboard/commerce/questions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">❓ পণ্য প্রশ্নোত্তর</Link>
-          <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧾 ক্রয় / Purchasing</Link>
-          <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏭 গুদাম / Warehouse</Link>
-          <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧮 কর ও হিসাব / Accounting</Link>
-          <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📑 রিপোর্ট / Reports</Link>
-          <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 ফাইন্যান্স / Finance</Link>
-          <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💵 COD মিলকরণ</Link>
-          <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📊 ইনভেন্টরি বুদ্ধিমত্তা</Link>
-          <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔁 সাবস্ক্রিপশন / Subscriptions</Link>
-          <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 কিস্তি / Installments</Link>
-          <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🤝 অ্যাফিলিয়েট</Link>
-          <Link href="/dashboard/commerce/loyalty" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">⭐ লয়্যালটি পয়েন্ট</Link>
-          <Link href="/dashboard/commerce/gift-cards" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🎁 গিফট কার্ড</Link>
-          <Link href="/dashboard/commerce/quotes" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧾 কোট / Quotes</Link>
-          <Link href="/dashboard/integrations" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔌 Integrations</Link>
+          <Link href="/dashboard/commerce/sync" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.sync className="mr-1 inline h-4 w-4 -translate-y-px" /> Sync Center</Link>
+          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.discounts className="mr-1 inline h-4 w-4 -translate-y-px" /> Discounts / কুপন</Link>
+          <Link href="/dashboard/commerce/promotions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.promotions className="mr-1 inline h-4 w-4 -translate-y-px" /> প্রমোশন</Link>
+          <Link href="/dashboard/commerce/bundles" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.bundles className="mr-1 inline h-4 w-4 -translate-y-px" /> বান্ডল</Link>
+          <Link href="/dashboard/commerce/feeds" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.feeds className="mr-1 inline h-4 w-4 -translate-y-px" /> প্রোডাক্ট ফিড</Link>
+          <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.abandoned className="mr-1 inline h-4 w-4 -translate-y-px" /> Abandoned Carts</Link>
+          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.storefront className="mr-1 inline h-4 w-4 -translate-y-px" /> Storefront / দোকান</Link>
+          <Link href="/dashboard/commerce/landings" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.landings className="mr-1 inline h-4 w-4 -translate-y-px" /> ল্যান্ডিং পেজ</Link>
+          <Link href="/dashboard/commerce/reviews" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reviews className="mr-1 inline h-4 w-4 -translate-y-px" /> রিভিউ মডারেশন</Link>
+          <Link href="/dashboard/commerce/questions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.questions className="mr-1 inline h-4 w-4 -translate-y-px" /> পণ্য প্রশ্নোত্তর</Link>
+          <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.purchasing className="mr-1 inline h-4 w-4 -translate-y-px" /> ক্রয় / Purchasing</Link>
+          <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.warehouse className="mr-1 inline h-4 w-4 -translate-y-px" /> গুদাম / Warehouse</Link>
+          <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.accounting className="mr-1 inline h-4 w-4 -translate-y-px" /> কর ও হিসাব / Accounting</Link>
+          <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reports className="mr-1 inline h-4 w-4 -translate-y-px" /> রিপোর্ট / Reports</Link>
+          <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.finance className="mr-1 inline h-4 w-4 -translate-y-px" /> ফাইন্যান্স / Finance</Link>
+          <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reconciliation className="mr-1 inline h-4 w-4 -translate-y-px" /> COD মিলকরণ</Link>
+          <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.inventoryIntelligence className="mr-1 inline h-4 w-4 -translate-y-px" /> ইনভেন্টরি বুদ্ধিমত্তা</Link>
+          <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.subscriptions className="mr-1 inline h-4 w-4 -translate-y-px" /> সাবস্ক্রিপশন / Subscriptions</Link>
+          <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.installments className="mr-1 inline h-4 w-4 -translate-y-px" /> কিস্তি / Installments</Link>
+          <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.affiliates className="mr-1 inline h-4 w-4 -translate-y-px" /> অ্যাফিলিয়েট</Link>
+          <Link href="/dashboard/commerce/loyalty" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.loyalty className="mr-1 inline h-4 w-4 -translate-y-px" /> লয়্যালটি পয়েন্ট</Link>
+          <Link href="/dashboard/commerce/gift-cards" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.giftCards className="mr-1 inline h-4 w-4 -translate-y-px" /> গিফট কার্ড</Link>
+          <Link href="/dashboard/commerce/quotes" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.quotes className="mr-1 inline h-4 w-4 -translate-y-px" /> কোট / Quotes</Link>
+          <Link href="/dashboard/integrations" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.integrations className="mr-1 inline h-4 w-4 -translate-y-px" /> Integrations</Link>
         </div>
       </div>
 

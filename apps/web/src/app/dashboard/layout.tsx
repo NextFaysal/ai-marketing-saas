@@ -2,6 +2,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/lib/nav";
+import { NAV_ICONS, type NavIconName } from "@/lib/icons";
+import { ToastProvider, ConfirmProvider } from "@repo/ui/client";
+import {
+  CalendarDays, Clock, Eye, FlaskConical, LogOut, Mail, Megaphone, Menu,
+  OctagonX, Search, UserRound, Wrench, X,
+} from "lucide-react";
 import { InstallButton } from "@/components/pwa";
 import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
@@ -11,7 +17,7 @@ import { getOrganizationId } from "@/lib/org";
 interface NavGroup {
   id: string;
   title: string;
-  icon: string;
+  icon: NavIconName;
   hrefs: string[];
 }
 
@@ -19,31 +25,31 @@ const GROUPS: NavGroup[] = [
   {
     id: "core",
     title: "সারসংক্ষেপ ও AI",
-    icon: "⚡",
+    icon: "groupCore",
     hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio", "/dashboard/knowledge"],
   },
   {
     id: "commerce",
     title: "কমার্স ও সেলস",
-    icon: "🛍️",
+    icon: "groupCommerce",
     hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
   },
   {
     id: "marketing",
     title: "বিজ্ঞাপন ও ক্যাম্পেইন",
-    icon: "🎯",
+    icon: "groupMarketing",
     hrefs: ["/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/ad-accounts", "/dashboard/social-posts", "/dashboard/creatives", "/dashboard/creative-studio", "/dashboard/audiences", "/dashboard/analytics", "/dashboard/competitors"],
   },
   {
     id: "crm",
     title: "গ্রাহক ও অটোমেশন",
-    icon: "💬",
+    icon: "groupCrm",
     hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/customers", "/dashboard/comments", "/dashboard/messaging", "/dashboard/automations", "/dashboard/workflows", "/dashboard/ai-instructions"],
   },
   {
     id: "settings",
     title: "টিম ও সেটিংস",
-    icon: "⚙️",
+    icon: "groupSettings",
     hrefs: ["/dashboard/team", "/dashboard/settings", "/dashboard/settings/webhooks", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog", "/dashboard/connections", "/dashboard/setup"],
   },
 ];
@@ -81,6 +87,7 @@ function NavContent({
   return (
     <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4 scrollbar-thin">
       {GROUPS.map((group) => {
+        const GroupIcon = NAV_ICONS[group.icon];
         // Filter items in this group
         const items = group.hrefs
           .map((href) => byHref.get(href))
@@ -104,7 +111,7 @@ function NavContent({
               className="flex w-full items-center justify-between px-2.5 py-1 text-left text-[11px] font-bold uppercase tracking-wider text-slate-400/80 transition hover:text-slate-200"
             >
               <span className="flex items-center gap-1.5 truncate">
-                <span className="text-xs opacity-75">{group.icon}</span>
+                <GroupIcon className="h-3.5 w-3.5 opacity-75" />
                 <span>{group.title}</span>
               </span>
               {!isSearching && (
@@ -118,6 +125,7 @@ function NavContent({
               <div className="space-y-0.5 pt-0.5">
                 {filtered.map((item) => {
                   const href = item.href;
+                  const ItemIcon = NAV_ICONS[item.icon];
                   const active = href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
                   if (!item.ready) {
                     const phase = (item as { phase?: string }).phase ?? "শীঘ্রই";
@@ -128,7 +136,7 @@ function NavContent({
                         title={`আসছে: ${phase}`}
                       >
                         <span className="flex items-center gap-2.5 truncate">
-                          <span className="text-sm opacity-50">{item.icon}</span>
+                          <ItemIcon className="h-4 w-4 opacity-50" />
                           <span className="truncate">{item.label}</span>
                         </span>
                         <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">
@@ -151,9 +159,7 @@ function NavContent({
                       aria-current={active ? "page" : undefined}
                     >
                       <span className="flex items-center gap-2.5 min-w-0">
-                        <span className={`text-[15px] transition-transform group-hover:scale-110 ${active ? "opacity-100" : "opacity-75"}`}>
-                          {item.icon}
-                        </span>
+                        <ItemIcon className={`h-[18px] w-[18px] transition-transform group-hover:scale-110 ${active ? "opacity-100" : "opacity-75"}`} />
                         <span className="truncate">{item.label}</span>
                       </span>
                       {active && (
@@ -240,7 +246,7 @@ function NotificationBell() {
           <div className="px-2 py-1 text-xs font-bold text-slate-500">নোটিফিকেশন</div>
           {items.length === 0 ? <p className="px-2 py-3 text-sm text-slate-400">কোনো নোটিফিকেশন নেই</p> : items.map((n) => (
             <button key={n.id} onClick={() => readOne(n.id)} className={`block w-full rounded-xl px-2 py-2 text-left hover:bg-slate-50 ${n.readAt ? "opacity-60" : ""}`}>
-              <div className="text-[13px] font-medium text-slate-800">{n.type === "urgent" ? "🔴 " : n.type === "mention" ? "@ " : "👤 "}{n.title}</div>
+              <div className="text-[13px] font-medium text-slate-800">{n.type === "urgent" ? <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-red-500 align-middle" /> : n.type === "mention" ? "@ " : <UserRound className="mr-1 inline h-3.5 w-3.5 -translate-y-px text-slate-500" />}{n.title}</div>
               {n.body ? <div className="truncate text-xs text-slate-500">{n.body}</div> : null}
               <div className="text-[10px] text-slate-400">{new Date(n.createdAt).toLocaleString()}</div>
             </button>
@@ -277,7 +283,7 @@ function ViewAsBanner() {
   return (
     <div className="px-4 pt-4 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
-        <span>👁 <b>Admin View-As সেশন চলছে</b> — {info.adminEmail} এই ওয়ার্কস্পেসটি {info.mode === "write" ? "Write" : "Read-only"} মোডে দেখছেন। {info.mode !== "write" ? "কোনো পরিবর্তন করা যাবে না।" : "পরিবর্তনগুলো Audit Log এ রেকর্ড হয়।"}</span>
+        <span><Eye className="mr-1 inline h-4 w-4 -translate-y-px" /><b>Admin View-As সেশন চলছে</b> — {info.adminEmail} এই ওয়ার্কস্পেসটি {info.mode === "write" ? "Write" : "Read-only"} মোডে দেখছেন। {info.mode !== "write" ? "কোনো পরিবর্তন করা যাবে না।" : "পরিবর্তনগুলো Audit Log এ রেকর্ড হয়।"}</span>
         <button onClick={end} className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">সেশন শেষ করুন</button>
       </div>
     </div>
@@ -311,7 +317,7 @@ function PracticeBanner() {
   return (
     <div className="px-4 pt-4 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
-        <span>🧪 <b>Practice Mode চালু আছে</b> — কোনো কিছুই আসল customer-এর কাছে যাবে না। প্র্যাক্টিস বার্তা ও অর্ডার শুধু অনুশীলনের জন্য।</span>
+        <span><FlaskConical className="mr-1 inline h-4 w-4 -translate-y-px" /><b>Practice Mode চালু আছে</b> — কোনো কিছুই আসল customer-এর কাছে যাবে না। প্র্যাক্টিস বার্তা ও অর্ডার শুধু অনুশীলনের জন্য।</span>
         <a href="/dashboard/setup" className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">Setup Guide-এ যান</a>
       </div>
     </div>
@@ -327,11 +333,11 @@ function PracticeBanner() {
  */
 function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () => void }) {
   // If user is inside an active chat thread or conversation detail, keep bar tidy
-  const items = [
-    { label: "হোম", href: "/dashboard", icon: "📊" },
-    { label: "ইনবক্স", href: "/dashboard/inbox", icon: "💬" },
-    { label: "অর্ডার", href: "/dashboard/orders", icon: "📦" },
-    { label: "ক্যাম্পেইন", href: "/dashboard/campaigns", icon: "🚀" },
+  const items: { label: string; href: string; icon: NavIconName }[] = [
+    { label: "হোম", href: "/dashboard", icon: "overview" },
+    { label: "ইনবক্স", href: "/dashboard/inbox", icon: "inbox" },
+    { label: "অর্ডার", href: "/dashboard/orders", icon: "orders" },
+    { label: "ক্যাম্পেইন", href: "/dashboard/campaigns", icon: "campaigns" },
   ];
   return (
     <nav
@@ -342,6 +348,7 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
       <div className="grid grid-cols-5 h-[58px]">
         {items.map((item) => {
           const active = item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
+          const ItemIcon = NAV_ICONS[item.icon];
           return (
             <a
               key={item.href}
@@ -354,7 +361,7 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
               {active && (
                 <span className="absolute top-0 h-0.5 w-6 rounded-full bg-indigo-600 shadow-sm" />
               )}
-              <span className={`text-[17px] leading-none transition-transform ${active ? "scale-110" : ""}`}>{item.icon}</span>
+              <ItemIcon className={`h-5 w-5 transition-transform ${active ? "scale-110" : ""}`} />
               <span>{item.label}</span>
             </a>
           );
@@ -364,7 +371,7 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
           className="relative flex flex-col items-center justify-center gap-0.5 text-[10.5px] font-semibold text-slate-500 hover:text-slate-800 transition active:scale-95"
           aria-label="সকল মেনু"
         >
-          <span className="text-[17px] leading-none">☰</span>
+          <Menu className="h-5 w-5" />
           <span>মেনু</span>
         </button>
       </div>
@@ -391,21 +398,21 @@ function PlatformBanner() {
     <div className="space-y-2 px-4 pt-4 sm:px-6 lg:px-8">
       {w?.active ? (
         <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-          🔧 <b>নির্ধারিত রক্ষণাবেক্ষণ চলছে</b> ({new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত)। {w.message || "কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।"}{w.hardLockout ? " এই সময়ে নতুন পরিবর্তন সংরক্ষণ করা যাবে না।" : ""}{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>নির্ধারিত রক্ষণাবেক্ষণ চলছে</b> ({new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত)। {w.message || "কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।"}{w.hardLockout ? " এই সময়ে নতুন পরিবর্তন সংরক্ষণ করা যাবে না।" : ""}{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
         </div>
       ) : status.maintenanceMode ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          🔧 <b>রক্ষণাবেক্ষণ চলছে:</b> প্ল্যাটফর্ম টিম একটি নির্ধারিত রক্ষণাবেক্ষণ চালাচ্ছে। কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>রক্ষণাবেক্ষণ চলছে:</b> প্ল্যাটফর্ম টিম একটি নির্ধারিত রক্ষণাবেক্ষণ চালাচ্ছে। কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
         </div>
       ) : null}
       {w?.upcoming ? (
         <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-          📅 <b>আসন্ন রক্ষণাবেক্ষণ:</b> {new Date(w.startsAt).toLocaleString("bn-BD")} থেকে {new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত। {w.message}
+          <CalendarDays className="mr-1 inline h-4 w-4 -translate-y-px" /><b>আসন্ন রক্ষণাবেক্ষণ:</b> {new Date(w.startsAt).toLocaleString("bn-BD")} থেকে {new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত। {w.message}
         </div>
       ) : null}
       {status.announcement ? (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-          📣 <b>{status.announcement.title}</b> — {status.announcement.body}
+          <Megaphone className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{status.announcement.title}</b> — {status.announcement.body}
         </div>
       ) : null}
     </div>
@@ -437,7 +444,7 @@ function SubscriptionBanner() {
     return (
       <div className="px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-          ⛔ <b>সাবস্ক্রিপশনের মেয়াদ পেরিয়ে গেছে (Past Due):</b> ওয়ার্কস্পেস এখন <b>শুধু দেখার</b> মোডে আছে — নতুন কিছু তৈরি/বদল করা যাবে না। পেমেন্ট বা প্ল্যানের জন্য <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজে</a> যান।
+          <OctagonX className="mr-1 inline h-4 w-4 -translate-y-px" /><b>সাবস্ক্রিপশনের মেয়াদ পেরিয়ে গেছে (Past Due):</b> ওয়ার্কস্পেস এখন <b>শুধু দেখার</b> মোডে আছে — নতুন কিছু তৈরি/বদল করা যাবে না। পেমেন্ট বা প্ল্যানের জন্য <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজে</a> যান।
         </div>
       </div>
     );
@@ -446,7 +453,7 @@ function SubscriptionBanner() {
     return (
       <div className="px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          ⏳ <b>ট্রায়াল শেষ হতে {daysLeft > 0 ? `${daysLeft} দিন` : "আজই"} বাকি</b> ({sub.plan} প্ল্যান)। চালিয়ে যেতে <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজ</a> থেকে প্ল্যান বেছে নিন।
+          <Clock className="mr-1 inline h-4 w-4 -translate-y-px" /><b>ট্রায়াল শেষ হতে {daysLeft > 0 ? `${daysLeft} দিন` : "আজই"} বাকি</b> ({sub.plan} প্ল্যান)। চালিয়ে যেতে <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজ</a> থেকে প্ল্যান বেছে নিন।
         </div>
       </div>
     );
@@ -555,7 +562,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="card w-full max-w-md space-y-4 p-6 text-center">
-          <div className="text-4xl">✉️</div>
+          <div className="flex justify-center"><Mail className="h-10 w-10 text-indigo-500" /></div>
           <h1 className="text-lg font-bold">আগে ইমেইল যাচাই করুন</h1>
           <p className="text-sm leading-relaxed text-slate-500">
             ড্যাশবোর্ড ব্যবহারের আগে আপনার ইমেইল যাচাই করা আবশ্যক। রেজিস্ট্রেশনের সময়
@@ -582,6 +589,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const current = NAV_ITEMS.find((i) => (i.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(i.href))) ?? NAV_ITEMS[0];
   const initials = (email || "U").slice(0, 1).toUpperCase();
+  const CurrentIcon = NAV_ICONS[current.icon];
 
   const sidebar = (
     <div className="flex h-full flex-col bg-[#0b0f19] border-r border-white/[0.08] text-white">
@@ -597,13 +605,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             placeholder="ফিচার বা মেনু খুঁজুন..."
             className="w-full rounded-xl border border-white/10 bg-white/[0.06] pl-8 pr-7 py-1.5 text-[12.5px] text-white placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white/10 focus:outline-none transition"
           />
-          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">🔍</span>
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery("")}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
             >
-              ✕
+              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
@@ -643,6 +651,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     : undefined;
 
   return (
+    <ToastProvider>
+      <ConfirmProvider>
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-[270px] shrink-0 lg:block shadow-xl z-30">
@@ -689,7 +699,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Breadcrumb / Page Title */}
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="text-[15px]">{current?.icon}</span>
+                <CurrentIcon className="h-[18px] w-[18px]" />
                 <span className="truncate text-[15px] font-bold tracking-tight text-slate-900">{current?.label ?? "Dashboard"}</span>
               </div>
               <div className="hidden text-[11px] text-slate-500 font-medium sm:block">AI Marketing Operating System</div>
@@ -705,7 +715,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                💬 ইনবক্স
+                <NAV_ICONS.inbox className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />ইনবক্স
               </a>
               <a
                 href="/dashboard/orders"
@@ -715,13 +725,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                📦 অর্ডার
+                <NAV_ICONS.orders className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />অর্ডার
               </a>
               <a
                 href="/dashboard/campaign-builder"
                 className="rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
               >
-                🎯 ক্যাম্পেইন
+                <NAV_ICONS.adAccounts className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />ক্যাম্পেইন
               </a>
             </div>
 
@@ -759,19 +769,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           href="/dashboard/settings"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          ⚙️ সেটিংস
+                          <NAV_ICONS.orgSettings className="h-4 w-4" /> সেটিংস
                         </a>
                         <a
                           href="/dashboard/team"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          👥 টিম মেম্বার
+                          <NAV_ICONS.team className="h-4 w-4" /> টিম মেম্বার
                         </a>
                         <a
                           href="/dashboard/billing"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          💳 বিলিং ও প্ল্যান
+                          <NAV_ICONS.billing className="h-4 w-4" /> বিলিং ও প্ল্যান
                         </a>
                       </div>
                       <div className="pt-1 border-t border-slate-100">
@@ -779,7 +789,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           onClick={() => { localStorage.clear(); router.push("/login"); }}
                           className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50"
                         >
-                          🚪 লগআউট
+                          <LogOut className="h-4 w-4" /> লগআউট
                         </button>
                       </div>
                     </div>
@@ -810,6 +820,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           AI page itself, where the full workspace already lives. */}
       <GlobalAssistant />
     </div>
+      </ConfirmProvider>
+    </ToastProvider>
   );
 }
 
