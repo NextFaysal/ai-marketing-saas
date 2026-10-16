@@ -9,8 +9,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SplitDialog } from "../app/dashboard/orders/components/SplitDialog";
 import { MergeDialog } from "../app/dashboard/orders/components/MergeDialog";
-import { NotificationSettingsPanel } from "../app/dashboard/orders/components/NotificationSettingsPanel";
-import { FraudSettingsPanel } from "../app/dashboard/orders/components/FraudSettingsPanel";
+import { NotificationSettingsPanel, type NotificationSettingsPanelProps } from "../app/dashboard/orders/components/NotificationSettingsPanel";
+import { FraudSettingsPanel, type FraudSettingsPanelProps } from "../app/dashboard/orders/components/FraudSettingsPanel";
 import { EMPTY_FRAUD_RULE_DRAFT } from "./orders-gb3";
 import type { PanelOrder } from "../app/dashboard/orders/components/types";
 
@@ -61,7 +61,7 @@ const notifProps = {
   notifPanelError: "",
   notifPanelNotice: "",
   notifConfig: null,
-  setNotifConfig: setter<never>(),
+  setNotifConfig: vi.fn() as unknown as NotificationSettingsPanelProps["setNotifConfig"],
   notifPanelBusy: "",
   toggleNotifChannel: noop,
   saveNotifSettings: noopAsync,
@@ -72,7 +72,7 @@ const fraudProps = {
   fraudPanelError: "",
   fraudPanelNotice: "",
   fraudSettings: null,
-  setFraudSettings: setter<never>(),
+  setFraudSettings: vi.fn() as unknown as FraudSettingsPanelProps["setFraudSettings"],
   fraudHighTaka: "",
   setFraudHighTaka: setter<string>(),
   fraudPanelBusy: "",
