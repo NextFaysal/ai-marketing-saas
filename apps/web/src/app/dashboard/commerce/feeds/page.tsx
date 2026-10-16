@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { useConfirm, useToast } from "@repo/ui/client";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC14 — product feeds (Meta catalog / Google Merchant / generic CSV).
 // Every number (itemCount / skippedCount / preview rows) comes from
@@ -208,21 +209,21 @@ export default function FeedsPage() {
               <span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{f.format.toUpperCase()}</span>
               <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${f.active ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{f.active ? "সক্রিয়" : "বন্ধ"}</span>
               <span className="text-xs text-slate-500">আইটেম: {f.itemCount ?? "—"} · বাদ পড়েছে: {f.skippedCount ?? "—"}</span>
-              <span className="text-xs text-slate-400">শেষ তৈরি: {f.lastGeneratedAt ? new Date(f.lastGeneratedAt).toLocaleString("bn-BD") : "এখনো হয়নি"}</span>
+              <span className="text-xs text-slate-500">শেষ তৈরি: {f.lastGeneratedAt ? new Date(f.lastGeneratedAt).toLocaleString("bn-BD") : "এখনো হয়নি"}</span>
             </div>
             <div className="flex gap-2">
-              <input className="input flex-1 font-mono text-xs" readOnly value={f.url} onFocus={(e) => e.target.select()} />
-              <button className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => copyUrl(f.url)}>কপি</button>
+              <input aria-label="ফিড URL" className="input flex-1 font-mono text-xs" readOnly value={f.url} onFocus={(e) => e.target.select()} />
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => copyUrl(f.url)}>কপি</button>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(f)}>
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(f)}>
                 {busy === `active-${f.id}` ? "…" : f.active ? "বন্ধ করুন" : "সক্রিয় করুন"}
               </button>
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => showPreview(f)}>
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => showPreview(f)}>
                 {busy === `preview-${f.id}` ? "প্রিভিউ আসছে…" : previewId === f.id ? "প্রিভিউ বন্ধ করুন" : "প্রিভিউ"}
               </button>
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => rotateToken(f)}>টোকেন রোটেট</button>
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(f)}>মুছুন</button>
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => rotateToken(f)}>টোকেন রোটেট</button>
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(f)}>মুছুন</button>
             </div>
 
             {previewId === f.id ? (
@@ -233,7 +234,7 @@ export default function FeedsPage() {
                   <>
                     <p className="text-sm text-slate-600">
                       মোট আইটেম: <b>{preview.itemCount}</b> · বাদ পড়েছে: <b>{preview.skippedCount}</b>
-                      <span className="text-xs text-slate-400"> (নিচে প্রথম {preview.items.length}টি আইটেম দেখানো হচ্ছে)</span>
+                      <span className="text-xs text-slate-500"> (নিচে প্রথম {preview.items.length}টি আইটেম দেখানো হচ্ছে)</span>
                     </p>
                     {preview.warnings.length > 0 ? (
                       <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
@@ -241,6 +242,8 @@ export default function FeedsPage() {
                       </div>
                     ) : null}
                     {preview.items.length > 0 ? (
+                      <ResponsiveTable
+                        table={
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
@@ -264,13 +267,27 @@ export default function FeedsPage() {
                           </tbody>
                         </table>
                       </div>
+                        }
+                        cards={preview.items.map((it) => (
+                          <div key={it.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                            <dl className="space-y-1.5">
+                              <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ID</dt><dd className="text-right font-mono text-xs">{it.id}</dd></div>
+                              <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শিরোনাম</dt><dd className="text-right">{it.title}</dd></div>
+                              <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দাম</dt><dd className="text-right">{it.price}</dd></div>
+                              <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সেল দাম</dt><dd className="text-right">{it.salePrice ?? "—"}</dd></div>
+                              <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রাপ্যতা</dt><dd className="text-right">{it.availability}</dd></div>
+                            </dl>
+                            <a href={it.link} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-[44px] items-center text-indigo-700 underline">খুলুন</a>
+                          </div>
+                        ))}
+                      />
                     ) : <p className="text-sm text-slate-500">প্রিভিউতে কোনো আইটেম নেই।</p>}
                     {preview.skipped.length > 0 ? (
                       <div>
                         <div className="text-sm font-medium">বাদ পড়া পণ্য ({preview.skipped.length})</div>
                         <ul className="mt-1 space-y-1 text-sm text-slate-600">
                           {preview.skipped.map((s) => (
-                            <li key={s.productId}>• {s.name} — <span className="text-rose-600">{s.reasonMessage}</span> <span className="text-xs text-slate-400">({s.reason})</span></li>
+                            <li key={s.productId}>• {s.name} — <span className="text-rose-600">{s.reasonMessage}</span> <span className="text-xs text-slate-500">({s.reason})</span></li>
                           ))}
                         </ul>
                       </div>
