@@ -996,7 +996,7 @@ export default function ShopCheckoutPage() {
               </div>
             ) : null}
 
-            <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-indigo-600 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 disabled:opacity-50">
+            <button type="submit" disabled={submitting} className="btn-brand btn-brand-shadow w-full rounded-2xl py-3.5 text-sm font-extrabold disabled:opacity-50">
               {submitting ? t.checkout.placingOrder : t.checkout.placeOrder}
             </button>
             <Link href={`/shop/${orgSlug}/cart`} className="block text-center text-xs font-bold text-indigo-700 hover:underline">{t.checkout.backToCart}</Link>

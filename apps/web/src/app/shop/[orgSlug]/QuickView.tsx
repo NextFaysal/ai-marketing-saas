@@ -195,7 +195,7 @@ export function QuickView({
                 <p className="text-sm font-bold text-emerald-800">{t.product.added}</p>
                 <div className="flex justify-center gap-2">
                   <Link href={`/shop/${orgSlug}/cart`} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">{t.product.viewCart}</Link>
-                  <Link href={`/shop/${orgSlug}/checkout`} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white">{t.product.checkoutNow}</Link>
+                  <Link href={`/shop/${orgSlug}/checkout`} className="btn-brand rounded-lg px-4 py-2 text-xs font-bold">{t.product.checkoutNow}</Link>
                 </div>
               </div>
             ) : (
@@ -203,7 +203,7 @@ export function QuickView({
                 type="button"
                 onClick={addToCart}
                 disabled={busy || outOfStock}
-                className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-extrabold text-white disabled:opacity-50"
+                className="btn-brand w-full rounded-xl py-3 text-sm font-extrabold disabled:opacity-50"
               >
                 {outOfStock ? t.product.outOfStockOrder : busy ? t.product.adding : t.product.addToCart}
               </button>

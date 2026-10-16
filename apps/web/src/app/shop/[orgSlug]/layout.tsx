@@ -93,7 +93,18 @@ export default async function ShopLayout({
   const supportPhone = home.settings.supportPhone?.trim() || null;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    // ED1 (Tokens v3): the shop brand seam. --brand is set on the
+    // shop root so every token-driven surface below (the .btn-brand
+    // primary CTAs: PDP buy, QuickView, cart checkout, checkout
+    // submit) follows the org's primaryColor. The fallback IS
+    // today's hard-coded CTA colour (#4f46e5 = indigo-600), so an
+    // unbranded shop renders byte-identically. Before ED1 the seam
+    // reached only the announcement bar, header logo tile and a few
+    // accents — never a buy/checkout button.
+    <div
+      className="min-h-screen bg-slate-50"
+      style={{ "--brand": accent } as React.CSSProperties}
+    >
       <TrackingTags tracking={trackingFromSettings(home.settings)} />
       {/* AB8 (AX23): merchant custom CSS — after the tracking /
           theme inputs, before the header, so it can restyle the

@@ -297,7 +297,7 @@ export default function CartPage() {
           <span className="font-extrabold text-slate-900">{formatMinor(previewMinor)}</span>
         </div>
         <p className="text-[11px] text-slate-400">{t.cart.previewNote}</p>
-        <Link href={`/shop/${orgSlug}/checkout`} className="block rounded-2xl bg-indigo-600 py-3.5 text-center text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700">
+        <Link href={`/shop/${orgSlug}/checkout`} className="btn-brand btn-brand-shadow block rounded-2xl py-3.5 text-center text-sm font-extrabold">
           {t.cart.goCheckout}
         </Link>
         {/* AB4 (AX5c): express checkout — renders only for a

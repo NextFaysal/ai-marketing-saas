@@ -22,6 +22,71 @@
   --radius-card: 1rem;
   --shadow-card-v2: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
   --shadow-pop: 0 12px 40px -12px rgba(15, 23, 42, 0.25);
+
+  /* ---------- Design Tokens v3 (EB1 / ED1, additive) ----------
+     The full token set (docs/design-tokens-v3.md). Every default
+     below equals the value the hard-coded utilities computed to
+     before this layer existed, so un-migrated pages render
+     identically. --brand is the single brand token: it follows
+     --brand-from (which the M59 shell overrides per org); the shop
+     layout sets --brand directly to the org's primaryColor. Because
+     every token is a CSS variable, EB7's dark mode only needs to
+     re-declare this block under a dark scope — no class changes. */
+  --brand: var(--brand-from);
+  --brand-strong: var(--brand-to);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f9;
+  --border: rgba(203, 213, 225, 0.9);
+  --border-strong: #cbd5e1;
+  --ink-inverse: #ffffff;
+  --success: #059669;
+  --success-bright: #10b981;
+  --success-soft: #ecfdf5;
+  --warning: #d97706;
+  --warning-bright: #f59e0b;
+  --warning-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --info: #0284c7;
+  --info-soft: #f0f9ff;
+  /* Type scale (sizes the current classes already compute to). */
+  --text-display: 2rem;
+  --text-display-lh: 1.15;
+  --text-page-title: 26px;
+  --text-page-title-lh: 1.25;
+  --text-section: 15px;
+  --text-section-lh: 1.4;
+  --text-body: 14px;
+  --text-body-lh: 1.55;
+  --text-small: 13px;
+  --text-small-lh: 1.5;
+  --text-micro: 11px;
+  --text-micro-lh: 1.4;
+  /* Spacing rhythm (the 4px grid the current paddings/margins use). */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  /* Radius scale (mirrors the rounded-* steps in use today). */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-full: 9999px;
+  /* Shadow scale: defaults are the tailwind.config literals, which
+     the config now reads back from these variables (single source). */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px -4px rgba(15, 23, 42, 0.08);
+  --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 32px -8px rgba(15, 23, 42, 0.16);
+  --shadow-glow: 0 8px 24px -8px rgba(99, 102, 241, 0.55);
+  --shadow-drawer: 0 0 60px rgba(2, 6, 23, 0.45);
+  --shadow-success: 0 8px 24px -8px rgba(16, 185, 129, 0.55);
+  --shadow-warning: 0 8px 24px -8px rgba(245, 158, 11, 0.55);
+  /* Motion durations (match the transition durations in use). */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 350ms;
 }
 
 @layer base {
@@ -54,9 +119,15 @@
 }
 
 @layer components {
-  /* Premium surface used across every dashboard page */
+  /* Premium surface used across every dashboard page.
+     ED1: re-expressed on the token layer — border-soft = slate-200/80,
+     surface = white, radius-lg = rounded-2xl, shadow-card is the
+     tailwind utility now backed by --shadow-card. Identical values. */
   .card {
-    @apply rounded-2xl border border-slate-200/80 bg-white shadow-card;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
   }
   .card-hover { @apply transition duration-200 hover:shadow-card-hover hover:-translate-y-px; }
 
@@ -66,7 +137,9 @@
     background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to));
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300/90 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition duration-150 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition duration-150 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    /* ED1: border colour from the token layer (--border = slate-300/90). */
+    border-color: var(--border);
   }
   .btn-dark {
     @apply inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
@@ -74,13 +147,40 @@
   .btn-sm { @apply px-3 py-1.5 text-[13px] rounded-lg; }
   .btn-success {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
-    background-image: linear-gradient(135deg, #059669, #10b981);
-    box-shadow: 0 8px 24px -8px rgba(16,185,129,0.55);
+    /* ED1: gradient stops + shadow from the semantic tokens
+       (--success #059669 → --success-bright #10b981). */
+    background-image: linear-gradient(135deg, var(--success), var(--success-bright));
+    box-shadow: var(--shadow-success);
   }
   .btn-warning {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
-    background-image: linear-gradient(135deg, #d97706, #f59e0b);
-    box-shadow: 0 8px 24px -8px rgba(245,158,11,0.55);
+    /* ED1: --warning #d97706 → --warning-bright #f59e0b. */
+    background-image: linear-gradient(135deg, var(--warning), var(--warning-bright));
+    box-shadow: var(--shadow-warning);
+  }
+
+  /* Shop primary CTA (ED1). Solid brand colour from the token layer:
+     --brand defaults to var(--brand-from); the shop layout overrides
+     --brand with the org's primaryColor, falling back to #4f46e5 —
+     the exact indigo-600 the shop CTAs hard-coded before — so an
+     unbranded shop renders identically and a branded shop's buy /
+     cart / checkout buttons follow its colour. Pair with
+     .btn-brand-shadow on the hero CTAs that carried
+     shadow-lg shadow-indigo-600/30. Hover darkens via brightness:
+     the token-path equivalent of indigo-600 → indigo-700 that works
+     for ANY org colour (see docs/design-tokens-v3.md). */
+  .btn-brand {
+    background-color: var(--brand);
+    color: var(--ink-inverse);
+    transition: filter var(--motion-base) ease, transform var(--motion-fast) ease;
+  }
+  .btn-brand:hover { filter: brightness(0.92); }
+  .btn-brand:active { transform: scale(0.99); }
+  .btn-brand:disabled { opacity: 0.5; pointer-events: none; }
+  .btn-brand-shadow {
+    box-shadow:
+      0 10px 15px -3px color-mix(in srgb, var(--brand) 30%, transparent),
+      0 4px 6px -4px color-mix(in srgb, var(--brand) 30%, transparent);
   }
 
   /* Premium form control (pages assign this via their inputCls) */
@@ -98,11 +198,38 @@
   .badge-red { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-50 text-red-700 ring-1 ring-inset ring-red-200; }
   .badge-slate { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200; }
 
-  .page-title { @apply text-[26px] leading-tight font-bold tracking-tight text-slate-900; }
-  .page-sub { @apply text-sm text-slate-500; }
-  .section-title { @apply text-[15px] font-semibold tracking-tight text-slate-900; }
+  /* ED1: type tokens — 26px/1.25 = text-[26px] leading-tight,
+     ink-strong = slate-900, tracking-tight = -0.025em. */
+  .page-title {
+    font-size: var(--text-page-title);
+    line-height: var(--text-page-title-lh);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--ink-strong);
+  }
+  /* text-sm = 14px with a 1.25rem line-height; ink-muted = slate-500. */
+  .page-sub {
+    font-size: var(--text-body);
+    line-height: 1.25rem;
+    color: var(--ink-muted);
+  }
+  /* Line-height intentionally undeclared (inherited today, as before);
+     --text-section-lh is the design target EB5 normalises to. */
+  .section-title {
+    font-size: var(--text-section);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--ink-strong);
+  }
 
-  .table-wrap { @apply overflow-x-auto rounded-2xl border border-slate-200/80 bg-white shadow-card; }
+  /* ED1: same token re-expression as .card (identical values). */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
   .table-wrap table { @apply w-full text-sm; }
   .table-wrap thead th { @apply bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 px-4 py-3 border-b border-slate-200/80 whitespace-nowrap; }
   .table-wrap tbody td { @apply px-4 py-3 border-b border-slate-100 align-top; }
