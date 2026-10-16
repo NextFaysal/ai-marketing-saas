@@ -10,7 +10,7 @@ import {
   invalidateCartCount,
   setCachedCartCount,
 } from "@/lib/shop-header-cache";
-import { useBuyBarActive } from "@/lib/shop-bottom-chrome";
+import { setNavLiftPx, useBuyBarActive } from "@/lib/shop-bottom-chrome";
 
 /**
  * ED7 — v2 mobile bottom navigation. Rendered by the shop layout
@@ -32,6 +32,34 @@ export function ShopBottomNav({
   const [count, setCount] = useState(0);
   const [hidden, setHidden] = useState(false);
   const lastYRef = useRef(0);
+  const navRef = useRef<HTMLElement | null>(null);
+
+  // ED9: publish this nav's height as the nav bottom lift while
+  // it is the bottom-chrome owner on <lg, so floating overlays
+  // sit above it. While a buy bar owns the bottom (this nav
+  // yields) the nav lift is 0 and the buy bar's own lift rules.
+  useEffect(() => {
+    if (buyBarActive) {
+      setNavLiftPx(0);
+      return;
+    }
+    const mq = window.matchMedia("(max-width: 1023.98px)");
+    const measure = () => {
+      if (!mq.matches) {
+        setNavLiftPx(0);
+        return;
+      }
+      setNavLiftPx(navRef.current?.offsetHeight || 64);
+    };
+    measure();
+    mq.addEventListener?.("change", measure);
+    window.addEventListener("resize", measure);
+    return () => {
+      mq.removeEventListener?.("change", measure);
+      window.removeEventListener("resize", measure);
+      setNavLiftPx(0);
+    };
+  }, [buyBarActive]);
 
   // Cart badge: the same header-cache + event pattern ShopHeader
   // uses (ED5) — cached ~30s, invalidated on cart mutations and
@@ -104,6 +132,7 @@ export function ShopBottomNav({
 
   return (
     <nav
+      ref={navRef}
       aria-label={t.chrome.menu}
       className={`fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-soft)] bg-[var(--surface)] transition-transform duration-200 lg:hidden ${
         hidden ? "translate-y-full" : "translate-y-0"

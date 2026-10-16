@@ -12,6 +12,7 @@ import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
 import { ShopBottomNav } from "./ShopBottomNav";
 import { ShopContactButtons } from "./ShopContactButtons";
+import { ShopContactLift } from "./ShopContactLift";
 import { AttributionCapture } from "./AttributionCapture";
 import { ShopPushPrompt } from "./ShopPushPrompt";
 import { ShopInstallBar } from "./ShopInstallBar";
@@ -114,6 +115,7 @@ export default async function ShopLayout({
     // accents — never a buy/checkout button.
     <div
       className="min-h-screen bg-slate-50"
+      data-shop-theme={effThemeId}
       style={{ "--brand": accent } as React.CSSProperties}
     >
       <TrackingTags tracking={trackingFromSettings(home.settings)} />
@@ -148,12 +150,17 @@ export default async function ShopLayout({
       <ShopInstallBar orgSlug={orgSlug} />
       {/* ED6: social proof deferred (renders nothing until its feed loads). */}
       <ShopSocialProofDeferred orgSlug={orgSlug} themeId={effThemeId} />
-      <ShopContactButtons
-        whatsappNumber={home.settings.whatsappNumber ?? null}
-        messengerUrl={home.settings.messengerUrl ?? null}
-        whatsappLabel={t.pages.whatsappLabel}
-        messengerLabel={t.pages.messengerLabel}
-      />
+      {/* ED9: contact buttons ride the bottom-lift wrapper (see
+          ShopContactLift) so they clear the v2 bottom nav / a
+          page buy bar; at lift 0 rendering is pixel-identical. */}
+      <ShopContactLift>
+        <ShopContactButtons
+          whatsappNumber={home.settings.whatsappNumber ?? null}
+          messengerUrl={home.settings.messengerUrl ?? null}
+          whatsappLabel={t.pages.whatsappLabel}
+          messengerLabel={t.pages.messengerLabel}
+        />
+      </ShopContactLift>
       {/* ED7: v2 footer — SAME content blocks, token classes only.
           Legacy themes keep the exact original class strings. */}
       <footer className={effThemeId === "v2" ? "mt-14 border-t border-[var(--border-soft)] bg-[var(--surface)]" : "mt-14 border-t border-slate-200 bg-white"}>

@@ -20,7 +20,11 @@ export function ShopContactButtons({
   const hasMessenger = !!(messengerUrl && messengerUrl.trim());
   if (!hasWhatsapp && !hasMessenger) return null;
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-3">
+    // ED9: root is `absolute` (was `fixed`) because the layout
+    // mounts this inside ShopContactLift — a fixed inset-0
+    // wrapper, so absolute bottom-5 right-5 anchors to the
+    // viewport exactly as fixed did, pixel-identical at lift 0.
+    <div className="pointer-events-auto absolute bottom-5 right-5 z-40 flex flex-col gap-3">
       {hasWhatsapp ? (
         <a
           href={`https://wa.me/${digits}`}

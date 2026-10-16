@@ -13,6 +13,8 @@ import {
   type SocialProofFeed,
   type SocialProofItem,
 } from "@/lib/shop-social-proof";
+import { useOverlayGrant } from "@/lib/shop-overlay-queue";
+import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
 
 /**
  * AB7 (AX17) — social-proof popups, mounted in the shop layout.
@@ -35,6 +37,12 @@ export function ShopSocialProof({
 }) {
   const [item, setItem] = useState<SocialProofItem | null>(null);
   const [visible, setVisible] = useState(false);
+  // ED9: queue grant + bottom lift. The rotation/hide timers
+  // above keep running while another overlay holds the slot —
+  // the card simply does not render until granted (documented,
+  // accepted: a rotation slot may be spent unshown).
+  const granted = useOverlayGrant("social", item != null && visible);
+  const lift = useBottomLiftPx();
   const feedRef = useRef<SocialProofFeed | null>(null);
   const shownRef = useRef(0);
   const stoppedRef = useRef(false);
@@ -181,12 +189,13 @@ export function ShopSocialProof({
     setVisible(false);
   }
 
-  if (!item) return null;
+  if (!item || !granted) return null;
   const lines = socialProofLines(item);
   const dark = themeOf(themeId).headerDark;
   return (
     <div
       role="status"
+      style={lift > 0 ? { bottom: `calc(1.25rem + ${lift}px)` } : undefined}
       className={`fixed bottom-5 left-5 z-40 w-[calc(100vw-2.5rem)] max-w-xs rounded-2xl border p-4 shadow-xl transition-all duration-500 ${
         dark ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800"
       } ${visible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"}`}

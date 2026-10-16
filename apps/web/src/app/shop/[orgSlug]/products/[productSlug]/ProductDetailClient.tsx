@@ -11,7 +11,7 @@ import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
-import { setBuyBarActive } from "@/lib/shop-bottom-chrome";
+import { setBuyBarActive, setBuyBarLiftPx } from "@/lib/shop-bottom-chrome";
 import type { ShopTheme } from "@/lib/shop-theme";
 
 // ED6 (EB2) — deferred chunks. ExpressCheckout renders null until
@@ -50,6 +50,7 @@ export function ProductDetailClient({
   // scrolled out of view. Documented fallback: where IO is
   // unavailable, the bar is simply always visible on mobile.
   const buyRef = useRef<HTMLDivElement | null>(null);
+  const buyBarRef = useRef<HTMLDivElement | null>(null);
   const [barVisible, setBarVisible] = useState(false);
   const images = useMemo(() => {
     const list: string[] = [];
@@ -99,6 +100,23 @@ export function ProductDetailClient({
     if (!isV2) return;
     setBuyBarActive(barVisible);
     return () => setBuyBarActive(false);
+  }, [isV2, barVisible]);
+
+  // ED9: while the buy bar is shown, publish its height as the
+  // buy-bar bottom lift so floating overlays sit above it
+  // (lib/shop-bottom-chrome takes max(navLift, buyBarLift)).
+  useEffect(() => {
+    if (!isV2 || !barVisible) {
+      setBuyBarLiftPx(0);
+      return;
+    }
+    const measure = () => setBuyBarLiftPx(buyBarRef.current?.offsetHeight || 64);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      setBuyBarLiftPx(0);
+    };
   }, [isV2, barVisible]);
 
   // AB2 (AX3): gift-card purchase state — the chosen face value
@@ -560,6 +578,7 @@ export function ProductDetailClient({
   const barPriceMinor = gcBarMinor != null ? String(gcBarMinor) : unitMinor;
   const buyBar = barVisible ? (
     <div
+      ref={buyBarRef}
       className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)] lg:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >

@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { MediaImage } from "@/components/MediaImage";
+import { useOverlayGrant } from "@/lib/shop-overlay-queue";
 
 interface PopupConfig {
   title: string;
@@ -53,6 +54,10 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
   const pathname = usePathname();
   const [popup, setPopup] = useState<PopupConfig | null>(null);
   const [visible, setVisible] = useState(false);
+  // ED9: route through the overlay queue (top priority — the
+  // modal is fixed inset-0, covers everything incl. the bottom
+  // nav, so it takes no bottom lift).
+  const granted = useOverlayGrant("popup", visible && popup != null);
   const shownRef = useRef(false);
   const popupRef = useRef<PopupConfig | null>(null);
 
@@ -167,7 +172,7 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
   }
 
   try {
-    if (!visible || !popup) return null;
+    if (!visible || !popup || !granted) return null;
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={close}>
         <div
