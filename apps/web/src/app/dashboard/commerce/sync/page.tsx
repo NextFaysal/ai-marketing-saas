@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { useConfirm, useToast } from "@repo/ui/client";
+import { ResponsiveTable } from "@repo/ui";
 
 // GET /organizations/:id/stores returns the full Store rows
 // (IntegrationsService.listStores), so refundPushEnabled /
@@ -316,6 +317,89 @@ export default function SyncCenterPage() {
     finally { setBusy(""); }
   }
 
+  // EB6: row actions / detail panels shared verbatim between each
+  // desktop table and its ResponsiveTable mobile card — same
+  // handlers, same order, same state.
+  const renderOutboxAction = (o: OutboxItem) => (
+    o.status === "failed" || o.status === "dead" ? (
+      <button
+        className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50"
+        disabled={busy !== ""}
+        onClick={() => replay(o)}
+      >
+        {busy === `replay-${o.id}` ? "পাঠানো হচ্ছে…" : "আবার চেষ্টা"}
+      </button>
+    ) : null
+  );
+
+  const renderConflictActions = (c: Conflict, isOpen: boolean, diffs: ConflictFieldDiff[], expanded: boolean) => (
+    isOpen ? (
+      confirmConflict?.id === c.id ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-slate-600">
+            {confirmConflict.choice === "keep_local"
+              ? "লোকাল মানটিই রাখা হবে — নিশ্চিত তো?"
+              : "স্টোরের মানটি নেওয়া হবে, লোকাল মান বদলে যাবে — নিশ্চিত তো?"}
+          </p>
+          <div className="flex gap-2">
+            <button className="inline-flex min-h-[44px] items-center rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              disabled={busy !== ""} onClick={resolveConflict}>
+              {busy === `conflict-${c.id}` ? "হচ্ছে…" : "নিশ্চিত করুন"}
+            </button>
+            <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmConflict(null)}>বাতিল</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
+            onClick={() => setConfirmConflict({ id: c.id, choice: "keep_local" })}>
+            লোকাল রাখুন
+          </button>
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
+            onClick={() => setConfirmConflict({ id: c.id, choice: "take_remote" })}>
+            স্টোরেরটা নিন
+          </button>
+          {diffs.length > 0 ? (
+            <button className="inline-flex min-h-[44px] items-center rounded-lg border border-purple-300 px-3 py-1.5 text-xs font-semibold text-purple-700 disabled:opacity-50" disabled={busy !== ""}
+              onClick={() => setExpandedConflictId(expanded ? "" : c.id)}>
+              {expanded ? "বিস্তারিত লুকান" : "ফিল্ড অনুযায়ী বেছে নিন"}
+            </button>
+          ) : null}
+        </div>
+      )
+    ) : null
+  );
+
+  const renderConflictDetail = (c: Conflict, diffs: ConflictFieldDiff[]) => {
+    const picks = fieldChoices[c.id] ?? {};
+    const allPicked = diffs.length > 0 && diffs.every((d) => picks[d.field] === "local" || picks[d.field] === "remote");
+    return (
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-600">প্রতিটি ফিল্ডের জন্য কোন পক্ষের মান থাকবে বেছে নিন:</p>
+        {diffs.map((d) => (
+          <div key={d.field} className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-2 text-xs">
+            <span className="w-28 font-mono font-semibold">{d.field}</span>
+            <label className="flex items-center gap-1.5">
+              <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "local"}
+                onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "local" } }))} />
+              লোকাল: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.localValue)}</span>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "remote"}
+                onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "remote" } }))} />
+              স্টোরের: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.remoteValue)}</span>
+            </label>
+          </div>
+        ))}
+        <button className="inline-flex min-h-[44px] items-center rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          disabled={busy !== "" || !allPicked} onClick={() => applyPerField(c)}>
+          {busy === `conflict-${c.id}` ? "হচ্ছে…" : "ফিল্ড অনুযায়ী প্রয়োগ করুন"}
+        </button>
+        {!allPicked ? <span className="ml-2 text-xs text-slate-500">সব ফিল্ড বেছে নিলে বোতামটি সক্রিয় হবে।</span> : null}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-8">
       <div>
@@ -369,7 +453,7 @@ export default function SyncCenterPage() {
                 );
               })}
             </div>
-            <p className="mt-2 text-xs text-slate-400">মোড বদলানো শুধু Owner/Admin করতে পারেন।</p>
+            <p className="mt-2 text-xs text-slate-500">মোড বদলানো শুধু Owner/Admin করতে পারেন।</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="block text-sm">ওজনের একক (WooCommerce)
                 <select
@@ -385,9 +469,9 @@ export default function SyncCenterPage() {
                   <option value="oz">oz (আউন্স)</option>
                 </select>
               </label>
-              {weightBusy ? <span className="pt-5 text-xs text-slate-400">সংরক্ষণ হচ্ছে…</span> : null}
+              {weightBusy ? <span className="pt-5 text-xs text-slate-500">সংরক্ষণ হচ্ছে…</span> : null}
             </div>
-            <p className="text-xs text-slate-400">স্টোরের আসল একক Health Check-এ Woo Settings থেকে পড়ে সংরক্ষণ করা হয়; এখান থেকে হাতে বদলানো যায়। পণ্যের ওজন গ্রামে সংরক্ষিত থাকে, পাঠানোর সময় এই এককে রূপান্তর হয়।</p>
+            <p className="text-xs text-slate-500">স্টোরের আসল একক Health Check-এ Woo Settings থেকে পড়ে সংরক্ষণ করা হয়; এখান থেকে হাতে বদলানো যায়। পণ্যের ওজন গ্রামে সংরক্ষিত থাকে, পাঠানোর সময় এই এককে রূপান্তর হয়।</p>
             {weightError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{weightError}</p> : null}
             <div className="mt-4 space-y-3 border-t pt-4">
               <label className="flex items-start gap-2 text-sm">
@@ -403,7 +487,7 @@ export default function SyncCenterPage() {
                   <span className="block text-xs text-slate-500">বন্ধ থাকলে refund শুধু SaaS-এ রেকর্ড হবে, স্টোরে যাবে না। শুধু OWNER বদলাতে পারেন।</span>
                 </span>
               </label>
-              {refundBusy ? <p className="text-xs text-slate-400">বদলানো হচ্ছে…</p> : null}
+              {refundBusy ? <p className="text-xs text-slate-500">বদলানো হচ্ছে…</p> : null}
               {refundError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{refundError}</p> : null}
               <div className="space-y-1">
                 <label className="block text-sm font-medium">Courier Tracking Meta Key
@@ -416,7 +500,7 @@ export default function SyncCenterPage() {
                     />
                     <button
                       type="button"
-                      className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+                      className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50"
                       disabled={trackingBusy}
                       onClick={saveTrackingMetaKey}
                     >
@@ -424,7 +508,7 @@ export default function SyncCenterPage() {
                     </button>
                   </div>
                 </label>
-                <p className="text-xs text-slate-400">WooCommerce shipment plugin-এর tracking meta key (ঐচ্ছিক)। খালি রেখে সংরক্ষণ করলে মুছে যাবে।</p>
+                <p className="text-xs text-slate-500">WooCommerce shipment plugin-এর tracking meta key (ঐচ্ছিক)। খালি রেখে সংরক্ষণ করলে মুছে যাবে।</p>
                 {trackingError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{trackingError}</p> : null}
               </div>
             </div>
@@ -444,7 +528,10 @@ export default function SyncCenterPage() {
           </div>
         ) : <p className="mt-2 text-sm text-slate-500">লোড হচ্ছে…</p>}
         {listings.length > 0 ? (
-          <div className="mt-4 overflow-x-auto">
+          <ResponsiveTable
+            className="mt-4"
+            table={
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -461,7 +548,7 @@ export default function SyncCenterPage() {
                   <tr key={l.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       <span className="font-medium">{l.product?.name ?? "—"}</span>
-                      {l.product?.sku ? <span className="block text-xs text-slate-400">SKU: {l.product.sku}</span> : null}
+                      {l.product?.sku ? <span className="block text-xs text-slate-500">SKU: {l.product.sku}</span> : null}
                     </td>
                     <td className="py-2 pr-3">{l.store?.name ?? "—"}{l.store?.platform ? <span className="text-slate-400"> ({l.store.platform})</span> : null}</td>
                     <td className="py-2 pr-3 font-mono text-xs">{l.externalId ?? "—"}</td>
@@ -473,6 +560,20 @@ export default function SyncCenterPage() {
               </tbody>
             </table>
           </div>
+            }
+            cards={listings.map((l) => (
+              <div key={l.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <dl className="space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রোডাক্ট</dt><dd className="text-right"><span className="font-medium">{l.product?.name ?? "—"}</span>{l.product?.sku ? <span className="block text-xs text-slate-500">SKU: {l.product.sku}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টোর</dt><dd className="text-right">{l.store?.name ?? "—"}{l.store?.platform ? <span className="text-slate-400"> ({l.store.platform})</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">External ID</dt><dd className="text-right font-mono text-xs">{l.externalId ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${listingBadge(l.syncStatus)}`}>{l.syncStatus}</span></dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ রিমোট আপডেট</dt><dd className="text-right text-xs text-slate-500">{l.lastRemoteUpdatedAt ? new Date(l.lastRemoteUpdatedAt).toLocaleString() : "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">এরর</dt><dd className="text-right text-xs text-red-600">{l.lastSyncError ?? ""}</dd></div>
+                </dl>
+              </div>
+            ))}
+          />
         ) : <p className="mt-3 text-sm text-slate-500">এখনো কোনো Listing নেই।</p>}
       </div>
 
@@ -495,7 +596,10 @@ export default function SyncCenterPage() {
           </label>
         </div>
         {outbox.length === 0 ? <p className="mt-3 text-sm text-slate-500">এই ফিল্টারে কোনো Outbox আইটেম নেই।</p> : (
-          <div className="mt-3 overflow-x-auto">
+          <ResponsiveTable
+            className="mt-3"
+            table={
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -513,7 +617,7 @@ export default function SyncCenterPage() {
                   <tr key={o.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       <span className="font-medium">{o.entityType}</span>
-                      <span className="block font-mono text-xs text-slate-400" title={o.entityId}>{o.entityId.slice(0, 8)}…</span>
+                      <span className="block font-mono text-xs text-slate-500" title={o.entityId}>{o.entityId.slice(0, 8)}…</span>
                     </td>
                     <td className="py-2 pr-3">{o.operation}</td>
                     <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outboxBadge(o.status)}`}>{o.status}</span></td>
@@ -521,26 +625,33 @@ export default function SyncCenterPage() {
                     <td className="py-2 pr-3 text-xs text-slate-500">{o.nextRetryAt ? new Date(o.nextRetryAt).toLocaleString() : "—"}</td>
                     <td className="py-2 pr-3 max-w-xs truncate text-xs text-red-600" title={o.lastError ?? undefined}>{o.lastError ?? ""}</td>
                     <td className="py-2">
-                      {o.status === "failed" || o.status === "dead" ? (
-                        <button
-                          className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50"
-                          disabled={busy !== ""}
-                          onClick={() => replay(o)}
-                        >
-                          {busy === `replay-${o.id}` ? "পাঠানো হচ্ছে…" : "আবার চেষ্টা"}
-                        </button>
-                      ) : null}
+                      {renderOutboxAction(o)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+            }
+            cards={outbox.map((o) => (
+              <div key={o.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <dl className="space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Entity</dt><dd className="text-right"><span className="font-medium">{o.entityType}</span><span className="block font-mono text-xs text-slate-500" title={o.entityId}>{o.entityId.slice(0, 8)}…</span></dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Operation</dt><dd className="text-right">{o.operation}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${outboxBadge(o.status)}`}>{o.status}</span></dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">চেষ্টা</dt><dd className="text-right">{o.attempts}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরের চেষ্টা</dt><dd className="text-right text-xs text-slate-500">{o.nextRetryAt ? new Date(o.nextRetryAt).toLocaleString() : "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">এরর</dt><dd className="break-words text-right text-xs text-red-600">{o.lastError ?? ""}</dd></div>
+                </dl>
+                {renderOutboxAction(o) ? <div className="mt-2">{renderOutboxAction(o)}</div> : null}
+              </div>
+            ))}
+          />
         )}
         <div className="mt-3 flex items-center gap-3 text-sm">
-          <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page <= 1 || busy !== ""} onClick={() => setPage((p) => Math.max(1, p - 1))}>আগের পেজ</button>
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page <= 1 || busy !== ""} onClick={() => setPage((p) => Math.max(1, p - 1))}>আগের পেজ</button>
           <span className="text-slate-500">পেজ {page} / {totalPages} · মোট {outboxTotal}টি</span>
-          <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page >= totalPages || busy !== ""} onClick={() => setPage((p) => p + 1)}>পরের পেজ</button>
+          <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={page >= totalPages || busy !== ""} onClick={() => setPage((p) => p + 1)}>পরের পেজ</button>
         </div>
       </div>
 
@@ -551,7 +662,10 @@ export default function SyncCenterPage() {
         ) : conflicts.length === 0 ? (
           <p className="mt-2 text-sm text-slate-500">কোনো খোলা Conflict নেই।</p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
+          <ResponsiveTable
+            className="mt-3"
+            table={
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -571,84 +685,26 @@ export default function SyncCenterPage() {
                   const storeName = c.listing?.store?.name ?? c.store?.name ?? null;
                   const diffs = Array.isArray(c.fieldDiffs) ? c.fieldDiffs : [];
                   const expanded = expandedConflictId === c.id;
-                  const picks = fieldChoices[c.id] ?? {};
-                  const allPicked = diffs.length > 0 && diffs.every((d) => picks[d.field] === "local" || picks[d.field] === "remote");
                   return (
                     <React.Fragment key={c.id}>
                     <tr className="border-b last:border-0">
                       <td className="py-2 pr-3">{c.field}</td>
                       <td className="py-2 pr-3">
                         {productName ?? "—"}
-                        {storeName ? <span className="block text-xs text-slate-400">{storeName}</span> : null}
+                        {storeName ? <span className="block text-xs text-slate-500">{storeName}</span> : null}
                       </td>
                       <td className="py-2 pr-3 max-w-xs break-words text-xs">{c.localValue == null ? "—" : String(typeof c.localValue === "object" ? JSON.stringify(c.localValue) : c.localValue)}</td>
                       <td className="py-2 pr-3 max-w-xs break-words text-xs">{c.remoteValue == null ? "—" : String(typeof c.remoteValue === "object" ? JSON.stringify(c.remoteValue) : c.remoteValue)}</td>
                       <td className="py-2 pr-3"><span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{c.status}</span></td>
                       <td className="py-2 pr-3 text-xs text-slate-500">{new Date(c.createdAt).toLocaleString()}</td>
                       <td className="py-2">
-                        {isOpen ? (
-                          confirmConflict?.id === c.id ? (
-                            <div className="space-y-1.5">
-                              <p className="text-xs text-slate-600">
-                                {confirmConflict.choice === "keep_local"
-                                  ? "লোকাল মানটিই রাখা হবে — নিশ্চিত তো?"
-                                  : "স্টোরের মানটি নেওয়া হবে, লোকাল মান বদলে যাবে — নিশ্চিত তো?"}
-                              </p>
-                              <div className="flex gap-2">
-                                <button className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                                  disabled={busy !== ""} onClick={resolveConflict}>
-                                  {busy === `conflict-${c.id}` ? "হচ্ছে…" : "নিশ্চিত করুন"}
-                                </button>
-                                <button className="rounded-lg border px-3 py-1.5 text-xs" onClick={() => setConfirmConflict(null)}>বাতিল</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
-                                onClick={() => setConfirmConflict({ id: c.id, choice: "keep_local" })}>
-                                লোকাল রাখুন
-                              </button>
-                              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""}
-                                onClick={() => setConfirmConflict({ id: c.id, choice: "take_remote" })}>
-                                স্টোরেরটা নিন
-                              </button>
-                              {diffs.length > 0 ? (
-                                <button className="rounded-lg border border-purple-300 px-3 py-1.5 text-xs font-semibold text-purple-700 disabled:opacity-50" disabled={busy !== ""}
-                                  onClick={() => setExpandedConflictId(expanded ? "" : c.id)}>
-                                  {expanded ? "বিস্তারিত লুকান" : "ফিল্ড অনুযায়ী বেছে নিন"}
-                                </button>
-                              ) : null}
-                            </div>
-                          )
-                        ) : null}
+                        {renderConflictActions(c, isOpen, diffs, expanded)}
                       </td>
                     </tr>
                     {isOpen && expanded && diffs.length > 0 ? (
                       <tr className="border-b bg-purple-50/50">
                         <td colSpan={7} className="px-3 py-3">
-                          <div className="space-y-2">
-                            <p className="text-xs font-semibold text-slate-600">প্রতিটি ফিল্ডের জন্য কোন পক্ষের মান থাকবে বেছে নিন:</p>
-                            {diffs.map((d) => (
-                              <div key={d.field} className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-2 text-xs">
-                                <span className="w-28 font-mono font-semibold">{d.field}</span>
-                                <label className="flex items-center gap-1.5">
-                                  <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "local"}
-                                    onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "local" } }))} />
-                                  লোকাল: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.localValue)}</span>
-                                </label>
-                                <label className="flex items-center gap-1.5">
-                                  <input type="radio" name={`diff-${c.id}-${d.field}`} checked={picks[d.field] === "remote"}
-                                    onChange={() => setFieldChoices((prev) => ({ ...prev, [c.id]: { ...(prev[c.id] ?? {}), [d.field]: "remote" } }))} />
-                                  স্টোরের: <span className="max-w-[220px] break-words font-medium">{fmtConflictValue(d.remoteValue)}</span>
-                                </label>
-                              </div>
-                            ))}
-                            <button className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                              disabled={busy !== "" || !allPicked} onClick={() => applyPerField(c)}>
-                              {busy === `conflict-${c.id}` ? "হচ্ছে…" : "ফিল্ড অনুযায়ী প্রয়োগ করুন"}
-                            </button>
-                            {!allPicked ? <span className="ml-2 text-xs text-slate-500">সব ফিল্ড বেছে নিলে বোতামটি সক্রিয় হবে।</span> : null}
-                          </div>
+                          {renderConflictDetail(c, diffs)}
                         </td>
                       </tr>
                     ) : null}
@@ -658,6 +714,33 @@ export default function SyncCenterPage() {
               </tbody>
             </table>
           </div>
+            }
+            cards={conflicts.map((c) => {
+              const isOpen = c.status.toLowerCase() === "open";
+              const productName = c.listing?.product?.name ?? c.product?.name ?? null;
+              const storeName = c.listing?.store?.name ?? c.store?.name ?? null;
+              const diffs = Array.isArray(c.fieldDiffs) ? c.fieldDiffs : [];
+              const expanded = expandedConflictId === c.id;
+              return (
+                <div key={c.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                  <dl className="space-y-1.5">
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Field</dt><dd className="text-right">{c.field}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য / স্টোর</dt><dd className="text-right">{productName ?? "—"}{storeName ? <span className="block text-xs text-slate-500">{storeName}</span> : null}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">লোকাল মান</dt><dd className="break-words text-right text-xs">{c.localValue == null ? "—" : String(typeof c.localValue === "object" ? JSON.stringify(c.localValue) : c.localValue)}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টোরের মান</dt><dd className="break-words text-right text-xs">{c.remoteValue == null ? "—" : String(typeof c.remoteValue === "object" ? JSON.stringify(c.remoteValue) : c.remoteValue)}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">{c.status}</span></dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তৈরি হয়েছে</dt><dd className="text-right text-xs text-slate-500">{new Date(c.createdAt).toLocaleString()}</dd></div>
+                  </dl>
+                  {renderConflictActions(c, isOpen, diffs, expanded) ? <div className="mt-2">{renderConflictActions(c, isOpen, diffs, expanded)}</div> : null}
+                  {isOpen && expanded && diffs.length > 0 ? (
+                    <div className="mt-3 border-t bg-purple-50/50 px-3 py-3">
+                      {renderConflictDetail(c, diffs)}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          />
         )}
       </div>
 
@@ -666,7 +749,7 @@ export default function SyncCenterPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="font-semibold">Locations — {selectedStore.name}</div>
             {selectedStore.platform === "SHOPIFY" ? (
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 disabled={locationsBusy !== ""} onClick={refreshLocations}>
                 {locationsBusy === "refresh" ? "আনা হচ্ছে…" : "Shopify থেকে আনুন"}
               </button>
@@ -683,16 +766,16 @@ export default function SyncCenterPage() {
                   <span>
                     <span className="font-medium">{loc.name}</span>
                     {loc.isDefault ? <span className="ml-2 rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">ডিফল্ট</span> : null}
-                    <span className="block text-xs text-slate-400">External ID: {loc.externalLocationId ?? "—"}</span>
+                    <span className="block text-xs text-slate-500">External ID: {loc.externalLocationId ?? "—"}</span>
                   </span>
                   <span className="flex gap-2">
                     {!loc.isDefault ? (
-                      <button className="rounded-lg border px-2.5 py-1 text-xs disabled:opacity-50" disabled={locationsBusy !== ""}
+                      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2.5 py-1 text-xs disabled:opacity-50" disabled={locationsBusy !== ""}
                         onClick={() => setDefaultLocation(loc)}>
                         ডিফল্ট করুন
                       </button>
                     ) : null}
-                    <button className="rounded-lg border px-2.5 py-1 text-xs text-red-600 disabled:opacity-50" disabled={locationsBusy !== ""}
+                    <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2.5 py-1 text-xs text-red-600 disabled:opacity-50" disabled={locationsBusy !== ""}
                       onClick={() => deleteLocation(loc)}>
                       মুছুন
                     </button>
@@ -712,7 +795,7 @@ export default function SyncCenterPage() {
               <input type="checkbox" checked={locForm.isDefault} onChange={(e) => setLocForm({ ...locForm, isDefault: e.target.checked })} />
               ডিফল্ট
             </label>
-            <button className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={locationsBusy !== ""}>
+            <button className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={locationsBusy !== ""}>
               {locationsBusy === "add" ? "যোগ হচ্ছে…" : "Location যোগ করুন"}
             </button>
           </form>
