@@ -4,6 +4,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatAge, slaStageLabel } from "@/lib/orders-on5";
 import { summarizeAllocations, type AllocationLike } from "@/lib/warehouse-ab3";
+import { ResponsiveTable } from "@repo/ui";
 
 interface BoardLine { orderItemId: string; quantity: number; packed?: boolean; name: string }
 interface Fulfillment {
@@ -327,7 +328,7 @@ export default function DispatchBoardPage() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                       disabled={busy !== ""}
                       onClick={() => patchFulfillment(f, { status: "packed" }, `status-${f.id}-packed`)}
                     >
@@ -335,7 +336,7 @@ export default function DispatchBoardPage() {
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      className="inline-flex min-h-[44px] items-center rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                       disabled={busy !== ""}
                       onClick={() => patchFulfillment(f, { status: "handed_over" }, `status-${f.id}-handed_over`)}
                     >
@@ -348,6 +349,7 @@ export default function DispatchBoardPage() {
                     <li key={line.orderItemId} className="flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
+                        aria-label={`${line.name} প্যাক হয়েছে`}
                         checked={Boolean(line.packed)}
                         disabled={busy !== ""}
                         onChange={(e) => togglePacked(f, line, e.target.checked)}
@@ -410,7 +412,7 @@ export default function DispatchBoardPage() {
               {suggestions.map((g) => (
                 <li key={g.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
                   <span><span className="font-medium">{g.label}</span> <span className="text-slate-500">· {g.count}টি অর্ডার</span></span>
-                  <button type="button" className="btn-secondary btn-sm" disabled={waveBusy !== ""}
+                  <button type="button" className="btn-secondary btn-sm inline-flex min-h-[44px] items-center" disabled={waveBusy !== ""}
                     onClick={() => void createWaveFromGroup(g)}>
                     {waveBusy === `suggest-${g.key}` ? "তৈরি হচ্ছে…" : "ওয়েভ তৈরি"}
                   </button>
@@ -447,7 +449,7 @@ export default function DispatchBoardPage() {
                         </span>
                         <span className="text-xs text-slate-500">পিক: {w.progress.picked}/{w.progress.total}</span>
                         {w.status === "open" ? (
-                          <button type="button" className="rounded-lg border px-2.5 py-1 text-xs font-semibold disabled:opacity-50"
+                          <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-2.5 py-1 text-xs font-semibold disabled:opacity-50"
                             disabled={waveBusy !== ""} onClick={() => void waveAction(w.id, "/close", "POST", `close-${w.id}`)}>
                             {waveBusy === `close-${w.id}` ? "হচ্ছে…" : "ওয়েভ বন্ধ"}
                           </button>
@@ -457,7 +459,7 @@ export default function DispatchBoardPage() {
                     {open ? (
                       detail ? (
                         <ul className="mt-2 space-y-1.5 border-t pt-2">
-                          {detail.orders.length === 0 ? <li className="text-xs text-slate-400">এই ওয়েভে কোনো অর্ডার নেই।</li> : null}
+                          {detail.orders.length === 0 ? <li className="text-xs text-slate-500">এই ওয়েভে কোনো অর্ডার নেই।</li> : null}
                           {detail.orders.map((o) => (
                             <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                               <span>
@@ -475,13 +477,13 @@ export default function DispatchBoardPage() {
                               {w.status === "open" ? (
                                 <span className="flex gap-2">
                                   {!o.pickedAt ? (
-                                    <button type="button" className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                                    <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
                                       disabled={waveBusy !== ""} onClick={() => void waveAction(w.id, `/orders/${o.orderId}/pick`, "POST", `pick-${w.id}-${o.orderId}`)}>
                                       {waveBusy === `pick-${w.id}-${o.orderId}` ? "হচ্ছে…" : "পিক সম্পন্ন"}
                                     </button>
                                   ) : null}
                                   {!o.pickedAt ? (
-                                    <button type="button" className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50"
+                                    <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 hover:underline disabled:opacity-50"
                                       disabled={waveBusy !== ""} onClick={() => void waveAction(w.id, `/orders/${o.orderId}`, "DELETE", `remove-${w.id}-${o.orderId}`)}>
                                       {waveBusy === `remove-${w.id}-${o.orderId}` ? "সরানো হচ্ছে…" : "সরিয়ে দিন"}
                                     </button>
@@ -491,7 +493,7 @@ export default function DispatchBoardPage() {
                             </li>
                           ))}
                         </ul>
-                      ) : <p className="mt-2 text-xs text-slate-400">লোড হচ্ছে…</p>
+                      ) : <p className="mt-2 text-xs text-slate-500">লোড হচ্ছে…</p>
                     ) : null}
                   </li>
                 );
@@ -511,7 +513,10 @@ export default function DispatchBoardPage() {
         ) : (escalations ?? []).length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">এখন কোনো পার্সেল আটকে থাকার এসকেলেশন নেই।</p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
+          <ResponsiveTable
+            className="mt-3"
+            table={
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -535,6 +540,19 @@ export default function DispatchBoardPage() {
               </tbody>
             </table>
           </div>
+            }
+            cards={(escalations ?? []).map((s, i) => (
+              <div key={s.id ?? `${s.orderId}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                <dl className="space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার নম্বর</dt><dd className="text-right font-medium">{s.orderNumber ?? s.orderId.slice(0, 8)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কুরিয়ার</dt><dd className="text-right">{s.provider ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Tracking</dt><dd className="text-right font-mono text-xs">{s.trackingCode ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right">{s.status ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কত দিন আটকে</dt><dd className="text-right">{s.ageDays == null ? "—" : `${s.ageDays} দিন`}</dd></div>
+                </dl>
+              </div>
+            ))}
+          />
         )}
       </div>
 
@@ -566,14 +584,17 @@ export default function DispatchBoardPage() {
                 <span className="ml-2 text-slate-500">{manifest.date}</span>
                 <span className="ml-2 text-slate-500">মোট পার্সেল: {manifest.totalParcels} · মোট আইটেম: {manifest.totalItems}</span>
               </div>
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold print:hidden" onClick={() => window.print()}>
+              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold print:hidden" onClick={() => window.print()}>
                 প্রিন্ট করুন
               </button>
             </div>
             {manifest.rows.length === 0 ? (
               <p className="mt-3 text-sm text-slate-500">এই কুরিয়ারের জন্য আজ কোনো পার্সেল নেই।</p>
             ) : (
-              <div className="mt-3 overflow-x-auto">
+              <ResponsiveTable
+                className="mt-3"
+                table={
+              <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
@@ -595,6 +616,18 @@ export default function DispatchBoardPage() {
                   </tbody>
                 </table>
               </div>
+                }
+                cards={manifest.rows.map((r, i) => (
+                  <div key={`${r.trackingCode ?? "na"}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <dl className="space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Tracking কোড</dt><dd className="text-right font-mono text-xs">{r.trackingCode ?? "—"}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার নম্বর</dt><dd className="text-right">{r.orderNumber ?? "—"}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আইটেম সংখ্যা</dt><dd className="text-right">{r.itemCount}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadge(r.status)}`}>{r.status}</span></dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             )}
           </div>
         ) : null}
@@ -606,7 +639,7 @@ export default function DispatchBoardPage() {
             <span className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs text-slate-500">থেকে <input type="date" className="input w-auto" value={rtoFrom} onChange={(e) => setRtoFrom(e.target.value)} /></label>
               <label className="flex items-center gap-1.5 text-xs text-slate-500">পর্যন্ত <input type="date" className="input w-auto" value={rtoTo} onChange={(e) => setRtoTo(e.target.value)} /></label>
-              <button type="button" className="btn-secondary btn-sm" disabled={rtoBusy} onClick={() => void loadRto(rtoFrom || undefined, rtoTo || undefined)}>{rtoBusy ? "লোড হচ্ছে..." : "দেখুন"}</button>
+              <button type="button" className="btn-secondary btn-sm inline-flex min-h-[44px] items-center" disabled={rtoBusy} onClick={() => void loadRto(rtoFrom || undefined, rtoTo || undefined)}>{rtoBusy ? "লোড হচ্ছে..." : "দেখুন"}</button>
             </span>
           </div>
           <p className="mt-1 text-xs text-slate-500">
@@ -615,7 +648,10 @@ export default function DispatchBoardPage() {
           </p>
           {rtoError ? <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{rtoError}</p> : null}
           {rto ? (
-            <div className="mt-3 overflow-x-auto">
+            <ResponsiveTable
+              className="mt-3"
+              table={
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-slate-500">
@@ -642,6 +678,23 @@ export default function DispatchBoardPage() {
               </table>
               {(rto.providers ?? []).length === 0 ? <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো পার্সেল বুক হয়নি।</p> : null}
             </div>
+              }
+              cards={(<>
+              {[...(rto.providers ?? []), ...(rto.totals ? [{ ...rto.totals, provider: "মোট" }] : [])].map((row: any) => (
+                <div key={row.provider} className={`rounded-xl border bg-white p-3 text-sm shadow-sm ${row.provider === "মোট" ? "font-semibold" : ""}`}>
+                  <dl className="space-y-1.5">
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কুরিয়ার</dt><dd className="text-right">{row.provider === "steadfast" ? "Steadfast" : row.provider === "pathao" ? "Pathao" : row.provider === "redx" ? "RedX" : row.provider === "ecourier" ? "eCourier" : row.provider}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বুক হয়েছে</dt><dd className="text-right">{row.booked}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ডেলিভারি হয়েছে</dt><dd className="text-right">{row.delivered}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফেরত (RTO)</dt><dd className="text-right">{row.returned}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">RTO হার</dt><dd className="text-right">{row.rtoRatePct != null ? `${row.rtoRatePct}%` : "—"}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গড় ফেরত-সময়</dt><dd className="text-right">{row.avgDaysToReturn != null ? `${row.avgDaysToReturn} দিন (n=${row.timingN})` : `— (n=${row.timingN ?? 0})`}</dd></div>
+                  </dl>
+                </div>
+              ))}
+              {(rto.providers ?? []).length === 0 ? <p className="text-sm text-slate-500">এই সময়ে কোনো পার্সেল বুক হয়নি।</p> : null}
+              </>)}
+            />
           ) : rtoBusy ? <p className="mt-2 text-sm text-slate-500">লোড হচ্ছে...</p> : null}
         </div>
       </div>
