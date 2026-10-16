@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { formatMinor } from "@repo/contracts";
+import { ResponsiveTable } from "@repo/ui";
 import type {
   Order,
   Shipment,
@@ -222,6 +223,41 @@ export function OrderDrawer({
   const refunded = BigInt(order.refundedMinor ?? "0");
   const totalAmt = BigInt(order.totalMinor);
   const sh = shipments.find((s) => s.orderId === order.id);
+  // EB6/ED15: the installment collect cell is shared verbatim by the
+  // desktop table and the ResponsiveTable mobile card — same handlers,
+  // same order (products-page row-action discipline).
+  const renderInstCollect = (item: InstallmentItemRow) => {
+    const remaining = (() => {
+      try {
+        return BigInt(item.remainingMinor);
+      } catch {
+        return 0n;
+      }
+    })();
+    const form = collectForms[item.id];
+    return remaining > 0n && form ? (
+      <div className="flex items-center gap-1">
+        <input
+          className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs"
+          aria-label="সংগ্রহের পরিমাণ (টাকা)"
+          value={form.amount}
+          onChange={(e) =>
+            onCollectFormChange(item.id, "amount", e.target.value)
+          }
+        />
+        <button
+          type="button"
+          disabled={instBusy !== ""}
+          onClick={() => onCollectInstItem(item)}
+          className="inline-flex min-h-[44px] items-center rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-indigo-700"
+        >
+          কালেক্ট
+        </button>
+      </div>
+    ) : (
+      "—"
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs transition-opacity animate-fade">
@@ -248,7 +284,8 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm transition hover:bg-slate-100 hover:text-slate-700 active:scale-95"
+                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-400 shadow-sm transition hover:bg-slate-100 hover:text-slate-700 active:scale-95"
+                aria-label="বন্ধ করুন"
               >
                 ✕
               </button>
@@ -259,7 +296,7 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={() => onTabChange("overview")}
-                className={`rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   activeTab === "overview"
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-white text-slate-600 hover:bg-slate-100"
@@ -270,7 +307,7 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={() => onTabChange("courier")}
-                className={`rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   activeTab === "courier"
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-white text-slate-600 hover:bg-slate-100"
@@ -281,7 +318,7 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={() => onTabChange("payment")}
-                className={`rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   activeTab === "payment"
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-white text-slate-600 hover:bg-slate-100"
@@ -292,7 +329,7 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={() => onTabChange("store")}
-                className={`rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   activeTab === "store"
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-white text-slate-600 hover:bg-slate-100"
@@ -303,7 +340,7 @@ export function OrderDrawer({
               <button
                 type="button"
                 onClick={() => onTabChange("rider")}
-                className={`rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   activeTab === "rider"
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-white text-slate-600 hover:bg-slate-100"
@@ -358,7 +395,7 @@ export function OrderDrawer({
                       {actBusy === "save" ? "সংরক্ষণ হচ্ছে..." : "স্ট্যাটাস পরিবর্তন"}
                     </button>
                   </div>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-slate-500">
                     Cancelled/Failed হলে স্টক ফেরত হয়; Completed হলে order.delivered ইভেন্ট পুশ হয়।
                   </p>
                 </div>
@@ -953,7 +990,7 @@ export function OrderDrawer({
                   {instError && <p className="text-xs text-red-600">{instError}</p>}
 
                   {!instLoaded ? (
-                    <p className="text-xs text-slate-400">লোড হচ্ছে...</p>
+                    <p className="text-xs text-slate-500">লোড হচ্ছে...</p>
                   ) : !instPlan ? (
                     (() => {
                       let due = 0n;
@@ -1010,7 +1047,7 @@ export function OrderDrawer({
                           </button>
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-400">এই অর্ডারে কোনো বকেয়া নেই।</p>
+                        <p className="text-xs text-slate-500">এই অর্ডারে কোনো বকেয়া নেই।</p>
                       );
                     })()
                   ) : (
@@ -1021,9 +1058,11 @@ export function OrderDrawer({
                         <span>বাকি: <b>{formatMinor(BigInt(instPlan.remainingMinor))}</b></span>
                       </div>
 
-                      <div className="overflow-x-auto">
+                      <ResponsiveTable
+                        table={
+                          <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
-                          <thead className="border-b border-slate-100 text-slate-400">
+                          <thead className="border-b border-slate-100 text-slate-500">
                             <tr>
                               <th className="py-1">ক্রম</th>
                               <th className="py-1">তারিখ</th>
@@ -1035,14 +1074,6 @@ export function OrderDrawer({
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {instPlan.items.map((item) => {
-                              const remaining = (() => {
-                                try {
-                                  return BigInt(item.remainingMinor);
-                                } catch {
-                                  return 0n;
-                                }
-                              })();
-                              const form = collectForms[item.id];
                               return (
                                 <tr key={item.id} className="py-2">
                                   <td className="py-2 font-bold">{item.seq}</td>
@@ -1068,27 +1099,7 @@ export function OrderDrawer({
                                   </td>
                                   {instPlan.status === "active" && (
                                     <td className="py-2">
-                                      {remaining > 0n && form ? (
-                                        <div className="flex items-center gap-1">
-                                          <input
-                                            className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs"
-                                            value={form.amount}
-                                            onChange={(e) =>
-                                              onCollectFormChange(item.id, "amount", e.target.value)
-                                            }
-                                          />
-                                          <button
-                                            type="button"
-                                            disabled={instBusy !== ""}
-                                            onClick={() => onCollectInstItem(item)}
-                                            className="rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-indigo-700"
-                                          >
-                                            কালেক্ট
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        "—"
-                                      )}
+                                      {renderInstCollect(item)}
                                     </td>
                                   )}
                                 </tr>
@@ -1096,7 +1107,38 @@ export function OrderDrawer({
                             })}
                           </tbody>
                         </table>
-                      </div>
+                          </div>
+                        }
+                        cards={instPlan.items.map((item) => (
+                          <div key={item.id} className="rounded-xl border bg-white p-3 shadow-sm">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-slate-900">ক্রম {item.seq}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                  item.fullyPaid
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : item.overdue
+                                      ? "bg-red-100 text-red-800"
+                                      : "bg-slate-100 text-slate-700"
+                                }`}
+                              >
+                                {item.fullyPaid ? "সম্পূর্ণ" : item.overdue ? "অতিবাহিত" : "বাকি"}
+                              </span>
+                            </div>
+                            <dl className="mt-2 space-y-1 text-xs">
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">তারিখ</dt><dd className="font-medium">{item.dueDay}</dd></div>
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিমাণ</dt><dd className="font-semibold">{formatMinor(BigInt(item.amountMinor))}</dd></div>
+                              <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিশোধিত</dt><dd className="font-semibold text-emerald-700">{formatMinor(BigInt(item.paidMinor))}</dd></div>
+                            </dl>
+                            {instPlan.status === "active" && (
+                              <div className="mt-2 border-t pt-2">
+                                <div className="mb-1 text-xs font-semibold text-slate-500">সংগ্রহ</div>
+                                {renderInstCollect(item)}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      />
 
                       {instPlan.status === "active" && (
                         <button
@@ -1122,9 +1164,9 @@ export function OrderDrawer({
                 {pushStateError ? (
                   <p className="text-xs text-red-600">লোড করা যায়নি: {pushStateError}</p>
                 ) : !pushState ? (
-                  <p className="text-xs text-slate-400">লোড হচ্ছে...</p>
+                  <p className="text-xs text-slate-500">লোড হচ্ছে...</p>
                 ) : !pushState.store ? (
-                  <p className="text-xs text-slate-400">এই অর্ডারের কোনো সংযুক্ত স্টোর নেই</p>
+                  <p className="text-xs text-slate-500">এই অর্ডারের কোনো সংযুক্ত স্টোর নেই</p>
                 ) : (
                   <div className="space-y-4">
                     <div className="rounded-2xl border border-slate-200/80 p-4 space-y-2">
