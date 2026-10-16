@@ -712,6 +712,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         >
                           💳 বিলিং ও প্ল্যান
                         </a>
+                        <a
+                          href="/dashboard/support"
+                          className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          🎫 সাপোর্ট হাব
+                        </a>
                       </div>
                       <div className="pt-1 border-t border-slate-100">
                         <button

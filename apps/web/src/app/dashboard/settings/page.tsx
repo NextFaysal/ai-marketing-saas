@@ -424,6 +424,227 @@ function BusinessHub() {
   );
 }
 
+function VoiceSettingsCard() {
+  const [enabled, setEnabled] = useState(false);
+  const [autoCallNewCod, setAutoCallNewCod] = useState(false);
+  const [delayMinutes, setDelayMinutes] = useState(2);
+  const [provider, setProvider] = useState<"mock" | "twilio">("mock");
+  const [twilioAccountSid, setTwilioAccountSid] = useState("");
+  const [twilioAuthToken, setTwilioAuthToken] = useState("");
+  const [twilioCallerId, setTwilioCallerId] = useState("");
+  const [promptIntro, setPromptIntro] = useState("");
+  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const s = await apiFetch<any>(`/organizations/${orgId}/voice/settings`);
+      if (s) {
+        setEnabled(Boolean(s.enabled));
+        setAutoCallNewCod(Boolean(s.autoCallNewCod));
+        setDelayMinutes(Number(s.delayMinutes ?? 2));
+        setProvider(s.provider || "mock");
+        setTwilioAccountSid(s.twilioAccountSid ?? "");
+        setTwilioAuthToken(s.twilioAuthToken ?? "");
+        setTwilioCallerId(s.twilioCallerId ?? "");
+        setPromptIntro(s.promptIntro ?? "");
+        setMaxAttempts(Number(s.maxAttempts ?? 3));
+      }
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ভয়েস সেটিংস লোড করা যায়নি");
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(true); setMsg(""); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/voice/settings`, {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled,
+          autoCallNewCod,
+          delayMinutes,
+          provider,
+          twilioAccountSid,
+          twilioAuthToken,
+          twilioCallerId,
+          promptIntro,
+          maxAttempts,
+        }),
+      });
+      setMsg("✅ AI ভয়েস কল সেটিংস সফলভাবে সংরক্ষিত হয়েছে।");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section id="hub-voice" className="card scroll-mt-24 p-5 sm:p-6">
+      <div className="mb-4 flex items-start gap-3">
+        <span className="stat-icon stat-icon-brand !h-10 !w-10 text-lg">📞</span>
+        <div className="min-w-0">
+          <h2 className="font-semibold leading-tight text-slate-900">
+            AI ভয়েস কল কনফার্মেশন (Bangla IVR)
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            ক্যাশ অন ডেলিভারি (COD) অর্ডার কনফার্ম করতে গ্রাহককে স্বয়ংক্রিয় বাংলা ভয়েস কল এবং ১/২ বাটন ইনপুট
+          </p>
+        </div>
+      </div>
+
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+
+      {!loaded ? (
+        <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+      ) : (
+        <div className="space-y-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/50 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              <div>
+                <span className="font-semibold text-slate-800 block">ভয়েস কল সার্ভিস সক্রিয় করুন</span>
+                <span className="text-xs text-slate-500">অর্ডার ড্যাশবোর্ড থেকে ১-ক্লিকে গ্রাহককে AI কল করার সুবিধা</span>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/50 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                checked={autoCallNewCod}
+                onChange={(e) => setAutoCallNewCod(e.target.checked)}
+              />
+              <div>
+                <span className="font-semibold text-slate-800 block">নতুন COD অর্ডারে অটোমেটিক কল দিন</span>
+                <span className="text-xs text-slate-500">অর্ডার প্লেস হওয়ার সাথে সাথে স্বয়ংক্রিয়ভাবে কল ট্রিগার হবে</span>
+              </div>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">প্রোভাইডার</label>
+              <select
+                className="input"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as any)}
+              >
+                <option value="mock">স্যান্ডবক্স / টেস্ট মোড (Mock)</option>
+                <option value="twilio">Twilio Voice API (লাইভ প্রোডাকশন)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">অটো-কল বিলম্ব (মিনিট)</label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                className="input"
+                value={delayMinutes}
+                onChange={(e) => setDelayMinutes(Number(e.target.value))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">সর্বোচ্চ পুনঃপ্রচেষ্টা (বার)</label>
+              <input
+                type="number"
+                min={1}
+                max={5}
+                className="input"
+                value={maxAttempts}
+                onChange={(e) => setMaxAttempts(Number(e.target.value))}
+              />
+            </div>
+          </div>
+
+          {provider === "twilio" && (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4 space-y-3">
+              <h4 className="font-semibold text-indigo-950 text-xs uppercase tracking-wider">
+                Twilio ক্রেডেনশিয়াল
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">Account SID</label>
+                  <input
+                    type="text"
+                    className="input font-mono text-xs"
+                    placeholder="AC..."
+                    value={twilioAccountSid}
+                    onChange={(e) => setTwilioAccountSid(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">Auth Token</label>
+                  <input
+                    type="password"
+                    className="input font-mono text-xs"
+                    placeholder="••••••••"
+                    value={twilioAuthToken}
+                    onChange={(e) => setTwilioAuthToken(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">Twilio Caller ID (ফোন নম্বর)</label>
+                  <input
+                    type="text"
+                    className="input text-xs"
+                    placeholder="+1234567890"
+                    value={twilioCallerId}
+                    onChange={(e) => setTwilioCallerId(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              কাস্টম বাংলা শুভেচ্ছা ভূমিকা (ঐচ্ছিক)
+            </label>
+            <input
+              type="text"
+              className="input"
+              placeholder="আসসালামু আলাইকুম। (খালি রাখলে সিস্টেমের স্ট্যান্ডার্ড বাংলা স্ক্রিপ্ট চলবে)"
+              value={promptIntro}
+              onChange={(e) => setPromptIntro(e.target.value)}
+            />
+          </div>
+
+          <div className="pt-2 flex justify-end">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={save}
+              className="btn-primary min-h-[40px] px-5"
+            >
+              {busy ? "সংরক্ষণ হচ্ছে..." : "ভয়েস সেটিংস সংরক্ষণ করুন"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function SettingsPage() {
   const [status, setStatus] = useState<TotpStatus | null>(null);
   const [secret, setSecret] = useState("");
@@ -555,6 +776,7 @@ export default function SettingsPage() {
             </p>
           </section>
 
+          <VoiceSettingsCard />
           <BrandingCard />
         </div>
       </div>

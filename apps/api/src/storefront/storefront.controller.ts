@@ -40,6 +40,7 @@ import {
   RequestOtpDto,
   SHOP_SESSION_HEADER,
   TrackLookupDto,
+  NdrRecoveryDto,
   UpdateAddressDto,
   UpdateDeliverySlotDto,
   UpdatePickupPointDto,
@@ -326,6 +327,14 @@ export class PublicShopController {
   @Post(":orgSlug/track/digital-access")
   digitalAccess(@Param("orgSlug") orgSlug: string, @Body() dto: TrackLookupDto) {
     return this.storefront.digitalAccess(orgSlug, dto);
+  }
+
+  /** Automated Customer NDR Delivery Reschedule & Alternative Contact */
+  @Public()
+  @RateLimit(15, 60)
+  @Post(":orgSlug/track/ndr-recovery")
+  ndrRecovery(@Param("orgSlug") orgSlug: string, @Body() dto: NdrRecoveryDto) {
+    return this.storefront.ndrRecovery(orgSlug, dto);
   }
 
   // ---------- EC28: retention ----------

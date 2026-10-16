@@ -1235,8 +1235,21 @@ export class MessagingService {
     const { computeRfm, RFM_SEGMENTS } = await import("./rfm");
     const rows = await computeRfm(this.prisma as any, organizationId);
     const counts: Record<string, number> = {};
-    for (const seg of RFM_SEGMENTS) counts[seg] = rows.filter((r) => r.segment === seg).length;
-    return { totalCustomers: rows.length, segments: counts, rows: rows.slice(0, 200) };
+    const segmentStats: Record<string, { count: number; totalSpendMinor: string; avgRecencyDays: number; avgFrequency: number }> = {};
+    for (const seg of RFM_SEGMENTS) {
+      const segRows = rows.filter((r) => r.segment === seg);
+      counts[seg] = segRows.length;
+      const totalSpend = segRows.reduce((acc, r) => acc + BigInt(r.monetaryMinor || 0), 0n);
+      const avgRecency = segRows.length > 0 ? Math.round(segRows.reduce((acc, r) => acc + r.recencyDays, 0) / segRows.length) : 0;
+      const avgFreq = segRows.length > 0 ? Math.round((segRows.reduce((acc, r) => acc + r.frequency, 0) / segRows.length) * 10) / 10 : 0;
+      segmentStats[seg] = {
+        count: segRows.length,
+        totalSpendMinor: String(totalSpend),
+        avgRecencyDays: avgRecency,
+        avgFrequency: avgFreq,
+      };
+    }
+    return { totalCustomers: rows.length, segments: counts, segmentStats, rows: rows.slice(0, 500) };
   }
 
   // ---------- MS9: AI for messaging ----------

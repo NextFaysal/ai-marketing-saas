@@ -376,4 +376,21 @@ describe("EC10 sendStoreRecovery", () => {
     const { service } = sendSetup(async () => ({ providerMessageId: "msg-1" }));
     await expect(service.sendStoreRecovery("org-2", "user-1", "chk-1")).rejects.toThrow("not found");
   });
+
+  it("generates WhatsApp recovery data with clean phone and discount message", async () => {
+    const { prisma, service } = sendSetup(async () => ({ providerMessageId: "msg-1" }));
+    prisma.abandonedStoreCheckout.rows[0].phone = "01711223344";
+    const data = await service.getWhatsAppRecoveryData("org-1", "chk-1", "SAVE15");
+
+    expect(data.phone).toBe("8801711223344");
+    expect(data.discountCode).toBe("SAVE15");
+    expect(data.waLink).toContain("https://wa.me/8801711223344");
+    expect(data.messageText).toContain("SAVE15");
+  });
+
+  it("throws when checkout has no phone for WhatsApp recovery", async () => {
+    const { prisma, service } = sendSetup(async () => ({ providerMessageId: "msg-1" }));
+    prisma.abandonedStoreCheckout.rows[0].phone = null;
+    await expect(service.getWhatsAppRecoveryData("org-1", "chk-1")).rejects.toThrow("কোনো ফোন নম্বর নেই");
+  });
 });

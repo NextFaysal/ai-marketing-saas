@@ -111,7 +111,10 @@ function PolicyBadge({ policy }: { policy: PolicyResult }) {
   );
 }
 
+import { BannerStudio } from "./banner-studio";
+
 export default function CreativeStudioPage() {
+  const [activeTab, setActiveTab] = React.useState<"copy" | "banner">("copy");
   const [products, setProducts] = React.useState<ProductItem[]>([]);
   const [productsLoading, setProductsLoading] = React.useState(true);
   const [productId, setProductId] = React.useState("");
@@ -130,6 +133,37 @@ export default function CreativeStudioPage() {
   const [draftingIndex, setDraftingIndex] = React.useState<number | null>(null);
   const [draftResults, setDraftResults] = React.useState<Record<number, DraftResponse>>({});
   const [draftErrors, setDraftErrors] = React.useState<Record<number, string>>({});
+
+  async function onDraftWithBanner(product: ProductItem, bannerHeadline: string, bannerPrimaryText: string) {
+    if (!adAccountId || draftingIndex !== null) return;
+    const { apiFetch } = await import("@/lib/api");
+    const { getOrganizationId } = await import("@/lib/org");
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setDraftingIndex(999);
+    try {
+      const res = await apiFetch<DraftResponse>(
+        `/organizations/${orgId}/ai/creative-studio/draft`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            productId: product.id,
+            adAccountId,
+            headline: bannerHeadline,
+            primaryText: bannerPrimaryText,
+            callToAction: "SHOP_NOW",
+            linkUrl: linkUrl.trim() ? linkUrl.trim() : undefined,
+          }),
+        },
+      );
+      setDraftResults((prev) => ({ ...prev, [999]: res }));
+      alert("✅ ব্যানার ও কপি দিয়ে সফলভাবে ক্যাম্পেইন ড্রাফট তৈরি করা হয়েছে!\nPlan ID: " + res.planId);
+    } catch (e) {
+      alert("ড্রাফট তৈরি করা যায়নি: " + (e instanceof Error ? e.message : "Error"));
+    } finally {
+      setDraftingIndex(null);
+    }
+  }
 
   React.useEffect(() => {
     (async () => {
@@ -236,19 +270,59 @@ export default function CreativeStudioPage() {
       <div>
         <h1 className="page-title">🎨 AI Creative Studio</h1>
         <p className="text-sm text-slate-500">
-          আসল পণ্যের তথ্য (নাম, দাম, বিবরণ) থেকেই AI বিজ্ঞাপনের কপি বানায় — দাম/ছাড়/দাবি বানিয়ে বলে না; প্রতিটি ভ্যারিয়েন্ট স্বয়ংক্রিয় পলিসি চেকে যাচাই হয়।
+          আসল পণ্যের তথ্য (নাম, দাম, বিবরণ) থেকেই AI বিজ্ঞাপনের কপি ও ব্যানার বানায় — দাম/ছাড়/দাবি বানিয়ে বলে না; প্রতিটি ভ্যারিয়েন্ট স্বয়ংক্রিয় পলিসি চেকে যাচাই হয়।
         </p>
       </div>
 
-      <div className="card space-y-4 p-5">
-        <div className="font-semibold">বিজ্ঞাপনের কপি তৈরি করুন</div>
-        {productsLoading ? (
-          <p className="text-sm text-slate-500">লোড হচ্ছে...</p>
-        ) : products.length === 0 ? (
-          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            কোনো পণ্য নেই — আগে Products পেজে পণ্য যোগ করুন।
-          </p>
-        ) : (
+      {/* Mode Tabs */}
+      <div className="flex border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab("copy")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition ${
+            activeTab === "copy"
+              ? "border-sky-600 text-sky-600"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <span>📝</span>
+          <span>অ্যাড কপি জেনারেটর (Copywriting)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("banner")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition ${
+            activeTab === "banner"
+              ? "border-sky-600 text-sky-600"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <span>🎨</span>
+          <span>ভিজ্যুয়াল স্টুডিও ও ব্যানার মেকার (Banner Studio)</span>
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+            NEW
+          </span>
+        </button>
+      </div>
+
+      {activeTab === "banner" ? (
+        <BannerStudio
+          products={products}
+          adAccounts={adAccounts}
+          selectedAdAccountId={adAccountId}
+          onDraftWithBanner={onDraftWithBanner}
+        />
+      ) : (
+        <>
+          <div className="card space-y-4 p-5">
+            <div className="font-semibold">বিজ্ঞাপনের কপি তৈরি করুন</div>
+            {productsLoading ? (
+              <p className="text-sm text-slate-500">লোড হচ্ছে...</p>
+            ) : products.length === 0 ? (
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                কোনো পণ্য নেই — আগে Products পেজে পণ্য যোগ করুন।
+              </p>
+            ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             <label className="text-sm">
               পণ্য
@@ -437,6 +511,8 @@ export default function CreativeStudioPage() {
           </div>
         </div>
       ) : null}
+        </>
+      )}
     </div>
   );
 }

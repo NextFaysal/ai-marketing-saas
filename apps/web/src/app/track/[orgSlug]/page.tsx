@@ -124,6 +124,48 @@ export default function TrackOrderPage() {
   const [digitalBusy, setDigitalBusy] = useState(false);
   const [digitalError, setDigitalError] = useState("");
 
+  // NDR Delivery Recovery Bot state
+  const [ndrOpen, setNdrOpen] = useState(false);
+  const [ndrAction, setNdrAction] = useState<"reschedule" | "alt_phone" | "update_address" | "instruction">("reschedule");
+  const [ndrRescheduleDate, setNdrRescheduleDate] = useState("");
+  const [ndrAltPhone, setNdrAltPhone] = useState("");
+  const [ndrAddress, setNdrAddress] = useState("");
+  const [ndrInstruction, setNdrInstruction] = useState("");
+  const [ndrBusy, setNdrBusy] = useState(false);
+  const [ndrError, setNdrError] = useState("");
+  const [ndrSuccess, setNdrSuccess] = useState("");
+
+  async function submitNdr(e: React.FormEvent) {
+    e.preventDefault();
+    if (!result) return;
+    setNdrBusy(true);
+    setNdrError("");
+    setNdrSuccess("");
+    try {
+      const res = await fetch(`${API_URL}/public/shop/${encodeURIComponent(orgSlug)}/track/ndr-recovery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: phone.trim(),
+          orderNumber: orderNumber.trim(),
+          action: ndrAction,
+          rescheduleDate: ndrAction === "reschedule" ? ndrRescheduleDate : undefined,
+          altPhone: ndrAction === "alt_phone" ? ndrAltPhone.trim() : undefined,
+          updatedAddress: ndrAction === "update_address" ? ndrAddress.trim() : undefined,
+          instruction: ndrAction === "instruction" ? ndrInstruction.trim() : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "ডেলিভারি নির্দেশনা সংরক্ষণ করা যায়নি");
+      setNdrSuccess(data.message || "আপনার নির্দেশনা সফলভাবে গ্রহণ করা হয়েছে!");
+      setNdrOpen(false);
+    } catch (err) {
+      setNdrError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNdrBusy(false);
+    }
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -569,6 +611,176 @@ export default function TrackOrderPage() {
                 <p className="text-xs text-slate-400">{t.track.bookedAt}: {new Date(result.shipment.bookedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")}</p>
               </section>
             ) : null}
+
+            {/* NDR Recovery Assistant */}
+            {!terminal && !result.steps.some((s) => s.key === "delivered" && s.reached) ? (
+              <section className="space-y-3 rounded-3xl border border-amber-200 bg-amber-50/40 p-6 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black text-amber-950 flex items-center gap-1.5">
+                      <span>🤖</span>
+                      <span>ডেলিভারি সহায়তা ও রাইডার নির্দেশনা (NDR Assistant)</span>
+                    </h3>
+                    <p className="mt-1 text-xs text-amber-800">
+                      ডেলিভারি নিতে সমস্যা হচ্ছে? সময় বা ফোন নম্বর পরিবর্তন করতে নিচের বাটন ব্যবহার করুন।
+                    </p>
+                  </div>
+                  {!ndrOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setNdrOpen(true)}
+                      className="shrink-0 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-amber-700 shadow-sm transition"
+                    >
+                      নির্দেশনা দিন
+                    </button>
+                  )}
+                </div>
+
+                {ndrSuccess && (
+                  <div className="rounded-xl bg-emerald-100 p-3 text-xs font-bold text-emerald-800 border border-emerald-200 flex items-center gap-2">
+                    <span>✓</span>
+                    <span>{ndrSuccess}</span>
+                  </div>
+                )}
+
+                {ndrOpen && (
+                  <form onSubmit={submitNdr} className="mt-3 space-y-3 rounded-2xl bg-white p-4 border border-amber-200 shadow-xs">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {[
+                        { id: "reschedule", label: "📅 তারিখ পরিবর্তন" },
+                        { id: "alt_phone", label: "📞 বিকল্প ফোন" },
+                        { id: "update_address", label: "📍 ঠিকানা সংশোধন" },
+                        { id: "instruction", label: "📝 বিশেষ নোট" },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setNdrAction(item.id as any)}
+                          className={`rounded-xl px-2.5 py-2 text-center text-xs font-bold transition ${
+                            ndrAction === item.id
+                              ? "bg-amber-600 text-white shadow-xs"
+                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {ndrAction === "reschedule" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          কোন তারিখে ডেলিভারি নিতে চান?
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={ndrRescheduleDate}
+                          onChange={(e) => setNdrRescheduleDate(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 p-2 text-xs focus:border-amber-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {ndrAction === "alt_phone" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          বিকল্প ফোন নম্বর (রাইডার না পেলে এই নম্বরে কল করবে):
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="যেমন: 018XXXXXXXX"
+                          value={ndrAltPhone}
+                          onChange={(e) => setNdrAltPhone(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 p-2 text-xs font-mono focus:border-amber-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {ndrAction === "update_address" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          সংশোধিত ঠিকানা বা পরিচিত ল্যান্ডমার্ক:
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="যেমন: বাসা নং ১২, রোড ৩, মসজিদের পাশে"
+                          value={ndrAddress}
+                          onChange={(e) => setNdrAddress(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 p-2 text-xs focus:border-amber-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {ndrAction === "instruction" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          রাইডারের জন্য বিশেষ নির্দেশনা:
+                        </label>
+                        <textarea
+                          required
+                          rows={2}
+                          placeholder="যেমন: কল দিয়ে আসবেন, বা সিকিউরিটির কাছে রেখে যাবেন"
+                          value={ndrInstruction}
+                          onChange={(e) => setNdrInstruction(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 p-2 text-xs focus:border-amber-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {ndrError && (
+                      <p className="rounded-lg bg-rose-50 p-2 text-xs font-medium text-rose-700">
+                        {ndrError}
+                      </p>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setNdrOpen(false)}
+                        className="rounded-xl px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                      >
+                        বাতিল
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={ndrBusy}
+                        className="rounded-xl bg-amber-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
+                      >
+                        {ndrBusy ? "সংরক্ষণ হচ্ছে..." : "নির্দেশনা পাঠান"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
+            ) : null}
+
+            {/* Post-Purchase Loyalty & Upsell Card */}
+            <section className="space-y-3 rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 via-purple-50/40 to-indigo-50/60 p-6 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-2xl text-white shadow-md shadow-indigo-600/30">
+                    🎁
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-black text-indigo-950">
+                      আপনার জন্য বিশেষ উপহার — পরবর্তী অর্ডারে ১৫% ছাড়!
+                    </h3>
+                    <p className="mt-0.5 text-xs text-indigo-700">
+                      চেকআউটে কুপন কোড ব্যবহার করুন: <span className="font-mono font-black rounded bg-white px-2 py-0.5 border border-indigo-200 text-indigo-900">VIP15</span>
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href={`/shop/${orgSlug}`}
+                  className="rounded-2xl bg-indigo-600 px-5 py-2.5 text-xs font-black text-white hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition"
+                >
+                  🛍️ নতুন কালেকশন দেখুন →
+                </Link>
+              </div>
+            </section>
 
             {/* Trust block from the track response — hidden when empty. */}
             {result.shop.supportPhone?.trim() || result.shop.returnPolicyText?.trim() || result.shop.deliveryPromiseText?.trim() ? (

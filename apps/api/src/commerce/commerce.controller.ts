@@ -458,6 +458,15 @@ export class CommerceController {
     return this.abandoned.sendRecovery(orgId, user.userId, checkoutId);
   }
 
+  @Get("abandoned/:checkoutId/whatsapp")
+  getAbandonedWhatsApp(
+    @Param("organizationId") orgId: string,
+    @Param("checkoutId") checkoutId: string,
+    @Query("discountCode") discountCode?: string,
+  ) {
+    return this.abandoned.getWhatsAppRecoveryData(orgId, checkoutId, discountCode);
+  }
+
   @Post("abandoned/backfill/:storeId")
   @Roles(...WRITE_ROLES)
   backfillAbandoned(

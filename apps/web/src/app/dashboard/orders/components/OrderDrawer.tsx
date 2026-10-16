@@ -13,6 +13,8 @@ import type {
   ReviewRow,
 } from "./types";
 import { PATCH_STATUSES, transitionAllowed } from "./types";
+import { VoiceConfirmationCard } from "./VoiceConfirmationCard";
+import { SmartRoutingCard } from "./SmartRoutingCard";
 
 interface OrderDrawerProps {
   order: Order | null;
@@ -363,6 +365,18 @@ export function OrderDrawer({
                   </p>
                 </div>
 
+                {/* AI Voice Call Confirmation for COD */}
+                <VoiceConfirmationCard
+                  orderId={order.id}
+                  isCod={order.isCod}
+                  codConfirmationStatus={order.codConfirmationStatus}
+                  codCallAttempts={order.codCallAttempts}
+                  codLastCallAt={order.codLastCallAt}
+                  codLastCallOutcome={order.codLastCallOutcome}
+                  customerPhone={order.customer?.phone}
+                  onOrderUpdated={onSaveStatus}
+                />
+
                 {/* Ordered Items */}
                 <div className="rounded-2xl border border-slate-200/80 p-4 space-y-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -595,6 +609,16 @@ export function OrderDrawer({
                       </span>
                     )}
                   </div>
+
+                  {/* AI Smart Courier Routing Card */}
+                  <SmartRoutingCard
+                    orderId={order.id}
+                    currentProvider={bookForm.provider}
+                    onSelectProvider={async (provider) => {
+                      onBookFormChange({ ...bookForm, provider });
+                      await onLoadProviderLists(provider);
+                    }}
+                  />
 
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>

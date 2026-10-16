@@ -318,3 +318,14 @@ export class UpdatePickupPointDto {
   @IsOptional() @IsString() @MaxLength(20) feeMinor?: string;
   @IsOptional() @IsBoolean() active?: boolean;
 }
+
+export class NdrRecoveryDto {
+  @IsString() @MinLength(6) @MaxLength(30) phone!: string;
+  @IsString() @MinLength(2) @MaxLength(120) orderNumber!: string;
+  @IsIn(["reschedule", "alt_phone", "update_address", "instruction"]) action!: "reschedule" | "alt_phone" | "update_address" | "instruction";
+  @IsOptional() @IsString() @MaxLength(30) rescheduleDate?: string;
+  @IsOptional() @IsString() @MaxLength(30) altPhone?: string;
+  @IsOptional() @IsString() @MaxLength(500) updatedAddress?: string;
+  @IsOptional() @IsString() @MaxLength(500) instruction?: string;
+}
+

@@ -74,6 +74,24 @@ export default function AbandonedPage() {
     finally { setBusy(""); }
   }
 
+  async function recoverWhatsApp(item: AbandonedItem) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`wa-${item.id}`); setError(""); setNotice("");
+    try {
+      const res = await apiFetch<{ waLink: string; messageText: string }>(
+        `/organizations/${orgId}/commerce/abandoned/${item.id}/whatsapp?discountCode=SAVE10`
+      );
+      if (res.waLink) {
+        window.open(res.waLink, "_blank");
+        setNotice("WhatsApp রিকভারি বার্তা প্রস্তুত হয়েছে এবং নতুন উইন্ডোতে খোলা হয়েছে!");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "WhatsApp লিঙ্ক তৈরি করা যায়নি");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function backfill(storeId: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
     setBusy(`backfill-${storeId}`); setError(""); setNotice("");
@@ -88,6 +106,10 @@ export default function AbandonedPage() {
 
   const shopifyStoreIds = [...new Set(items.filter((i) => i.source === "shopify" && i.storeId).map((i) => i.storeId as string))];
 
+  const totalAbandonedRevenue = items.reduce((sum, item) => sum + (Number(item.totalMinor) || 0), 0);
+  const totalWithPhone = items.filter((i) => Boolean(i.phone)).length;
+  const totalRecovered = items.filter((i) => i.recovered).length;
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -95,12 +117,41 @@ export default function AbandonedPage() {
           <h1 className="page-title">Abandoned Carts — ফেলে যাওয়া কার্ট</h1>
           <p className="text-sm text-slate-500">
             দুই উৎসের abandoned কার্ট এক তালিকায়: আপনার সাইটের tracker থেকে ধরা কার্ট (Tracker) এবং Shopify স্টোরের
-            আসল abandoned checkout (Shopify)। মূল্য অনুযায়ী বড় থেকে ছোট সাজানো। Recovery ইমেইল প্রতি কার্টে একবারই যায় —
-            ব্যর্থ হলে পাঠানো হয়েছে বলে দেখানো হয় না।
+            আসল abandoned checkout (Shopify)। মূল্য অনুযায়ী বড় থেকে ছোট সাজানো।
           </p>
         </div>
         <Link href="/dashboard/commerce/sync" className="btn-primary">Sync Center →</Link>
       </div>
+
+      {/* Top Recovery KPI Cards */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="card p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase">মোট ড্রপ-অফ কার্ট</p>
+          <div className="mt-1 text-2xl font-black text-slate-900">{items.length}</div>
+          <p className="mt-1 text-[11px] text-slate-400">সর্বমোট ফেলে যাওয়া চেকআউট</p>
+        </div>
+
+        <div className="card p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase">সম্ভাব্য ড্রপ-অফ রাজস্ব</p>
+          <div className="mt-1 text-2xl font-black text-rose-600">
+            ৳{(totalAbandonedRevenue / 100).toLocaleString("bn-BD", { maximumFractionDigits: 0 })}
+          </div>
+          <p className="mt-1 text-[11px] text-rose-700">রিকভারি করার সুযোগ</p>
+        </div>
+
+        <div className="card p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase">WhatsApp রিকভারযোগ্য</p>
+          <div className="mt-1 text-2xl font-black text-emerald-600">{totalWithPhone}</div>
+          <p className="mt-1 text-[11px] text-emerald-700 font-medium">মোবাইল নম্বর সহ সরাসরি যোগাযোগের যোগ্য</p>
+        </div>
+
+        <div className="card p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase">সফলভাবে রিকভার্ড</p>
+          <div className="mt-1 text-2xl font-black text-indigo-600">{totalRecovered}</div>
+          <p className="mt-1 text-[11px] text-indigo-700 font-medium">অর্ডারে রূপান্তরিত হয়েছে</p>
+        </div>
+      </div>
+
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
@@ -152,13 +203,25 @@ export default function AbandonedPage() {
                         : <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">Open</span>}
                     </td>
                     <td className="py-2">
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {item.phone && !item.recovered ? (
+                          <button
+                            type="button"
+                            className="rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 px-2.5 py-1 text-xs font-bold hover:bg-emerald-100 flex items-center gap-1 shadow-xs transition disabled:opacity-50"
+                            disabled={busy !== ""}
+                            onClick={() => recoverWhatsApp(item)}
+                          >
+                            <span>💬</span>
+                            <span>{busy === `wa-${item.id}` ? "প্রস্তুত হচ্ছে…" : "WhatsApp রিকভারি"}</span>
+                          </button>
+                        ) : null}
+
                         {!item.recovered && !item.recoverySentAt && item.email ? (
                           <button className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => recover(item)}>
                             {busy === `recover-${item.id}` ? "পাঠানো হচ্ছে…" : "✉️ Recovery ইমেইল"}
                           </button>
                         ) : null}
-                        {!item.recovered && !item.email ? <span className="text-[11px] text-slate-400">ইমেইল নেই — পাঠানো যাবে না</span> : null}
+                        {!item.recovered && !item.email && !item.phone ? <span className="text-[11px] text-slate-400">যোগাযোগ মাধ্যম নেই</span> : null}
                         {item.conversationId ? (
                           <Link href="/dashboard/inbox" className="rounded-lg border px-2 py-1 text-xs font-semibold">💬 কথোপকথন খুলুন</Link>
                         ) : null}

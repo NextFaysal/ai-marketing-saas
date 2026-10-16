@@ -528,6 +528,7 @@ export function GlobalAssistant() {
                   <button type="button" className="ga-head-btn" onClick={() => void newConversation().catch(() => undefined)} title="নতুন কথোপকথন">+ নতুন</button>
                 </>
               )}
+              <Link href="/dashboard/support" className="ga-head-btn" title="সাপোর্ট টিকিট ও হেল্পডেস্ক" onClick={() => setOpen(false)}>🎫 সাপোর্ট</Link>
               <Link href="/dashboard/ai" className="ga-head-btn" title="পূর্ণ AI পেজ খুলুন" onClick={() => setOpen(false)}>পূর্ণ পেজ ↗</Link>
               <button type="button" className="ga-head-btn" onClick={() => setOpen(false)} aria-label="বন্ধ করুন">✕</button>
             </div>
@@ -590,6 +591,13 @@ export function GlobalAssistant() {
                     {starters.map((s) => (
                       <button key={s} type="button" className="ai3-follow-chip" onClick={() => send(s)}>{s}</button>
                     ))}
+                    <Link
+                      href="/dashboard/support"
+                      onClick={() => setOpen(false)}
+                      className="ai3-follow-chip !border-sky-300 !bg-sky-50 !text-sky-700 hover:!bg-sky-100"
+                    >
+                      🎫 সাপোর্ট টিকিট খুলুন
+                    </Link>
                   </div>
                 </div>
               ) : (

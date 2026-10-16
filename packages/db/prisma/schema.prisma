@@ -203,6 +203,8 @@ model Organization {
   // send guard lives at InboxService.deliverText + courier
   // booking). Default false = pre-CX12a behaviour.
   practiceMode          Boolean @default(false)
+  voiceCallSetting      VoiceCallSetting?
+  orderVoiceCalls       OrderVoiceCall[]
 }
 
 model Membership {
@@ -1964,6 +1966,7 @@ model Order {
   orderNotificationLogs OrderNotificationLog[]
   pickWaveOrders PickWaveOrder[]
   deliveryAttempts DeliveryAttempt[]
+  voiceCalls     OrderVoiceCall[]
 
   @@unique([organizationId, source, externalId])
   @@unique([organizationId, invoiceNumber])
@@ -5328,26 +5331,50 @@ model SupportTicket {
   organizationId String
   createdById    String
   subject        String
+  category       String    @default("general") // general | billing | technical | campaigns | integration
   status         String    @default("open") // open | pending | resolved | closed
-  priority       String    @default("normal") // normal | high
+  priority       String    @default("normal") // normal | high | urgent
   assignedToId   String?
+  diagnostics    Json?     // { url, userAgent, plan, errorSnippet }
+  tags           String[]  @default([])
+  slaDueAt       DateTime?
+  firstRepliedAt DateTime?
+  resolvedAt     DateTime?
+  csatRating     Int?      // 1 to 5
+  csatFeedback   String?
   lastMessageAt  DateTime  @default(now())
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  messages       SupportTicketMessage[]
 
   @@index([organizationId, status])
   @@index([status, lastMessageAt])
 }
 
 model SupportTicketMessage {
-  id         String   @id @default(cuid())
-  ticketId   String
-  authorId   String
-  authorKind String // tenant | admin
-  body       String
-  createdAt  DateTime @default(now())
+  id          String        @id @default(cuid())
+  ticketId    String
+  authorId    String
+  authorKind  String        // tenant | admin | system | ai
+  isInternal  Boolean       @default(false)
+  body        String
+  attachments Json?         // [{ name, url, size, mimeType }]
+  createdAt   DateTime      @default(now())
+
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId, createdAt])
+}
+
+model SupportCannedResponse {
+  id        String   @id @default(cuid())
+  shortcut  String   @unique // e.g. "/billing", "/meta-api"
+  title     String
+  body      String
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Admin Polish AP2: server-side registry for view-as
@@ -6801,4 +6828,51 @@ model DeliveryAssignment {
   @@index([organizationId, riderId, status])
   @@index([organizationId, orderId])
   @@index([organizationId, assignedAt])
+}
+
+// Automated COD Order Confirmation AI Voice Calling Engine (Bangla IVR)
+model VoiceCallSetting {
+  id                   String       @id @default(uuid())
+  organizationId       String       @unique
+  enabled              Boolean      @default(false)
+  autoCallNewCod       Boolean      @default(false)
+  delayMinutes         Int          @default(2)
+  provider             String       @default("mock") // twilio | mock
+  twilioAccountSid     String?
+  twilioAuthToken      String?
+  twilioCallerId       String?
+  promptIntro          String?
+  maxAttempts          Int          @default(3)
+  retryIntervalMinutes Int          @default(15)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled])
+}
+
+model OrderVoiceCall {
+  id              String       @id @default(uuid())
+  organizationId  String
+  orderId         String
+  phone           String
+  provider        String       @default("mock") // twilio | mock
+  callSid         String?      @unique
+  direction       String       @default("outbound") // outbound | inbound
+  status          String       @default("initiated") // initiated | ringing | in_progress | completed | busy | failed | no_answer
+  durationSeconds Int          @default(0)
+  digitsPressed   String?
+  outcome         String       @default("pending") // pending | confirmed | rejected | unreachable | failed
+  speechPrompt    String?
+  recordingUrl    String?
+  errorMessage    String?
+  metadata        Json?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order           Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, orderId])
+  @@index([orderId, status])
 }

@@ -17,6 +17,8 @@ import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorato
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
+import { GrowthCopilotService } from "./growth-copilot.service";
+
 @PermissionArea("ai")
 @Controller("organizations/:organizationId/ai")
 @UseGuards(TenantGuard, RolesGuard)
@@ -32,6 +34,7 @@ export class AiController {
     private readonly creative: CreativeStudioService,
     private readonly vision: VisionService,
     private readonly apiKeys: AssistantApiService,
+    private readonly growthCopilot: GrowthCopilotService,
   ) {}
 
   // ----- Reports -----
@@ -282,5 +285,30 @@ export class AiController {
   @Post("creative-studio/draft") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   createCreativeDraft(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateCreativeDraftDto) {
     return this.creative.createDraft(orgId, user.userId, dto);
+  }
+
+  // ----- AI Growth Copilot & Ad Optimizer -----
+  @Get("growth-copilot")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "ANALYST")
+  getGrowthCopilotAudit(@Param("organizationId") orgId: string) {
+    return this.growthCopilot.runAudit(orgId);
+  }
+
+  @Post("growth-copilot/apply-action")
+  @UseGuards(RolesGuard)
+  @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  applyGrowthAction(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() body: { opportunityId: string; actionType: string; payload?: Record<string, any> },
+  ) {
+    return this.growthCopilot.applyAction(
+      orgId,
+      user.userId,
+      body.opportunityId,
+      body.actionType,
+      body.payload || {},
+    );
   }
 }

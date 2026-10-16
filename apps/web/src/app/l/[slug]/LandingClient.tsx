@@ -3,6 +3,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
 import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
 import { ReviewsBlock, type PublicReviewItem, type PublicReviewsSummary } from "@/components/product-reviews";
+import {
+  UrgencyStockBar,
+  BundleSelector,
+  StickyBuyBar,
+  RecentBuyersToast,
+} from "./ConversionBoosters";
 
 // EC13 — public landing page client. Mirrors checkout/[slug]:
 // same-origin /backend fetches, the same fbq injection snippet,
@@ -551,6 +557,7 @@ export default function LandingClient({ slug }: { slug: string }) {
               </div>
             ) : null}
             <div className="space-y-3 text-center">
+              <UrgencyStockBar stockCount={product.stockQuantity} />
               <h1 className="text-2xl font-black leading-snug text-slate-900 sm:text-3xl">{headline}</h1>
               <div className="flex items-center justify-center gap-3">
                 <span className="text-3xl font-extrabold text-indigo-700">{taka(unitMinor)}</span>
@@ -793,8 +800,15 @@ export default function LandingClient({ slug }: { slug: string }) {
           </div>
         ) : null}
 
+        <BundleSelector
+          unitMinor={unitMinor}
+          quantity={quantity}
+          onSelectQuantity={(q) => setQuantity(q)}
+          takaFn={taka}
+        />
+
         <div className="flex items-center justify-between border-y py-3">
-          <span className="text-xs font-bold text-slate-700">পরিমাণ:</span>
+          <span className="text-xs font-bold text-slate-700">কাস্টম পরিমাণ নির্বাচন:</span>
           <div className="flex items-center overflow-hidden rounded-lg border">
             <button type="button" onClick={() => setQuantity(Math.max(1, quantity - 1))} className="bg-slate-50 px-3 py-1 font-bold text-slate-600 hover:bg-slate-100">−</button>
             <span className="px-4 py-1 text-sm font-bold text-slate-900">{quantity}</span>
@@ -924,19 +938,17 @@ export default function LandingClient({ slug }: { slug: string }) {
         {orderForm}
       </div>
 
-      {/* Sticky mobile bottom bar */}
-      <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:hidden">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] text-slate-500">{product.name}</div>
-          <div className="text-base font-extrabold text-indigo-700">{taka(unitMinor)}</div>
-        </div>
-        <button
-          type="button" onClick={scrollToOrder}
-          className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30"
-        >
-          অর্ডার করুন
-        </button>
-      </div>
+      {/* High-Converting Sticky Bottom Bar (Mobile & Desktop) & Social Proof Toast */}
+      <StickyBuyBar
+        productName={product.name}
+        imageUrl={product.imageUrl}
+        unitMinor={unitMinor}
+        quantity={quantity}
+        onScrollToOrder={scrollToOrder}
+        visible={true}
+        takaFn={taka}
+      />
+      <RecentBuyersToast />
     </div>
   );
 }

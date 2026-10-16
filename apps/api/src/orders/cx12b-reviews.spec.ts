@@ -216,7 +216,16 @@ describe("CX12b public link page", () => {
     expect(page.branding.name).toBe("Meghna Attire");
     expect(page.rating).toBeNull();
     const out = await svc.submitPublicReview(token, { rating: 4, comment: "মোটামুটি ভালো" });
-    expect(out).toEqual({ ok: true, rating: 4, status: "received" });
+    expect(out).toEqual({
+      ok: true,
+      rating: 4,
+      status: "received",
+      rewardCoupon: {
+        code: "REVIEW10",
+        discount: "১০% ছাড়",
+        desc: "আপনার পরবর্তী অর্ডারে ১০% বিশেষ ছাড় উপভোগ করুন!",
+      },
+    });
     expect(reviews[0].source).toBe("link");
     await expect(svc.submitPublicReview(token, { rating: 5 })).rejects.toBeInstanceOf(BadRequestException);
     await expect(svc.submitPublicReview(token, { rating: 9 })).rejects.toBeInstanceOf(BadRequestException);

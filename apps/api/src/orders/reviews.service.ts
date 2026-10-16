@@ -279,6 +279,11 @@ export class ReviewsService {
     if (!row) throw new NotFoundException("এই রিভিউ লিংকটি পাওয়া যায়নি");
     const org = await this.p().organization.findFirst({ where: { id: row.organizationId } }).catch(() => null);
     const order = await this.p().order.findFirst({ where: { id: row.orderId, organizationId: row.organizationId }, select: { externalNumber: true } }).catch(() => null);
+    const rewardCoupon = {
+      code: "REVIEW10",
+      discount: "১০% ছাড়",
+      desc: "আপনার পরবর্তী অর্ডারে ১০% বিশেষ ছাড় উপভোগ করুন!",
+    };
     return {
       status: row.status,
       rating: row.rating ?? null,
@@ -291,6 +296,7 @@ export class ReviewsService {
         logoUrl: org?.logoUrl ?? null,
         primaryColor: org?.primaryColor ?? null,
       },
+      rewardCoupon,
     };
   }
 
@@ -310,6 +316,11 @@ export class ReviewsService {
     await this.audit?.log({ organizationId: row.organizationId, userId: "system", action: "review.received", entityType: "OrderReview", entityId: row.id, metadata: { orderId: row.orderId, rating, via: "link" } }).catch(() => undefined);
     // SU5: same producer hook as the chat path.
     this.events?.emit?.("social_draft.review_received", { organizationId: row.organizationId, reviewId: row.id, orderId: row.orderId, rating });
-    return { ok: true, rating: updated.rating, status: updated.status };
+    const rewardCoupon = {
+      code: "REVIEW10",
+      discount: "১০% ছাড়",
+      desc: "আপনার পরবর্তী অর্ডারে ১০% বিশেষ ছাড় উপভোগ করুন!",
+    };
+    return { ok: true, rating: updated.rating, status: updated.status, rewardCoupon };
   }
 }

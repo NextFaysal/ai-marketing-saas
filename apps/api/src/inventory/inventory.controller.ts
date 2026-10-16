@@ -34,3 +34,20 @@ export class InventoryController {
     return this.inventory.adjust(orgId, user.userId, productId, dto);
   }
 }
+
+@Controller("organizations/:organizationId/inventory")
+@UseGuards(TenantGuard)
+export class InventoryIntelligenceController {
+  constructor(private readonly inventory: InventoryService) {}
+
+  @Get("forecast")
+  forecast(
+    @Param("organizationId") orgId: string,
+    @Query() q: { lookbackDays?: string; targetCoverDays?: string },
+  ) {
+    return this.inventory.getInventoryForecast(orgId, {
+      lookbackDays: q.lookbackDays ? Number(q.lookbackDays) : undefined,
+      targetCoverDays: q.targetCoverDays ? Number(q.targetCoverDays) : undefined,
+    });
+  }
+}

@@ -100,6 +100,9 @@ export interface Order {
   codCallOutcome?: string | null;
   codCallAttempts?: number;
   codCallNote?: string | null;
+  codConfirmationStatus?: string | null;
+  codLastCallAt?: string | null;
+  codLastCallOutcome?: string | null;
   deliveryChargeMinor?: string;
   currency?: string;
 }

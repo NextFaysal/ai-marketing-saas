@@ -4,6 +4,7 @@ import { CourierService } from "./courier.service";
 import { CourierRulesService } from "./courier-rules.service";
 import { CourierNdrService } from "./courier-ndr.service";
 import { CourierReconciliationService } from "./courier-reconciliation.service";
+import { CourierOptimizerService } from "./courier-optimizer.service";
 import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
 import { RescheduleNdrDto, ResolveNdrDto, CustomerNdrActionDto } from "./courier-ndr.dto";
 import { UploadDisbursementDto, UpdateDisputeDto } from "./courier-reconciliation.dto";
@@ -20,6 +21,7 @@ export class CourierController {
     private readonly rules: CourierRulesService,
     private readonly ndr: CourierNdrService,
     private readonly reconciliation: CourierReconciliationService,
+    private readonly optimizer: CourierOptimizerService,
   ) {}
 
   @Get("connection")
@@ -57,6 +59,12 @@ export class CourierController {
   @Get("suggestion/:orderId")
   suggestion(@Param("organizationId") orgId: string, @Param("orderId") orderId: string) {
     return this.rules.suggestion(orgId, orderId);
+  }
+
+  /** Smart Courier AI Routing: recommends best courier based on district success rate and benchmarks */
+  @Get("smart-routing/:orderId")
+  smartRouting(@Param("organizationId") orgId: string, @Param("orderId") orderId: string) {
+    return this.optimizer.getSmartRouting(orgId, orderId);
   }
 
   /** EC22: set/clear a courier account's tracking URL template. */

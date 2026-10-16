@@ -17,6 +17,7 @@ import { MentionsService } from "./mentions.service";
 import { AssistantApiService } from "./assistant-api.service";
 import { AssistantApiController } from "./assistant-api.controller";
 import { AssistantApproveController } from "./assistant-approve.controller";
+import { GrowthCopilotService } from "./growth-copilot.service";
 
 import { CompetitorsModule } from "../competitors/competitors.module";
 import { ProductsModule } from "../products/products.module";
@@ -26,8 +27,8 @@ import { CommerceModule } from "../commerce/commerce.module";
 @Module({
   imports: [AnalyticsModule, AttributionModule, CampaignsModule, MessagingModule, CompetitorsModule, ProductsModule, InventoryModule, CommerceModule],
   controllers: [AiController, AssistantApiController, AssistantApproveController],
-  providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService, VisionService, PromptsService, MentionsService, AssistantApiService],
-  exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory, VisionService],
+  providers: [ReportsService, ChatService, ToolsService, LlmFactory, ProposalsService, ProactiveService, CreativeStudioService, VisionService, PromptsService, MentionsService, AssistantApiService, GrowthCopilotService],
+  exports: [ReportsService, ProposalsService, ProactiveService, LlmFactory, VisionService, GrowthCopilotService],
 })
 
 export class AiModule {}

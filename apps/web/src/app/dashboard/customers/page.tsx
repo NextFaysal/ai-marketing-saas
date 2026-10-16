@@ -9,6 +9,7 @@ import {
 } from "@/components/custom-fields";
 import { minorToTaka, takaToMinor } from "@/lib/orders-on1";
 import { agingRows, isOverLimit, type CustomerKhata } from "@/lib/orders-on7";
+import RfmRetentionStudio from "./components/RfmRetentionStudio";
 
 interface CustomerRow {
   id: string; name?: string | null; phone?: string | null; email?: string | null;
@@ -70,6 +71,7 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   // CP6: GDPR erasure report for the last erased customer.
   const [eraseReport, setEraseReport] = useState<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number } | null>(null);
+  const [activeTab, setActiveTab] = useState<"directory" | "rfm">("directory");
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
@@ -236,21 +238,62 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="page-title">Customers 360</h1>
-        <p className="text-slate-500">প্রতিটি গ্রাহকের সম্পূর্ণ ছবি: অর্ডার, কথোপকথন, পার্সেল ও মোট কেনাকাটা। ডুপ্লিকেট রেকর্ড মার্জও এখান থেকে।</p>
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="page-title">Customers 360 & LTV Retention</h1>
+          <p className="text-slate-500">প্রতিটি গ্রাহকের সম্পূর্ণ ছবি: অর্ডার, কথোপকথন, পার্সেল, RFM সেগমেন্টেশন ও গ্রাহক ধরে রাখার বিজ্ঞানসম্মত টুলস।</p>
+        </div>
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p> : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
-          শুধু বকেয়া আছে
-        </label>
-        <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
+
+      {/* Main Mode Navigation Tabs */}
+      <div className="flex border-b border-slate-200">
+        <button
+          onClick={() => setActiveTab("directory")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-bold transition ${
+            activeTab === "directory"
+              ? "border-indigo-600 text-indigo-600 bg-indigo-50/20"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <span>👥 কাস্টমার ডিরেক্টরি (360 ভিউ)</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{rows.length}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("rfm")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-bold transition ${
+            activeTab === "rfm"
+              ? "border-indigo-600 text-indigo-600 bg-indigo-50/20"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <span>💎 RFM সেগমেন্টেশন ও LTV Retention Studio</span>
+          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-700">
+            AI CRM
+          </span>
+        </button>
       </div>
-      <div className="grid gap-4 lg:grid-cols-5">
+
+      {activeTab === "rfm" ? (
+        <RfmRetentionStudio
+          onSelectCustomer={(id) => {
+            setActiveTab("directory");
+            open(id);
+          }}
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
+              শুধু বকেয়া আছে
+            </label>
+            <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-5">
         <div className="card overflow-hidden p-0 lg:col-span-2">
           {loading ? <p className="p-4 text-sm text-slate-400">লোড হচ্ছে...</p> : rows.length === 0 ? (
             <div className="p-4"><EmptyState title="কোনো কাস্টমার নেই" description="অর্ডার Sync বা চ্যাট থেকে কাস্টমার তৈরি হলে এখানে দেখা যাবে।" /></div>
@@ -534,6 +577,8 @@ export default function CustomersPage() {
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

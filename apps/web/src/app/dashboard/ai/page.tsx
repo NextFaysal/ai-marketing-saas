@@ -15,6 +15,7 @@ import { useVoiceInput } from "@/lib/voice-input";
 import { useSpeechOutput } from "@/lib/voice-output";
 import { PERSONAS_UI, personaLabel } from "@/lib/personas";
 import { AiMessageAttachment } from "@/components/ai-rich";
+import { MediaBuyerAdvisor } from "./media-buyer-advisor";
 
 interface Conversation { id: string; title?: string | null; updatedAt: string; pinnedAt?: string | null; tags?: string[]; persona?: string }
 interface Proposal { id: string; type: string; title: string; preview: string; status: string; error?: string | null; createdAt: string }
@@ -739,6 +740,9 @@ export default function AiAssistantPage() {
               {promptNote ? <span className="text-[11px] font-semibold text-emerald-600">{promptNote}</span> : null}
             </div>
           </div>
+
+          {/* Predictive AI Media Buyer / Daily Optimization Advisor */}
+          <MediaBuyerAdvisor onProposalCreated={loadProposals} />
 
           {taskInbox && (taskInbox.pendingProposals > 0 || taskInbox.unansweredOpen > 0 || taskInbox.radar.length > 0) ? (
             <div className="ai3-panel space-y-3">

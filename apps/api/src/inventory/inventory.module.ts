@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { InventoryController } from "./inventory.controller";
+import { InventoryController, InventoryIntelligenceController } from "./inventory.controller";
 import { InventoryService } from "./inventory.service";
 import { CommerceModule } from "../commerce/commerce.module";
 
@@ -8,7 +8,7 @@ import { CommerceModule } from "../commerce/commerce.module";
 // notifications); it does not import InventoryModule — no cycle.
 @Module({
   imports: [CommerceModule],
-  controllers: [InventoryController],
+  controllers: [InventoryController, InventoryIntelligenceController],
   providers: [InventoryService],
   exports: [InventoryService],
 })

@@ -4,6 +4,7 @@ import { CourierService } from "./courier.service";
 import { CourierRulesService } from "./courier-rules.service";
 import { CourierNdrService } from "./courier-ndr.service";
 import { CourierReconciliationService } from "./courier-reconciliation.service";
+import { CourierOptimizerService } from "./courier-optimizer.service";
 import { InboxModule } from "../inbox/inbox.module";
 import { InventoryModule } from "../inventory/inventory.module";
 import { MessagingModule } from "../messaging/messaging.module";
@@ -12,8 +13,8 @@ import { OrderNotificationsModule } from "../order-notifications/order-notificat
 @Module({
   imports: [InboxModule, InventoryModule, MessagingModule, OrderNotificationsModule],
   controllers: [CourierController, PublicTrackingController],
-  providers: [CourierService, CourierRulesService, CourierNdrService, CourierReconciliationService],
-  exports: [CourierService, CourierRulesService, CourierNdrService, CourierReconciliationService],
+  providers: [CourierService, CourierRulesService, CourierNdrService, CourierReconciliationService, CourierOptimizerService],
+  exports: [CourierService, CourierRulesService, CourierNdrService, CourierReconciliationService, CourierOptimizerService],
 })
 export class CourierModule {}
 

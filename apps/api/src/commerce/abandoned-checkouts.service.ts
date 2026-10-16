@@ -760,4 +760,60 @@ export class AbandonedCheckoutsService {
       errors,
     };
   }
+
+  async getWhatsAppRecoveryData(orgId: string, checkoutId: string, customDiscountCode = "SAVE10") {
+    let row = await (this.prisma as any).abandonedStoreCheckout.findFirst({
+      where: { id: checkoutId, organizationId: orgId },
+    });
+    let phone = row?.phone;
+    let items = (row?.items as any[]) ?? [];
+    let checkoutUrl = row?.checkoutUrl;
+
+    if (!row) {
+      const cart = await (this.prisma as any).storefrontCart.findFirst({
+        where: { id: checkoutId, organizationId: orgId },
+        include: { lines: { include: { product: true } } },
+      });
+      if (cart) {
+        phone = cart.phone;
+        items = (cart.lines || []).map((l: any) => ({ name: l.product?.name, quantity: l.quantity }));
+        const org = await (this.prisma as any).organization.findUnique({ where: { id: orgId } });
+        checkoutUrl = org?.slug ? `/shop/${org.slug}` : `/`;
+      }
+    }
+
+    if (!phone) {
+      throw new BadRequestException("এই কার্টে কোনো ফোন নম্বর নেই — WhatsApp রিকভারি সম্ভব নয়");
+    }
+
+    let cleanPhone = String(phone).replace(/\D/g, "");
+    if (cleanPhone.startsWith("0")) cleanPhone = `88${cleanPhone}`;
+    else if (!cleanPhone.startsWith("880") && cleanPhone.length === 10) cleanPhone = `880${cleanPhone}`;
+
+    const itemNames = items.map((i) => i.name || "পণ্য").slice(0, 3).join(", ");
+    const discount = (customDiscountCode || "SAVE10").toUpperCase();
+    const text = `আসসালামু আলাইকুম! আপনার কার্টে থাকা (${itemNames || "পণ্যসমূহ"}) অর্ডার করার জন্য সংরক্ষিত আছে।\n\nএখনই অর্ডার নিশ্চিত করলে পাচ্ছেন বিশেষ ছাড়! চেকআউটে কুপন কোড ব্যবহার করুন: *${discount}*\n\n🛒 অর্ডার সম্পন্ন করার লিংক:\n${checkoutUrl || "আমাদের শপে ভিজিট করুন"}`;
+
+    const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+
+    if (this.audit) {
+      await this.audit
+        .log({
+          organizationId: orgId,
+          action: "commerce.whatsapp_recovery_generated",
+          entityType: "AbandonedCheckout",
+          entityId: checkoutId,
+          metadata: { phone: cleanPhone, discountCode: discount },
+        })
+        .catch(() => undefined);
+    }
+
+    return {
+      phone: cleanPhone,
+      itemSummary: itemNames,
+      discountCode: discount,
+      messageText: text,
+      waLink,
+    };
+  }
 }

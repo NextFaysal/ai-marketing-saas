@@ -944,4 +944,187 @@ export class InventoryService {
       })),
     };
   }
+
+  /**
+   * AI-powered Inventory Runout Forecasting & Reorder Intelligence
+   * Computes sales velocity (last N days), estimated runout days,
+   * stock status (out_of_stock, critical, low, healthy, dead_stock),
+   * suggested reorder quantity, and pre-formatted supplier WhatsApp PO message.
+   */
+  async getInventoryForecast(
+    organizationId: string,
+    options?: { lookbackDays?: number; targetCoverDays?: number },
+  ) {
+    const lookback = Math.max(7, Math.min(60, options?.lookbackDays ?? 14));
+    const coverDays = Math.max(7, Math.min(90, options?.targetCoverDays ?? 21));
+    const sinceDate = new Date(Date.now() - lookback * 24 * 3600 * 1000);
+
+    const [products, recentOrders, org] = await Promise.all([
+      (this.prisma as any).product.findMany({
+        where: { organizationId, status: "ACTIVE" },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          priceMinor: true,
+          stockQuantity: true,
+          lowStockThreshold: true,
+          imageUrl: true,
+          category: true,
+        },
+      }),
+      (this.prisma as any).order.findMany({
+        where: {
+          organizationId,
+          status: { not: "cancelled" },
+          createdAt: { gte: sinceDate },
+        },
+        select: {
+          items: {
+            select: {
+              productId: true,
+              sku: true,
+              quantity: true,
+            },
+          },
+        },
+      }),
+      (this.prisma as any).organization.findFirst({
+        where: { id: organizationId },
+        select: { name: true, brandName: true },
+      }),
+    ]);
+
+    const storeName = org?.brandName || org?.name || "আমাদের স্টোর";
+
+    // Aggregate sold quantities by productId and sku
+    const soldByProductId = new Map<string, number>();
+    const soldBySku = new Map<string, number>();
+
+    for (const order of recentOrders ?? []) {
+      for (const item of order.items ?? []) {
+        const qty = Number(item.quantity || 1);
+        if (item.productId) {
+          soldByProductId.set(item.productId, (soldByProductId.get(item.productId) ?? 0) + qty);
+        }
+        if (item.sku) {
+          soldBySku.set(item.sku, (soldBySku.get(item.sku) ?? 0) + qty);
+        }
+      }
+    }
+
+    let totalStockValueMinor = 0n;
+    let potentialLostRevenueMinor = 0n;
+    let outOfStockCount = 0;
+    let criticalCount = 0;
+    let lowStockCount = 0;
+    let healthyCount = 0;
+    let deadStockCount = 0;
+
+    const items = (products ?? []).map((p: any) => {
+      const unitsSold = soldByProductId.get(p.id) ?? (p.sku ? soldBySku.get(p.sku) ?? 0 : 0);
+      const dailyVelocity = Math.round((unitsSold / lookback) * 10) / 10;
+      const currentStock = typeof p.stockQuantity === "number" ? p.stockQuantity : null;
+      const price = BigInt(p.priceMinor || 0);
+
+      if (currentStock !== null && currentStock > 0) {
+        totalStockValueMinor += BigInt(currentStock) * price;
+      }
+
+      let runoutDays: number | null = null;
+      let status: "out_of_stock" | "critical" | "low" | "healthy" | "dead_stock" | "untracked" = "untracked";
+
+      if (currentStock === null) {
+        status = "untracked";
+      } else if (currentStock <= 0) {
+        status = "out_of_stock";
+        outOfStockCount++;
+        potentialLostRevenueMinor += BigInt(Math.max(1, Math.round(dailyVelocity * 7))) * price;
+      } else if (dailyVelocity > 0) {
+        runoutDays = Math.round(currentStock / dailyVelocity);
+        if (runoutDays <= 4) {
+          status = "critical";
+          criticalCount++;
+          potentialLostRevenueMinor += BigInt(Math.max(1, Math.round(dailyVelocity * 3))) * price;
+        } else if (runoutDays <= 10) {
+          status = "low";
+          lowStockCount++;
+        } else if (runoutDays > 45 && unitsSold <= 2) {
+          status = "dead_stock";
+          deadStockCount++;
+        } else {
+          status = "healthy";
+          healthyCount++;
+        }
+      } else {
+        // No sales in lookback period
+        if (currentStock > 20) {
+          status = "dead_stock";
+          deadStockCount++;
+          runoutDays = 999;
+        } else {
+          status = "healthy";
+          healthyCount++;
+          runoutDays = 999;
+        }
+      }
+
+      // Suggested reorder quantity
+      let suggestedReorder = 0;
+      if (currentStock !== null) {
+        if (dailyVelocity > 0) {
+          const needed = Math.ceil(dailyVelocity * coverDays);
+          suggestedReorder = Math.max(0, needed - currentStock);
+        } else if (currentStock <= 0) {
+          suggestedReorder = 10;
+        }
+      }
+
+      // WhatsApp supplier message generator
+      const supplierMessage = `আসসালামু আলাইকুম। ${storeName} থেকে বলছি। আমাদের "${p.name}"${p.sku ? ` (SKU: ${p.sku})` : ""} পণ্যটির স্টক শেষ পর্যায়ে (বর্তমান স্টক: ${currentStock ?? 0} পিস)। জরুরি ভিত্তিতে ${suggestedReorder > 0 ? suggestedReorder : 20} পিস প্রস্তুত করে পাঠানোর অনুরোধ করছি। অনুগ্রহ করে কনফার্ম করবেন। ধন্যবাদ!`;
+
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku ?? null,
+        imageUrl: p.imageUrl ?? null,
+        priceMinor: String(p.priceMinor),
+        stockQuantity: currentStock,
+        category: p.category ?? null,
+        unitsSoldInWindow: unitsSold,
+        dailyVelocity,
+        runoutDays,
+        status,
+        suggestedReorder,
+        supplierMessage,
+      };
+    });
+
+    // Sort by urgency: out_of_stock -> critical -> low -> dead_stock -> healthy
+    const urgencyOrder: Record<string, number> = {
+      out_of_stock: 1,
+      critical: 2,
+      low: 3,
+      dead_stock: 4,
+      healthy: 5,
+      untracked: 6,
+    };
+    items.sort((a: any, b: any) => (urgencyOrder[a.status] || 99) - (urgencyOrder[b.status] || 99));
+
+    return {
+      summary: {
+        totalProducts: products.length,
+        outOfStockCount,
+        criticalCount,
+        lowStockCount,
+        healthyCount,
+        deadStockCount,
+        totalStockValueMinor: String(totalStockValueMinor),
+        potentialLostRevenueMinor: String(potentialLostRevenueMinor),
+        lookbackDays: lookback,
+        targetCoverDays: coverDays,
+      },
+      items,
+    };
+  }
 }

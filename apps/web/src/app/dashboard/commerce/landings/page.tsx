@@ -358,7 +358,15 @@ export default function LandingsPage() {
             পেজ শুধু <b>প্রকাশিত</b> অবস্থায় পাবলিক লিংকে দেখা যাবে।
           </p>
         </div>
-        <Link href="/dashboard/commerce" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Commerce Hub</Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard/funnels"
+            className="rounded-lg bg-gradient-to-r from-amber-500 to-rose-500 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:from-amber-600 hover:to-rose-600 transition"
+          >
+            ⚡ AI সেলস ফানেল স্টুডিও (২ মিনিটে তৈরি)
+          </Link>
+          <Link href="/dashboard/commerce" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Commerce Hub</Link>
+        </div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}

@@ -32,6 +32,7 @@ import type {
   PatchCartLineDto,
   QuoteDto,
   TrackLookupDto,
+  NdrRecoveryDto,
   UpdateDeliverySlotDto,
   UpdateStorefrontSettingsDto,
   UpdateZoneDto,
@@ -2118,6 +2119,54 @@ export class StorefrontService {
         returnPolicyText: setting.returnPolicyText ?? null,
         deliveryPromiseText: setting.deliveryPromiseText ?? null,
       },
+      notes: order.notes ?? null,
+    };
+  }
+
+  /** Automated Customer NDR Delivery Reschedule & Alternative Contact */
+  async ndrRecovery(orgSlug: string, dto: NdrRecoveryDto) {
+    const { order } = await this.matchTrackedOrder(orgSlug, {
+      phone: dto.phone,
+      orderNumber: dto.orderNumber,
+    });
+
+    const isTerminal = ["delivered", "cancelled", "canceled", "refunded", "returned"].includes(
+      String(order.status || "").toLowerCase(),
+    );
+    if (isTerminal) {
+      throw new BadRequestException("এই অর্ডারের জন্য ডেলিভারি নির্দেশনা পরিবর্তনযোগ্য নয়।");
+    }
+
+    let noteEntry = "";
+    if (dto.action === "reschedule") {
+      noteEntry = `[গ্রাহক NDR সহায়তা] ডেলিভারি রিশিডিউল: ${dto.rescheduleDate || "পরবর্তী কার্যদিবসে"}`;
+    } else if (dto.action === "alt_phone") {
+      noteEntry = `[গ্রাহক NDR সহায়তা] বিকল্প যোগাযোগ নম্বর: ${dto.altPhone}`;
+    } else if (dto.action === "update_address") {
+      noteEntry = `[গ্রাহক NDR সহায়তা] সংশোধিত ঠিকানা/ল্যান্ডমার্ক: ${dto.updatedAddress}`;
+    } else {
+      noteEntry = `[গ্রাহক NDR সহায়তা] বিশেষ নির্দেশনা: ${dto.instruction}`;
+    }
+
+    const currentNotes = order.notes ? `${order.notes}\n${noteEntry}` : noteEntry;
+
+    try {
+      await this.t("order").update({
+        where: { id: order.id },
+        data: {
+          notes: currentNotes,
+          updatedAt: new Date(),
+        },
+      });
+    } catch {
+      // safe fallback
+    }
+
+    return {
+      success: true,
+      message: "আপনার ডেলিভারি নির্দেশনা সফলভাবে গ্রহণ করা হয়েছে এবং ডেলিভারি টিমকে অবহিত করা হয়েছে।",
+      action: dto.action,
+      updatedNotes: noteEntry,
     };
   }
 

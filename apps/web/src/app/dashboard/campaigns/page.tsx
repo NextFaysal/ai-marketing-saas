@@ -12,6 +12,9 @@ import {
   getCampaignStatusBadge,
   getCampaignObjectiveMeta,
 } from "@/lib/campaign-status";
+import { AbTestHub } from "./ab-test-hub";
+import { GrowthCopilotHub } from "./components/GrowthCopilotHub";
+import { FestivalPlaybookHub } from "./festival-playbook-hub";
 
 interface Plan {
   id: string;
@@ -76,7 +79,7 @@ interface FunnelResult {
 }
 const SERIES_CADENCE_LABEL: Record<string, string> = { weekly: "সাপ্তাহিক", monthly: "মাসিক", dates: "তারিখের তালিকা" };
 
-type TabKey = "all" | "live" | "approval" | "blueprints";
+type TabKey = "all" | "live" | "approval" | "blueprints" | "ab_tests" | "copilot" | "festivals";
 
 export default function CampaignsPage() {
   const router = useRouter();
@@ -474,7 +477,7 @@ export default function CampaignsPage() {
     setStatusFilter(f.statusFilter ?? "all");
     setObjectiveFilter(f.objectiveFilter ?? "all");
     setSearchQuery(f.searchQuery ?? "");
-    if (f.activeTab === "all" || f.activeTab === "live" || f.activeTab === "approval" || f.activeTab === "blueprints") setActiveTab(f.activeTab);
+    if (f.activeTab === "all" || f.activeTab === "live" || f.activeTab === "approval" || f.activeTab === "blueprints" || f.activeTab === "ab_tests") setActiveTab(f.activeTab);
     setPage(1);
   }
   async function deleteView(v: SavedView) {
@@ -773,13 +776,61 @@ export default function CampaignsPage() {
               {blueprints.length}
             </span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => { setActiveTab("ab_tests"); setPage(1); }}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 font-semibold transition ${
+              activeTab === "ab_tests"
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>⚖️</span>
+            <span>অটো A/B টেস্টিং ও উইনার</span>
+            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700 font-bold">
+              AI
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setActiveTab("copilot"); setPage(1); }}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 font-semibold transition ${
+              activeTab === "copilot"
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>🤖</span>
+            <span>AI Growth Copilot</span>
+            <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700 font-bold">
+              সক্রিয়
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setActiveTab("festivals"); setPage(1); }}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 font-semibold transition ${
+              activeTab === "festivals"
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>🎉</span>
+            <span>উৎসব ও ফ্ল্যাশ-সেল প্লেবুক</span>
+            <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700 font-bold">
+              BD Special
+            </span>
+          </button>
         </div>
       </div>
 
       {/* ============================================================== */}
       {/* TABS 1, 2, 3: CAMPAIGNS LISTING VIEW                           */}
       {/* ============================================================== */}
-      {activeTab !== "blueprints" && (
+      {activeTab !== "blueprints" && activeTab !== "ab_tests" && activeTab !== "copilot" && activeTab !== "festivals" && (
         <div className="space-y-4">
           {/* Search & Filters Card */}
           <div className="card p-4 space-y-3">
@@ -1224,6 +1275,27 @@ export default function CampaignsPage() {
             })}
           </div>
         </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 5: AUTO A/B TESTING & WINNER DETECTOR HUB                  */}
+      {/* ============================================================== */}
+      {activeTab === "ab_tests" && (
+        <AbTestHub plans={plans} onRefreshPlans={load} />
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 6: AI GROWTH COPILOT & AD OPTIMIZER HUB                   */}
+      {/* ============================================================== */}
+      {activeTab === "copilot" && (
+        <GrowthCopilotHub onActionApplied={load} />
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 7: FESTIVAL & FLASH-SALE CAMPAIGN PLAYBOOK (BD SPECIAL)   */}
+      {/* ============================================================== */}
+      {activeTab === "festivals" && (
+        <FestivalPlaybookHub accounts={accounts} onCampaignCreated={load} />
       )}
 
       {/* Rejection Modal */}
