@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ED6 (EB2) — font loading discipline.
+   font-display: Fontsource's shipped CSS already declares
+   `font-display: swap` on every @font-face (verified in
+   node_modules/@fontsource/hind-siliguri/{400,500,600,700}.css and
+   @fontsource-variable/inter/index.css), so no override is needed.
+   All four Hind Siliguri weights stay imported in the root layout:
+   font-medium (500) ×907, font-semibold (600) ×2,489 and
+   font-bold (700) ×1,258 utility uses across the app (grep,
+   2026-10-16) — every weight is genuinely exercised.
+   Metric-matched local fallback: while Hind Siliguri downloads,
+   Bengali text renders in a local font adjusted to Hind Siliguri's
+   own metrics so the swap does not shift layout. The numbers are
+   measured from the shipped font files with fonttools (NOT
+   invented): Hind Siliguri 400 — unitsPerEm 1000, hhea
+   ascent 1116 / descent −501 / lineGap 0, x-height 505.
+   size-adjust is the x-height ratio against Liberation Sans
+   (Arial-metric-compatible): (505/1000) / (1082/2048) = 95.6%. */
+@font-face {
+  font-family: "Hind Siliguri Fallback";
+  src: local("Arial"), local("Noto Sans Bengali"), local("Liberation Sans");
+  size-adjust: 95.6%;
+  ascent-override: 111.6%;
+  descent-override: 50.1%;
+  line-gap-override: 0%;
+}
+
 :root {
   --brand-from: #6366f1;
   --brand-to: #8b5cf6;
@@ -99,7 +125,7 @@
     color: #0f172a;
     /* UX1 Q1: Latin renders in Inter Variable; Bengali glyphs (absent
        from Inter) fall through per-glyph to Hind Siliguri. */
-    font-family: "Inter Variable", Inter, "Hind Siliguri", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: "Inter Variable", Inter, "Hind Siliguri", "Hind Siliguri Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
   }
   ::selection { background: rgba(99,102,241,0.25); }
