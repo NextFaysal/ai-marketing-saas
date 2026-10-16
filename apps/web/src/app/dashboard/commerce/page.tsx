@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka } from "@/lib/storefront-money";
 import { COMMERCE_ICONS } from "@/lib/icons";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC11 — Commerce Hub: one glance over every store. Every number on
 // this page comes from the commerce analytics endpoints
@@ -243,7 +244,7 @@ export default function CommerceHubPage() {
                   : ""}।
               </p>
               {Object.keys(hub.abandoned.bySource).length > 0 ? (
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-slate-500">
                   উৎস: {Object.entries(hub.abandoned.bySource).map(([s, n]) => `${s} ${n}টি`).join(" · ")}
                 </p>
               ) : null}
@@ -289,7 +290,7 @@ export default function CommerceHubPage() {
         <div className="card p-5">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold">প্রতি স্টোরের স্বাস্থ্য (Live Health)</div>
-            <Link href="/dashboard/integrations" className="text-slate-400">→</Link>
+            <Link href="/dashboard/integrations" className="text-slate-400" aria-label="Integrations পেজ খুলুন">→</Link>
           </div>
           {!healthChecked ? (
             <p className="mt-3 text-sm text-slate-500">Health যাচাই চলছে…</p>
@@ -315,15 +316,18 @@ export default function CommerceHubPage() {
               })}
             </ul>
           )}
-          <p className="mt-2 text-xs text-slate-400">ব্যাজটি পেজ লোডের সময় চালানো আসল Health check-এর সবচেয়ে খারাপ ফল — যাচাই ব্যর্থ হলে অনুমান করা হয় না।</p>
+          <p className="mt-2 text-xs text-slate-500">ব্যাজটি পেজ লোডের সময় চালানো আসল Health check-এর সবচেয়ে খারাপ ফল — যাচাই ব্যর্থ হলে অনুমান করা হয় না।</p>
         </div>
       </div>
 
       <div className="card p-5">
         <div className="font-semibold">স্টোর অনুযায়ী রেভিনিউ ও লাভ — শেষ {analytics?.days ?? 30} দিন</div>
         {analytics ? (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            className="mt-3"
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 pr-3">স্টোর</th>
@@ -339,9 +343,9 @@ export default function CommerceHubPage() {
                   <tr key={r.storeId ?? "native"} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       <span className="font-medium">{r.storeName}</span>
-                      <span className="block text-xs text-slate-400">{r.platform}</span>
+                      <span className="block text-xs text-slate-500">{r.platform}</span>
                     </td>
-                    <td className="py-2 pr-3">{r.ordersCount}টি <span className="text-xs text-slate-400">(রেভিনিউ {r.revenueOrders}টি)</span></td>
+                    <td className="py-2 pr-3">{r.ordersCount}টি <span className="text-xs text-slate-500">(রেভিনিউ {r.revenueOrders}টি)</span></td>
                     <td className="py-2 pr-3 font-medium">{formatMinorTaka(r.revenueMinor)}</td>
                     <td className="py-2 pr-3">{formatMinorTaka(r.totalRefundedMinor)}</td>
                     <td className="py-2 pr-3">{formatMinorTaka(r.cogsMinor)}</td>
@@ -358,7 +362,7 @@ export default function CommerceHubPage() {
                 ))}
                 <tr className="bg-slate-50 font-semibold">
                   <td className="py-2 pr-3">মোট</td>
-                  <td className="py-2 pr-3">{analytics.totals.ordersCount}টি <span className="text-xs font-normal text-slate-400">(রেভিনিউ {analytics.totals.revenueOrders}টি)</span></td>
+                  <td className="py-2 pr-3">{analytics.totals.ordersCount}টি <span className="text-xs font-normal text-slate-500">(রেভিনিউ {analytics.totals.revenueOrders}টি)</span></td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.revenueMinor)}</td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.totalRefundedMinor)}</td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.cogsMinor)}</td>
@@ -368,11 +372,82 @@ export default function CommerceHubPage() {
                       : "—"}
                   </td>
                 </tr>
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={
+              <>
+                {analytics.stores.map((r) => (
+                  <div key={r.storeId ?? "native"} className="rounded-lg border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-medium">{r.storeName}</div>
+                        <div className="text-xs text-slate-500">{r.platform}</div>
+                      </div>
+                      <span className="font-medium">{formatMinorTaka(r.revenueMinor)}</span>
+                    </div>
+                    <dl className="mt-2 space-y-1.5 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                        <dd>{r.ordersCount}টি <span className="text-xs text-slate-500">(রেভিনিউ {r.revenueOrders}টি)</span></dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">Refund (মোট)</dt>
+                        <dd>{formatMinorTaka(r.totalRefundedMinor)}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">COGS</dt>
+                        <dd>{formatMinorTaka(r.cogsMinor)}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">লাভ</dt>
+                        <dd>
+                          {r.profitMinor !== null ? (
+                            <span className="font-semibold">{formatMinorTaka(r.profitMinor)}</span>
+                          ) : r.cogsCoveragePercent !== null ? (
+                            <span className="text-amber-700">COGS অসম্পূর্ণ (coverage {r.cogsCoveragePercent}%)</span>
+                          ) : (
+                            <span className="text-slate-500">রেভিনিউ অর্ডার নেই — লাভ প্রযোজ্য নয়</span>
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                ))}
+                <div className="rounded-lg border bg-slate-50 p-3 font-semibold">
+                  <div className="flex items-start justify-between gap-2">
+                    <span>মোট</span>
+                    <span>{formatMinorTaka(analytics.totals.revenueMinor)}</span>
+                  </div>
+                  <dl className="mt-2 space-y-1.5 text-sm">
+                    <div className="flex gap-2">
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                      <dd>{analytics.totals.ordersCount}টি <span className="text-xs font-normal text-slate-500">(রেভিনিউ {analytics.totals.revenueOrders}টি)</span></dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">Refund (মোট)</dt>
+                      <dd>{formatMinorTaka(analytics.totals.totalRefundedMinor)}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">COGS</dt>
+                      <dd>{formatMinorTaka(analytics.totals.cogsMinor)}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">লাভ</dt>
+                      <dd>
+                        {analytics.totals.profitMinor !== null ? formatMinorTaka(analytics.totals.profitMinor)
+                          : analytics.totals.cogsCoveragePercent !== null ? `COGS অসম্পূর্ণ (coverage ${analytics.totals.cogsCoveragePercent}%)`
+                          : "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </>
+            }
+          />
         ) : <p className="mt-2 text-sm text-slate-500">{loading ? "লোড হচ্ছে…" : "তথ্য পাওয়া যায়নি।"}</p>}
-        <p className="mt-2 text-xs text-slate-400">রেভিনিউ = cancelled/refunded/failed বাদে অর্ডারের মোট (effective date = placedAt ?? createdAt, ঢাকা দিন)। লাভ = রেভিনিউ − refund − COGS, শুধু ১০০% COGS coverage-এ।</p>
+        <p className="mt-2 text-xs text-slate-500">রেভিনিউ = cancelled/refunded/failed বাদে অর্ডারের মোট (effective date = placedAt ?? createdAt, ঢাকা দিন)। লাভ = রেভিনিউ − refund − COGS, শুধু ১০০% COGS coverage-এ।</p>
       </div>
 
       <div className="card p-5">
@@ -384,8 +459,11 @@ export default function CommerceHubPage() {
         {deadStock.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">{loading ? "লোড হচ্ছে…" : "এই সংজ্ঞায় কোনো Dead Stock পণ্য নেই।"}</p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            className="mt-3"
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 pr-3">পণ্য</th>
@@ -399,20 +477,47 @@ export default function CommerceHubPage() {
                   <tr key={p.productId} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       <span className="font-medium">{p.name}</span>
-                      {p.sku ? <span className="block text-xs text-slate-400">SKU: {p.sku}</span> : null}
+                      {p.sku ? <span className="block text-xs text-slate-500">SKU: {p.sku}</span> : null}
                     </td>
                     <td className="py-2 pr-3">{p.stockQuantity}টি</td>
                     <td className="py-2 pr-3 font-medium">{formatMinorTaka(p.stockValueMinor)}</td>
                     <td className="py-2 text-slate-600">
                       {p.lastSaleAt
-                        ? <>{new Date(p.lastSaleAt).toLocaleDateString()} <span className="text-xs text-slate-400">({p.daysSinceLastSale} দিন আগে)</span></>
+                        ? <>{new Date(p.lastSaleAt).toLocaleDateString()} <span className="text-xs text-slate-500">({p.daysSinceLastSale} দিন আগে)</span></>
                         : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={deadStock.slice(0, 10).map((p) => (
+              <div key={p.productId} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{p.name}</div>
+                    {p.sku ? <div className="text-xs text-slate-500">SKU: {p.sku}</div> : null}
+                  </div>
+                  <span className="font-medium">{formatMinorTaka(p.stockValueMinor)}</span>
+                </div>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">স্টক</dt>
+                    <dd>{p.stockQuantity}টি</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">শেষ বিক্রি</dt>
+                    <dd className="text-slate-600">
+                      {p.lastSaleAt
+                        ? <>{new Date(p.lastSaleAt).toLocaleDateString()} <span className="text-xs text-slate-500">({p.daysSinceLastSale} দিন আগে)</span></>
+                        : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          />
         )}
         <div className="mt-3">
           <Link href="/dashboard/products" className="text-sm font-semibold text-blue-700">সব পণ্য দেখুন →</Link>
