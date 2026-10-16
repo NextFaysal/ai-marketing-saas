@@ -38,7 +38,7 @@ import { OrderAnalyticsPanel } from "./on9-analytics";
 import { OrderPrintPanel } from "./on10-print";
 import { OrderTeamPanel } from "./on12-team";
 import { formatMinor } from "@repo/contracts";
-import { EmptyState, KpiCard } from "@repo/ui";
+import { EmptyState, KpiCard, ResponsiveTable } from "@repo/ui";
 import { useConfirm, usePrompt, useToast } from "@repo/ui/client";
 import { extractedSummary, type LabelScanResultView, type LabelMatchView } from "@/lib/cx8";
 
@@ -2016,7 +2016,7 @@ function OrdersPageInner() {
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={codOnly} onChange={(e) => setCodOnly(e.target.checked)} /> শুধু COD</label>
           <label className="flex items-center gap-2 text-sm" title="CX12a প্র্যাক্টিস অর্ডার — আসল তালিকায় এগুলো ডিফল্টে থাকে না"><input type="checkbox" checked={filters.practice} onChange={(e) => patchFilters({ practice: e.target.checked })} /> প্র্যাক্টিস অর্ডার দেখান</label>
           <button className="btn-secondary btn-sm" disabled={exportBusy} onClick={downloadExport}>{exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}</button>
-          <span className="ml-auto text-xs text-slate-400" title="তালিকা নিজে থেকে বদলায় না — নতুন অর্ডার এলে উপরে জানানো হয়, আপনি চাইলে তালিকা রিলোড হয়">স্বয়ংক্রিয় হালনাগাদ: চালু (২৫ সেকেন্ডে যাচাই)</span>
+          <span className="ml-auto text-xs text-slate-500" title="তালিকা নিজে থেকে বদলায় না — নতুন অর্ডার এলে উপরে জানানো হয়, আপনি চাইলে তালিকা রিলোড হয়">স্বয়ংক্রিয় হালনাগাদ: চালু (২৫ সেকেন্ডে যাচাই)</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-slate-500">থেকে <input type="date" className="input w-auto" value={filters.dateFrom} onChange={(e) => patchFilters({ dateFrom: e.target.value })} /></label>
@@ -2063,10 +2063,10 @@ function OrdersPageInner() {
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t pt-2">
           <span className="text-xs font-semibold text-slate-500">সংরক্ষিত ভিউ:</span>
-          {savedViews.length === 0 ? <span className="text-xs text-slate-400">কোনো ভিউ নেই</span> : savedViews.map((v) => (
+          {savedViews.length === 0 ? <span className="text-xs text-slate-500">কোনো ভিউ নেই</span> : savedViews.map((v) => (
             <span key={v.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-3 pr-1.5 text-xs font-medium">
               <button type="button" className="hover:underline" onClick={() => applyFiltersObject(viewToFilters(v))}>{v.name}</button>
-              <button type="button" className="rounded-full px-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" onClick={() => void deleteView(v)}>✕</button>
+              <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" aria-label="ভিউ মুছুন" onClick={() => void deleteView(v)}>✕</button>
             </span>
           ))}
           <button className="btn-secondary btn-sm" onClick={() => void saveCurrentView()}>ভিউ সংরক্ষণ</button>
@@ -2087,7 +2087,7 @@ function OrdersPageInner() {
             onChange={(e) => setLabelQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runLabelLookup(); } }} />
           <button className="btn-secondary btn-sm" disabled={labelBusy !== "" || !labelQuery.trim()} onClick={() => void runLabelLookup()}>{labelBusy === "lookup" ? "খোঁজা হচ্ছে..." : "🔢 নম্বর দিয়ে খুঁজুন"}</button>
-          <span className="text-[11px] text-slate-400">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
+          <span className="text-[11px] text-slate-500">কীবোর্ডের মাইক (🎤) দিয়ে নম্বর বলেও লেখা যায় — এই বক্সে বললেই সংখ্যা বসবে, আলাদা কোনো ভয়েস-চেনা ফিচার নয়।</span>
         </div>
         {labelError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{labelError}</p> : null}
         {labelScan && !labelScan.available ? (
@@ -2148,7 +2148,7 @@ function OrdersPageInner() {
             <input className="input" placeholder="Steadfast API Key" value={courierForm.apiKey} onChange={(e) => setCourierForm({ ...courierForm, apiKey: e.target.value })} required />
             <input className="input" placeholder="Secret Key" value={courierForm.secretKey} onChange={(e) => setCourierForm({ ...courierForm, secretKey: e.target.value })} required />
             <button className="btn-primary" disabled={courierBusy !== ""}>{courierBusy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-            <p className="text-xs text-slate-400 sm:col-span-3">Key Steadfast Portal থেকে পাবেন। যুক্ত করার আগে আসল API দিয়ে Balance যাচাই করা হয়; ভুল Key হলে Steadfast এর নিজের ত্রুটিই দেখাবে।</p>
+            <p className="text-xs text-slate-500 sm:col-span-3">Key Steadfast Portal থেকে পাবেন। যুক্ত করার আগে আসল API দিয়ে Balance যাচাই করা হয়; ভুল Key হলে Steadfast এর নিজের ত্রুটিই দেখাবে।</p>
           </form>
         )}
       </div>
@@ -2170,7 +2170,7 @@ function OrdersPageInner() {
                 <input className="input" type="password" placeholder="Merchant পাসওয়ার্ড" value={pathaoForm.password} onChange={(e) => setPathaoForm({ ...pathaoForm, password: e.target.value })} required />
                 <label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={pathaoForm.sandbox} onChange={(e) => setPathaoForm({ ...pathaoForm, sandbox: e.target.checked })} /> Sandbox (টেস্ট) পরিবেশ</label>
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "pathao" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">Client ID/Secret Pathao Merchant Panel এর Developer API অংশে পাবেন। যুক্ত করার আগে আসল API তে Token নিয়ে Store তালিকা যাচাই করা হয়। পাসওয়ার্ড Token নবায়নের জন্য এনক্রিপ্ট করে রাখা হয়।</p>
+                <p className="text-xs text-slate-500">Client ID/Secret Pathao Merchant Panel এর Developer API অংশে পাবেন। যুক্ত করার আগে আসল API তে Token নিয়ে Store তালিকা যাচাই করা হয়। পাসওয়ার্ড Token নবায়নের জন্য এনক্রিপ্ট করে রাখা হয়।</p>
               </form>
             )}
           </div>
@@ -2186,7 +2186,7 @@ function OrdersPageInner() {
                 <input className="input" placeholder="API Access Token" value={redxForm.accessToken} onChange={(e) => setRedxForm({ ...redxForm, accessToken: e.target.value })} required />
                 <input className="input" placeholder="Base URL (ঐচ্ছিক — Legacy অ্যাকাউন্টের জন্য)" value={redxForm.baseUrl} onChange={(e) => setRedxForm({ ...redxForm, baseUrl: e.target.value })} />
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "redx" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">Token RedX Merchant Panel এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।</p>
+                <p className="text-xs text-slate-500">Token RedX Merchant Panel এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।</p>
               </form>
             )}
           </div>
@@ -2204,7 +2204,7 @@ function OrdersPageInner() {
                 <input className="input" placeholder="User ID" value={ecourierForm.userId} onChange={(e) => setEcourierForm({ ...ecourierForm, userId: e.target.value })} required />
                 <input className="input" placeholder="Base URL (ঐচ্ছিক — Partner অ্যাকাউন্টের জন্য)" value={ecourierForm.baseUrl} onChange={(e) => setEcourierForm({ ...ecourierForm, baseUrl: e.target.value })} />
                 <button className="btn-primary btn-sm" disabled={courierBusy !== ""}>{courierBusy === "ecourier" ? "যাচাই হচ্ছে..." : "যাচাই করে যুক্ত করুন"}</button>
-                <p className="text-xs text-slate-400">তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।</p>
+                <p className="text-xs text-slate-500">তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।</p>
               </form>
             )}
           </div>
@@ -2254,14 +2254,14 @@ function OrdersPageInner() {
         </form>
         <div className="space-y-2 border-t pt-3">
           <p className="text-sm font-medium">ট্র্যাকিং URL টেমপ্লেট</p>
-          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-400">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
+          {conns.filter((c) => c.connected).length === 0 ? <p className="text-xs text-slate-500">কোনো কুরিয়ার যুক্ত নেই।</p> : conns.filter((c) => c.connected).map((c) => (
             <div key={c.provider} className="flex flex-wrap items-center gap-2">
               <span className="w-24 text-sm font-medium">{c.provider}</span>
               <input className="input flex-1" placeholder="https://…/track/{trackingId}" value={trackingTemplates[c.provider] ?? ""} onChange={(e) => setTrackingTemplates({ ...trackingTemplates, [c.provider]: e.target.value })} />
               <button type="button" className="btn-secondary btn-sm" disabled={ruleBusy !== ""} onClick={() => saveTrackingTemplate(c.provider)}>{ruleBusy === `tpl-${c.provider}` ? "হচ্ছে…" : "সংরক্ষণ"}</button>
             </div>
           ))}
-          <p className="text-xs text-slate-400">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
+          <p className="text-xs text-slate-500">{"{trackingId}"} জায়গায় আসল ট্র্যাকিং কোড বসবে। খালি রাখলে আগের মতোই শুধু নম্বর দেখাবে।</p>
         </div>
       </div>
       <div className="card space-y-3">
@@ -2280,7 +2280,9 @@ function OrdersPageInner() {
         ) : perf.providers.length === 0 ? (
           <p className="text-sm text-slate-400">এই সময়ে কোনো shipment বুক হয়নি।</p>
         ) : (
-          <div className="overflow-x-auto">
+          <ResponsiveTable
+            table={
+              <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
@@ -2313,9 +2315,29 @@ function OrdersPageInner() {
                 })}
               </tbody>
             </table>
-          </div>
+              </div>
+            }
+            cards={[...perf.providers, perf.totals].map((row) => {
+              const isTotal = row.provider === "total";
+              const rate = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(1)}%`);
+              return (
+                <div key={row.provider} className={`rounded-xl border bg-white p-3 shadow-sm ${isTotal ? "bg-slate-50 font-semibold" : ""}`}>
+                  <div className="font-bold text-slate-900">{PERF_PROVIDER_LABEL[row.provider] ?? row.provider}</div>
+                  <dl className="mt-2 space-y-1 text-xs">
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বুকিং</dt><dd className="font-medium">{row.booked}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভার্ড</dt><dd className="font-medium">{row.delivered}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন</dt><dd className="font-medium">{row.returned}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">বাতিল</dt><dd className="font-medium">{row.cancelled}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">পথে আছে</dt><dd className="font-medium">{row.inFlight}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি হার</dt><dd className="font-medium">{rate(row.deliveryRate)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-slate-500">রিটার্ন হার</dt><dd className="font-medium">{rate(row.returnRate)}</dd></div>
+                  </dl>
+                </div>
+              );
+            })}
+          />
         )}
-        <p className="text-[11px] text-slate-400">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
+        <p className="text-[11px] text-slate-500">হিসাবের নিয়ম: শুধু এই সময়ে বুক করা shipment। ডেলিভার্ড = delivered + partial delivery; decided = ডেলিভার্ড + রিটার্ন + বাতিল; হার = decided-এর মধ্যে অংশ — decided 0 হলে হার দেখানো হয় না। গড় ডেলিভারি সময় এখন দেখানো যাচ্ছে না, কারণ shipment রেকর্ডে ডেলিভারির মুহূর্তের timestamp সংরক্ষিত হয় না।</p>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {riskDetail ? (
@@ -2328,7 +2350,7 @@ function OrdersPageInner() {
             {riskDetail.reasons.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
           {riskDetail.suggestion ? <p className="text-sm font-medium text-amber-800">{riskDetail.suggestion}</p> : null}
-          <p className="text-xs text-slate-400">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
+          <p className="text-xs text-slate-500">স্কোরটি শুধু এই দোকানের নিজের অর্ডার ইতিহাস থেকে হিসাব করা (ফোন নম্বর মিলিয়ে)। এটি কোনো অর্ডার আটকায় না — সিদ্ধান্ত সবসময় আপনার।</p>
         </div>
       ) : null}
       {/* ON4: Fraud Shield detail — the PERSISTED fraud
@@ -2347,8 +2369,8 @@ function OrdersPageInner() {
             </h3>
             <button className="btn-ghost btn-sm" onClick={() => setFraudOrder(null)}>বন্ধ করুন</button>
           </div>
-          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">স্কোর: <b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-400"> · যাচাই: {new Date(fraudOrder.riskAssessedAt).toLocaleString("bn-BD")}</span> : null}</p> : null}
-          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">ডিভাইস: <span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-400">(শুধু হ্যাশের শুরুটা দেখানো হয়)</span></p> : null}
+          {fraudOrder.riskScore != null ? <p className="text-sm text-slate-700">স্কোর: <b>{fraudOrder.riskScore}</b>{fraudOrder.riskAssessedAt ? <span className="text-xs text-slate-500"> · যাচাই: {new Date(fraudOrder.riskAssessedAt).toLocaleString("bn-BD")}</span> : null}</p> : null}
+          {fraudOrder.deviceHashPrefix ? <p className="text-sm text-slate-700">ডিভাইস: <span className="font-mono">{fraudOrder.deviceHashPrefix}…</span> <span className="text-xs text-slate-500">(শুধু হ্যাশের শুরুটা দেখানো হয়)</span></p> : null}
           {(fraudOrder.riskReasons ?? []).length > 0 ? (
             <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
               {(fraudOrder.riskReasons ?? []).map((r, i) => <li key={r.key ?? i}>{r.label} <span className="font-semibold text-rose-700">(+{r.points})</span></li>)}
@@ -2401,7 +2423,7 @@ function OrdersPageInner() {
               {r.customerName ? <span className="text-slate-600">{r.customerName}</span> : null}
               {r.rating != null ? <span className="text-amber-500">{stars(r.rating)}</span> : <span className="badge-slate">{reviewStatusBn(r)}</span>}
               {r.comment ? <span className="text-slate-700">“{r.comment}”</span> : null}
-              <span className="text-xs text-slate-400">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
+              <span className="text-xs text-slate-500">{r.receivedAt ? new Date(r.receivedAt).toLocaleString("bn-BD") : r.requestedAt ? `চাওয়া: ${new Date(r.requestedAt).toLocaleString("bn-BD")}` : "চ্যানেল নেই — পাঠানো হয়নি"}</span>
             </div>
           ))}
           {reviews.filter((r) => reviewFilter === "" ? true : reviewFilter === "pending" ? r.status === "pending_send" : reviewFilter === "requested" ? r.status === "requested" : r.rating === Number(reviewFilter)).length === 0 ? <p className="text-sm text-slate-400">এই ফিল্টারে কোনো রিভিউ নেই</p> : null}
@@ -2410,15 +2432,15 @@ function OrdersPageInner() {
       {chases.length > 0 ? (
         <div className="card space-y-2">
           <h2 className="font-semibold">🎯 To Chase — থেমে যাওয়া অর্ডার সেশন</h2>
-          <p className="text-xs text-slate-400">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
+          <p className="text-xs text-slate-500">অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া সেশনগুলোর অনুস্মারকের অবস্থা। শুধু যেসব সেশন Sweep ইতিমধ্যে বিবেচনা করেছে সেগুলোই এখানে আছে।</p>
           {chases.slice(0, 50).map((c) => (
             <div key={c.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b py-1.5 text-sm last:border-0">
               <span className="font-medium">{c.productName ?? "পণ্য অজানা"}</span>
               <span className="badge-slate">{chaseStatusBn(c)}</span>
               {c.sessionStatus ? <span className="text-slate-500">সেশন: {c.sessionStatus}{c.sessionState ? ` (${c.sessionState})` : ""}</span> : null}
-              {c.lastChasedAt ? <span className="text-xs text-slate-400">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
+              {c.lastChasedAt ? <span className="text-xs text-slate-500">সর্বশেষ অনুস্মারক: {new Date(c.lastChasedAt).toLocaleString("bn-BD")}</span> : null}
               {c.lastFailedAt && (!c.lastChasedAt || c.lastFailedAt > c.lastChasedAt) ? <span className="text-xs text-red-500">সর্বশেষ পাঠানো ব্যর্থ হয়েছে — আবার চেষ্টা হবে</span> : null}
-              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-400">গ্রাহক উত্তর দিয়েছেন</span> : null}
+              {!c.stoppedReason && c.lastEvent === "customer_replied" ? <span className="text-xs text-slate-500">গ্রাহক উত্তর দিয়েছেন</span> : null}
             </div>
           ))}
         </div>
@@ -2433,7 +2455,7 @@ function OrdersPageInner() {
                 param cleared); it is not rendered twice — its
                 count rides on this button instead. */}
             <button type="button" onClick={() => selectQueue("")}
-              className={`flex shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === "" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
+              className={`flex min-h-[44px] shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === "" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
               <span>সব অর্ডার</span>
               {queues.find((q) => q.key === "all") ? (
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === "" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{queues.find((q) => q.key === "all")!.count}</span>
@@ -2441,12 +2463,12 @@ function OrdersPageInner() {
             </button>
             {queues.filter((q) => q.key !== "all").map((q) => (
               <button key={q.key} type="button" onClick={() => selectQueue(q.key)}
-                className={`flex shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === q.key ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
+                className={`flex min-h-[44px] shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium ring-1 ${filters.queue === q.key ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"}`}>
                 <span>{q.label}</span>
                 <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${filters.queue === q.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{q.count}</span>
               </button>
             ))}
-            {queues.length === 0 ? <span className="px-1 text-xs text-slate-400">কিউ লোড হয়নি</span> : null}
+            {queues.length === 0 ? <span className="px-1 text-xs text-slate-500">কিউ লোড হয়নি</span> : null}
           </div>
         </aside>
         <div className="min-w-0 flex-1 space-y-4">
@@ -2601,7 +2623,7 @@ function OrdersPageInner() {
                 </label>
                 <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
               </div>
-              <p className="text-sm text-slate-600">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}{o.customer?.phone ? <span className="block text-xs text-slate-400">{o.customer.phone}</span> : null}</p>
+              <p className="text-sm text-slate-600">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}{o.customer?.phone ? <span className="block text-xs text-slate-500">{o.customer.phone}</span> : null}</p>
               <p className="text-xs text-slate-500">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</p>
               {(o.tags ?? []).length > 0 ? <p className="flex flex-wrap gap-1">{(o.tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</p> : null}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
@@ -2609,7 +2631,7 @@ function OrdersPageInner() {
                 <span className="font-semibold">{formatMinor(BigInt(o.totalMinor))}</span>
                 {due > 0n ? <span className="font-semibold text-red-600">বকেয়া {formatMinor(due)}</span> : null}
                 <span className="text-xs text-slate-500">দায়িত্ব: {memberName(members, o.assigneeId)}</span>
-                <span className="text-xs text-slate-400">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</span>
+                <span className="text-xs text-slate-500">{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</span>
                 {sh ? <span className="badge-indigo">🚚 {sh.status}</span> : null}
                 {o.risk ? <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${RISK_LABEL[o.risk.band]?.cls ?? RISK_LABEL.unknown.cls}`}>{RISK_LABEL[o.risk.band]?.text ?? "ঝুঁকি"}</span> : null}
                 {o.riskBand ? (
@@ -2653,7 +2675,7 @@ function OrdersPageInner() {
                     {o.deliverySlot ? <span className="mt-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
                     {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
                   </td>
-                  <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-400">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
+                  <td className="px-4 py-3">{[o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(" ") || "—"}<div className="text-xs text-slate-500">{o.customer?.phone ?? o.customer?.email ?? ""}</div></td>
                   <td className="px-4 py-3">{o.items?.map((i) => `${i.name} ×${i.quantity}`).join(", ") ?? "—"}</td>
                   <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium">{o.status}</span>
                     {o.risk ? (
@@ -2878,8 +2900,8 @@ function OrdersPageInner() {
                             {shipmentEvents.map((ev: any) => (
                               <li key={ev.id} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
                                 <span className="font-semibold">{ev.kind === "error" ? "⚠️ ত্রুটি" : ev.kind === "note" ? "📝 নোট" : `স্ট্যাটাস: ${ev.status ?? "—"}`}</span>
-                                {ev.rawStatus ? <span className="text-slate-400"> (কুরিয়ারের ভাষায়: {ev.rawStatus})</span> : null}
-                                <span className="text-slate-400"> · {ev.source === "manual" ? "ম্যানুয়াল" : ev.source === "booking" ? "বুকিং" : ev.source === "api_sync" ? "API সিঙ্ক" : ev.source} · {ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
+                                {ev.rawStatus ? <span className="text-slate-500"> (কুরিয়ারের ভাষায়: {ev.rawStatus})</span> : null}
+                                <span className="text-slate-500"> · {ev.source === "manual" ? "ম্যানুয়াল" : ev.source === "booking" ? "বুকিং" : ev.source === "api_sync" ? "API সিঙ্ক" : ev.source} · {ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
                                 {ev.message ? <span className="block text-slate-500">{ev.message}</span> : null}
                               </li>
                             ))}
