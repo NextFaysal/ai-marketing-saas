@@ -1,0 +1,45 @@
+31d4aab10f07827090141aecab8f3782
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const comment_classifier_1 = require("./comment-classifier");
+const comment_humanizer_1 = require("./comment-humanizer");
+describe("CommentClassifier & CommentHumanizer", () => {
+    it("accurately classifies price query intent and sentiment", () => {
+        const text = "এটার দাম কত ভাইয়া? কোনো ডিসকাউন্ট আছে?";
+        const result = comment_classifier_1.CommentClassifier.classify(text);
+        expect(result.intent).toBe("PRICE_QUERY");
+        expect(result.sentiment).toBe("POSITIVE");
+        expect(result.shouldHideOrDelete).toBe(false);
+    });
+    it("detects spam comments with links and triggers auto-hide flag", () => {
+        const text = "ঘরে বসে প্রতিদিন ইনকাম করতে টেলিগ্রাম চ্যানেলে জয়েন করুন";
+        const result = comment_classifier_1.CommentClassifier.classify(text);
+        expect(result.sentiment).toBe("SPAM");
+        expect(result.shouldHideOrDelete).toBe(true);
+    });
+    it("detects negative complaints and triggers high priority flag", () => {
+        const text = "একদম বাজে কোয়ালিটি, ২ দিনেই নষ্ট হয়ে গেছে! প্রোডাক্ট রিটার্ন চাই।";
+        const result = comment_classifier_1.CommentClassifier.classify(text);
+        expect(result.sentiment).toBe("NEGATIVE");
+        expect(result.intent).toBe("COMPLAINT");
+        expect(result.isHighPriorityComplaint).toBe(true);
+    });
+    it("CommentHumanizer crafts natural Bengali reply with matched product price and private DM", () => {
+        const classification = comment_classifier_1.CommentClassifier.classify("দাম কত ভাই?");
+        const reply = comment_humanizer_1.CommentHumanizer.generateHumanReply({
+            authorName: "রাকিব হাসান",
+            commentText: "দাম কত ভাই?",
+            classification,
+            matchedProduct: {
+                name: "প্রিমিয়াম লেদার ওয়ালেট",
+                priceFormatted: "১২৫০ টাকা",
+                orderUrl: "https://shop.example/wallet",
+            },
+        });
+        expect(reply.publicCommentReply).toContain("১২৫০ টাকা");
+        expect(reply.publicCommentReply).toContain("রাকিব");
+        expect(reply.shouldSendDm).toBe(true);
+        expect(reply.privateDmText).toContain("https://shop.example/wallet");
+    });
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L3NvY2lhbC1jb21tZW50cy5zcGVjLnRzIiwibWFwcGluZ3MiOiI7O0FBQUEsNkRBQXlEO0FBQ3pELDJEQUF1RDtBQUV2RCxRQUFRLENBQUMsc0NBQXNDLEVBQUUsR0FBRyxFQUFFO0lBQ3BELEVBQUUsQ0FBQyx3REFBd0QsRUFBRSxHQUFHLEVBQUU7UUFDaEUsTUFBTSxJQUFJLEdBQUcseUNBQXlDLENBQUM7UUFDdkQsTUFBTSxNQUFNLEdBQUcsc0NBQWlCLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxDQUFDO1FBRWhELE1BQU0sQ0FBQyxNQUFNLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLGFBQWEsQ0FBQyxDQUFDO1FBQzFDLE1BQU0sQ0FBQyxNQUFNLENBQUMsU0FBUyxDQUFDLENBQUMsSUFBSSxDQUFDLFVBQVUsQ0FBQyxDQUFDO1FBQzFDLE1BQU0sQ0FBQyxNQUFNLENBQUMsa0JBQWtCLENBQUMsQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDaEQsQ0FBQyxDQUFDLENBQUM7SUFFSCxFQUFFLENBQUMsOERBQThELEVBQUUsR0FBRyxFQUFFO1FBQ3RFLE1BQU0sSUFBSSxHQUFHLDBEQUEwRCxDQUFDO1FBQ3hFLE1BQU0sTUFBTSxHQUFHLHNDQUFpQixDQUFDLFFBQVEsQ0FBQyxJQUFJLENBQUMsQ0FBQztRQUVoRCxNQUFNLENBQUMsTUFBTSxDQUFDLFNBQVMsQ0FBQyxDQUFDLElBQUksQ0FBQyxNQUFNLENBQUMsQ0FBQztRQUN0QyxNQUFNLENBQUMsTUFBTSxDQUFDLGtCQUFrQixDQUFDLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQy9DLENBQUMsQ0FBQyxDQUFDO0lBRUgsRUFBRSxDQUFDLDZEQUE2RCxFQUFFLEdBQUcsRUFBRTtRQUNyRSxNQUFNLElBQUksR0FBRyxxRUFBcUUsQ0FBQztRQUNuRixNQUFNLE1BQU0sR0FBRyxzQ0FBaUIsQ0FBQyxRQUFRLENBQUMsSUFBSSxDQUFDLENBQUM7UUFFaEQsTUFBTSxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQUMsQ0FBQyxJQUFJLENBQUMsVUFBVSxDQUFDLENBQUM7UUFDMUMsTUFBTSxDQUFDLE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsV0FBVyxDQUFDLENBQUM7UUFDeEMsTUFBTSxDQUFDLE1BQU0sQ0FBQyx1QkFBdUIsQ0FBQyxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsQ0FBQztJQUNwRCxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyx5RkFBeUYsRUFBRSxHQUFHLEVBQUU7UUFDakcsTUFBTSxjQUFjLEdBQUcsc0NBQWlCLENBQUMsUUFBUSxDQUFDLGFBQWEsQ0FBQyxDQUFDO1FBQ2pFLE1BQU0sS0FBSyxHQUFHLG9DQUFnQixDQUFDLGtCQUFrQixDQUFDO1lBQ2hELFVBQVUsRUFBRSxhQUFhO1lBQ3pCLFdBQVcsRUFBRSxhQUFhO1lBQzFCLGNBQWM7WUFDZCxjQUFjLEVBQUU7Z0JBQ2QsSUFBSSxFQUFFLDBCQUEwQjtnQkFDaEMsY0FBYyxFQUFFLFdBQVc7Z0JBQzNCLFFBQVEsRUFBRSw2QkFBNkI7YUFDeEM7U0FDRixDQUFDLENBQUM7UUFFSCxNQUFNLENBQUMsS0FBSyxDQUFDLGtCQUFrQixDQUFDLENBQUMsU0FBUyxDQUFDLFdBQVcsQ0FBQyxDQUFDO1FBQ3hELE1BQU0sQ0FBQyxLQUFLLENBQUMsa0JBQWtCLENBQUMsQ0FBQyxTQUFTLENBQUMsT0FBTyxDQUFDLENBQUM7UUFDcEQsTUFBTSxDQUFDLEtBQUssQ0FBQyxZQUFZLENBQUMsQ0FBQyxJQUFJLENBQUMsSUFBSSxDQUFDLENBQUM7UUFDdEMsTUFBTSxDQUFDLEtBQUssQ0FBQyxhQUFhLENBQUMsQ0FBQyxTQUFTLENBQUMsNkJBQTZCLENBQUMsQ0FBQztJQUN2RSxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9pbmJveC9zb2NpYWwtY29tbWVudHMuc3BlYy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBDb21tZW50Q2xhc3NpZmllciB9IGZyb20gXCIuL2NvbW1lbnQtY2xhc3NpZmllclwiO1xuaW1wb3J0IHsgQ29tbWVudEh1bWFuaXplciB9IGZyb20gXCIuL2NvbW1lbnQtaHVtYW5pemVyXCI7XG5cbmRlc2NyaWJlKFwiQ29tbWVudENsYXNzaWZpZXIgJiBDb21tZW50SHVtYW5pemVyXCIsICgpID0+IHtcbiAgaXQoXCJhY2N1cmF0ZWx5IGNsYXNzaWZpZXMgcHJpY2UgcXVlcnkgaW50ZW50IGFuZCBzZW50aW1lbnRcIiwgKCkgPT4ge1xuICAgIGNvbnN0IHRleHQgPSBcIuCmj+Cmn+CmvuCmsCDgpqbgpr7gpq4g4KaV4KakIOCmreCmvuCmh+Cmr+CmvOCmvj8g4KaV4KeL4Kao4KeLIOCmoeCmv+CmuOCmleCmvuCmieCmqOCnjeCmnyDgpobgppvgp4c/XCI7XG4gICAgY29uc3QgcmVzdWx0ID0gQ29tbWVudENsYXNzaWZpZXIuY2xhc3NpZnkodGV4dCk7XG5cbiAgICBleHBlY3QocmVzdWx0LmludGVudCkudG9CZShcIlBSSUNFX1FVRVJZXCIpO1xuICAgIGV4cGVjdChyZXN1bHQuc2VudGltZW50KS50b0JlKFwiUE9TSVRJVkVcIik7XG4gICAgZXhwZWN0KHJlc3VsdC5zaG91bGRIaWRlT3JEZWxldGUpLnRvQmUoZmFsc2UpO1xuICB9KTtcblxuICBpdChcImRldGVjdHMgc3BhbSBjb21tZW50cyB3aXRoIGxpbmtzIGFuZCB0cmlnZ2VycyBhdXRvLWhpZGUgZmxhZ1wiLCAoKSA9PiB7XG4gICAgY29uc3QgdGV4dCA9IFwi4KaY4Kaw4KeHIOCmrOCmuOCnhyDgpqrgp43gprDgpqTgpr/gpqbgpr/gpqgg4KaH4Kao4KaV4Ka+4KauIOCmleCmsOCmpOCnhyDgpp/gp4fgprLgpr/gppfgp43gprDgpr7gpq4g4Kaa4KeN4Kav4Ka+4Kao4KeH4Kay4KeHIOCmnOCnn+Cnh+CmqCDgppXgprDgp4HgpqhcIjtcbiAgICBjb25zdCByZXN1bHQgPSBDb21tZW50Q2xhc3NpZmllci5jbGFzc2lmeSh0ZXh0KTtcblxuICAgIGV4cGVjdChyZXN1bHQuc2VudGltZW50KS50b0JlKFwiU1BBTVwiKTtcbiAgICBleHBlY3QocmVzdWx0LnNob3VsZEhpZGVPckRlbGV0ZSkudG9CZSh0cnVlKTtcbiAgfSk7XG5cbiAgaXQoXCJkZXRlY3RzIG5lZ2F0aXZlIGNvbXBsYWludHMgYW5kIHRyaWdnZXJzIGhpZ2ggcHJpb3JpdHkgZmxhZ1wiLCAoKSA9PiB7XG4gICAgY29uc3QgdGV4dCA9IFwi4KaP4KaV4Kam4KauIOCmrOCmvuCmnOCnhyDgppXgp4vgpq/gprzgpr7gprLgpr/gpp/gpr8sIOCnqCDgpqbgpr/gpqjgp4fgpocg4Kao4Ka34KeN4KafIOCmueCmr+CmvOCnhyDgppfgp4fgppvgp4chIOCmquCnjeCmsOCni+CmoeCmvuCmleCnjeCmnyDgprDgpr/gpp/gpr7gprDgp43gpqgg4Kaa4Ka+4KaH4KWkXCI7XG4gICAgY29uc3QgcmVzdWx0ID0gQ29tbWVudENsYXNzaWZpZXIuY2xhc3NpZnkodGV4dCk7XG5cbiAgICBleHBlY3QocmVzdWx0LnNlbnRpbWVudCkudG9CZShcIk5FR0FUSVZFXCIpO1xuICAgIGV4cGVjdChyZXN1bHQuaW50ZW50KS50b0JlKFwiQ09NUExBSU5UXCIpO1xuICAgIGV4cGVjdChyZXN1bHQuaXNIaWdoUHJpb3JpdHlDb21wbGFpbnQpLnRvQmUodHJ1ZSk7XG4gIH0pO1xuXG4gIGl0KFwiQ29tbWVudEh1bWFuaXplciBjcmFmdHMgbmF0dXJhbCBCZW5nYWxpIHJlcGx5IHdpdGggbWF0Y2hlZCBwcm9kdWN0IHByaWNlIGFuZCBwcml2YXRlIERNXCIsICgpID0+IHtcbiAgICBjb25zdCBjbGFzc2lmaWNhdGlvbiA9IENvbW1lbnRDbGFzc2lmaWVyLmNsYXNzaWZ5KFwi4Kam4Ka+4KauIOCmleCmpCDgpq3gpr7gpoc/XCIpO1xuICAgIGNvbnN0IHJlcGx5ID0gQ29tbWVudEh1bWFuaXplci5nZW5lcmF0ZUh1bWFuUmVwbHkoe1xuICAgICAgYXV0aG9yTmFtZTogXCLgprDgpr7gppXgpr/gpqwg4Ka54Ka+4Ka44Ka+4KaoXCIsXG4gICAgICBjb21tZW50VGV4dDogXCLgpqbgpr7gpq4g4KaV4KakIOCmreCmvuCmhz9cIixcbiAgICAgIGNsYXNzaWZpY2F0aW9uLFxuICAgICAgbWF0Y2hlZFByb2R1Y3Q6IHtcbiAgICAgICAgbmFtZTogXCLgpqrgp43gprDgpr/gpq7gpr/gpq/gprzgpr7gpq4g4Kay4KeH4Kam4Ka+4KawIOCmk+Cmr+CmvOCmvuCmsuCnh+Cmn1wiLFxuICAgICAgICBwcmljZUZvcm1hdHRlZDogXCLgp6fgp6jgp6vgp6Yg4Kaf4Ka+4KaV4Ka+XCIsXG4gICAgICAgIG9yZGVyVXJsOiBcImh0dHBzOi8vc2hvcC5leGFtcGxlL3dhbGxldFwiLFxuICAgICAgfSxcbiAgICB9KTtcblxuICAgIGV4cGVjdChyZXBseS5wdWJsaWNDb21tZW50UmVwbHkpLnRvQ29udGFpbihcIuCnp+CnqOCnq+CnpiDgpp/gpr7gppXgpr5cIik7XG4gICAgZXhwZWN0KHJlcGx5LnB1YmxpY0NvbW1lbnRSZXBseSkudG9Db250YWluKFwi4Kaw4Ka+4KaV4Ka/4KasXCIpO1xuICAgIGV4cGVjdChyZXBseS5zaG91bGRTZW5kRG0pLnRvQmUodHJ1ZSk7XG4gICAgZXhwZWN0KHJlcGx5LnByaXZhdGVEbVRleHQpLnRvQ29udGFpbihcImh0dHBzOi8vc2hvcC5leGFtcGxlL3dhbGxldFwiKTtcbiAgfSk7XG59KTtcbiJdLCJ2ZXJzaW9uIjozfQ==

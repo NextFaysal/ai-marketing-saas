@@ -1,0 +1,89 @@
+b6b0fb3c5133ddd24fe6d31187e68508
+"use strict";
+/**
+ * CC20 — PUBLIC Google-pack OAuth callbacks.
+ *
+ * Lives beside the Connect Center (the Google pack's home), NOT
+ * in the social module — the flows it completes store
+ * Integration rows, and routing them through SocialModule would
+ * cycle the modules. The prefix deliberately mirrors the social
+ * callbacks' (/social/oauth/<flow>/callback) so the operator
+ * registers all Google redirect URIs in one shape on the one
+ * platform Google app. Never throws at the browser: every
+ * outcome is a 302 back to the Connect Center with the result
+ * in the query string.
+ */
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.GoogleOAuthCallbackController = void 0;
+const common_1 = require("@nestjs/common");
+const decorators_1 = require("../common/decorators");
+const google_connect_service_1 = require("./google-connect.service");
+let GoogleOAuthCallbackController = class GoogleOAuthCallbackController {
+    google;
+    constructor(google) {
+        this.google = google;
+    }
+    async ga4(code, state, error, res) {
+        const result = await this.google.handleCallback("ga4", { code, state, error });
+        return res.redirect(this.google.webRedirect(result));
+    }
+    async merchant(code, state, error, res) {
+        const result = await this.google.handleCallback("merchant", { code, state, error });
+        return res.redirect(this.google.webRedirect(result));
+    }
+    async business(code, state, error, res) {
+        const result = await this.google.handleCallback("business", { code, state, error });
+        return res.redirect(this.google.webRedirect(result));
+    }
+};
+exports.GoogleOAuthCallbackController = GoogleOAuthCallbackController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)("google-ga4/callback"),
+    __param(0, (0, common_1.Query)("code")),
+    __param(1, (0, common_1.Query)("state")),
+    __param(2, (0, common_1.Query)("error")),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], GoogleOAuthCallbackController.prototype, "ga4", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)("google-merchant/callback"),
+    __param(0, (0, common_1.Query)("code")),
+    __param(1, (0, common_1.Query)("state")),
+    __param(2, (0, common_1.Query)("error")),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], GoogleOAuthCallbackController.prototype, "merchant", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)("google-business/callback"),
+    __param(0, (0, common_1.Query)("code")),
+    __param(1, (0, common_1.Query)("state")),
+    __param(2, (0, common_1.Query)("error")),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], GoogleOAuthCallbackController.prototype, "business", null);
+exports.GoogleOAuthCallbackController = GoogleOAuthCallbackController = __decorate([
+    (0, common_1.Controller)("social/oauth"),
+    __metadata("design:paramtypes", [google_connect_service_1.GoogleConnectService])
+], GoogleOAuthCallbackController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2Nvbm5lY3Rpb25zL2dvb2dsZS1vYXV0aC1jYWxsYmFjay5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7Ozs7Ozs7O0dBWUc7Ozs7Ozs7Ozs7Ozs7OztBQUVILDJDQUE2RDtBQUU3RCxxREFBOEM7QUFDOUMscUVBQWdFO0FBR3pELElBQU0sNkJBQTZCLEdBQW5DLE1BQU0sNkJBQTZCO0lBQ1g7SUFBN0IsWUFBNkIsTUFBNEI7UUFBNUIsV0FBTSxHQUFOLE1BQU0sQ0FBc0I7SUFBRyxDQUFDO0lBR3ZELEFBQU4sS0FBSyxDQUFDLEdBQUcsQ0FBZ0IsSUFBd0IsRUFBa0IsS0FBeUIsRUFBa0IsS0FBeUIsRUFBUyxHQUFhO1FBQzNKLE1BQU0sTUFBTSxHQUFHLE1BQU0sSUFBSSxDQUFDLE1BQU0sQ0FBQyxjQUFjLENBQUMsS0FBSyxFQUFFLEVBQUUsSUFBSSxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsQ0FBQyxDQUFDO1FBQy9FLE9BQU8sR0FBRyxDQUFDLFFBQVEsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLFdBQVcsQ0FBQyxNQUFNLENBQUMsQ0FBQyxDQUFDO0lBQ3ZELENBQUM7SUFHSyxBQUFOLEtBQUssQ0FBQyxRQUFRLENBQWdCLElBQXdCLEVBQWtCLEtBQXlCLEVBQWtCLEtBQXlCLEVBQVMsR0FBYTtRQUNoSyxNQUFNLE1BQU0sR0FBRyxNQUFNLElBQUksQ0FBQyxNQUFNLENBQUMsY0FBYyxDQUFDLFVBQVUsRUFBRSxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsS0FBSyxFQUFFLENBQUMsQ0FBQztRQUNwRixPQUFPLEdBQUcsQ0FBQyxRQUFRLENBQUMsSUFBSSxDQUFDLE1BQU0sQ0FBQyxXQUFXLENBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQztJQUN2RCxDQUFDO0lBR0ssQUFBTixLQUFLLENBQUMsUUFBUSxDQUFnQixJQUF3QixFQUFrQixLQUF5QixFQUFrQixLQUF5QixFQUFTLEdBQWE7UUFDaEssTUFBTSxNQUFNLEdBQUcsTUFBTSxJQUFJLENBQUMsTUFBTSxDQUFDLGNBQWMsQ0FBQyxVQUFVLEVBQUUsRUFBRSxJQUFJLEVBQUUsS0FBSyxFQUFFLEtBQUssRUFBRSxDQUFDLENBQUM7UUFDcEYsT0FBTyxHQUFHLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxNQUFNLENBQUMsV0FBVyxDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUM7SUFDdkQsQ0FBQztDQUNGLENBQUE7QUFwQlksc0VBQTZCO0FBSWxDO0lBREwsSUFBQSxtQkFBTSxHQUFFO0lBQUUsSUFBQSxZQUFHLEVBQUMscUJBQXFCLENBQUM7SUFDMUIsV0FBQSxJQUFBLGNBQUssRUFBQyxNQUFNLENBQUMsQ0FBQTtJQUE0QixXQUFBLElBQUEsY0FBSyxFQUFDLE9BQU8sQ0FBQyxDQUFBO0lBQTZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsT0FBTyxDQUFDLENBQUE7SUFBNkIsV0FBQSxJQUFBLFlBQUcsR0FBRSxDQUFBOzs7O3dEQUc5STtBQUdLO0lBREwsSUFBQSxtQkFBTSxHQUFFO0lBQUUsSUFBQSxZQUFHLEVBQUMsMEJBQTBCLENBQUM7SUFDMUIsV0FBQSxJQUFBLGNBQUssRUFBQyxNQUFNLENBQUMsQ0FBQTtJQUE0QixXQUFBLElBQUEsY0FBSyxFQUFDLE9BQU8sQ0FBQyxDQUFBO0lBQTZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsT0FBTyxDQUFDLENBQUE7SUFBNkIsV0FBQSxJQUFBLFlBQUcsR0FBRSxDQUFBOzs7OzZEQUduSjtBQUdLO0lBREwsSUFBQSxtQkFBTSxHQUFFO0lBQUUsSUFBQSxZQUFHLEVBQUMsMEJBQTBCLENBQUM7SUFDMUIsV0FBQSxJQUFBLGNBQUssRUFBQyxNQUFNLENBQUMsQ0FBQTtJQUE0QixXQUFBLElBQUEsY0FBSyxFQUFDLE9BQU8sQ0FBQyxDQUFBO0lBQTZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsT0FBTyxDQUFDLENBQUE7SUFBNkIsV0FBQSxJQUFBLFlBQUcsR0FBRSxDQUFBOzs7OzZEQUduSjt3Q0FuQlUsNkJBQTZCO0lBRHpDLElBQUEsbUJBQVUsRUFBQyxjQUFjLENBQUM7cUNBRVksNkNBQW9CO0dBRDlDLDZCQUE2QixDQW9CekMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2Nvbm5lY3Rpb25zL2dvb2dsZS1vYXV0aC1jYWxsYmFjay5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQ0MyMCDigJQgUFVCTElDIEdvb2dsZS1wYWNrIE9BdXRoIGNhbGxiYWNrcy5cbiAqXG4gKiBMaXZlcyBiZXNpZGUgdGhlIENvbm5lY3QgQ2VudGVyICh0aGUgR29vZ2xlIHBhY2sncyBob21lKSwgTk9UXG4gKiBpbiB0aGUgc29jaWFsIG1vZHVsZSDigJQgdGhlIGZsb3dzIGl0IGNvbXBsZXRlcyBzdG9yZVxuICogSW50ZWdyYXRpb24gcm93cywgYW5kIHJvdXRpbmcgdGhlbSB0aHJvdWdoIFNvY2lhbE1vZHVsZSB3b3VsZFxuICogY3ljbGUgdGhlIG1vZHVsZXMuIFRoZSBwcmVmaXggZGVsaWJlcmF0ZWx5IG1pcnJvcnMgdGhlIHNvY2lhbFxuICogY2FsbGJhY2tzJyAoL3NvY2lhbC9vYXV0aC88Zmxvdz4vY2FsbGJhY2spIHNvIHRoZSBvcGVyYXRvclxuICogcmVnaXN0ZXJzIGFsbCBHb29nbGUgcmVkaXJlY3QgVVJJcyBpbiBvbmUgc2hhcGUgb24gdGhlIG9uZVxuICogcGxhdGZvcm0gR29vZ2xlIGFwcC4gTmV2ZXIgdGhyb3dzIGF0IHRoZSBicm93c2VyOiBldmVyeVxuICogb3V0Y29tZSBpcyBhIDMwMiBiYWNrIHRvIHRoZSBDb25uZWN0IENlbnRlciB3aXRoIHRoZSByZXN1bHRcbiAqIGluIHRoZSBxdWVyeSBzdHJpbmcuXG4gKi9cblxuaW1wb3J0IHsgQ29udHJvbGxlciwgR2V0LCBRdWVyeSwgUmVzIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgdHlwZSB7IFJlc3BvbnNlIH0gZnJvbSBcImV4cHJlc3NcIjtcbmltcG9ydCB7IFB1YmxpYyB9IGZyb20gXCIuLi9jb21tb24vZGVjb3JhdG9yc1wiO1xuaW1wb3J0IHsgR29vZ2xlQ29ubmVjdFNlcnZpY2UgfSBmcm9tIFwiLi9nb29nbGUtY29ubmVjdC5zZXJ2aWNlXCI7XG5cbkBDb250cm9sbGVyKFwic29jaWFsL29hdXRoXCIpXG5leHBvcnQgY2xhc3MgR29vZ2xlT0F1dGhDYWxsYmFja0NvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IGdvb2dsZTogR29vZ2xlQ29ubmVjdFNlcnZpY2UpIHt9XG5cbiAgQFB1YmxpYygpIEBHZXQoXCJnb29nbGUtZ2E0L2NhbGxiYWNrXCIpXG4gIGFzeW5jIGdhNChAUXVlcnkoXCJjb2RlXCIpIGNvZGU6IHN0cmluZyB8IHVuZGVmaW5lZCwgQFF1ZXJ5KFwic3RhdGVcIikgc3RhdGU6IHN0cmluZyB8IHVuZGVmaW5lZCwgQFF1ZXJ5KFwiZXJyb3JcIikgZXJyb3I6IHN0cmluZyB8IHVuZGVmaW5lZCwgQFJlcygpIHJlczogUmVzcG9uc2UpIHtcbiAgICBjb25zdCByZXN1bHQgPSBhd2FpdCB0aGlzLmdvb2dsZS5oYW5kbGVDYWxsYmFjayhcImdhNFwiLCB7IGNvZGUsIHN0YXRlLCBlcnJvciB9KTtcbiAgICByZXR1cm4gcmVzLnJlZGlyZWN0KHRoaXMuZ29vZ2xlLndlYlJlZGlyZWN0KHJlc3VsdCkpO1xuICB9XG5cbiAgQFB1YmxpYygpIEBHZXQoXCJnb29nbGUtbWVyY2hhbnQvY2FsbGJhY2tcIilcbiAgYXN5bmMgbWVyY2hhbnQoQFF1ZXJ5KFwiY29kZVwiKSBjb2RlOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBRdWVyeShcInN0YXRlXCIpIHN0YXRlOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBRdWVyeShcImVycm9yXCIpIGVycm9yOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBSZXMoKSByZXM6IFJlc3BvbnNlKSB7XG4gICAgY29uc3QgcmVzdWx0ID0gYXdhaXQgdGhpcy5nb29nbGUuaGFuZGxlQ2FsbGJhY2soXCJtZXJjaGFudFwiLCB7IGNvZGUsIHN0YXRlLCBlcnJvciB9KTtcbiAgICByZXR1cm4gcmVzLnJlZGlyZWN0KHRoaXMuZ29vZ2xlLndlYlJlZGlyZWN0KHJlc3VsdCkpO1xuICB9XG5cbiAgQFB1YmxpYygpIEBHZXQoXCJnb29nbGUtYnVzaW5lc3MvY2FsbGJhY2tcIilcbiAgYXN5bmMgYnVzaW5lc3MoQFF1ZXJ5KFwiY29kZVwiKSBjb2RlOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBRdWVyeShcInN0YXRlXCIpIHN0YXRlOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBRdWVyeShcImVycm9yXCIpIGVycm9yOiBzdHJpbmcgfCB1bmRlZmluZWQsIEBSZXMoKSByZXM6IFJlc3BvbnNlKSB7XG4gICAgY29uc3QgcmVzdWx0ID0gYXdhaXQgdGhpcy5nb29nbGUuaGFuZGxlQ2FsbGJhY2soXCJidXNpbmVzc1wiLCB7IGNvZGUsIHN0YXRlLCBlcnJvciB9KTtcbiAgICByZXR1cm4gcmVzLnJlZGlyZWN0KHRoaXMuZ29vZ2xlLndlYlJlZGlyZWN0KHJlc3VsdCkpO1xuICB9XG59XG4iXSwidmVyc2lvbiI6M30=

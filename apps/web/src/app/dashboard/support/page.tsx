@@ -5,7 +5,7 @@ import { apiFetch } from "../../../lib/api";
 import { getOrganizationId } from "../../../lib/org";
 
 interface TicketMessage { id: string; authorKind: string; body: string; createdAt: string }
-interface Ticket { id: string; subject: string; status: string; priority: string; lastMessageAt: string; createdAt: string; messageCount?: number; messages?: TicketMessage[] }
+interface Ticket { id: string; subject: string; status: string; priority: string; category?: string; lastMessageAt: string; createdAt: string; messageCount?: number; messages?: TicketMessage[] }
 
 /**
  * Support Design v2 — presentation layer only. Every handler below
@@ -20,6 +20,9 @@ const STATUS_TEXT: Record<string, string> = { open: "খোলা", pending: "�
 const STATUS_BADGE: Record<string, string> = { open: "badge-green", pending: "badge-amber", resolved: "badge-brand", closed: "badge-slate" };
 const STATUS_DOT: Record<string, string> = { open: "bg-emerald-500", pending: "bg-amber-500", resolved: "bg-brand-500", closed: "bg-slate-400" };
 const PRIORITY_TEXT: Record<string, string> = { normal: "সাধারণ", high: "জরুরি" };
+/** GC23: ticket category vocabulary (mirrors the API's
+ * TICKET_CATEGORIES) with Bengali labels. */
+const CATEGORY_TEXT: Record<string, string> = { billing: "বিলিং", technical: "কারিগরি সমস্যা", account: "অ্যাকাউন্ট", feature: "ফিচার অনুরোধ", other: "অন্যান্য" };
 
 /** Status banner in the thread — every line states a fact the API
  *  itself guarantees (admin reply → pending; tenant reply reopens a
@@ -70,6 +73,7 @@ export default function SupportPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [priority, setPriority] = useState("normal");
+  const [category, setCategory] = useState("other");
   const [reply, setReply] = useState("");
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
@@ -95,8 +99,8 @@ export default function SupportPage() {
     if (!orgId) return;
     setError("");
     try {
-      const t = await apiFetch<Ticket>(`/organizations/${orgId}/tickets`, { method: "POST", body: JSON.stringify({ subject, body, priority }) });
-      setSubject(""); setBody(""); setPriority("normal");
+      const t = await apiFetch<Ticket>(`/organizations/${orgId}/tickets`, { method: "POST", body: JSON.stringify({ subject, body, priority, category }) });
+      setSubject(""); setBody(""); setPriority("normal"); setCategory("other");
       await load(); setSelected(t);
     } catch (e) { setError(e instanceof Error ? e.message : "Ticket তৈরি হয়নি"); }
   };
@@ -181,7 +185,10 @@ export default function SupportPage() {
             <h2 className="section-title flex items-center gap-2"><span className="stat-icon stat-icon-brand !h-9 !w-9 !rounded-xl text-base">✉️</span>নতুন Ticket</h2>
             <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="বিষয় — যেমন: WooCommerce Sync হচ্ছে না" className="input mt-4" />
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="সমস্যাটা বিস্তারিত লিখুন…" className="input mt-2 resize-none" />
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select value={category} onChange={(e) => setCategory(e.target.value)} className="input !w-auto min-h-[44px]" aria-label="বিভাগ">
+                {Object.entries(CATEGORY_TEXT).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
               <select value={priority} onChange={(e) => setPriority(e.target.value)} className="input !w-auto min-h-[44px]" aria-label="গুরুত্ব">
                 <option value="normal">সাধারণ</option>
                 <option value="high">জরুরি</option>
@@ -217,6 +224,7 @@ export default function SupportPage() {
                     </div>
                     <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
                       {t.priority === "high" ? <span className="badge-red">জরুরি</span> : null}
+                      {t.category ? <span className="badge-slate">{CATEGORY_TEXT[t.category] ?? t.category}</span> : null}
                       <span>💬 {bnNum(t.messageCount ?? 0)}টি বার্তা</span>
                       <span className="ml-auto">শেষ কার্যকলাপ · {relativeBn(t.lastMessageAt)}</span>
                     </div>

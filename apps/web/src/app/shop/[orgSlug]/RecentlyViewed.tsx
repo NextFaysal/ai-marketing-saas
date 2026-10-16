@@ -1,49 +1,24 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { readRecentlyViewed, recordRecentlyViewed, type RecentlyViewedCard } from "@/lib/recently-viewed";
+import { API_URL } from "@/lib/api";
+import { readRecentlyViewedIds, recordRecentlyViewed } from "@/lib/recently-viewed";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { ProductCard } from "./ProductCard";
 
 /**
- * EC27 — recently viewed (web-only, localStorage per org slug).
- * Recording happens on the product page; the strip renders the
- * stored minimal cards (prices captured at view time may be
- * stale — clicking goes to the live product page). No server
- * state, no tracking.
+ * AB6 (AX14) — recently viewed v2 (web-only, localStorage per
+ * org slug). Storage holds product IDs ONLY; the strip
+ * resolves them LIVE via the shop API (?ids=), so prices and
+ * stock are never stale, unresolvable/inactive products are
+ * dropped, and a fetch failure renders nothing. No server
+ * tracking of views.
  */
-export function RecordRecentlyViewed({ orgSlug, product }: { orgSlug: string; product: ShopProduct }) {
+export function RecordRecentlyViewed({ orgSlug, productId }: { orgSlug: string; productId: string }) {
   useEffect(() => {
-    recordRecentlyViewed(orgSlug, {
-      id: product.id,
-      slug: product.slug,
-      name: product.name,
-      imageUrl: product.imageUrl,
-      priceMinor: product.priceMinor,
-    });
-  }, [orgSlug, product]);
+    recordRecentlyViewed(orgSlug, productId);
+  }, [orgSlug, productId]);
   return null;
-}
-
-function toCardProduct(card: RecentlyViewedCard): ShopProduct {
-  return {
-    id: card.id,
-    name: card.name,
-    slug: card.slug,
-    description: null,
-    category: null,
-    categoryId: null,
-    sku: null,
-    priceMinor: card.priceMinor,
-    compareAtMinor: null,
-    currency: "BDT",
-    imageUrl: card.imageUrl,
-    images: card.imageUrl ? [card.imageUrl] : [],
-    stockQuantity: null,
-    stockState: "untracked", // no stock claim from a stored card
-    bump: null,
-    variants: [],
-  };
 }
 
 export function RecentlyViewedStrip({
@@ -56,17 +31,36 @@ export function RecentlyViewedStrip({
   excludeId?: string;
 }) {
   const t = shopT(locale);
-  const [cards, setCards] = useState<RecentlyViewedCard[]>([]);
+  const [products, setProducts] = useState<ShopProduct[]>([]);
   useEffect(() => {
-    setCards(readRecentlyViewed(orgSlug).filter((c) => c.id !== excludeId));
+    let alive = true;
+    const ids = readRecentlyViewedIds(orgSlug).filter((id) => id !== excludeId);
+    if (ids.length === 0) { setProducts([]); return; }
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_URL}/public/shop/${encodeURIComponent(orgSlug)}?ids=${encodeURIComponent(ids.join(","))}`,
+        );
+        if (!res.ok) throw new Error("failed");
+        const json = (await res.json()) as { products?: ShopProduct[] };
+        const live = Array.isArray(json.products) ? json.products : [];
+        // Render in stored-id order; ids the API did not
+        // resolve (inactive/deleted) are dropped.
+        const byId = new Map(live.map((p) => [p.id, p]));
+        if (alive) setProducts(ids.map((id) => byId.get(id)).filter((p): p is ShopProduct => !!p));
+      } catch {
+        if (alive) setProducts([]);
+      }
+    })();
+    return () => { alive = false; };
   }, [orgSlug, excludeId]);
-  if (cards.length === 0) return null;
+  if (products.length === 0) return null;
   return (
     <section className="space-y-4">
       <h2 className="text-xl font-black text-slate-900">{t.home.recentlyViewed}</h2>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {cards.map((c) => (
-          <ProductCard key={c.id} orgSlug={orgSlug} product={toCardProduct(c)} locale={locale} />
+        {products.map((p) => (
+          <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
         ))}
       </div>
     </section>

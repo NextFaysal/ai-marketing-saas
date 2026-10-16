@@ -1,0 +1,93 @@
+4dee4e5bad51b4470763ecbd1f7d8142
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CustomFieldsController = void 0;
+const common_1 = require("@nestjs/common");
+const custom_fields_service_1 = require("./custom-fields.service");
+const custom_fields_dto_1 = require("./custom-fields.dto");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+/**
+ * CRM C4: custom field definitions for leads + customers.
+ * Definition management is OWNER/ADMIN only; reads follow the
+ * controller's PermissionArea like the rest of the CRM.
+ */
+let CustomFieldsController = class CustomFieldsController {
+    fields;
+    constructor(fields) {
+        this.fields = fields;
+    }
+    list(orgId, entity) {
+        return this.fields.listDefs(orgId, entity);
+    }
+    create(_user, orgId, dto) {
+        return this.fields.createDef(orgId, dto);
+    }
+    update(orgId, defId, dto) {
+        return this.fields.updateDef(orgId, defId, dto);
+    }
+    archive(orgId, defId) {
+        return this.fields.archiveDef(orgId, defId);
+    }
+};
+exports.CustomFieldsController = CustomFieldsController;
+__decorate([
+    (0, common_1.Get)(),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("entity")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CustomFieldsController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)(),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, custom_fields_dto_1.CreateCustomFieldDto]),
+    __metadata("design:returntype", void 0)
+], CustomFieldsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Patch)(":defId"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("defId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, custom_fields_dto_1.UpdateCustomFieldDto]),
+    __metadata("design:returntype", void 0)
+], CustomFieldsController.prototype, "update", null);
+__decorate([
+    (0, common_1.Post)(":defId/archive"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("defId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CustomFieldsController.prototype, "archive", null);
+exports.CustomFieldsController = CustomFieldsController = __decorate([
+    (0, decorators_1.PermissionArea)("customers"),
+    (0, common_1.Controller)("organizations/:organizationId/crm/custom-fields"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [custom_fields_service_1.CustomFieldsService])
+], CustomFieldsController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NybS9jdXN0b20tZmllbGRzLmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQTZGO0FBQzdGLG1FQUE4RDtBQUM5RCwyREFBaUY7QUFDakYscURBQW9GO0FBQ3BGLHlEQUFxRDtBQUNyRCx1REFBbUQ7QUFFbkQ7Ozs7R0FJRztBQUlJLElBQU0sc0JBQXNCLEdBQTVCLE1BQU0sc0JBQXNCO0lBQ0o7SUFBN0IsWUFBNkIsTUFBMkI7UUFBM0IsV0FBTSxHQUFOLE1BQU0sQ0FBcUI7SUFBRyxDQUFDO0lBRzVELElBQUksQ0FBMEIsS0FBYSxFQUFtQixNQUFlO1FBQzNFLE9BQU8sSUFBSSxDQUFDLE1BQU0sQ0FBQyxRQUFRLENBQUMsS0FBSyxFQUFFLE1BQU0sQ0FBQyxDQUFDO0lBQzdDLENBQUM7SUFHRCxNQUFNLENBQWdCLEtBQWUsRUFBMkIsS0FBYSxFQUFVLEdBQXlCO1FBQzlHLE9BQU8sSUFBSSxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQUMsS0FBSyxFQUFFLEdBQUcsQ0FBQyxDQUFDO0lBQzNDLENBQUM7SUFHRCxNQUFNLENBQTBCLEtBQWEsRUFBa0IsS0FBYSxFQUFVLEdBQXlCO1FBQzdHLE9BQU8sSUFBSSxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQUMsS0FBSyxFQUFFLEtBQUssRUFBRSxHQUFHLENBQUMsQ0FBQztJQUNsRCxDQUFDO0lBR0QsT0FBTyxDQUEwQixLQUFhLEVBQWtCLEtBQWE7UUFDM0UsT0FBTyxJQUFJLENBQUMsTUFBTSxDQUFDLFVBQVUsQ0FBQyxLQUFLLEVBQUUsS0FBSyxDQUFDLENBQUM7SUFDOUMsQ0FBQztDQUNGLENBQUE7QUF0Qlksd0RBQXNCO0FBSWpDO0lBREMsSUFBQSxZQUFHLEdBQUU7SUFDQSxXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGNBQUssRUFBQyxRQUFRLENBQUMsQ0FBQTs7OztrREFFNUQ7QUFHRDtJQURDLElBQUEsYUFBSSxHQUFFO0lBQUUsSUFBQSxrQkFBUyxFQUFDLHdCQUFVLENBQUM7SUFBRSxJQUFBLGtCQUFLLEVBQUMsT0FBTyxFQUFFLE9BQU8sQ0FBQztJQUMvQyxXQUFBLElBQUEsd0JBQVcsR0FBRSxDQUFBO0lBQW1CLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7O3FEQUFNLHdDQUFvQjs7b0RBRS9HO0FBR0Q7SUFEQyxJQUFBLGNBQUssRUFBQyxRQUFRLENBQUM7SUFBRSxJQUFBLGtCQUFTLEVBQUMsd0JBQVUsQ0FBQztJQUFFLElBQUEsa0JBQUssRUFBQyxPQUFPLEVBQUUsT0FBTyxDQUFDO0lBQ3hELFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsY0FBSyxFQUFDLE9BQU8sQ0FBQyxDQUFBO0lBQWlCLFdBQUEsSUFBQSxhQUFJLEdBQUUsQ0FBQTs7cURBQU0sd0NBQW9COztvREFFOUc7QUFHRDtJQURDLElBQUEsYUFBSSxFQUFDLGdCQUFnQixDQUFDO0lBQUUsSUFBQSxrQkFBUyxFQUFDLHdCQUFVLENBQUM7SUFBRSxJQUFBLGtCQUFLLEVBQUMsT0FBTyxFQUFFLE9BQU8sQ0FBQztJQUM5RCxXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTs7OztxREFFOUQ7aUNBckJVLHNCQUFzQjtJQUhsQyxJQUFBLDJCQUFjLEVBQUMsV0FBVyxDQUFDO0lBQzNCLElBQUEsbUJBQVUsRUFBQyxpREFBaUQsQ0FBQztJQUM3RCxJQUFBLGtCQUFTLEVBQUMsMEJBQVcsRUFBRSx3QkFBVSxDQUFDO3FDQUVJLDJDQUFtQjtHQUQ3QyxzQkFBc0IsQ0FzQmxDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jcm0vY3VzdG9tLWZpZWxkcy5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IEJvZHksIENvbnRyb2xsZXIsIEdldCwgUGFyYW0sIFBhdGNoLCBQb3N0LCBRdWVyeSwgVXNlR3VhcmRzIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBDdXN0b21GaWVsZHNTZXJ2aWNlIH0gZnJvbSBcIi4vY3VzdG9tLWZpZWxkcy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBDcmVhdGVDdXN0b21GaWVsZER0bywgVXBkYXRlQ3VzdG9tRmllbGREdG8gfSBmcm9tIFwiLi9jdXN0b20tZmllbGRzLmR0b1wiO1xuaW1wb3J0IHsgQ3VycmVudFVzZXIsIEF1dGhVc2VyLCBSb2xlcywgUGVybWlzc2lvbkFyZWEgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IFRlbmFudEd1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi90ZW5hbnQuZ3VhcmRcIjtcbmltcG9ydCB7IFJvbGVzR3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3JvbGVzLmd1YXJkXCI7XG5cbi8qKlxuICogQ1JNIEM0OiBjdXN0b20gZmllbGQgZGVmaW5pdGlvbnMgZm9yIGxlYWRzICsgY3VzdG9tZXJzLlxuICogRGVmaW5pdGlvbiBtYW5hZ2VtZW50IGlzIE9XTkVSL0FETUlOIG9ubHk7IHJlYWRzIGZvbGxvdyB0aGVcbiAqIGNvbnRyb2xsZXIncyBQZXJtaXNzaW9uQXJlYSBsaWtlIHRoZSByZXN0IG9mIHRoZSBDUk0uXG4gKi9cbkBQZXJtaXNzaW9uQXJlYShcImN1c3RvbWVyc1wiKVxuQENvbnRyb2xsZXIoXCJvcmdhbml6YXRpb25zLzpvcmdhbml6YXRpb25JZC9jcm0vY3VzdG9tLWZpZWxkc1wiKVxuQFVzZUd1YXJkcyhUZW5hbnRHdWFyZCwgUm9sZXNHdWFyZClcbmV4cG9ydCBjbGFzcyBDdXN0b21GaWVsZHNDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBmaWVsZHM6IEN1c3RvbUZpZWxkc1NlcnZpY2UpIHt9XG5cbiAgQEdldCgpXG4gIGxpc3QoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFF1ZXJ5KFwiZW50aXR5XCIpIGVudGl0eT86IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLmZpZWxkcy5saXN0RGVmcyhvcmdJZCwgZW50aXR5KTtcbiAgfVxuXG4gIEBQb3N0KCkgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIGNyZWF0ZShAQ3VycmVudFVzZXIoKSBfdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiBDcmVhdGVDdXN0b21GaWVsZER0bykge1xuICAgIHJldHVybiB0aGlzLmZpZWxkcy5jcmVhdGVEZWYob3JnSWQsIGR0byk7XG4gIH1cblxuICBAUGF0Y2goXCI6ZGVmSWRcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIHVwZGF0ZShAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJkZWZJZFwiKSBkZWZJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogVXBkYXRlQ3VzdG9tRmllbGREdG8pIHtcbiAgICByZXR1cm4gdGhpcy5maWVsZHMudXBkYXRlRGVmKG9yZ0lkLCBkZWZJZCwgZHRvKTtcbiAgfVxuXG4gIEBQb3N0KFwiOmRlZklkL2FyY2hpdmVcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIGFyY2hpdmUoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwiZGVmSWRcIikgZGVmSWQ6IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLmZpZWxkcy5hcmNoaXZlRGVmKG9yZ0lkLCBkZWZJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

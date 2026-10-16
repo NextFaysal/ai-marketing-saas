@@ -11,16 +11,23 @@ interface Ticket {
   id: string; organizationId: string; organizationName?: string | null; subject: string;
   status: string; priority: string; assignedToId?: string | null; lastMessageAt: string;
   messageCount?: number; messages?: TicketMessage[]; creatorEmail?: string | null;
+  // GC23: category + read-time SLA state (admin payloads only).
+  category?: string; firstRespondedAt?: string | null;
+  slaBreached?: boolean; slaDueAt?: string; slaHours?: number;
 }
 interface Admin { id: string; email: string }
 
 const STATUS_LABEL: Record<string, string> = { open: "🟢 Open", pending: "🟡 Pending", resolved: "✅ Resolved", closed: "⚪ Closed" };
 const FILTERS = ["", "open", "pending", "resolved", "closed"] as const;
+const CATEGORY_LABEL: Record<string, string> = { billing: "💳 Billing", technical: "🛠 Technical", account: "👤 Account", feature: "✨ Feature", other: "📁 Other" };
+const CATEGORY_FILTERS = ["", "billing", "technical", "account", "feature", "other"] as const;
 
 export default function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [filter, setFilter] = useState<string>("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [slaOnly, setSlaOnly] = useState(false);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [reply, setReply] = useState("");
   const [note, setNote] = useState("");
@@ -32,10 +39,15 @@ export default function TicketsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setTickets(await apiFetch<Ticket[]>(`/admin/tickets${filter ? `?status=${filter}` : ""}`)); setLoadError(""); }
+    const params = new URLSearchParams();
+    if (filter) params.set("status", filter);
+    if (categoryFilter) params.set("category", categoryFilter);
+    if (slaOnly) params.set("sla", "breached");
+    const qs = params.toString();
+    try { setTickets(await apiFetch<Ticket[]>(`/admin/tickets${qs ? `?${qs}` : ""}`)); setLoadError(""); }
     catch (e) { setLoadError(e instanceof Error ? e.message : "Ticket তালিকা লোড ব্যর্থ হয়েছে"); }
     finally { setLoading(false); }
-  }, [filter]);
+  }, [filter, categoryFilter, slaOnly]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     apiFetch<{ admins: Admin[] }>("/admin/security").then((s) => setAdmins(s.admins ?? [])).catch(() => undefined);
@@ -83,6 +95,13 @@ export default function TicketsPage() {
           <button key={f || "all"} onClick={() => setFilter(f)} className={filter === f ? "abtn abtn-primary" : "abtn"}>{f ? STATUS_LABEL[f] : "সব"}</button>
         ))}
       </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="amut" style={{ fontSize: 12.5 }}>বিভাগ:</span>
+        {CATEGORY_FILTERS.map((c) => (
+          <button key={c || "all-cat"} onClick={() => setCategoryFilter(c)} className={categoryFilter === c ? "abtn abtn-primary" : "abtn"}>{c ? CATEGORY_LABEL[c] : "সব বিভাগ"}</button>
+        ))}
+        <button onClick={() => setSlaOnly(!slaOnly)} className={slaOnly ? "abtn abtn-primary" : "abtn"} style={slaOnly ? {} : { borderColor: "#fecaca", color: "#991b1b" }}>🔴 শুধু SLA অতিক্রম</button>
+      </div>
       {/* ADX14: saved views — this page's only filter state is the
           status filter, so a view is a named status preset. */}
       <div className="mb-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40">
@@ -105,6 +124,10 @@ export default function TicketsPage() {
                 <span style={{ fontSize: 12 }}>{STATUS_LABEL[t.status] ?? t.status}</span>
               </div>
               <p className="amut" style={{ marginTop: 4 }}>{t.organizationName ?? t.organizationId} · {t.messageCount ?? 0} বার্তা · {fmtDateTime(t.lastMessageAt)}</p>
+              <p style={{ marginTop: 4, fontSize: 12 }}>
+                <span className="abadge">{CATEGORY_LABEL[t.category ?? "other"] ?? t.category}</span>
+                {t.slaBreached ? <span className="abadge" style={{ marginLeft: 6, background: "#fee2e2", color: "#991b1b", borderColor: "#fecaca" }}>🔴 SLA অতিক্রম — প্রথম উত্তর বাকি (সময়সীমা {t.slaDueAt ? fmtDateTime(t.slaDueAt) : "—"})</span> : null}
+              </p>
             </button>
           ))}
         </div>
@@ -129,7 +152,15 @@ export default function TicketsPage() {
                   <option value="normal">সাধারণ</option>
                   <option value="high">জরুরি</option>
                 </select>
+                <select value={selected.category ?? "other"} onChange={(e) => update({ category: e.target.value })} className="ainput" style={{ width: "auto" }} title="বিভাগ">
+                  {Object.entries(CATEGORY_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
               </div>
+              <p className="amut" style={{ margin: "6px 0 2px", fontSize: 12.5 }}>
+                SLA: প্রথম উত্তরের সময়সীমা {selected.slaDueAt ? new Date(selected.slaDueAt).toLocaleString("bn-BD") : "—"}
+                {selected.firstRespondedAt ? ` · প্রথম উত্তর: ${new Date(selected.firstRespondedAt).toLocaleString("bn-BD")}` : " · প্রথম উত্তর এখনো হয়নি"}
+                {selected.slaBreached ? <b style={{ color: "#991b1b" }}> · 🔴 SLA অতিক্রম হয়েছে</b> : ""}
+              </p>
               <div className="space-y-2">
                 {(selected.messages ?? []).map((m) => (
                   <div key={m.id} style={{ borderRadius: 12, padding: "8px 12px", fontSize: 13.5, background: m.authorKind === "admin" ? "#eef2ff" : "#f1f5f9", marginLeft: m.authorKind === "admin" ? 0 : 32, marginRight: m.authorKind === "admin" ? 32 : 0 }}>

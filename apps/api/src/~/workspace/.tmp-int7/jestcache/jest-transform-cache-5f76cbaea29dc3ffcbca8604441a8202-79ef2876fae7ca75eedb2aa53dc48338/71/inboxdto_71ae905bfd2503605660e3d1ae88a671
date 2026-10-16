@@ -1,0 +1,1159 @@
+e0da143dbfea08c6e617e136647e0528
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BulkReplyDto = exports.RunMacroDto = exports.UpdateMacroDto = exports.CreateMacroDto = exports.UpdateSavedViewDto = exports.CreateSavedViewDto = exports.ToneRewriteDto = exports.GhostDto = exports.SendProductDto = exports.BulkConversationsDto = exports.ConnectEmailDto = exports.ConnectTelegramDto = exports.AgentScheduleDto = exports.AgentStateDto = exports.TeamMembersDto = exports.TeamMemberInputDto = exports.UpdateTeamDto = exports.RebalanceDto = exports.UpdateSignatureDto = exports.TeamDto = exports.TranslateMessageDto = exports.CreateChatOrderDto = exports.CreateChatOrderItemDto = exports.CodConfirmationDto = exports.UpdateInboxSettingsDto = exports.SendMediaDto = exports.SendImageDto = exports.SendTemplateDto = exports.SubmitWhatsAppTemplateDto = exports.WhatsAppTemplateDto = exports.QuickReplyDto = exports.BlockConversationDto = exports.LinkCustomerDto = exports.UnmergeCustomerDto = exports.MergeCustomerDto = exports.AddNoteDto = exports.SendDraftDto = exports.RefundRequestDto = exports.SnoozeConversationDto = exports.UpdateConversationDto = exports.ReactMessageDto = exports.PinMessageDto = exports.SendMessageDto = exports.UpdateWhatsAppWabaDto = exports.ConnectMessagingDto = void 0;
+const class_validator_1 = require("class-validator");
+class ConnectMessagingDto {
+    channel;
+    accessToken;
+    // Optional since Milestone 33: tenants connecting under the
+    // operator's platform Meta app omit it; verification then falls
+    // back to the platform app secret.
+    appSecret;
+    verifyToken;
+    phoneNumberId;
+    pageId;
+    // MS6: WhatsApp Business Account id (whatsapp connects only;
+    // ignored for other channels). Needed for template sync/submit.
+    wabaId;
+    // CC4: which Meta app this connection belongs to — "platform"
+    // (default; the operator's app) or "own" (the tenant's
+    // TenantAppConfig app; its saved secret is used when no
+    // per-call appSecret is given, and the connect refuses when
+    // no own config exists).
+    appSource;
+}
+exports.ConnectMessagingDto = ConnectMessagingDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "accessToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "appSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "verifyToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "phoneNumberId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "pageId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "wabaId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["platform", "own"]),
+    __metadata("design:type", String)
+], ConnectMessagingDto.prototype, "appSource", void 0);
+/** MS6: set or clear (null/empty) the WABA id on the org's
+ * connected WhatsApp integration. */
+class UpdateWhatsAppWabaDto {
+    wabaId;
+}
+exports.UpdateWhatsAppWabaDto = UpdateWhatsAppWabaDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateWhatsAppWabaDto.prototype, "wabaId", void 0);
+class SendMessageDto {
+    content;
+    // CX11ac: composer-reported attribution (optional; absent =
+    // a plain hand-typed send).
+    aiAssisted;
+    quickReplyId;
+    // IN6b: quote target — must be a message in the same conversation
+    // (the service validates; another thread's id is a 400).
+    replyToMessageId;
+}
+exports.SendMessageDto = SendMessageDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4096),
+    __metadata("design:type", String)
+], SendMessageDto.prototype, "content", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SendMessageDto.prototype, "aiAssisted", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], SendMessageDto.prototype, "quickReplyId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], SendMessageDto.prototype, "replyToMessageId", void 0);
+/** IN6d: pin toggle for one message (DB-only feature). */
+class PinMessageDto {
+    pinned;
+}
+exports.PinMessageDto = PinMessageDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PinMessageDto.prototype, "pinned", void 0);
+/** IN6c: agent reaction — an emoji, or null to remove ours. Only
+ * Messenger/Instagram have a real platform send; the service
+ * refuses other channels honestly. */
+class ReactMessageDto {
+    emoji;
+}
+exports.ReactMessageDto = ReactMessageDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(16),
+    __metadata("design:type", Object)
+], ReactMessageDto.prototype, "emoji", void 0);
+class UpdateConversationDto {
+    status;
+    assignedUserId;
+    // CX4: timed assignment (minutes, 5..480 — range enforced in the
+    // service with a Bengali message; only valid with assignedUserId).
+    assignForMinutes;
+    spamFlag;
+    tags;
+    autoReplyPaused;
+    // Unified Inbox U5: pipeline + close outcome.
+    pipelineStage;
+    outcome;
+    outcomeReason;
+}
+exports.UpdateConversationDto = UpdateConversationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateConversationDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateConversationDto.prototype, "assignedUserId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], UpdateConversationDto.prototype, "assignForMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateConversationDto.prototype, "spamFlag", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], UpdateConversationDto.prototype, "tags", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateConversationDto.prototype, "autoReplyPaused", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateConversationDto.prototype, "pipelineStage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateConversationDto.prototype, "outcome", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", Object)
+], UpdateConversationDto.prototype, "outcomeReason", void 0);
+/** CX5: snooze a conversation — exactly one of minutes / until;
+ * the one-of rule and the ranges are enforced in the service with
+ * Bengali messages (minutes 5..10080, until a future ISO time). */
+class SnoozeConversationDto {
+    minutes;
+    until;
+}
+exports.SnoozeConversationDto = SnoozeConversationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], SnoozeConversationDto.prototype, "minutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], SnoozeConversationDto.prototype, "until", void 0);
+class RefundRequestDto {
+    reason;
+}
+exports.RefundRequestDto = RefundRequestDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], RefundRequestDto.prototype, "reason", void 0);
+class SendDraftDto {
+    content;
+}
+exports.SendDraftDto = SendDraftDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4096),
+    __metadata("design:type", String)
+], SendDraftDto.prototype, "content", void 0);
+class AddNoteDto {
+    content;
+    // IN10b: opt-in — mask phone/card/transaction-id shaped tokens
+    // before the note is stored (the original is never persisted).
+    maskSensitive;
+}
+exports.AddNoteDto = AddNoteDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4000),
+    __metadata("design:type", String)
+], AddNoteDto.prototype, "content", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], AddNoteDto.prototype, "maskSensitive", void 0);
+/** IN2: merge two customer records from a conversation (agent-
+ * confirmed only; the service ties one side to this thread). */
+class MergeCustomerDto {
+    sourceCustomerId;
+    targetCustomerId;
+}
+exports.MergeCustomerDto = MergeCustomerDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], MergeCustomerDto.prototype, "sourceCustomerId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], MergeCustomerDto.prototype, "targetCustomerId", void 0);
+class UnmergeCustomerDto {
+    sourceCustomerId;
+}
+exports.UnmergeCustomerDto = UnmergeCustomerDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UnmergeCustomerDto.prototype, "sourceCustomerId", void 0);
+class LinkCustomerDto {
+    customerId;
+}
+exports.LinkCustomerDto = LinkCustomerDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LinkCustomerDto.prototype, "customerId", void 0);
+/** IN10a: block/unblock this conversation's customer (our
+ * system-level block only — never a platform block). */
+class BlockConversationDto {
+    blocked;
+    reason;
+}
+exports.BlockConversationDto = BlockConversationDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], BlockConversationDto.prototype, "blocked", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], BlockConversationDto.prototype, "reason", void 0);
+class QuickReplyDto {
+    title;
+    content;
+}
+exports.QuickReplyDto = QuickReplyDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], QuickReplyDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4000),
+    __metadata("design:type", String)
+], QuickReplyDto.prototype, "content", void 0);
+class WhatsAppTemplateDto {
+    name;
+    language;
+    category;
+    bodyText;
+}
+exports.WhatsAppTemplateDto = WhatsAppTemplateDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(512),
+    __metadata("design:type", String)
+], WhatsAppTemplateDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(10),
+    __metadata("design:type", String)
+], WhatsAppTemplateDto.prototype, "language", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], WhatsAppTemplateDto.prototype, "category", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], WhatsAppTemplateDto.prototype, "bodyText", void 0);
+/** MS6: create + submit a WhatsApp template to Meta for approval.
+ * Deep validation (name rule, category, examples, buttons) runs in
+ * the service with Bengali errors BEFORE any Meta call; the DTO
+ * only shapes the payload. */
+class SubmitWhatsAppTemplateDto {
+    name;
+    language;
+    category;
+    bodyText;
+    exampleValues;
+    headerType;
+    headerText;
+    headerExample;
+    headerHandle;
+    buttons;
+}
+exports.SubmitWhatsAppTemplateDto = SubmitWhatsAppTemplateDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(512),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(10),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "language", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "category", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4000),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "bodyText", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], SubmitWhatsAppTemplateDto.prototype, "exampleValues", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["none", "text", "image"]),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "headerType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "headerText", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "headerExample", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], SubmitWhatsAppTemplateDto.prototype, "headerHandle", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], SubmitWhatsAppTemplateDto.prototype, "buttons", void 0);
+class SendTemplateDto {
+    templateId;
+    variables;
+}
+exports.SendTemplateDto = SendTemplateDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SendTemplateDto.prototype, "templateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], SendTemplateDto.prototype, "variables", void 0);
+class SendImageDto {
+    imageUrl;
+    caption;
+}
+exports.SendImageDto = SendImageDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SendImageDto.prototype, "imageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(1024),
+    __metadata("design:type", String)
+], SendImageDto.prototype, "caption", void 0);
+/** Inbox Next-Gen P1: browser-uploaded media (drag-drop / paste /
+ * voice recorder). Base64 in JSON like the M59 logo upload; the
+ * decoded cap (2MB in InboxService) keeps the payload inside the
+ * 3MB body limit. The declared contentType is never trusted for
+ * images/PDF — the service sniffs magic bytes. */
+class SendMediaDto {
+    dataBase64;
+    fileName;
+    contentType;
+    caption;
+}
+exports.SendMediaDto = SendMediaDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2900000),
+    __metadata("design:type", String)
+], SendMediaDto.prototype, "dataBase64", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], SendMediaDto.prototype, "fileName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], SendMediaDto.prototype, "contentType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(1024),
+    __metadata("design:type", String)
+], SendMediaDto.prototype, "caption", void 0);
+class UpdateInboxSettingsDto {
+    autoReplyMode;
+    confidenceThreshold;
+    perIntent;
+    smartAssign;
+    slaFirstResponseMinutes;
+    botEnabled;
+    botDeliveryChargeMinor;
+    reassignAfterMinutes;
+    escalationTeamId;
+    perChannelModes;
+    escalationThresholdMinor;
+    retentionDays;
+    // CX3: wait-before-answering (seconds, 0 = immediate).
+    aiReplyDelaySeconds;
+    aiReplyDelayByChannel;
+    // CX12d: channel-wise AI schedule (deep-validated in the service).
+    aiScheduleByChannel;
+    // CX12b: post-delivery review requests (opt-in + delay hours).
+    reviewRequestEnabled;
+    reviewRequestDelayHours;
+    // CX7: "To Chase" stalled-session nudges (opt-in + bounds,
+    // deep-validated again in the service like the review delay).
+    chaseEnabled;
+    chaseFirstDelayMinutes;
+    chaseIntervalMinutes;
+    chaseMaxAttempts;
+    chaseQuietHoursRespect;
+    chaseQuietStartHour;
+    chaseQuietEndHour;
+    // Owner CX7 variant fields (his series): max attempts + custom message.
+    maxChaseAttempts;
+    chaseMessage;
+    // IN4: layered SLA + escalation chain (deep-validated again in
+    // the service: channel vocabulary + per-value ranges).
+    slaByChannel;
+    slaVipMinutes;
+    slaEscalateAfterMinutes;
+    slaLeadAlertEnabled;
+    slaAutoReassignEnabled;
+}
+exports.UpdateInboxSettingsDto = UpdateInboxSettingsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateInboxSettingsDto.prototype, "autoReplyMode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(100),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "confidenceThreshold", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "perIntent", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateInboxSettingsDto.prototype, "smartAssign", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(10080),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "slaFirstResponseMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "botEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "botDeliveryChargeMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(5),
+    (0, class_validator_1.Max)(10080),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "reassignAfterMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "escalationTeamId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "perChannelModes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "escalationThresholdMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(7),
+    (0, class_validator_1.Max)(3650),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "retentionDays", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(600),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "aiReplyDelaySeconds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "aiReplyDelayByChannel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "aiScheduleByChannel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "reviewRequestEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(168),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "reviewRequestDelayHours", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "chaseEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(15),
+    (0, class_validator_1.Max)(1440),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "chaseFirstDelayMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(60),
+    (0, class_validator_1.Max)(2880),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "chaseIntervalMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(5),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "chaseMaxAttempts", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "chaseQuietHoursRespect", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(23),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "chaseQuietStartHour", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(23),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "chaseQuietEndHour", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(10),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "maxChaseAttempts", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(1000),
+    __metadata("design:type", String)
+], UpdateInboxSettingsDto.prototype, "chaseMessage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "slaByChannel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(10080),
+    __metadata("design:type", Object)
+], UpdateInboxSettingsDto.prototype, "slaVipMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(1440),
+    __metadata("design:type", Number)
+], UpdateInboxSettingsDto.prototype, "slaEscalateAfterMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "slaLeadAlertEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateInboxSettingsDto.prototype, "slaAutoReassignEnabled", void 0);
+class CodConfirmationDto {
+    orderId;
+}
+exports.CodConfirmationDto = CodConfirmationDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CodConfirmationDto.prototype, "orderId", void 0);
+class CreateChatOrderItemDto {
+    productId;
+    variantId;
+    quantity;
+}
+exports.CreateChatOrderItemDto = CreateChatOrderItemDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateChatOrderItemDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateChatOrderItemDto.prototype, "variantId", void 0);
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(99),
+    __metadata("design:type", Number)
+], CreateChatOrderItemDto.prototype, "quantity", void 0);
+class CreateChatOrderDto {
+    items;
+    shippingMinor;
+    isCod;
+    address;
+}
+exports.CreateChatOrderDto = CreateChatOrderDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], CreateChatOrderDto.prototype, "items", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], CreateChatOrderDto.prototype, "shippingMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateChatOrderDto.prototype, "isCod", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], CreateChatOrderDto.prototype, "address", void 0);
+class TranslateMessageDto {
+    target;
+}
+exports.TranslateMessageDto = TranslateMessageDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TranslateMessageDto.prototype, "target", void 0);
+// Unified Inbox U2: teams + agent state.
+class TeamDto {
+    name;
+    channels;
+}
+exports.TeamDto = TeamDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], TeamDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], TeamDto.prototype, "channels", void 0);
+/** Milestone 73 (Team T4): the agent's own chat signature. */
+class UpdateSignatureDto {
+    signature;
+    enabled;
+}
+exports.UpdateSignatureDto = UpdateSignatureDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], UpdateSignatureDto.prototype, "signature", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateSignatureDto.prototype, "enabled", void 0);
+/** Milestone 74 (Team T5): workload rebalance request. */
+class RebalanceDto {
+    dryRun;
+}
+exports.RebalanceDto = RebalanceDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], RebalanceDto.prototype, "dryRun", void 0);
+class UpdateTeamDto {
+    name;
+    channels;
+    /** Milestone 71: the team's lead (org member id) or null to clear. */
+    leadUserId;
+}
+exports.UpdateTeamDto = UpdateTeamDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], UpdateTeamDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], UpdateTeamDto.prototype, "channels", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", Object)
+], UpdateTeamDto.prototype, "leadUserId", void 0);
+class TeamMemberInputDto {
+    userId;
+    capacity;
+}
+exports.TeamMemberInputDto = TeamMemberInputDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TeamMemberInputDto.prototype, "userId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(200),
+    __metadata("design:type", Number)
+], TeamMemberInputDto.prototype, "capacity", void 0);
+class TeamMembersDto {
+    members;
+}
+exports.TeamMembersDto = TeamMembersDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], TeamMembersDto.prototype, "members", void 0);
+class AgentStateDto {
+    status;
+}
+exports.AgentStateDto = AgentStateDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AgentStateDto.prototype, "status", void 0);
+/** Milestone 68 (Team T2): weekly working hours. The windows
+ * object is shape-validated in the service (weekday keys with
+ * ["HH:MM","HH:MM"] pairs). */
+class AgentScheduleDto {
+    timezone;
+    windows;
+}
+exports.AgentScheduleDto = AgentScheduleDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], AgentScheduleDto.prototype, "timezone", void 0);
+__decorate([
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], AgentScheduleDto.prototype, "windows", void 0);
+// Unified Inbox U4: channel connects.
+class ConnectTelegramDto {
+    botToken;
+}
+exports.ConnectTelegramDto = ConnectTelegramDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(10),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ConnectTelegramDto.prototype, "botToken", void 0);
+class ConnectEmailDto {
+    imapHost;
+    imapPort;
+    smtpHost;
+    smtpPort;
+    user;
+    password;
+}
+exports.ConnectEmailDto = ConnectEmailDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ConnectEmailDto.prototype, "imapHost", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(65535),
+    __metadata("design:type", Number)
+], ConnectEmailDto.prototype, "imapPort", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ConnectEmailDto.prototype, "smtpHost", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(65535),
+    __metadata("design:type", Number)
+], ConnectEmailDto.prototype, "smtpPort", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ConnectEmailDto.prototype, "user", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(400),
+    __metadata("design:type", String)
+], ConnectEmailDto.prototype, "password", void 0);
+/** Inbox Next-Gen P2: bulk conversation actions. The 25-id cap
+ * and the action vocabulary are enforced in the service as well;
+ * the DTO only shapes the payload. */
+class BulkConversationsDto {
+    ids;
+    action; // close | assign | tag-add | mark-read
+    assignedUserId;
+    tag;
+}
+exports.BulkConversationsDto = BulkConversationsDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], BulkConversationsDto.prototype, "ids", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], BulkConversationsDto.prototype, "action", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], BulkConversationsDto.prototype, "assignedUserId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], BulkConversationsDto.prototype, "tag", void 0);
+/** Inbox Next-Gen P2: product showcase card send. */
+class SendProductDto {
+    productId;
+    caption;
+}
+exports.SendProductDto = SendProductDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SendProductDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], SendProductDto.prototype, "caption", void 0);
+/** Inbox Next-Gen P3: ghost completion — the agent's half-written
+ * reply text the model should continue. */
+class GhostDto {
+    partial;
+}
+exports.GhostDto = GhostDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], GhostDto.prototype, "partial", void 0);
+/** Inbox Next-Gen P3: tone rewrite of the agent's own draft. */
+class ToneRewriteDto {
+    text;
+    tone;
+}
+exports.ToneRewriteDto = ToneRewriteDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], ToneRewriteDto.prototype, "text", void 0);
+__decorate([
+    (0, class_validator_1.IsIn)(["polite", "professional", "sales"]),
+    __metadata("design:type", String)
+], ToneRewriteDto.prototype, "tone", void 0);
+/** IN1: saved inbox view — a named filter preset. The `filters`
+ * object is deep-validated in the service (whitelist of the list
+ * filter keys, per-key type/range checks); the DTO only shapes it. */
+class CreateSavedViewDto {
+    name;
+    filters;
+    shared;
+}
+exports.CreateSavedViewDto = CreateSavedViewDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateSavedViewDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], CreateSavedViewDto.prototype, "filters", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateSavedViewDto.prototype, "shared", void 0);
+class UpdateSavedViewDto {
+    name;
+    filters;
+    shared;
+}
+exports.UpdateSavedViewDto = UpdateSavedViewDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], UpdateSavedViewDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateSavedViewDto.prototype, "filters", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateSavedViewDto.prototype, "shared", void 0);
+/** IN3: an inbox macro — a named step sequence. `steps` is
+ * deep-validated in the service (sanitizeMacroSteps, strict: an
+ * invalid step is a 400, never silently dropped); the DTO only
+ * shapes the payload. */
+class CreateMacroDto {
+    name;
+    steps;
+    shared;
+}
+exports.CreateMacroDto = CreateMacroDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateMacroDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], CreateMacroDto.prototype, "steps", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateMacroDto.prototype, "shared", void 0);
+class UpdateMacroDto {
+    name;
+    steps;
+    shared;
+}
+exports.UpdateMacroDto = UpdateMacroDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], UpdateMacroDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], UpdateMacroDto.prototype, "steps", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateMacroDto.prototype, "shared", void 0);
+class RunMacroDto {
+    conversationId;
+}
+exports.RunMacroDto = RunMacroDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RunMacroDto.prototype, "conversationId", void 0);
+/** IN3c: bulk reply — the same quick reply OR WhatsApp template
+ * to up to 25 conversations (caps + the one-of rule are enforced
+ * in the service as well). */
+class BulkReplyDto {
+    ids;
+    quickReplyId;
+    templateId;
+}
+exports.BulkReplyDto = BulkReplyDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], BulkReplyDto.prototype, "ids", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], BulkReplyDto.prototype, "quickReplyId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], BulkReplyDto.prototype, "templateId", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L2luYm94LmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBa0k7QUFDbEksTUFBYSxtQkFBbUI7SUFDbEIsT0FBTyxDQUFVO0lBQ2pCLFdBQVcsQ0FBVTtJQUNqQyw0REFBNEQ7SUFDNUQsZ0VBQWdFO0lBQ2hFLG1DQUFtQztJQUNULFNBQVMsQ0FBVTtJQUNqQyxXQUFXLENBQVU7SUFDUCxhQUFhLENBQVU7SUFDdkIsTUFBTSxDQUFVO0lBQzFDLDZEQUE2RDtJQUM3RCxnRUFBZ0U7SUFDdEMsTUFBTSxDQUFVO0lBQzFDLDhEQUE4RDtJQUM5RCx1REFBdUQ7SUFDdkQsd0RBQXdEO0lBQ3hELDREQUE0RDtJQUM1RCx5QkFBeUI7SUFDZ0IsU0FBUyxDQUFVO0NBQzdEO0FBbkJELGtEQW1CQztBQWxCYTtJQUFYLElBQUEsMEJBQVEsR0FBRTs7b0RBQWtCO0FBQ2pCO0lBQVgsSUFBQSwwQkFBUSxHQUFFOzt3REFBc0I7QUFJUDtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3NEQUFvQjtBQUNqQztJQUFYLElBQUEsMEJBQVEsR0FBRTs7d0RBQXNCO0FBQ1A7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzswREFBd0I7QUFDdkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzttREFBaUI7QUFHaEI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzttREFBaUI7QUFNRDtJQUF4QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxVQUFVLEVBQUUsS0FBSyxDQUFDLENBQUM7O3NEQUFvQjtBQUU5RDtxQ0FDcUM7QUFDckMsTUFBYSxxQkFBcUI7SUFDTixNQUFNLENBQWlCO0NBQ2xEO0FBRkQsc0RBRUM7QUFE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R0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O2tEQUF1QjtBQUN0QjtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOztnREFBcUIiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L2luYm94LmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJc0FycmF5LCBJc0Jvb2xlYW4sIElzSW4sIElzSW50LCBJc09iamVjdCwgSXNPcHRpb25hbCwgSXNTdHJpbmcsIE1heCwgTWF4TGVuZ3RoLCBNaW4sIE1pbkxlbmd0aCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcbmV4cG9ydCBjbGFzcyBDb25uZWN0TWVzc2FnaW5nRHRvIHtcbiAgQElzU3RyaW5nKCkgY2hhbm5lbCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgYWNjZXNzVG9rZW4hOiBzdHJpbmc7XG4gIC8vIE9wdGlvbmFsIHNpbmNlIE1pbGVzdG9uZSAzMzogdGVuYW50cyBjb25uZWN0aW5nIHVuZGVyIHRoZVxuICAvLyBvcGVyYXRvcidzIHBsYXRmb3JtIE1ldGEgYXBwIG9taXQgaXQ7IHZlcmlmaWNhdGlvbiB0aGVuIGZhbGxzXG4gIC8vIGJhY2sgdG8gdGhlIHBsYXRmb3JtIGFwcCBzZWNyZXQuXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYXBwU2VjcmV0Pzogc3RyaW5nO1xuICBASXNTdHJpbmcoKSB2ZXJpZnlUb2tlbiE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBwaG9uZU51bWJlcklkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHBhZ2VJZD86IHN0cmluZztcbiAgLy8gTVM2OiBXaGF0c0FwcCBCdXNpbmVzcyBBY2NvdW50IGlkICh3aGF0c2FwcCBjb25uZWN0cyBvbmx5O1xuICAvLyBpZ25vcmVkIGZvciBvdGhlciBjaGFubmVscykuIE5lZWRlZCBmb3IgdGVtcGxhdGUgc3luYy9zdWJtaXQuXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgd2FiYUlkPzogc3RyaW5nO1xuICAvLyBDQzQ6IHdoaWNoIE1ldGEgYXBwIHRoaXMgY29ubmVjdGlvbiBiZWxvbmdzIHRvIOKAlCBcInBsYXRmb3JtXCJcbiAgLy8gKGRlZmF1bHQ7IHRoZSBvcGVyYXRvcidzIGFwcCkgb3IgXCJvd25cIiAodGhlIHRlbmFudCdzXG4gIC8vIFRlbmFudEFwcENvbmZpZyBhcHA7IGl0cyBzYXZlZCBzZWNyZXQgaXMgdXNlZCB3aGVuIG5vXG4gIC8vIHBlci1jYWxsIGFwcFNlY3JldCBpcyBnaXZlbiwgYW5kIHRoZSBjb25uZWN0IHJlZnVzZXMgd2hlblxuICAvLyBubyBvd24gY29uZmlnIGV4aXN0cykuXG4gIEBJc09wdGlvbmFsKCkgQElzSW4oW1wicGxhdGZvcm1cIiwgXCJvd25cIl0pIGFwcFNvdXJjZT86IHN0cmluZztcbn1cbi8qKiBNUzY6IHNldCBvciBjbGVhciAobnVsbC9lbXB0eSkgdGhlIFdBQkEgaWQgb24gdGhlIG9yZydzXG4gKiBjb25uZWN0ZWQgV2hhdHNBcHAgaW50ZWdyYXRpb24uICovXG5leHBvcnQgY2xhc3MgVXBkYXRlV2hhdHNBcHBXYWJhRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB3YWJhSWQ/OiBzdHJpbmcgfCBudWxsO1xufVxuZXhwb3J0IGNsYXNzIFNlbmRNZXNzYWdlRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MDk2KSBjb250ZW50ITogc3RyaW5nO1xuICAvLyBDWDExYWM6IGNvbXBvc2VyLXJlcG9ydGVkIGF0dHJpYnV0aW9uIChvcHRpb25hbDsgYWJzZW50ID1cbiAgLy8gYSBwbGFpbiBoYW5kLXR5cGVkIHNlbmQpLlxuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBhaUFzc2lzdGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgcXVpY2tSZXBseUlkPzogc3RyaW5nO1xuICAvLyBJTjZiOiBxdW90ZSB0YXJnZXQg4oCUIG11c3QgYmUgYSBtZXNzYWdlIGluIHRoZSBzYW1lIGNvbnZlcnNhdGlvblxuICAvLyAodGhlIHNlcnZpY2UgdmFsaWRhdGVzOyBhbm90aGVyIHRocmVhZCdzIGlkIGlzIGEgNDAwKS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgcmVwbHlUb01lc3NhZ2VJZD86IHN0cmluZztcbn1cbi8qKiBJTjZkOiBwaW4gdG9nZ2xlIGZvciBvbmUgbWVzc2FnZSAoREItb25seSBmZWF0dXJlKS4gKi9cbmV4cG9ydCBjbGFzcyBQaW5NZXNzYWdlRHRvIHtcbiAgQElzQm9vbGVhbigpIHBpbm5lZCE6IGJvb2xlYW47XG59XG4vKiogSU42YzogYWdlbnQgcmVhY3Rpb24g4oCUIGFuIGVtb2ppLCBvciBudWxsIHRvIHJlbW92ZSBvdXJzLiBPbmx5XG4gKiBNZXNzZW5nZXIvSW5zdGFncmFtIGhhdmUgYSByZWFsIHBsYXRmb3JtIHNlbmQ7IHRoZSBzZXJ2aWNlXG4gKiByZWZ1c2VzIG90aGVyIGNoYW5uZWxzIGhvbmVzdGx5LiAqL1xuZXhwb3J0IGNsYXNzIFJlYWN0TWVzc2FnZUR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxNikgZW1vamk/OiBzdHJpbmcgfCBudWxsO1xufVxuZXhwb3J0IGNsYXNzIFVwZGF0ZUNvbnZlcnNhdGlvbkR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc3RhdHVzPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGFzc2lnbmVkVXNlcklkPzogc3RyaW5nIHwgbnVsbDtcbiAgLy8gQ1g0OiB0aW1lZCBhc3NpZ25tZW50IChtaW51dGVzLCA1Li40ODAg4oCUIHJhbmdlIGVuZm9yY2VkIGluIHRoZVxuICAvLyBzZXJ2aWNlIHdpdGggYSBCZW5nYWxpIG1lc3NhZ2U7IG9ubHkgdmFsaWQgd2l0aCBhc3NpZ25lZFVzZXJJZCkuXG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgYXNzaWduRm9yTWludXRlcz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgc3BhbUZsYWc/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSB0YWdzPzogc3RyaW5nW107XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGF1dG9SZXBseVBhdXNlZD86IGJvb2xlYW47XG4gIC8vIFVuaWZpZWQgSW5ib3ggVTU6IHBpcGVsaW5lICsgY2xvc2Ugb3V0Y29tZS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBwaXBlbGluZVN0YWdlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG91dGNvbWU/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzAwKSBvdXRjb21lUmVhc29uPzogc3RyaW5nIHwgbnVsbDtcbn1cbi8qKiBDWDU6IHNub296ZSBhIGNvbnZlcnNhdGlvbiDigJQgZXhhY3RseSBvbmUgb2YgbWludXRlcyAvIHVudGlsO1xuICogdGhlIG9uZS1vZiBydWxlIGFuZCB0aGUgcmFuZ2VzIGFyZSBlbmZvcmNlZCBpbiB0aGUgc2VydmljZSB3aXRoXG4gKiBCZW5nYWxpIG1lc3NhZ2VzIChtaW51dGVzIDUuLjEwMDgwLCB1bnRpbCBhIGZ1dHVyZSBJU08gdGltZSkuICovXG5leHBvcnQgY2xhc3MgU25vb3plQ29udmVyc2F0aW9uRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBtaW51dGVzPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNjQpIHVudGlsPzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIFJlZnVuZFJlcXVlc3REdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzAwKSByZWFzb24/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgU2VuZERyYWZ0RHRvIHsgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwOTYpIGNvbnRlbnQ/OiBzdHJpbmc7IH1cblxuZXhwb3J0IGNsYXNzIEFkZE5vdGVEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwMDApIGNvbnRlbnQhOiBzdHJpbmc7XG4gIC8vIElOMTBiOiBvcHQtaW4g4oCUIG1hc2sgcGhvbmUvY2FyZC90cmFuc2FjdGlvbi1pZCBzaGFwZWQgdG9rZW5zXG4gIC8vIGJlZm9yZSB0aGUgbm90ZSBpcyBzdG9yZWQgKHRoZSBvcmlnaW5hbCBpcyBuZXZlciBwZXJzaXN0ZWQpLlxuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBtYXNrU2Vuc2l0aXZlPzogYm9vbGVhbjtcbn1cbi8qKiBJTjI6IG1lcmdlIHR3byBjdXN0b21lciByZWNvcmRzIGZyb20gYSBjb252ZXJzYXRpb24gKGFnZW50LVxuICogY29uZmlybWVkIG9ubHk7IHRoZSBzZXJ2aWNlIHRpZXMgb25lIHNpZGUgdG8gdGhpcyB0aHJlYWQpLiAqL1xuZXhwb3J0IGNsYXNzIE1lcmdlQ3VzdG9tZXJEdG8ge1xuICBASXNTdHJpbmcoKSBzb3VyY2VDdXN0b21lcklkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSB0YXJnZXRDdXN0b21lcklkITogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIFVubWVyZ2VDdXN0b21lckR0byB7XG4gIEBJc1N0cmluZygpIHNvdXJjZUN1c3RvbWVySWQhOiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgTGlua0N1c3RvbWVyRHRvIHtcbiAgQElzU3RyaW5nKCkgY3VzdG9tZXJJZCE6IHN0cmluZztcbn1cbi8qKiBJTjEwYTogYmxvY2svdW5ibG9jayB0aGlzIGNvbnZlcnNhdGlvbidzIGN1c3RvbWVyIChvdXJcbiAqIHN5c3RlbS1sZXZlbCBibG9jayBvbmx5IOKAlCBuZXZlciBhIHBsYXRmb3JtIGJsb2NrKS4gKi9cbmV4cG9ydCBjbGFzcyBCbG9ja0NvbnZlcnNhdGlvbkR0byB7XG4gIEBJc0Jvb2xlYW4oKSBibG9ja2VkITogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDMwMCkgcmVhc29uPzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIFF1aWNrUmVwbHlEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgdGl0bGUhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNDAwMCkgY29udGVudCE6IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBXaGF0c0FwcFRlbXBsYXRlRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg1MTIpIG5hbWUhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMCkgbGFuZ3VhZ2U/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgY2F0ZWdvcnk/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBib2R5VGV4dD86IHN0cmluZztcbn1cbi8qKiBNUzY6IGNyZWF0ZSArIHN1Ym1pdCBhIFdoYXRzQXBwIHRlbXBsYXRlIHRvIE1ldGEgZm9yIGFwcHJvdmFsLlxuICogRGVlcCB2YWxpZGF0aW9uIChuYW1lIHJ1bGUsIGNhdGVnb3J5LCBleGFtcGxlcywgYnV0dG9ucykgcnVucyBpblxuICogdGhlIHNlcnZpY2Ugd2l0aCBCZW5nYWxpIGVycm9ycyBCRUZPUkUgYW55IE1ldGEgY2FsbDsgdGhlIERUT1xuICogb25seSBzaGFwZXMgdGhlIHBheWxvYWQuICovXG5leHBvcnQgY2xhc3MgU3VibWl0V2hhdHNBcHBUZW1wbGF0ZUR0byB7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTEyKSBuYW1lITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTApIGxhbmd1YWdlPzogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSBjYXRlZ29yeSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MDAwKSBib2R5VGV4dCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIEBJc1N0cmluZyh7IGVhY2g6IHRydWUgfSkgZXhhbXBsZVZhbHVlcz86IHN0cmluZ1tdO1xuICBASXNPcHRpb25hbCgpIEBJc0luKFtcIm5vbmVcIiwgXCJ0ZXh0XCIsIFwiaW1hZ2VcIl0pIGhlYWRlclR5cGU/OiBcIm5vbmVcIiB8IFwidGV4dFwiIHwgXCJpbWFnZVwiO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwMCkgaGVhZGVyVGV4dD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgaGVhZGVyRXhhbXBsZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgaGVhZGVySGFuZGxlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgYnV0dG9ucz86IHsgdHlwZTogXCJ1cmxcIiB8IFwicXVpY2tfcmVwbHlcIjsgdGV4dDogc3RyaW5nOyB1cmw/OiBzdHJpbmcgfVtdO1xufVxuZXhwb3J0IGNsYXNzIFNlbmRUZW1wbGF0ZUR0byB7XG4gIEBJc1N0cmluZygpIHRlbXBsYXRlSWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIHZhcmlhYmxlcz86IHN0cmluZ1tdO1xufVxuZXhwb3J0IGNsYXNzIFNlbmRJbWFnZUR0byB7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwMCkgaW1hZ2VVcmwhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMDI0KSBjYXB0aW9uPzogc3RyaW5nO1xufVxuXG4vKiogSW5ib3ggTmV4dC1HZW4gUDE6IGJyb3dzZXItdXBsb2FkZWQgbWVkaWEgKGRyYWctZHJvcCAvIHBhc3RlIC9cbiAqIHZvaWNlIHJlY29yZGVyKS4gQmFzZTY0IGluIEpTT04gbGlrZSB0aGUgTTU5IGxvZ28gdXBsb2FkOyB0aGVcbiAqIGRlY29kZWQgY2FwICgyTUIgaW4gSW5ib3hTZXJ2aWNlKSBrZWVwcyB0aGUgcGF5bG9hZCBpbnNpZGUgdGhlXG4gKiAzTUIgYm9keSBsaW1pdC4gVGhlIGRlY2xhcmVkIGNvbnRlbnRUeXBlIGlzIG5ldmVyIHRydXN0ZWQgZm9yXG4gKiBpbWFnZXMvUERGIOKAlCB0aGUgc2VydmljZSBzbmlmZnMgbWFnaWMgYnl0ZXMuICovXG5leHBvcnQgY2xhc3MgU2VuZE1lZGlhRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyOTAwMDAwKSBkYXRhQmFzZTY0ITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBmaWxlTmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgY29udGVudFR5cGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMDI0KSBjYXB0aW9uPzogc3RyaW5nO1xufVxuXG5leHBvcnQgY2xhc3MgVXBkYXRlSW5ib3hTZXR0aW5nc0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYXV0b1JlcGx5TW9kZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDApIEBNYXgoMTAwKSBjb25maWRlbmNlVGhyZXNob2xkPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIHBlckludGVudD86IFJlY29yZDxzdHJpbmcsIHN0cmluZz47XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc21hcnRBc3NpZ24/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDEwMDgwKSBzbGFGaXJzdFJlc3BvbnNlTWludXRlcz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgYm90RW5hYmxlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigwKSBib3REZWxpdmVyeUNoYXJnZU1pbm9yPzogbnVtYmVyIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDUpIEBNYXgoMTAwODApIHJlYXNzaWduQWZ0ZXJNaW51dGVzPzogbnVtYmVyIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBlc2NhbGF0aW9uVGVhbUlkPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNPYmplY3QoKSBwZXJDaGFubmVsTW9kZXM/OiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+O1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgZXNjYWxhdGlvblRocmVzaG9sZE1pbm9yPzogbnVtYmVyIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDcpIEBNYXgoMzY1MCkgcmV0ZW50aW9uRGF5cz86IG51bWJlciB8IG51bGw7XG4gIC8vIENYMzogd2FpdC1iZWZvcmUtYW5zd2VyaW5nIChzZWNvbmRzLCAwID0gaW1tZWRpYXRlKS5cbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDApIEBNYXgoNjAwKSBhaVJlcGx5RGVsYXlTZWNvbmRzPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIGFpUmVwbHlEZWxheUJ5Q2hhbm5lbD86IFJlY29yZDxzdHJpbmcsIG51bWJlcj47XG4gIC8vIENYMTJkOiBjaGFubmVsLXdpc2UgQUkgc2NoZWR1bGUgKGRlZXAtdmFsaWRhdGVkIGluIHRoZSBzZXJ2aWNlKS5cbiAgQElzT3B0aW9uYWwoKSBASXNPYmplY3QoKSBhaVNjaGVkdWxlQnlDaGFubmVsPzogUmVjb3JkPHN0cmluZywgdW5rbm93bj47XG4gIC8vIENYMTJiOiBwb3N0LWRlbGl2ZXJ5IHJldmlldyByZXF1ZXN0cyAob3B0LWluICsgZGVsYXkgaG91cnMpLlxuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSByZXZpZXdSZXF1ZXN0RW5hYmxlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigwKSBATWF4KDE2OCkgcmV2aWV3UmVxdWVzdERlbGF5SG91cnM/OiBudW1iZXI7XG4gIC8vIENYNzogXCJUbyBDaGFzZVwiIHN0YWxsZWQtc2Vzc2lvbiBudWRnZXMgKG9wdC1pbiArIGJvdW5kcyxcbiAgLy8gZGVlcC12YWxpZGF0ZWQgYWdhaW4gaW4gdGhlIHNlcnZpY2UgbGlrZSB0aGUgcmV2aWV3IGRlbGF5KS5cbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgY2hhc2VFbmFibGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDE1KSBATWF4KDE0NDApIGNoYXNlRmlyc3REZWxheU1pbnV0ZXM/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbig2MCkgQE1heCgyODgwKSBjaGFzZUludGVydmFsTWludXRlcz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDEpIEBNYXgoNSkgY2hhc2VNYXhBdHRlbXB0cz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgY2hhc2VRdWlldEhvdXJzUmVzcGVjdD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigwKSBATWF4KDIzKSBjaGFzZVF1aWV0U3RhcnRIb3VyPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCgyMykgY2hhc2VRdWlldEVuZEhvdXI/OiBudW1iZXI7XG4gIC8vIE93bmVyIENYNyB2YXJpYW50IGZpZWxkcyAoaGlzIHNlcmllcyk6IG1heCBhdHRlbXB0cyArIGN1c3RvbSBtZXNzYWdlLlxuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMSkgQE1heCgxMCkgbWF4Q2hhc2VBdHRlbXB0cz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMDApIGNoYXNlTWVzc2FnZT86IHN0cmluZztcbiAgLy8gSU40OiBsYXllcmVkIFNMQSArIGVzY2FsYXRpb24gY2hhaW4gKGRlZXAtdmFsaWRhdGVkIGFnYWluIGluXG4gIC8vIHRoZSBzZXJ2aWNlOiBjaGFubmVsIHZvY2FidWxhcnkgKyBwZXItdmFsdWUgcmFuZ2VzKS5cbiAgQElzT3B0aW9uYWwoKSBASXNPYmplY3QoKSBzbGFCeUNoYW5uZWw/OiBSZWNvcmQ8c3RyaW5nLCBudW1iZXI+O1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMSkgQE1heCgxMDA4MCkgc2xhVmlwTWludXRlcz86IG51bWJlciB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDE0NDApIHNsYUVzY2FsYXRlQWZ0ZXJNaW51dGVzPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBzbGFMZWFkQWxlcnRFbmFibGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgc2xhQXV0b1JlYXNzaWduRW5hYmxlZD86IGJvb2xlYW47XG59XG5leHBvcnQgY2xhc3MgQ29kQ29uZmlybWF0aW9uRHRvIHsgQElzU3RyaW5nKCkgb3JkZXJJZCE6IHN0cmluZzsgfVxuXG5leHBvcnQgY2xhc3MgQ3JlYXRlQ2hhdE9yZGVySXRlbUR0byB7XG4gIEBJc1N0cmluZygpIHByb2R1Y3RJZCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB2YXJpYW50SWQ/OiBzdHJpbmc7XG4gIEBJc0ludCgpIEBNaW4oMSkgQE1heCg5OSkgcXVhbnRpdHkhOiBudW1iZXI7XG59XG5leHBvcnQgY2xhc3MgQ3JlYXRlQ2hhdE9yZGVyRHRvIHtcbiAgQElzQXJyYXkoKSBpdGVtcyE6IENyZWF0ZUNoYXRPcmRlckl0ZW1EdG9bXTtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDApIHNoaXBwaW5nTWlub3I/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGlzQ29kPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgYWRkcmVzcz86IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBUcmFuc2xhdGVNZXNzYWdlRHRvIHsgQElzU3RyaW5nKCkgdGFyZ2V0ITogc3RyaW5nOyB9XG5cbi8vIFVuaWZpZWQgSW5ib3ggVTI6IHRlYW1zICsgYWdlbnQgc3RhdGUuXG5leHBvcnQgY2xhc3MgVGVhbUR0byB7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCg4MCkgbmFtZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIEBJc1N0cmluZyh7IGVhY2g6IHRydWUgfSkgY2hhbm5lbHM/OiBzdHJpbmdbXTtcbn1cbi8qKiBNaWxlc3RvbmUgNzMgKFRlYW0gVDQpOiB0aGUgYWdlbnQncyBvd24gY2hhdCBzaWduYXR1cmUuICovXG5leHBvcnQgY2xhc3MgVXBkYXRlU2lnbmF0dXJlRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDMwMCkgc2lnbmF0dXJlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBlbmFibGVkPzogYm9vbGVhbjtcbn1cblxuLyoqIE1pbGVzdG9uZSA3NCAoVGVhbSBUNSk6IHdvcmtsb2FkIHJlYmFsYW5jZSByZXF1ZXN0LiAqL1xuZXhwb3J0IGNsYXNzIFJlYmFsYW5jZUR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGRyeVJ1bj86IGJvb2xlYW47XG59XG5cbmV4cG9ydCBjbGFzcyBVcGRhdGVUZWFtRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoODApIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIGNoYW5uZWxzPzogc3RyaW5nW107XG4gIC8qKiBNaWxlc3RvbmUgNzE6IHRoZSB0ZWFtJ3MgbGVhZCAob3JnIG1lbWJlciBpZCkgb3IgbnVsbCB0byBjbGVhci4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDgwKSBsZWFkVXNlcklkPzogc3RyaW5nIHwgbnVsbDtcbn1cbmV4cG9ydCBjbGFzcyBUZWFtTWVtYmVySW5wdXREdG8ge1xuICBASXNTdHJpbmcoKSB1c2VySWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDIwMCkgY2FwYWNpdHk/OiBudW1iZXI7XG59XG5leHBvcnQgY2xhc3MgVGVhbU1lbWJlcnNEdG8ge1xuICBASXNBcnJheSgpIG1lbWJlcnMhOiBUZWFtTWVtYmVySW5wdXREdG9bXTtcbn1cbmV4cG9ydCBjbGFzcyBBZ2VudFN0YXRlRHRvIHtcbiAgQElzU3RyaW5nKCkgc3RhdHVzITogc3RyaW5nO1xufVxuLyoqIE1pbGVzdG9uZSA2OCAoVGVhbSBUMik6IHdlZWtseSB3b3JraW5nIGhvdXJzLiBUaGUgd2luZG93c1xuICogb2JqZWN0IGlzIHNoYXBlLXZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSAod2Vla2RheSBrZXlzIHdpdGhcbiAqIFtcIkhIOk1NXCIsXCJISDpNTVwiXSBwYWlycykuICovXG5leHBvcnQgY2xhc3MgQWdlbnRTY2hlZHVsZUR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg2MCkgdGltZXpvbmU/OiBzdHJpbmc7XG4gIEBJc09iamVjdCgpIHdpbmRvd3MhOiBSZWNvcmQ8c3RyaW5nLCBbc3RyaW5nLCBzdHJpbmddW10+O1xufVxuXG4vLyBVbmlmaWVkIEluYm94IFU0OiBjaGFubmVsIGNvbm5lY3RzLlxuZXhwb3J0IGNsYXNzIENvbm5lY3RUZWxlZ3JhbUR0byB7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMTApIEBNYXhMZW5ndGgoMjAwKSBib3RUb2tlbiE6IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBDb25uZWN0RW1haWxEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgaW1hcEhvc3QhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDY1NTM1KSBpbWFwUG9ydD86IG51bWJlcjtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIHNtdHBIb3N0ITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMSkgQE1heCg2NTUzNSkgc210cFBvcnQ/OiBudW1iZXI7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSB1c2VyITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoNDAwKSBwYXNzd29yZCE6IHN0cmluZztcbn1cblxuLyoqIEluYm94IE5leHQtR2VuIFAyOiBidWxrIGNvbnZlcnNhdGlvbiBhY3Rpb25zLiBUaGUgMjUtaWQgY2FwXG4gKiBhbmQgdGhlIGFjdGlvbiB2b2NhYnVsYXJ5IGFyZSBlbmZvcmNlZCBpbiB0aGUgc2VydmljZSBhcyB3ZWxsO1xuICogdGhlIERUTyBvbmx5IHNoYXBlcyB0aGUgcGF5bG9hZC4gKi9cbmV4cG9ydCBjbGFzcyBCdWxrQ29udmVyc2F0aW9uc0R0byB7XG4gIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBpZHMhOiBzdHJpbmdbXTtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMCkgYWN0aW9uITogc3RyaW5nOyAvLyBjbG9zZSB8IGFzc2lnbiB8IHRhZy1hZGQgfCBtYXJrLXJlYWRcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhc3NpZ25lZFVzZXJJZD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg2MCkgdGFnPzogc3RyaW5nO1xufVxuXG4vKiogSW5ib3ggTmV4dC1HZW4gUDI6IHByb2R1Y3Qgc2hvd2Nhc2UgY2FyZCBzZW5kLiAqL1xuZXhwb3J0IGNsYXNzIFNlbmRQcm9kdWN0RHRvIHtcbiAgQElzU3RyaW5nKCkgcHJvZHVjdElkITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTAwKSBjYXB0aW9uPzogc3RyaW5nO1xufVxuXG4vKiogSW5ib3ggTmV4dC1HZW4gUDM6IGdob3N0IGNvbXBsZXRpb24g4oCUIHRoZSBhZ2VudCdzIGhhbGYtd3JpdHRlblxuICogcmVwbHkgdGV4dCB0aGUgbW9kZWwgc2hvdWxkIGNvbnRpbnVlLiAqL1xuZXhwb3J0IGNsYXNzIEdob3N0RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBwYXJ0aWFsITogc3RyaW5nO1xufVxuXG4vKiogSW5ib3ggTmV4dC1HZW4gUDM6IHRvbmUgcmV3cml0ZSBvZiB0aGUgYWdlbnQncyBvd24gZHJhZnQuICovXG5leHBvcnQgY2xhc3MgVG9uZVJld3JpdGVEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMDApIHRleHQhOiBzdHJpbmc7XG4gIEBJc0luKFtcInBvbGl0ZVwiLCBcInByb2Zlc3Npb25hbFwiLCBcInNhbGVzXCJdKSB0b25lITogc3RyaW5nO1xufVxuXG4vKiogSU4xOiBzYXZlZCBpbmJveCB2aWV3IOKAlCBhIG5hbWVkIGZpbHRlciBwcmVzZXQuIFRoZSBgZmlsdGVyc2BcbiAqIG9iamVjdCBpcyBkZWVwLXZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSAod2hpdGVsaXN0IG9mIHRoZSBsaXN0XG4gKiBmaWx0ZXIga2V5cywgcGVyLWtleSB0eXBlL3JhbmdlIGNoZWNrcyk7IHRoZSBEVE8gb25seSBzaGFwZXMgaXQuICovXG5leHBvcnQgY2xhc3MgQ3JlYXRlU2F2ZWRWaWV3RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDgwKSBuYW1lITogc3RyaW5nO1xuICBASXNPYmplY3QoKSBmaWx0ZXJzITogUmVjb3JkPHN0cmluZywgdW5rbm93bj47XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHNoYXJlZD86IGJvb2xlYW47XG59XG5leHBvcnQgY2xhc3MgVXBkYXRlU2F2ZWRWaWV3RHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoODApIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgZmlsdGVycz86IFJlY29yZDxzdHJpbmcsIHVua25vd24+O1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBzaGFyZWQ/OiBib29sZWFuO1xufVxuXG4vKiogSU4zOiBhbiBpbmJveCBtYWNybyDigJQgYSBuYW1lZCBzdGVwIHNlcXVlbmNlLiBgc3RlcHNgIGlzXG4gKiBkZWVwLXZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSAoc2FuaXRpemVNYWNyb1N0ZXBzLCBzdHJpY3Q6IGFuXG4gKiBpbnZhbGlkIHN0ZXAgaXMgYSA0MDAsIG5ldmVyIHNpbGVudGx5IGRyb3BwZWQpOyB0aGUgRFRPIG9ubHlcbiAqIHNoYXBlcyB0aGUgcGF5bG9hZC4gKi9cbmV4cG9ydCBjbGFzcyBDcmVhdGVNYWNyb0R0byB7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCg4MCkgbmFtZSE6IHN0cmluZztcbiAgQElzQXJyYXkoKSBzdGVwcyE6IHVua25vd25bXTtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgc2hhcmVkPzogYm9vbGVhbjtcbn1cbmV4cG9ydCBjbGFzcyBVcGRhdGVNYWNyb0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDgwKSBuYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgc3RlcHM/OiB1bmtub3duW107XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHNoYXJlZD86IGJvb2xlYW47XG59XG5leHBvcnQgY2xhc3MgUnVuTWFjcm9EdG8ge1xuICBASXNTdHJpbmcoKSBjb252ZXJzYXRpb25JZCE6IHN0cmluZztcbn1cblxuLyoqIElOM2M6IGJ1bGsgcmVwbHkg4oCUIHRoZSBzYW1lIHF1aWNrIHJlcGx5IE9SIFdoYXRzQXBwIHRlbXBsYXRlXG4gKiB0byB1cCB0byAyNSBjb252ZXJzYXRpb25zIChjYXBzICsgdGhlIG9uZS1vZiBydWxlIGFyZSBlbmZvcmNlZFxuICogaW4gdGhlIHNlcnZpY2UgYXMgd2VsbCkuICovXG5leHBvcnQgY2xhc3MgQnVsa1JlcGx5RHRvIHtcbiAgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIGlkcyE6IHN0cmluZ1tdO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTIwKSBxdWlja1JlcGx5SWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMjApIHRlbXBsYXRlSWQ/OiBzdHJpbmc7XG59XG4iXSwidmVyc2lvbiI6M30=

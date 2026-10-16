@@ -1,0 +1,201 @@
+a925f5828ad17992658404d9b510d71e
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PublicChatController = exports.WebchatAdminController = void 0;
+const common_1 = require("@nestjs/common");
+const webchat_service_1 = require("./webchat.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const class_validator_1 = require("class-validator");
+class CreateSiteDto {
+    name;
+    domain;
+    greeting;
+    color;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateSiteDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateSiteDto.prototype, "domain", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], CreateSiteDto.prototype, "greeting", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], CreateSiteDto.prototype, "color", void 0);
+class SetEnabledDto {
+    enabled;
+}
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetEnabledDto.prototype, "enabled", void 0);
+let WebchatAdminController = class WebchatAdminController {
+    webchat;
+    constructor(webchat) {
+        this.webchat = webchat;
+    }
+    list(orgId) { return this.webchat.listSites(orgId); }
+    create(user, orgId, dto) {
+        return this.webchat.createSite(orgId, user.userId, dto);
+    }
+    setEnabled(orgId, siteId, dto) {
+        return this.webchat.setSiteEnabled(orgId, siteId, dto.enabled);
+    }
+};
+exports.WebchatAdminController = WebchatAdminController;
+__decorate([
+    (0, common_1.Get)("sites"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], WebchatAdminController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)("sites"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, CreateSiteDto]),
+    __metadata("design:returntype", void 0)
+], WebchatAdminController.prototype, "create", null);
+__decorate([
+    (0, common_1.Patch)("sites/:siteId"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("siteId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, SetEnabledDto]),
+    __metadata("design:returntype", void 0)
+], WebchatAdminController.prototype, "setEnabled", null);
+exports.WebchatAdminController = WebchatAdminController = __decorate([
+    (0, common_1.Controller)("organizations/:organizationId/webchat"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard),
+    __metadata("design:paramtypes", [webchat_service_1.WebchatService])
+], WebchatAdminController);
+/** Public widget endpoints: CORS-open by design (the widget runs on
+ * the merchant's own storefront). Auth = site key + session token. */
+let PublicChatController = class PublicChatController {
+    webchat;
+    constructor(webchat) {
+        this.webchat = webchat;
+    }
+    start(key, dto) {
+        return this.webchat.startSession(key, dto);
+    }
+    post(key, dto) {
+        return this.webchat.postMessage(key, dto);
+    }
+    /** Inbox Next-Gen P3: visitor presence/typing heartbeat — the
+     * widget reports it, agents see it on their inbox stream. */
+    presence(key, dto) {
+        return this.webchat.visitorPresence(key, dto);
+    }
+    list(key, token) {
+        return this.webchat.listMessages(key, token);
+    }
+    /** Milestone 66: realtime visitor stream (SSE). The widget
+     * falls back to polling whenever this is unavailable. */
+    async stream(key, token) {
+        return this.webchat.streamFor(key, token);
+    }
+    /** Inbox Next-Gen P1: stored media bytes for the session owner's
+     * own conversation only (token-derived, like the stream). */
+    async media(key, messageId, token) {
+        const { bytes, contentType } = await this.webchat.getVisitorMedia(key, token, messageId);
+        return new common_1.StreamableFile(bytes, { type: contentType, disposition: "inline" });
+    }
+};
+exports.PublicChatController = PublicChatController;
+__decorate([
+    (0, common_1.Post)(":key/start"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], PublicChatController.prototype, "start", null);
+__decorate([
+    (0, common_1.Post)(":key/messages"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], PublicChatController.prototype, "post", null);
+__decorate([
+    (0, common_1.Post)(":key/presence"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], PublicChatController.prototype, "presence", null);
+__decorate([
+    (0, common_1.Get)(":key/messages"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Query)("token")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], PublicChatController.prototype, "list", null);
+__decorate([
+    (0, common_1.Sse)(":key/stream"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Query)("token")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], PublicChatController.prototype, "stream", null);
+__decorate([
+    (0, common_1.Get)(":key/messages/:messageId/media"),
+    (0, common_1.Header)("Access-Control-Allow-Origin", "*"),
+    __param(0, (0, common_1.Param)("key")),
+    __param(1, (0, common_1.Param)("messageId")),
+    __param(2, (0, common_1.Query)("token")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", Promise)
+], PublicChatController.prototype, "media", null);
+exports.PublicChatController = PublicChatController = __decorate([
+    (0, common_1.Controller)("public/chat"),
+    (0, decorators_1.Public)(),
+    __metadata("design:paramtypes", [webchat_service_1.WebchatService])
+], PublicChatController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L3dlYmNoYXQuY29udHJvbGxlci50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQ0FBd0k7QUFFeEksdURBQW1EO0FBQ25ELHFEQUE0RTtBQUM1RSx5REFBcUQ7QUFDckQsdURBQW1EO0FBQ25ELHFEQUE2RTtBQUU3RSxNQUFNLGFBQWE7SUFDVyxJQUFJLENBQVU7SUFDQSxNQUFNLENBQVU7SUFDaEIsUUFBUSxDQUFVO0lBQ25CLEtBQUssQ0FBVTtDQUN6RDtBQUo2QjtJQUEzQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzsyQ0FBZTtBQUNBO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzZDQUFpQjtBQUNoQjtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzsrQ0FBbUI7QUFDbkI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7NENBQWdCO0FBRTFELE1BQU0sYUFBYTtJQUFnQixPQUFPLENBQVU7Q0FBRTtBQUFuQjtJQUFaLElBQUEsMkJBQVMsR0FBRTs7OENBQWtCO0FBSTdDLElBQU0sc0JBQXNCLEdBQTVCLE1BQU0sc0JBQXNCO0lBQ0o7SUFBN0IsWUFBNkIsT0FBdUI7UUFBdkIsWUFBTyxHQUFQLE9BQU8sQ0FBZ0I7SUFBRyxDQUFDO0lBR3hELElBQUksQ0FBMEIsS0FBYSxJQUFJLE9BQU8sSUFBSSxDQUFDLE9BQU8sQ0FBQyxTQUFTLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBR3RGLE1BQU0sQ0FBZ0IsSUFBYyxFQUEyQixLQUFh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QUssQ0FBQyxDQUFBO0lBQWUsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTs7OztrREFFdEQ7QUFNSztJQUZMLElBQUEsWUFBRyxFQUFDLGdDQUFnQyxDQUFDO0lBQ3JDLElBQUEsZUFBTSxFQUFDLDZCQUE2QixFQUFFLEdBQUcsQ0FBQztJQUM5QixXQUFBLElBQUEsY0FBSyxFQUFDLEtBQUssQ0FBQyxDQUFBO0lBQWUsV0FBQSxJQUFBLGNBQUssRUFBQyxXQUFXLENBQUMsQ0FBQTtJQUFxQixXQUFBLElBQUEsY0FBSyxFQUFDLE9BQU8sQ0FBQyxDQUFBOzs7O2lEQUc1RjsrQkE1Q1Usb0JBQW9CO0lBRmhDLElBQUEsbUJBQVUsRUFBQyxhQUFhLENBQUM7SUFDekIsSUFBQSxtQkFBTSxHQUFFO3FDQUUrQixnQ0FBYztHQUR6QyxvQkFBb0IsQ0E2Q2hDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9pbmJveC93ZWJjaGF0LmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQm9keSwgQ29udHJvbGxlciwgR2V0LCBIZWFkZXIsIE1lc3NhZ2VFdmVudCwgUGFyYW0sIFBhdGNoLCBQb3N0LCBRdWVyeSwgU3NlLCBTdHJlYW1hYmxlRmlsZSwgVXNlR3VhcmRzIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBPYnNlcnZhYmxlIH0gZnJvbSBcInJ4anNcIjtcbmltcG9ydCB7IFdlYmNoYXRTZXJ2aWNlIH0gZnJvbSBcIi4vd2ViY2hhdC5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBDdXJyZW50VXNlciwgQXV0aFVzZXIsIFB1YmxpYywgUm9sZXMgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IFRlbmFudEd1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi90ZW5hbnQuZ3VhcmRcIjtcbmltcG9ydCB7IFJvbGVzR3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3JvbGVzLmd1YXJkXCI7XG5pbXBvcnQgeyBJc0Jvb2xlYW4sIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXhMZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5cbmNsYXNzIENyZWF0ZVNpdGVEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgbmFtZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgZG9tYWluPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzAwKSBncmVldGluZz86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDMwKSBjb2xvcj86IHN0cmluZztcbn1cbmNsYXNzIFNldEVuYWJsZWREdG8geyBASXNCb29sZWFuKCkgZW5hYmxlZCE6IGJvb2xlYW4gfVxuXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL3dlYmNoYXRcIilcbkBVc2VHdWFyZHMoVGVuYW50R3VhcmQpXG5leHBvcnQgY2xhc3MgV2ViY2hhdEFkbWluQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgd2ViY2hhdDogV2ViY2hhdFNlcnZpY2UpIHt9XG5cbiAgQEdldChcInNpdGVzXCIpXG4gIGxpc3QoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykgeyByZXR1cm4gdGhpcy53ZWJjaGF0Lmxpc3RTaXRlcyhvcmdJZCk7IH1cblxuICBAUG9zdChcInNpdGVzXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICBjcmVhdGUoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiBDcmVhdGVTaXRlRHRvKSB7XG4gICAgcmV0dXJuIHRoaXMud2ViY2hhdC5jcmVhdGVTaXRlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIEBQYXRjaChcInNpdGVzLzpzaXRlSWRcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIHNldEVuYWJsZWQoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwic2l0ZUlkXCIpIHNpdGVJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogU2V0RW5hYmxlZER0bykge1xuICAgIHJldHVybiB0aGlzLndlYmNoYXQuc2V0U2l0ZUVuYWJsZWQob3JnSWQsIHNpdGVJZCwgZHRvLmVuYWJsZWQpO1xuICB9XG59XG5cbi8qKiBQdWJsaWMgd2lkZ2V0IGVuZHBvaW50czogQ09SUy1vcGVuIGJ5IGRlc2lnbiAodGhlIHdpZGdldCBydW5zIG9uXG4gKiB0aGUgbWVyY2hhbnQncyBvd24gc3RvcmVmcm9udCkuIEF1dGggPSBzaXRlIGtleSArIHNlc3Npb24gdG9rZW4uICovXG5AQ29udHJvbGxlcihcInB1YmxpYy9jaGF0XCIpXG5AUHVibGljKClcbmV4cG9ydCBjbGFzcyBQdWJsaWNDaGF0Q29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgd2ViY2hhdDogV2ViY2hhdFNlcnZpY2UpIHt9XG5cbiAgQFBvc3QoXCI6a2V5L3N0YXJ0XCIpXG4gIEBIZWFkZXIoXCJBY2Nlc3MtQ29udHJvbC1BbGxvdy1PcmlnaW5cIiwgXCIqXCIpXG4gIHN0YXJ0KEBQYXJhbShcImtleVwiKSBrZXk6IHN0cmluZywgQEJvZHkoKSBkdG86IHsgdmlzaXRvcklkOiBzdHJpbmc7IG5hbWU/OiBzdHJpbmcgfSkge1xuICAgIHJldHVybiB0aGlzLndlYmNoYXQuc3RhcnRTZXNzaW9uKGtleSwgZHRvKTtcbiAgfVxuXG4gIEBQb3N0KFwiOmtleS9tZXNzYWdlc1wiKVxuICBASGVhZGVyKFwiQWNjZXNzLUNvbnRyb2wtQWxsb3ctT3JpZ2luXCIsIFwiKlwiKVxuICBwb3N0KEBQYXJhbShcImtleVwiKSBrZXk6IHN0cmluZywgQEJvZHkoKSBkdG86IHsgdG9rZW46IHN0cmluZzsgdGV4dDogc3RyaW5nIH0pIHtcbiAgICByZXR1cm4gdGhpcy53ZWJjaGF0LnBvc3RNZXNzYWdlKGtleSwgZHRvKTtcbiAgfVxuXG4gIC8qKiBJbmJveCBOZXh0LUdlbiBQMzogdmlzaXRvciBwcmVzZW5jZS90eXBpbmcgaGVhcnRiZWF0IOKAlCB0aGVcbiAgICogd2lkZ2V0IHJlcG9ydHMgaXQsIGFnZW50cyBzZWUgaXQgb24gdGhlaXIgaW5ib3ggc3RyZWFtLiAqL1xuICBAUG9zdChcIjprZXkvcHJlc2VuY2VcIilcbiAgQEhlYWRlcihcIkFjY2Vzcy1Db250cm9sLUFsbG93LU9yaWdpblwiLCBcIipcIilcbiAgcHJlc2VuY2UoQFBhcmFtKFwia2V5XCIpIGtleTogc3RyaW5nLCBAQm9keSgpIGR0bzogeyB0b2tlbjogc3RyaW5nOyB0eXBpbmc/OiBib29sZWFuIH0pIHtcbiAgICByZXR1cm4gdGhpcy53ZWJjaGF0LnZpc2l0b3JQcmVzZW5jZShrZXksIGR0byk7XG4gIH1cblxuICBAR2V0KFwiOmtleS9tZXNzYWdlc1wiKVxuICBASGVhZGVyKFwiQWNjZXNzLUNvbnRyb2wtQWxsb3ctT3JpZ2luXCIsIFwiKlwiKVxuICBsaXN0KEBQYXJhbShcImtleVwiKSBrZXk6IHN0cmluZywgQFF1ZXJ5KFwidG9rZW5cIikgdG9rZW46IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLndlYmNoYXQubGlzdE1lc3NhZ2VzKGtleSwgdG9rZW4pO1xuICB9XG5cbiAgLyoqIE1pbGVzdG9uZSA2NjogcmVhbHRpbWUgdmlzaXRvciBzdHJlYW0gKFNTRSkuIFRoZSB3aWRnZXRcbiAgICogZmFsbHMgYmFjayB0byBwb2xsaW5nIHdoZW5ldmVyIHRoaXMgaXMgdW5hdmFpbGFibGUuICovXG4gIEBTc2UoXCI6a2V5L3N0cmVhbVwiKVxuICBASGVhZGVyKFwiQWNjZXNzLUNvbnRyb2wtQWxsb3ctT3JpZ2luXCIsIFwiKlwiKVxuICBhc3luYyBzdHJlYW0oQFBhcmFtKFwia2V5XCIpIGtleTogc3RyaW5nLCBAUXVlcnkoXCJ0b2tlblwiKSB0b2tlbjogc3RyaW5nKTogUHJvbWlzZTxPYnNlcnZhYmxlPE1lc3NhZ2VFdmVudD4+IHtcbiAgICByZXR1cm4gdGhpcy53ZWJjaGF0LnN0cmVhbUZvcihrZXksIHRva2VuKTtcbiAgfVxuXG4gIC8qKiBJbmJveCBOZXh0LUdlbiBQMTogc3RvcmVkIG1lZGlhIGJ5dGVzIGZvciB0aGUgc2Vzc2lvbiBvd25lcidzXG4gICAqIG93biBjb252ZXJzYXRpb24gb25seSAodG9rZW4tZGVyaXZlZCwgbGlrZSB0aGUgc3RyZWFtKS4gKi9cbiAgQEdldChcIjprZXkvbWVzc2FnZXMvOm1lc3NhZ2VJZC9tZWRpYVwiKVxuICBASGVhZGVyKFwiQWNjZXNzLUNvbnRyb2wtQWxsb3ctT3JpZ2luXCIsIFwiKlwiKVxuICBhc3luYyBtZWRpYShAUGFyYW0oXCJrZXlcIikga2V5OiBzdHJpbmcsIEBQYXJhbShcIm1lc3NhZ2VJZFwiKSBtZXNzYWdlSWQ6IHN0cmluZywgQFF1ZXJ5KFwidG9rZW5cIikgdG9rZW46IHN0cmluZykge1xuICAgIGNvbnN0IHsgYnl0ZXMsIGNvbnRlbnRUeXBlIH0gPSBhd2FpdCB0aGlzLndlYmNoYXQuZ2V0VmlzaXRvck1lZGlhKGtleSwgdG9rZW4sIG1lc3NhZ2VJZCk7XG4gICAgcmV0dXJuIG5ldyBTdHJlYW1hYmxlRmlsZShieXRlcywgeyB0eXBlOiBjb250ZW50VHlwZSwgZGlzcG9zaXRpb246IFwiaW5saW5lXCIgfSk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

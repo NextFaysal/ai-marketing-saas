@@ -21,11 +21,27 @@ export default function ProductImportPage() {
     if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
     setLoading(true); setError(""); setResult(null); setFileName(file.name);
     try {
-      const csvText = await file.text();
-      const data = await apiFetch<ImportResult>(`/organizations/${orgId}/imports/products`, {
-        method: "POST", body: JSON.stringify({ fileName: file.name, csvText }),
-      });
-      setResult(data);
+      const isXlsx = /\.xlsx$/i.test(file.name);
+      if (isXlsx) {
+        // GC7: .xlsx goes as base64 — read as data URL and strip the prefix.
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result ?? ""));
+          reader.onerror = () => reject(new Error("ফাইল পড়া যায়নি"));
+          reader.readAsDataURL(file);
+        });
+        const fileBase64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+        const data = await apiFetch<ImportResult>(`/organizations/${orgId}/imports/products/xlsx`, {
+          method: "POST", body: JSON.stringify({ fileName: file.name, fileBase64 }),
+        });
+        setResult(data);
+      } else {
+        const csvText = await file.text();
+        const data = await apiFetch<ImportResult>(`/organizations/${orgId}/imports/products`, {
+          method: "POST", body: JSON.stringify({ fileName: file.name, csvText }),
+        });
+        setResult(data);
+      }
     } catch (err) { setError(err instanceof Error ? err.message : "Import failed"); }
     finally { setLoading(false); }
   }
@@ -33,15 +49,18 @@ export default function ProductImportPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="page-title">CSV দিয়ে পণ্য ইমপোর্ট</h1>
+        <h1 className="page-title">CSV / Excel দিয়ে পণ্য ইমপোর্ট</h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-500">
-          কলাম: name (আবশ্যক), price (আবশ্যক), sku, cost, stock, category, description, image_url, currency।
+          কলাম: name (আবশ্যক), price (আবশ্যক), sku, cost, stock, category, description, image_url, currency, brand, status,
+          variant_name, variant_sku, variant_price, variant_stock, variant_cost।
           একই SKU আবার আপলোড হলে সেটি Skip হবে, পুরনো ডেটা ওভাররাইট হবে না। সর্বোচ্চ ফাইল ২ MB।
+          একই SKU-এর একাধিক Row-তে variant কলাম থাকলে সেগুলো একটি পণ্যের ভ্যারিয়েন্ট হিসেবে যোগ হবে —
+          অর্থাৎ একই SKU ভাগ করা Rowগুলো ONE product with variants তৈরি করে।
           নমুনা: <code>docs/examples/products-sample.csv</code>
         </p>
       </div>
       <div className="card p-6">
-        <input type="file" accept=".csv,text/csv" onChange={onFile} className="text-sm" />
+        <input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={onFile} className="text-sm" />
         {fileName ? <span className="ml-3 text-sm text-slate-500">{fileName}</span> : null}
         {loading ? <p className="mt-3 text-sm text-slate-500">ইমপোর্ট হচ্ছে...</p> : null}
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}

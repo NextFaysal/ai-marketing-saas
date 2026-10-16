@@ -41,6 +41,9 @@ export interface MyOrder {
   id: string;
   orderNumber: string;
   status: string;
+  // AB4: present when the account-orders payload carries it —
+  // the express-checkout preselect reads it (display only).
+  paymentMethod?: string | null;
   placedAt: string;
   totalMinor: string;
   itemCount: number;
@@ -72,6 +75,45 @@ export interface ReorderResult {
     available: true;
   }[];
   unavailable: { name: string; reason: string }[];
+}
+
+/** AB1: one loyalty-ledger entry on the account loyalty view. */
+export interface LoyaltyEntry {
+  id: string;
+  deltaPoints: number;
+  reason: "earn" | "redeem" | "expire" | "adjust" | "referral_reward" | string;
+  orderId: string | null;
+  orderNumber: string | null;
+  balanceAfter: number;
+  expiresAt: string | null;
+  remainingPoints: number | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** AB1: a referral-reward coupon the customer earned as referrer. */
+export interface ReferralRewardCoupon {
+  id: string;
+  code: string;
+  /** Percent value of the coupon. */
+  value: number;
+  kind: string;
+  endsAt: string | null;
+  active: boolean;
+  usedCount: number;
+  sourceOrderNumber: string | null;
+}
+
+/** AB1: GET :orgSlug/account/loyalty response. */
+export interface AccountLoyalty {
+  enabled: boolean;
+  balance: number;
+  /** Taka value of the balance, in paisa (a number). */
+  balanceValueMinor: number;
+  redeemValueMinorPerPoint: number;
+  entries: LoyaltyEntry[];
+  referralRewards: { coupons: ReferralRewardCoupon[] };
+  referralCode: string | null;
 }
 
 export interface WishlistItem {
@@ -199,10 +241,11 @@ async function accountFetch<T>(orgSlug: string, path: string, init: RequestInit 
 export async function requestOtp(
   orgSlug: string,
   phone: string,
+  captchaToken?: string,
 ): Promise<{ sent: true; expiresInSeconds: number }> {
   return accountFetch(orgSlug, `${shopPath(orgSlug)}/auth/request-otp`, {
     method: "POST",
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, ...(captchaToken ? { captchaToken } : {}) }),
   });
 }
 
@@ -253,6 +296,11 @@ export async function updateProfile(
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+/** AB1: the signed-in customer's loyalty balance, history and referral rewards. */
+export async function fetchAccountLoyalty(orgSlug: string): Promise<AccountLoyalty> {
+  return accountFetch(orgSlug, `${shopPath(orgSlug)}/account/loyalty`);
 }
 
 export async function fetchMyOrders(orgSlug: string, page = 1, pageSize = 10): Promise<OrdersPage> {

@@ -7,7 +7,9 @@ import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { buildProductJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "../../ProductCard";
+import { FlashCountdown } from "../../FlashCountdown";
 import { ProductDetailClient } from "./ProductDetailClient";
+import { ReviewInsightBox } from "./ReviewInsightBox";
 import { ProductReviewsSection } from "@/components/product-reviews";
 import { ProductQuestions } from "../../ProductQuestions";
 import { RecordRecentlyViewed, RecentlyViewedStrip } from "../../RecentlyViewed";
@@ -41,6 +43,9 @@ export default async function ProductPage({ params }: { params: Params }) {
   const detail = await fetchProductDetail(orgSlug, productSlug);
   if (!detail) notFound();
   const { product, related } = detail;
+  // GB7 (GC18): server clock for the flash countdown (cached fetch).
+  const homeForFlash = product.flashSale ? await fetchShopHome(orgSlug).catch(() => null) : null;
+  const flashServerNow = homeForFlash?.flashSales?.serverNow ?? null;
   const locale = shopLocaleOf(detail.settings?.locale);
   const t = shopT(locale);
   // EC27: the EC15 unified reviews summary feeds the JSON-LD
@@ -64,7 +69,7 @@ export default async function ProductPage({ params }: { params: Params }) {
           ),
         }}
       />
-      <RecordRecentlyViewed orgSlug={orgSlug} product={product} />
+      <RecordRecentlyViewed orgSlug={orgSlug} productId={product.id} />
       <nav className="text-xs font-semibold text-slate-500">
         <Link href={`/shop/${orgSlug}`} className="hover:text-indigo-700">{t.common.home}</Link>
         {product.category?.name ? (
@@ -82,6 +87,17 @@ export default async function ProductPage({ params }: { params: Params }) {
         <span className="text-slate-800">{product.name}</span>
       </nav>
 
+      {/* GB7 (GC18): flash-sale banner above the buy panel's price area */}
+      {product.flashSale ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-rose-600 px-5 py-3 text-white shadow-sm">
+          <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-black">−{product.flashSale.percentOff}%</span>
+          <span className="text-sm">
+            <FlashCountdown endsAt={product.flashSale.endsAt} serverNow={flashServerNow} locale={locale} />
+          </span>
+          <span className="text-xs font-semibold text-rose-100">{product.flashSale.name}</span>
+        </div>
+      ) : null}
+
       <ProductDetailClient orgSlug={orgSlug} product={product} locale={locale} />
 
       {/* EC27: bought-together from real sold orders — the section
@@ -96,6 +112,10 @@ export default async function ProductPage({ params }: { params: Params }) {
           </div>
         </section>
       ) : null}
+
+      {/* AB7 (AX15): AI review-insight box — renders only when the
+          endpoint returns an insight; sits directly above reviews. */}
+      <ReviewInsightBox orgSlug={orgSlug} productSlug={productSlug} />
 
       {/* EC15: unified reviews (own delivered-order reviews + pulled
           external reviews) from the public product-reviews endpoint. */}

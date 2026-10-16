@@ -1,7 +1,8 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { googleErrorMessage } from "@/lib/google-auth";
 import { loginSchema } from "@repo/contracts";
 
 const HIGHLIGHTS = [
@@ -23,6 +24,43 @@ export default function LoginPage() {
   // no access token exists until the code checks out.
   const [challengeToken, setChallengeToken] = useState("");
   const [code, setCode] = useState("");
+  // AB8 (AX26): Google SSO. The button exists only when the API
+  // says the platform Google OAuth config is enabled — otherwise
+  // nothing renders (no dead button).
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+
+  useEffect(() => {
+    // A failed Google login lands back here with ?googleError=<code>:
+    // show the mapped Bengali message once, then strip the param so a
+    // refresh doesn't repeat it.
+    const params = new URLSearchParams(window.location.search);
+    const googleMsg = googleErrorMessage(params.get("googleError"));
+    if (params.has("googleError")) {
+      if (googleMsg) setError(googleMsg);
+      params.delete("googleError");
+      const qs = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    }
+    let cancelled = false;
+    apiFetch<{ enabled: boolean }>("/auth/google/config")
+      .then((cfg) => { if (!cancelled) setGoogleEnabled(cfg.enabled === true); })
+      .catch(() => { /* not configured / unreachable — button stays hidden */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function onGoogleLogin() {
+    setError("");
+    setGoogleBusy(true);
+    try {
+      const data = await apiFetch<{ url: string }>("/auth/google/start");
+      if (!data.url) throw new Error("Google লগইন ব্যর্থ হয়েছে — আবার চেষ্টা করুন");
+      window.location.assign(data.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google লগইন ব্যর্থ হয়েছে — আবার চেষ্টা করুন");
+      setGoogleBusy(false);
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -122,6 +160,14 @@ export default function LoginPage() {
             <button className="btn-primary w-full py-2.5 text-[15px]" disabled={loading}>
               {loading ? "অপেক্ষা করুন..." : "লগইন করুন"}
             </button>
+            {googleEnabled ? (
+              <>
+                <div className="flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />অথবা<span className="h-px flex-1 bg-slate-200" /></div>
+                <button type="button" className="btn-secondary w-full py-2.5 text-[15px]" disabled={googleBusy} onClick={onGoogleLogin}>
+                  {googleBusy ? "Google এ যাওয়া হচ্ছে..." : "Google দিয়ে লগইন করুন"}
+                </button>
+              </>
+            ) : null}
             <p className="text-center text-sm text-slate-500">অ্যাকাউন্ট নেই? <a className="font-semibold text-brand-600 hover:text-brand-700" href="/register">রেজিস্টার করুন</a></p>
           </form>
           )}

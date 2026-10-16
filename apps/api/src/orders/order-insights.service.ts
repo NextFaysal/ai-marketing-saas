@@ -189,13 +189,36 @@ export class OrderInsightsService {
     // (5) courier shipments
     try {
       const rows = await this.safeRows("courierShipment", { where: { organizationId, orderId } });
+      const shipmentIds: string[] = [];
+      const providerByShipment = new Map<string, string>();
       for (const s of rows) {
         if (String(s.orderId) !== String(orderId)) continue;
+        shipmentIds.push(String(s.id));
+        providerByShipment.set(String(s.id), String(s.provider ?? ""));
         const detail = [s.provider, s.trackingCode ?? s.consignmentId].filter(Boolean).join(" · ") || null;
         push(s.createdAt, "shipment", "কুরিয়ার বুক করা হয়েছে", detail);
         if (s.codCollectedMinor !== null && s.codCollectedMinor !== undefined) {
           push(s.codCollectedAt ?? s.updatedAt ?? s.createdAt, "cod_collected", "COD টাকা সংগ্রহ (মিলকরণ)", moneyStr(s.codCollectedMinor));
         }
+      }
+      // (5b) GB5 (GC14): shipment status events — the GC14 event
+      // log's status-kind rows for this order's shipments (the
+      // booking event duplicates the "বুক করা হয়েছে" entry
+      // above by design of the log, so source=booking rows are
+      // skipped here; sync/manual transitions are the news).
+      if (shipmentIds.length) {
+        try {
+          const events = await this.safeRows("courierShipmentEvent", {
+            where: { organizationId, shipmentId: { in: shipmentIds }, kind: "status" },
+          });
+          for (const e of events) {
+            if (!shipmentIds.includes(String(e.shipmentId))) continue;
+            if (String(e.source) === "booking") continue;
+            const origin = e.source === "manual" ? "ম্যানুয়াল হালনাগাদ" : "কুরিয়ার সিঙ্ক";
+            const detail = [providerByShipment.get(String(e.shipmentId)), origin].filter(Boolean).join(" · ") || null;
+            push(e.createdAt, "shipment_event", `পার্সেল স্ট্যাটাস: ${e.status ?? "—"}`, detail);
+          }
+        } catch { /* isolated source */ }
       }
     } catch { /* isolated source */ }
 
@@ -300,6 +323,32 @@ export class OrderInsightsService {
             .map((a: any) => `${String(a?.type ?? "?")}${a?.ok ? " ✓" : " ✗"}`)
             .join(" · ") || null;
           push(r.createdAt, "automation", nameById.get(String(r.ruleId)) ?? "অটোমেশন নিয়ম", summary);
+        }
+      }
+    } catch { /* isolated source */ }
+
+    // (13) GB3 (GC9) fraud-rule hits for this order — title
+    // carries the rule's name (a deleted rule degrades to a
+    // generic title), detail is the action's Bengali label.
+    try {
+      const rows = await this.safeRows("fraudRuleHit", { where: { organizationId, orderId } });
+      if (rows.length > 0) {
+        const ruleRows = await this.safeRows("fraudRule", { where: { organizationId } });
+        const nameById = new Map<string, string>();
+        for (const r of ruleRows) if (r?.id) nameById.set(String(r.id), String(r.name ?? ""));
+        const ACTION_LABELS: Record<string, string> = {
+          hold: "অর্ডার আটকানো হয়েছে",
+          tag: "ট্যাগ যোগ হয়েছে",
+          block_checkout: "চেকআউট আটকানো হয়েছিল",
+        };
+        for (const r of rows) {
+          if (String(r.orderId) !== String(orderId)) continue;
+          const name = nameById.get(String(r.ruleId));
+          push(
+            r.createdAt, "fraud_rule",
+            `জালিয়াতি নিয়ম: ${name ?? "নিয়ম"}`,
+            ACTION_LABELS[String(r.action ?? "")] ?? null,
+          );
         }
       }
     } catch { /* isolated source */ }

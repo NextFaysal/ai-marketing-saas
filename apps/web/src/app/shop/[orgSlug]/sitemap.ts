@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { fetchAllProductSitemapEntries } from "@/lib/storefront-server";
+import { fetchAllProductSitemapEntries, fetchShopBlog } from "@/lib/storefront-server";
 import { buildShopSitemapEntries, sitemapUrlBase } from "@/lib/storefront-sitemap";
 
 /**
@@ -27,7 +27,14 @@ export default async function sitemap({
   const products = await fetchAllProductSitemapEntries(orgSlug).catch(
     () => [] as { slug: string; updatedAt: string | null }[],
   );
-  const entries = buildShopSitemapEntries(sitemapUrlBase(), orgSlug, products);
+  // AB6 (AX12): blog posts (failure-isolated — a blog fetch
+  // failure must never break the product sitemap).
+  const blog = await fetchShopBlog(orgSlug).catch(() => null);
+  const blogPosts = (blog?.posts ?? []).map((p) => ({
+    slug: p.slug,
+    updatedAt: p.updatedAt ?? p.publishedAt ?? null,
+  }));
+  const entries = buildShopSitemapEntries(sitemapUrlBase(), orgSlug, products, blogPosts);
   const now = new Date();
   return entries.map((entry, i) => ({
     url: entry.url,

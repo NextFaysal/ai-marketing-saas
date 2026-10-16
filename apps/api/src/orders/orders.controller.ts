@@ -1,11 +1,15 @@
-import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
 import { OrderInsightsService } from "./order-insights.service";
 import { FraudShieldService } from "./fraud-shield.service";
 import { OrderSurgeryService } from "./order-surgery.service";
+import { IdentifierListsService } from "../fraud/identifier-lists.service";
+import { FraudAttemptLogService } from "../fraud/fraud-attempt-log.service";
+import { FraudRulesService } from "../fraud/fraud-rules.service";
 import { parseBdAddress } from "./bd-address";
-import { AdvanceVerificationDto, AssignOrderDto, CodCallDto, CreateBlockedPhoneDto, CreateManualOrderDto, CreateOrderCommentDto, CreateSavedViewDto, CreateStoreDraftDto, EditOrderItemsDto, HoldOrderDto, MergeOrdersDto, ParseAddressDto, SetOrderTagsDto, SplitOrderDto, StoreNoteDto, UpdateFraudSettingsDto, UpdateOrderDto } from "./orders.dto";
+import { AdvanceVerificationDto, AssignOrderDto, CodCallDto, CreateBlockedPhoneDto, CreateFraudRuleDto, CreateIdentifierDto, CreateManualOrderDto, CreateOrderCommentDto, CreateSavedViewDto, CreateStoreDraftDto, EditOrderItemsDto, HoldOrderDto, MergeOrdersDto, ParseAddressDto, PaymentLinkResendDto, SetOrderTagsDto, SplitOrderDto, StoreNoteDto, UpdateFraudRuleDto, UpdateFraudSettingsDto, UpdateOrderDto } from "./orders.dto";
 import { AssignAgentDto, AssignOrderPatchDto, BulkAssignAgentDto, MergeDuplicateOrdersDto, StaffScoreboardQueryDto } from "./orders.dto";
+import { PaymentResendService } from "./payment-resend.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -21,6 +25,15 @@ export class OrdersController {
     private readonly insights: OrderInsightsService,
     private readonly fraud: FraudShieldService,
     private readonly surgery: OrderSurgeryService,
+    // GB3 (GC9): fraud-core services, provided via the leaf
+    // FraudModule that OrdersModule already imports. Optional
+    // so manual constructions in older specs keep working.
+    @Optional() private readonly identifiers?: IdentifierListsService,
+    @Optional() private readonly attemptLog?: FraudAttemptLogService,
+    @Optional() private readonly fraudRules?: FraudRulesService,
+    // GC12: payment-link resend. Optional so manual constructions
+    // in older specs keep working; OrdersModule provides it.
+    @Optional() private readonly paymentResend?: PaymentResendService,
   ) {}
 
   /** Feature 5: Staff Performance & Sales Attribution Scoreboard */
@@ -54,6 +67,23 @@ export class OrdersController {
   @Post() @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createManual(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateManualOrderDto) {
     return this.orders.createManual(orgId, user.userId, dto);
+  }
+
+  /** AB5 (AX7): convert an ACCEPTED quote into a real order.
+   * The route lives here (not on the commerce surface) because
+   * conversion composes OrdersService.createManual and
+   * OrdersModule → CommerceModule is the acyclic direction. */
+  @Post("from-quote/:quoteId/convert") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  convertQuote(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("quoteId") quoteId: string) {
+    return this.orders.convertQuote(orgId, user.userId, quoteId);
+  }
+
+  /** AB5 (AX7): read-only conversion preview (manual-path math,
+   * creates nothing) — the orders-side mirror of the commerce
+   * surface's GET quotes/:quoteId/convert-preview. */
+  @Get("from-quote/:quoteId/convert-preview")
+  previewQuoteConversion(@Param("organizationId") orgId: string, @Param("quoteId") quoteId: string) {
+    return this.orders.previewQuoteConversion(orgId, quoteId);
   }
 
   @Get("stats")
@@ -105,6 +135,70 @@ export class OrdersController {
   @Delete("blocked-phones/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   removeBlockedPhone(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.fraud.blockRemove(orgId, user.userId, id);
+  }
+
+  // ---- GB3 (GC9) literals BEFORE ":orderId" ----
+
+  @Get("blocked-identifiers")
+  blockedIdentifiers(@Param("organizationId") orgId: string, @Query("kind") kind?: string) {
+    return this.identifiers ? this.identifiers.list(orgId, "blocked", kind) : [];
+  }
+
+  @Post("blocked-identifiers") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  addBlockedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateIdentifierDto) {
+    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.identifiers.add(orgId, user.userId, "blocked", dto);
+  }
+
+  @Delete("blocked-identifiers/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  removeBlockedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.identifiers.remove(orgId, user.userId, "blocked", id);
+  }
+
+  @Get("trusted-identifiers")
+  trustedIdentifiers(@Param("organizationId") orgId: string, @Query("kind") kind?: string) {
+    return this.identifiers ? this.identifiers.list(orgId, "trusted", kind) : [];
+  }
+
+  @Post("trusted-identifiers") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  addTrustedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateIdentifierDto) {
+    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.identifiers.add(orgId, user.userId, "trusted", dto);
+  }
+
+  @Delete("trusted-identifiers/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  removeTrustedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.identifiers.remove(orgId, user.userId, "trusted", id);
+  }
+
+  @Get("fraud-attempts")
+  fraudAttempts(@Param("organizationId") orgId: string, @Query("limit") limit?: string) {
+    return this.attemptLog ? this.attemptLog.list(orgId, { limit: limit ? Number(limit) : undefined }) : [];
+  }
+
+  @Get("fraud-rules")
+  fraudRulesList(@Param("organizationId") orgId: string) {
+    return this.fraudRules ? this.fraudRules.list(orgId) : [];
+  }
+
+  @Post("fraud-rules") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateFraudRuleDto) {
+    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.fraudRules.create(orgId, user.userId, dto);
+  }
+
+  @Patch("fraud-rules/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateFraudRuleDto) {
+    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.fraudRules.update(orgId, user.userId, id, dto);
+  }
+
+  @Delete("fraud-rules/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  deleteFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.fraudRules.delete(orgId, user.userId, id);
   }
 
   /** ON11: parse a free-text address into district/thana. */
@@ -217,10 +311,11 @@ export class OrdersController {
 
   @Patch(":orderId/assign") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   assign(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: AssignOrderPatchDto) {
-    // Integration-6 union: ON1 assignee assignment and the enterprise
-    // staff-attribution assignment share this route; an explicit
-    // agentId in the body selects staff attribution (agentId +
-    // commission), otherwise the ON1 assignee path runs as before.
+    // Integration-6 union (preserved in Integration-7): ON1 assignee
+    // assignment and the enterprise staff-attribution assignment share
+    // this route; an explicit agentId in the body selects staff
+    // attribution (agentId + commission), otherwise the ON1 assignee
+    // path runs as before.
     if (typeof dto.agentId === "string" && dto.agentId) {
       return this.orders.assignAgent(orgId, id, dto.agentId, dto.commissionMinor);
     }
@@ -230,6 +325,15 @@ export class OrdersController {
   @Post(":orderId/advance-verification") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   recordAdvanceVerification(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: AdvanceVerificationDto) {
     return this.orders.recordAdvanceVerification(orgId, user.userId, id, dto);
+  }
+
+  /** GC12: recovery resend — a FRESH payment initiation for an
+   * unpaid order, its link sent to the customer (SMS) and always
+   * returned to staff. No automatic retries. */
+  @Post(":orderId/payment-link-resend") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  resendPaymentLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: PaymentLinkResendDto) {
+    if (!this.paymentResend) throw new BadRequestException("পেমেন্ট লিংক পাঠানোর সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.paymentResend.resendPaymentLink(orgId, user.userId, id, dto);
   }
 
   @Post(":orderId/create-store-draft") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
@@ -271,5 +375,4 @@ export class OrdersController {
   merge(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("survivorId") survivorId: string, @Body() dto: MergeOrdersDto) {
     return this.surgery.merge(orgId, user.userId, survivorId, dto);
   }
-
 }

@@ -222,6 +222,42 @@ export function invoicePage(input: {
 }
 
 /**
+ * GC22 (GB9): one A4 SaaS subscription invoice page — the PDF
+ * rendering of the SAME structured data buildInvoiceHtml uses
+ * in payments.service (saasInvoiceData): identical invoice
+ * number, org, amounts and dates. Seller is the platform
+ * (Qosprey); the org is the buyer.
+ */
+export function saasInvoicePage(input: {
+  orgName: string; invoiceNo: string; date: string;
+  metaLines: string[];
+  items: { label: string; amountText: string }[];
+  totalLabel: string; totalText: string;
+}): PdfPageSpec {
+  const c = new PdfCanvas();
+  const W = 595, H = 842;
+  c.text(48, H - 56, 18, "Qosprey - AI Marketing SaaS", true);
+  c.text(48, H - 96, 13, "INVOICE", true);
+  c.text(48, H - 112, 10, `Invoice: ${input.invoiceNo}   Issued: ${input.date}`);
+  let y = H - 132;
+  c.text(48, y, 10, `Billed to: ${input.orgName}`, true); y -= 14;
+  for (const line of input.metaLines) {
+    for (const wrapped of wrapText(line, 92).slice(0, 2)) { c.text(48, y, 9, wrapped); y -= 12; }
+  }
+  y -= 6; c.line(48, y, W - 48); y -= 22;
+  for (const item of input.items) {
+    c.text(48, y, 10, item.label);
+    c.text(W - 190, y, 10, item.amountText);
+    y -= 16;
+  }
+  y -= 4; c.line(48, y, W - 48); y -= 20;
+  c.text(W - 300, y, 11, input.totalLabel, true);
+  c.text(W - 190, y, 11, input.totalText, true);
+  c.text(48, 64, 8, "Generated from the platform's payment records. Amounts are shown exactly as recorded.");
+  return { width: W, height: H, content: c.build() };
+}
+
+/**
  * ON10: one A4 delivery-challan page for an order — what the
  * courier hands over: order number, customer + phone + address,
  * the item lines (name × qty, NO prices — a challan is a

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { ShopifyService } from "../integrations/shopify/shopify.service";
@@ -40,6 +41,13 @@ import { OrderAutomationService } from "../order-automation/order-automation.ser
 import { OrderAnalyticsService } from "../orders/order-analytics.service";
 import { MediaLifecycleService } from "../storage/media-lifecycle.service";
 import { ProductImageMirrorService } from "../products/product-image-mirror.service";
+import { ScheduledReportsService } from "../finance/scheduled-reports.service";
+import { WebhooksOutgoingService } from "../webhooks-outgoing/webhooks-outgoing.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
+import { GiftCardsService } from "../commerce/gift-cards.service";
+import { CatalogsService } from "../catalogs/catalogs.service";
+import { WebPushService } from "../webpush/webpush.service";
+import { DataExportsService } from "../data-tools/data-exports.service";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
@@ -92,6 +100,35 @@ export const JOB_TYPES = [
   // the org's auto-mirror opt-out (OrgFeatureFlag
   // product_image_auto_mirror; default ON).
   "product_image_mirror_sweep",
+  // GB8: scheduled report delivery (GC19 reports + profit by
+  // email with the report file attached; per-org enablement).
+  "scheduled_report_sweep",
+  // GB9 (GC23): outgoing webhook delivery (signed POSTs with the
+  // 1m → 5m → 30m → 2h retry schedule; per-org enablement).
+  "webhook_delivery_sweep",
+  // AB1 (AX1): loyalty points expiry (lots whose expiresAt has
+  // passed are expired exactly once; per-org enablement).
+  "loyalty_points_sweep",
+  // AB2 (AX3): gift card expiry (cards whose expiresAt has
+  // passed are expired exactly once, releasing any balance;
+  // per-org enablement).
+  "gift_card_expiry_sweep",
+  // AB5 (AX10): Meta catalog auto-sync (queued product changes
+  // for autoSync catalogs are drained to the Catalog batch
+  // endpoint; per-org enablement).
+  "catalog_sync_sweep",
+  // AB7 (AX16): web-push campaign drain (queued campaigns send
+  // their remaining subscriptions in bounded chunks; per-org
+  // enablement).
+  "web_push_sweep",
+  // AB8 (AX25): merchant data exports queued for generation
+  // (large orgs whose export estimate exceeds the inline
+  // threshold; per-org enablement).
+  "data_export_generate",
+  // AB8 (AX25): weekly scheduled backup sweep (only orgs whose
+  // backup preference is enabled and due are acted on; per-org
+  // enablement).
+  "org_backup_sweep",
 ] as const;
 
 
@@ -186,6 +223,22 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতিদিন একবার: গতকালের অর্ডার সারাংশ (অর্ডার, বিক্রি, আদায়, বকেয়া, আটকে থাকা পার্সেল, SLA ভঙ্গ) দোকানের মালিকদের (OWNER) ইমেইলে পাঠানো হবে। মালিকের ফোন নম্বর রেকর্ডে থাকলেই কেবল SMS যাবে — নম্বর না থাকলে SMS পাঠানো হয়েছে বলে দেখানো হবে না। প্রতিটি পাঠানোর ফল Audit Log-এ থাকবে।" },
   { key: "order_automation_sweep", name: "অর্ডার অটোমেশন যাচাই (টেমপ্লেট)", type: "order_automation_sweep", targetKind: "org", intervalMinutes: 60,
     descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার অটোমেশন স্টুডিওর সময়ভিত্তিক নিয়মগুলো যাচাই হবে — নির্দিষ্ট ঘণ্টার বেশি একই কুরিয়ার স্ট্যাটাসে আটকে থাকা পার্সেল (parcel_stuck_hours) এবং ডেলিভারি হওয়া অর্ডারের নির্দিষ্ট দিনের বেশি পুরনো বকেয়া (due_overdue_days)। প্রতিটি নিয়ম প্রতিটি অর্ডারে প্রতিটি অবস্থায় ঠিক একবারই চলবে; সব কাজের বিবরণ নিয়মের লগে থাকবে।" },
+  { key: "scheduled_report_sweep", name: "নির্ধারিত রিপোর্ট পাঠানো (টেমপ্লেট)", type: "scheduled_report_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: Reports অংশে সেট করা নির্ধারিত রিপোর্টগুলোর সময় হয়ে গেলে (প্রতিদিন: গতকালের; প্রতি সপ্তাহে: শেষ ৭ দিনের) রিপোর্ট তৈরি হয়ে প্রাপকদের ইমেইলে সংযুক্তি (attachment) হিসেবে পাঠানো হবে। ইমেইল সার্ভিস সেটআপ না থাকলে পাঠানো হয়েছে বলে রেকর্ড হবে না (failed_no_provider)।" },
+  { key: "webhook_delivery_sweep", name: "Webhook ডেলিভারি (টেমপ্লেট)", type: "webhook_delivery_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: Settings → Webhooks-এ সেট করা endpoint-গুলোতে সময় হয়ে যাওয়া অর্ডার-ইভেন্ট (order.created / order.status_changed / order.paid / order.returned) স্বাক্ষরিত (HMAC) POST হিসেবে পাঠানো হবে। ব্যর্থ হলে ১ মিনিট → ৫ মিনিট → ৩০ মিনিট → ২ ঘণ্টা ব্যবধানে আবার চেষ্টা হবে; ৫ বার ব্যর্থ হলে ডেলিভারিটি failed হবে।" },
+  { key: "loyalty_points_sweep", name: "লয়্যালটি পয়েন্ট মেয়াদ (টেমপ্লেট)", type: "loyalty_points_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: লয়্যালটি পয়েন্টের মেয়াদ যাচাই হবে — যেসব আয়/পুরস্কারের পয়েন্টের মেয়াদ (Loyalty সেটিংসের pointsExpiryDays) পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে লেজারে লেখা হবে। মেয়াদ না থাকা পয়েন্টে কোনো প্রভাব পড়বে না।" },
+  { key: "gift_card_expiry_sweep", name: "গিফট কার্ড মেয়াদ (টেমপ্লেট)", type: "gift_card_expiry_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: গিফট কার্ডের মেয়াদ যাচাই হবে — যেসব কার্ডের মেয়াদ পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে চিহ্নিত হবে এবং অবশিষ্ট ব্যালেন্স লেজারে মেয়াদোত্তীর্ণ হিসেবে লেখা হবে। মেয়াদ না থাকা কার্ডে কোনো প্রভাব পড়বে না।" },
+  { key: "catalog_sync_sweep", name: "Meta ক্যাটালগ অটো-সিঙ্ক (টেমপ্লেট)", type: "catalog_sync_sweep", targetKind: "org", intervalMinutes: 10,
+    descriptionBn: "প্রতি ১০ মিনিটে: Auto-Sync চালু থাকা Meta ক্যাটালগগুলোর জন্য সারিতে থাকা পণ্যের পরিবর্তনগুলো (তৈরি/হালনাগাদ/মুছে ফেলা) Meta Catalog-এ পাঠানো হবে। ব্যর্থ হলে পরের রানে আবার চেষ্টা হবে; ৩ বার ব্যর্থ হলে রেকর্ডটি Failed হবে এবং কারণটি ক্যাটালগের Sync Status-এ দেখা যাবে।" },
+  { key: "web_push_sweep", name: "Web Push Campaign Drain (টেমপ্লেট)", type: "web_push_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: সারিতে থাকা (queued) ওয়েব পুশ ক্যাম্পেইনগুলোর বাকি সাবস্ক্রাইবারদের কাছে পুশ পাঠানো হবে — প্রতি রানে সর্বোচ্চ ৫টি ক্যাম্পেইন, ক্যাম্পেইন প্রতি সর্বোচ্চ ৫০০ জন। যেসব ব্রাউজারের সাবস্ক্রিপশন শেষ হয়ে গেছে (push service 404/410 দিলে) সেগুলো gone হিসেবে চিহ্নিত হবে এবং আর পাঠানো হবে না।" },
+  { key: "data_export_generate", name: "ডেটা এক্সপোর্ট তৈরি (টেমপ্লেট)", type: "data_export_generate", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: বড় আকারের কারণে অপেক্ষমাণ (pending) থাকা ডেটা এক্সপোর্টগুলো তৈরি হয়ে ফাইল হিসেবে সংরক্ষণ হবে — তৈরি এক্সপোর্ট ৭ দিন পর্যন্ত ডাউনলোড করা যাবে।" },
+  { key: "org_backup_sweep", name: "সাপ্তাহিক ব্যাকআপ (টেমপ্লেট)", type: "org_backup_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সাপ্তাহিক ব্যাকআপ চালু থাকলে এবং শেষ ব্যাকআপের ৭ দিন পার হলে নতুন ব্যাকআপ এক্সপোর্ট তৈরি হবে — সবশেষ ৪টি তৈরি ব্যাকআপ রাখা হবে, পুরনোগুলোর ফাইল মুছে সেগুলো মেয়াদোত্তীর্ণ চিহ্নিত হবে।" },
   { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
     descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।" },
   { key: "connection_health_sweep", name: "Connection Health Sweep (টেমপ্লেট)", type: "connection_health_sweep", targetKind: "org", intervalMinutes: 60,
@@ -291,6 +344,33 @@ export class AutomationService implements OnModuleInit {
     // OrdersModule (already imported by AutomationModule), so
     // this adds no cycle.
     @Optional() private readonly orderAnalytics?: OrderAnalyticsService,
+    // INT7 union tail (positions 31+): the gc-line tail and the
+    // main-line tail are INTERLEAVED so both lines' positional
+    // spec constructions keep their meaning — AB5's catalog spec
+    // passes catalogs as argument 35 and RB6b's mirror spec
+    // passes productImageMirror as argument 36; ON8's engine
+    // stays at argument 29 above. Nest injects by type in
+    // production, so wiring is unaffected by the order.
+    // GB8: scheduled report sweep — FinanceModule imports
+    // Audit/Messaging/Orders only; no cycle. @Optional.
+    @Optional() private readonly scheduledReports?: ScheduledReportsService,
+    // GB9 (GC23): webhook delivery sweep — WebhooksOutgoingModule
+    // is a leaf (global Prisma/Audit/Events only); no cycle.
+    @Optional() private readonly webhooksOutgoing?: WebhooksOutgoingService,
+    // AB1 (AX1): loyalty points expiry sweep — CommerceModule is
+    // already imported by AutomationModule (SyncOutboxService)
+    // and LoyaltyService is exported from it; no cycle.
+    @Optional() private readonly loyalty?: LoyaltyService,
+    // AB2 (AX3): gift card expiry sweep — same CommerceModule
+    // reasoning as loyalty; no cycle.
+    @Optional() private readonly giftCards?: GiftCardsService,
+    // AB5 (AX10): catalog auto-sync sweep — CatalogsModule is a
+    // leaf (global Prisma/Audit only); no cycle. Position 35.
+    @Optional() private readonly catalogs?: CatalogsService,
+    // RB6b: product/review image auto-mirror — ProductsModule's
+    // import closure does not reach AutomationModule; no cycle.
+    // Position 36.
+    @Optional() private readonly productImageMirror?: ProductImageMirrorService,
     // SU2: evergreen sweep — SocialModule exports SocialQueueService
     // and AutomationModule already imports SocialModule.
     @Optional() private readonly socialQueue?: SocialQueueService,
@@ -307,11 +387,12 @@ export class AutomationService implements OnModuleInit {
     // nothing from AutomationModule (Prisma/Audit are global),
     // so this adds no cycle.
     @Optional() private readonly mediaLifecycle?: MediaLifecycleService,
-    // RB6b: product/review image auto-mirror — ProductsModule's
-    // import closure does not reach AutomationModule (verified),
-    // so this adds no cycle. Appended LAST so positional spec
-    // constructions keep their meaning.
-    @Optional() private readonly productImageMirror?: ProductImageMirrorService,
+    // AB7 (AX16): web-push campaign drain — WebpushModule is a
+    // leaf (global Prisma/Audit only); no cycle.
+    @Optional() private readonly webpush?: WebPushService,
+    // AB8 (AX25): merchant data tools — DataToolsModule is a leaf
+    // (global Prisma/Audit only); no cycle. Appended LAST.
+    @Optional() private readonly dataExports?: DataExportsService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -439,9 +520,7 @@ export class AutomationService implements OnModuleInit {
       const title = `অটোমেশন ব্যর্থ হয়েছে: ${job.name}`;
       const body = `“${job.name}” (${row.jobType ?? job.type}) Jobটি সব চেষ্টা শেষে ব্যর্থ হয়েছে — মোট ${row.attempts ?? 0} বার চেষ্টা করা হয়েছিল। ত্রুটি: ${excerpt} Automations পেজের Dead Letter অংশে বিস্তারিত দেখে আবার চালাতে পারবেন।`;
       for (const userId of recipients) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId: row.organizationId, userId, type: "job_dead_letter", title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId: row.organizationId, userId, type: "job_dead_letter", title, body, conversationId: null }).catch(() => undefined);
       }
       await this.audit.log({
         organizationId: row.organizationId, userId: undefined, action: "automation.dead_letter_notified",
@@ -854,6 +933,14 @@ export class AutomationService implements OnModuleInit {
       case "stuck_parcel_sweep": return this.fulfillmentExcellence ? this.fulfillmentExcellence.runStuckParcelSweep(orgId) : { skipped: "fulfillment excellence unavailable" };
       case "order_automation_sweep": return this.orderAutomation ? this.orderAutomation.runAutomationSweep(orgId) : { skipped: "order automation unavailable" };
       case "owner_order_digest": return this.orderAnalytics ? this.orderAnalytics.runOwnerDigestJob(orgId) : { skipped: "order analytics unavailable" };
+      case "scheduled_report_sweep": return this.scheduledReports ? this.scheduledReports.runSweep(orgId) : { skipped: "scheduled reports unavailable" };
+      case "webhook_delivery_sweep": return this.webhooksOutgoing ? this.webhooksOutgoing.runDeliverySweep(orgId) : { skipped: "webhooks unavailable" };
+      case "loyalty_points_sweep": return this.loyalty ? this.loyalty.runExpirySweep(orgId) : { skipped: "loyalty unavailable" };
+      case "gift_card_expiry_sweep": return this.giftCards ? this.giftCards.runExpirySweep(orgId) : { skipped: "gift cards unavailable" };
+      case "catalog_sync_sweep": return this.catalogs ? this.catalogs.runCatalogSyncSweep(orgId) : { skipped: "catalogs unavailable" };
+      case "web_push_sweep": return this.webpush ? this.webpush.runWebPushSweep(orgId) : { skipped: "web push unavailable" };
+      case "data_export_generate": return this.dataExports ? this.dataExports.runPendingForOrg(orgId) : { skipped: "data exports unavailable" };
+      case "org_backup_sweep": return this.dataExports ? this.dataExports.runBackupSweepForOrg(orgId) : { skipped: "data exports unavailable" };
       case "audience_refresh": {
         if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
         return this.audiences.refreshAllMemberships(orgId, actor);
@@ -1056,7 +1143,7 @@ export class AutomationService implements OnModuleInit {
     const org = await p.organization.findUnique({ where: { id: organizationId } }).catch(() => null);
     const notifyAdmins = async (title: string, body: string) => {
       for (const m of memberships) {
-        const made = await p.agentNotification?.create?.({ data: { organizationId, userId: m.userId, type: "billing", title, body } })?.catch?.(() => null);
+        const made = await createAgentNotification(p, { organizationId, userId: m.userId, type: "billing", title, body })?.catch?.(() => null);
         if (made) out.notifications++;
       }
     };
@@ -1101,9 +1188,7 @@ export class AutomationService implements OnModuleInit {
       const reminded = new Set(prior.map((a) => metaOf(a)?.checkoutId).filter(Boolean));
       for (const co of stale) {
         if (reminded.has(co.id)) continue;
-        const made = await p.agentNotification?.create?.({
-          data: { organizationId, userId: co.createdById, type: "billing", title: "💳 অসম্পূর্ণ পেমেন্ট", body: `${co.plan} প্ল্যানের পেমেন্টটি অসম্পূর্ণ আছে (${co.tranId}) — Billing পেজ থেকে আবার চেষ্টা করে প্ল্যানটি চালু করুন।` },
-        })?.catch?.(() => null);
+        const made = await createAgentNotification(p, { organizationId, userId: co.createdById, type: "billing", title: "💳 অসম্পূর্ণ পেমেন্ট", body: `${co.plan} প্ল্যানের পেমেন্টটি অসম্পূর্ণ আছে (${co.tranId}) — Billing পেজ থেকে আবার চেষ্টা করে প্ল্যানটি চালু করুন।` })?.catch?.(() => null);
         if (made) out.notifications++;
         const creator = await p.user.findUnique({ where: { id: co.createdById } }).catch(() => null);
         if (this.email && creator?.email) {

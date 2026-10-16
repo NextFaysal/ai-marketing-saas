@@ -17,15 +17,26 @@ export function ShopHeader({
   logoUrl,
   primaryColor,
   locale = "bn",
+  pages,
+  theme,
+  themeId,
+  blog,
 }: {
   orgSlug: string;
   shopName: string;
   logoUrl?: string | null;
   primaryColor?: string | null;
   locale?: ShopLocale | string;
+  pages?: { slug: string; title: string }[];
+  theme?: string;
+  themeId?: string;
+  // AB6 (AX12): show the blog nav link (≥1 published post).
+  blog?: boolean;
 }) {
   const t = shopT(locale);
   const accent = primaryColor || "#4f46e5";
+  const dark = (theme ?? themeId) === "bold";
+  const menuPages = pages ?? [];
   const [count, setCount] = useState(0);
   const [wishCount, setWishCount] = useState(0);
 
@@ -72,8 +83,11 @@ export function ShopHeader({
     };
   }, [refresh, refreshWish, orgSlug]);
 
+  const navLinkCls = dark
+    ? "rounded-lg px-3 py-2 text-slate-100 hover:bg-slate-800"
+    : "rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-100";
   return (
-    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+    <header className={dark ? "sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 backdrop-blur" : "sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur"}>
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <Link href={`/shop/${orgSlug}`} className="flex min-w-0 items-center gap-2.5">
           {logoUrl ? (
@@ -87,15 +101,20 @@ export function ShopHeader({
               {shopName.slice(0, 1)}
             </span>
           )}
-          <span className="truncate text-base font-black text-slate-900">{shopName}</span>
+          <span className={dark ? "truncate text-base font-black text-white" : "truncate text-base font-black text-slate-900"}>{shopName}</span>
         </Link>
         <nav className="flex items-center gap-2 text-sm font-semibold">
-          <Link href={`/shop/${orgSlug}`} className="rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-100">
+          <Link href={`/shop/${orgSlug}`} className={navLinkCls}>
             {t.common.home}
           </Link>
+          {blog ? (
+            <Link href={`/shop/${orgSlug}/blog`} className={navLinkCls}>
+              {t.blog.title}
+            </Link>
+          ) : null}
           <Link
             href={`/shop/${orgSlug}/account?wishlist=1`}
-            className="relative rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-100"
+            className={`relative ${navLinkCls}`}
             aria-label={t.common.wishlist}
           >
             ❤️ <span className="hidden sm:inline">{t.common.wishlist}</span>
@@ -105,7 +124,7 @@ export function ShopHeader({
               </span>
             ) : null}
           </Link>
-          <Link href={`/shop/${orgSlug}/account`} className="rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-100">
+          <Link href={`/shop/${orgSlug}/account`} className={navLinkCls}>
             👤 {t.common.account}
           </Link>
           <Link
@@ -120,6 +139,11 @@ export function ShopHeader({
               </span>
             ) : null}
           </Link>
+          {menuPages.map((p) => (
+            <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className={navLinkCls}>
+              {p.title}
+            </Link>
+          ))}
         </nav>
       </div>
     </header>

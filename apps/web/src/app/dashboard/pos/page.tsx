@@ -2,6 +2,32 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import {
+  enqueue as enqueueOfflineSale, generateLocalReceiptNo, loadQueue, removeEntry,
+  type PosOfflineEntry, type PosOfflineSalePayload,
+} from "@/lib/pos-offline";
+import {
+  ScanDebouncer, barcodeDetectorSupported, normalizeScanCode,
+} from "@/lib/pos-scan";
+
+// AB4: lib/api.ts surfaces a network failure (non-GET) as this
+// exact message; an HTTP error carries the server's message
+// instead. Only the network shape queues a sale offline.
+const NETWORK_ERROR_MESSAGE = "নেটওয়ার্কে সমস্যা হচ্ছে। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
+const TERMINAL_SYNC_STATUSES = new Set(["synced", "conflict", "rejected", "discarded"]);
+
+function isNetworkFailure(e: unknown): boolean {
+  return e instanceof Error && e.message === NETWORK_ERROR_MESSAGE;
+}
+
+function newIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch { /* fall through */ }
+  return `pos-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+}
 
 // EC34 — POS / কাউন্টার বিক্রি। বামে পণ্য খোঁজা (Enter-এ exact
 // SKU/barcode মিললে সরাসরি কার্টে), ডানে কার্ট + পেমেন্ট।
@@ -45,14 +71,52 @@ interface ReceiptData {
   subtotalMinor: string; discountMinor: string; taxMinor: string; taxAddedMinor: string;
   totalMinor: string; paidMinor: string; dueMinor: string;
   paymentMode: string; paymentMethod: string | null;
+  // AB1: loyalty slice of the sale (inside the receipt payload;
+  // points used is 0 and the discount "0" when nothing redeemed).
+  loyaltyPointsUsed?: number;
+  loyaltyDiscountMinor?: string;
+  // AB2: gift-card slice of the sale, present only when a card
+  // was applied (last4 + discount only, never the full code).
+  giftCard?: { codeLast4: string; discountMinor: string };
 }
-interface SaleResponse { id: string; externalNumber?: string | null; receipt: ReceiptData }
+interface SaleResponse {
+  id: string; externalNumber?: string | null; receipt: ReceiptData;
+  // AB1: some responses also carry the loyalty fields at the top
+  // level — the receipt view checks both places.
+  loyaltyPointsUsed?: number;
+  loyaltyDiscountMinor?: string;
+}
 
 interface TodayOrder {
   id: string; externalNumber: string | null; totalMinor: string;
   dueMinor: string; createdAt: string; itemCount: number;
 }
 interface TodayResponse { orders: TodayOrder[]; totalSalesMinor: string; orderCount: number }
+
+// AB4: one server ledger row for an offline sale's sync journey.
+interface OfflineSyncRow {
+  id: string; idempotencyKey: string; cashierId?: string | null;
+  localReceiptNo: string | null; localTotalMinor: string | null;
+  status: string; reason: string | null;
+  serverOrderId: string | null; serverTotalMinor: string | null;
+  varianceMinor: string | null; discardNote: string | null;
+  attempts: number; createdAt: string; syncedAt: string | null;
+  sale?: SaleResponse | null;
+}
+interface OfflineSyncListResponse { rows: OfflineSyncRow[] }
+
+interface OfflineReceiptCard {
+  entry: PosOfflineEntry;
+  lines: Array<{ name: string; quantity: number; totalMinor: number }>;
+}
+
+const SYNC_STATUS_CHIP: Record<string, { label: string; cls: string }> = {
+  synced: { label: "সিঙ্ক হয়েছে", cls: "bg-emerald-100 text-emerald-700" },
+  conflict: { label: "দ্বন্দ্ব", cls: "bg-amber-100 text-amber-700" },
+  rejected: { label: "বাতিল", cls: "bg-red-100 text-red-700" },
+  discarded: { label: "বাদ দেওয়া", cls: "bg-slate-200 text-slate-600" },
+  pending: { label: "অপেক্ষমাণ", cls: "bg-sky-100 text-sky-700" },
+};
 
 function fmt(v: string | number | null | undefined): string {
   const n = v == null ? 0 : Number(v);
@@ -77,6 +141,11 @@ export default function PosPage() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [couponCode, setCouponCode] = useState("");
+  // AB1: optional loyalty points to redeem for this customer
+  // (only meaningful with a phone that resolves to a customer).
+  const [loyaltyPoints, setLoyaltyPoints] = useState("");
+  // AB2: optional gift-card code to redeem for this sale.
+  const [giftCardCode, setGiftCardCode] = useState("");
   const [payMode, setPayMode] = useState<"paid" | "due">("paid");
   const [method, setMethod] = useState("cash");
   const [reference, setReference] = useState("");
@@ -87,6 +156,26 @@ export default function PosPage() {
   const [today, setToday] = useState<TodayResponse | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // AB4: connection state + local outbox + server sync ledger.
+  const [online, setOnline] = useState<boolean>(
+    () => (typeof navigator !== "undefined" ? navigator.onLine : true),
+  );
+  const [outbox, setOutbox] = useState<PosOfflineEntry[]>([]);
+  const [offlineReceipt, setOfflineReceipt] = useState<OfflineReceiptCard | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [ledger, setLedger] = useState<OfflineSyncRow[] | null>(null);
+  const [ledgerBusy, setLedgerBusy] = useState<string | null>(null);
+
+  // AB4: camera scanning.
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanNote, setScanNote] = useState("");
+  const [scanFeedback, setScanFeedback] = useState("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scanStreamRef = useRef<MediaStream | null>(null);
+  const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scanDebouncerRef = useRef(new ScanDebouncer());
+
   const loadToday = useCallback(async () => {
     const orgId = getOrganizationId();
     if (!orgId) return;
@@ -95,8 +184,36 @@ export default function PosPage() {
     } catch { /* strip is advisory — the sale flow must not depend on it */ }
   }, []);
 
+  const refreshOutbox = useCallback(() => {
+    const orgId = getOrganizationId();
+    setOutbox(orgId ? loadQueue(orgId) : []);
+  }, []);
+
+  const loadLedger = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const res = await apiFetch<OfflineSyncListResponse>(`/organizations/${orgId}/pos/offline-sync`);
+      setLedger(res.rows ?? []);
+    } catch { /* ledger is advisory — the sale flow must not depend on it */ }
+  }, []);
+
   useEffect(() => { loadToday(); }, [loadToday]);
+  useEffect(() => { refreshOutbox(); loadLedger(); }, [refreshOutbox, loadLedger]);
   useEffect(() => { searchRef.current?.focus(); }, []);
+
+  // Connection badge: navigator.onLine + online/offline events.
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    setOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
 
   const addLine = useCallback((product: PosProduct, variant: PosVariant | null) => {
     const unit = variant?.priceMinor != null ? Number(variant.priceMinor) : Number(product.priceMinor);
@@ -123,9 +240,9 @@ export default function PosPage() {
     });
   }, []);
 
-  const runSearch = useCallback(async () => {
+  const runSearchFor = useCallback(async (raw: string) => {
     const orgId = getOrganizationId();
-    const q = query.trim();
+    const q = raw.trim();
     if (!orgId || !q) return;
     setSearching(true); setSearchError("");
     try {
@@ -145,7 +262,84 @@ export default function PosPage() {
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : "খুঁজতে সমস্যা হয়েছে");
     } finally { setSearching(false); }
-  }, [query, addLine]);
+  }, [addLine]);
+
+  const runSearch = useCallback(() => runSearchFor(query), [runSearchFor, query]);
+
+  // ---------- AB4: camera scanning ----------
+  const stopScanner = useCallback(() => {
+    if (scanTimerRef.current) { clearInterval(scanTimerRef.current); scanTimerRef.current = null; }
+    if (scanStreamRef.current) {
+      for (const track of scanStreamRef.current.getTracks()) {
+        try { track.stop(); } catch { /* already stopped */ }
+      }
+      scanStreamRef.current = null;
+    }
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const closeScanner = useCallback(() => {
+    stopScanner();
+    setScanOpen(false);
+    searchRef.current?.focus();
+  }, [stopScanner]);
+
+  const openScanner = useCallback(() => {
+    if (!barcodeDetectorSupported(window)) {
+      setScanNote("এই ব্রাউজারে ক্যামেরা স্ক্যান নেই — বারকোড টাইপ করে Enter চাপুন");
+      searchRef.current?.focus();
+      return;
+    }
+    setScanNote("");
+    setScanFeedback("");
+    scanDebouncerRef.current.reset();
+    setScanOpen(true);
+  }, []);
+
+  // Start the camera once the overlay (and its <video>) exists;
+  // every failure degrades to the manual-entry note.
+  useEffect(() => {
+    if (!scanOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const Detector = (window as any).BarcodeDetector;
+        const detector = new Detector();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false,
+        });
+        if (cancelled) {
+          for (const track of stream.getTracks()) track.stop();
+          return;
+        }
+        scanStreamRef.current = stream;
+        const video = videoRef.current;
+        if (!video) { stopScanner(); return; }
+        video.srcObject = stream;
+        await video.play().catch(() => undefined);
+        scanTimerRef.current = setInterval(async () => {
+          if (!videoRef.current || videoRef.current.readyState < 2) return;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            const raw = codes?.[0]?.rawValue;
+            if (!raw) return;
+            const code = normalizeScanCode(raw);
+            if (!code || !scanDebouncerRef.current.accept(code)) return;
+            setScanFeedback(`স্ক্যান হয়েছে: ${code}`);
+            setQuery(code);
+            await runSearchFor(code);
+          } catch { /* a bad frame is not an error — keep scanning */ }
+        }, 300);
+      } catch {
+        if (!cancelled) {
+          setScanNote("ক্যামেরা ব্যবহার করা যায়নি — বারকোড টাইপ করে Enter চাপুন");
+          setScanOpen(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; stopScanner(); };
+  }, [scanOpen, runSearchFor, stopScanner]);
 
   const changeLineVariant = (line: CartLine, variantId: string) => {
     const variant = line.variants.find((v) => v.id === variantId) ?? null;
@@ -163,35 +357,162 @@ export default function PosPage() {
 
   const estimate = cart.reduce((s, l) => s + l.unitPriceMinor * l.quantity, 0);
 
+  // AB4: queue a sale locally (offline). The cart snapshot +
+  // client total ride the card so staff see exactly what was
+  // queued — labelled local/আনুমানিক, because the server's
+  // totals at sync time are the truth.
+  const queueOfflineSale = (salePayload: PosOfflineSalePayload, idempotencyKey: string) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const entry: PosOfflineEntry = {
+      idempotencyKey,
+      localReceiptNo: generateLocalReceiptNo(),
+      localTotalMinor: String(estimate),
+      sale: salePayload,
+      queuedAt: new Date().toISOString(),
+    };
+    setOutbox(enqueueOfflineSale(orgId, entry));
+    setOfflineReceipt({
+      entry,
+      lines: cart.map((l) => ({
+        name: l.name, quantity: l.quantity, totalMinor: l.unitPriceMinor * l.quantity,
+      })),
+    });
+    setLastSale(null);
+    setCart([]); setCouponCode(""); setReference(""); setLoyaltyPoints(""); setGiftCardCode("");
+    searchRef.current?.focus();
+  };
+
   const completeSale = async () => {
     const orgId = getOrganizationId();
     if (!orgId || cart.length === 0 || selling) return;
+    // AB4: EVERY sale attempt carries a fresh idempotency key,
+    // so a retry (manual or offline-sync) can never double-sell.
+    const idempotencyKey = newIdempotencyKey();
+    const salePayload: PosOfflineSalePayload = {
+      items: cart.map((l) => ({ productId: l.productId, variantId: l.variantId ?? undefined, quantity: l.quantity })),
+      customerPhone: customerPhone.trim() || undefined,
+      customerName: customerName.trim() || undefined,
+      couponCode: couponCode.trim() || undefined,
+      // AB1: sent only when a positive whole number is entered.
+      loyaltyPoints: (() => { const n = parseInt(loyaltyPoints, 10); return Number.isFinite(n) && n > 0 ? n : undefined; })(),
+      // AB2: sent only when a code was entered; a refusal
+      // comes back as a sale error like any other.
+      giftCardCode: giftCardCode.trim() || undefined,
+      idempotencyKey,
+      payment: payMode === "paid"
+        ? { mode: "paid", method, reference: reference.trim() || undefined }
+        : { mode: "due" },
+    };
     setSelling(true); setSaleError("");
+    // Known-offline before submit: queue without even trying.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueOfflineSale(salePayload, idempotencyKey);
+      setSelling(false);
+      return;
+    }
     try {
       const res = await apiFetch<SaleResponse>(`/organizations/${orgId}/pos/sale`, {
         method: "POST",
-        body: JSON.stringify({
-          items: cart.map((l) => ({ productId: l.productId, variantId: l.variantId ?? undefined, quantity: l.quantity })),
-          customerPhone: customerPhone.trim() || undefined,
-          customerName: customerName.trim() || undefined,
-          couponCode: couponCode.trim() || undefined,
-          payment: payMode === "paid"
-            ? { mode: "paid", method, reference: reference.trim() || undefined }
-            : { mode: "due" },
-        }),
+        body: JSON.stringify(salePayload),
       });
       setLastSale(res);
-      setCart([]); setCouponCode(""); setReference("");
+      setOfflineReceipt(null);
+      setCart([]); setCouponCode(""); setReference(""); setLoyaltyPoints(""); setGiftCardCode("");
       await loadToday();
       searchRef.current?.focus();
     } catch (e) {
-      setSaleError(e instanceof Error ? e.message : "বিক্রি সম্পন্ন করা যায়নি");
+      // AB4: a NETWORK failure queues the sale for sync; an
+      // HTTP error (4xx/5xx from the server) surfaces as today
+      // and is NEVER queued.
+      if (isNetworkFailure(e)) {
+        queueOfflineSale(salePayload, idempotencyKey);
+      } else {
+        setSaleError(e instanceof Error ? e.message : "বিক্রি সম্পন্ন করা যায়নি");
+      }
     } finally { setSelling(false); }
   };
 
+  // AB4: post each queued entry to the server ledger, in
+  // order. A terminal server status hands the record over to
+  // the ledger (local entry removed); a network failure stops
+  // the run and keeps the rest queued.
+  const syncOutbox = async () => {
+    const orgId = getOrganizationId();
+    if (!orgId || syncing) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    setSyncing(true); setSyncError("");
+    let queue = loadQueue(orgId);
+    for (const entry of [...queue]) {
+      try {
+        const row = await apiFetch<OfflineSyncRow>(`/organizations/${orgId}/pos/offline-sync`, {
+          method: "POST",
+          body: JSON.stringify({
+            idempotencyKey: entry.idempotencyKey,
+            localReceiptNo: entry.localReceiptNo,
+            localTotalMinor: (() => {
+              const n = parseInt(entry.localTotalMinor, 10);
+              return Number.isFinite(n) && n >= 0 ? n : undefined;
+            })(),
+            sale: entry.sale,
+          }),
+        });
+        if (TERMINAL_SYNC_STATUSES.has(row.status)) {
+          queue = removeEntry(orgId, entry.idempotencyKey);
+          setOutbox(queue);
+        } else {
+          break;
+        }
+      } catch (e) {
+        if (isNetworkFailure(e)) {
+          setSyncError("সিঙ্কের মাঝে সংযোগ বিচ্ছিন্ন হয়েছে — বাকিগুলো কিউতেই আছে।");
+        } else {
+          setSyncError(e instanceof Error ? e.message : "সিঙ্ক করা যায়নি");
+        }
+        break;
+      }
+    }
+    setSyncing(false);
+    await loadLedger();
+    await loadToday();
+  };
+
+  const repostLedgerRow = async (row: OfflineSyncRow, force: boolean) => {
+    const orgId = getOrganizationId();
+    if (!orgId || ledgerBusy) return;
+    setLedgerBusy(row.id); setSyncError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/pos/offline-sync/${row.id}/repost`, {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      });
+      await loadLedger();
+      await loadToday();
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : "আবার পোস্ট করা যায়নি");
+    } finally { setLedgerBusy(null); }
+  };
+
+  const discardLedgerRow = async (row: OfflineSyncRow) => {
+    const orgId = getOrganizationId();
+    if (!orgId || ledgerBusy) return;
+    const note = window.prompt("বাদ দেওয়ার নোট (ঐচ্ছিক):", "");
+    if (note === null) return; // cancelled — do nothing
+    setLedgerBusy(row.id); setSyncError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/pos/offline-sync/${row.id}/discard`, {
+        method: "POST",
+        body: JSON.stringify({ note: note.trim() || undefined }),
+      });
+      await loadLedger();
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : "বাদ দেওয়া যায়নি");
+    } finally { setLedgerBusy(null); }
+  };
+
   const resetSale = () => {
-    setLastSale(null); setSaleError("");
-    setCustomerPhone(""); setCustomerName("");
+    setLastSale(null); setOfflineReceipt(null); setSaleError("");
+    setCustomerPhone(""); setCustomerName(""); setLoyaltyPoints(""); setGiftCardCode("");
     searchRef.current?.focus();
   };
 
@@ -202,6 +523,25 @@ export default function PosPage() {
   return (
     <div className="space-y-6">
       <h1 className="page-title">🧾 POS / কাউন্টার বিক্রি</h1>
+
+      {/* AB4: connection + outbox strip */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
+        {online ? (
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">🟢 অনলাইন</span>
+        ) : (
+          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">🔴 অফলাইন</span>
+        )}
+        <span className="text-slate-600">সিঙ্ক বাকি: <strong>{outbox.length}টি</strong> অফলাইন বিক্রি</span>
+        <button
+          type="button"
+          className="btn-primary ml-auto px-3 py-1.5 text-xs"
+          disabled={!online || syncing || outbox.length === 0}
+          onClick={syncOutbox}
+        >
+          {syncing ? "সিঙ্ক হচ্ছে…" : "🔄 সিঙ্ক করুন"}
+        </button>
+      </div>
+      {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* ---------- left: search + results ---------- */}
@@ -220,7 +560,15 @@ export default function PosPage() {
             <button type="submit" className="btn-primary whitespace-nowrap" disabled={searching}>
               {searching ? "খুঁজছে…" : "খুঁজুন"}
             </button>
+            <button
+              type="button"
+              className="whitespace-nowrap rounded-lg border px-3 py-2.5 text-sm font-semibold"
+              onClick={openScanner}
+            >
+              📷 স্ক্যান
+            </button>
           </form>
+          {scanNote ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">{scanNote}</p> : null}
           {searchError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{searchError}</p> : null}
 
           {results.length > 0 ? (
@@ -293,6 +641,72 @@ export default function PosPage() {
               </ul>
             )}
           </section>
+
+          {/* ---------- AB4: offline sync ledger ---------- */}
+          <section className="rounded-xl border bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">📥 অফলাইন সিঙ্ক</h2>
+              <button type="button" className="text-xs font-semibold text-indigo-600 hover:underline" onClick={loadLedger}>
+                রিফ্রেশ
+              </button>
+            </div>
+            {outbox.length > 0 ? (
+              <p className="mb-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700">
+                এই ব্রাউজারের কিউতে {outbox.length}টি অফলাইন বিক্রি সিঙ্কের অপেক্ষায় আছে — উপরের “সিঙ্ক করুন” চাপুন।
+              </p>
+            ) : null}
+            {!ledger ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : ledger.length === 0 ? (
+              <p className="text-sm text-slate-500">কোনো অফলাইন বিক্রি সিঙ্ক হয়নি এখনো।</p>
+            ) : (
+              <ul className="divide-y">
+                {ledger.map((row) => {
+                  const chip = SYNC_STATUS_CHIP[row.status] ?? SYNC_STATUS_CHIP.pending;
+                  const busy = ledgerBusy === row.id;
+                  return (
+                    <li key={row.id} className="space-y-1.5 py-2.5 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{row.localReceiptNo ?? row.id}</span>
+                        <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>{chip.label}</span>
+                        <span className="text-xs text-slate-500">{new Date(row.createdAt).toLocaleString("bn-BD")}</span>
+                        <span className="text-xs text-slate-500">চেষ্টা: {row.attempts}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 text-xs text-slate-600">
+                        <span>স্থানীয় মোট (আনুমানিক): {row.localTotalMinor != null ? fmt(row.localTotalMinor) : "—"}</span>
+                        {row.status === "synced" ? (
+                          <>
+                            <span>সার্ভারের মোট: {row.serverTotalMinor != null ? fmt(row.serverTotalMinor) : "—"}</span>
+                            <span>পার্থক্য: {row.varianceMinor != null ? fmt(row.varianceMinor) : "—"}</span>
+                          </>
+                        ) : null}
+                      </div>
+                      {(row.status === "conflict" || row.status === "rejected") && row.reason ? (
+                        <p className="text-xs font-medium text-red-600">{row.reason}</p>
+                      ) : null}
+                      {row.status === "discarded" && row.discardNote ? (
+                        <p className="text-xs text-slate-500">নোট: {row.discardNote}</p>
+                      ) : null}
+                      {row.status === "conflict" ? (
+                        <div className="flex gap-2 pt-0.5">
+                          <button type="button" className="btn-primary px-3 py-1.5 text-xs" disabled={busy} onClick={() => repostLedgerRow(row, true)}>
+                            তবুও পোস্ট করুন
+                          </button>
+                          <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600" disabled={busy} onClick={() => discardLedgerRow(row)}>
+                            বাদ দিন
+                          </button>
+                        </div>
+                      ) : row.status === "rejected" ? (
+                        <div className="flex gap-2 pt-0.5">
+                          <button type="button" className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600" disabled={busy} onClick={() => discardLedgerRow(row)}>
+                            বাদ দিন
+                          </button>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         </section>
 
         {/* ---------- right: cart ---------- */}
@@ -305,6 +719,19 @@ export default function PosPage() {
               <div className="space-y-1 text-sm text-emerald-900">
                 <div className="flex justify-between"><span>সাবটোটাল</span><span>{fmt(lastSale.receipt.subtotalMinor)}</span></div>
                 <div className="flex justify-between"><span>ছাড়</span><span>-{fmt(lastSale.receipt.discountMinor)}</span></div>
+                {(() => {
+                  const used = lastSale.receipt.loyaltyPointsUsed ?? lastSale.loyaltyPointsUsed ?? 0;
+                  const disc = lastSale.receipt.loyaltyDiscountMinor ?? lastSale.loyaltyDiscountMinor;
+                  return used > 0 ? (
+                    <>
+                      <div className="flex justify-between"><span>⭐ লয়্যালটি পয়েন্ট ব্যবহার</span><span>{used} পয়েন্ট</span></div>
+                      <div className="flex justify-between"><span>লয়্যালটি ছাড় (উপরের ছাড়ের অংশ)</span><span>-{fmt(disc)}</span></div>
+                    </>
+                  ) : null;
+                })()}
+                {lastSale.receipt.giftCard ? (
+                  <div className="flex justify-between"><span>🎁 গিফট কার্ড ছাড় (••••{lastSale.receipt.giftCard.codeLast4}, উপরের ছাড়ের অংশ)</span><span>-{fmt(lastSale.receipt.giftCard.discountMinor)}</span></div>
+                ) : null}
                 {Number(lastSale.receipt.taxAddedMinor) > 0 ? (
                   <div className="flex justify-between"><span>কর</span><span>{fmt(lastSale.receipt.taxAddedMinor)}</span></div>
                 ) : null}
@@ -316,6 +743,29 @@ export default function PosPage() {
                 <button type="button" className="btn-primary flex-1" onClick={() => printReceipt(lastSale.id)}>🧾 রসিদ প্রিন্ট</button>
                 <button type="button" className="flex-1 rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>নতুন বিক্রি</button>
               </div>
+            </div>
+          ) : null}
+
+          {/* AB4: local-only receipt for a sale queued offline.
+              Clearly labelled local/আনুমানিক — the server total
+              at sync time is the truth. */}
+          {offlineReceipt ? (
+            <div className="space-y-3 rounded-lg bg-amber-50 p-3">
+              <p className="text-sm font-semibold text-amber-800">📴 অফলাইন বিক্রি — সিঙ্ক বাকি</p>
+              <p className="text-xs text-amber-700">
+                স্থানীয় রসিদ নং: {offlineReceipt.entry.localReceiptNo} · এটি স্থানীয় আনুমানিক হিসাব — চূড়ান্ত হিসাব সিঙ্কের সময় সার্ভারে হবে।
+              </p>
+              <div className="space-y-1 text-sm text-amber-900">
+                {offlineReceipt.lines.map((l, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span>{l.name} × {l.quantity}</span><span>{fmt(l.totalMinor)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between border-t border-amber-200 pt-1 font-bold">
+                  <span>স্থানীয় মোট (আনুমানিক)</span><span>{fmt(offlineReceipt.entry.localTotalMinor)}</span>
+                </div>
+              </div>
+              <button type="button" className="w-full rounded-lg border px-3 py-2 text-sm font-semibold" onClick={resetSale}>নতুন বিক্রি</button>
             </div>
           ) : null}
 
@@ -362,6 +812,13 @@ export default function PosPage() {
             <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="ক্রেতার ফোন (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
             <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="ক্রেতার নাম (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
             <input value={couponCode} onChange={(e) => setCouponCode(e.target.value)} placeholder="কুপন কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <input value={giftCardCode} onChange={(e) => setGiftCardCode(e.target.value)} placeholder="🎁 গিফট কার্ডের কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 font-mono text-sm" />
+            {customerPhone.trim() ? (
+              <label className="block text-sm">লয়্যালটি পয়েন্ট ব্যবহার (ঐচ্ছিক)
+                <input value={loyaltyPoints} onChange={(e) => setLoyaltyPoints(e.target.value)} type="number" min="0" step="1" placeholder="কত পয়েন্ট খরচ করবেন" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
+                <span className="mt-1 block text-xs font-normal text-slate-400">ফোন নম্বরের গ্রাহকের ব্যালেন্স থেকে কাটা হবে; চূড়ান্ত প্রয়োগ (সীমা/ব্যালেন্স) সার্ভারই ঠিক করবে।</span>
+              </label>
+            ) : null}
           </div>
 
           <div className="space-y-2 border-t pt-3">
@@ -401,6 +858,27 @@ export default function PosPage() {
           </button>
         </aside>
       </div>
+
+      {/* AB4: camera scan overlay — stays open (debounced) so
+          staff can scan a whole basket; tracks stop on close. */}
+      {scanOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">📷 বারকোড স্ক্যান করুন</h2>
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={closeScanner}>
+                বন্ধ করুন
+              </button>
+            </div>
+            <video ref={videoRef} className="aspect-[4/3] w-full rounded-xl bg-black object-cover" playsInline muted />
+            {scanFeedback ? (
+              <p className="rounded-lg bg-emerald-50 p-2.5 text-sm font-medium text-emerald-700">{scanFeedback}</p>
+            ) : (
+              <p className="text-sm text-slate-500">বারকোডটি ক্যামেরার সামনে ধরুন — exact মিল সরাসরি কার্টে যোগ হবে।</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

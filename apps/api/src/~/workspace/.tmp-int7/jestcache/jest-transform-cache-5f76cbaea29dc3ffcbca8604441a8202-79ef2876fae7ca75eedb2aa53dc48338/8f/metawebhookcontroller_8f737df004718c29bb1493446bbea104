@@ -1,0 +1,84 @@
+e7c2c1026184c14b7d02017a3b5c77e8
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MetaWebhookController = void 0;
+const common_1 = require("@nestjs/common");
+const inbox_service_1 = require("./inbox.service");
+const webhook_dispatch_1 = require("../common/webhook-dispatch");
+/** Public Meta webhook endpoint (no auth guard: authenticity comes from
+ *  the hub verify token on GET and the X-Hub-Signature-256 HMAC on POST,
+ *  both checked against the integration's encrypted secrets). */
+let MetaWebhookController = class MetaWebhookController {
+    inbox;
+    constructor(inbox) {
+        this.inbox = inbox;
+    }
+    async verify(integrationId, mode, token, challenge, res) {
+        const ok = await this.inbox.verifySubscription(integrationId, mode, token, challenge);
+        if (ok !== null)
+            return res.status(common_1.HttpStatus.OK).send(ok);
+        return res.status(common_1.HttpStatus.FORBIDDEN).send("Verification failed");
+    }
+    async receive(integrationId, signature, req, res) {
+        const rawBody = req.rawBody?.toString("utf8") ?? JSON.stringify(req.body ?? {});
+        // Milestone 63: queue mode acks Meta immediately; the worker
+        // re-runs handleWebhook (verification included) unchanged.
+        if (await webhook_dispatch_1.webhookDispatcher.enqueue({
+            source: "meta", integrationId, rawBody, headers: { signature },
+        })) {
+            return res.status(common_1.HttpStatus.OK).json({ ok: true, queued: true });
+        }
+        try {
+            const result = await this.inbox.handleWebhook(integrationId, rawBody, signature);
+            return res.status(common_1.HttpStatus.OK).json({ ok: true, ...result });
+        }
+        catch (e) {
+            // Signature failures are 403; processing errors are logged by the
+            // service and answered 200-with-error so Meta does not retry storms.
+            const message = e instanceof Error ? e.message : "error";
+            if (message.includes("signature") || message.includes("not found")) {
+                return res.status(common_1.HttpStatus.FORBIDDEN).json({ ok: false, error: message });
+            }
+            return res.status(common_1.HttpStatus.OK).json({ ok: false, error: message });
+        }
+    }
+};
+exports.MetaWebhookController = MetaWebhookController;
+__decorate([
+    (0, common_1.Get)(":integrationId"),
+    __param(0, (0, common_1.Param)("integrationId")),
+    __param(1, (0, common_1.Query)("hub.mode")),
+    __param(2, (0, common_1.Query)("hub.verify_token")),
+    __param(3, (0, common_1.Query)("hub.challenge")),
+    __param(4, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, String, Object]),
+    __metadata("design:returntype", Promise)
+], MetaWebhookController.prototype, "verify", null);
+__decorate([
+    (0, common_1.Post)(":integrationId"),
+    __param(0, (0, common_1.Param)("integrationId")),
+    __param(1, (0, common_1.Headers)("x-hub-signature-256")),
+    __param(2, (0, common_1.Req)()),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], MetaWebhookController.prototype, "receive", null);
+exports.MetaWebhookController = MetaWebhookController = __decorate([
+    (0, common_1.Controller)("webhooks/meta"),
+    __metadata("design:paramtypes", [inbox_service_1.InboxService])
+], MetaWebhookController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L21ldGEtd2ViaG9vay5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUFvRztBQUVwRyxtREFBK0M7QUFDL0MsaUVBQStEO0FBRS9EOztpRUFFaUU7QUFFMUQsSUFBTSxxQkFBcUIsR0FBM0IsTUFBTSxxQkFBcUI7SUFDSDtJQUE3QixZQUE2QixLQUFtQjtRQUFuQixVQUFLLEdBQUwsS0FBSyxDQUFjO0lBQUcsQ0FBQztJQUc5QyxBQUFOLEtBQUssQ0FBQyxNQUFNLENBQ2MsYUFBcUIsRUFDMUIsSUFBWSxFQUNKLEtBQWEsRUFDaEIsU0FBaUIsRUFDbEMsR0FBYTtRQUVwQixNQUFNLEVBQUUsR0FBRyxNQUFNLElBQUksQ0FBQyxLQUFLLENBQUMsa0JBQWtCLENBQUMsYUFBYSxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsU0FBUyxDQUFDLENBQUM7UUFDdEYsSUFBSSxFQUFFLEtBQUssSUFBSTtZQUFFLE9BQU8sR0FBRyxDQUFDLE1BQU0sQ0FBQyxtQkFBVSxDQUFDLEVBQUUsQ0FBQyxDQUFDLElBQUksQ0FBQyxFQUFFLENBQUMsQ0FBQztRQUMzRCxPQUFPLEdBQUcsQ0FBQyxNQUFNLENBQUMsbUJBQVUsQ0FBQyxTQUFTLENBQUMsQ0FBQyxJQUFJLENBQUMscUJBQXFCLENBQUMsQ0FBQztJQUN0RSxDQUFDO0lBR0ssQUFBTixLQUFLLENBQUMsT0FBTyxDQUNhLGFBQXFCLEVBQ2IsU0FBNkIsRUFDdEQsR0FBWSxFQUNaLEdBQWE7UUFFcEIsTUFBTSxPQUFPLEdBQUksR0FBVyxDQUFDLE9BQU8sRUFBRSxRQUFRLENBQUMsTUFBTSxDQUFDLElBQUksSUFBSSxDQUFDLFNBQVMsQ0FBQyxHQUFHLENBQUMsSUFBSSxJQUFJLEVBQUUsQ0FBQyxDQUFDO1FBQ3pGLDZEQUE2RDtRQUM3RCwyREFBMkQ7UUFDM0QsSUFBSSxNQUFNLG9DQUFpQixDQUFDLE9BQU8sQ0FBQztZQUNsQyxNQUFNLEVBQUUsTUFBTSxFQUFFLGFBQWEsRUFBRSxPQUFPLEVBQUUsT0FBTyxFQUFFLEVBQUUsU0FBUyxFQUFFO1NBQy9ELENBQUMsRUFBRSxDQUFDO1lBQ0gsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsRUFBRSxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLElBQUksRUFBRSxNQUFNLEVBQUUsSUFBSSxFQUFFLENBQUMsQ0FBQztRQUNwRSxDQUFDO1FBQ0QsSUFBSSxDQUFDO1lBQ0gsTUFBTSxNQUFNLEdBQUcsTUFBTSxJQUFJLENBQUMsS0FBSyxDQUFDLGFBQWEsQ0FBQyxhQUFhLEVBQUUsT0FBTyxFQUFFLFNBQVMsQ0FBQyxDQUFDO1lBQ2pGLE9BQU8sR0FBRyxDQUFDLE1BQU0sQ0FBQyxtQkFBVSxDQUFDLEVBQUUsQ0FBQyxDQUFDLElBQUksQ0FBQyxFQUFFLEVBQUUsRUFBRSxJQUFJLEVBQUUsR0FBRyxNQUFNLEVBQUUsQ0FBQyxDQUFDO1FBQ2pFLENBQUM7UUFBQyxPQUFPLENBQUMsRUFBRSxDQUFDO1lBQ1gsa0VBQWtFO1lBQ2xFLHFFQUFxRTtZQUNyRSxNQUFNLE9BQU8sR0FBRyxDQUFDLFlBQVksS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLENBQUMsQ0FBQyxPQUFPLENBQUM7WUFDekQsSUFBSSxPQUFPLENBQUMsUUFBUSxDQUFDLFdBQVcsQ0FBQyxJQUFJLE9BQU8sQ0FBQyxRQUFRLENBQUMsV0FBVyxDQUFDLEVBQUUsQ0FBQztnQkFDbkUsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsU0FBUyxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsT0FBTyxFQUFFLENBQUMsQ0FBQztZQUM5RSxDQUFDO1lBQ0QsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsRUFBRSxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsT0FBTyxFQUFFLENBQUMsQ0FBQztRQUN2RSxDQUFDO0lBQ0gsQ0FBQztDQUNGLENBQUE7QUE1Q1ksc0RBQXFCO0FBSTFCO0lBREwsSUFBQSxZQUFHLEVBQUMsZ0JBQWdCLENBQUM7SUFFbkIsV0FBQSxJQUFBLGNBQUssRUFBQyxlQUFlLENBQUMsQ0FBQTtJQUN0QixXQUFBLElBQUEsY0FBSyxFQUFDLFVBQVUsQ0FBQyxDQUFBO0lBQ2pCLFdBQUEsSUFBQSxjQUFLLEVBQUMsa0JBQWtCLENBQUMsQ0FBQTtJQUN6QixXQUFBLElBQUEsY0FBSyxFQUFDLGVBQWUsQ0FBQyxDQUFBO0lBQ3RCLFdBQUEsSUFBQSxZQUFHLEdBQUUsQ0FBQTs7OzttREFLUDtBQUdLO0lBREwsSUFBQSxhQUFJLEVBQUMsZ0JBQWdCLENBQUM7SUFFcEIsV0FBQSxJQUFBLGNBQUssRUFBQyxlQUFlLENBQUMsQ0FBQTtJQUN0QixXQUFBLElBQUEsZ0JBQU8sRUFBQyxxQkFBcUIsQ0FBQyxDQUFBO0lBQzlCLFdBQUEsSUFBQSxZQUFHLEdBQUUsQ0FBQTtJQUNMLFdBQUEsSUFBQSxZQUFHLEdBQUUsQ0FBQTs7OztvREFzQlA7Z0NBM0NVLHFCQUFxQjtJQURqQyxJQUFBLG1CQUFVLEVBQUMsZUFBZSxDQUFDO3FDQUVVLDRCQUFZO0dBRHJDLHFCQUFxQixDQTRDakMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L21ldGEtd2ViaG9vay5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IENvbnRyb2xsZXIsIEdldCwgSGVhZGVycywgUGFyYW0sIFBvc3QsIFF1ZXJ5LCBSZXEsIFJlcywgSHR0cFN0YXR1cyB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUmVxdWVzdCwgUmVzcG9uc2UgfSBmcm9tIFwiZXhwcmVzc1wiO1xuaW1wb3J0IHsgSW5ib3hTZXJ2aWNlIH0gZnJvbSBcIi4vaW5ib3guc2VydmljZVwiO1xuaW1wb3J0IHsgd2ViaG9va0Rpc3BhdGNoZXIgfSBmcm9tIFwiLi4vY29tbW9uL3dlYmhvb2stZGlzcGF0Y2hcIjtcblxuLyoqIFB1YmxpYyBNZXRhIHdlYmhvb2sgZW5kcG9pbnQgKG5vIGF1dGggZ3VhcmQ6IGF1dGhlbnRpY2l0eSBjb21lcyBmcm9tXG4gKiAgdGhlIGh1YiB2ZXJpZnkgdG9rZW4gb24gR0VUIGFuZCB0aGUgWC1IdWItU2lnbmF0dXJlLTI1NiBITUFDIG9uIFBPU1QsXG4gKiAgYm90aCBjaGVja2VkIGFnYWluc3QgdGhlIGludGVncmF0aW9uJ3MgZW5jcnlwdGVkIHNlY3JldHMpLiAqL1xuQENvbnRyb2xsZXIoXCJ3ZWJob29rcy9tZXRhXCIpXG5leHBvcnQgY2xhc3MgTWV0YVdlYmhvb2tDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBpbmJveDogSW5ib3hTZXJ2aWNlKSB7fVxuXG4gIEBHZXQoXCI6aW50ZWdyYXRpb25JZFwiKVxuICBhc3luYyB2ZXJpZnkoXG4gICAgQFBhcmFtKFwiaW50ZWdyYXRpb25JZFwiKSBpbnRlZ3JhdGlvbklkOiBzdHJpbmcsXG4gICAgQFF1ZXJ5KFwiaHViLm1vZGVcIikgbW9kZTogc3RyaW5nLFxuICAgIEBRdWVyeShcImh1Yi52ZXJpZnlfdG9rZW5cIikgdG9rZW46IHN0cmluZyxcbiAgICBAUXVlcnkoXCJodWIuY2hhbGxlbmdlXCIpIGNoYWxsZW5nZTogc3RyaW5nLFxuICAgIEBSZXMoKSByZXM6IFJlc3BvbnNlLFxuICApIHtcbiAgICBjb25zdCBvayA9IGF3YWl0IHRoaXMuaW5ib3gudmVyaWZ5U3Vic2NyaXB0aW9uKGludGVncmF0aW9uSWQsIG1vZGUsIHRva2VuLCBjaGFsbGVuZ2UpO1xuICAgIGlmIChvayAhPT0gbnVsbCkgcmV0dXJuIHJlcy5zdGF0dXMoSHR0cFN0YXR1cy5PSykuc2VuZChvayk7XG4gICAgcmV0dXJuIHJlcy5zdGF0dXMoSHR0cFN0YXR1cy5GT1JCSURERU4pLnNlbmQoXCJWZXJpZmljYXRpb24gZmFpbGVkXCIpO1xuICB9XG5cbiAgQFBvc3QoXCI6aW50ZWdyYXRpb25JZFwiKVxuICBhc3luYyByZWNlaXZlKFxuICAgIEBQYXJhbShcImludGVncmF0aW9uSWRcIikgaW50ZWdyYXRpb25JZDogc3RyaW5nLFxuICAgIEBIZWFkZXJzKFwieC1odWItc2lnbmF0dXJlLTI1NlwiKSBzaWduYXR1cmU6IHN0cmluZyB8IHVuZGVmaW5lZCxcbiAgICBAUmVxKCkgcmVxOiBSZXF1ZXN0LFxuICAgIEBSZXMoKSByZXM6IFJlc3BvbnNlLFxuICApIHtcbiAgICBjb25zdCByYXdCb2R5ID0gKHJlcSBhcyBhbnkpLnJhd0JvZHk/LnRvU3RyaW5nKFwidXRmOFwiKSA/PyBKU09OLnN0cmluZ2lmeShyZXEuYm9keSA/PyB7fSk7XG4gICAgLy8gTWlsZXN0b25lIDYzOiBxdWV1ZSBtb2RlIGFja3MgTWV0YSBpbW1lZGlhdGVseTsgdGhlIHdvcmtlclxuICAgIC8vIHJlLXJ1bnMgaGFuZGxlV2ViaG9vayAodmVyaWZpY2F0aW9uIGluY2x1ZGVkKSB1bmNoYW5nZWQuXG4gICAgaWYgKGF3YWl0IHdlYmhvb2tEaXNwYXRjaGVyLmVucXVldWUoe1xuICAgICAgc291cmNlOiBcIm1ldGFcIiwgaW50ZWdyYXRpb25JZCwgcmF3Qm9keSwgaGVhZGVyczogeyBzaWduYXR1cmUgfSxcbiAgICB9KSkge1xuICAgICAgcmV0dXJuIHJlcy5zdGF0dXMoSHR0cFN0YXR1cy5PSykuanNvbih7IG9rOiB0cnVlLCBxdWV1ZWQ6IHRydWUgfSk7XG4gICAgfVxuICAgIHRyeSB7XG4gICAgICBjb25zdCByZXN1bHQgPSBhd2FpdCB0aGlzLmluYm94LmhhbmRsZVdlYmhvb2soaW50ZWdyYXRpb25JZCwgcmF3Qm9keSwgc2lnbmF0dXJlKTtcbiAgICAgIHJldHVybiByZXMuc3RhdHVzKEh0dHBTdGF0dXMuT0spLmpzb24oeyBvazogdHJ1ZSwgLi4ucmVzdWx0IH0pO1xuICAgIH0gY2F0Y2ggKGUpIHtcbiAgICAgIC8vIFNpZ25hdHVyZSBmYWlsdXJlcyBhcmUgNDAzOyBwcm9jZXNzaW5nIGVycm9ycyBhcmUgbG9nZ2VkIGJ5IHRoZVxuICAgICAgLy8gc2VydmljZSBhbmQgYW5zd2VyZWQgMjAwLXdpdGgtZXJyb3Igc28gTWV0YSBkb2VzIG5vdCByZXRyeSBzdG9ybXMuXG4gICAgICBjb25zdCBtZXNzYWdlID0gZSBpbnN0YW5jZW9mIEVycm9yID8gZS5tZXNzYWdlIDogXCJlcnJvclwiO1xuICAgICAgaWYgKG1lc3NhZ2UuaW5jbHVkZXMoXCJzaWduYXR1cmVcIikgfHwgbWVzc2FnZS5pbmNsdWRlcyhcIm5vdCBmb3VuZFwiKSkge1xuICAgICAgICByZXR1cm4gcmVzLnN0YXR1cyhIdHRwU3RhdHVzLkZPUkJJRERFTikuanNvbih7IG9rOiBmYWxzZSwgZXJyb3I6IG1lc3NhZ2UgfSk7XG4gICAgICB9XG4gICAgICByZXR1cm4gcmVzLnN0YXR1cyhIdHRwU3RhdHVzLk9LKS5qc29uKHsgb2s6IGZhbHNlLCBlcnJvcjogbWVzc2FnZSB9KTtcbiAgICB9XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

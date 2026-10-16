@@ -8,6 +8,7 @@ import { createHash } from "crypto";
 import Papa from "papaparse";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { createAgentNotification } from "../common/agent-notify";
 import type {
   ColumnMappingDto,
   ImportSheetDto,
@@ -444,7 +445,68 @@ export class ReconciliationService {
       },
     }).catch(() => undefined);
 
+    // GB8 (GC20.3): settlement mismatch alert — exactly once per
+    // import, fully failure-isolated (never fails the import).
+    if (counts.amount_mismatch > 0) {
+      await this.notifySettlementMismatch(orgId, String(importRow.id), provider).catch(() => undefined);
+    }
+
     return { ...(updated ?? importRow), counts: { rowCount: rows.length, ...counts } };
+  }
+
+  /**
+   * GB8 (GC20.3) — when an import completes with amount_mismatch
+   * lines, notify OWNER/ADMIN staff ONCE per import batch. The
+   * batch's mismatchAlertedAt stamp is claimed with a conditional
+   * updateMany BEFORE notifying, so a re-import of the same sheet
+   * (a NEW batch row) alerts again but the same batch never
+   * alerts twice. The notification links (in its body — the
+   * AgentNotification model has no link column) to the Finance
+   * page's courier-settlement mismatches list, which is computed
+   * from these very lines.
+   */
+  private async notifySettlementMismatch(orgId: string, importId: string, provider: string): Promise<void> {
+    try {
+      const batch = await (this.prisma as any).reconciliationImport.findFirst({ where: { id: importId, organizationId: orgId } });
+      if (!batch || batch.mismatchAlertedAt) return;
+      const lines = await (this.prisma as any).reconciliationLine.findMany({
+        where: { organizationId: orgId, importId, outcome: "amount_mismatch" },
+        select: { sheetAmountMinor: true, expectedMinor: true },
+        take: 5001,
+      });
+      if (!lines.length) return;
+      const delta = lines.reduce((s: bigint, l: any) => {
+        const sv = BigInt(String(l.sheetAmountMinor ?? 0));
+        const ev = BigInt(String(l.expectedMinor ?? 0));
+        return s + (sv - ev);
+      }, 0n);
+      // Claim the stamp first — exactly once per import.
+      const claimed = await (this.prisma as any).reconciliationImport.updateMany({
+        where: { id: importId, organizationId: orgId, mismatchAlertedAt: null },
+        data: { mismatchAlertedAt: new Date() },
+      }).catch(() => null);
+      if (!claimed || claimed.count === 0) return;
+      const memberships = await (this.prisma as any).membership.findMany({
+        where: { organizationId: orgId, status: "ACTIVE" },
+      }).catch(() => []);
+      const recipients = [...new Set((memberships as any[])
+        .filter((m) => ["OWNER", "ADMIN"].includes(String(m.role)))
+        .map((m) => String(m.userId)))];
+      const absDelta = delta < 0n ? -delta : delta;
+      const deltaText = `${delta < 0n ? "−" : "+"}৳${absDelta / 100n}.${String(absDelta % 100n).padStart(2, "0")}`;
+      for (const userId of recipients) {
+        await createAgentNotification(this.prisma as any, {
+          organizationId: orgId,
+          userId,
+          type: "billing",
+          title: `কুরিয়ার সেটেলমেন্টে অমিল: ${lines.length}টি লাইন`,
+          body: `${provider} সেটেলমেন্ট শিটে ${lines.length}টি লাইনে পরিমাণ মেলেনি (মোট পার্থক্য ${deltaText})। বিস্তারিত: Finance পেজের "কুরিয়ার সেটেলমেন্ট" অংশে (/dashboard/commerce/finance)`,
+          conversationId: null,
+        }).catch(() => null);
+      }
+    } catch {
+      // Failure-isolated by design: alerting must never break an import.
+    }
   }
 
   // ---------- reads ----------

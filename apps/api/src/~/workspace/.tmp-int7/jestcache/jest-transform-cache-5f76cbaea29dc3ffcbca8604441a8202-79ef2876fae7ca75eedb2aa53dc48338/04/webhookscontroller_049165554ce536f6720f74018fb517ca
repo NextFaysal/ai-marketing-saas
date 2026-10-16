@@ -1,0 +1,94 @@
+7ec1827e5947e32991be35bbae5e1c61
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WooWebhooksController = void 0;
+const common_1 = require("@nestjs/common");
+const prisma_service_1 = require("../prisma/prisma.service");
+const integrations_service_1 = require("./integrations.service");
+const decorators_1 = require("../common/decorators");
+const webhooks_service_1 = require("./webhooks.service");
+const webhook_dispatch_1 = require("../common/webhook-dispatch");
+/**
+ * Public webhook endpoint for WooCommerce.
+ * URL to register in WP Admin > Settings > Advanced > Webhooks:
+ *   POST {API_URL}/webhooks/woocommerce/{integrationId}
+ * Security: HMAC signature checked against the stored webhook secret.
+ * Events with a duplicate delivery id are acknowledged without reprocessing.
+ */
+let WooWebhooksController = class WooWebhooksController {
+    prisma;
+    integrations;
+    constructor(prisma, integrations) {
+        this.prisma = prisma;
+        this.integrations = integrations;
+    }
+    async handle(integrationId, topic, deliveryId, signature, req) {
+        const integration = await this.integrations.getIntegrationById(integrationId);
+        if (!integration)
+            throw new common_1.BadRequestException("Unknown integration");
+        const secrets = this.integrations.getSecrets(integration);
+        if (!secrets.webhookSecret) {
+            throw new common_1.BadRequestException("Webhook secret is not configured for this integration");
+        }
+        const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
+        const valid = (0, webhooks_service_1.verifyWooSignature)(rawBody, signature, secrets.webhookSecret);
+        if (!valid)
+            throw new common_1.UnauthorizedException("Invalid webhook signature");
+        // Idempotency: Woo retries deliveries; the same delivery id must not
+        // create duplicate orders/products.
+        if (deliveryId) {
+            const duplicate = await this.prisma.webhookEvent.findFirst({
+                where: { integrationId, deliveryId },
+            });
+            if (duplicate)
+                return { received: true, duplicate: true };
+        }
+        const payload = (req.body ?? {});
+        const event = await this.prisma.webhookEvent.create({
+            data: {
+                integrationId, provider: "woocommerce", topic: topic ?? null,
+                deliveryId: deliveryId ?? null, payload, signatureValid: true,
+            },
+        });
+        // Milestone 63: with a queue available, the upsert half runs
+        // in the worker (the event row above is the durable record
+        // either way); without one it processes inline as before.
+        if (await webhook_dispatch_1.webhookDispatcher.enqueue({
+            source: "woocommerce", integrationId, eventId: event.id,
+        })) {
+            return { received: true, queued: true };
+        }
+        const out = await this.integrations.processWooWebhookEvent(event.id);
+        return { received: true, processed: out.processed };
+    }
+};
+exports.WooWebhooksController = WooWebhooksController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":integrationId"),
+    __param(0, (0, common_1.Param)("integrationId")),
+    __param(1, (0, common_1.Headers)("x-wc-webhook-topic")),
+    __param(2, (0, common_1.Headers)("x-wc-webhook-delivery-id")),
+    __param(3, (0, common_1.Headers)("x-wc-webhook-signature")),
+    __param(4, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], WooWebhooksController.prototype, "handle", null);
+exports.WooWebhooksController = WooWebhooksController = __decorate([
+    (0, common_1.Controller)("webhooks/woocommerce"),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService, integrations_service_1.IntegrationsService])
+], WooWebhooksController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ludGVncmF0aW9ucy93ZWJob29rcy5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUFtSDtBQUVuSCw2REFBeUQ7QUFDekQsaUVBQTZEO0FBQzdELHFEQUE4QztBQUM5Qyx5REFBd0Q7QUFDeEQsaUVBQStEO0FBRS9EOzs7Ozs7R0FNRztBQUVJLElBQU0scUJBQXFCLEdBQTNCLE1BQU0scUJBQXFCO0lBQ0g7SUFBd0M7SUFBckUsWUFBNkIsTUFBcUIsRUFBbUIsWUFBaUM7UUFBekUsV0FBTSxHQUFOLE1BQU0sQ0FBZTtRQUFtQixpQkFBWSxHQUFaLFlBQVksQ0FBcUI7SUFBRyxDQUFDO0lBSXBHLEFBQU4sS0FBSyxDQUFDLE1BQU0sQ0FDYyxhQUFxQixFQUNkLEtBQXlCLEVBQ25CLFVBQThCLEVBQ2hDLFNBQTZCLEVBQ3pELEdBQW1DO1FBRTFDLE1BQU0sV0FBVyxHQUFHLE1BQU0sSUFBSSxDQUFDLFlBQVksQ0FBQyxrQkFBa0IsQ0FBQyxhQUFhLENBQUMsQ0FBQztRQUM5RSxJQUFJLENBQUMsV0FBVztZQUFFLE1BQU0sSUFBSSw0QkFBbUIsQ0FBQyxxQkFBcUIsQ0FBQyxDQUFDO1FBQ3ZFLE1BQU0sT0FBTyxHQUFHLElBQUksQ0FBQyxZQUFZLENBQUMsVUFBVSxDQUFDLFdBQVcsQ0FBQyxDQUFDO1FBQzFELElBQUksQ0FBQyxPQUFPLENBQUMsYUFBYSxFQUFFLENBQUM7WUFDM0IsTUFBTSxJQUFJLDRCQUFtQixDQUFDLHVEQUF1RCxDQUFDLENBQUM7UUFDekYsQ0FBQztRQUNELE1BQU0sT0FBTyxHQUFHLEdBQUcsQ0FBQyxPQUFPLElBQUksTUFBTSxDQUFDLElBQUksQ0FBQyxJQUFJLENBQUMsU0FBUyxDQUFDLEdBQUcsQ0FBQyxJQUFJLElBQUksRUFBRSxDQUFDLENBQUMsQ0FBQztRQUMzRSxNQUFNLEtBQUssR0FBRyxJQUFBLHFDQUFrQixFQUFDLE9BQU8sRUFBRSxTQUFTLEVBQUUsT0FBTyxDQUFDLGFBQWEsQ0FBQyxDQUFDO1FBQzVFLElBQUksQ0FBQyxLQUFLO1lBQUUsTUFBTSxJQUFJLDhCQUFxQixDQUFDLDJCQUEyQixDQUFDLENBQUM7UUFFekUscUVBQXFFO1FBQ3JFLG9DQUFvQztRQUNwQyxJQUFJLFVBQVUsRUFBRSxDQUFDO1lBQ2YsTUFBTSxTQUFTLEdBQUcsTUFBTyxJQUFJLENBQUMsTUFBYyxDQUFDLFlBQVksQ0FBQyxTQUFTLENBQUM7Z0JBQ2xFLEtBQUssRUFBRSxFQUFFLGFBQWEsRUFBRSxVQUFVLEVBQUU7YUFDckMsQ0FBQyxDQUFDO1lBQ0gsSUFBSSxTQUFTO2dCQUFFLE9BQU8sRUFBRSxRQUFRLEVBQUUsSUFBSSxFQUFFLFNBQVMsRUFBRSxJQUFJLEVBQUUsQ0FBQztRQUM1RCxDQUFDO1FBRUQsTUFBTSxPQUFPLEdBQUcsQ0FBQyxHQUFHLENBQUMsSUFBSSxJQUFJLEVBQUUsQ0FBUSxDQUFDO1FBQ3hDLE1BQU0sS0FBSyxHQUFHLE1BQU8sSUFBSSxDQUFDLE1BQWMsQ0FBQyxZQUFZLENBQUMsTUFBTSxDQUFDO1lBQzNELElBQUksRUFBRTtnQkFDSixhQUFhLEVBQUUsUUFBUSxFQUFFLGFBQWEsRUFBRSxLQUFLLEVBQUUsS0FBSyxJQUFJLElBQUk7Z0JBQzVELFVBQVUsRUFBRSxVQUFVLElBQUksSUFBSSxFQUFFLE9BQU8sRUFBRSxjQUFjLEVBQUUsSUFBSTthQUM5RDtTQUNGLENBQUMsQ0FBQztRQUVILDZEQUE2RDtRQUM3RCwyREFBMkQ7UUFDM0QsMERBQTBEO1FBQzFELElBQUksTUFBTSxvQ0FBaUIsQ0FBQyxPQUFPLENBQUM7WUFDbEMsTUFBTSxFQUFFLGFBQWEsRUFBRSxhQUFhLEVBQUUsT0FBTyxFQUFFLEtBQUssQ0FBQyxFQUFFO1NBQ3hELENBQUMsRUFBRSxDQUFDO1lBQ0gsT0FBTyxFQUFFLFFBQVEsRUFBRSxJQUFJLEVBQUUsTUFBTSxFQUFFLElBQUksRUFBRSxDQUFDO1FBQzFDLENBQUM7UUFDRCxNQUFNLEdBQUcsR0FBRyxNQUFNLElBQUksQ0FBQyxZQUFZLENBQUMsc0JBQXNCLENBQUMsS0FBSyxDQUFDLEVBQUUsQ0FBQyxDQUFDO1FBQ3JFLE9BQU8sRUFBRSxRQUFRLEVBQUUsSUFBSSxFQUFFLFNBQVMsRUFBRSxHQUFHLENBQUMsU0FBUyxFQUFFLENBQUM7SUFDdEQsQ0FBQztDQUNGLENBQUE7QUFsRFksc0RBQXFCO0FBSzFCO0lBRkwsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxhQUFJLEVBQUMsZ0JBQWdCLENBQUM7SUFFcEIsV0FBQSxJQUFBLGNBQUssRUFBQyxlQUFlLENBQUMsQ0FBQTtJQUN0QixXQUFBLElBQUEsZ0JBQU8sRUFBQyxvQkFBb0IsQ0FBQyxDQUFBO0lBQzdCLFdBQUEsSUFBQSxnQkFBTyxFQUFDLDBCQUEwQixDQUFDLENBQUE7SUFDbkMsV0FBQSxJQUFBLGdCQUFPLEVBQUMsd0JBQXdCLENBQUMsQ0FBQTtJQUNqQyxXQUFBLElBQUEsWUFBRyxHQUFFLENBQUE7Ozs7bURBdUNQO2dDQWpEVSxxQkFBcUI7SUFEakMsSUFBQSxtQkFBVSxFQUFDLHNCQUFzQixDQUFDO3FDQUVJLDhCQUFhLEVBQWlDLDBDQUFtQjtHQUQzRixxQkFBcUIsQ0FrRGpDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9pbnRlZ3JhdGlvbnMvd2ViaG9va3MuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBDb250cm9sbGVyLCBIZWFkZXJzLCBQYXJhbSwgUG9zdCwgUmVxLCBVbmF1dGhvcml6ZWRFeGNlcHRpb24sIEJhZFJlcXVlc3RFeGNlcHRpb24gfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IFJlcXVlc3QgfSBmcm9tIFwiZXhwcmVzc1wiO1xuaW1wb3J0IHsgUHJpc21hU2VydmljZSB9IGZyb20gXCIuLi9wcmlzbWEvcHJpc21hLnNlcnZpY2VcIjtcbmltcG9ydCB7IEludGVncmF0aW9uc1NlcnZpY2UgfSBmcm9tIFwiLi9pbnRlZ3JhdGlvbnMuc2VydmljZVwiO1xuaW1wb3J0IHsgUHVibGljIH0gZnJvbSBcIi4uL2NvbW1vbi9kZWNvcmF0b3JzXCI7XG5pbXBvcnQgeyB2ZXJpZnlXb29TaWduYXR1cmUgfSBmcm9tIFwiLi93ZWJob29rcy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyB3ZWJob29rRGlzcGF0Y2hlciB9IGZyb20gXCIuLi9jb21tb24vd2ViaG9vay1kaXNwYXRjaFwiO1xuXG4vKipcbiAqIFB1YmxpYyB3ZWJob29rIGVuZHBvaW50IGZvciBXb29Db21tZXJjZS5cbiAqIFVSTCB0byByZWdpc3RlciBpbiBXUCBBZG1pbiA+IFNldHRpbmdzID4gQWR2YW5jZWQgPiBXZWJob29rczpcbiAqICAgUE9TVCB7QVBJX1VSTH0vd2ViaG9va3Mvd29vY29tbWVyY2Uve2ludGVncmF0aW9uSWR9XG4gKiBTZWN1cml0eTogSE1BQyBzaWduYXR1cmUgY2hlY2tlZCBhZ2FpbnN0IHRoZSBzdG9yZWQgd2ViaG9vayBzZWNyZXQuXG4gKiBFdmVudHMgd2l0aCBhIGR1cGxpY2F0ZSBkZWxpdmVyeSBpZCBhcmUgYWNrbm93bGVkZ2VkIHdpdGhvdXQgcmVwcm9jZXNzaW5nLlxuICovXG5AQ29udHJvbGxlcihcIndlYmhvb2tzL3dvb2NvbW1lcmNlXCIpXG5leHBvcnQgY2xhc3MgV29vV2ViaG9va3NDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBwcmlzbWE6IFByaXNtYVNlcnZpY2UsIHByaXZhdGUgcmVhZG9ubHkgaW50ZWdyYXRpb25zOiBJbnRlZ3JhdGlvbnNTZXJ2aWNlKSB7fVxuXG4gIEBQdWJsaWMoKVxuICBAUG9zdChcIjppbnRlZ3JhdGlvbklkXCIpXG4gIGFzeW5jIGhhbmRsZShcbiAgICBAUGFyYW0oXCJpbnRlZ3JhdGlvbklkXCIpIGludGVncmF0aW9uSWQ6IHN0cmluZyxcbiAgICBASGVhZGVycyhcIngtd2Mtd2ViaG9vay10b3BpY1wiKSB0b3BpYzogc3RyaW5nIHwgdW5kZWZpbmVkLFxuICAgIEBIZWFkZXJzKFwieC13Yy13ZWJob29rLWRlbGl2ZXJ5LWlkXCIpIGRlbGl2ZXJ5SWQ6IHN0cmluZyB8IHVuZGVmaW5lZCxcbiAgICBASGVhZGVycyhcIngtd2Mtd2ViaG9vay1zaWduYXR1cmVcIikgc2lnbmF0dXJlOiBzdHJpbmcgfCB1bmRlZmluZWQsXG4gICAgQFJlcSgpIHJlcTogUmVxdWVzdCAmIHsgcmF3Qm9keT86IEJ1ZmZlciB9LFxuICApIHtcbiAgICBjb25zdCBpbnRlZ3JhdGlvbiA9IGF3YWl0IHRoaXMuaW50ZWdyYXRpb25zLmdldEludGVncmF0aW9uQnlJZChpbnRlZ3JhdGlvbklkKTtcbiAgICBpZiAoIWludGVncmF0aW9uKSB0aHJvdyBuZXcgQmFkUmVxdWVzdEV4Y2VwdGlvbihcIlVua25vd24gaW50ZWdyYXRpb25cIik7XG4gICAgY29uc3Qgc2VjcmV0cyA9IHRoaXMuaW50ZWdyYXRpb25zLmdldFNlY3JldHMoaW50ZWdyYXRpb24pO1xuICAgIGlmICghc2VjcmV0cy53ZWJob29rU2VjcmV0KSB7XG4gICAgICB0aHJvdyBuZXcgQmFkUmVxdWVzdEV4Y2VwdGlvbihcIldlYmhvb2sgc2VjcmV0IGlzIG5vdCBjb25maWd1cmVkIGZvciB0aGlzIGludGVncmF0aW9uXCIpO1xuICAgIH1cbiAgICBjb25zdCByYXdCb2R5ID0gcmVxLnJhd0JvZHkgPz8gQnVmZmVyLmZyb20oSlNPTi5zdHJpbmdpZnkocmVxLmJvZHkgPz8ge30pKTtcbiAgICBjb25zdCB2YWxpZCA9IHZlcmlmeVdvb1NpZ25hdHVyZShyYXdCb2R5LCBzaWduYXR1cmUsIHNlY3JldHMud2ViaG9va1NlY3JldCk7XG4gICAgaWYgKCF2YWxpZCkgdGhyb3cgbmV3IFVuYXV0aG9yaXplZEV4Y2VwdGlvbihcIkludmFsaWQgd2ViaG9vayBzaWduYXR1cmVcIik7XG5cbiAgICAvLyBJZGVtcG90ZW5jeTogV29vIHJldHJpZXMgZGVsaXZlcmllczsgdGhlIHNhbWUgZGVsaXZlcnkgaWQgbXVzdCBub3RcbiAgICAvLyBjcmVhdGUgZHVwbGljYXRlIG9yZGVycy9wcm9kdWN0cy5cbiAgICBpZiAoZGVsaXZlcnlJZCkge1xuICAgICAgY29uc3QgZHVwbGljYXRlID0gYXdhaXQgKHRoaXMucHJpc21hIGFzIGFueSkud2ViaG9va0V2ZW50LmZpbmRGaXJzdCh7XG4gICAgICAgIHdoZXJlOiB7IGludGVncmF0aW9uSWQsIGRlbGl2ZXJ5SWQgfSxcbiAgICAgIH0pO1xuICAgICAgaWYgKGR1cGxpY2F0ZSkgcmV0dXJuIHsgcmVjZWl2ZWQ6IHRydWUsIGR1cGxpY2F0ZTogdHJ1ZSB9O1xuICAgIH1cblxuICAgIGNvbnN0IHBheWxvYWQgPSAocmVxLmJvZHkgPz8ge30pIGFzIGFueTtcbiAgICBjb25zdCBldmVudCA9IGF3YWl0ICh0aGlzLnByaXNtYSBhcyBhbnkpLndlYmhvb2tFdmVudC5jcmVhdGUoe1xuICAgICAgZGF0YToge1xuICAgICAgICBpbnRlZ3JhdGlvbklkLCBwcm92aWRlcjogXCJ3b29jb21tZXJjZVwiLCB0b3BpYzogdG9waWMgPz8gbnVsbCxcbiAgICAgICAgZGVsaXZlcnlJZDogZGVsaXZlcnlJZCA/PyBudWxsLCBwYXlsb2FkLCBzaWduYXR1cmVWYWxpZDogdHJ1ZSxcbiAgICAgIH0sXG4gICAgfSk7XG5cbiAgICAvLyBNaWxlc3RvbmUgNjM6IHdpdGggYSBxdWV1ZSBhdmFpbGFibGUsIHRoZSB1cHNlcnQgaGFsZiBydW5zXG4gICAgLy8gaW4gdGhlIHdvcmtlciAodGhlIGV2ZW50IHJvdyBhYm92ZSBpcyB0aGUgZHVyYWJsZSByZWNvcmRcbiAgICAvLyBlaXRoZXIgd2F5KTsgd2l0aG91dCBvbmUgaXQgcHJvY2Vzc2VzIGlubGluZSBhcyBiZWZvcmUuXG4gICAgaWYgKGF3YWl0IHdlYmhvb2tEaXNwYXRjaGVyLmVucXVldWUoe1xuICAgICAgc291cmNlOiBcIndvb2NvbW1lcmNlXCIsIGludGVncmF0aW9uSWQsIGV2ZW50SWQ6IGV2ZW50LmlkLFxuICAgIH0pKSB7XG4gICAgICByZXR1cm4geyByZWNlaXZlZDogdHJ1ZSwgcXVldWVkOiB0cnVlIH07XG4gICAgfVxuICAgIGNvbnN0IG91dCA9IGF3YWl0IHRoaXMuaW50ZWdyYXRpb25zLnByb2Nlc3NXb29XZWJob29rRXZlbnQoZXZlbnQuaWQpO1xuICAgIHJldHVybiB7IHJlY2VpdmVkOiB0cnVlLCBwcm9jZXNzZWQ6IG91dC5wcm9jZXNzZWQgfTtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

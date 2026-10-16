@@ -105,6 +105,18 @@ export interface NormalizedOrder {
   customerId?: string;
   /** EC24c: renewal orders link back to their CustomerSubscription. */
   subscriptionId?: string;
+  /** AB7 (AX19): order-level attribution stamps, supplied ONLY
+   * by the native checkout paths (already normalized via
+   * normalizeAttribution). upsertOrder stamps them on the
+   * CREATE branch only; external sync payloads never carry
+   * them, so synced orders stay untracked (null). */
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  clickIdType?: string;
+  clickId?: string;
 }
 
 export function normalizeWooOrder(o: any): NormalizedOrder {

@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { ProductQuestionsStaffController, PublicShopController, StorefrontStaffController } from "./storefront.controller";
 import { StorefrontService } from "./storefront.service";
+import { CheckoutFieldsService } from "./checkout-fields.service";
+import { CheckoutFieldsController } from "./checkout-fields.controller";
 import { DeliveryPricingService } from "./delivery-pricing.service";
 import { ShopAccountService } from "./shop-account.service";
 import { RetentionService } from "./retention.service";
@@ -12,17 +14,21 @@ import { MessagingModule } from "../messaging/messaging.module";
 import { AffiliatesModule } from "../affiliates/affiliates.module";
 import { FraudModule } from "../fraud/fraud.module";
 import { StorageModule } from "../storage/storage.module";
+import { InventoryModule } from "../inventory/inventory.module";
+import { ConnectionsModule } from "../connections/connections.module";
 
 /**
  * EC8 native storefront. Imports follow the ProductsModule
  * arrangement (IntegrationsModule for upsertOrder, CommerceModule
  * for DiscountsService); neither module imports this one, so the
- * graph stays acyclic.
+ * graph stays acyclic. GB2: InventoryModule joins for the
+ * availability/reservation reads (it imports only CommerceModule,
+ * so the graph stays acyclic).
  */
 @Module({
-  imports: [AuditModule, IntegrationsModule, CommerceModule, MessagingModule, AffiliatesModule, FraudModule, StorageModule],
-  controllers: [PublicShopController, StorefrontStaffController, ProductQuestionsStaffController],
-  providers: [StorefrontService, DeliveryPricingService, ShopAccountService, RetentionService, StorefrontDnsResolver, StorefrontRoutingFetcher],
+  imports: [AuditModule, IntegrationsModule, CommerceModule, MessagingModule, AffiliatesModule, FraudModule, StorageModule, InventoryModule, ConnectionsModule],
+  controllers: [PublicShopController, StorefrontStaffController, ProductQuestionsStaffController, CheckoutFieldsController],
+  providers: [StorefrontService, DeliveryPricingService, ShopAccountService, RetentionService, StorefrontDnsResolver, StorefrontRoutingFetcher, CheckoutFieldsService],
   // EC28: RetentionService is exported for the AutomationModule
   // wishlist_price_alert_sweep job (AutomationModule imports this
   // module; nothing in this module's chain imports it back).

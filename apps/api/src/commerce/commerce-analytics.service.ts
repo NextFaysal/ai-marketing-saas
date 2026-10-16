@@ -327,6 +327,83 @@ export class CommerceAnalyticsService {
     };
   }
 
+  // ---------- AB7 (AX19): order attribution source breakdown ----------
+
+  /**
+   * Orders grouped by their AX19 utmSource stamp over the
+   * window. Range + "sold" conventions are THIS service's:
+   * Dhaka-day window on the effective date (placedAt ??
+   * createdAt), sold = status NOT in REVENUE_EXCLUDED_STATUSES
+   * (cancelled / refunded / failed) — the same revenue-order
+   * definition storesAnalytics uses.
+   *
+   * The stamps read here are the ORDER-LEVEL record written at
+   * placement by the native checkouts. This is NOT the
+   * attribution engine (src/attribution/): the engine computes
+   * visitor-journey attribution and is untouched by AX19, and
+   * nothing here feeds it.
+   *
+   * Orders without a stamp (POS / manual / external sync —
+   * never stamped) group under "সরাসরি/অজানা".
+   */
+  async sourceBreakdown(orgId: string, daysInput?: number | string | null, now = new Date()) {
+    const days = parseDays(daysInput, 30);
+    const end = new Date(dhakaDayStartUtc(now).getTime() + DAY_MS);
+    const start = new Date(end.getTime() - days * DAY_MS);
+
+    const allOrders = await this.loadOrders(orgId, false);
+    const sold = allOrders.filter((o: any) => {
+      if (REVENUE_EXCLUDED_STATUSES.includes(o.status)) return false;
+      const t = effectiveDate(o).getTime();
+      return t >= start.getTime() && t < end.getTime();
+    });
+
+    const UNKNOWN_SOURCE = "সরাসরি/অজানা";
+    const bySource = new Map<string, { source: string; orders: number; revenueMinor: bigint }>();
+    let withClickId = 0;
+    let stampedOrders = 0;
+    let totalRevenue = 0n;
+    for (const o of sold) {
+      const raw = typeof o.utmSource === "string" ? o.utmSource.trim() : "";
+      const source = raw === "" ? UNKNOWN_SOURCE : raw;
+      if (raw !== "") stampedOrders++;
+      if (o.clickId !== null && o.clickId !== undefined && o.clickId !== "") withClickId++;
+      const revenue = BigInt(o.totalMinor ?? 0);
+      totalRevenue += revenue;
+      let bucket = bySource.get(source);
+      if (!bucket) {
+        bucket = { source, orders: 0, revenueMinor: 0n };
+        bySource.set(source, bucket);
+      }
+      bucket.orders++;
+      bucket.revenueMinor += revenue;
+    }
+
+    const sources = [...bySource.values()]
+      .sort((a, b) => {
+        if (a.revenueMinor !== b.revenueMinor) return a.revenueMinor > b.revenueMinor ? -1 : 1;
+        return a.source < b.source ? -1 : a.source > b.source ? 1 : 0;
+      })
+      .map((b) => ({ source: b.source, orders: b.orders, revenueMinor: money(b.revenueMinor) }));
+
+    return {
+      days,
+      window: { from: start.toISOString(), to: end.toISOString() },
+      sources,
+      totals: {
+        orders: sold.length,
+        revenueMinor: money(totalRevenue),
+        withClickId,
+        stampedOrders,
+      },
+      definitions: {
+        sold:
+          "Orders by effective date (placedAt ?? createdAt) in the Dhaka-day window, excluding cancelled/refunded/failed (REVENUE_EXCLUDED_STATUSES).",
+        unknownSource: `${UNKNOWN_SOURCE} = orders with no utmSource stamp (untracked: POS / manual / external sync, or a native checkout that presented none).`,
+      },
+    };
+  }
+
   // ---------- EC11: dead stock ----------
 
   async deadStock(

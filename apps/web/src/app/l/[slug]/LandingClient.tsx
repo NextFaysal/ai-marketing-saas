@@ -1,9 +1,20 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
-import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
-import { ReviewsBlock, type PublicReviewItem, type PublicReviewsSummary } from "@/components/product-reviews";
 import { MediaImage } from "@/components/media-image";
+import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
+import { captureFirstTouchAttribution, getAttributionForCheckout } from "@/lib/shop-tracking";
+import { getDeviceHashForCheckout } from "@/lib/device-hash";
+import { captchaSiteKeyFor, exceedsMinor, termsHrefFor, type CheckoutTrust } from "@/lib/orders-gb3";
+import { TurnstileWidget, useIdempotencyKey } from "@/components/TurnstileWidget";
+import { ReviewsBlock, type PublicReviewItem, type PublicReviewsSummary } from "@/components/product-reviews";
+import {
+  buildFieldAnswers,
+  missingRequiredFields,
+  normalizeCheckoutFields,
+  type FieldAnswers,
+} from "@/lib/checkout-fields";
+import { CheckoutFieldsSection } from "@/components/CheckoutFieldsSection";
 
 // EC13 — public landing page client. Mirrors checkout/[slug]:
 // same-origin /backend fetches, the same fbq injection snippet,
@@ -68,6 +79,11 @@ interface LandingPayload {
   deliveryPromiseText?: string | null;
   supportPhone?: string | null;
   returnPolicyText?: string | null;
+  // GB3 (GC8): checkout trust block (settings-level sibling).
+  checkoutTrust?: CheckoutTrust;
+  // AB4 (AX5): the org's custom checkout fields for this surface.
+  checkoutFields?: unknown;
+  deposit?: { amountMinor: string; note: string } | null;
 }
 
 function slotDateString(offsetDays = 0): string {
@@ -98,6 +114,8 @@ interface OrderResult {
   upsellEligible: boolean;
   // EC24b: order contains digital items (success-screen note).
   hasDigitalItems?: boolean;
+  // AB4 (AX5): deposit due on this order (notice only).
+  deposit?: { amountMinor: string; note: string } | null;
 }
 
 const taka = (minor?: string | number | null) =>
@@ -183,6 +201,12 @@ export default function LandingClient({ slug }: { slug: string }) {
   // EC18: delivery slot picker state.
   const [slotId, setSlotId] = useState("");
   const [slotDate, setSlotDate] = useState("");
+  // GB3 (GC8): terms consent + Turnstile token + idempotency key.
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const idempotency = useIdempotencyKey();
+  // AB4 (AX5): custom checkout-field answers.
+  const [fieldAnswers, setFieldAnswers] = useState<FieldAnswers>({});
 
   // Upsell state.
   const [upsellBusy, setUpsellBusy] = useState(false);
@@ -195,6 +219,9 @@ export default function LandingClient({ slug }: { slug: string }) {
     // EC32: capture a partner ?ref= code (keyed by this landing's
     // slug; the submit below reads the same key).
     captureAffiliateRef(slug);
+    // AB7 (AX19): capture first-touch utm/click params into the
+    // tracking storage (never overwrites an existing session).
+    captureFirstTouchAttribution();
     const visitor = getVisitorId();
     setVisitorId(visitor);
     (async () => {
@@ -280,9 +307,27 @@ export default function LandingClient({ slug }: { slug: string }) {
       setOrderError("ডেলিভারির জন্য আপনার জেলা বেছে নিন।");
       return;
     }
+    const trust = data.checkoutTrust;
+    if (trust?.termsRequired && !termsAccepted) {
+      setOrderError("অর্ডার করতে শর্তাবলিতে সম্মতি দিন।");
+      return;
+    }
+    if (captchaSiteKeyFor(trust, "checkout") && !captchaToken) {
+      setOrderError("CAPTCHA যাচাই সম্পূর্ণ করুন।");
+      return;
+    }
+    // AB4: required custom fields must be answered.
+    const fieldDefs = normalizeCheckoutFields(data.checkoutFields);
+    const missingFields = missingRequiredFields(fieldDefs, fieldAnswers);
+    if (missingFields.length > 0) {
+      setOrderError(`এই তথ্যগুলো আবশ্যক: ${missingFields.join(", ")}`);
+      return;
+    }
     setSubmitting(true);
     setOrderError("");
     try {
+      // AB8 (AX27): weak device signal — omitted when unavailable.
+      const deviceHash = await getDeviceHashForCheckout();
       const res = await fetch(`${API_URL}/public/landing/${encodeURIComponent(slug)}/order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -307,6 +352,20 @@ export default function LandingClient({ slug }: { slug: string }) {
           ...(slotId && slotDate && visibleSlots.some((s) => s.id === slotId)
             ? { deliverySlotId: slotId, deliveryDate: slotDate }
             : {}),
+          // GB3 (GC8): consent + idempotency + captcha token.
+          termsAccepted,
+          idempotencyKey: idempotency.key,
+          ...(captchaToken ? { captchaToken } : {}),
+          // AB4: custom-field answers (omitted when none answered).
+          ...(buildFieldAnswers(fieldDefs, fieldAnswers)
+            ? { fieldAnswers: buildFieldAnswers(fieldDefs, fieldAnswers) }
+            : {}),
+          // AB7 (AX19): first-touch attribution — omitted when empty.
+          ...(getAttributionForCheckout()
+            ? { attribution: getAttributionForCheckout() }
+            : {}),
+          // AB8 (AX27): device hash (omitted when unavailable).
+          ...(deviceHash ? { deviceHash } : {}),
         }),
       });
       if (!res.ok) {
@@ -315,6 +374,7 @@ export default function LandingClient({ slug }: { slug: string }) {
         throw new Error(errJson?.message || "অর্ডার সম্পন্ন করতে সমস্যা হয়েছে");
       }
       const out = (await res.json()) as OrderResult;
+      idempotency.reset();
       setOrderCompleted(out);
       setFinalTotalMinor(out.totals.totalMinor);
       // fbq Purchase, exactly like checkout/[slug] values: BDT
@@ -467,6 +527,14 @@ export default function LandingClient({ slug }: { slug: string }) {
             </div>
           ) : null}
 
+          {/* AB4 (AX5): deposit notice from the placement response —
+              notice only; this surface has no payment initiation. */}
+          {orderCompleted.deposit ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+              এই অর্ডারে {taka(orderCompleted.deposit.amountMinor)} advance প্রয়োজন — {orderCompleted.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করতে আপনার সাথে যোগাযোগ করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয়নি।
+            </div>
+          ) : null}
+
           {upsell && orderCompleted.upsellEligible && !upsellAdded ? (
             <div className="space-y-3 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/60 p-4 text-left">
               <div className="text-sm font-black text-slate-900">সাথে এটাও যোগ করুন</div>
@@ -530,6 +598,7 @@ export default function LandingClient({ slug }: { slug: string }) {
           <section key="hero" className="space-y-4">
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
               {heroImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <MediaImage src={heroImage} alt={product.name} priority sizes="(max-width: 1024px) 100vw, 1024px" className="aspect-square w-full object-cover sm:aspect-[4/3]" />
               ) : (
                 <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-7xl">📦</div>
@@ -544,6 +613,7 @@ export default function LandingClient({ slug }: { slug: string }) {
                     onClick={() => setHeroImage(src)}
                     className={`h-16 w-16 overflow-hidden rounded-xl border-2 ${src === heroImage ? "border-indigo-600" : "border-slate-200"}`}
                   >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
                   </button>
                 ))}
@@ -591,6 +661,7 @@ export default function LandingClient({ slug }: { slug: string }) {
             <h2 className="text-xl font-black text-slate-900">পণ্যের ছবি</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {galleryImages.map((src) => (
+                // eslint-disable-next-line @next/next/no-img-element
                 <MediaImage key={src} src={src} alt={product.name} width={600} height={600} sizes="(max-width: 640px) 50vw, 320px" className="aspect-square w-full rounded-2xl border border-slate-200 object-cover" />
               ))}
             </div>
@@ -848,6 +919,13 @@ export default function LandingClient({ slug }: { slug: string }) {
           />
         </div>
 
+        {/* AB4 (AX5): the org's custom checkout fields. */}
+        <CheckoutFieldsSection
+          defs={normalizeCheckoutFields(data.checkoutFields)}
+          answers={fieldAnswers}
+          onChange={(k, v) => setFieldAnswers((prev) => ({ ...prev, [k]: v }))}
+        />
+
         <div className="space-y-2 text-xs">
           <div className="flex justify-between text-slate-600">
             <span>সাবটোটাল ({quantity}টি পণ্য{includeBump && hasBump ? " + অ্যাড-অন" : ""}):</span>
@@ -867,6 +945,31 @@ export default function LandingClient({ slug }: { slug: string }) {
             {trustPromise?.trim() ? <p className="text-xs font-semibold text-slate-700">🚚 {trustPromise.trim()}</p> : null}
             {trustPhone?.trim() ? <p className="text-xs text-slate-500">সাপোর্ট: <span className="font-mono font-semibold">{trustPhone.trim()}</span></p> : null}
           </div>
+        ) : null}
+
+        {/* GB3 (GC8): terms consent + Turnstile + advance notice. */}
+        {data.checkoutTrust?.termsRequired ? (
+          <label className="flex cursor-pointer items-start gap-2 text-sm font-semibold text-slate-800">
+            <input type="checkbox" className="mt-0.5" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />
+            <span>
+              আমি শর্তাবলি পড়েছি এবং সম্মত আছি
+              {termsHrefFor(data.checkoutTrust, organization.slug) ? (
+                <> — <a href={termsHrefFor(data.checkoutTrust, organization.slug) ?? undefined} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline" onClick={(e) => e.stopPropagation()}>শর্তাবলি দেখুন</a></>
+              ) : null}
+            </span>
+          </label>
+        ) : null}
+        {captchaSiteKeyFor(data.checkoutTrust, "checkout") ? (
+          <TurnstileWidget siteKey={captchaSiteKeyFor(data.checkoutTrust, "checkout") ?? ""} onToken={setCaptchaToken} />
+        ) : null}
+        {data.checkoutTrust?.cod.advanceAboveMinor && exceedsMinor(String(subtotalPreview), data.checkoutTrust.cod.advanceAboveMinor) ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">এই অর্ডারের জন্য অগ্রিম পেমেন্ট আবশ্যক — অর্ডারের পর দোকান অগ্রিমের বিষয়ে আপনার সাথে যোগাযোগ করবে। এই পেজে কোনো পেমেন্ট নেওয়া হয় না।</p>
+        ) : null}
+        {/* AB4: payload-carried deposit notice (when present). */}
+        {data.deposit ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+            এই অর্ডারে {taka(data.deposit.amountMinor)} advance প্রয়োজন — {data.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয় না।
+          </p>
         ) : null}
 
         <button

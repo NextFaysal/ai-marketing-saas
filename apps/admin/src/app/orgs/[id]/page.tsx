@@ -14,6 +14,24 @@ interface OrgDetail {
   subscription?: { plan: string; status: string; currentPeriodEnd?: string | null } | null;
   counts: { products: number; orders: number; conversations: number; campaigns: number };
   aiDailyLimitOverride?: number | null; broadcastCapOverride?: number | null; seatLimit?: number | null;
+  // AB8 (AX24): white-label — platform branding fully hidden for this org.
+  whiteLabel?: boolean;
+  // GC21 (GB9): merchant verification + recorded storage usage.
+  verificationStatus?: string; verificationNote?: string | null; verificationSubmittedAt?: string | null;
+  businessProfile?: {
+    tradeLicenseNo?: string | null; businessAddress?: string | null; address?: string | null;
+    contactPhone?: string | null; contactEmail?: string | null; city?: string | null;
+  } | null;
+  storageBytes?: string; storageAssetCount?: number; storageMeteredFrom?: string;
+}
+
+function formatBytes(bytesStr?: string): string {
+  const n = Number(bytesStr ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0 বাইট";
+  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  let v = n; let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
 }
 
 /** ADX6 tabs — every tab's content already existed on this page;
@@ -35,6 +53,7 @@ export default function OrgDetailPage() {
   const [data, setData] = React.useState<OrgDetail | null>(null);
   const [notes, setNotes] = React.useState<{ id: string; body: string; createdAt: string }[]>([]);
   const [note, setNote] = React.useState("");
+  const [verificationNote, setVerificationNote] = React.useState("");
   const [msg, setMsg] = React.useState("");
   const [tab, setTab] = React.useState("summary");
   const [limits, setLimits] = React.useState<{ aiDailyLimitOverride: string; broadcastCapOverride: string; seatLimit: string }>({ aiDailyLimitOverride: "", broadcastCapOverride: "", seatLimit: "" });
@@ -138,6 +157,50 @@ export default function OrgDetailPage() {
               </div>
               <p className="mt-1 text-xs text-slate-500">স্থায়ী Deletion শুধু DELETED অবস্থার Org এর জন্য, নাম হুবহু লিখে নিশ্চিত করতে হয়। Deletion Certificate (কোন Table থেকে কত Row) Platform Audit Log এ থেকে যায়।</p>
             </div>
+            <div className="border-t border-slate-800 pt-3">
+              <div className="mb-2 font-semibold">🏅 Merchant Verification (GC21)</div>
+              <div className="space-y-1.5 text-sm">
+                <div><span className="text-slate-400">অবস্থা:</span>{" "}
+                  {data.verificationStatus === "verified" ? <span className="abadge-green">verified · যাচাইকৃত</span>
+                    : data.verificationStatus === "pending" ? <span className="abadge-amber">pending · রিভিউ বাকি</span>
+                    : data.verificationStatus === "rejected" ? <span className="abadge-amber">rejected · ফিরিয়ে দেওয়া</span>
+                    : <span className="abadge-amber">{data.verificationStatus ?? "unverified"}</span>}
+                  {data.verificationSubmittedAt ? <span className="ml-2 text-xs text-slate-500">জমা: {fmtDateTime(data.verificationSubmittedAt)}</span> : null}
+                </div>
+                <div><span className="text-slate-400">ট্রেড লাইসেন্স নম্বর:</span> {data.businessProfile?.tradeLicenseNo ?? "—"}</div>
+                <div><span className="text-slate-400">ব্যবসার ঠিকানা:</span> {data.businessProfile?.businessAddress ?? data.businessProfile?.address ?? "—"}</div>
+                <div><span className="text-slate-400">যোগাযোগ:</span> {data.businessProfile?.contactPhone ?? "—"} · {data.businessProfile?.contactEmail ?? "—"}</div>
+                {data.verificationNote ? <div><span className="text-slate-400">শেষ নোট (মার্চেন্ট দেখেন):</span> “{data.verificationNote}”</div> : null}
+                <div><span className="text-slate-400">স্টোরেজ ব্যবহার:</span> {formatBytes(data.storageBytes)} · {data.storageAssetCount ?? 0}টি ফাইল <span className="text-xs text-slate-500">({data.storageMeteredFrom ?? "মিডিয়া লাইব্রেরিতে রেকর্ডকৃত আপলোড থেকে হিসাব"})</span></div>
+              </div>
+              {data.verificationStatus === "pending" ? (
+                <div className="mt-3 space-y-2">
+                  <input className="ainput w-full" placeholder="নোট — Reject করলে আবশ্যক, মার্চেন্ট এটি দেখতে পাবেন" value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} />
+                  <div className="flex flex-wrap gap-2">
+                    <button className="abtn" onClick={async () => {
+                      try {
+                        await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "approve", note: verificationNote.trim() || undefined }) });
+                        setMsg("প্রতিষ্ঠানটি যাচাইকৃত (verified) করা হয়েছে।");
+                        setVerificationNote("");
+                        await load();
+                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+                    }}>✅ Approve — যাচাইকৃত করুন</button>
+                    <button className="abtn-danger" onClick={async () => {
+                      if (!verificationNote.trim()) { setMsg("Reject করতে নোট লিখুন — মার্চেন্ট সেই কারণ দেখে ঠিক করে আবার জমা দেবেন।"); return; }
+                      try {
+                        await apiFetch(`/admin/organizations/${id}/verification`, { method: "POST", body: JSON.stringify({ decision: "reject", note: verificationNote.trim() }) });
+                        setMsg("আবেদন Reject করা হয়েছে — নোটসহ মার্চেন্টের কাছে পৌঁছেছে।");
+                        setVerificationNote("");
+                        await load();
+                      } catch (e) { setMsg(e instanceof Error ? e.message : "ব্যর্থ হয়েছে"); }
+                    }}>✗ Reject — ফিরিয়ে দিন</button>
+                  </div>
+                  <p className="text-xs text-slate-500">সিদ্ধান্ত Admin Audit Log এ রেকর্ড হয়। শুধু pending আবেদনই রিভিউ করা যায়।</p>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">রিভিউ করার মতো pending আবেদন নেই।</p>
+              )}
+            </div>
           </div>
         </div>
       ) : null}
@@ -199,6 +262,22 @@ export default function OrgDetailPage() {
             })}
             <p className="text-xs text-slate-500">Flag বন্ধ থাকলে ওই Org এ সংশ্লিষ্ট Beta ফিচার দেখাবে না (Tenant অ্যাপ ফ্ল্যাগ পড়ে যেখানে প্রযোজ্য)।</p>
           </div>
+          <div className="acard space-y-2">
+            <div className="font-semibold">🏷 White-label (AX24)</div>
+            <label className="flex items-center justify-between gap-3 text-sm">White-label
+              <input type="checkbox" checked={data.whiteLabel ?? false} onChange={async (e) => {
+                const next = e.target.checked;
+                try {
+                  // whiteLabel persists via the org-update PATCH this page already
+                  // uses for limits (LimitsDto) — there is no PATCH /admin/orgs/:id route.
+                  await apiFetch(`/admin/orgs/${id}/limits`, { method: "PATCH", body: JSON.stringify({ whiteLabel: next }) });
+                  setMsg(next ? "White-label চালু হয়েছে — এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের চিহ্ন আর থাকবে না।" : "White-label বন্ধ করা হয়েছে।");
+                  await load();
+                } catch (err) { setMsg(err instanceof Error ? err.message : "White-label আপডেট ব্যর্থ হয়েছে"); }
+              }} />
+            </label>
+            <p className="text-xs text-slate-500">White-label — চালু থাকলে এই প্রতিষ্ঠানের দোকান/ইমেইলে প্ল্যাটফর্মের কোনো চিহ্ন থাকবে না</p>
+          </div>
         </div>
       ) : null}
 
@@ -250,8 +329,7 @@ export default function OrgDetailPage() {
             <ul className="mt-2 space-y-1 text-sm text-slate-400">{notes.map((n) => <li key={n.id} className="rounded bg-slate-800 px-2 py-1.5">{n.body} <span className="text-xs text-slate-500">· {fmtDateTime(n.createdAt)}</span></li>)}</ul>
           </div>
         </div>
-      ) : null}
-    </AdminShell>
+      ) : null}    </AdminShell>
   );
 }
 

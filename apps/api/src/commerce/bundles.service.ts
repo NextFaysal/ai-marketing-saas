@@ -27,6 +27,318 @@ export class BundlesService {
     return (this.prisma as any).bundle;
   }
 
+  private slotTable(): any {
+    return (this.prisma as any).bundleSlot;
+  }
+
+  /**
+   * AB5 (AX8): slots of a bundle, in display order. `bundle` may
+   * be a bundle id or a bundle row; a row carrying an embedded
+   * `slots` array (an include-shaped read) is the fallback when
+   * the slot table yields nothing.
+   */
+  async loadSlots(orgId: string, bundle: any): Promise<any[]> {
+    const bundleId = typeof bundle === "string" ? bundle : bundle?.id;
+    if (!bundleId) return [];
+    const table = this.slotTable();
+    if (table?.findMany) {
+      const rows = await table
+        .findMany({
+          where: { bundleId, organizationId: orgId },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        })
+        .catch(() => null);
+      if (Array.isArray(rows) && rows.length > 0) return rows;
+      if (Array.isArray(rows)) {
+        // Table answered (possibly empty) — only fall back to an
+        // embedded array when the table is genuinely absent.
+        if (!Array.isArray(bundle?.slots)) return rows;
+        if (rows.length === 0 && bundle.slots.length === 0) return rows;
+      }
+    }
+    return Array.isArray(bundle?.slots) ? bundle.slots : [];
+  }
+
+  /**
+   * AB5 (AX8): the CURRENT option pool of one slot.
+   * - "category": ACTIVE products of the org with that
+   *   categoryId, capped at 60.
+   * - "products": the listed products that still exist in the
+   *   org AND are ACTIVE, in listed order.
+   * Picks are product-level in v1: variantSku is always null —
+   * a pick names a PRODUCT; if the product has variants the
+   * pick resolves the product itself at the product price.
+   */
+  async slotPool(orgId: string, slot: any): Promise<any[]> {
+    if (slot?.sourceType === "category") {
+      const categoryId = slot?.sourceRef?.categoryId;
+      if (typeof categoryId !== "string" || !categoryId) return [];
+      const table = (this.prisma as any).product;
+      if (!table?.findMany) return [];
+      const rows = await table
+        .findMany({
+          where: { organizationId: orgId, categoryId, status: "ACTIVE" },
+          orderBy: [{ createdAt: "asc" }],
+          take: 60,
+        })
+        .catch(() => []);
+      return rows ?? [];
+    }
+    if (slot?.sourceType === "products") {
+      const ids: any[] = Array.isArray(slot?.sourceRef?.productIds)
+        ? slot.sourceRef.productIds
+        : [];
+      const out: any[] = [];
+      for (const productId of ids) {
+        const product = await (this.prisma as any).product
+          .findFirst({ where: { id: productId, organizationId: orgId } })
+          .catch(() => null);
+        if (product && product.status === "ACTIVE") out.push(product);
+      }
+      return out;
+    }
+    return [];
+  }
+
+  /** One slot in the wire shape shared by staff + shop payloads. */
+  async serializeSlot(orgId: string, slot: any): Promise<any> {
+    const pool = await this.slotPool(orgId, slot).catch(() => []);
+    return {
+      id: slot.id ?? null,
+      label: slot.label,
+      chooseQty: Number(slot.chooseQty ?? 1),
+      sourceType: slot.sourceType,
+      sourceRef: slot.sourceRef ?? null,
+      options: pool.map((p: any) => ({
+        productId: p.id,
+        name: p.name ?? null,
+        imageUrl: p.imageUrl ?? null,
+        variantSku: null,
+        regularUnitMinor: p.priceMinor != null ? String(p.priceMinor) : "0",
+      })),
+    };
+  }
+
+  async serializeSlots(orgId: string, bundle: any): Promise<any[]> {
+    const slots = await this.loadSlots(orgId, bundle).catch(() => []);
+    const out: any[] = [];
+    for (const slot of slots) out.push(await this.serializeSlot(orgId, slot));
+    return out;
+  }
+
+  /**
+   * AB5 (AX8): validate + normalize raw slots. Each slot:
+   * { label (required, ≤120), chooseQty int 1..20,
+   *   sourceType "category"|"products", sourceRef } —
+   * category → { categoryId } must be an org Category row;
+   * products → { productIds } 1..50 ids, all org products.
+   * A bundle's total slots ≤ 6. `bundleId` is accepted for
+   * call-site symmetry (create passes null — no row exists yet).
+   */
+  async validateSlots(orgId: string, bundleId: string | null, rawSlots: unknown): Promise<any[]> {
+    void bundleId;
+    if (!Array.isArray(rawSlots)) {
+      throw new BadRequestException("বান্ডলের স্লটের তালিকা দিতে হবে");
+    }
+    if (rawSlots.length > 6) {
+      throw new BadRequestException("বান্ডলে সর্বোচ্চ ৬টি স্লট থাকতে পারবে");
+    }
+    const out: any[] = [];
+    for (let i = 0; i < rawSlots.length; i++) {
+      const entry: any = (rawSlots as any[])[i] ?? {};
+      const label = typeof entry.label === "string" ? entry.label.trim() : "";
+      if (!label) throw new BadRequestException("প্রতিটি স্লটের লেবেল আবশ্যক");
+      if (label.length > 120) {
+        throw new BadRequestException("স্লটের লেবেল সর্বোচ্চ ১২০ অক্ষরের হতে পারবে");
+      }
+      const chooseQty = entry.chooseQty;
+      if (!Number.isInteger(chooseQty) || chooseQty < 1 || chooseQty > 20) {
+        throw new BadRequestException(`"${label}" স্লটে বেছে নেওয়ার সংখ্যা ১–২০ হতে হবে`);
+      }
+      const sourceType = entry.sourceType;
+      if (sourceType !== "category" && sourceType !== "products") {
+        throw new BadRequestException(`"${label}" স্লটের ধরন সঠিক নয়`);
+      }
+      let sourceRef: any;
+      if (sourceType === "category") {
+        const categoryId = entry.sourceRef?.categoryId;
+        if (typeof categoryId !== "string" || !categoryId) {
+          throw new BadRequestException(`"${label}" স্লটের জন্য ক্যাটাগরি বেছে নিন`);
+        }
+        const catTable = (this.prisma as any).category ?? (this.prisma as any).productCategory;
+        const cat = catTable?.findFirst
+          ? await catTable
+              .findFirst({ where: { id: categoryId, organizationId: orgId } })
+              .catch(() => null)
+          : null;
+        if (!cat) {
+          throw new BadRequestException(`"${label}" স্লটের ক্যাটাগরি পাওয়া যায়নি (এই সংস্থার নয়)`);
+        }
+        sourceRef = { categoryId };
+      } else {
+        const rawIds = entry.sourceRef?.productIds;
+        if (!Array.isArray(rawIds) || rawIds.length < 1 || rawIds.length > 50) {
+          throw new BadRequestException(`"${label}" স্লটে ১–৫০টি পণ্য দিতে হবে`);
+        }
+        const productIds: string[] = [];
+        for (const pid of rawIds) {
+          if (typeof pid !== "string" || !pid) {
+            throw new BadRequestException(`"${label}" স্লটের প্রতিটি পণ্যের আইডি দিতে হবে`);
+          }
+          if (!productIds.includes(pid)) productIds.push(pid);
+        }
+        for (const pid of productIds) {
+          const product = await (this.prisma as any).product
+            .findFirst({ where: { id: pid, organizationId: orgId } })
+            .catch(() => null);
+          if (!product) {
+            throw new BadRequestException(`"${label}" স্লটের পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${pid}`);
+          }
+        }
+        sourceRef = { productIds };
+      }
+      out.push({ label, chooseQty, sourceType, sourceRef, sortOrder: i });
+    }
+    return out;
+  }
+
+  /** Wholesale-replace a bundle's slots with normalized rows. */
+  private async replaceSlots(orgId: string, bundleId: string, normalized: any[]): Promise<void> {
+    const table = this.slotTable();
+    if (!table?.create) return;
+    if (table.deleteMany) {
+      await table.deleteMany({ where: { bundleId, organizationId: orgId } });
+    } else if (table.findMany && table.delete) {
+      const existing = await table
+        .findMany({ where: { bundleId, organizationId: orgId } })
+        .catch(() => []);
+      for (const row of existing ?? []) {
+        await table.delete({ where: { id: row.id } }).catch(() => undefined);
+      }
+    }
+    for (let i = 0; i < normalized.length; i++) {
+      const s = normalized[i];
+      await table.create({
+        data: {
+          organizationId: orgId,
+          bundleId,
+          label: s.label,
+          chooseQty: s.chooseQty,
+          sourceType: s.sourceType,
+          sourceRef: s.sourceRef,
+          sortOrder: s.sortOrder ?? i,
+        },
+      });
+    }
+  }
+
+  /**
+   * AB5 (AX8): validate a buyer's picks against the bundle's
+   * CURRENT slots + pools. Returns normalized picks
+   * [{ slotId, productId }] in slot order, or throws a Bengali
+   * BadRequest. Rules: a slotted bundle REQUIRES every slot be
+   * satisfied exactly (picks per slot == chooseQty, each product
+   * in that slot's current pool and ACTIVE, no duplicate
+   * product within one slot, unknown slots refused); a slotless
+   * bundle refuses any picks.
+   */
+  async validatePicks(orgId: string, bundle: any, picks: unknown): Promise<any[]> {
+    const slots = await this.loadSlots(orgId, bundle).catch(() => []);
+    const hasPicks = Array.isArray(picks) ? picks.length > 0 : picks != null;
+    if (slots.length === 0) {
+      if (hasPicks) {
+        throw new BadRequestException("এই বান্ডলে কোনো স্লট নেই — এতে পিক দেওয়া যাবে না");
+      }
+      return [];
+    }
+    if (!Array.isArray(picks) || picks.length === 0) {
+      throw new BadRequestException(
+        `বান্ডলের "${slots[0].label}" স্লটের জন্য পণ্য বেছে নিন`,
+      );
+    }
+    const slotById = new Map<string, any>(slots.map((s: any) => [String(s.id), s]));
+    const bySlot = new Map<string, any[]>();
+    for (const raw of picks as any[]) {
+      const slotId = raw?.slotId;
+      const productId = raw?.productId;
+      if (typeof slotId !== "string" || !slotId || typeof productId !== "string" || !productId) {
+        throw new BadRequestException("প্রতিটি পিকের স্লট ও পণ্যের আইডি দিতে হবে");
+      }
+      const slot = slotById.get(slotId);
+      if (!slot) {
+        throw new BadRequestException("পিকে অজানা স্লট দেওয়া হয়েছে — এই বান্ডলে সেই স্লট নেই");
+      }
+      const list = bySlot.get(slotId) ?? [];
+      list.push({ slotId, productId });
+      bySlot.set(slotId, list);
+    }
+    const normalized: any[] = [];
+    for (const slot of slots) {
+      const list = bySlot.get(String(slot.id)) ?? [];
+      if (list.length !== Number(slot.chooseQty ?? 1)) {
+        throw new BadRequestException(
+          `"${slot.label}" স্লট থেকে ঠিক ${Number(slot.chooseQty ?? 1)}টি পণ্য বেছে নিন`,
+        );
+      }
+      const seen = new Set<string>();
+      for (const pick of list) {
+        if (seen.has(pick.productId)) {
+          throw new BadRequestException(`"${slot.label}" স্লটে একই পণ্য দুবার বেছে নেওয়া যাবে না`);
+        }
+        seen.add(pick.productId);
+      }
+      // Pool membership is the ACTIVE check too: slotPool only
+      // ever returns ACTIVE products of this org.
+      const pool = await this.slotPool(orgId, slot);
+      const poolIds = new Set(pool.map((p: any) => String(p.id)));
+      for (const pick of list) {
+        if (!poolIds.has(pick.productId)) {
+          throw new BadRequestException(
+            `"${slot.label}" স্লটে এই পণ্যটি বেছে নেওয়া যাবে না (পণ্যটি পাওয়া যাচ্ছে না বা সক্রিয় নয়)`,
+          );
+        }
+        normalized.push(pick);
+      }
+    }
+    return normalized;
+  }
+
+  /**
+   * AB5 (AX8): fixed components PLUS one component per pick.
+   * PRICING RULE: the bundle price stays the merchant-set
+   * bundlePriceMinor REGARDLESS of picks — slots are
+   * choice-within-price. Each pick contributes ONE component
+   * unit (qty 1) to the same allocateBundle expansion,
+   * weighted by its regular price like a fixed item.
+   */
+  async resolveComponentsWithPicks(orgId: string, bundle: any, picks: unknown): Promise<any[]> {
+    const fixed = await this.resolveComponents(orgId, bundle);
+    if (!Array.isArray(picks) || picks.length === 0) return fixed;
+    const slots = await this.loadSlots(orgId, bundle).catch(() => []);
+    const slotById = new Map<string, any>(slots.map((s: any) => [String(s.id), s]));
+    const out = [...fixed];
+    for (const pick of picks as any[]) {
+      const product = await (this.prisma as any).product
+        .findFirst({ where: { id: pick?.productId, organizationId: orgId } })
+        .catch(() => null);
+      const regularUnitMinor =
+        product?.priceMinor != null ? BigInt(product.priceMinor) : 0n;
+      const slot = slotById.get(String(pick?.slotId ?? ""));
+      out.push({
+        productId: pick?.productId,
+        name: product?.name ?? null,
+        product: product ?? null,
+        variant: null,
+        variantSku: null,
+        qty: 1,
+        regularUnitMinor,
+        slotId: pick?.slotId ?? null,
+        slotLabel: slot?.label ?? null,
+      });
+    }
+    return out;
+  }
+
   private async loadOr404(orgId: string, id: string): Promise<any> {
     const row = await this.table().findFirst({ where: { id, organizationId: orgId } });
     if (!row) throw new NotFoundException("Bundle not found in this organization");
@@ -146,6 +458,9 @@ export class BundlesService {
       items: Array.isArray(bundle.items) ? bundle.items : [],
       regularTotalMinor: regularTotalMinor.toString(),
       hasMissingComponents: comps.some((c) => !c.product),
+      // AB5 (AX8): slots with their CURRENT pools resolved, so
+      // the shop/staff UI never re-derives pools.
+      slots: await this.serializeSlots(bundle.organizationId, bundle).catch(() => []),
     };
   }
 
@@ -178,6 +493,12 @@ export class BundlesService {
     if (!name) throw new BadRequestException("বান্ডলের নাম আবশ্যক");
     const bundlePriceMinor = this.parseBundlePrice(dto.bundlePriceMinor);
     const items = await this.validateItems(orgId, dto.items);
+    // AB5 (AX8): slots present (incl. []) are validated BEFORE
+    // any write, then created with the bundle.
+    const hasSlots = (dto as any).slots !== undefined;
+    const normalizedSlots = hasSlots
+      ? await this.validateSlots(orgId, null, (dto as any).slots)
+      : null;
     const row = await this.table().create({
       data: {
         organizationId: orgId,
@@ -190,6 +511,7 @@ export class BundlesService {
         sortOrder: dto.sortOrder ?? 0,
       },
     });
+    if (normalizedSlots) await this.replaceSlots(orgId, row.id, normalizedSlots);
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: "bundle.created",
       entityType: "Bundle", entityId: row.id, metadata: { name },
@@ -212,7 +534,15 @@ export class BundlesService {
     if (dto.active !== undefined) data.active = dto.active;
     if (dto.sortOrder !== undefined) data.sortOrder = dto.sortOrder;
     void existing;
+    // AB5 (AX8): slots present (incl. []) REPLACE the bundle's
+    // slots wholesale in the same call, validated first; when
+    // absent, slots are untouched.
+    const hasSlots = (dto as any).slots !== undefined;
+    const normalizedSlots = hasSlots
+      ? await this.validateSlots(orgId, id, (dto as any).slots)
+      : null;
     const updated = await this.table().update({ where: { id }, data });
+    if (normalizedSlots) await this.replaceSlots(orgId, id, normalizedSlots);
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: "bundle.updated",
       entityType: "Bundle", entityId: id,
@@ -257,7 +587,11 @@ export class BundlesService {
     const out: any[] = [];
     for (const bundle of rows) {
       const comps = await this.resolveComponents(orgId, bundle);
-      if (comps.length === 0) continue;
+      // AB5 (AX8): the same slots shape as the staff serialize.
+      const slots = await this.serializeSlots(orgId, bundle).catch(() => []);
+      // A slots-only bundle (no fixed items) is still a real
+      // bundle — only a bundle with NEITHER is empty.
+      if (comps.length === 0 && slots.length === 0) continue;
       if (comps.some((c) => !c.product || c.product.status !== "ACTIVE")) continue;
       const regularTotalMinor = comps.reduce(
         (s, c) => s + c.regularUnitMinor * BigInt(c.qty),
@@ -282,6 +616,7 @@ export class BundlesService {
           qty: c.qty,
           unitPriceMinor: c.regularUnitMinor.toString(),
         })),
+        slots,
       });
     }
     return out;

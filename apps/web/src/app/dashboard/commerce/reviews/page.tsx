@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { reviewSourceLabel, reviewStars } from "@/components/product-reviews";
+import { ReviewInsightCard } from "@/components/review-insight-card";
 
 // EC15 — staff review moderation. Consumes
 // apps/api/src/orders/product-reviews.controller.ts:
@@ -104,6 +105,9 @@ export default function ReviewsModerationPage() {
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+
+      {/* AB7 (AX15): per-product AI review summary */}
+      <ReviewInsightCard />
 
       <div className="card flex flex-wrap items-end gap-3 p-5">
         <label className="block text-sm">উৎস

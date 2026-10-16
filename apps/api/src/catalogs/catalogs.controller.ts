@@ -1,17 +1,28 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/common";
-import { IsString, MaxLength } from "class-validator";
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
 import { CatalogsService } from "./catalogs.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
-class CreateCatalogDto {
+/** AB5 (AX10): the staff-entered Page / Instagram link fields,
+ * accepted at create/register and patchable afterwards. */
+class CatalogLinkFields {
+  @IsOptional() @IsString() @MaxLength(200) pageId?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) pageName?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) instagramId?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) instagramName?: string | null;
+}
+class CreateCatalogDto extends CatalogLinkFields {
   @IsString() @MaxLength(200) name!: string;
   @IsString() businessId!: string;
 }
-class RegisterCatalogDto {
+class RegisterCatalogDto extends CatalogLinkFields {
   @IsString() @MaxLength(200) name!: string;
   @IsString() externalCatalogId!: string;
+}
+class UpdateCatalogDto extends CatalogLinkFields {
+  @IsOptional() @IsBoolean() autoSync?: boolean;
 }
 
 @PermissionArea("ads")
@@ -52,5 +63,26 @@ export class CatalogsController {
   @Post(":catalogId/push-products") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   push(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("catalogId") id: string) {
     return this.catalogs.pushProducts(orgId, user.userId, id);
+  }
+
+  /** AB5 (AX10): partial catalog settings — autoSync opt-in +
+   * the Page / Instagram link fields (null clears a field). */
+  @Patch(":catalogId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  update(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("catalogId") catalogId: string, @Body() dto: UpdateCatalogDto) {
+    return this.catalogs.updateCatalog(orgId, user.userId, catalogId, dto ?? ({} as any));
+  }
+
+  /** AB5 (AX10): catalog-level auto-sync status (queue counts +
+   * the catalog's last-sync stamp). */
+  @Get(":catalogId/sync-status")
+  syncStatus(@Param("organizationId") orgId: string, @Param("catalogId") catalogId: string) {
+    return this.catalogs.syncStatus(orgId, catalogId);
+  }
+
+  /** AB5 (AX10): one product's auto-sync state in this catalog,
+   * read from the sync-record queue only. */
+  @Get(":catalogId/products/:productId/sync-state")
+  productSyncState(@Param("organizationId") orgId: string, @Param("catalogId") catalogId: string, @Param("productId") productId: string) {
+    return this.catalogs.productSyncState(orgId, catalogId, productId);
   }
 }

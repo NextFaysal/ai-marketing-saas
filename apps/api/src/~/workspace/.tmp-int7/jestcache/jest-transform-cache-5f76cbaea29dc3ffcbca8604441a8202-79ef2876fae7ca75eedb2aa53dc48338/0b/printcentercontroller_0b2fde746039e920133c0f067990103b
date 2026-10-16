@@ -1,0 +1,128 @@
+b6fd283178ad694702b000465b3d5b53
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PrintCenterController = void 0;
+const common_1 = require("@nestjs/common");
+const print_center_service_1 = require("./print-center.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
+/**
+ * ON10 — Print & Document Center endpoints. Same prefix as
+ * OrdersController; this controller is registered FIRST in
+ * OrdersModule so the literal "print-jobs" / "print-template"
+ * segments win over OrdersController's ":orderId" route (the
+ * ON9 pattern). PDF responses stream through the exact
+ * sendPdf mechanism the courier controller uses; a failed job
+ * answers 422 (the job row + Bengali error are in the body) —
+ * never a PDF that does not exist.
+ */
+let PrintCenterController = class PrintCenterController {
+    printCenter;
+    constructor(printCenter) {
+        this.printCenter = printCenter;
+    }
+    getTemplate(orgId) {
+        return this.printCenter.getTemplate(orgId);
+    }
+    updateTemplate(user, orgId, dto) {
+        return this.printCenter.updateTemplate(orgId, user.userId, dto ?? {});
+    }
+    /** Binary PDF response — the courier controller's sendPdf, verbatim. */
+    sendPdf(res, buf, filename) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", String(buf.length));
+        res.end(buf);
+    }
+    async createJob(user, orgId, dto, res) {
+        const { job, pdf } = await this.printCenter.createJob(orgId, user.userId, dto ?? {});
+        if (!pdf) {
+            throw new common_1.HttpException({ message: job.error ?? "প্রিন্ট তৈরি করা যায়নি", jobId: job.id, failedOrderIds: job.failedOrderIds }, common_1.HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+        res.setHeader("X-Print-Job-Id", job.id);
+        if (job.failedOrderIds.length)
+            res.setHeader("X-Print-Job-Failed-Order-Ids", job.failedOrderIds.join(","));
+        this.sendPdf(res, pdf, `print-${job.type}-${job.id}.pdf`);
+    }
+    listJobs(orgId, page, pageSize) {
+        return this.printCenter.listJobs(orgId, page, pageSize);
+    }
+    getJob(orgId, jobId) {
+        return this.printCenter.getJob(orgId, jobId);
+    }
+};
+exports.PrintCenterController = PrintCenterController;
+__decorate([
+    (0, common_1.Get)("print-template"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PrintCenterController.prototype, "getTemplate", null);
+__decorate([
+    (0, common_1.Put)("print-template"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", void 0)
+], PrintCenterController.prototype, "updateTemplate", null);
+__decorate([
+    __param(0, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Buffer, String]),
+    __metadata("design:returntype", void 0)
+], PrintCenterController.prototype, "sendPdf", null);
+__decorate([
+    (0, common_1.Post)("print-jobs"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object, Object]),
+    __metadata("design:returntype", Promise)
+], PrintCenterController.prototype, "createJob", null);
+__decorate([
+    (0, common_1.Get)("print-jobs"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("page")),
+    __param(2, (0, common_1.Query)("pageSize")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], PrintCenterController.prototype, "listJobs", null);
+__decorate([
+    (0, common_1.Get)("print-jobs/:jobId"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("jobId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], PrintCenterController.prototype, "getJob", null);
+exports.PrintCenterController = PrintCenterController = __decorate([
+    (0, decorators_1.PermissionArea)("orders"),
+    (0, common_1.Controller)("organizations/:organizationId/orders"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [print_center_service_1.PrintCenterService])
+], PrintCenterController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVycy9wcmludC1jZW50ZXIuY29udHJvbGxlci50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQ0FBMkg7QUFFM0gsaUVBQTREO0FBQzVELHFEQUFvRjtBQUNwRix5REFBcUQ7QUFDckQsdURBQW1EO0FBRW5ELE1BQU0sV0FBVyxHQUFHLENBQUMsT0FBTyxFQUFFLE9BQU8sRUFBRSxtQkFBbUIsRUFBRSxlQUFlLENBQVUsQ0FBQztBQUV0Rjs7Ozs7Ozs7O0dBU0c7QUFJSSxJQUFNLHFCQUFxQixHQUEzQixNQUFNLHFCQUFxQjtJQUNIO0lBQTdCLFlBQTZCLFdBQStCO1FBQS9CLGdCQUFXLEdBQVgsV0FBVyxDQUFvQjtJQUFHLENBQUM7SUFHaEUsV0FBVyxDQUEwQixLQUFhO1FBQ2hELE9BQU8sSUFBSSxDQUFDLFdBQVcsQ0FBQyxXQUFXLENBQUMsS0FBSyxDQUFDLENBQUM7SUFDN0MsQ0FBQztJQUdELGNBQWMsQ0FBZ0IsSUFBYyxFQUEyQixLQUFhLEVBQVUsR0FFN0Y7UUFDQyxPQUFPLElBQUksQ0FBQyxXQUFXLENBQUMsY0FBYyxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEdBQUcsSUFBSSxFQUFFLENBQUMsQ0FBQztJQUN4RSxDQUFDO0lBRUQsd0VBQXdFO0lBQ2hFLE9BQU8sQ0FBUSxHQUFhLEVBQUUsR0FBVyxFQUFFLFFBQWdCO1FBQ2pFLEdBQUcsQ0FBQyxTQUFTLENBQUMsY0FBYyxFQUFFLGlCQUFpQixDQUFDLENBQUM7UUFDakQsR0FBRyxDQUFDLFNBQVMsQ0FBQyxxQkFBcUIsRUFBRSx5QkFBeUIsUUFBUSxHQUFHLENBQUMsQ0FBQztRQUMzRSxHQUFHLENBQUMsU0FBUyxDQUFDLGdCQUFnQixFQUFFLE1BQU0sQ0FBQyxHQUFHLENBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQztRQUNwRCxHQUFHLENBQUMsR0FBRyxDQUFDLEdBQUcs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QkFBbUIsQ0FBQztJQUNqQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTs7OzttREFFN0Q7Z0NBL0NVLHFCQUFxQjtJQUhqQyxJQUFBLDJCQUFjLEVBQUMsUUFBUSxDQUFDO0lBQ3hCLElBQUEsbUJBQVUsRUFBQyxzQ0FBc0MsQ0FBQztJQUNsRCxJQUFBLGtCQUFTLEVBQUMsMEJBQVcsRUFBRSx3QkFBVSxDQUFDO3FDQUVTLHlDQUFrQjtHQURqRCxxQkFBcUIsQ0FnRGpDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9vcmRlcnMvcHJpbnQtY2VudGVyLmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQm9keSwgQ29udHJvbGxlciwgR2V0LCBIdHRwRXhjZXB0aW9uLCBIdHRwU3RhdHVzLCBQYXJhbSwgUG9zdCwgUHV0LCBRdWVyeSwgUmVzLCBVc2VHdWFyZHMgfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IFJlc3BvbnNlIH0gZnJvbSBcImV4cHJlc3NcIjtcbmltcG9ydCB7IFByaW50Q2VudGVyU2VydmljZSB9IGZyb20gXCIuL3ByaW50LWNlbnRlci5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBDdXJyZW50VXNlciwgQXV0aFVzZXIsIFJvbGVzLCBQZXJtaXNzaW9uQXJlYSB9IGZyb20gXCIuLi9jb21tb24vZGVjb3JhdG9yc1wiO1xuaW1wb3J0IHsgVGVuYW50R3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3RlbmFudC5ndWFyZFwiO1xuaW1wb3J0IHsgUm9sZXNHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vcm9sZXMuZ3VhcmRcIjtcblxuY29uc3QgV1JJVEVfUk9MRVMgPSBbXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCJdIGFzIGNvbnN0O1xuXG4vKipcbiAqIE9OMTAg4oCUIFByaW50ICYgRG9jdW1lbnQgQ2VudGVyIGVuZHBvaW50cy4gU2FtZSBwcmVmaXggYXNcbiAqIE9yZGVyc0NvbnRyb2xsZXI7IHRoaXMgY29udHJvbGxlciBpcyByZWdpc3RlcmVkIEZJUlNUIGluXG4gKiBPcmRlcnNNb2R1bGUgc28gdGhlIGxpdGVyYWwgXCJwcmludC1qb2JzXCIgLyBcInByaW50LXRlbXBsYXRlXCJcbiAqIHNlZ21lbnRzIHdpbiBvdmVyIE9yZGVyc0NvbnRyb2xsZXIncyBcIjpvcmRlcklkXCIgcm91dGUgKHRoZVxuICogT045IHBhdHRlcm4pLiBQREYgcmVzcG9uc2VzIHN0cmVhbSB0aHJvdWdoIHRoZSBleGFjdFxuICogc2VuZFBkZiBtZWNoYW5pc20gdGhlIGNvdXJpZXIgY29udHJvbGxlciB1c2VzOyBhIGZhaWxlZCBqb2JcbiAqIGFuc3dlcnMgNDIyICh0aGUgam9iIHJvdyArIEJlbmdhbGkgZXJyb3IgYXJlIGluIHRoZSBib2R5KSDigJRcbiAqIG5ldmVyIGEgUERGIHRoYXQgZG9lcyBub3QgZXhpc3QuXG4gKi9cbkBQZXJtaXNzaW9uQXJlYShcIm9yZGVyc1wiKVxuQENvbnRyb2xsZXIoXCJvcmdhbml6YXRpb25zLzpvcmdhbml6YXRpb25JZC9vcmRlcnNcIilcbkBVc2VHdWFyZHMoVGVuYW50R3VhcmQsIFJvbGVzR3VhcmQpXG5leHBvcnQgY2xhc3MgUHJpbnRDZW50ZXJDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBwcmludENlbnRlcjogUHJpbnRDZW50ZXJTZXJ2aWNlKSB7fVxuXG4gIEBHZXQoXCJwcmludC10ZW1wbGF0ZVwiKVxuICBnZXRUZW1wbGF0ZShAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMucHJpbnRDZW50ZXIuZ2V0VGVtcGxhdGUob3JnSWQpO1xuICB9XG5cbiAgQFB1dChcInByaW50LXRlbXBsYXRlXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKC4uLldSSVRFX1JPTEVTKVxuICB1cGRhdGVUZW1wbGF0ZShAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQEJvZHkoKSBkdG86IHtcbiAgICBsb2dvVXJsPzogc3RyaW5nIHwgbnVsbDsgZm9vdGVyVGV4dD86IHN0cmluZyB8IG51bGw7IHRlcm1zVGV4dD86IHN0cmluZyB8IG51bGw7IGludm9pY2VOb3RlPzogc3RyaW5nIHwgbnVsbDtcbiAgfSkge1xuICAgIHJldHVybiB0aGlzLnByaW50Q2VudGVyLnVwZGF0ZVRlbXBsYXRlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvID8/IHt9KTtcbiAgfVxuXG4gIC8qKiBCaW5hcnkgUERGIHJlc3BvbnNlIOKAlCB0aGUgY291cmllciBjb250cm9sbGVyJ3Mgc2VuZFBkZiwgdmVyYmF0aW0uICovXG4gIHByaXZhdGUgc2VuZFBkZihAUmVzKCkgcmVzOiBSZXNwb25zZSwgYnVmOiBCdWZmZXIsIGZpbGVuYW1lOiBzdHJpbmcpIHtcbiAgICByZXMuc2V0SGVhZGVyKFwiQ29udGVudC1UeXBlXCIsIFwiYXBwbGljYXRpb24vcGRmXCIpO1xuICAgIHJlcy5zZXRIZWFkZXIoXCJDb250ZW50LURpc3Bvc2l0aW9uXCIsIGBhdHRhY2htZW50OyBmaWxlbmFtZT1cIiR7ZmlsZW5hbWV9XCJgKTtcbiAgICByZXMuc2V0SGVhZGVyKFwiQ29udGVudC1MZW5ndGhcIiwgU3RyaW5nKGJ1Zi5sZW5ndGgpKTtcbiAgICByZXMuZW5kKGJ1Zik7XG4gIH1cblxuICBAUG9zdChcInByaW50LWpvYnNcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoLi4uV1JJVEVfUk9MRVMpXG4gIGFzeW5jIGNyZWF0ZUpvYihAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQEJvZHkoKSBkdG86IHtcbiAgICB0eXBlPzogc3RyaW5nOyBvcmRlcklkcz86IHN0cmluZ1tdO1xuICB9LCBAUmVzKCkgcmVzOiBSZXNwb25zZSkge1xuICAgIGNvbnN0IHsgam9iLCBwZGYgfSA9IGF3YWl0IHRoaXMucHJpbnRDZW50ZXIuY3JlYXRlSm9iKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvID8/IHt9KTtcbiAgICBpZiAoIXBkZikge1xuICAgICAgdGhyb3cgbmV3IEh0dHBFeGNlcHRpb24oXG4gICAgICAgIHsgbWVzc2FnZTogam9iLmVycm9yID8/IFwi4Kaq4KeN4Kaw4Ka/4Kao4KeN4KafIOCmpOCniOCmsOCmvyDgppXgprDgpr4g4Kav4Ka+4Kav4Ka84Kao4Ka/XCIsIGpvYklkOiBqb2IuaWQsIGZhaWxlZE9yZGVySWRzOiBqb2IuZmFpbGVkT3JkZXJJZHMgfSxcbiAgICAgICAgSHR0cFN0YXR1cy5VTlBST0NFU1NBQkxFX0VOVElUWSxcbiAgICAgICk7XG4gICAgfVxuICAgIHJlcy5zZXRIZWFkZXIoXCJYLVByaW50LUpvYi1JZFwiLCBqb2IuaWQpO1xuICAgIGlmIChqb2IuZmFpbGVkT3JkZXJJZHMubGVuZ3RoKSByZXMuc2V0SGVhZGVyKFwiWC1QcmludC1Kb2ItRmFpbGVkLU9yZGVyLUlkc1wiLCBqb2IuZmFpbGVkT3JkZXJJZHMuam9pbihcIixcIikpO1xuICAgIHRoaXMuc2VuZFBkZihyZXMsIHBkZiwgYHByaW50LSR7am9iLnR5cGV9LSR7am9iLmlkfS5wZGZgKTtcbiAgfVxuXG4gIEBHZXQoXCJwcmludC1qb2JzXCIpXG4gIGxpc3RKb2JzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBRdWVyeShcInBhZ2VcIikgcGFnZT86IHN0cmluZywgQFF1ZXJ5KFwicGFnZVNpemVcIikgcGFnZVNpemU/OiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5wcmludENlbnRlci5saXN0Sm9icyhvcmdJZCwgcGFnZSwgcGFnZVNpemUpO1xuICB9XG5cbiAgQEdldChcInByaW50LWpvYnMvOmpvYklkXCIpXG4gIGdldEpvYihAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJqb2JJZFwiKSBqb2JJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMucHJpbnRDZW50ZXIuZ2V0Sm9iKG9yZ0lkLCBqb2JJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -10,6 +10,8 @@ class CreateTicketDto {
   @IsString() @MinLength(3) subject!: string;
   @IsString() @MinLength(1) body!: string;
   @IsOptional() @IsIn(["normal", "high"]) priority?: string;
+  // GC23: merchant-chosen category (service defaults "other").
+  @IsOptional() @IsIn(["billing", "technical", "account", "feature", "other"]) category?: string;
 }
 class ReplyDto { @IsString() @MinLength(1) body!: string; }
 class TenantStatusDto { @IsIn(["closed", "open"]) status!: string; }
@@ -17,6 +19,8 @@ class AdminTicketUpdateDto {
   @IsOptional() @IsIn(["open", "pending", "resolved", "closed"]) status?: string;
   @IsOptional() @IsString() assignedToId?: string | null;
   @IsOptional() @IsIn(["normal", "high"]) priority?: string;
+  // GC23: admin recategorization.
+  @IsOptional() @IsIn(["billing", "technical", "account", "feature", "other"]) category?: string;
 }
 
 @Controller("organizations")
@@ -58,8 +62,16 @@ export class TenantSupportController {
 export class AdminSupportController {
   constructor(private readonly support: SupportService) {}
 
-  @Get() list(@Query("status") status?: string, @Query("organizationId") organizationId?: string) {
-    return this.support.listTicketsAdmin({ status, organizationId });
+  @Get() list(
+    @Query("status") status?: string,
+    @Query("organizationId") organizationId?: string,
+    @Query("category") category?: string,
+    @Query("sla") sla?: string,
+  ) {
+    return this.support.listTicketsAdmin({
+      status, organizationId, category,
+      slaBreached: sla === "breached" ? true : undefined,
+    });
   }
   @Get(":id") get(@Param("id") id: string) { return this.support.getTicketAdmin(id); }
 

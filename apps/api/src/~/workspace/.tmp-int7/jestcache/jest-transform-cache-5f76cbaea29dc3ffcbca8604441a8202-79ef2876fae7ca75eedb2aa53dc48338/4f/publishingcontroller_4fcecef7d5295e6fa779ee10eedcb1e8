@@ -1,0 +1,256 @@
+4a03ef382d928adcb405b8331fe6b8ce
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PublishingController = void 0;
+const common_1 = require("@nestjs/common");
+const class_validator_1 = require("class-validator");
+const publishing_service_1 = require("./publishing.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+class GooglePublishDto {
+    adAccountId;
+    name;
+    dailyBudget;
+    countryCodes;
+    headlines;
+    descriptions;
+    finalUrl;
+    keywords;
+    negativeKeywords;
+    sitelinks;
+    callouts;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePublishDto.prototype, "adAccountId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], GooglePublishDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePublishDto.prototype, "dailyBudget", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "countryCodes", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "headlines", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "descriptions", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePublishDto.prototype, "finalUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "keywords", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "negativeKeywords", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "sitelinks", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePublishDto.prototype, "callouts", void 0);
+class TikTokPublishDto {
+    adAccountId;
+    name;
+    dailyBudget;
+    countryCodes;
+    adText;
+    landingUrl;
+    imageUrl;
+    videoUrl;
+    identityId;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "adAccountId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "dailyBudget", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], TikTokPublishDto.prototype, "countryCodes", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "adText", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "landingUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "imageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "videoUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TikTokPublishDto.prototype, "identityId", void 0);
+class GooglePmaxDto {
+    adAccountId;
+    name;
+    dailyBudget;
+    countryCodes;
+    finalUrl;
+    businessName;
+    headlines;
+    longHeadlines;
+    descriptions;
+    logoUrl;
+    imageUrls;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "adAccountId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "dailyBudget", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePmaxDto.prototype, "countryCodes", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "finalUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "businessName", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePmaxDto.prototype, "headlines", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePmaxDto.prototype, "longHeadlines", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePmaxDto.prototype, "descriptions", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GooglePmaxDto.prototype, "logoUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], GooglePmaxDto.prototype, "imageUrls", void 0);
+let PublishingController = class PublishingController {
+    publishing;
+    constructor(publishing) {
+        this.publishing = publishing;
+    }
+    list(orgId) { return this.publishing.list(orgId); }
+    google(user, orgId, dto) {
+        return this.publishing.publishGoogle(orgId, user.userId, dto);
+    }
+    googlePmax(user, orgId, dto) {
+        return this.publishing.publishGooglePmax(orgId, user.userId, dto);
+    }
+    tiktok(user, orgId, dto) {
+        return this.publishing.publishTikTok(orgId, user.userId, dto);
+    }
+};
+exports.PublishingController = PublishingController;
+__decorate([
+    (0, common_1.Get)("publications"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PublishingController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)("google"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, GooglePublishDto]),
+    __metadata("design:returntype", void 0)
+], PublishingController.prototype, "google", null);
+__decorate([
+    (0, common_1.Post)("google-pmax"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, GooglePmaxDto]),
+    __metadata("design:returntype", void 0)
+], PublishingController.prototype, "googlePmax", null);
+__decorate([
+    (0, common_1.Post)("tiktok"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, TikTokPublishDto]),
+    __metadata("design:returntype", void 0)
+], PublishingController.prototype, "tiktok", null);
+exports.PublishingController = PublishingController = __decorate([
+    (0, common_1.Controller)("organizations/:organizationId/publish"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard),
+    __metadata("design:paramtypes", [publishing_service_1.PublishingService])
+], PublishingController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3B1Ymxpc2hpbmcvcHVibGlzaGluZy5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUErRTtBQUMvRSxxREFBMkU7QUFDM0UsNkRBQXlEO0FBQ3pELHFEQUFvRTtBQUNwRSx5REFBcUQ7QUFDckQsdURBQW1EO0FBRW5ELE1BQU0sZ0JBQWdCO0lBQ1IsV0FBVyxDQUFVO0lBQ0wsSUFBSSxDQUFVO0lBQzlCLFdBQVcsQ0FBVTtJQUN0QixZQUFZLENBQVk7SUFDeEIsU0FBUyxDQUFZO0lBQ3JCLFlBQVksQ0FBWTtJQUN2QixRQUFRLENBQVU7SUFDbkIsUUFBUSxDQUEwQztJQUNwQyxnQkFBZ0IsQ0FBWTtJQUM1QixTQUFTLENBQW1DO0lBQzVDLFFBQVEsQ0FBWTtDQUM5QztBQVhhO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztxREFBc0I7QUFDTDtJQUEzQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs4Q0FBZTtBQUM5QjtJQUFYLElBQUEsMEJBQVEsR0FBRTs7cURBQXNCO0FBQ3RCO0lBQVYsSUFBQSx5QkFBTyxHQUFFOztzREFBeUI7QUFDeEI7SUFBVixJQUFBLHlCQUFPLEdBQUU7O21EQUFzQjtBQUNyQjtJQUFWLElBQUEseUJBQU8sR0FBRTs7c0RBQXlCO0FBQ3ZCO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztrREFBbUI7QUFDbkI7SUFBVixJQUFBLHlCQUFPLEdBQUU7O2tEQUFtRDtBQUNwQztJQUF4QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7OzBEQUE2QjtBQUM1QjtJQUF4QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7O21EQUE2QztBQUM1QztJQUF4QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7O2tEQUFxQjtBQUUvQyxNQUFN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QUFXLENBQUM7cUNBRW9CLHNDQUFpQjtHQUQvQyxvQkFBb0IsQ0FvQmhDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9wdWJsaXNoaW5nL3B1Ymxpc2hpbmcuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBCb2R5LCBDb250cm9sbGVyLCBHZXQsIFBhcmFtLCBQb3N0LCBVc2VHdWFyZHMgfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IElzQXJyYXksIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXhMZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5pbXBvcnQgeyBQdWJsaXNoaW5nU2VydmljZSB9IGZyb20gXCIuL3B1Ymxpc2hpbmcuc2VydmljZVwiO1xuaW1wb3J0IHsgQ3VycmVudFVzZXIsIEF1dGhVc2VyLCBSb2xlcyB9IGZyb20gXCIuLi9jb21tb24vZGVjb3JhdG9yc1wiO1xuaW1wb3J0IHsgVGVuYW50R3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3RlbmFudC5ndWFyZFwiO1xuaW1wb3J0IHsgUm9sZXNHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vcm9sZXMuZ3VhcmRcIjtcblxuY2xhc3MgR29vZ2xlUHVibGlzaER0byB7XG4gIEBJc1N0cmluZygpIGFkQWNjb3VudElkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgbmFtZSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgZGFpbHlCdWRnZXQhOiBzdHJpbmc7XG4gIEBJc0FycmF5KCkgY291bnRyeUNvZGVzITogc3RyaW5nW107XG4gIEBJc0FycmF5KCkgaGVhZGxpbmVzITogc3RyaW5nW107XG4gIEBJc0FycmF5KCkgZGVzY3JpcHRpb25zITogc3RyaW5nW107XG4gIEBJc1N0cmluZygpIGZpbmFsVXJsITogc3RyaW5nO1xuICBASXNBcnJheSgpIGtleXdvcmRzITogeyB0ZXh0OiBzdHJpbmc7IG1hdGNoVHlwZT86IHN0cmluZyB9W107XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBuZWdhdGl2ZUtleXdvcmRzPzogc3RyaW5nW107XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBzaXRlbGlua3M/OiB7IHRleHQ6IHN0cmluZzsgdXJsOiBzdHJpbmcgfVtdO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgY2FsbG91dHM/OiBzdHJpbmdbXTtcbn1cbmNsYXNzIFRpa1Rva1B1Ymxpc2hEdG8ge1xuICBASXNTdHJpbmcoKSBhZEFjY291bnRJZCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIG5hbWUhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIGRhaWx5QnVkZ2V0ITogc3RyaW5nO1xuICBASXNBcnJheSgpIGNvdW50cnlDb2RlcyE6IHN0cmluZ1tdO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMCkgYWRUZXh0ITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBsYW5kaW5nVXJsITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGltYWdlVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHZpZGVvVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGlkZW50aXR5SWQ/OiBzdHJpbmc7XG59XG5jbGFzcyBHb29nbGVQbWF4RHRvIHtcbiAgQElzU3RyaW5nKCkgYWRBY2NvdW50SWQhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBuYW1lITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBkYWlseUJ1ZGdldCE6IHN0cmluZztcbiAgQElzQXJyYXkoKSBjb3VudHJ5Q29kZXMhOiBzdHJpbmdbXTtcbiAgQElzU3RyaW5nKCkgZmluYWxVcmwhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIGJ1c2luZXNzTmFtZSE6IHN0cmluZztcbiAgQElzQXJyYXkoKSBoZWFkbGluZXMhOiBzdHJpbmdbXTtcbiAgQElzQXJyYXkoKSBsb25nSGVhZGxpbmVzITogc3RyaW5nW107XG4gIEBJc0FycmF5KCkgZGVzY3JpcHRpb25zITogc3RyaW5nW107XG4gIEBJc1N0cmluZygpIGxvZ29VcmwhOiBzdHJpbmc7XG4gIEBJc0FycmF5KCkgaW1hZ2VVcmxzITogc3RyaW5nW107XG59XG5cbkBDb250cm9sbGVyKFwib3JnYW5pemF0aW9ucy86b3JnYW5pemF0aW9uSWQvcHVibGlzaFwiKVxuQFVzZUd1YXJkcyhUZW5hbnRHdWFyZClcbmV4cG9ydCBjbGFzcyBQdWJsaXNoaW5nQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgcHVibGlzaGluZzogUHVibGlzaGluZ1NlcnZpY2UpIHt9XG5cbiAgQEdldChcInB1YmxpY2F0aW9uc1wiKVxuICBsaXN0KEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHsgcmV0dXJuIHRoaXMucHVibGlzaGluZy5saXN0KG9yZ0lkKTsgfVxuXG4gIEBQb3N0KFwiZ29vZ2xlXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICBnb29nbGUoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiBHb29nbGVQdWJsaXNoRHRvKSB7XG4gICAgcmV0dXJuIHRoaXMucHVibGlzaGluZy5wdWJsaXNoR29vZ2xlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIEBQb3N0KFwiZ29vZ2xlLXBtYXhcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIGdvb2dsZVBtYXgoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiBHb29nbGVQbWF4RHRvKSB7XG4gICAgcmV0dXJuIHRoaXMucHVibGlzaGluZy5wdWJsaXNoR29vZ2xlUG1heChvcmdJZCwgdXNlci51c2VySWQsIGR0byk7XG4gIH1cblxuICBAUG9zdChcInRpa3Rva1wiKSBAVXNlR3VhcmRzKFJvbGVzR3VhcmQpIEBSb2xlcyhcIk9XTkVSXCIsIFwiQURNSU5cIilcbiAgdGlrdG9rKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogVGlrVG9rUHVibGlzaER0bykge1xuICAgIHJldHVybiB0aGlzLnB1Ymxpc2hpbmcucHVibGlzaFRpa1RvayhvcmdJZCwgdXNlci51c2VySWQsIGR0byk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

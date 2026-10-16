@@ -57,6 +57,22 @@ export class DiscountDto {
   @IsOptional() @IsInt() @Min(1) usageLimit?: number | null;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) storeIds?: string[];
+  // GB7 (GC17)
+  @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
+  @IsOptional() @IsBoolean() repeatCustomerOnly?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) perCustomerLimit?: number | null;
+  @IsOptional() @IsString() maxOrderMinor?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) excludedProductIds?: string[] | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) excludedCategoryIds?: string[] | null;
+}
+
+/** GB7: per-org abandoned-cart recovery coupon template. */
+export class AbandonedCouponSettingDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsIn(["percent", "fixed"]) kind?: "percent" | "fixed";
+  @IsOptional() @IsInt() @Min(0) @Max(100000000) value?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(720) expiryHours?: number;
+  @IsOptional() @IsString() minOrderMinor?: string | null;
 }
 
 export class SetDiscountActiveDto {
@@ -89,6 +105,12 @@ export class BundleDto {
   @IsOptional() @IsString() @MaxLength(2000) description?: string | null;
   @IsOptional() @IsString() @MaxLength(1000) imageUrl?: string | null;
   @IsOptional() @IsArray() items?: any[];
+  /** AB5 (AX8): mix-and-match slots ([{ label, chooseQty,
+   *  sourceType, sourceRef }]) validated server-side by
+   *  BundlesService.validateSlots; when present (incl. []) the
+   *  bundle's slots are replaced wholesale, when absent they
+   *  are untouched. */
+  @IsOptional() @IsArray() slots?: any[];
   @IsOptional() @IsString() bundlePriceMinor?: string;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(10000) sortOrder?: number;
@@ -117,4 +139,137 @@ export class GenerateCampaignDto {
 /** EC5: the store's shipment-plugin tracking meta key (nullable to clear). */
 export class UpdateTrackingMetaKeyDto {
   @IsOptional() @IsString() @MaxLength(120) courierTrackingMetaKey?: string | null;
+}
+
+/** AB1 (AX1): loyalty program settings. All fields optional —
+ * the service applies only the provided ones (null clears the
+ * nullable caps). Range validation lives in LoyaltyService so
+ * the Bengali errors match the rest of the commerce surface. */
+export class LoyaltySettingDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsInt() earnPointsPer1000Minor?: number;
+  @IsOptional() @IsInt() redeemValueMinorPerPoint?: number;
+  @IsOptional() @IsInt() minRedeemPoints?: number;
+  @IsOptional() @IsInt() maxRedeemSharePct?: number | null;
+  @IsOptional() @IsInt() pointsExpiryDays?: number | null;
+}
+
+/** AB1 (AX2): referral reward settings — what the REFERRER
+ * earns when a referred order becomes sold. */
+export class ReferralRewardSettingDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsIn(["points", "coupon"]) rewardType?: "points" | "coupon";
+  @IsOptional() @IsInt() rewardPoints?: number | null;
+  @IsOptional() @IsInt() couponPercent?: number | null;
+  @IsOptional() @IsString() rewardMinOrderMinor?: string | null;
+}
+
+/** AB1 (AX1): a staff manual points correction. The note is
+ * mandatory (enforced in the service) — every adjust explains
+ * itself in the customer's ledger. */
+export class LoyaltyAdjustDto {
+  @IsInt() deltaPoints!: number;
+  @IsString() @MaxLength(500) note!: string;
+}
+
+/** AB2 (AX3): gift-card settings. All fields optional — the
+ * service applies only the provided ones (null clears the
+ * default expiry). Range validation lives in GiftCardsService
+ * so the Bengali errors match the rest of the commerce surface. */
+export class GiftCardSettingDto {
+  @IsOptional() @IsBoolean() redemptionEnabled?: boolean;
+  @IsOptional() @IsInt() defaultExpiryDays?: number | null;
+}
+
+/** AB2 (AX3): a staff manual gift-card issue. amountMinor is
+ * integer minor units as a decimal string (BigInt over the
+ * wire). A recipient contact (valid email or a phone) and the
+ * note are mandatory — enforced in the service, because the
+ * code is sent ONLY to the recipient and shown nowhere else. */
+export class ManualGiftCardIssueDto {
+  @IsString() amountMinor!: string;
+  @IsOptional() @IsString() @MaxLength(200) recipientName?: string;
+  @IsOptional() @IsString() @MaxLength(200) recipientEmail?: string;
+  @IsOptional() @IsString() @MaxLength(40) recipientPhone?: string;
+  @IsString() @MaxLength(500) note!: string;
+}
+
+/** AB2 (AX3): a staff gift-card action that must explain
+ * itself (void). The note is mandatory in the service. */
+export class GiftCardNoteDto {
+  @IsString() @MaxLength(500) note!: string;
+}
+
+/** AB2 (AX3): a staff balance correction. deltaMinor is a
+ * signed integer-minor decimal string; the note is mandatory
+ * in the service — every adjust explains itself in the ledger. */
+export class GiftCardAdjustDto {
+  @IsString() deltaMinor!: string;
+  @IsString() @MaxLength(500) note!: string;
+}
+
+/** AB5 (AX7): a B2B customer group (name unique per org —
+ * enforced in PriceListsService with a Bengali 400). */
+export class CustomerGroupDto {
+  @IsString() @MaxLength(200) name!: string;
+}
+
+export class UpdateCustomerGroupDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+}
+
+/** AB5 (AX7): one explicit price-list row. priceMinor is
+ * integer minor units as a decimal string; variantId null /
+ * absent = the product-level price. */
+export class PriceListItemDto {
+  @IsString() productId!: string;
+  @IsOptional() @IsString() variantId?: string | null;
+  @IsString() priceMinor!: string;
+}
+
+/** AB5 (AX7): materialize a %-off as explicit product-level
+ * rows (percentOff 1..99 validated in the service). */
+export class BulkPercentOffDto {
+  @IsInt() percentOff!: number;
+  @IsOptional() @IsArray() @IsString({ each: true }) productIds?: string[];
+}
+
+/** AB5 (AX7): a staff-issued quote. Lines are validated +
+ * snapshotted (name/sku) in QuotesService; totals are
+ * Σ lines + deliveryChargeMinor with NO tax/promotion
+ * evaluation. customerId OR walk-in details identify the buyer. */
+export class QuoteDto {
+  @IsOptional() @IsString() customerId?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) walkinName?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) walkinPhone?: string | null;
+  @IsOptional() @IsArray() lines?: any[];
+  @IsOptional() @IsString() deliveryChargeMinor?: string;
+  @IsOptional() @IsString() expiresAt?: string | null;
+  @IsOptional() @IsString() @MaxLength(2000) note?: string | null;
+}
+
+export class UpdateQuoteDto {
+  @IsOptional() @IsString() customerId?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) walkinName?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) walkinPhone?: string | null;
+  @IsOptional() @IsArray() lines?: any[];
+  @IsOptional() @IsString() deliveryChargeMinor?: string;
+  @IsOptional() @IsString() expiresAt?: string | null;
+  @IsOptional() @IsString() @MaxLength(2000) note?: string | null;
+}
+
+/** AB5 (AX7): the public quote-page response (accept/decline). */
+export class QuoteRespondDto {
+  @IsBoolean() accept!: boolean;
+}
+
+/** AB5 (AX9): a staff license-key pool import. `text` is the raw
+ * newline-separated key list (one vendor key per line; the exact
+ * trimmed string is canonical and case-sensitive). Line-level
+ * dedupe / invalid rules + the 500-line ceiling live in
+ * LicenseKeysService with Bengali errors. */
+export class LicenseKeyImportDto {
+  @IsString() productId!: string;
+  @IsString() @MaxLength(200000) text!: string;
+  @IsOptional() @IsString() @MaxLength(100) batch?: string;
 }

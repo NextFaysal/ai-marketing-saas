@@ -157,7 +157,7 @@ export class PathaoClient {
     recipient_city?: number; recipient_zone?: number; recipient_area?: number;
     delivery_type: number; item_type: number; item_quantity: number; item_weight: number;
     item_description?: string; special_instruction?: string; amount_to_collect: number;
-  }): Promise<{ consignmentId: string; status: string; deliveryFee: number | null }> {
+  }): Promise<{ consignmentId: string; status: string; rawStatus: string | null; deliveryFee: number | null }> {
     // Pathao rejects null location fields - omit them entirely.
     const clean: Record<string, unknown> = { ...payload };
     for (const key of ["recipient_city", "recipient_zone", "recipient_area", "merchant_order_id", "item_description", "special_instruction"]) {
@@ -171,6 +171,9 @@ export class PathaoClient {
     return {
       consignmentId: String(data.consignment_id),
       status: mapPathaoStatus(data.order_status),
+      // GB5: the provider's verbatim status, preserved for the
+      // shipment event log (additive — existing readers ignore it).
+      rawStatus: data.order_status != null ? String(data.order_status) : null,
       deliveryFee: data.delivery_fee !== undefined ? Number(data.delivery_fee) : null,
     };
   }
@@ -203,10 +206,17 @@ export class PathaoClient {
   }
 
   async orderStatus(consignmentId: string): Promise<string> {
+    return (await this.orderStatusDetail(consignmentId)).status;
+  }
+
+  /** GB5: the same read as orderStatus, also returning the
+   * provider's verbatim status string for the event log. */
+  async orderStatusDetail(consignmentId: string): Promise<{ status: string; rawStatus: string | null }> {
     const body = await this.call(`/aladdin/api/v1/orders/${encodeURIComponent(consignmentId)}/info`);
     const data = body?.data;
     if (!data) throw new PathaoError("Pathao order info response was empty");
-    return mapPathaoStatus(data.order_status_slug ?? data.order_status);
+    const raw = data.order_status_slug ?? data.order_status;
+    return { status: mapPathaoStatus(raw), rawStatus: raw != null ? String(raw) : null };
   }
 }
 

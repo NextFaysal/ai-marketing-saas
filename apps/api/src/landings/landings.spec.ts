@@ -920,8 +920,12 @@ describe("LandingsService — stats", () => {
     expect(stats.conversionPct).toBe(60);
     const a = stats.variants.find((x: any) => x.variantId === "lv-a");
     const b = stats.variants.find((x: any) => x.variantId === "lv-b");
-    expect(a).toEqual({ variantId: "lv-a", name: "A (control)", views: 2, orders: 2, revenueMinor: "100000", conversionPct: 100 });
-    expect(b).toEqual({ variantId: "lv-b", name: "B", views: 2, orders: 1, revenueMinor: "30000", conversionPct: 50 });
+    // AB7 (AX20): conversionRate + vsControl ride the same rows
+    // (tie on views => A, earliest created, is the significance
+    // control; both sides < 30 views => B is insufficient_data).
+    expect(a).toEqual({ variantId: "lv-a", name: "A (control)", views: 2, orders: 2, revenueMinor: "100000", conversionPct: 100, conversionRate: 1, vsControl: null });
+    expect(b).toEqual({ variantId: "lv-b", name: "B", views: 2, orders: 1, revenueMinor: "30000", conversionPct: 50, conversionRate: 0.5, vsControl: { pValue: null, significant: false, note: "insufficient_data" } });
+    expect(stats.winnerId).toBeNull();
   });
 
   it("conversionPct is null when there are no views", async () => {

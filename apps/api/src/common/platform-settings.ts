@@ -60,8 +60,14 @@ export async function planPrices(prisma: any): Promise<Record<string, number>> {
   return out;
 }
 
-export type PlanLimits = { aiDaily: number; broadcastCap: number; seats: number };
-export const PLAN_LIMIT_FIELDS = ["aiDaily", "broadcastCap", "seats"] as const;
+export type PlanLimits = {
+  aiDaily: number; broadcastCap: number; seats: number;
+  // GC22 (GB9): resource limits — OPTIONAL per tier. Absent
+  // (in defaults AND in stored config) = unlimited; a stored
+  // integer >= 0 is a real cap (0 blocks everything).
+  productLimit?: number; orderLimit?: number; storageLimitMb?: number; apiDailyLimit?: number;
+};
+export const PLAN_LIMIT_FIELDS = ["aiDaily", "broadcastCap", "seats", "productLimit", "orderLimit", "storageLimitMb", "apiDailyLimit"] as const;
 
 /** AA4: operator-editable per-plan limits stored in SystemSetting
  * "planLimits". Mirrors planPrices(): start from a deep copy of
@@ -82,6 +88,34 @@ export async function planLimits(prisma: any): Promise<Record<string, PlanLimits
     }
   }
   return out;
+}
+
+/** GC22 (GB9): the org's plan resource limits, resolved from
+ * its current tier. Each limit is a number when the tier's
+ * merged planLimits carry the field, or null = unlimited. */
+export async function planResourceLimits(
+  prisma: any,
+  organizationId: string,
+): Promise<{ plan: string; productLimit: number | null; orderLimit: number | null; storageLimitMb: number | null; apiDailyLimit: number | null }> {
+  const [plan, allLimits] = await Promise.all([orgPlan(prisma, organizationId), planLimits(prisma)]);
+  const tier = allLimits[plan] ?? allLimits.FREE;
+  const pick = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+  return {
+    plan,
+    productLimit: pick(tier?.productLimit),
+    orderLimit: pick(tier?.orderLimit),
+    storageLimitMb: pick(tier?.storageLimitMb),
+    apiDailyLimit: pick(tier?.apiDailyLimit),
+  };
+}
+
+/** GC22 (GB9): days a PAST_DUE org may keep trading after its
+ * period ends before commerce writes refuse. Operator-set via
+ * SystemSetting "billingGraceDays" (integer >= 0 wins);
+ * default 3. */
+export async function billingGraceDays(prisma: any): Promise<number> {
+  const raw = await platformSetting(prisma, "billingGraceDays");
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : 3;
 }
 
 /** Billing Package B3: yearly cycle prices. Defaults are

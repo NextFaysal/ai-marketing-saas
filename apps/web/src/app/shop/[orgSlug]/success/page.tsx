@@ -1,12 +1,27 @@
 "use client";
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { lastOrderKey, type CheckoutResult } from "@/lib/storefront-cart";
+import {
+  depositStateLines,
+  hasOutstandingMinor,
+  initiatePayment,
+  isDepositFullyPaid,
+  isOnlineCheckoutContext,
+  isTerminalPaymentKind,
+  paymentStateKind,
+  readOnlinePaymentChoice,
+  type DepositState,
+  type InitiatePurpose,
+  type OnlinePaymentOption,
+  type PaymentStateKind,
+} from "@/lib/checkout-gc10";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { payOnlineAvailable, payOptionLabel, type PayOption } from "@/lib/connections";
+import { shouldFireAdsConversion, trackingFromSettings } from "@/lib/shop-tracking";
 
 function money(minor: string): string {
   try {
@@ -25,6 +40,15 @@ function SuccessInner() {
   const [loaded, setLoaded] = useState(false);
   const [locale, setLocale] = useState<ShopLocale>("bn");
   const [trackingEnabled, setTrackingEnabled] = useState(true);
+  // GB7 (GC18): the whole settings object (carries settings.tracking).
+  const [shopSettings, setShopSettings] = useState<unknown>(null);
+  // AB4: the shop's online options (fallback payment choice for
+  // the deposit/balance buttons when no choice was stored).
+  const [shopOnlineOptions, setShopOnlineOptions] = useState<OnlinePaymentOption[]>([]);
+  // GB7: true ONLY when `order` came from this browser's
+  // sessionStorage — the ?order= query fallback is display-only
+  // and must never fire an Ads conversion.
+  const sessionOrderRef = useRef(false);
   const t = shopT(locale);
   // CC19: buyer "Pay online" — options come from the shop's
   // PUBLIC payment-options answer, which lists an option only
@@ -38,7 +62,10 @@ function SuccessInner() {
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(lastOrderKey(orgSlug));
-      if (raw) setOrder(JSON.parse(raw) as CheckoutResult);
+      if (raw) {
+        setOrder(JSON.parse(raw) as CheckoutResult);
+        sessionOrderRef.current = true;
+      }
     } catch { /* no stored response — honest generic confirmation below */ }
     setLoaded(true);
   }, [orgSlug]);
@@ -50,6 +77,8 @@ function SuccessInner() {
         const res = await fetch(`${API_URL}/public/shop/${encodeURIComponent(orgSlug)}`);
         if (!res.ok) return;
         const json = await res.json();
+        setShopSettings(json?.settings ?? null);
+        setShopOnlineOptions(json?.paymentOptions?.online ?? []);
         setLocale(shopLocaleOf(json?.settings?.locale));
         if (json?.settings?.trackingPageEnabled === false) setTrackingEnabled(false);
       } catch { /* defaults: bn, tracking link shown */ }
@@ -90,8 +119,156 @@ function SuccessInner() {
       setPayBusy("");
     }
   }
+  // GB7 (GC18): Google Ads conversion — fires at most once per
+  // order, only for the genuinely placed order held in this
+  // browser's sessionStorage, and only when the merchant
+  // configured BOTH the Ads id and the conversion label.
+  useEffect(() => {
+    if (!loaded || !order || !sessionOrderRef.current) return;
+    const tracking = trackingFromSettings(shopSettings);
+    let alreadyFired = false;
+    try {
+      alreadyFired = sessionStorage.getItem(`adsConv:${order.orderNumber}`) === "1";
+    } catch { /* storage unavailable — the pure check still gates */ }
+    if (!shouldFireAdsConversion({ tracking, order, alreadyFired })) return;
+    // Mark BEFORE firing so a re-render can never double-count.
+    try {
+      sessionStorage.setItem(`adsConv:${order.orderNumber}`, "1");
+    } catch { /* ignore — gtag itself dedupes by transaction_id */ }
+    const adsId = tracking.googleAdsId as string;
+    const label = tracking.googleAdsConversionLabel as string;
+    const w = window as unknown as {
+      dataLayer?: unknown[];
+      gtag?: (...args: unknown[]) => void;
+    };
+    const fire = () => {
+      w.dataLayer = w.dataLayer || [];
+      if (typeof w.gtag !== "function") {
+        w.gtag = (...args: unknown[]) => {
+          (w.dataLayer as unknown[]).push(args);
+        };
+      }
+      w.gtag("config", adsId);
+      w.gtag("event", "conversion", {
+        send_to: `${adsId}/${label}`,
+        value: Number(order.totalMinor) / 100,
+        currency: "BDT",
+        transaction_id: order.orderNumber,
+      });
+    };
+    if (typeof w.gtag === "function") {
+      fire();
+      return;
+    }
+    // gtag.js may already be on its way (layout GA4/GTM tags use
+    // the same library queue) — the dataLayer shim is then enough.
+    if (document.querySelector('script[src^="https://www.googletagmanager.com/gtag/js"]')) {
+      fire();
+      return;
+    }
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${adsId}`;
+    script.onload = fire;
+    document.head.appendChild(script);
+  }, [loaded, order, shopSettings]);
 
   const orderNumber = order?.orderNumber ?? orderFromQuery;
+
+  // GC10: online-payment polling. The ?payment= flag alone is
+  // informational (a gateway browser return proves NOTHING) —
+  // only the polled server state "verified_paid" may render as
+  // paid. Poll ~4s, max ~30 tries, stop on a terminal state.
+  const paymentParam = search.get("payment");
+  const onlineContext = isOnlineCheckoutContext(order?.paymentClaimStatus, paymentParam);
+  const [payKind, setPayKind] = useState<PaymentStateKind | null>(null);
+  // AB4: the raw polled state + its deposit block (the success
+  // page renders ONLY from this polled data, never the return).
+  const [payStateRaw, setPayStateRaw] = useState<string | null>(null);
+  const [payDeposit, setPayDeposit] = useState<DepositState | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
+  // AB4: an order placed with a deposit also polls — its deposit
+  // block only exists on the polled state response.
+  const pollEnabled = onlineContext || !!order?.deposit;
+
+  useEffect(() => {
+    if (!pollEnabled || !order?.orderId || !order?.orderNumber) return;
+    let cancelled = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      tries += 1;
+      try {
+        const qs = new URLSearchParams({ orderId: order.orderId!, orderNumber: order.orderNumber! });
+        const res = await fetch(`${API_URL}/public/tenant-payments/state/${encodeURIComponent(orgSlug)}?${qs.toString()}`);
+        if (res.ok) {
+          const data = (await res.json()) as { state?: string; deposit?: DepositState | null };
+          const kind = paymentStateKind(data.state);
+          if (!cancelled) {
+            setPayKind(kind);
+            setPayStateRaw(data.state ?? null);
+            setPayDeposit(data.deposit ?? null);
+          }
+          if (isTerminalPaymentKind(kind)) return;
+        }
+      } catch { /* a failed poll is not a payment result — keep waiting */ }
+      if (!cancelled && tries < 30) timer = setTimeout(poll, 4000);
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [pollEnabled, order?.orderId, order?.orderNumber, orgSlug]);
+
+  // The payment pair for (re)initiation: the pair stored at
+  // checkout wins; otherwise the shop's first online option.
+  function paymentChoice() {
+    return (
+      readOnlinePaymentChoice(orgSlug) ??
+      (shopOnlineOptions[0] ? { provider: shopOnlineOptions[0].provider, source: shopOnlineOptions[0].source } : null)
+    );
+  }
+
+  // GC10: retry — re-initiate the SAME stored order with the
+  // pair chosen at checkout; redirect to the gateway on success.
+  // AB4: a purpose ("deposit" | "balance") scopes the amount.
+  async function retryPayment(purpose?: InitiatePurpose) {
+    const choice = paymentChoice();
+    if (!choice || !order?.orderId || !order?.orderNumber) return;
+    setRetrying(true);
+    setRetryError("");
+    try {
+      const redirectUrl = await initiatePayment(orgSlug, {
+        orderId: order.orderId,
+        orderNumber: order.orderNumber,
+        provider: choice.provider,
+        source: choice.source,
+        ...(purpose ? { purpose } : {}),
+      });
+      window.location.assign(redirectUrl);
+    } catch {
+      setRetryError("পেমেন্ট আবার শুরু করা যায়নি — কিছুক্ষণ পর আবার চেষ্টা করুন।");
+      setRetrying(false);
+    }
+  }
+
+  // Effective display kind: an initiate failure with no txn
+  // state yet reads as failed; otherwise the polled kind rules.
+  const effectivePayKind: PaymentStateKind =
+    payKind ?? (paymentParam === "initiate_failed" ? "failed" : "pending");
+
+  // AB4: deposit display state — all from the POLLED deposit
+  // block. deposit_paid never renders the full-paid message.
+  const depositPaidState = payStateRaw === "deposit_paid" || payKind === "deposit_paid";
+  const depositDueUnpaid =
+    !!payDeposit &&
+    !depositPaidState &&
+    hasOutstandingMinor(payDeposit.outstandingMinor) &&
+    !isDepositFullyPaid(payDeposit) &&
+    (effectivePayKind === "pending" || effectivePayKind === "none");
+  const depositSettledBalanceDue =
+    !!payDeposit &&
+    hasOutstandingMinor(payDeposit.outstandingMinor) &&
+    (depositPaidState || isDepositFullyPaid(payDeposit));
 
   return (
     <div className="mx-auto max-w-lg px-4 py-12">
@@ -125,6 +302,12 @@ function SuccessInner() {
             {order.referralDiscountMinor && BigInt(order.referralDiscountMinor) > 0n ? (
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.checkout.referralApplied}{order.referral ? ` (${order.referral.code})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.referralDiscountMinor)}</span></div>
             ) : null}
+            {(order.loyaltyPointsUsed ?? 0) > 0 ? (
+              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">লয়্যালটি পয়েন্ট ছাড় ({order.loyaltyPointsUsed} পয়েন্ট):</span><span className="font-bold text-emerald-700">− {money(order.loyaltyDiscountMinor ?? "0")}</span></div>
+            ) : null}
+            {order.giftCardDiscountMinor && BigInt(order.giftCardDiscountMinor) > 0n ? (
+              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">গিফট কার্ড ছাড়{order.giftCardCodeLast4 ? ` (••••${order.giftCardCodeLast4})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.giftCardDiscountMinor)}</span></div>
+            ) : null}
             {order.gift ? (
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">🎁 {t.success.giftLine}: {order.gift.productName} × {order.gift.quantity} ({order.gift.promotionName})</span><span className="font-bold text-pink-700">{money("0")}</span></div>
             ) : null}
@@ -148,7 +331,60 @@ function SuccessInner() {
             ) : null}
             <div className="flex justify-between pt-1 text-sm font-bold"><span className="text-slate-900">{t.success.total}</span><span className="text-indigo-700">{money(order.totalMinor)}</span></div>
 
-            {order.paymentClaimStatus === "cod_due" ? (
+            {/* AB4 (AX5): deposit status from the polled state —
+                deposit_paid is NOT the full-paid message. */}
+            {payDeposit || depositPaidState ? (
+              <div className="space-y-2 rounded-xl bg-amber-50 p-3 text-center">
+                {depositPaidState ? (
+                  <p className="text-sm font-black text-emerald-900">
+                    ✅ ডিপোজিট পরিশোধ হয়েছে — বাকি {payDeposit ? money(payDeposit.outstandingMinor) : ""} ডেলিভারির সময় দিতে হবে
+                  </p>
+                ) : null}
+                {payDeposit ? (
+                  <div className="space-y-0.5 text-[11px] font-medium text-amber-900">
+                    {depositStateLines(payDeposit, money).map((line) => (
+                      <p key={line}>{line}</p>
+                    ))}
+                  </div>
+                ) : null}
+                {depositDueUnpaid && paymentChoice() ? (
+                  <button type="button" onClick={() => void retryPayment("deposit")} disabled={retrying} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                    {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "ডিপোজিট পরিশোধ করুন"}
+                  </button>
+                ) : null}
+                {depositSettledBalanceDue && !depositDueUnpaid && paymentChoice() ? (
+                  <button type="button" onClick={() => void retryPayment("balance")} disabled={retrying} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "বাকি টাকা পরিশোধ করুন"}
+                  </button>
+                ) : null}
+                {retryError ? <p className="text-[11px] font-medium text-rose-700">{retryError}</p> : null}
+              </div>
+            ) : null}
+
+            {depositPaidState ? null : onlineContext ? (
+              effectivePayKind === "paid" ? (
+                <div className="rounded-xl bg-emerald-50 p-3 text-center">
+                  <p className="text-sm font-black text-emerald-900">✅ পেমেন্ট যাচাইকৃতভাবে সম্পন্ন হয়েছে</p>
+                  <p className="text-[11px] text-emerald-700">গেটওয়ের সার্ভার-যাচাইয়ে এই অর্ডারের পেমেন্ট নিশ্চিত হয়েছে।</p>
+                </div>
+              ) : effectivePayKind === "failed" || effectivePayKind === "cancelled" ? (
+                <div className="space-y-2 rounded-xl bg-rose-50 p-3 text-center">
+                  <p className="text-sm font-black text-rose-900">পেমেন্ট সম্পন্ন হয়নি</p>
+                  <p className="text-[11px] text-rose-700">অর্ডারটি রাখা আছে, কিন্তু পেমেন্ট হয়নি — আবার চেষ্টা করতে পারেন।</p>
+                  {readOnlinePaymentChoice(orgSlug) ? (
+                    <button type="button" onClick={() => void retryPayment()} disabled={retrying} className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+                      {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "আবার পেমেন্ট করুন"}
+                    </button>
+                  ) : null}
+                  {retryError ? <p className="text-[11px] font-medium text-rose-700">{retryError}</p> : null}
+                </div>
+              ) : (
+                <div className="rounded-xl bg-amber-50 p-3 text-center">
+                  <p className="text-sm font-black text-amber-900">⏳ পেমেন্ট যাচাই চলছে — গেটওয়ে থেকে নিশ্চিতকরণ এলেই অর্ডার পেমেন্ট সম্পন্ন হবে</p>
+                  <p className="text-[11px] text-amber-700">এই পেজটি নিজে থেকেই হালনাগাদ হবে; যাচাই সম্পন্ন না হওয়া পর্যন্ত পেমেন্ট সম্পন্ন ধরা হবে না।</p>
+                </div>
+              )
+            ) : order.paymentClaimStatus === "cod_due" ? (
               <div className="rounded-xl bg-emerald-50 p-3 text-center">
                 <p className="text-[11px] font-semibold text-emerald-800">{t.success.codDueTitle}</p>
                 <p className="text-lg font-black text-emerald-900">{money(order.codDueMinor)}</p>

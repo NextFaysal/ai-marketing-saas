@@ -2,6 +2,7 @@ import {
   BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { OrdersService } from "../orders/orders.service";
@@ -417,12 +418,10 @@ export class OrderAutomationService {
         const userIds = [...new Set(memberships.map((m: any) => String(m.userId)))];
         let written = 0;
         for (const userId of userIds) {
-          const made = await this.t("agentNotification").create({
-            data: {
+          const made = await createAgentNotification(this.prisma as any, {
               organizationId: orgId, userId, type: "urgent",
               title: String(rule.name), body: rendered, conversationId: null,
-            },
-          }).catch(() => null);
+            }).catch(() => null);
           if (made) written += 1;
         }
         return { type, ok: written > 0, detail: `recipients:${written}` };

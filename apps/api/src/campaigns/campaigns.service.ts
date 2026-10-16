@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { isMemberConnectionDenied } from "../common/permission-catalog";
+import { createAgentNotification } from "../common/agent-notify";
 import { leaderClaim } from "../common/leader-claim";
 import { PublishingService } from "../publishing/publishing.service";
 import { AudiencesService } from "../audiences/audiences.service";
@@ -2456,7 +2457,7 @@ export class CampaignsService implements OnModuleInit {
     const table = (this.prisma as any).agentNotification;
     if (!table?.create) return;
     for (const userId of [...new Set(userIds)]) {
-      await table.create({ data: { organizationId, userId, type, title: title.slice(0, 120), body: body.slice(0, 500) } }).catch(() => undefined);
+      await createAgentNotification(this.prisma as any, { organizationId, userId, type, title: title.slice(0, 120), body: body.slice(0, 500) }).catch(() => undefined);
     }
   }
 

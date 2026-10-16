@@ -1,0 +1,119 @@
+2c18e5597fce01aadda300f1cf2d6766
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PracticeController = void 0;
+const common_1 = require("@nestjs/common");
+const practice_service_1 = require("./practice.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+/**
+ * CX12a — Practice Mode endpoints. Toggle + cleanup are
+ * OWNER/ADMIN only (RolesGuard, the repo pattern); reading state
+ * is open to any member so the shell banner can render for the
+ * whole team while practice is on.
+ */
+let PracticeController = class PracticeController {
+    practice;
+    constructor(practice) {
+        this.practice = practice;
+    }
+    state(orgId) {
+        return this.practice.getState(orgId);
+    }
+    toggle(user, orgId, dto) {
+        return this.practice.setPracticeMode(orgId, user.userId, Boolean(dto?.enabled));
+    }
+    conversation(user, orgId) {
+        return this.practice.createPracticeConversation(orgId, user.userId);
+    }
+    simulate(user, orgId, conversationId, dto) {
+        return this.practice.simulateInboundMessage(orgId, user.userId, conversationId, dto?.content);
+    }
+    demoPack(user, orgId) {
+        return this.practice.loadDemoPack(orgId, user.userId);
+    }
+    cleanup(user, orgId) {
+        return this.practice.cleanupPractice(orgId, user.userId);
+    }
+};
+exports.PracticeController = PracticeController;
+__decorate([
+    (0, common_1.Get)(),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "state", null);
+__decorate([
+    (0, common_1.Post)("toggle"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "toggle", null);
+__decorate([
+    (0, common_1.Post)("conversation"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "conversation", null);
+__decorate([
+    (0, common_1.Post)("conversations/:conversationId/simulate"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("conversationId")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, Object]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "simulate", null);
+__decorate([
+    (0, common_1.Post)("demo-pack"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "demoPack", null);
+__decorate([
+    (0, common_1.Post)("cleanup"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], PracticeController.prototype, "cleanup", null);
+exports.PracticeController = PracticeController = __decorate([
+    (0, decorators_1.PermissionArea)("inbox"),
+    (0, common_1.Controller)("organizations/:organizationId/practice"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [practice_service_1.PracticeService])
+], PracticeController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L3ByYWN0aWNlLmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQStFO0FBQy9FLHlEQUFxRDtBQUNyRCxxREFBb0Y7QUFDcEYseURBQXFEO0FBQ3JELHVEQUFtRDtBQUVuRDs7Ozs7R0FLRztBQUlJLElBQU0sa0JBQWtCLEdBQXhCLE1BQU0sa0JBQWtCO0lBQ0E7SUFBN0IsWUFBNkIsUUFBeUI7UUFBekIsYUFBUSxHQUFSLFFBQVEsQ0FBaUI7SUFBRyxDQUFDO0lBRzFELEtBQUssQ0FBMEIsS0FBYTtRQUMxQyxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQ3ZDLENBQUM7SUFHRCxNQUFNLENBQWdCLElBQWMsRUFBMkIsS0FBYSxFQUFVLEdBQTBCO1FBQzlHLE9BQU8sSUFBSSxDQUFDLFFBQVEsQ0FBQyxlQUFlLENBQUMsS0FBSyxFQUFFLElBQUksQ0FBQyxNQUFNLEVBQUUsT0FBTyxDQUFDLEdBQUcsRUFBRSxPQUFPLENBQUMsQ0FBQyxDQUFDO0lBQ2xGLENBQUM7SUFHRCxZQUFZLENBQWdCLElBQWMsRUFBMkIsS0FBYTtRQUNoRixPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsMEJBQTBCLENBQUMsS0FBSyxFQUFFLElBQUksQ0FBQyxNQUFNLENBQUMsQ0FBQztJQUN0RSxDQUFDO0lBR0QsUUFBUSxDQUFnQixJQUFjLEVBQTJCLEtBQWEsRUFBMkIsY0FBc0IsRUFBVSxHQUF5QjtRQUNoSyxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsc0JBQXNCLENBQUMsS0FBSyxFQUFFLElBQUksQ0FBQyxNQUFNLEVBQUUsY0FBYyxFQUFFLEdBQUcsRUFBRSxPQUFPLENBQUMsQ0FBQztJQUNoRyxDQUFDO0lBR0QsUUFBUSxDQUFnQixJQUFjLEVBQTJCLEtBQWE7UUFDNUUsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLFlBQVksQ0FBQyxLQUFLLEVBQUUsSUFBSSxDQUFDLE1BQU0sQ0FBQyxDQUFDO0lBQ3hELENBQUM7SUFHRCxPQUFPLENBQWdCLElBQWMsRUFBMkIsS0FBYTtRQUMzRSxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsZUFBZSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxDQUFDLENBQUM7SUFDM0QsQ0FBQztDQUNGLENBQUE7QUFoQ1ksZ0RBQWtCO0FBSTdCO0lBREMsSUFBQSxZQUFHLEdBQUU7SUFDQyxXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7Ozs7K0NBRTdCO0FBR0Q7SUFEQyxJQUFBLGFBQUksRUFBQyxRQUFRLENBQUM7SUFBRSxJQUFBLGtCQUFTLEVBQUMsd0JBQVUsQ0FBQztJQUFFLElBQUEsa0JBQUssRUFBQyxPQUFPLEVBQUUsT0FBTyxDQUFDO0lBQ3ZELFdBQUEsSUFBQSx3QkFBVyxHQUFFLENBQUE7SUFBa0IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQWlCLFdBQUEsSUFBQSxhQUFJLEdBQUUsQ0FBQTs7OztnREFFcEY7QUFHRDtJQURDLElBQUEsYUFBSSxFQUFDLGNBQWMsQ0FBQztJQUFFLElBQUEsa0JBQVMsRUFBQyx3QkFBVSxDQUFDO0lBQUUsSUFBQSxrQkFBSyxFQUFDLE9BQU8sRUFBRSxPQUFPLEVBQUUsbUJBQW1CLEVBQUUsZUFBZSxDQUFDO0lBQzdGLFdBQUEsSUFBQSx3QkFBVyxHQUFFLENBQUE7SUFBa0IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBOzs7O3NEQUVuRTtBQUdEO0lBREMsSUFBQSxhQUFJLEVBQUMsd0NBQXdDLENBQUM7SUFBRSxJQUFBLGtCQUFTLEVBQUMsd0JBQVUsQ0FBQztJQUFFLElBQUEsa0JBQUssRUFBQyxPQUFPLEVBQUUsT0FBTyxFQUFFLG1CQUFtQixFQUFFLGVBQWUsQ0FBQztJQUMzSCxXQUFBLElBQUEsd0JBQVcsR0FBRSxDQUFBO0lBQWtCLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBMEIsV0FBQSxJQUFBLGFBQUksR0FBRSxDQUFBOzs7O2tEQUV2STtBQUdEO0lBREMsSUFBQSxhQUFJLEVBQUMsV0FBVyxDQUFDO0lBQUUsSUFBQSxrQkFBUyxFQUFDLHdCQUFVLENBQUM7SUFBRSxJQUFBLGtCQUFLLEVBQUMsT0FBTyxFQUFFLE9BQU8sRUFBRSxtQkFBbUIsRUFBRSxlQUFlLENBQUM7SUFDOUYsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUFrQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7Ozs7a0RBRS9EO0FBR0Q7SUFEQyxJQUFBLGFBQUksRUFBQyxTQUFTLENBQUM7SUFBRSxJQUFBLGtCQUFTLEVBQUMsd0JBQVUsQ0FBQztJQUFFLElBQUEsa0JBQUssRUFBQyxPQUFPLEVBQUUsT0FBTyxDQUFDO0lBQ3ZELFdBQUEsSUFBQSx3QkFBVyxHQUFFLENBQUE7SUFBa0IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBOzs7O2lEQUU5RDs2QkEvQlUsa0JBQWtCO0lBSDlCLElBQUEsMkJBQWMsRUFBQyxPQUFPLENBQUM7SUFDdkIsSUFBQSxtQkFBVSxFQUFDLHdDQUF3QyxDQUFDO0lBQ3BELElBQUEsa0JBQVMsRUFBQywwQkFBVyxFQUFFLHdCQUFVLENBQUM7cUNBRU0sa0NBQWU7R0FEM0Msa0JBQWtCLENBZ0M5QiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvaW5ib3gvcHJhY3RpY2UuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBCb2R5LCBDb250cm9sbGVyLCBHZXQsIFBhcmFtLCBQb3N0LCBVc2VHdWFyZHMgfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IFByYWN0aWNlU2VydmljZSB9IGZyb20gXCIuL3ByYWN0aWNlLnNlcnZpY2VcIjtcbmltcG9ydCB7IEN1cnJlbnRVc2VyLCBBdXRoVXNlciwgUm9sZXMsIFBlcm1pc3Npb25BcmVhIH0gZnJvbSBcIi4uL2NvbW1vbi9kZWNvcmF0b3JzXCI7XG5pbXBvcnQgeyBUZW5hbnRHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vdGVuYW50Lmd1YXJkXCI7XG5pbXBvcnQgeyBSb2xlc0d1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi9yb2xlcy5ndWFyZFwiO1xuXG4vKipcbiAqIENYMTJhIOKAlCBQcmFjdGljZSBNb2RlIGVuZHBvaW50cy4gVG9nZ2xlICsgY2xlYW51cCBhcmVcbiAqIE9XTkVSL0FETUlOIG9ubHkgKFJvbGVzR3VhcmQsIHRoZSByZXBvIHBhdHRlcm4pOyByZWFkaW5nIHN0YXRlXG4gKiBpcyBvcGVuIHRvIGFueSBtZW1iZXIgc28gdGhlIHNoZWxsIGJhbm5lciBjYW4gcmVuZGVyIGZvciB0aGVcbiAqIHdob2xlIHRlYW0gd2hpbGUgcHJhY3RpY2UgaXMgb24uXG4gKi9cbkBQZXJtaXNzaW9uQXJlYShcImluYm94XCIpXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL3ByYWN0aWNlXCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIFByYWN0aWNlQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgcHJhY3RpY2U6IFByYWN0aWNlU2VydmljZSkge31cblxuICBAR2V0KClcbiAgc3RhdGUoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLnByYWN0aWNlLmdldFN0YXRlKG9yZ0lkKTtcbiAgfVxuXG4gIEBQb3N0KFwidG9nZ2xlXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICB0b2dnbGUoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiB7IGVuYWJsZWQ/OiBib29sZWFuIH0pIHtcbiAgICByZXR1cm4gdGhpcy5wcmFjdGljZS5zZXRQcmFjdGljZU1vZGUob3JnSWQsIHVzZXIudXNlcklkLCBCb29sZWFuKGR0bz8uZW5hYmxlZCkpO1xuICB9XG5cbiAgQFBvc3QoXCJjb252ZXJzYXRpb25cIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIGNvbnZlcnNhdGlvbihAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLnByYWN0aWNlLmNyZWF0ZVByYWN0aWNlQ29udmVyc2F0aW9uKG9yZ0lkLCB1c2VyLnVzZXJJZCk7XG4gIH1cblxuICBAUG9zdChcImNvbnZlcnNhdGlvbnMvOmNvbnZlcnNhdGlvbklkL3NpbXVsYXRlXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiKVxuICBzaW11bGF0ZShAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwiY29udmVyc2F0aW9uSWRcIikgY29udmVyc2F0aW9uSWQ6IHN0cmluZywgQEJvZHkoKSBkdG86IHsgY29udGVudD86IHN0cmluZyB9KSB7XG4gICAgcmV0dXJuIHRoaXMucHJhY3RpY2Uuc2ltdWxhdGVJbmJvdW5kTWVzc2FnZShvcmdJZCwgdXNlci51c2VySWQsIGNvbnZlcnNhdGlvbklkLCBkdG8/LmNvbnRlbnQpO1xuICB9XG5cbiAgQFBvc3QoXCJkZW1vLXBhY2tcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIGRlbW9QYWNrKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMucHJhY3RpY2UubG9hZERlbW9QYWNrKG9yZ0lkLCB1c2VyLnVzZXJJZCk7XG4gIH1cblxuICBAUG9zdChcImNsZWFudXBcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIGNsZWFudXAoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5wcmFjdGljZS5jbGVhbnVwUHJhY3RpY2Uob3JnSWQsIHVzZXIudXNlcklkKTtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

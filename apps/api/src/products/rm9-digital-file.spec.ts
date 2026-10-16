@@ -9,6 +9,11 @@ import { StorageRegistryService } from "../storage/storage-registry.service";
 import { StorefrontService } from "../storefront/storefront.service";
 import { assertEc24Conditionals } from "../commerce/ec24";
 
+// INT7 union (AB5/AX9): the reveal mints signed download tokens
+// (the JWT_SECRET source shared with the admin token); the R2
+// presigned URL is produced at the token-redemption step.
+process.env.JWT_SECRET = "rm9-spec-secret";
+
 /**
  * RB6/RM9 — digital product files in the platform's own PRIVATE
  * bucket: presign (blocklist + size cap) -> browser PUT ->
@@ -125,7 +130,8 @@ function makeService(prisma: any, storage: FakeStorage) {
     prisma as any,
     auditStub,
     undefined, undefined, undefined, undefined, undefined,
-    undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined,
     storage as any,
     new StorageRegistryService(prisma as any) as any,
     undefined,
@@ -331,20 +337,50 @@ function makeStorefront(prisma: any, storage?: FakeStorage) {
     prisma as any,
     undefined, undefined, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined,
     storage as any,
   );
 }
 
+class FakeRes {
+  statusCode: number | null = null;
+  headers: Record<string, string> = {};
+  body: string | null = null;
+  redirectUrl: string | null = null;
+  status(code: number) { this.statusCode = code; return this; }
+  setHeader(k: string, v: string) { this.headers[k] = v; return this; }
+  send(b: string) { this.body = b; return this; }
+  end(b?: string) { if (b) this.body = b; return this; }
+  redirect(code: number, url: string) { this.statusCode = code; this.redirectUrl = url; return this; }
+}
+
+function tokenFrom(downloadPath: string): string {
+  return downloadPath.split("token=")[1];
+}
+
 describe("RM9 delivery reveal", () => {
-  it("R2 file: the revealed URL is a 300s presigned GET, and the access cap still applies", async () => {
+  // INT7 union semantics: AB5 (AX9) redesigned this surface — the
+  // reveal returns a signed downloadPath and NEVER a raw or
+  // presigned URL; the RM9 resolution (R2 key -> 300s presigned
+  // GET, merchant URL as fallback) happens at the token-redemption
+  // step (StorefrontService.digitalDownload), where these tests
+  // now verify it.
+  it("R2 file: reveal mints a signed path (no URL leaks); download 302s to the 300s presigned GET; reveal cap still applies", async () => {
     const prisma = storefrontPrisma();
     seedShop(prisma, { digitalStorageKey: "org-1/digital/p-digi/abc.pdf", digitalFileUrl: null });
     const svc = makeStorefront(prisma, new FakeStorage());
     const out: any = await svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" });
-    expect(out.links).toEqual([
-      { productName: "ইবুক", url: "https://fake-s3.test/private/org-1/digital/p-digi/abc.pdf?get=1&ttl=300" },
-    ]);
+    expect(out.links).toHaveLength(1);
+    expect(out.links[0].productName).toBe("ইবুক");
+    expect(out.links[0].downloadPath).toContain("digital-download?token=");
+    expect(JSON.stringify(out)).not.toContain("fake-s3.test");
     expect(prisma.order.rows[0].digitalAccessCount).toBe(1);
+    // Redeem: the R2 key resolves to the 300s presigned GET.
+    const res = new FakeRes();
+    await svc.digitalDownload("shop-one", "o-1", tokenFrom(out.links[0].downloadPath), res as any);
+    expect(res.statusCode).toBe(302);
+    expect(res.redirectUrl).toBe("https://fake-s3.test/private/org-1/digital/p-digi/abc.pdf?get=1&ttl=300");
     // Cap = 1: the second reveal is refused exactly as EC24b.
     await expect(svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" }))
       .rejects.toThrow(/ডাউনলোডের সীমা শেষ/);
@@ -355,15 +391,24 @@ describe("RM9 delivery reveal", () => {
     seedShop(prisma, { digitalStorageKey: "org-1/digital/p-digi/abc.pdf", digitalFileUrl: "https://files.example.com/ebook.pdf" }, null);
     const svc = makeStorefront(prisma, new FakeStorage());
     const out: any = await svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" });
-    expect(out.links[0].url).toContain("fake-s3.test/private/");
+    const res = new FakeRes();
+    await svc.digitalDownload("shop-one", "o-1", tokenFrom(out.links[0].downloadPath), res as any);
+    expect(res.statusCode).toBe(302);
+    expect(res.redirectUrl).toContain("fake-s3.test/private/");
   });
 
-  it("no storage wired: merchant URL revealed exactly as EC24b; key-only product yields no link", async () => {
+  it("no storage wired: reveal mints a signed path (raw merchant URL never exposed) and download 302s to it; key-only product yields no link", async () => {
     const prisma = storefrontPrisma();
     seedShop(prisma, { digitalFileUrl: "https://files.example.com/ebook.pdf" }, null);
     const svc = makeStorefront(prisma);
     const out: any = await svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" });
-    expect(out.links).toEqual([{ productName: "ইবুক", url: "https://files.example.com/ebook.pdf" }]);
+    expect(out.links).toHaveLength(1);
+    expect(out.links[0].downloadPath).toContain("digital-download?token=");
+    expect(JSON.stringify(out)).not.toContain("files.example.com");
+    const res = new FakeRes();
+    await svc.digitalDownload("shop-one", "o-1", tokenFrom(out.links[0].downloadPath), res as any);
+    expect(res.statusCode).toBe(302);
+    expect(res.redirectUrl).toBe("https://files.example.com/ebook.pdf");
 
     const prisma2 = storefrontPrisma();
     seedShop(prisma2, { digitalStorageKey: "org-1/digital/p-digi/abc.pdf", digitalFileUrl: null }, null);

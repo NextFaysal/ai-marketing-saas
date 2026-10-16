@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { PERMISSION_AREA_KEYS } from "./permission-catalog";
 
 // Milestone 40: scheduled maintenance windows live in
 // SystemSetting; the guard caches the row briefly.
@@ -110,6 +111,22 @@ export class TenantGuard implements CanActivate {
       if (viewAs.mode !== "write" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
         throw new ForbiddenException("This is a read-only view-as session — changes are disabled. The admin can start a write session if a fix is needed.");
       }
+    }
+    // GB6 (GC16): attach the member's CustomRole areas (if any)
+    // so RolesGuard can gate area-tagged endpoints by the
+    // custom role. Fully defensive: any lookup failure leaves
+    // customRoleAreas undefined and access falls back to the
+    // ordinary role/override behaviour — never blocks.
+    if ((membership as any).customRoleId) {
+      try {
+        if (typeof (this.prisma as any).customRole?.findUnique === "function") {
+          const row = await (this.prisma as any).customRole.findUnique({ where: { id: (membership as any).customRoleId } });
+          const areas = Array.isArray(row?.areas) ? row.areas : [];
+          (membership as any).customRoleAreas = areas.filter(
+            (k: unknown): k is string => typeof k === "string" && PERMISSION_AREA_KEYS.includes(k),
+          );
+        }
+      } catch { /* custom-role lookup unavailable — do not block */ }
     }
     req.membership = membership;
     req.organizationId = organizationId;

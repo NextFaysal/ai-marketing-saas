@@ -148,7 +148,8 @@ describe("ON1 queues", () => {
     const counts = await svc.queueCounts("org-1");
     expect(counts.map((c) => c.key)).toEqual([
       "needs_confirmation", "ready_to_pack", "in_transit_stuck", "deliveries_today",
-      "due_collection", "returns_open", "review_hold", "incomplete_intake", "sla_breach", "all_open", "all",
+      // GB5 (GC14): rto_attention joins the rail (returns_open এর পাশে).
+      "due_collection", "returns_open", "rto_attention", "review_hold", "incomplete_intake", "sla_breach", "all_open", "all",
     ]);
     expect(counts.find((c) => c.key === "needs_confirmation")?.label).toBe("নিশ্চিত করা বাকি");
     for (const c of counts) {

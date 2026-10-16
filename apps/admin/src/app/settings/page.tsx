@@ -10,8 +10,8 @@ interface Settings {
   killSwitches: { aiDisabledOrgIds: string[]; broadcastsPaused: boolean };
   planPrices: Record<string, number>;
   planYearlyPrices: Record<string, number>;
-  planLimits: Record<string, { aiDaily: number; broadcastCap: number; seats: number }>;
-  planLimitsStored: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number }> | null;
+  planLimits: Record<string, { aiDaily: number; broadcastCap: number; seats: number; productLimit?: number; orderLimit?: number; storageLimitMb?: number; apiDailyLimit?: number }>;
+  planLimitsStored: Record<string, { aiDaily?: number; broadcastCap?: number; seats?: number; productLimit?: number; orderLimit?: number; storageLimitMb?: number; apiDailyLimit?: number }> | null;
 }
 interface Announcement { id: string; title: string; body: string; audience?: string; active: boolean; startsAt?: string | null; endsAt?: string | null; createdAt: string }
 const AUDIENCES: { value: string; label: string }[] = [
@@ -26,7 +26,7 @@ const AUDIENCES: { value: string; label: string }[] = [
 const SETTING_SECTIONS: { id: string; icon: string; label: string; sub: string }[] = [
   { id: "general", icon: "🧭", label: "সাধারণ", sub: "প্ল্যাটফর্ম অবস্থা · Plan দাম ও Limits · Kill Switch · Maintenance" },
   { id: "ai", icon: "🤖", label: "AI ও মিডিয়া", sub: "LLM · Image Generation" },
-  { id: "apps", icon: "🔌", label: "অ্যাপ সংযোগ", sub: "Meta · TikTok · Google · LinkedIn" },
+  { id: "apps", icon: "🔌", label: "অ্যাপ সংযোগ", sub: "Meta · TikTok · Google · Google SSO · LinkedIn" },
   { id: "messaging", icon: "✉️", label: "বার্তা", sub: "SMTP · SMS" },
   { id: "payment", icon: "💳", label: "পেমেন্ট", sub: "SSLCommerz · bKash · Wallet" },
   { id: "flags", icon: "🚩", label: "Flags ও Plan Defaults", sub: "Plan Feature Defaults" },
@@ -35,13 +35,13 @@ const SETTING_SECTIONS: { id: string; icon: string; label: string; sub: string }
 const SECTION_IDS = SETTING_SECTIONS.map((s) => s.id);
 const BLOCK_SECTION: Record<string, string> = {
   "config-llm": "ai", "config-image": "ai",
-  "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-linkedin": "apps",
+  "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-google-sso": "apps", "config-linkedin": "apps",
   "config-smtp": "messaging", "config-sms": "messaging",
   "config-sslcommerz": "payment", "config-bkash": "payment", "config-wallet": "payment",
 };
 const HASH_ALIAS: Record<string, string> = {
   "ai-llm": "config-llm", "ai-image": "config-image",
-  "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-linkedin": "config-linkedin",
+  "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-google-sso": "config-google-sso", "apps-linkedin": "config-linkedin",
   "messaging-smtp": "config-smtp", "messaging-sms": "config-sms",
   "payment-sslcommerz": "config-sslcommerz", "payment-bkash": "config-bkash", "payment-wallet": "config-wallet",
 };
@@ -57,6 +57,10 @@ interface PlatformConfigView {
   tiktokApp: { source: string; clientKey: string | null; redirectUri: string | null; audited: boolean; secretConfigured: boolean };
   googleApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
   linkedinApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
+  // AB8 (AX26): Google SSO staff login — separate OAuth client from
+  // the YouTube googleApp above. Optional in the type only so this
+  // page keeps rendering while the API section rolls out.
+  googleOAuth?: { source?: string; clientId: string | null; secretConfigured: boolean; enabled: boolean };
   wallet: { source: string; feeBps: number; payoutFourEyesThresholdMinor: number | null };
   note: string;
 }
@@ -195,6 +199,19 @@ function PlatformConfigSection({ setMsg, section, highlightId }: { setMsg: (m: s
           <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy token পাঠিয়ে Google-এর invalid_client বনাম invalid_grant উত্তরের পার্থক্য দেখা হয়) — Redirect URI নিবন্ধন বা API চালু থাকা এটি প্রমাণ করে না। Google Cloud Console-এ OAuth Client (Web) বানিয়ে Authorized Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/youtube/callback</code> এবং YouTube Data API v3 চালু করুন। App যাচাই (verification) না হলে YouTube আপলোড Private-এ আটকে রাখে — UI-তে সেটা হুবহু লেখা থাকে, Public বলে দাবি করা হয় না।</p>
           <p className="text-xs text-slate-500">CC20: একই Google App দিয়েই Connect Center-এর Google প্যাক (GA4 / Merchant Center / Business Profile) চলে — সেগুলোর জন্য এই অতিরিক্ত Redirect URI-গুলোও একই OAuth Client-এ নিবন্ধন করুন: <code>https://api.qosprey.com/social/oauth/google-ga4/callback</code>, <code>https://api.qosprey.com/social/oauth/google-merchant/callback</code>, <code>https://api.qosprey.com/social/oauth/google-business/callback</code> — আর Google Cloud-এ Analytics Admin API, Merchant API ও Business Profile API চালু করুন।</p>
         </div>
+        <div id="config-google-sso" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-google-sso" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">🔑 Google SSO (স্টাফ লগইন)</span><span className="flex items-center gap-2">{cfg.googleOAuth?.source ? srcBadge(cfg.googleOAuth.source) : null}{(cfg.googleOAuth?.enabled ?? false) ? <span className="abadge-green">চালু আছে</span> : <span className="abadge-red">বন্ধ আছে</span>}</span></div>
+          <label className="block text-sm">Client ID<input id="pc-gso-id" className="ainput mt-1" defaultValue={cfg.googleOAuth?.clientId ?? ""} placeholder="Google Cloud Console OAuth Client ID (Web)" /></label>
+          <label className="block text-sm">Client Secret<input id="pc-gso-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.googleOAuth?.secretConfigured ?? false)} /></label>
+          <label className="flex items-center gap-2 text-sm">
+            <input id="pc-gso-enabled" type="checkbox" defaultChecked={cfg.googleOAuth?.enabled ?? false} />
+            Google SSO চালু (Login পেজে “Google দিয়ে লগইন করুন” বোতাম দেখাবে)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("google-oauth", { clientId: val("pc-gso-id"), clientSecret: val("pc-gso-secret") || undefined, enabled: (document.getElementById("pc-gso-enabled") as HTMLInputElement)?.checked ?? false }, "Google SSO সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+          </div>
+          <p className="text-xs text-slate-500">এটি উপরের YouTube Google App থেকে আলাদা OAuth Client — শুধু লগইনের জন্য। Google Cloud Console-এ এই Client-এর Authorized Redirect URI হিসেবে ঠিক এটি নিবন্ধন করুন: <code>https://api.qosprey.com/auth/google/callback</code> (API_PUBLIC_URL বদলালে সেই অনুযায়ী <code>&lt;API_PUBLIC_URL&gt;/auth/google/callback</code>)। Google দিয়ে লগইন শুধু আগে থেকে থাকা অ্যাকাউন্টের যাচাইকৃত ইমেইলেই হয় — নতুন অ্যাকাউন্ট তৈরি হয় না; TOTP চালু থাকলে Google-এর পরেও কোড লাগবে।</p>
+        </div>
         <div id="config-linkedin" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-linkedin" ? "ring-2 ring-indigo-400" : "")}>
           <div className="flex items-center justify-between"><span className="font-semibold">💼 LinkedIn App — Page Connect + পোস্টিং (Connect Center — CC20)</span>{srcBadge(cfg.linkedinApp.source)}</div>
           <label className="block text-sm">Client ID<input id="pc-li-id" className="ainput mt-1" defaultValue={cfg.linkedinApp.clientId ?? ""} placeholder="LinkedIn Developer App Client ID" /></label>
@@ -285,7 +302,6 @@ function PlatformConfigSection({ setMsg, section, highlightId }: { setMsg: (m: s
           <p className="text-xs text-slate-500">এই ফি শুধু প্ল্যাটফর্ম গেটওয়ে (উপরের SSLCommerz/bKash — প্ল্যাটফর্মের অ্যাকাউন্ট) দিয়ে আসা Tenant পেমেন্টে কাটা হয়: যাচাইকৃত পেমেন্টের মুহূর্তে তখনকার হারেই হিসাব হয়, Tenant-এর Wallet-এ নিট অংশ জমা হয় (ledger-এ ফি আলাদা row)। সেট না থাকলে ফি 0 — কখনো অনুমান করা হয় না। Tenant-এর নিজের গেটওয়ের (CC9) টাকায় কোনো ফি নেই। Payout পরিচালনা: Wallet Payouts পেজে।</p>
         </div>
       </div>
-
       </div>
     </div>
   );
@@ -403,6 +419,12 @@ export default function SettingsPage() {
               const fromSetting = !!(s.planLimitsStored && tier in s.planLimitsStored);
               const setField = (field: "aiDaily" | "broadcastCap" | "seats", v: number) =>
                 setS({ ...s, planLimits: { ...s.planLimits, [tier]: { ...limits, [field]: v } } });
+              // GC22: resource limits are OPTIONAL — empty = সীমা নেই (unlimited), 0 = সব বন্ধ।
+              const setResourceField = (field: "productLimit" | "orderLimit" | "storageLimitMb" | "apiDailyLimit", raw: string) => {
+                const next = { ...limits };
+                if (raw.trim() === "") delete next[field]; else next[field] = Number(raw);
+                setS({ ...s, planLimits: { ...s.planLimits, [tier]: next } });
+              };
               return (
                 <div key={tier} className="mb-3 rounded-lg bg-slate-800/50 p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm">
@@ -430,6 +452,20 @@ export default function SettingsPage() {
                     </label>
                     <label className="block">Seats
                       <input className="ainput mt-1" type="number" min={0} step={1} value={limits.seats} onChange={(e) => setField("seats", Number(e.target.value))} />
+                    </label>
+                  </div>
+                  <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
+                    <label className="block">পণ্য সীমা (খালি = সীমা নেই)
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.productLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("productLimit", e.target.value)} />
+                    </label>
+                    <label className="block">অর্ডার/মাস (খালি = সীমা নেই)
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.orderLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("orderLimit", e.target.value)} />
+                    </label>
+                    <label className="block">স্টোরেজ MB (খালি = সীমা নেই)
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.storageLimitMb ?? ""} placeholder="∞" onChange={(e) => setResourceField("storageLimitMb", e.target.value)} />
+                    </label>
+                    <label className="block">API/দিন (খালি = সীমা নেই)
+                      <input className="ainput mt-1" type="number" min={0} step={1} value={limits.apiDailyLimit ?? ""} placeholder="∞" onChange={(e) => setResourceField("apiDailyLimit", e.target.value)} />
                     </label>
                   </div>
                 </div>

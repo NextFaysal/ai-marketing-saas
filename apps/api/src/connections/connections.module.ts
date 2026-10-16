@@ -18,6 +18,7 @@ import { ConnectionHealingService } from "./connection-healing.service";
 import { ConnectionAnalyticsService } from "./connection-analytics.service";
 import { ConnectionUsageService } from "./connection-usage.service";
 import { IntegrationsModule } from "../integrations/integrations.module";
+import { PaymentOpsService } from "./payment-ops.service";
 
 /**
  * CC1/CC2 — Connect Center. PrismaService and AuditService come
@@ -55,7 +56,9 @@ import { IntegrationsModule } from "../integrations/integrations.module";
     // the stored-state deliverability surface.
     ConnectionUsageService,
     { provide: "CONNECTION_HEALING", useExisting: ConnectionHealingService },
+    // GC12: payment-attempt ops reads (theirs).
+    PaymentOpsService,
   ],
-  exports: [ConnectionsService, TenantPaymentsService, PaymentRefundsService, SettlementsService, PaymentLinksService, WalletService, ConnectionDoctorService, ConnectionMonitorService, ConnectionTimelineService, ProviderHealthService, GoogleConnectService, SetupAssistantService, StepUpService, ConnectionHealingService, ConnectionAnalyticsService, ConnectionUsageService],
+  exports: [ConnectionsService, TenantPaymentsService, PaymentRefundsService, SettlementsService, PaymentLinksService, WalletService, ConnectionDoctorService, ConnectionMonitorService, ConnectionTimelineService, ProviderHealthService, GoogleConnectService, SetupAssistantService, StepUpService, ConnectionHealingService, ConnectionAnalyticsService, ConnectionUsageService, PaymentOpsService],
 })
 export class ConnectionsModule {}

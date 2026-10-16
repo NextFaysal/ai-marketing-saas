@@ -79,14 +79,18 @@ export class RedxClient {
     cash_collection_amount: string; parcel_weight: number; // grams
     instruction?: string; value: number; pickup_store_id?: number;
     parcel_details_json?: { name: string; category?: string; value: number }[];
-  }): Promise<{ trackingId: string; status: string }> {
+  }): Promise<{ trackingId: string; status: string; rawStatus: string | null }> {
     const body = await this.call("/parcel", { method: "POST", body: JSON.stringify(payload) });
     const data = body?.data ?? body;
     const trackingId = data?.tracking_id ?? data?.trackingId;
     if (!trackingId) {
       throw new RedxError(`RedX did not return a tracking id: ${body?.message ?? "unknown response"}`);
     }
-    return { trackingId: String(trackingId), status: mapRedxStatus(data?.status ?? "pending") };
+    return {
+      trackingId: String(trackingId), status: mapRedxStatus(data?.status ?? "pending"),
+      // GB5: the provider's verbatim status for the event log.
+      rawStatus: data?.status != null ? String(data.status) : null,
+    };
   }
 
   /** Pre-booking charge calculation from RedX's OWN charge calculator.
@@ -119,10 +123,16 @@ export class RedxClient {
   }
 
   async parcelStatus(trackingId: string): Promise<string> {
+    return (await this.parcelStatusDetail(trackingId)).status;
+  }
+
+  /** GB5: the same read as parcelStatus, also returning the
+   * provider's verbatim status string for the event log. */
+  async parcelStatusDetail(trackingId: string): Promise<{ status: string; rawStatus: string | null }> {
     const body = await this.call(`/parcel/info/${encodeURIComponent(trackingId)}`);
     const data = body?.data ?? body?.parcel ?? body;
     const status = data?.status ?? data?.parcel_status;
     if (!status) throw new RedxError("RedX parcel info response had no status");
-    return mapRedxStatus(status);
+    return { status: mapRedxStatus(status), rawStatus: String(status) };
   }
 }

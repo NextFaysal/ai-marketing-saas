@@ -7,9 +7,14 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
+import { clientIpFromRequest } from "../fraud/client-ip";
 import { StorefrontService } from "./storefront.service";
 import { DeliveryPricingService } from "./delivery-pricing.service";
 import { ShopAccountService } from "./shop-account.service";
@@ -28,9 +33,20 @@ import {
   StockAlertSubscribeDto,
   CartContactDto,
   CheckoutDto,
+  ContactMessageDto,
+  CreateSearchSynonymDto,
+  UpdateSearchSynonymDto,
+  CreateBlogPostDto,
+  UpdateBlogPostDto,
+  ExpressCheckoutDto,
   CreateAddressDto,
+  CreateShopPageDto,
+  PopupEventDto,
+  UpdateShopPageDto,
+  UpsertStorePopupDto,
   CreateDeliverySlotDto,
   CreatePickupPointDto,
+  GiftCardBalanceDto,
   CreateShippingRateRuleDto,
   CreateZoneDto,
   MergeWishlistDto,
@@ -84,21 +100,109 @@ export class PublicShopController {
     @Param("orgSlug") orgSlug: string,
     @Query("q") q?: string,
     @Query("category") category?: string,
+    @Query("brand") brand?: string,
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string,
+    @Query("sort") sort?: string,
+    @Query("ids") ids?: string,
   ) {
     return this.storefront.shopHome(orgSlug, {
       q: q || undefined,
       category: category || undefined,
+      // GB2 (GC6): brand filter by slug.
+      brand: brand || undefined,
       page: parseIntDef(page, 1),
       pageSize: parseIntDef(pageSize, 24),
+      sort: sort || undefined,
+      // AB6 (AX14): explicit product-id list mode (see service).
+      ids: ids || undefined,
     });
+  }
+
+  /** GB2 (GC6): public brand page (brand info + its ACTIVE
+   * products). The literal "brands" segment cannot be captured
+   * by the product-slug route. */
+  @Public()
+  @Get(":orgSlug/brands/:brandSlug")
+  brandPage(@Param("orgSlug") orgSlug: string, @Param("brandSlug") brandSlug: string) {
+    return this.storefront.shopBrandPage(orgSlug, brandSlug);
+  }
+
+  /** GB7: public flash-sales countdown payload (live sales +
+   * their products + serverNow). Distinct segment count from
+   * the product-slug route, so ordering is safe. */
+  @Public()
+  @Get(":orgSlug/flash-sales")
+  flashSales(@Param("orgSlug") orgSlug: string) {
+    return this.storefront.publicFlashSales(orgSlug);
+  }
+
+  /** AB6 (AX14): cart cross-sell recommendations — products
+   * bought together with any of the given cart product ids.
+   * `context` is accepted for forward compatibility and ignored
+   * in v1 (only "cart" exists). Distinct segment count from the
+   * product-slug route, so ordering is safe. */
+  @Public()
+  @Get(":orgSlug/recommendations")
+  recommendations(
+    @Param("orgSlug") orgSlug: string,
+    @Query("productIds") productIds?: string,
+    @Query("context") context?: string,
+  ) {
+    void context;
+    return this.storefront.cartRecommendations(orgSlug, productIds ?? "");
   }
 
   @Public()
   @Get(":orgSlug/products/:productSlug")
   product(@Param("orgSlug") orgSlug: string, @Param("productSlug") productSlug: string) {
     return this.storefront.productDetail(orgSlug, productSlug);
+  }
+
+  /** GB1 (GC2): a published shop content page. Declared after
+   * the product route; the literal "pages" segment cannot be
+   * captured by the product-slug route. */
+  @Public()
+  @Get(":orgSlug/pages/:pageSlug")
+  publicPage(@Param("orgSlug") orgSlug: string, @Param("pageSlug") pageSlug: string) {
+    return this.storefront.getPublicPage(orgSlug, pageSlug);
+  }
+
+  /** AB6 (AX12): the shop's published blog posts. */
+  @Public()
+  @Get(":orgSlug/blog")
+  publicBlog(@Param("orgSlug") orgSlug: string) {
+    return this.storefront.listPublicBlogPosts(orgSlug);
+  }
+
+  /** AB6 (AX12): one published blog post (drafts 404). */
+  @Public()
+  @Get(":orgSlug/blog/:postSlug")
+  publicBlogPost(@Param("orgSlug") orgSlug: string, @Param("postSlug") postSlug: string) {
+    return this.storefront.getPublicBlogPost(orgSlug, postSlug);
+  }
+
+  /** GB1 (GC3): the shop's live popup (null when none applies). */
+  @Public()
+  @Get(":orgSlug/popup")
+  publicPopup(@Param("orgSlug") orgSlug: string) {
+    return this.storefront.getPublicPopup(orgSlug);
+  }
+
+  /** GB1 (GC3): popup impression/click counter (always ok). */
+  @Public()
+  @RateLimit(60, 60)
+  @Post(":orgSlug/popup-event")
+  popupEvent(@Param("orgSlug") orgSlug: string, @Body() dto: PopupEventDto) {
+    return this.storefront.recordPopupEvent(orgSlug, dto.kind);
+  }
+
+  /** GB1 (GC2): shop contact form (staff-notify + email, stored always). */
+  @Public()
+  @RateLimit(5, 60)
+  @Post(":orgSlug/contact")
+  contact(@Param("orgSlug") orgSlug: string, @Body() dto: ContactMessageDto) {
+    return this.storefront.submitContactMessage(orgSlug, dto);
   }
 
   /** EC30: active pickup points for the checkout picker. */
@@ -163,9 +267,25 @@ export class PublicShopController {
   checkout(
     @Param("orgSlug") orgSlug: string,
     @Body() dto: CheckoutDto,
+    @Req() req: any,
     @Headers(SHOP_SESSION_HEADER) sessionToken?: string,
   ) {
-    return this.storefront.checkout(orgSlug, dto, sessionToken);
+    return this.storefront.checkout(orgSlug, dto, sessionToken, { ip: clientIpFromRequest(req) });
+  }
+
+  /** AB4 (AX5c): express checkout — signed-in customers place
+   * the cart against a saved address in one call (the session
+   * header is required by the service, which 400s without a
+   * valid session). */
+  @Public()
+  @Post(":orgSlug/express-checkout")
+  expressCheckout(
+    @Param("orgSlug") orgSlug: string,
+    @Body() dto: ExpressCheckoutDto,
+    @Req() req: any,
+    @Headers(SHOP_SESSION_HEADER) sessionToken?: string,
+  ) {
+    return this.storefront.expressCheckout(orgSlug, sessionToken, dto, { ip: clientIpFromRequest(req) });
   }
 
   // ---------- EC25: storefront accounts (OTP auth) ----------
@@ -173,8 +293,11 @@ export class PublicShopController {
   @Public()
   @RateLimit(10, 60)
   @Post(":orgSlug/auth/request-otp")
-  requestOtp(@Param("orgSlug") orgSlug: string, @Body() dto: RequestOtpDto) {
-    return this.shopAccount.requestOtp(orgSlug, dto.phone);
+  requestOtp(@Param("orgSlug") orgSlug: string, @Body() dto: RequestOtpDto, @Req() req: any) {
+    return this.shopAccount.requestOtp(orgSlug, dto.phone, {
+      captchaToken: dto.captchaToken ?? null,
+      ip: clientIpFromRequest(req),
+    });
   }
 
   @Public()
@@ -194,6 +317,14 @@ export class PublicShopController {
   @Get(":orgSlug/account/me")
   accountMe(@Param("orgSlug") orgSlug: string, @Headers(SHOP_SESSION_HEADER) token?: string) {
     return this.shopAccount.me(orgSlug, token);
+  }
+
+  /** AB1 (AX1/AX2): the signed-in customer's points balance,
+   * history, referral code and referral rewards. */
+  @Public()
+  @Get(":orgSlug/account/loyalty")
+  accountLoyalty(@Param("orgSlug") orgSlug: string, @Headers(SHOP_SESSION_HEADER) token?: string) {
+    return this.shopAccount.loyaltyView(orgSlug, token);
   }
 
   @Public()
@@ -328,6 +459,33 @@ export class PublicShopController {
     return this.storefront.digitalAccess(orgSlug, dto);
   }
 
+  /** AB5 (AX9): signed digital download — the token (minted by
+   * the reveal) is the credential, so this answers with a raw
+   * @Res response: 302 to the merchant file on success, one
+   * generic Bengali 403 page for every failure. */
+  @Public()
+  @Get(":orgSlug/orders/:orderId/digital-download")
+  async digitalDownload(
+    @Param("orgSlug") orgSlug: string,
+    @Param("orderId") orderId: string,
+    @Query("token") token: string | undefined,
+    @Res() res: Response,
+  ) {
+    return this.storefront.digitalDownload(orgSlug, orderId, token, res as any);
+  }
+
+  /** AB2 (AX3): public gift-card balance lookup — the code is a
+   * bearer credential, so this is rate-limited like the track
+   * routes and answers generically for unknown codes. Declared
+   * in the track section: the literal "gift-cards" segment
+   * cannot be captured by any product-slug route. */
+  @Public()
+  @RateLimit(10, 60)
+  @Post(":orgSlug/gift-cards/balance")
+  giftCardBalance(@Param("orgSlug") orgSlug: string, @Body() dto: GiftCardBalanceDto) {
+    return this.storefront.giftCardBalance(orgSlug, dto);
+  }
+
   // ---------- EC28: retention ----------
 
   /** Back-in-stock subscription (only while actually out of stock). */
@@ -445,6 +603,144 @@ export class StorefrontStaffController {
     @Body() dto: UpdateStorefrontSettingsDto,
   ) {
     return this.storefront.updateSettings(orgId, user.userId, dto);
+  }
+
+  // GB1 (GC2): shop content pages (staff CRUD).
+  @Get("pages")
+  listPages(@Param("organizationId") orgId: string) {
+    return this.storefront.listPages(orgId);
+  }
+
+  @Post("pages")
+  @Roles(...WRITE_ROLES)
+  createPage(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: CreateShopPageDto,
+  ) {
+    return this.storefront.createPage(orgId, user.userId, dto);
+  }
+
+  @Patch("pages/:pageId")
+  @Roles(...WRITE_ROLES)
+  updatePage(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("pageId") pageId: string,
+    @Body() dto: UpdateShopPageDto,
+  ) {
+    return this.storefront.updatePage(orgId, user.userId, pageId, dto);
+  }
+
+  @Delete("pages/:pageId")
+  @Roles(...WRITE_ROLES)
+  deletePage(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("pageId") pageId: string,
+  ) {
+    return this.storefront.deletePage(orgId, user.userId, pageId);
+  }
+
+  // AB6 (AX12): shop blog posts (staff CRUD).
+  @Get("blog")
+  listBlogPosts(@Param("organizationId") orgId: string, @Query("status") status?: string) {
+    return this.storefront.listBlogPosts(orgId, status);
+  }
+
+  @Post("blog")
+  @Roles(...WRITE_ROLES)
+  createBlogPost(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: CreateBlogPostDto,
+  ) {
+    return this.storefront.createBlogPost(orgId, user.userId, dto);
+  }
+
+  @Patch("blog/:postId")
+  @Roles(...WRITE_ROLES)
+  updateBlogPost(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("postId") postId: string,
+    @Body() dto: UpdateBlogPostDto,
+  ) {
+    return this.storefront.updateBlogPost(orgId, user.userId, postId, dto);
+  }
+
+  @Delete("blog/:postId")
+  @Roles(...WRITE_ROLES)
+  deleteBlogPost(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("postId") postId: string,
+  ) {
+    return this.storefront.deleteBlogPost(orgId, user.userId, postId);
+  }
+
+  // AB6 (AX11): search analytics + synonyms + reindex (staff).
+  @Get("search/analytics")
+  searchAnalytics(@Param("organizationId") orgId: string) {
+    return this.storefront.searchAnalytics(orgId);
+  }
+
+  @Get("search/synonyms")
+  listSynonyms(@Param("organizationId") orgId: string) {
+    return this.storefront.listSynonyms(orgId);
+  }
+
+  @Post("search/synonyms")
+  @Roles(...WRITE_ROLES)
+  createSynonym(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: CreateSearchSynonymDto,
+  ) {
+    return this.storefront.createSynonym(orgId, user.userId, dto);
+  }
+
+  @Patch("search/synonyms/:synonymId")
+  @Roles(...WRITE_ROLES)
+  updateSynonym(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("synonymId") synonymId: string,
+    @Body() dto: UpdateSearchSynonymDto,
+  ) {
+    return this.storefront.updateSynonym(orgId, user.userId, synonymId, dto);
+  }
+
+  @Delete("search/synonyms/:synonymId")
+  @Roles(...WRITE_ROLES)
+  deleteSynonym(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("synonymId") synonymId: string,
+  ) {
+    return this.storefront.deleteSynonym(orgId, user.userId, synonymId);
+  }
+
+  @Post("search/reindex")
+  @Roles(...WRITE_ROLES)
+  reindexSearch(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.storefront.reindexSearch(orgId, user.userId);
+  }
+
+  // GB1 (GC3): the shop popup config (staff read + upsert).
+  @Get("popup")
+  getPopup(@Param("organizationId") orgId: string) {
+    return this.storefront.getPopupConfig(orgId);
+  }
+
+  @Put("popup")
+  @Roles(...WRITE_ROLES)
+  upsertPopup(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: UpsertStorePopupDto,
+  ) {
+    return this.storefront.upsertPopup(orgId, user.userId, dto);
   }
 
   @Post("zones")

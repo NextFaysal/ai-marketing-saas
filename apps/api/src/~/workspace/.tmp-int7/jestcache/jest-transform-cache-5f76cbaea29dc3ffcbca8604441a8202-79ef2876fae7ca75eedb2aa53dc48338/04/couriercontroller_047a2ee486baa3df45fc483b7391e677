@@ -1,0 +1,633 @@
+5d611bee875292b54c63827040091e4e
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PublicTrackingController = exports.CourierController = void 0;
+const common_1 = require("@nestjs/common");
+const courier_service_1 = require("./courier.service");
+const courier_rules_service_1 = require("./courier-rules.service");
+const courier_ndr_service_1 = require("./courier-ndr.service");
+const courier_reconciliation_service_1 = require("./courier-reconciliation.service");
+const courier_dto_1 = require("./courier.dto");
+const courier_ndr_dto_1 = require("./courier-ndr.dto");
+const courier_reconciliation_dto_1 = require("./courier-reconciliation.dto");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+let CourierController = class CourierController {
+    courier;
+    rules;
+    ndr;
+    reconciliation;
+    constructor(courier, rules, ndr, reconciliation) {
+        this.courier = courier;
+        this.rules = rules;
+        this.ndr = ndr;
+        this.reconciliation = reconciliation;
+    }
+    connection(orgId, provider) {
+        return this.courier.getConnection(orgId, provider);
+    }
+    connections(orgId) { return this.courier.getConnections(orgId); }
+    // ---------- EC22: courier auto-selection rules ----------
+    listRules(orgId) { return this.rules.list(orgId); }
+    createRule(user, orgId, dto) {
+        return this.rules.create(orgId, user.userId, dto);
+    }
+    updateRule(user, orgId, ruleId, dto) {
+        return this.rules.update(orgId, user.userId, ruleId, dto);
+    }
+    deleteRule(user, orgId, ruleId) {
+        return this.rules.remove(orgId, user.userId, ruleId);
+    }
+    /** EC22: which courier WOULD this order be auto-booked with? */
+    suggestion(orgId, orderId) {
+        return this.rules.suggestion(orgId, orderId);
+    }
+    /** EC22: set/clear a courier account's tracking URL template. */
+    setTrackingTemplate(user, orgId, dto) {
+        return this.courier.setTrackingTemplate(orgId, user.userId, dto.provider, dto.trackingUrlTemplate);
+    }
+    connect(user, orgId, dto) {
+        return this.courier.connect(orgId, user.userId, dto);
+    }
+    // CC29: ?integrationId= disconnects exactly that account of
+    // the provider; without it the primary account is disconnected
+    // (the pre-CC29 behavior).
+    disconnect(user, orgId, provider, integrationId) {
+        return this.courier.disconnect(orgId, user.userId, provider, integrationId);
+    }
+    pathaoStores(orgId) { return this.courier.pathaoStores(orgId); }
+    pathaoCities(orgId) { return this.courier.pathaoCities(orgId); }
+    pathaoZones(orgId, cityId) {
+        return this.courier.pathaoZones(orgId, Number(cityId));
+    }
+    pathaoAreas(orgId, zoneId) {
+        return this.courier.pathaoAreas(orgId, Number(zoneId));
+    }
+    redxAreas(orgId) { return this.courier.redxAreas(orgId); }
+    redxStores(orgId) { return this.courier.redxStores(orgId); }
+    /** Sales & Data S5: per-provider performance over booked shipments. */
+    performance(orgId, days) {
+        return this.courier.performance(orgId, days);
+    }
+    /** GB5 (GC14): the RTO report — per provider booked/delivered/
+     * returned + rate + event-log-based average days to return. */
+    rtoReport(orgId, from, to) {
+        return this.courier.rtoReport(orgId, { from, to });
+    }
+    /** GB5: eCourier booking-form pickers (documented city/thana
+     * lists + the merchant's assigned packages). */
+    ecourierCities(orgId) { return this.courier.ecourierCities(orgId); }
+    ecourierThanas(orgId, city) {
+        return this.courier.ecourierThanas(orgId, city);
+    }
+    ecourierPackages(orgId) { return this.courier.ecourierPackages(orgId); }
+    list(orgId, orderId) {
+        return this.courier.listShipments(orgId, orderId);
+    }
+    /** Milestone 52: pre-booking delivery-charge quote (provider's own pricing API). */
+    quote(orgId, dto) {
+        return this.courier.quote(orgId, dto);
+    }
+    book(user, orgId, dto) {
+        return this.courier.bookShipment(orgId, user.userId, dto);
+    }
+    /** Milestone 53: bulk booking (max 50) through the single-booking path. */
+    bookBulk(user, orgId, dto) {
+        return this.courier.bookBulk(orgId, user.userId, dto);
+    }
+    /** Milestone 53: PDF downloads are binary responses. */
+    sendPdf(res, buf, filename) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", String(buf.length));
+        res.end(buf);
+    }
+    async labelPdf(organizationId, shipmentId, res) {
+        this.sendPdf(res, await this.courier.labelPdf(organizationId, shipmentId), `label-${shipmentId}.pdf`);
+    }
+    async labelsPdf(organizationId, ids, res) {
+        this.sendPdf(res, await this.courier.labelsPdf(organizationId, (ids ?? "").split(",").map((s) => s.trim())), "labels.pdf");
+    }
+    async invoicePdf(organizationId, orderId, res) {
+        this.sendPdf(res, await this.courier.invoicePdf(organizationId, orderId), `invoice-${orderId}.pdf`);
+    }
+    async invoicesPdf(organizationId, ids, res) {
+        this.sendPdf(res, await this.courier.invoicesPdf(organizationId, (ids ?? "").split(",").map((s) => s.trim()).filter(Boolean)), "invoices.pdf");
+    }
+    sync(orgId, id) {
+        return this.courier.syncShipment(orgId, id);
+    }
+    /** GB5 (GC14): staff manual tracking update — same applicator
+     * as a provider sync, event stamped source=manual. */
+    manualStatus(user, orgId, id, dto) {
+        return this.courier.applyManualStatus(orgId, user.userId, id, dto);
+    }
+    /** GB5 (GC14): the shipment's event history (staff detail view). */
+    shipmentEvents(orgId, id) {
+        return this.courier.listShipmentEvents(orgId, id);
+    }
+    syncAll(orgId) { return this.courier.syncAll(orgId); }
+    /** CX6: mint/return the shipment's public live-tracking link. */
+    trackingLink(orgId, id) {
+        return this.courier.trackingLinkForShipment(orgId, id);
+    }
+    /** Feature 1: NDR (Non-Delivery Report) Interceptor & Recovery Hub */
+    listNdr(orgId, status, provider) {
+        return this.ndr.list(orgId, { status, provider });
+    }
+    contactNdr(orgId, id) {
+        return this.ndr.sendNdrCustomerAlert(orgId, { id, shipmentId: id });
+    }
+    rescheduleNdr(orgId, id, dto) {
+        return this.ndr.reschedule(orgId, id, dto);
+    }
+    resolveNdr(orgId, id, dto) {
+        return this.ndr.resolve(orgId, id, dto);
+    }
+    /** Feature 4: Courier COD Disbursement Reconciliation & Missing Cash Finder */
+    uploadDisbursement(user, orgId, dto) {
+        return this.reconciliation.processDisbursementBatch(orgId, dto, user?.userId);
+    }
+    listBatches(orgId) {
+        return this.reconciliation.listBatches(orgId);
+    }
+    getBatchDetails(orgId, batchId) {
+        return this.reconciliation.getBatchDetails(orgId, batchId);
+    }
+    getMissingDisbursements(orgId, days) {
+        const parsedDays = days ? parseInt(days, 10) : 7;
+        return this.reconciliation.getMissingDisbursements(orgId, isNaN(parsedDays) ? 7 : parsedDays);
+    }
+    updateDispute(orgId, itemId, dto) {
+        return this.reconciliation.updateDispute(orgId, itemId, dto);
+    }
+    getClaimSheet(orgId, batchId) {
+        return this.reconciliation.exportClaimSheet(orgId, batchId);
+    }
+};
+exports.CourierController = CourierController;
+__decorate([
+    (0, common_1.Get)("connection"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("provider")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "connection", null);
+__decorate([
+    (0, common_1.Get)("connections"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "connections", null);
+__decorate([
+    (0, common_1.Get)("rules"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "listRules", null);
+__decorate([
+    (0, common_1.Post)("rules"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "createRule", null);
+__decorate([
+    (0, common_1.Patch)("rules/:ruleId"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("ruleId")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, Object]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "updateRule", null);
+__decorate([
+    (0, common_1.Delete)("rules/:ruleId"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("ruleId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "deleteRule", null);
+__decorate([
+    (0, common_1.Get)("suggestion/:orderId"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("orderId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "suggestion", null);
+__decorate([
+    (0, common_1.Patch)("tracking-template"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "setTrackingTemplate", null);
+__decorate([
+    (0, common_1.Post)("connect"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, courier_dto_1.ConnectCourierDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "connect", null);
+__decorate([
+    (0, common_1.Delete)("connection"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Query)("provider")),
+    __param(3, (0, common_1.Query)("integrationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "disconnect", null);
+__decorate([
+    (0, common_1.Get)("pathao/stores"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "pathaoStores", null);
+__decorate([
+    (0, common_1.Get)("pathao/cities"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "pathaoCities", null);
+__decorate([
+    (0, common_1.Get)("pathao/zones/:cityId"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("cityId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "pathaoZones", null);
+__decorate([
+    (0, common_1.Get)("pathao/areas/:zoneId"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("zoneId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "pathaoAreas", null);
+__decorate([
+    (0, common_1.Get)("redx/areas"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "redxAreas", null);
+__decorate([
+    (0, common_1.Get)("redx/stores"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "redxStores", null);
+__decorate([
+    (0, common_1.Get)("performance"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("days")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "performance", null);
+__decorate([
+    (0, common_1.Get)("rto-report"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("from")),
+    __param(2, (0, common_1.Query)("to")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "rtoReport", null);
+__decorate([
+    (0, common_1.Get)("ecourier/cities"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "ecourierCities", null);
+__decorate([
+    (0, common_1.Get)("ecourier/thanas"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("city")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "ecourierThanas", null);
+__decorate([
+    (0, common_1.Get)("ecourier/packages"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "ecourierPackages", null);
+__decorate([
+    (0, common_1.Get)("shipments"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("orderId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)("quote"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, courier_dto_1.QuoteCourierDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "quote", null);
+__decorate([
+    (0, common_1.Post)("shipments"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, courier_dto_1.BookShipmentDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "book", null);
+__decorate([
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    (0, common_1.Post)("shipments/bulk"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, courier_dto_1.BulkBookDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "bookBulk", null);
+__decorate([
+    __param(0, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Buffer, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "sendPdf", null);
+__decorate([
+    (0, common_1.Get)("shipments/:shipmentId/label.pdf"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("shipmentId")),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", Promise)
+], CourierController.prototype, "labelPdf", null);
+__decorate([
+    (0, common_1.Get)("labels.pdf"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("ids")),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", Promise)
+], CourierController.prototype, "labelsPdf", null);
+__decorate([
+    (0, common_1.Get)("orders/:orderId/invoice.pdf"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("orderId")),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", Promise)
+], CourierController.prototype, "invoicePdf", null);
+__decorate([
+    (0, common_1.Get)("invoices.pdf"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("ids")),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", Promise)
+], CourierController.prototype, "invoicesPdf", null);
+__decorate([
+    (0, common_1.Post)("shipments/:shipmentId/sync"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("shipmentId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "sync", null);
+__decorate([
+    (0, common_1.Post)("shipments/:shipmentId/manual-status"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("shipmentId")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, courier_dto_1.ManualShipmentStatusDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "manualStatus", null);
+__decorate([
+    (0, common_1.Get)("shipments/:shipmentId/events"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("shipmentId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "shipmentEvents", null);
+__decorate([
+    (0, common_1.Post)("sync-all"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "syncAll", null);
+__decorate([
+    (0, common_1.Post)("shipments/:shipmentId/tracking-link"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("shipmentId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "trackingLink", null);
+__decorate([
+    (0, common_1.Get)("ndr"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("status")),
+    __param(2, (0, common_1.Query)("provider")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "listNdr", null);
+__decorate([
+    (0, common_1.Post)("ndr/:id/contact"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "contactNdr", null);
+__decorate([
+    (0, common_1.Post)("ndr/:id/reschedule"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("id")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, courier_ndr_dto_1.RescheduleNdrDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "rescheduleNdr", null);
+__decorate([
+    (0, common_1.Post)("ndr/:id/resolve"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("id")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, courier_ndr_dto_1.ResolveNdrDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "resolveNdr", null);
+__decorate([
+    (0, common_1.Post)("reconciliation/upload"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "ACCOUNTANT"),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, courier_reconciliation_dto_1.UploadDisbursementDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "uploadDisbursement", null);
+__decorate([
+    (0, common_1.Get)("reconciliation/batches"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "listBatches", null);
+__decorate([
+    (0, common_1.Get)("reconciliation/batches/:batchId"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("batchId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "getBatchDetails", null);
+__decorate([
+    (0, common_1.Get)("reconciliation/missing"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("days")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "getMissingDisbursements", null);
+__decorate([
+    (0, common_1.Post)("reconciliation/items/:itemId/dispute"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)("OWNER", "ADMIN", "ACCOUNTANT", "SUPPORT_AGENT"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("itemId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, courier_reconciliation_dto_1.UpdateDisputeDto]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "updateDispute", null);
+__decorate([
+    (0, common_1.Get)("reconciliation/batches/:batchId/claim-sheet"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("batchId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CourierController.prototype, "getClaimSheet", null);
+exports.CourierController = CourierController = __decorate([
+    (0, decorators_1.PermissionArea)("courier"),
+    (0, common_1.Controller)("organizations/:organizationId/courier"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [courier_service_1.CourierService,
+        courier_rules_service_1.CourierRulesService,
+        courier_ndr_service_1.CourierNdrService,
+        courier_reconciliation_service_1.CourierReconciliationService])
+], CourierController);
+/** CX6 + NDR: public live-tracking page data and customer self-serve response. */
+let PublicTrackingController = class PublicTrackingController {
+    courier;
+    ndr;
+    constructor(courier, ndr) {
+        this.courier = courier;
+        this.ndr = ndr;
+    }
+    view(token) { return this.courier.publicTracking(token); }
+    respondNdr(token, dto) {
+        return this.ndr.customerRespond(token, dto);
+    }
+};
+exports.PublicTrackingController = PublicTrackingController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)(":token"),
+    __param(0, (0, common_1.Param)("token")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PublicTrackingController.prototype, "view", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":token/ndr-respond"),
+    __param(0, (0, common_1.Param)("token")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, courier_ndr_dto_1.CustomerNdrActionDto]),
+    __metadata("design:returntype", void 0)
+], PublicTrackingController.prototype, "respondNdr", null);
+exports.PublicTrackingController = PublicTrackingController = __decorate([
+    (0, common_1.Controller)("public/tracking"),
+    __metadata("design:paramtypes", [courier_service_1.CourierService,
+        courier_ndr_service_1.CourierNdrService])
+], PublicTrackingController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvdXJpZXIvY291cmllci5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUEwRztBQUUxRyx1REFBbUQ7QUFDbkQsbUVBQThEO0FBQzlELCtEQUEwRDtBQUMxRCxxRkFBZ0Y7QUFDaEYsK0NBQTBIO0FBQzFILHVEQUEwRjtBQUMxRiw2RUFBdUY7QUFDdkYscURBQTRGO0FBQzVGLHlEQUFxRDtBQUNyRCx1REFBbUQ7QUFLNUMsSUFBTSxpQkFBaUIsR0FBdkIsTUFBTSxpQkFBaUI7SUFFVDtJQUNBO0lBQ0E7SUFDQTtJQUpuQixZQUNtQixPQUF1QixFQUN2QixLQUEwQixFQUMxQixHQUFzQixFQUN0QixjQUE0QztRQUg1QyxZQUFPLEdBQVAsT0FBTyxDQUFnQjtRQUN2QixVQUFLLEdBQUwsS0FBSyxDQUFxQjtRQUMxQixRQUFHLEdBQUgsR0FBRyxDQUFtQjtRQUN0QixtQkFBYyxHQUFkLGNBQWMsQ0FBOEI7SUFDNUQsQ0FBQztJQUdKLFVBQVUsQ0FBMEIsS0FBYSxFQUFxQixRQUFpQjtRQUNyRixPQUFPLElBQUksQ0FBQyxPQUFPLENBQUMsYUFBYSxDQUFDLEtBQUssRUFBRSxRQUFRLENBQUMsQ0FBQztJQUNyRCxDQUFDO0lBR0QsV0FBVyxDQUEwQixLQUFhLElBQUksT0FBTyxJQUFJLENBQUMsT0FBTyxDQUFDLGNBQWMsQ0FBQyxLQUFLLENBQUMsQ0FBQyxDQUFDLENBQUM7SUFFbEcsMkRBQTJEO0lBRTNELFNBQVMsQ0FBMEIsS0FBYSxJQUFJLE9BQU8sSUFBSSxDQUFDLEtBQUssQ0FBQyxJQUFJLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDO0lBR3BGLFVBQVUsQ0FBZ0IsSUFBYyxFQUEyQixLQUFhLEVBQVUsR0FFekY7UUFDQyxPQUFPLElBQUksQ0FBQyxLQUFLLENBQUMsTUFBTSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFB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UixJQUFBLGFBQUksRUFBQyxvQkFBb0IsQ0FBQztJQUNmLFdBQUEsSUFBQSxjQUFLLEVBQUMsT0FBTyxDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGFBQUksR0FBRSxDQUFBOzs2Q0FBTSxzQ0FBb0I7OzBEQUUxRTttQ0FkVSx3QkFBd0I7SUFEcEMsSUFBQSxtQkFBVSxFQUFDLGlCQUFpQixDQUFDO3FDQUdBLGdDQUFjO1FBQ2xCLHVDQUFpQjtHQUg5Qix3QkFBd0IsQ0FlcEMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvdXJpZXIvY291cmllci5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IEJvZHksIENvbnRyb2xsZXIsIERlbGV0ZSwgR2V0LCBQYXJhbSwgUGF0Y2gsIFBvc3QsIFF1ZXJ5LCBSZXMsIFVzZUd1YXJkcyB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUmVzcG9uc2UgfSBmcm9tIFwiZXhwcmVzc1wiO1xuaW1wb3J0IHsgQ291cmllclNlcnZpY2UgfSBmcm9tIFwiLi9jb3VyaWVyLnNlcnZpY2VcIjtcbmltcG9ydCB7IENvdXJpZXJSdWxlc1NlcnZpY2UgfSBmcm9tIFwiLi9jb3VyaWVyLXJ1bGVzLnNlcnZpY2VcIjtcbmltcG9ydCB7IENvdXJpZXJOZHJTZXJ2aWNlIH0gZnJvbSBcIi4vY291cmllci1uZHIuc2VydmljZVwiO1xuaW1wb3J0IHsgQ291cmllclJlY29uY2lsaWF0aW9uU2VydmljZSB9IGZyb20gXCIuL2NvdXJpZXItcmVjb25jaWxpYXRpb24uc2VydmljZVwiO1xuaW1wb3J0IHsgQm9va1NoaXBtZW50RHRvLCBCdWxrQm9va0R0bywgQ29ubmVjdENvdXJpZXJEdG8sIE1hbnVhbFNoaXBtZW50U3RhdHVzRHRvLCBRdW90ZUNvdXJpZXJEdG8gfSBmcm9tIFwiLi9jb3VyaWVyLmR0b1wiO1xuaW1wb3J0IHsgUmVzY2hlZHVsZU5kckR0bywgUmVzb2x2ZU5kckR0bywgQ3VzdG9tZXJOZHJBY3Rpb25EdG8gfSBmcm9tIFwiLi9jb3VyaWVyLW5kci5kdG9cIjtcbmltcG9ydCB7IFVwbG9hZERpc2J1cnNlbWVudER0bywgVXBkYXRlRGlzcHV0ZUR0byB9IGZyb20gXCIuL2NvdXJpZXItcmVjb25jaWxpYXRpb24uZHRvXCI7XG5pbXBvcnQgeyBDdXJyZW50VXNlciwgQXV0aFVzZXIsIFJvbGVzLCBQZXJtaXNzaW9uQXJlYSwgUHVibGljIH0gZnJvbSBcIi4uL2NvbW1vbi9kZWNvcmF0b3JzXCI7XG5pbXBvcnQgeyBUZW5hbnRHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vdGVuYW50Lmd1YXJkXCI7XG5pbXBvcnQgeyBSb2xlc0d1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi9yb2xlcy5ndWFyZFwiO1xuXG5AUGVybWlzc2lvbkFyZWEoXCJjb3VyaWVyXCIpXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL2NvdXJpZXJcIilcbkBVc2VHdWFyZHMoVGVuYW50R3VhcmQsIFJvbGVzR3VhcmQpXG5leHBvcnQgY2xhc3MgQ291cmllckNvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3RvcihcbiAgICBwcml2YXRlIHJlYWRvbmx5IGNvdXJpZXI6IENvdXJpZXJTZXJ2aWNlLFxuICAgIHByaXZhdGUgcmVhZG9ubHkgcnVsZXM6IENvdXJpZXJSdWxlc1NlcnZpY2UsXG4gICAgcHJpdmF0ZSByZWFkb25seSBuZHI6IENvdXJpZXJOZHJTZXJ2aWNlLFxuICAgIHByaXZhdGUgcmVhZG9ubHkgcmVjb25jaWxpYXRpb246IENvdXJpZXJSZWNvbmNpbGlhdGlvblNlcnZpY2UsXG4gICkge31cblxuICBAR2V0KFwiY29ubmVjdGlvblwiKVxuICBjb25uZWN0aW9uKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBRdWVyeShcInByb3ZpZGVyXCIpIHByb3ZpZGVyPzogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5nZXRDb25uZWN0aW9uKG9yZ0lkLCBwcm92aWRlcik7XG4gIH1cblxuICBAR2V0KFwiY29ubmVjdGlvbnNcIilcbiAgY29ubmVjdGlvbnMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykgeyByZXR1cm4gdGhpcy5jb3VyaWVyLmdldENvbm5lY3Rpb25zKG9yZ0lkKTsgfVxuXG4gIC8vIC0tLS0tLS0tLS0gRUMyMjogY291cmllciBhdXRvLXNlbGVjdGlvbiBydWxlcyAtLS0tLS0tLS0tXG4gIEBHZXQoXCJydWxlc1wiKVxuICBsaXN0UnVsZXMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykgeyByZXR1cm4gdGhpcy5ydWxlcy5saXN0KG9yZ0lkKTsgfVxuXG4gIEBQb3N0KFwicnVsZXNcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIpXG4gIGNyZWF0ZVJ1bGUoQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiB7XG4gICAgbmFtZTogc3RyaW5nOyBjb25kaXRpb25zOiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjsgY291cmllckFjY291bnRJZDogc3RyaW5nOyBwcmlvcml0eT86IG51bWJlcjsgYWN0aXZlPzogYm9vbGVhbjtcbiAgfSkge1xuICAgIHJldHVybiB0aGlzLnJ1bGVzLmNyZWF0ZShvcmdJZCwgdXNlci51c2VySWQsIGR0byk7XG4gIH1cblxuICBAUGF0Y2goXCJydWxlcy86cnVsZUlkXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICB1cGRhdGVSdWxlKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJydWxlSWRcIikgcnVsZUlkOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiB7XG4gICAgbmFtZT86IHN0cmluZzsgY29uZGl0aW9ucz86IFJlY29yZDxzdHJpbmcsIHVua25vd24+OyBjb3VyaWVyQWNjb3VudElkPzogc3RyaW5nOyBwcmlvcml0eT86IG51bWJlcjsgYWN0aXZlPzogYm9vbGVhbjtcbiAgfSkge1xuICAgIHJldHVybiB0aGlzLnJ1bGVzLnVwZGF0ZShvcmdJZCwgdXNlci51c2VySWQsIHJ1bGVJZCwgZHRvKTtcbiAgfVxuXG4gIEBEZWxldGUoXCJydWxlcy86cnVsZUlkXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICBkZWxldGVSdWxlKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJydWxlSWRcIikgcnVsZUlkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5ydWxlcy5yZW1vdmUob3JnSWQsIHVzZXIudXNlcklkLCBydWxlSWQpO1xuICB9XG5cbiAgLyoqIEVDMjI6IHdoaWNoIGNvdXJpZXIgV09VTEQgdGhpcyBvcmRlciBiZSBhdXRvLWJvb2tlZCB3aXRoPyAqL1xuICBAR2V0KFwic3VnZ2VzdGlvbi86b3JkZXJJZFwiKVxuICBzdWdnZXN0aW9uKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBQYXJhbShcIm9yZGVySWRcIikgb3JkZXJJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMucnVsZXMuc3VnZ2VzdGlvbihvcmdJZCwgb3JkZXJJZCk7XG4gIH1cblxuICAvKiogRUMyMjogc2V0L2NsZWFyIGEgY291cmllciBhY2NvdW50J3MgdHJhY2tpbmcgVVJMIHRlbXBsYXRlLiAqL1xuICBAUGF0Y2goXCJ0cmFja2luZy10ZW1wbGF0ZVwiKSBAVXNlR3VhcmRzKFJvbGVzR3VhcmQpIEBSb2xlcyhcIk9XTkVSXCIsIFwiQURNSU5cIilcbiAgc2V0VHJhY2tpbmdUZW1wbGF0ZShAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQEJvZHkoKSBkdG86IHtcbiAgICBwcm92aWRlcj86IHN0cmluZzsgdHJhY2tpbmdVcmxUZW1wbGF0ZT86IHN0cmluZyB8IG51bGw7XG4gIH0pIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLnNldFRyYWNraW5nVGVtcGxhdGUob3JnSWQsIHVzZXIudXNlcklkLCBkdG8ucHJvdmlkZXIsIGR0by50cmFja2luZ1VybFRlbXBsYXRlKTtcbiAgfVxuXG4gIEBQb3N0KFwiY29ubmVjdFwiKSBAVXNlR3VhcmRzKFJvbGVzR3VhcmQpIEBSb2xlcyhcIk9XTkVSXCIsIFwiQURNSU5cIilcbiAgY29ubmVjdChAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQEJvZHkoKSBkdG86IENvbm5lY3RDb3VyaWVyRHRvKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5jb25uZWN0KG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIC8vIENDMjk6ID9pbnRlZ3JhdGlvbklkPSBkaXNjb25uZWN0cyBleGFjdGx5IHRoYXQgYWNjb3VudCBvZlxuICAvLyB0aGUgcHJvdmlkZXI7IHdpdGhvdXQgaXQgdGhlIHByaW1hcnkgYWNjb3VudCBpcyBkaXNjb25uZWN0ZWRcbiAgLy8gKHRoZSBwcmUtQ0MyOSBiZWhhdmlvcikuXG4gIEBEZWxldGUoXCJjb25uZWN0aW9uXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiKVxuICBkaXNjb25uZWN0KEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUXVlcnkoXCJwcm92aWRlclwiKSBwcm92aWRlcj86IHN0cmluZywgQFF1ZXJ5KFwiaW50ZWdyYXRpb25JZFwiKSBpbnRlZ3JhdGlvbklkPzogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5kaXNjb25uZWN0KG9yZ0lkLCB1c2VyLnVzZXJJZCwgcHJvdmlkZXIsIGludGVncmF0aW9uSWQpO1xuICB9XG5cbiAgQEdldChcInBhdGhhby9zdG9yZXNcIilcbiAgcGF0aGFvU3RvcmVzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHsgcmV0dXJuIHRoaXMuY291cmllci5wYXRoYW9TdG9yZXMob3JnSWQpOyB9XG4gIEBHZXQoXCJwYXRoYW8vY2l0aWVzXCIpXG4gIHBhdGhhb0NpdGllcyhAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7IHJldHVybiB0aGlzLmNvdXJpZXIucGF0aGFvQ2l0aWVzKG9yZ0lkKTsgfVxuICBAR2V0KFwicGF0aGFvL3pvbmVzLzpjaXR5SWRcIilcbiAgcGF0aGFvWm9uZXMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwiY2l0eUlkXCIpIGNpdHlJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5wYXRoYW9ab25lcyhvcmdJZCwgTnVtYmVyKGNpdHlJZCkpO1xuICB9XG4gIEBHZXQoXCJwYXRoYW8vYXJlYXMvOnpvbmVJZFwiKVxuICBwYXRoYW9BcmVhcyhAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJ6b25lSWRcIikgem9uZUlkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLnBhdGhhb0FyZWFzKG9yZ0lkLCBOdW1iZXIoem9uZUlkKSk7XG4gIH1cbiAgQEdldChcInJlZHgvYXJlYXNcIilcbiAgcmVkeEFyZWFzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHsgcmV0dXJuIHRoaXMuY291cmllci5yZWR4QXJlYXMob3JnSWQpOyB9XG4gIEBHZXQoXCJyZWR4L3N0b3Jlc1wiKVxuICByZWR4U3RvcmVzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHsgcmV0dXJuIHRoaXMuY291cmllci5yZWR4U3RvcmVzKG9yZ0lkKTsgfVxuXG4gIC8qKiBTYWxlcyAmIERhdGEgUzU6IHBlci1wcm92aWRlciBwZXJmb3JtYW5jZSBvdmVyIGJvb2tlZCBzaGlwbWVudHMuICovXG4gIEBHZXQoXCJwZXJmb3JtYW5jZVwiKVxuICBwZXJmb3JtYW5jZShAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUXVlcnkoXCJkYXlzXCIpIGRheXM/OiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLnBlcmZvcm1hbmNlKG9yZ0lkLCBkYXlzKTtcbiAgfVxuXG4gIC8qKiBHQjUgKEdDMTQpOiB0aGUgUlRPIHJlcG9ydCDigJQgcGVyIHByb3ZpZGVyIGJvb2tlZC9kZWxpdmVyZWQvXG4gICAqIHJldHVybmVkICsgcmF0ZSArIGV2ZW50LWxvZy1iYXNlZCBhdmVyYWdlIGRheXMgdG8gcmV0dXJuLiAqL1xuICBAR2V0KFwicnRvLXJlcG9ydFwiKVxuICBydG9SZXBvcnQoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFF1ZXJ5KFwiZnJvbVwiKSBmcm9tPzogc3RyaW5nLCBAUXVlcnkoXCJ0b1wiKSB0bz86IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLmNvdXJpZXIucnRvUmVwb3J0KG9yZ0lkLCB7IGZyb20sIHRvIH0pO1xuICB9XG5cbiAgLyoqIEdCNTogZUNvdXJpZXIgYm9va2luZy1mb3JtIHBpY2tlcnMgKGRvY3VtZW50ZWQgY2l0eS90aGFuYVxuICAgKiBsaXN0cyArIHRoZSBtZXJjaGFudCdzIGFzc2lnbmVkIHBhY2thZ2VzKS4gKi9cbiAgQEdldChcImVjb3VyaWVyL2NpdGllc1wiKVxuICBlY291cmllckNpdGllcyhAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7IHJldHVybiB0aGlzLmNvdXJpZXIuZWNvdXJpZXJDaXRpZXMob3JnSWQpOyB9XG4gIEBHZXQoXCJlY291cmllci90aGFuYXNcIilcbiAgZWNvdXJpZXJUaGFuYXMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFF1ZXJ5KFwiY2l0eVwiKSBjaXR5OiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLmVjb3VyaWVyVGhhbmFzKG9yZ0lkLCBjaXR5KTtcbiAgfVxuICBAR2V0KFwiZWNvdXJpZXIvcGFja2FnZXNcIilcbiAgZWNvdXJpZXJQYWNrYWdlcyhAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7IHJldHVybiB0aGlzLmNvdXJpZXIuZWNvdXJpZXJQYWNrYWdlcyhvcmdJZCk7IH1cblxuICBAR2V0KFwic2hpcG1lbnRzXCIpXG4gIGxpc3QoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFF1ZXJ5KFwib3JkZXJJZFwiKSBvcmRlcklkPzogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5saXN0U2hpcG1lbnRzKG9yZ0lkLCBvcmRlcklkKTtcbiAgfVxuXG4gIC8qKiBNaWxlc3RvbmUgNTI6IHByZS1ib29raW5nIGRlbGl2ZXJ5LWNoYXJnZSBxdW90ZSAocHJvdmlkZXIncyBvd24gcHJpY2luZyBBUEkpLiAqL1xuICBAUG9zdChcInF1b3RlXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiKVxuICBxdW90ZShAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogUXVvdGVDb3VyaWVyRHRvKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5xdW90ZShvcmdJZCwgZHRvKTtcbiAgfVxuXG4gIEBQb3N0KFwic2hpcG1lbnRzXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiKVxuICBib29rKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogQm9va1NoaXBtZW50RHRvKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5ib29rU2hpcG1lbnQob3JnSWQsIHVzZXIudXNlcklkLCBkdG8pO1xuICB9XG5cbiAgLyoqIE1pbGVzdG9uZSA1MzogYnVsayBib29raW5nIChtYXggNTApIHRocm91Z2ggdGhlIHNpbmdsZS1ib29raW5nIHBhdGguICovXG4gIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiKVxuICBAUG9zdChcInNoaXBtZW50cy9idWxrXCIpXG4gIGJvb2tCdWxrKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogQnVsa0Jvb2tEdG8pIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLmJvb2tCdWxrKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIC8qKiBNaWxlc3RvbmUgNTM6IFBERiBkb3dubG9hZHMgYXJlIGJpbmFyeSByZXNwb25zZXMuICovXG4gIHByaXZhdGUgc2VuZFBkZihAUmVzKCkgcmVzOiBSZXNwb25zZSwgYnVmOiBCdWZmZXIsIGZpbGVuYW1lOiBzdHJpbmcpIHtcbiAgICByZXMuc2V0SGVhZGVyKFwiQ29udGVudC1UeXBlXCIsIFwiYXBwbGljYXRpb24vcGRmXCIpO1xuICAgIHJlcy5zZXRIZWFkZXIoXCJDb250ZW50LURpc3Bvc2l0aW9uXCIsIGBhdHRhY2htZW50OyBmaWxlbmFtZT1cIiR7ZmlsZW5hbWV9XCJgKTtcbiAgICByZXMuc2V0SGVhZGVyKFwiQ29udGVudC1MZW5ndGhcIiwgU3RyaW5nKGJ1Zi5sZW5ndGgpKTtcbiAgICByZXMuZW5kKGJ1Zik7XG4gIH1cblxuICBAR2V0KFwic2hpcG1lbnRzLzpzaGlwbWVudElkL2xhYmVsLnBkZlwiKVxuICBhc3luYyBsYWJlbFBkZihAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdhbml6YXRpb25JZDogc3RyaW5nLCBAUGFyYW0oXCJzaGlwbWVudElkXCIpIHNoaXBtZW50SWQ6IHN0cmluZywgQFJlcygpIHJlczogUmVzcG9uc2UpIHtcbiAgICB0aGlzLnNlbmRQZGYocmVzLCBhd2FpdCB0aGlzLmNvdXJpZXIubGFiZWxQZGYob3JnYW5pemF0aW9uSWQsIHNoaXBtZW50SWQpLCBgbGFiZWwtJHtzaGlwbWVudElkfS5wZGZgKTtcbiAgfVxuXG4gIEBHZXQoXCJsYWJlbHMucGRmXCIpXG4gIGFzeW5jIGxhYmVsc1BkZihAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdhbml6YXRpb25JZDogc3RyaW5nLCBAUXVlcnkoXCJpZHNcIikgaWRzOiBzdHJpbmcsIEBSZXMoKSByZXM6IFJlc3BvbnNlKSB7XG4gICAgdGhpcy5zZW5kUGRmKHJlcywgYXdhaXQgdGhpcy5jb3VyaWVyLmxhYmVsc1BkZihvcmdhbml6YXRpb25JZCwgKGlkcyA/PyBcIlwiKS5zcGxpdChcIixcIikubWFwKChzKSA9PiBzLnRyaW0oKSkpLCBcImxhYmVscy5wZGZcIik7XG4gIH1cblxuICBAR2V0KFwib3JkZXJzLzpvcmRlcklkL2ludm9pY2UucGRmXCIpXG4gIGFzeW5jIGludm9pY2VQZGYoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnYW5pemF0aW9uSWQ6IHN0cmluZywgQFBhcmFtKFwib3JkZXJJZFwiKSBvcmRlcklkOiBzdHJpbmcsIEBSZXMoKSByZXM6IFJlc3BvbnNlKSB7XG4gICAgdGhpcy5zZW5kUGRmKHJlcywgYXdhaXQgdGhpcy5jb3VyaWVyLmludm9pY2VQZGYob3JnYW5pemF0aW9uSWQsIG9yZGVySWQpLCBgaW52b2ljZS0ke29yZGVySWR9LnBkZmApO1xuICB9XG5cbiAgQEdldChcImludm9pY2VzLnBkZlwiKVxuICBhc3luYyBpbnZvaWNlc1BkZihAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdhbml6YXRpb25JZDogc3RyaW5nLCBAUXVlcnkoXCJpZHNcIikgaWRzOiBzdHJpbmcsIEBSZXMoKSByZXM6IFJlc3BvbnNlKSB7XG4gICAgdGhpcy5zZW5kUGRmKHJlcywgYXdhaXQgdGhpcy5jb3VyaWVyLmludm9pY2VzUGRmKG9yZ2FuaXphdGlvbklkLCAoaWRzID8/IFwiXCIpLnNwbGl0KFwiLFwiKS5tYXAoKHMpID0+IHMudHJpbSgpKS5maWx0ZXIoQm9vbGVhbikpLCBcImludm9pY2VzLnBkZlwiKTtcbiAgfVxuXG4gIEBQb3N0KFwic2hpcG1lbnRzLzpzaGlwbWVudElkL3N5bmNcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIHN5bmMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwic2hpcG1lbnRJZFwiKSBpZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci5zeW5jU2hpcG1lbnQob3JnSWQsIGlkKTtcbiAgfVxuXG4gIC8qKiBHQjUgKEdDMTQpOiBzdGFmZiBtYW51YWwgdHJhY2tpbmcgdXBkYXRlIOKAlCBzYW1lIGFwcGxpY2F0b3JcbiAgICogYXMgYSBwcm92aWRlciBzeW5jLCBldmVudCBzdGFtcGVkIHNvdXJjZT1tYW51YWwuICovXG4gIEBQb3N0KFwic2hpcG1lbnRzLzpzaGlwbWVudElkL21hbnVhbC1zdGF0dXNcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIG1hbnVhbFN0YXR1cyhAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlciwgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwic2hpcG1lbnRJZFwiKSBpZDogc3RyaW5nLCBAQm9keSgpIGR0bzogTWFudWFsU2hpcG1lbnRTdGF0dXNEdG8pIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLmFwcGx5TWFudWFsU3RhdHVzKG9yZ0lkLCB1c2VyLnVzZXJJZCwgaWQsIGR0byk7XG4gIH1cblxuICAvKiogR0I1IChHQzE0KTogdGhlIHNoaXBtZW50J3MgZXZlbnQgaGlzdG9yeSAoc3RhZmYgZGV0YWlsIHZpZXcpLiAqL1xuICBAR2V0KFwic2hpcG1lbnRzLzpzaGlwbWVudElkL2V2ZW50c1wiKVxuICBzaGlwbWVudEV2ZW50cyhAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJzaGlwbWVudElkXCIpIGlkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5jb3VyaWVyLmxpc3RTaGlwbWVudEV2ZW50cyhvcmdJZCwgaWQpO1xuICB9XG5cbiAgQFBvc3QoXCJzeW5jLWFsbFwiKSBAVXNlR3VhcmRzKFJvbGVzR3VhcmQpIEBSb2xlcyhcIk9XTkVSXCIsIFwiQURNSU5cIiwgXCJNQVJLRVRJTkdfTUFOQUdFUlwiLCBcIlNVUFBPUlRfQUdFTlRcIilcbiAgc3luY0FsbChAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7IHJldHVybiB0aGlzLmNvdXJpZXIuc3luY0FsbChvcmdJZCk7IH1cblxuICAvKiogQ1g2OiBtaW50L3JldHVybiB0aGUgc2hpcG1lbnQncyBwdWJsaWMgbGl2ZS10cmFja2luZyBsaW5rLiAqL1xuICBAUG9zdChcInNoaXBtZW50cy86c2hpcG1lbnRJZC90cmFja2luZy1saW5rXCIpIEBVc2VHdWFyZHMoUm9sZXNHdWFyZCkgQFJvbGVzKFwiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiKVxuICB0cmFja2luZ0xpbmsoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwic2hpcG1lbnRJZFwiKSBpZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuY291cmllci50cmFja2luZ0xpbmtGb3JTaGlwbWVudChvcmdJZCwgaWQpO1xuICB9XG5cbiAgLyoqIEZlYXR1cmUgMTogTkRSIChOb24tRGVsaXZlcnkgUmVwb3J0KSBJbnRlcmNlcHRvciAmIFJlY292ZXJ5IEh1YiAqL1xuICBAR2V0KFwibmRyXCIpXG4gIGxpc3ROZHIoXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUXVlcnkoXCJzdGF0dXNcIikgc3RhdHVzPzogc3RyaW5nLFxuICAgIEBRdWVyeShcInByb3ZpZGVyXCIpIHByb3ZpZGVyPzogc3RyaW5nLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5uZHIubGlzdChvcmdJZCwgeyBzdGF0dXMsIHByb3ZpZGVyIH0pO1xuICB9XG5cbiAgQFBvc3QoXCJuZHIvOmlkL2NvbnRhY3RcIilcbiAgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKVxuICBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIGNvbnRhY3ROZHIoXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJpZFwiKSBpZDogc3RyaW5nLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5uZHIuc2VuZE5kckN1c3RvbWVyQWxlcnQob3JnSWQsIHsgaWQsIHNoaXBtZW50SWQ6IGlkIH0pO1xuICB9XG5cbiAgQFBvc3QoXCJuZHIvOmlkL3Jlc2NoZWR1bGVcIilcbiAgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKVxuICBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJTVVBQT1JUX0FHRU5UXCIpXG4gIHJlc2NoZWR1bGVOZHIoXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJpZFwiKSBpZDogc3RyaW5nLFxuICAgIEBCb2R5KCkgZHRvOiBSZXNjaGVkdWxlTmRyRHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5uZHIucmVzY2hlZHVsZShvcmdJZCwgaWQsIGR0byk7XG4gIH1cblxuICBAUG9zdChcIm5kci86aWQvcmVzb2x2ZVwiKVxuICBAVXNlR3VhcmRzKFJvbGVzR3VhcmQpXG4gIEBSb2xlcyhcIk9XTkVSXCIsIFwiQURNSU5cIiwgXCJNQVJLRVRJTkdfTUFOQUdFUlwiLCBcIlNVUFBPUlRfQUdFTlRcIilcbiAgcmVzb2x2ZU5kcihcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcImlkXCIpIGlkOiBzdHJpbmcsXG4gICAgQEJvZHkoKSBkdG86IFJlc29sdmVOZHJEdG8sXG4gICkge1xuICAgIHJldHVybiB0aGlzLm5kci5yZXNvbHZlKG9yZ0lkLCBpZCwgZHRvKTtcbiAgfVxuXG4gIC8qKiBGZWF0dXJlIDQ6IENvdXJpZXIgQ09EIERpc2J1cnNlbWVudCBSZWNvbmNpbGlhdGlvbiAmIE1pc3NpbmcgQ2FzaCBGaW5kZXIgKi9cbiAgQFBvc3QoXCJyZWNvbmNpbGlhdGlvbi91cGxvYWRcIilcbiAgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKVxuICBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiQUNDT1VOVEFOVFwiKVxuICB1cGxvYWREaXNidXJzZW1lbnQoXG4gICAgQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAQm9keSgpIGR0bzogVXBsb2FkRGlzYnVyc2VtZW50RHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5yZWNvbmNpbGlhdGlvbi5wcm9jZXNzRGlzYnVyc2VtZW50QmF0Y2gob3JnSWQsIGR0bywgdXNlcj8udXNlcklkKTtcbiAgfVxuXG4gIEBHZXQoXCJyZWNvbmNpbGlhdGlvbi9iYXRjaGVzXCIpXG4gIGxpc3RCYXRjaGVzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5yZWNvbmNpbGlhdGlvbi5saXN0QmF0Y2hlcyhvcmdJZCk7XG4gIH1cblxuICBAR2V0KFwicmVjb25jaWxpYXRpb24vYmF0Y2hlcy86YmF0Y2hJZFwiKVxuICBnZXRCYXRjaERldGFpbHMoXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJiYXRjaElkXCIpIGJhdGNoSWQ6IHN0cmluZyxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMucmVjb25jaWxpYXRpb24uZ2V0QmF0Y2hEZXRhaWxzKG9yZ0lkLCBiYXRjaElkKTtcbiAgfVxuXG4gIEBHZXQoXCJyZWNvbmNpbGlhdGlvbi9taXNzaW5nXCIpXG4gIGdldE1pc3NpbmdEaXNidXJzZW1lbnRzKFxuICAgIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsXG4gICAgQFF1ZXJ5KFwiZGF5c1wiKSBkYXlzPzogc3RyaW5nLFxuICApIHtcbiAgICBjb25zdCBwYXJzZWREYXlzID0gZGF5cyA/IHBhcnNlSW50KGRheXMsIDEwKSA6IDc7XG4gICAgcmV0dXJuIHRoaXMucmVjb25jaWxpYXRpb24uZ2V0TWlzc2luZ0Rpc2J1cnNlbWVudHMob3JnSWQsIGlzTmFOKHBhcnNlZERheXMpID8gNyA6IHBhcnNlZERheXMpO1xuICB9XG5cbiAgQFBvc3QoXCJyZWNvbmNpbGlhdGlvbi9pdGVtcy86aXRlbUlkL2Rpc3B1dGVcIilcbiAgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKVxuICBAUm9sZXMoXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiQUNDT1VOVEFOVFwiLCBcIlNVUFBPUlRfQUdFTlRcIilcbiAgdXBkYXRlRGlzcHV0ZShcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcIml0ZW1JZFwiKSBpdGVtSWQ6IHN0cmluZyxcbiAgICBAQm9keSgpIGR0bzogVXBkYXRlRGlzcHV0ZUR0byxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMucmVjb25jaWxpYXRpb24udXBkYXRlRGlzcHV0ZShvcmdJZCwgaXRlbUlkLCBkdG8pO1xuICB9XG5cbiAgQEdldChcInJlY29uY2lsaWF0aW9uL2JhdGNoZXMvOmJhdGNoSWQvY2xhaW0tc2hlZXRcIilcbiAgZ2V0Q2xhaW1TaGVldChcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcImJhdGNoSWRcIikgYmF0Y2hJZDogc3RyaW5nLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5yZWNvbmNpbGlhdGlvbi5leHBvcnRDbGFpbVNoZWV0KG9yZ0lkLCBiYXRjaElkKTtcbiAgfVxufVxuXG4vKiogQ1g2ICsgTkRSOiBwdWJsaWMgbGl2ZS10cmFja2luZyBwYWdlIGRhdGEgYW5kIGN1c3RvbWVyIHNlbGYtc2VydmUgcmVzcG9uc2UuICovXG5AQ29udHJvbGxlcihcInB1YmxpYy90cmFja2luZ1wiKVxuZXhwb3J0IGNsYXNzIFB1YmxpY1RyYWNraW5nQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKFxuICAgIHByaXZhdGUgcmVhZG9ubHkgY291cmllcjogQ291cmllclNlcnZpY2UsXG4gICAgcHJpdmF0ZSByZWFkb25seSBuZHI6IENvdXJpZXJOZHJTZXJ2aWNlLFxuICApIHt9XG5cbiAgQFB1YmxpYygpXG4gIEBHZXQoXCI6dG9rZW5cIilcbiAgdmlldyhAUGFyYW0oXCJ0b2tlblwiKSB0b2tlbjogc3RyaW5nKSB7IHJldHVybiB0aGlzLmNvdXJpZXIucHVibGljVHJhY2tpbmcodG9rZW4pOyB9XG5cbiAgQFB1YmxpYygpXG4gIEBQb3N0KFwiOnRva2VuL25kci1yZXNwb25kXCIpXG4gIHJlc3BvbmROZHIoQFBhcmFtKFwidG9rZW5cIikgdG9rZW46IHN0cmluZywgQEJvZHkoKSBkdG86IEN1c3RvbWVyTmRyQWN0aW9uRHRvKSB7XG4gICAgcmV0dXJuIHRoaXMubmRyLmN1c3RvbWVyUmVzcG9uZCh0b2tlbiwgZHRvKTtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

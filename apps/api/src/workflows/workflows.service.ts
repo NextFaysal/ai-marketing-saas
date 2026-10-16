@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -8,6 +9,7 @@ import { InboxService } from "../inbox/inbox.service";
 import { Optional } from "@nestjs/common";
 import { evaluateConditions, renderTemplate } from "../messaging/render";
 import { classifyShipmentStatus } from "../courier/courier-performance";
+import { AbandonedCheckoutsService } from "../commerce/abandoned-checkouts.service";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { deriveAbandonedCarts } from "../tracking/abandoned-carts";
 
@@ -34,6 +36,9 @@ export const STEP_TYPES = [
   "branch",
   // Advanced actions: external channels and AI agent.
   "notify_channel", "ai_generate",
+  // AX18: multi-step cart recovery — issue a REAL recovery
+  // coupon (EC10 machinery) and send it with the step template.
+  "issue_recovery_coupon",
 ] as const;
 
 /**
@@ -176,6 +181,14 @@ export class WorkflowsService implements OnModuleInit {
     private readonly messaging: MessagingService,
     @Optional() private readonly inbox?: InboxService,
     @Optional() private readonly llmFactory?: LlmFactory,
+    // AX18: EC10 recovery-coupon issuance for the
+    // issue_recovery_coupon step. Optional + LAST positional
+    // arg (the MS8/MS9 constructor precedent) so every existing
+    // spec construction keeps working; wired in production via
+    // WorkflowsModule importing CommerceModule (commerce never
+    // imports workflows, so there is no module cycle). Absent
+    // ⇒ the step skips honestly instead of failing the run.
+    @Optional() private readonly abandonedCheckouts?: AbandonedCheckoutsService,
   ) {}
 
   private scanTimer?: ReturnType<typeof setInterval>;
@@ -462,7 +475,9 @@ export class WorkflowsService implements OnModuleInit {
   private async validateSteps(organizationId: string, steps: any[], depth: number) {
     for (const step of steps) {
       if (!(STEP_TYPES as readonly string[]).includes(step.type)) throw new BadRequestException(`Invalid step type: ${step.type}`);
-      if ((step.type === "send_email" || step.type === "send_sms") && !step.templateId) {
+      if ((step.type === "send_email" || step.type === "send_sms" || step.type === "issue_recovery_coupon") && !step.templateId) {
+        // AX18: the coupon step sends its code WITH a template,
+        // so it needs a templateId exactly like the send steps.
         throw new BadRequestException(`${step.type} steps need a templateId`);
       }
       if (step.type === "wait" && (!Number(step.minutes) || Number(step.minutes) < 1 || Number(step.minutes) > 43200)) {
@@ -757,6 +772,12 @@ export class WorkflowsService implements OnModuleInit {
             entry.detail = recipient
               ? `would send ${step.type === "send_email" ? "email" : "SMS"} to ${recipient.name ?? recipient.id} using template "${template.name}"`
               : "would FAIL: no recipient could be resolved from this context";
+          } else if (step.type === "issue_recovery_coupon") {
+            const template = await this.messaging.getTemplate(organizationId, step.templateId);
+            const recipient = await this.resolveRecipient(organizationId, context);
+            entry.detail = recipient
+              ? `would issue a recovery coupon (if enabled) and send template "${template.name}" to ${recipient.name ?? recipient.id}`
+              : "would issue a recovery coupon (if enabled) but FAIL: no recipient could be resolved from this context";
           } else if (step.type === "send_inbox_message") {
             entry.detail = context.conversationId
               ? `would send to conversation ${context.conversationId}: "${renderTemplate(String(step.text ?? ""), context).slice(0, 80)}"`
@@ -825,14 +846,12 @@ export class WorkflowsService implements OnModuleInit {
       if (!creator || creator === "system") return;
       const member = await p.membership?.findFirst?.({ where: { organizationId: workflow.organizationId, userId: creator, status: "ACTIVE" } })?.catch?.(() => null);
       if (!member) return;
-      await p.agentNotification?.create?.({
-        data: {
+      await createAgentNotification(p, {
           organizationId: workflow.organizationId, userId: creator, type: "workflow_failed",
           title: "⚠️ Workflow ব্যর্থ হয়েছে",
           body: `"${workflow.name}" — ${failedDetail}`.slice(0, 500),
           conversationId: null,
-        },
-      })?.catch?.(() => undefined);
+        })?.catch?.(() => undefined);
       await this.audit.log({
         organizationId: workflow.organizationId, userId: creator,
         action: "workflow.run_failed_notified", entityType: "Workflow", entityId: workflow.id,
@@ -993,9 +1012,10 @@ export class WorkflowsService implements OnModuleInit {
           const arm = ok ? "then" : "else";
           const subs: any[] = Array.isArray(step[arm]) ? step[arm] : [];
           stepsLog.push({ step: "branch", status: "ok", detail: `${step.field} ${step.op} ${JSON.stringify(step.value)} -> ${ok} (${arm}: ${subs.length} steps)` });
-          for (const sub of subs) {
+          for (let sIdx = 0; sIdx < subs.length; sIdx++) {
+            const sub = subs[sIdx];
             try {
-              const detail = await this.executeStep(organizationId, run.id, sub, context);
+              const detail = await this.executeStep(organizationId, run.id, sub, context, `${i}.${arm}.${sIdx}`);
               stepsLog.push({ step: sub.type, status: "ok", detail, branch: arm });
             } catch (e) {
               if (e instanceof StepSkippedError) {
@@ -1008,7 +1028,7 @@ export class WorkflowsService implements OnModuleInit {
           }
           continue;
         }
-        const detail = await this.executeStep(organizationId, run.id, step, context);
+        const detail = await this.executeStep(organizationId, run.id, step, context, String(i));
         stepsLog.push({ step: step.type, status: "ok", detail });
       } catch (e) {
         if (e instanceof StepSkippedError) {
@@ -1031,7 +1051,7 @@ export class WorkflowsService implements OnModuleInit {
     }
   }
 
-  private async executeStep(organizationId: string, runId: string, step: any, context: Record<string, any>): Promise<string> {
+  private async executeStep(organizationId: string, runId: string, step: any, context: Record<string, any>, stepRef = "0"): Promise<string> {
     if (step.type === "send_email" || step.type === "send_sms") {
       const channel = step.type === "send_email" ? "email" : "sms";
       const template = await this.messaging.getTemplate(organizationId, step.templateId);
@@ -1046,6 +1066,105 @@ export class WorkflowsService implements OnModuleInit {
       if (result.status === "skipped") throw new StepSkippedError(result.error ?? "Recipient opted out");
       if (result.status !== "sent") throw new Error(result.error ?? "Send failed");
       return `${channel} sent to ${result.address} (provider id ${result.providerMessageId})`;
+    }
+    if (step.type === "issue_recovery_coupon") {
+      // AX18 — multi-step cart recovery: issue a REAL recovery
+      // coupon via the EC10 machinery (AbandonedCheckoutsService
+      // .issueRecoveryCoupon — the GB7 AbandonedCouponSetting
+      // path) and send it with the step's template.
+      //
+      // Exactly-once per (run, step): workflow steps carry no
+      // id field, so the step is identified by its POSITION —
+      // top-level index ("3"), or "3.then.0" inside a branch
+      // arm. That is stable across resumes because a run always
+      // executes its frozen stepsSnapshot and resumeRuns()
+      // continues at nextStepIndex without reordering. BEFORE
+      // issuing we look for an existing StoreDiscount with
+      // origin "abandoned_recovery" + sourceRef
+      // `wf:{runId}:{stepRef}`; a hit (e.g. a crash between the
+      // coupon create and the stepsLog write) reuses its code
+      // instead of issuing a second coupon. The shared EC10
+      // method itself does NOT dedupe by sourceRef (its call
+      // sites pass checkout/cart ids and guard with audit
+      // markers) — the pre-check lives HERE, keyed on the wf:
+      // ref, so EC10 behaviour is unchanged.
+      const sourceRef = `wf:${runId}:${stepRef}`;
+      let coupon: { code: string; kind: string; value: number; expiryHours: number } | null = null;
+      let reused = false;
+      const existing = await (this.prisma as any).storeDiscount?.findFirst?.({
+        where: { organizationId, origin: "abandoned_recovery", sourceRef },
+      })?.catch?.(() => null);
+      if (existing?.code) {
+        reused = true;
+        // The row carries endsAt, not expiryHours: the honest
+        // figure for a reused coupon is its REMAINING validity.
+        const remainingHours = existing.endsAt
+          ? Math.max(0, Math.round((new Date(existing.endsAt).getTime() - Date.now()) / 3600_000))
+          : 0;
+        coupon = {
+          code: String(existing.code), kind: String(existing.kind ?? "percent"),
+          value: Number(existing.value ?? 0), expiryHours: remainingHours,
+        };
+      }
+      if (!coupon) {
+        if (!this.abandonedCheckouts || typeof this.abandonedCheckouts.issueRecoveryCoupon !== "function") {
+          // No issuance machinery wired — same discipline as a
+          // disabled setting: skip, never fail the run.
+          throw new StepSkippedError("Recovery coupon issuance is not available in this deployment — coupon step skipped, no message sent");
+        }
+        coupon = await this.abandonedCheckouts.issueRecoveryCoupon(organizationId, sourceRef);
+        if (!coupon) {
+          // Coupon setting disabled or issuance failed (the
+          // EC10 method is failure-isolated and returns null):
+          // log the step as skipped and let the run CONTINUE —
+          // a missing coupon must never fail a recovery run.
+          throw new StepSkippedError("Recovery coupon not issued (coupon setting disabled or issuance failed) — coupon step skipped, no message sent");
+        }
+      }
+      // Send ONE message through the same machinery the
+      // send_sms/send_email branch uses: template lookup,
+      // resolveRecipient on the run context (a cart_abandoned
+      // context resolves via contactPhone/contactEmail exactly
+      // like the plain send steps), then sendToRecipient. The
+      // step has no intrinsic channel — the TEMPLATE's channel
+      // decides (the AX18 preset installs an SMS template).
+      const template = await this.messaging.getTemplate(organizationId, step.templateId);
+      const channel = template.channel;
+      if (channel !== "email" && channel !== "sms") throw new Error(`Template channel (${channel}) cannot carry a recovery coupon message`);
+      const recipient = await this.resolveRecipient(organizationId, context);
+      if (!recipient) throw new Error("No recipient could be resolved from the trigger context");
+      // Coupon lines mirror EC10's couponLines() format
+      // verbatim; the expiry line is omitted only for a reused
+      // coupon whose remaining validity computes to 0h.
+      const discountText = coupon.kind === "percent" ? `${coupon.value}% ছাড়` : `৳${coupon.value} ছাড়`;
+      const couponLines = [
+        `আপনার জন্য একটি কুপন কোড: ${coupon.code} (${discountText})`,
+        ...(coupon.expiryHours > 0 ? [`কোডটি ${coupon.expiryHours} ঘণ্টা পর্যন্ত বৈধ`] : []),
+      ];
+      // The code ALSO goes through a context variable:
+      // sendToRecipient renders the body with
+      // { name: recipient.name, ...vars }, so a template
+      // authored with {{couponCode}} renders the real code —
+      // vars carry the run context plus couponCode LAST so a
+      // stray context key can never shadow the issued code.
+      // Because the AX18 preset template deliberately has no
+      // {{couponCode}} placeholder, the composed body appends
+      // the coupon lines after the rendered template body,
+      // exactly the way EC10 appends couponLines to its email.
+      const body = `${String(template.body ?? "")}\n\n${couponLines.join("\n")}`;
+      const result = await this.messaging.sendToRecipient(organizationId, {
+        channel, recipient, subject: template.subject, body,
+        vars: { ...context, couponCode: coupon.code }, workflowRunId: runId,
+      });
+      // Same send-outcome discipline as send_sms/send_email:
+      // an opt-out is a skip; any other non-sent is a failure.
+      if (result.status === "skipped") throw new StepSkippedError(result.error ?? "Recipient opted out");
+      if (result.status !== "sent") throw new Error(result.error ?? "Send failed");
+      // The full code goes in the stepsLog detail: stepsLog is
+      // staff-visible, and EC10's precedent is the same — its
+      // recovery audit markers store the full couponCode. A
+      // staff-usable code is the point of the step.
+      return `${channel} sent to ${result.address} (provider id ${result.providerMessageId}) with recovery coupon ${coupon.code}${reused ? " (reused — already issued for this run step)" : ""}`;
     }
     if (step.type === "send_inbox_message") {
       if (!this.inbox) throw new Error("Inbox service is not available to workflows");
@@ -1131,13 +1250,11 @@ export class WorkflowsService implements OnModuleInit {
       const text = renderTemplate(String(step.text), context);
       let sent = 0;
       for (const m of members as any[]) {
-        await (this.prisma as any).agentNotification.create({
-          data: {
+        await createAgentNotification(this.prisma as any, {
             organizationId, userId: m.userId, type: "workflow",
             title: String(step.title ?? "Workflow").slice(0, 120),
             body: text.slice(0, 500), conversationId: context.conversationId ?? null,
-          },
-        }).then(() => { sent++; }).catch(() => undefined);
+          }).then(() => { sent++; }).catch(() => undefined);
       }
       if (!sent) throw new Error("notify_team could not create any notification");
       return `Team notified (${sent})`;

@@ -1,0 +1,44 @@
+f9432fa9b889d4557455d1b5410464f5
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TrackingController = void 0;
+const common_1 = require("@nestjs/common");
+const tracking_service_1 = require("./tracking.service");
+const tracking_dto_1 = require("./tracking.dto");
+const decorators_1 = require("../common/decorators");
+// Public ingestion endpoint used by tracker.js. Identification is the
+// store's public tracking key; no customer secrets are involved. Events
+// are validated, deduplicated and size-limited in the service.
+let TrackingController = class TrackingController {
+    tracking;
+    constructor(tracking) {
+        this.tracking = tracking;
+    }
+    ingest(dto) { return this.tracking.ingest(dto); }
+};
+exports.TrackingController = TrackingController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)("events"),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [tracking_dto_1.IngestDto]),
+    __metadata("design:returntype", void 0)
+], TrackingController.prototype, "ingest", null);
+exports.TrackingController = TrackingController = __decorate([
+    (0, common_1.Controller)("tracking"),
+    __metadata("design:paramtypes", [tracking_service_1.TrackingService])
+], TrackingController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3RyYWNraW5nL3RyYWNraW5nLmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQXdEO0FBQ3hELHlEQUFxRDtBQUNyRCxpREFBMkM7QUFDM0MscURBQThDO0FBRTlDLHNFQUFzRTtBQUN0RSx3RUFBd0U7QUFDeEUsK0RBQStEO0FBRXhELElBQU0sa0JBQWtCLEdBQXhCLE1BQU0sa0JBQWtCO0lBQ0E7SUFBN0IsWUFBNkIsUUFBeUI7UUFBekIsYUFBUSxHQUFSLFFBQVEsQ0FBaUI7SUFBRyxDQUFDO0lBRTFELE1BQU0sQ0FBUyxHQUFjLElBQUksT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLE1BQU0sQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUM7Q0FDckUsQ0FBQTtBQUpZLGdEQUFrQjtBQUc3QjtJQURDLElBQUEsbUJBQU0sR0FBRTtJQUFFLElBQUEsYUFBSSxFQUFDLFFBQVEsQ0FBQztJQUNqQixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7O3FDQUFNLHdCQUFTOztnREFBdUM7NkJBSHpELGtCQUFrQjtJQUQ5QixJQUFBLG1CQUFVLEVBQUMsVUFBVSxDQUFDO3FDQUVrQixrQ0FBZTtHQUQzQyxrQkFBa0IsQ0FJOUIiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3RyYWNraW5nL3RyYWNraW5nLmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQm9keSwgQ29udHJvbGxlciwgUG9zdCB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgVHJhY2tpbmdTZXJ2aWNlIH0gZnJvbSBcIi4vdHJhY2tpbmcuc2VydmljZVwiO1xuaW1wb3J0IHsgSW5nZXN0RHRvIH0gZnJvbSBcIi4vdHJhY2tpbmcuZHRvXCI7XG5pbXBvcnQgeyBQdWJsaWMgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcblxuLy8gUHVibGljIGluZ2VzdGlvbiBlbmRwb2ludCB1c2VkIGJ5IHRyYWNrZXIuanMuIElkZW50aWZpY2F0aW9uIGlzIHRoZVxuLy8gc3RvcmUncyBwdWJsaWMgdHJhY2tpbmcga2V5OyBubyBjdXN0b21lciBzZWNyZXRzIGFyZSBpbnZvbHZlZC4gRXZlbnRzXG4vLyBhcmUgdmFsaWRhdGVkLCBkZWR1cGxpY2F0ZWQgYW5kIHNpemUtbGltaXRlZCBpbiB0aGUgc2VydmljZS5cbkBDb250cm9sbGVyKFwidHJhY2tpbmdcIilcbmV4cG9ydCBjbGFzcyBUcmFja2luZ0NvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IHRyYWNraW5nOiBUcmFja2luZ1NlcnZpY2UpIHt9XG4gIEBQdWJsaWMoKSBAUG9zdChcImV2ZW50c1wiKVxuICBpbmdlc3QoQEJvZHkoKSBkdG86IEluZ2VzdER0bykgeyByZXR1cm4gdGhpcy50cmFja2luZy5pbmdlc3QoZHRvKTsgfVxufVxuIl0sInZlcnNpb24iOjN9

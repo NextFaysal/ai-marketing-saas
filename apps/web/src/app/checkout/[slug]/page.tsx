@@ -3,6 +3,17 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { formatMinor } from "@repo/contracts";
+import { captchaSiteKeyFor, exceedsMinor, termsHrefFor, type CheckoutTrust } from "@/lib/orders-gb3";
+import { TurnstileWidget, useIdempotencyKey } from "@/components/TurnstileWidget";
+import {
+  buildFieldAnswers,
+  missingRequiredFields,
+  normalizeCheckoutFields,
+  type FieldAnswers,
+} from "@/lib/checkout-fields";
+import { CheckoutFieldsSection } from "@/components/CheckoutFieldsSection";
+import { captureFirstTouchAttribution, getAttributionForCheckout } from "@/lib/shop-tracking";
+import { getDeviceHashForCheckout } from "@/lib/device-hash";
 
 interface CheckoutData {
   product: {
@@ -46,6 +57,13 @@ interface CheckoutData {
   };
   // EC29: gift-wrap offer from the checkout-info payload (absent = hidden).
   giftWrap?: { enabled: boolean; feeMinor: string | null } | null;
+  // GB3 (GC8): checkout trust block (settings-level sibling).
+  checkoutTrust?: CheckoutTrust;
+  // AB4 (AX5): the org's custom checkout fields for this surface
+  // + an optional pre-placement deposit notice when the payload
+  // carries one.
+  checkoutFields?: unknown;
+  deposit?: { amountMinor: string; note: string } | null;
 }
 
 function slotDateString(offsetDays = 0): string {
@@ -89,9 +107,18 @@ export default function CheckoutPage() {
   // EC29: gift wrap + message (only when the payload offers it).
   const [giftWrap, setGiftWrap] = useState(false);
   const [giftMessage, setGiftMessage] = useState("");
+  // GB3 (GC8): terms consent + Turnstile token + idempotency key.
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const idempotency = useIdempotencyKey();
+  // AB4 (AX5): custom checkout-field answers.
+  const [fieldAnswers, setFieldAnswers] = useState<FieldAnswers>({});
 
   useEffect(() => {
     if (!slug) return;
+    // AB7 (AX19): capture first-touch utm/click params into the
+    // tracking storage (never overwrites an existing session).
+    captureFirstTouchAttribution();
     (async () => {
       setLoading(true);
       setError("");
@@ -121,12 +148,30 @@ export default function CheckoutPage() {
       alert("অনুগ্রহ করে সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)");
       return;
     }
+    const trust = data.checkoutTrust;
+    if (trust?.termsRequired && !termsAccepted) {
+      setError("অর্ডার করতে শর্তাবলিতে সম্মতি দিন।");
+      return;
+    }
+    if (captchaSiteKeyFor(trust, "checkout") && !captchaToken) {
+      setError("CAPTCHA যাচাই সম্পূর্ণ করুন।");
+      return;
+    }
+    // AB4: required custom fields must be answered.
+    const fieldDefs = normalizeCheckoutFields(data.checkoutFields);
+    const missingFields = missingRequiredFields(fieldDefs, fieldAnswers);
+    if (missingFields.length > 0) {
+      setError(`এই তথ্যগুলো আবশ্যক: ${missingFields.join(", ")}`);
+      return;
+    }
 
     setSubmitting(true);
     setError("");
     setCouponError("");
 
     try {
+      // AB8 (AX27): weak device signal — omitted when unavailable.
+      const deviceHash = await getDeviceHashForCheckout();
       const res = await fetch(`${API_URL}/public/checkout/${slug}/order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -143,6 +188,20 @@ export default function CheckoutPage() {
           referralCode: referralCode.trim() || undefined,
           ...(slotId && slotDate ? { deliverySlotId: slotId, deliveryDate: slotDate } : {}),
           ...(giftWrap ? { giftWrap: true, giftMessage: giftMessage.trim() || undefined } : {}),
+          // GB3 (GC8): consent + idempotency + captcha token.
+          termsAccepted,
+          idempotencyKey: idempotency.key,
+          ...(captchaToken ? { captchaToken } : {}),
+          // AB4: custom-field answers (omitted when none answered).
+          ...(buildFieldAnswers(fieldDefs, fieldAnswers)
+            ? { fieldAnswers: buildFieldAnswers(fieldDefs, fieldAnswers) }
+            : {}),
+          // AB7 (AX19): first-touch attribution — omitted when empty.
+          ...(getAttributionForCheckout()
+            ? { attribution: getAttributionForCheckout() }
+            : {}),
+          // AB8 (AX27): device hash (omitted when unavailable).
+          ...(deviceHash ? { deviceHash } : {}),
         }),
       });
 
@@ -152,6 +211,7 @@ export default function CheckoutPage() {
       }
 
       const out = await res.json();
+      idempotency.reset();
       setOrderCompleted(out);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "অর্ডার ব্যর্থ হয়েছে";
@@ -263,6 +323,15 @@ export default function CheckoutPage() {
           {orderCompleted.yourReferralCode ? (
             <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-3 text-xs font-bold text-indigo-900">
               🎁 আপনার রেফারেল কোড: <span className="font-mono">{orderCompleted.yourReferralCode}</span> — বন্ধুদের দিলে তারা ছাড় পাবেন
+            </div>
+          ) : null}
+
+          {/* AB4 (AX5): deposit notice from the placement response —
+              notice only; this surface has no payment initiation,
+              the shop arranges collection. */}
+          {orderCompleted.deposit ? (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs font-semibold text-amber-900">
+              এই অর্ডারে ৳{(Number(orderCompleted.deposit.amountMinor ?? 0) / 100).toLocaleString("en-IN")} advance প্রয়োজন — {orderCompleted.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করতে আপনার সাথে যোগাযোগ করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয়নি।
             </div>
           ) : null}
 
@@ -490,6 +559,14 @@ export default function CheckoutPage() {
               />
             </div>
 
+            {/* AB4 (AX5): the org's custom checkout fields. */}
+            <CheckoutFieldsSection
+              defs={normalizeCheckoutFields(data.checkoutFields)}
+              answers={fieldAnswers}
+              onChange={(k, v) => setFieldAnswers((prev) => ({ ...prev, [k]: v }))}
+              dense
+            />
+
             {/* EC29: gift wrap — hidden unless the payload offers it */}
             {giftWrapCfg?.enabled && giftWrapCfg.feeMinor ? (
               <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
@@ -682,6 +759,31 @@ export default function CheckoutPage() {
                     <p className="text-xs text-slate-500">সাপোর্ট: <span className="font-mono font-semibold">{organization.supportPhone.trim()}</span></p>
                   ) : null}
                 </div>
+              ) : null}
+
+              {/* GB3 (GC8): terms consent + Turnstile + advance notice. */}
+              {data.checkoutTrust?.termsRequired ? (
+                <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-slate-800">
+                  <input type="checkbox" className="mt-0.5" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />
+                  <span>
+                    আমি শর্তাবলি পড়েছি এবং সম্মত আছি
+                    {termsHrefFor(data.checkoutTrust, organization.slug) ? (
+                      <> — <a href={termsHrefFor(data.checkoutTrust, organization.slug) ?? undefined} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline" onClick={(e) => e.stopPropagation()}>শর্তাবলি দেখুন</a></>
+                    ) : null}
+                  </span>
+                </label>
+              ) : null}
+              {captchaSiteKeyFor(data.checkoutTrust, "checkout") ? (
+                <TurnstileWidget siteKey={captchaSiteKeyFor(data.checkoutTrust, "checkout") ?? ""} onToken={setCaptchaToken} />
+              ) : null}
+              {data.checkoutTrust?.cod.advanceAboveMinor && exceedsMinor(String(Math.round(grandTotal * 100)), data.checkoutTrust.cod.advanceAboveMinor) ? (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">এই অর্ডারের জন্য অগ্রিম পেমেন্ট আবশ্যক — অর্ডারের পর দোকান অগ্রিমের বিষয়ে আপনার সাথে যোগাযোগ করবে। এই পেজে কোনো পেমেন্ট নেওয়া হয় না।</p>
+              ) : null}
+              {/* AB4: payload-carried deposit notice (when present). */}
+              {data.deposit ? (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                  এই অর্ডারে {formatMinor(BigInt(data.deposit.amountMinor))} advance প্রয়োজন — {data.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয় না।
+                </p>
               ) : null}
 
               {/* Submit Button */}

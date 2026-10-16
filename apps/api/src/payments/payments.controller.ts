@@ -81,6 +81,31 @@ export class PaymentsController {
   invoice(@Param("organizationId") id: string, @Param("paymentId") paymentId: string) {
     return this.payments.invoiceHtmlForOrgPayment(id, paymentId);
   }
+
+  /** GC22 (GB9): the same invoice as a PDF download (binary
+   * response, courier-label style). Two route shapes — the
+   * payments-mirroring one and the invoices one — each with
+   * its own handler (stacked @Get decorators on one method
+   * register only ONE route in NestJS). */
+  @Get(":organizationId/billing/payments/:paymentId/invoice.pdf")
+  @Roles("OWNER", "ADMIN")
+  async invoicePdf(@Param("organizationId") id: string, @Param("paymentId") paymentId: string, @Res() res: Response) {
+    return this.sendInvoicePdf(id, paymentId, res);
+  }
+
+  @Get(":organizationId/billing/invoices/:paymentId/pdf")
+  @Roles("OWNER", "ADMIN")
+  async invoicePdfByInvoicesRoute(@Param("organizationId") id: string, @Param("paymentId") paymentId: string, @Res() res: Response) {
+    return this.sendInvoicePdf(id, paymentId, res);
+  }
+
+  private async sendInvoicePdf(id: string, paymentId: string, res: Response) {
+    const buf = await this.payments.invoicePdfForOrgPayment(id, paymentId);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="invoice-${paymentId}.pdf"`);
+    res.setHeader("Content-Length", String(buf.length));
+    res.end(buf);
+  }
 }
 
 /**

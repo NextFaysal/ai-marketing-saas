@@ -8,13 +8,25 @@ import {
   type CustomFieldDef,
 } from "@/components/custom-fields";
 import { minorToTaka, takaToMinor } from "@/lib/orders-on1";
+import {
+  formatPaisaNumber, formatPointsDelta, loyaltyEntryLabel, loyaltyEntryNote,
+  type CustomerLoyalty,
+} from "@/lib/loyalty";
 import { agingRows, isOverLimit, type CustomerKhata } from "@/lib/orders-on7";
+import {
+  CUSTOMER_TYPE_OPTIONS, EMPTY_SEGMENT_DRAFT, buildCustomerListParams, buildSegmentPayload,
+  normalizeTags, segmentCriteriaSummary, segmentCriteriaToDraft, validateNewTag, validateTags,
+  type CrmSegment, type SegmentCriteriaDraft,
+} from "@/lib/gb6-crm";
 
 interface CustomerRow {
   id: string; name?: string | null; phone?: string | null; email?: string | null;
   source: string; createdAt: string; orderCount: number; totalSpentMinor: string;
   // ON7: list rows now carry the open due + credit limit.
   dueMinor?: string; creditLimitMinor?: string | null;
+  // GB6 (GC15): EC33 sold-bucket figures + CRM flags/tags.
+  soldOrderCount?: number; lifetimeValueMinor?: string; aovMinor?: string | null;
+  isRepeat?: boolean; tags?: string[]; isVip?: boolean; isBlocked?: boolean;
 }
 interface Detail {
   customer: {
@@ -23,6 +35,10 @@ interface Detail {
     customFields?: Record<string, unknown> | null;
     // EC24d: staff-set wholesale flag.
     isWholesale?: boolean;
+    // GB6 (GC15): CRM depth — staff-only fields (detail payload only).
+    tags?: string[]; notes?: string | null; isVip?: boolean; isBlocked?: boolean; blockedReason?: string | null;
+    // AB5 (AX7): B2B group + net terms.
+    groupId?: string | null; creditTermsDays?: number;
   };
   orders: { id: string; externalNumber?: string | null; status: string; source: string; isCod: boolean; totalMinor: string; createdAt: string }[];
   conversations: { id: string; channel: string; status: string; lastMessagePreview?: string | null; lastMessageAt?: string | null; unreadCount: number }[];
@@ -49,8 +65,63 @@ export default function CustomersPage() {
   const [q, setQ] = useState("");
   // ON7: due-only filter + the খাতা (ledger) section state.
   const [hasDue, setHasDue] = useState(false);
+  // GB6 (GC15): type / tag / segment list filters + segments manager.
+  const [customerType, setCustomerType] = useState("all");
+  const [tagFilter, setTagFilter] = useState("");
+  const [segmentId, setSegmentId] = useState("");
+  const [segments, setSegments] = useState<CrmSegment[]>([]);
+  const [segName, setSegName] = useState("");
+  const [segDraft, setSegDraft] = useState<SegmentCriteriaDraft>(EMPTY_SEGMENT_DRAFT);
+  const [segTagInput, setSegTagInput] = useState("");
+  const [editingSegmentId, setEditingSegmentId] = useState("");
+  const [segError, setSegError] = useState("");
+  const [segNotice, setSegNotice] = useState("");
+  const [segBusy, setSegBusy] = useState("");
+  // GB6 (GC15): detail CRM editor state (tags / VIP / notes / block).
+  const [crmTags, setCrmTags] = useState<string[]>([]);
+  const [crmTagInput, setCrmTagInput] = useState("");
+  const [crmTagError, setCrmTagError] = useState("");
+  const [crmNotes, setCrmNotes] = useState("");
+  const [crmVip, setCrmVip] = useState(false);
+  const [crmBlocked, setCrmBlocked] = useState(false);
+  const [crmBlockedReason, setCrmBlockedReason] = useState("");
+  const [crmError, setCrmError] = useState("");
+  const [crmNotice, setCrmNotice] = useState("");
   const [khata, setKhata] = useState<CustomerKhata | null>(null);
   const [khataError, setKhataError] = useState("");
+  // AB5 (AX7): খাতা overdue-only filter (?overdue=1).
+  const [khataOverdueOnly, setKhataOverdueOnly] = useState(false);
+  // AB5 (AX7): B2B customer groups + per-group price list editor.
+  interface CustomerGroup { id: string; name: string; memberCount: number; hasPriceList: boolean }
+  interface PriceListItemRow { id: string; productId: string; variantId: string | null; priceMinor: string; productName: string | null; variantName: string | null }
+  const [groups, setGroups] = useState<CustomerGroup[]>([]);
+  const [groupName, setGroupName] = useState("");
+  const [editingGroupId, setEditingGroupId] = useState("");
+  const [groupError, setGroupError] = useState("");
+  const [groupNotice, setGroupNotice] = useState("");
+  const [groupBusy, setGroupBusy] = useState("");
+  const [plGroupId, setPlGroupId] = useState("");
+  const [plItems, setPlItems] = useState<PriceListItemRow[]>([]);
+  const [plLoading, setPlLoading] = useState(false);
+  const [orgProducts, setOrgProducts] = useState<{ id: string; name: string; priceMinor: string }[]>([]);
+  const [plProductId, setPlProductId] = useState("");
+  const [plVariants, setPlVariants] = useState<{ id: string; name: string }[]>([]);
+  const [plVariantId, setPlVariantId] = useState("");
+  const [plPriceTaka, setPlPriceTaka] = useState("");
+  const [bulkPercent, setBulkPercent] = useState("");
+  const [bulkResult, setBulkResult] = useState("");
+  // AB5 (AX7): group + credit terms in the customer edit form.
+  const [editGroupId, setEditGroupId] = useState("");
+  const [editCreditTerms, setEditCreditTerms] = useState("0");
+  // AB1: loyalty section in the detail (balance, ledger, referral
+  // coupons, staff adjust) — lazy-fetched when the detail opens.
+  const [loyalty, setLoyalty] = useState<CustomerLoyalty | null>(null);
+  const [loyaltyError, setLoyaltyError] = useState("");
+  const [adjustDelta, setAdjustDelta] = useState("");
+  const [adjustNote, setAdjustNote] = useState("");
+  const [adjustBusy, setAdjustBusy] = useState(false);
+  const [adjustError, setAdjustError] = useState("");
+  const [adjustNotice, setAdjustNotice] = useState("");
   const [creditTaka, setCreditTaka] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditNotice, setCreditNotice] = useState("");
@@ -75,23 +146,120 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      if (hasDue) params.set("hasDue", "true");
+      const params = buildCustomerListParams({ q, hasDue, customerType, tag: tagFilter, segmentId });
       const qs = params.toString();
       setRows(await apiFetch<CustomerRow[]>(`/organizations/${orgId}/customers${qs ? `?${qs}` : ""}`));
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setLoading(false); }
-  }, [q, hasDue]);
+  }, [q, hasDue, customerType, tagFilter, segmentId]);
+
+  // GB6 (GC15): segments list — memberCount is computed live by
+  // the API on every GET, so a plain refetch keeps counts honest.
+  const loadSegments = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try { setSegments(await apiFetch<CrmSegment[]>(`/organizations/${orgId}/customers/segments`)); }
+    catch { /* the segments panel shows its own empty state */ }
+  }, []);
+  useEffect(() => { loadSegments(); }, [loadSegments]);
+
+  async function saveSegment() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const { payload, errors } = buildSegmentPayload(segName, segDraft);
+    if (!payload) { setSegError(errors.join(" ")); return; }
+    setSegBusy("save"); setSegError(""); setSegNotice("");
+    try {
+      if (editingSegmentId) {
+        await apiFetch(`/organizations/${orgId}/customers/segments/${editingSegmentId}`, {
+          method: "PATCH", body: JSON.stringify(payload),
+        });
+        setSegNotice("সেগমেন্ট হালনাগাদ হয়েছে।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/customers/segments`, {
+          method: "POST", body: JSON.stringify(payload),
+        });
+        setSegNotice("সেগমেন্ট তৈরি হয়েছে।");
+      }
+      setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegTagInput(""); setEditingSegmentId("");
+      await loadSegments();
+    } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট সংরক্ষণ ব্যর্থ"); }
+    finally { setSegBusy(""); }
+  }
+
+  function editSegment(s: CrmSegment) {
+    setEditingSegmentId(s.id); setSegName(s.name);
+    setSegDraft(segmentCriteriaToDraft(s.criteria)); setSegTagInput("");
+    setSegError(""); setSegNotice("");
+  }
+
+  async function deleteSegment(s: CrmSegment) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!confirm(`“${s.name}” সেগমেন্টটি মুছে ফেলবেন? গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`)) return;
+    setSegBusy(`del-${s.id}`); setSegError(""); setSegNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/customers/segments/${s.id}`, { method: "DELETE" });
+      if (segmentId === s.id) setSegmentId("");
+      if (editingSegmentId === s.id) { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); }
+      setSegNotice("সেগমেন্ট মুছে ফেলা হয়েছে।");
+      await loadSegments();
+    } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট মোছা ব্যর্থ"); }
+    finally { setSegBusy(""); }
+  }
+
+  function addSegTag() {
+    const err = validateNewTag(segDraft.tagsAny, segTagInput);
+    if (err) { setSegError(err); return; }
+    setSegDraft({ ...segDraft, tagsAny: normalizeTags([...segDraft.tagsAny, segTagInput]) });
+    setSegTagInput(""); setSegError("");
+  }
+
+  // GB6 (GC15): save the detail CRM fields via the customer PATCH.
+  // Tags use REPLACE semantics (the whole array is sent); notes
+  // empty -> null (clear); unblocking clears the reason server-side.
+  async function saveCrm() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    const tagError = validateTags(crmTags);
+    if (tagError) { setCrmError(tagError); return; }
+    if (crmBlockedReason.length > 300) { setCrmError("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে।"); return; }
+    setBusy("crm"); setCrmError(""); setCrmNotice("");
+    try {
+      const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          tags: normalizeTags(crmTags),
+          notes: crmNotes.trim() ? crmNotes : null,
+          isVip: crmVip,
+          isBlocked: crmBlocked,
+          blockedReason: crmBlocked ? (crmBlockedReason.trim() || null) : null,
+        }),
+      });
+      setDetail(out);
+      setCrmTags(out.customer.tags ?? []);
+      setCrmNotes(out.customer.notes ?? "");
+      setCrmVip(!!out.customer.isVip);
+      setCrmBlocked(!!out.customer.isBlocked);
+      setCrmBlockedReason(out.customer.blockedReason ?? "");
+      setCrmNotice("CRM তথ্য সেভ হয়েছে।");
+      await load();
+      await loadSegments();
+    } catch (e) { setCrmError(e instanceof Error ? e.message : "CRM সেভ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  function addCrmTag() {
+    const err = validateNewTag(crmTags, crmTagInput);
+    if (err) { setCrmTagError(err); return; }
+    setCrmTags(normalizeTags([...crmTags, crmTagInput]));
+    setCrmTagInput(""); setCrmTagError("");
+  }
 
   /** ON7: load the customer's খাতা (ledger) — open orders with
    * paid/due split, aging buckets and the credit limit. A failed
    * load says so; it never renders as "no dues". */
-  const loadKhata = useCallback(async (customerId: string) => {
+  const loadKhata = useCallback(async (customerId: string, overdueOnly = false) => {
     const orgId = getOrganizationId(); if (!orgId) return;
     try {
-      const k = await apiFetch<CustomerKhata>(`/organizations/${orgId}/customers/${customerId}/khata`);
+      const k = await apiFetch<CustomerKhata>(`/organizations/${orgId}/customers/${customerId}/khata${overdueOnly ? "?overdue=1" : ""}`);
       setKhata(k); setKhataError("");
       setCreditTaka(k.creditLimitMinor ? minorToTaka(k.creditLimitMinor) : "");
     } catch (e) {
@@ -99,6 +267,161 @@ export default function CustomersPage() {
       setKhataError(e instanceof Error ? e.message : "খাতা লোড ব্যর্থ");
     }
   }, []);
+
+  // AB5 (AX7): customer groups (B2B) — list / create / rename /
+  // delete + the selected group's price list. Deleting a group
+  // ungroups its members server-side (they are NOT deleted).
+  const loadGroups = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const out = await apiFetch<{ items: CustomerGroup[] }>(`/organizations/${orgId}/commerce/customer-groups`);
+      setGroups(out.items ?? []);
+    } catch { /* the groups card shows its own empty state */ }
+  }, []);
+  useEffect(() => { loadGroups(); }, [loadGroups]);
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    apiFetch<{ items: { id: string; name: string; priceMinor: string }[] }>(`/organizations/${orgId}/products?pageSize=100`)
+      .then((d) => setOrgProducts(d.items ?? [])).catch(() => undefined);
+  }, []);
+
+  async function saveGroup() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!groupName.trim()) { setGroupError("গ্রুপের নাম দিন।"); return; }
+    setGroupBusy("save"); setGroupError(""); setGroupNotice("");
+    try {
+      if (editingGroupId) {
+        await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${editingGroupId}`, {
+          method: "PATCH", body: JSON.stringify({ name: groupName.trim() }),
+        });
+        setGroupNotice("গ্রুপের নাম বদলানো হয়েছে।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/commerce/customer-groups`, {
+          method: "POST", body: JSON.stringify({ name: groupName.trim() }),
+        });
+        setGroupNotice("গ্রুপ তৈরি হয়েছে।");
+      }
+      setGroupName(""); setEditingGroupId("");
+      await loadGroups();
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ সংরক্ষণ ব্যর্থ"); }
+    finally { setGroupBusy(""); }
+  }
+
+  async function deleteGroup(g: CustomerGroup) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!confirm(`“${g.name}” গ্রুপটি মুছে ফেলবেন? এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`)) return;
+    setGroupBusy(`del-${g.id}`); setGroupError(""); setGroupNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${g.id}`, { method: "DELETE" });
+      if (plGroupId === g.id) { setPlGroupId(""); setPlItems([]); }
+      if (editingGroupId === g.id) { setEditingGroupId(""); setGroupName(""); }
+      setGroupNotice("গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।");
+      await loadGroups();
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ মোছা ব্যর্থ"); }
+    finally { setGroupBusy(""); }
+  }
+
+  const loadPriceList = useCallback(async (groupId: string) => {
+    const orgId = getOrganizationId(); if (!orgId || !groupId) return;
+    setPlLoading(true);
+    try {
+      const out = await apiFetch<{ items: PriceListItemRow[] }>(`/organizations/${orgId}/commerce/customer-groups/${groupId}/price-list`);
+      setPlItems(out.items ?? []);
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "প্রাইস লিস্ট লোড ব্যর্থ"); }
+    finally { setPlLoading(false); }
+  }, []);
+
+  async function onPlProductChange(productId: string) {
+    setPlProductId(productId); setPlVariantId(""); setPlVariants([]);
+    const orgId = getOrganizationId(); if (!orgId || !productId) return;
+    try {
+      const detail = await apiFetch<{ variants?: { id: string; name: string }[] }>(`/organizations/${orgId}/products/${productId}`);
+      setPlVariants(detail.variants ?? []);
+    } catch { /* variant picker simply stays product-level */ }
+  }
+
+  async function addPlItem() {
+    const orgId = getOrganizationId(); if (!orgId || !plGroupId) return;
+    if (!plProductId) { setGroupError("আইটেম যোগ করতে পণ্য বেছে নিন।"); return; }
+    const priceMinor = takaToMinor(plPriceTaka.trim());
+    if (priceMinor === null) { setGroupError("দাম টাকায় ঠিকভাবে লিখুন (যেমন: 450 বা 450.50)।"); return; }
+    setGroupBusy("pl-add"); setGroupError(""); setGroupNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items`, {
+        method: "POST",
+        body: JSON.stringify({ productId: plProductId, variantId: plVariantId || null, priceMinor }),
+      });
+      setPlPriceTaka("");
+      await loadPriceList(plGroupId);
+      await loadGroups();
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "আইটেম যোগ ব্যর্থ"); }
+    finally { setGroupBusy(""); }
+  }
+
+  async function removePlItem(item: PriceListItemRow) {
+    const orgId = getOrganizationId(); if (!orgId || !plGroupId) return;
+    setGroupBusy(`pl-del-${item.id}`); setGroupError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items/${item.id}`, { method: "DELETE" });
+      await loadPriceList(plGroupId);
+      await loadGroups();
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "আইটেম সরানো ব্যর্থ"); }
+    finally { setGroupBusy(""); }
+  }
+
+  async function applyBulkPercent() {
+    const orgId = getOrganizationId(); if (!orgId || !plGroupId) return;
+    const percentOff = Number(bulkPercent);
+    if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 99) {
+      setGroupError("ছাড়ের হার ১–৯৯ শতাংশের পূর্ণ সংখ্যা হতে হবে।"); return;
+    }
+    setGroupBusy("bulk"); setGroupError(""); setBulkResult("");
+    try {
+      const out = await apiFetch<{ written: number }>(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/bulk-percent`, {
+        method: "POST", body: JSON.stringify({ percentOff }),
+      });
+      setBulkResult(`${out.written}টি পণ্যে ${percentOff}% ছাড়ের দাম লেখা হয়েছে।`);
+      await loadPriceList(plGroupId);
+      await loadGroups();
+    } catch (e) { setGroupError(e instanceof Error ? e.message : "বাল্ক ছাড় ব্যর্থ"); }
+    finally { setGroupBusy(""); }
+  }
+
+  /** AB1: load the customer's loyalty balance + ledger +
+   * referral reward coupons. A failed load says so — it never
+   * renders as a zero balance. */
+  const loadLoyalty = useCallback(async (customerId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const l = await apiFetch<CustomerLoyalty>(`/organizations/${orgId}/commerce/loyalty/customers/${customerId}`);
+      setLoyalty(l); setLoyaltyError("");
+    } catch (e) {
+      setLoyalty(null);
+      setLoyaltyError(e instanceof Error ? e.message : "লয়্যালটি লোড ব্যর্থ");
+    }
+  }, []);
+
+  /** AB1: staff point adjustment — delta is a non-zero integer
+   * and the note is REQUIRED (the API enforces both; the button
+   * stays disabled until both are present). On success the
+   * section is refetched and the server's new balance shown. */
+  async function adjustLoyalty() {
+    const orgId = getOrganizationId(); if (!orgId || !detail) return;
+    const delta = Number(adjustDelta);
+    if (!Number.isInteger(delta) || delta === 0) { setAdjustError("পয়েন্টের পরিমাণ শূন্য নয় এমন পূর্ণ সংখ্যা দিন (যোগ করতে ধনাত্মক, কাটতে ঋণাত্মক)।"); return; }
+    if (!adjustNote.trim()) { setAdjustError("সমন্বয়ের নোট দেওয়া বাধ্যতামূলক।"); return; }
+    setAdjustBusy(true); setAdjustError(""); setAdjustNotice("");
+    try {
+      const out = await apiFetch<{ balance: number }>(`/organizations/${orgId}/commerce/loyalty/customers/${detail.customer.id}/adjust`, {
+        method: "POST",
+        body: JSON.stringify({ deltaPoints: delta, note: adjustNote.trim() }),
+      });
+      setAdjustNotice(`সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`);
+      setAdjustDelta(""); setAdjustNote("");
+      await loadLoyalty(detail.customer.id);
+    } catch (e) { setAdjustError(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ"); }
+    finally { setAdjustBusy(false); }
+  }
 
   /** ON7: save the credit limit via the existing customer PATCH
    * (taka input -> minor string; an empty input clears the
@@ -162,6 +485,8 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setKhata(null); setKhataError(""); setCreditNotice(""); setCreditError("");
     void loadKhata(id);
+    setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError(""); setAdjustNotice("");
+    void loadLoyalty(id);
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
       setDetail(d); setMergeTarget("");
@@ -172,7 +497,19 @@ export default function CustomersPage() {
         email: d.customer.email ?? "", phone: d.customer.phone ?? "",
       });
       setEditWholesale(!!d.customer.isWholesale);
+      // AB5 (AX7): seed group + credit terms from the detail payload.
+      setEditGroupId(d.customer.groupId ?? "");
+      setEditCreditTerms(String(d.customer.creditTermsDays ?? 0));
+      setKhataOverdueOnly(false);
       setEditCf(customFieldsToRaw(custDefs, d.customer.customFields));
+      // GB6 (GC15): seed the CRM editor from the detail payload.
+      setCrmTags(d.customer.tags ?? []);
+      setCrmTagInput(""); setCrmTagError("");
+      setCrmNotes(d.customer.notes ?? "");
+      setCrmVip(!!d.customer.isVip);
+      setCrmBlocked(!!d.customer.isBlocked);
+      setCrmBlockedReason(d.customer.blockedReason ?? "");
+      setCrmError(""); setCrmNotice("");
     }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -190,6 +527,9 @@ export default function CustomersPage() {
           firstName: editForm.firstName || null, lastName: editForm.lastName || null,
           email: editForm.email || null, phone: editForm.phone || null,
           isWholesale: editWholesale,
+          // AB5 (AX7): B2B group (empty select = no group) + net terms.
+          groupId: editGroupId || null,
+          creditTermsDays: Number(editCreditTerms) || 0,
           ...(Object.keys(customFields).length ? { customFields } : {}),
         }),
       });
@@ -250,6 +590,25 @@ export default function CustomersPage() {
         </label>
         <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={downloadExport}>📤 CSV এক্সপোর্ট</button>
       </div>
+      {/* GB6 (GC15): CRM filters — type / exact tag / segment, all
+          wired to the real list query params. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 text-sm">গ্রাহকের ধরন
+          <select className="input w-40" value={customerType} onChange={(e) => setCustomerType(e.target.value)}>
+            {CUSTOMER_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+        <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+        <label className="flex items-center gap-2 text-sm">সেগমেন্ট
+          <select className="input w-56" value={segmentId} onChange={(e) => setSegmentId(e.target.value)}>
+            <option value="">সব সেগমেন্ট</option>
+            {segments.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.memberCount} জন)</option>)}
+          </select>
+        </label>
+        {(customerType !== "all" || tagFilter || segmentId) ? (
+          <button className="rounded-lg border bg-white px-3 py-2 text-sm" onClick={() => { setCustomerType("all"); setTagFilter(""); setSegmentId(""); }}>ফিল্টার পরিষ্কার করুন</button>
+        ) : null}
+      </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="card overflow-hidden p-0 lg:col-span-2">
           {loading ? <p className="p-4 text-sm text-slate-400">লোড হচ্ছে...</p> : rows.length === 0 ? (
@@ -261,6 +620,19 @@ export default function CustomersPage() {
                 <span className="text-sm font-semibold">{money(c.totalSpentMinor)}</span>
               </div>
               <div className="mt-0.5 text-xs text-slate-400">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
+              {/* GB6 (GC15): sold-bucket figures — sold orders,
+                  lifetime value and AOV ("—" when no sold order). */}
+              <div className="mt-0.5 text-xs text-slate-500">
+                বিক্রি সম্পন্ন: {c.soldOrderCount ?? 0}টি · লাইফটাইম মূল্য: {money(c.lifetimeValueMinor ?? "0")} · গড় অর্ডার মূল্য (AOV): {c.aovMinor != null ? money(c.aovMinor) : "—"}
+              </div>
+              {(c.isRepeat || c.isVip || c.isBlocked || (c.tags ?? []).length > 0) ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {c.isRepeat ? <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">পুনরাবৃত্ত</span> : null}
+                  {c.isVip ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">⭐ VIP</span> : null}
+                  {c.isBlocked ? <span className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">ব্লক করা</span> : null}
+                  {(c.tags ?? []).map((t) => <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">#{t}</span>)}
+                </div>
+              ) : null}
               {/* ON7: বকেয়া (open due) on the list row — "—" when nothing is due. */}
               <div className="mt-0.5 text-xs">
                 <span className="text-slate-400">বকেয়া: </span>
@@ -328,11 +700,81 @@ export default function CustomersPage() {
                     <input type="checkbox" checked={editWholesale} onChange={(e) => setEditWholesale(e.target.checked)} />
                     পাইকারি ক্রেতা (দোকানে চেকআউটে পাইকারি স্তরের দাম প্রযোজ্য হবে)
                   </label>
+                  {/* AB5 (AX7): B2B group + net credit terms. */}
+                  <label className="block text-sm">কাস্টমার গ্রুপ (B2B)
+                    <select className="input mt-1" value={editGroupId} onChange={(e) => setEditGroupId(e.target.value)}>
+                      <option value="">কোনো গ্রুপ নয়</option>
+                      {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                    <span className="mt-1 block text-xs font-normal text-slate-400">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
+                  </label>
+                  <label className="block text-sm">ক্রেডিট শর্ত (বকেয়ার মেয়াদ)
+                    <select className="input mt-1" value={editCreditTerms} onChange={(e) => setEditCreditTerms(e.target.value)}>
+                      <option value="0">০ দিন (শর্ত নেই)</option>
+                      <option value="7">৭ দিন</option>
+                      <option value="14">১৪ দিন</option>
+                      <option value="30">৩০ দিন</option>
+                    </select>
+                  </label>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>
                   <span className="text-xs text-slate-400">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
                 </div>
+              </div>
+              {/* GB6 (GC15): CRM — tags / VIP / staff notes / block. */}
+              <div className="card space-y-3">
+                <h3 className="font-semibold">🏷️ CRM — ট্যাগ, VIP, নোট ও ব্লক</h3>
+                {detail.customer.isBlocked ? (
+                  <div className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white">
+                    🚫 এই গ্রাহক ব্লক করা{detail.customer.blockedReason ? ` — কারণ: ${detail.customer.blockedReason}` : ""}। ব্লক থাকলে দোকানে চেকআউট আটকে যাবে।
+                  </div>
+                ) : null}
+                {crmError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{crmError}</p> : null}
+                {crmNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{crmNotice}</p> : null}
+                <div>
+                  <div className="mb-1 text-sm font-medium">ট্যাগ (সর্বোচ্চ ১০টি, প্রতিটি ১–৩০ অক্ষর)</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {crmTags.map((t) => (
+                      <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                        #{t}
+                        <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                          onClick={() => setCrmTags(crmTags.filter((x) => x !== t))}>×</button>
+                      </span>
+                    ))}
+                    {crmTags.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ নেই</span> : null}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" value={crmTagInput}
+                      onChange={(e) => setCrmTagInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCrmTag(); } }} />
+                    <button type="button" className="btn-secondary btn-sm" onClick={addCrmTag}>ট্যাগ যোগ করুন</button>
+                  </div>
+                  {crmTagError ? <p className="mt-1 text-xs text-red-600">{crmTagError}</p> : null}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={crmVip} onChange={(e) => setCrmVip(e.target.checked)} />
+                  ⭐ VIP গ্রাহক
+                </label>
+                <label className="block text-sm font-medium">অভ্যন্তরীণ নোট
+                  <span className="mb-1 block text-xs font-normal text-amber-700">শুধুমাত্র কর্মীদের জন্য — গ্রাহক এটি দেখতে পান না</span>
+                  <textarea className="input mt-1 w-full" rows={3} value={crmNotes} onChange={(e) => setCrmNotes(e.target.value)}
+                    placeholder="যেমন: সবসময় COD পছন্দ করেন, সন্ধ্যায় ফোন ধরেন…" />
+                </label>
+                <div className="space-y-2 rounded-xl bg-red-50/60 p-3">
+                  <label className="flex items-center gap-2 text-sm font-medium text-red-700">
+                    <input type="checkbox" checked={crmBlocked} onChange={(e) => setCrmBlocked(e.target.checked)} />
+                    🚫 এই গ্রাহককে ব্লক করুন (চেকআউট আটকে যাবে)
+                  </label>
+                  {crmBlocked ? (
+                    <label className="block text-sm">ব্লকের কারণ (সর্বোচ্চ ৩০০ অক্ষর)
+                      <input className="input mt-1 w-full" value={crmBlockedReason} onChange={(e) => setCrmBlockedReason(e.target.value)}
+                        placeholder="যেমন: বারবার ভুয়া অর্ডার" maxLength={320} />
+                      <span className="mt-1 block text-xs font-normal text-slate-500">কারণটিও শুধুমাত্র কর্মীরা দেখতে পান — গ্রাহককে সাধারণ বার্তা দেখানো হয়। ব্লক তুললে কারণ মুছে যাবে।</span>
+                    </label>
+                  ) : null}
+                </div>
+                <button className="btn-primary" disabled={busy !== ""} onClick={saveCrm}>{busy === "crm" ? "সেভ হচ্ছে..." : "CRM সেভ করুন"}</button>
               </div>
               <div className="card space-y-3">
                 <h3 className="font-semibold">🏪 স্টোর পরিচিতি (Store Identities)</h3>
@@ -425,7 +867,24 @@ export default function CustomersPage() {
                   aging buckets, credit limit and the open
                   orders behind the numbers. */}
               <div className="card space-y-3">
-                <h3 className="font-semibold">📒 খাতা (বকেয়ার হিসাব)</h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold">📒 খাতা (বকেয়ার হিসাব)</h3>
+                  {/* AB5 (AX7): net terms in the header + overdue-only filter. */}
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    {khata ? (
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                        ক্রেডিট শর্ত: {(khata.creditTermsDays ?? 0) > 0 ? `${khata.creditTermsDays} দিন` : "নেই (০ দিন)"}
+                      </span>
+                    ) : null}
+                    <label className="flex items-center gap-2 text-xs font-medium">
+                      <input type="checkbox" checked={khataOverdueOnly} onChange={(e) => {
+                        setKhataOverdueOnly(e.target.checked);
+                        if (detail) void loadKhata(detail.customer.id, e.target.checked);
+                      }} />
+                      শুধু মেয়াদোত্তীর্ণ
+                    </label>
+                  </div>
+                </div>
                 {khataError ? (
                   <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{khataError}</p>
                 ) : !khata ? (
@@ -469,7 +928,7 @@ export default function CustomersPage() {
                       {creditNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{creditNotice}</p> : null}
                     </div>
                     {khata.orders.length === 0 ? (
-                      <p className="text-sm text-slate-400">এই কাস্টমারের কোনো অর্ডার খাতায় নেই।</p>
+                      <p className="text-sm text-slate-400">{khataOverdueOnly ? "মেয়াদোত্তীর্ণ কোনো বকেয়া অর্ডার নেই।" : "এই কাস্টমারের কোনো অর্ডার খাতায় নেই।"}</p>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm">
@@ -480,6 +939,7 @@ export default function CustomersPage() {
                               <th className="py-1.5 pr-2 font-semibold">মোট</th>
                               <th className="py-1.5 pr-2 font-semibold">পরিশোধিত</th>
                               <th className="py-1.5 pr-2 font-semibold">বকেয়া</th>
+                              <th className="py-1.5 pr-2 font-semibold">পরিশোধের শেষ তারিখ</th>
                               <th className="py-1.5 font-semibold">স্ট্যাটাস</th>
                             </tr>
                           </thead>
@@ -493,7 +953,11 @@ export default function CustomersPage() {
                                 <td className="py-1.5 pr-2">{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
                                   ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
                                   : <span className="text-slate-400">—</span>; })()}</td>
-                                <td className="py-1.5"><span className="badge-slate">{o.status}</span></td>
+                                <td className="py-1.5 pr-2">{o.creditDueDate ? new Date(o.creditDueDate).toLocaleDateString("bn-BD") : "—"}</td>
+                                <td className="py-1.5">
+                                  <span className="badge-slate">{o.status}</span>
+                                  {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">মেয়াদ উত্তীর্ণ</span> : null}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -503,6 +967,97 @@ export default function CustomersPage() {
                     {khata.ordersTruncated ? (
                       <p className="text-xs text-amber-700">আরও অর্ডার আছে — খাতায় শুধু সাম্প্রতিকগুলো দেখানো হচ্ছে; মোট বকেয়া সব অর্ডার মিলিয়েই হিসাব করা।</p>
                     ) : null}
+                  </>
+                )}
+              </div>
+              {/* AB1: loyalty — balance + value, ledger history,
+                  referral reward coupons and the staff adjust
+                  form (note required). */}
+              <div className="card space-y-3">
+                <h3 className="font-semibold">⭐ লয়্যালটি পয়েন্ট</h3>
+                {loyaltyError ? (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{loyaltyError}</p>
+                ) : !loyalty ? (
+                  <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div>
+                        <div className={`text-2xl font-black ${loyalty.balance < 0 ? "text-red-600" : ""}`}>{loyalty.balance} পয়েন্ট</div>
+                        <div className="text-xs text-slate-400">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
+                      </div>
+                      {!loyalty.enabled ? (
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">লয়্যালটি প্রোগ্রাম বর্তমানে বন্ধ</span>
+                      ) : null}
+                      {loyalty.balance < 0 ? (
+                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">ঋণাত্মক ব্যালেন্স — অর্জন করে শোধ না করা পর্যন্ত পয়েন্ট খরচ বন্ধ</span>
+                      ) : null}
+                    </div>
+                    {loyalty.entries.length === 0 ? (
+                      <p className="text-sm text-slate-400">এখনো কোনো পয়েন্টের লেনদেন নেই।</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="border-b text-xs text-slate-500">
+                              <th className="py-1.5 pr-2 font-semibold">ধরন</th>
+                              <th className="py-1.5 pr-2 font-semibold">পয়েন্ট</th>
+                              <th className="py-1.5 pr-2 font-semibold">ব্যালেন্স (পরে)</th>
+                              <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
+                              <th className="py-1.5 font-semibold">তারিখ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {loyalty.entries.map((en) => (
+                              <tr key={en.id} className="border-b last:border-0 align-top">
+                                <td className="py-1.5 pr-2">
+                                  <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+                                  {loyaltyEntryNote(en) ? <span className="block text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
+                                  {en.expiresAt ? <span className="block text-xs text-slate-400">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
+                                </td>
+                                <td className={`py-1.5 pr-2 font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</td>
+                                <td className="py-1.5 pr-2">{en.balanceAfter}</td>
+                                <td className="py-1.5 pr-2">{en.orderNumber ? `#${en.orderNumber}` : en.orderId ? `#${en.orderId.slice(0, 8)}` : "—"}</td>
+                                <td className="py-1.5 text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {(loyalty.referralRewards?.coupons ?? []).length > 0 ? (
+                      <div className="space-y-1 border-t pt-3">
+                        <div className="text-sm font-semibold">🎁 রেফারেল পুরস্কারে পাওয়া কুপন</div>
+                        {(loyalty.referralRewards?.coupons ?? []).map((c) => (
+                          <div key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+                            <span className="font-mono font-semibold">{c.code}</span>
+                            <span>{c.kind === "percent" ? `${c.value}% ছাড়` : c.value}</span>
+                            {c.sourceOrderNumber ? <span className="text-xs text-slate-400">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
+                            {c.endsAt ? <span className="text-xs text-slate-400">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
+                            {!c.active ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">বাতিল/নিষ্ক্রিয়</span>
+                              : c.usedCount > 0 ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">ব্যবহৃত ({c.usedCount}বার)</span>
+                              : <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">সক্রিয়</span>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="space-y-2 border-t pt-3">
+                      <div className="text-sm font-semibold">পয়েন্ট সমন্বয় (স্টাফ)</div>
+                      <p className="text-xs text-slate-500">ধনাত্মক সংখ্যা = পয়েন্ট যোগ, ঋণাত্মক = পয়েন্ট কাটা। নোট দেওয়া বাধ্যতামূলক — নোটটি লেজারে থেকে যাবে।</p>
+                      {adjustError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{adjustError}</p> : null}
+                      {adjustNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{adjustNotice}</p> : null}
+                      <div className="flex flex-wrap items-end gap-2">
+                        <label className="block text-sm">পয়েন্ট (+/−)
+                          <input className="input mt-1 w-36" type="number" step="1" value={adjustDelta} onChange={(e) => setAdjustDelta(e.target.value)} placeholder="যেমন: ৫০ বা −২০" />
+                        </label>
+                        <label className="block flex-1 text-sm">নোট (বাধ্যতামূলক)
+                          <input className="input mt-1 w-full" value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="সমন্বয়ের কারণ লিখুন" />
+                        </label>
+                        <button type="button" className="btn-primary" disabled={adjustBusy || !adjustNote.trim() || !adjustDelta.trim() || Number(adjustDelta) === 0} onClick={() => void adjustLoyalty()}>
+                          {adjustBusy ? "হচ্ছে…" : "সমন্বয় করুন"}
+                        </button>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
@@ -532,6 +1087,185 @@ export default function CustomersPage() {
           ) : (
             <div className="card"><EmptyState title="কাস্টমার বেছে নিন" description="বাম দিকের তালিকা থেকে একজন কাস্টমারে ক্লিক করলে তার সম্পূর্ণ প্রোফাইল এখানে দেখা যাবে।" /></div>
           )}
+        </div>
+      </div>
+
+      {/* AB5 (AX7): B2B customer groups + per-group price list.
+          A group's price list holds explicit prices only; the
+          bulk %-off helper materializes rows server-side. */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">👥 কাস্টমার গ্রুপ (B2B) ও প্রাইস লিস্ট</h2>
+        <p className="text-xs text-slate-500">পাইকারি/B2B ক্রেতাদের গ্রুপে ভাগ করুন। প্রতিটি গ্রুপের নিজস্ব প্রাইস লিস্ট থাকতে পারে — গ্রুপের সদস্যের চেকআউটে ক্যাটালগ দামের বদলে প্রাইস লিস্টের দামই প্রযোজ্য হবে। গ্রুপ মুছলে সদস্যরা গ্রুপছাড়া হয়ে যান, কাস্টমার মোছা হয় না।</p>
+        {groupError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{groupError}</p> : null}
+        {groupNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{groupNotice}</p> : null}
+        {groups.length === 0 ? <p className="text-sm text-slate-400">কোনো গ্রুপ নেই — নিচে প্রথমটি বানান।</p> : groups.map((g) => (
+          <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+            <span>
+              <span className="font-medium">{g.name}</span>
+              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{g.memberCount} জন সদস্য</span>
+              <span className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${g.hasPriceList ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                {g.hasPriceList ? "প্রাইস লিস্ট আছে" : "প্রাইস লিস্ট নেই"}
+              </span>
+            </span>
+            <span className="flex gap-2">
+              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(g.id); setBulkResult(""); void loadPriceList(g.id); }}>প্রাইস লিস্ট</button>
+              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); setGroupNotice(""); }}>নাম বদলান</button>
+              <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => deleteGroup(g)}>মুছুন</button>
+            </span>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+          <label className="block text-sm">{editingGroupId ? "গ্রুপের নতুন নাম" : "নতুন গ্রুপের নাম"}
+            <input className="input mt-1 w-72" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="যেমন: ঢাকার পাইকারি ক্রেতা" maxLength={200} />
+          </label>
+          <button className="btn-primary" disabled={groupBusy !== "" || !groupName.trim()} onClick={saveGroup}>
+            {groupBusy === "save" ? "সংরক্ষণ হচ্ছে…" : editingGroupId ? "নাম সংরক্ষণ করুন" : "গ্রুপ তৈরি করুন"}
+          </button>
+          {editingGroupId ? (
+            <button className="btn-secondary" onClick={() => { setEditingGroupId(""); setGroupName(""); }}>বাতিল</button>
+          ) : null}
+        </div>
+
+        {plGroupId ? (
+          <div className="space-y-3 rounded-xl bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">💲 প্রাইস লিস্ট — {groups.find((g) => g.id === plGroupId)?.name ?? ""}</h3>
+              <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(""); setPlItems([]); }}>বন্ধ করুন</button>
+            </div>
+            {plLoading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : plItems.length === 0 ? (
+              <p className="text-sm text-slate-400">এই লিস্টে এখনো কোনো আইটেম নেই — নিচে পণ্য যোগ করুন অথবা বাল্ক ছাড় চালান।</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-slate-500">
+                      <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
+                      <th className="py-1.5 pr-2 font-semibold">ভ্যারিয়েন্ট</th>
+                      <th className="py-1.5 pr-2 font-semibold">গ্রুপ দাম</th>
+                      <th className="py-1.5 font-semibold"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plItems.map((it) => (
+                      <tr key={it.id} className="border-b last:border-0">
+                        <td className="py-1.5 pr-2 font-medium">{it.productName ?? it.productId}</td>
+                        <td className="py-1.5 pr-2">{it.variantName ?? "সব ভ্যারিয়েন্ট"}</td>
+                        <td className="py-1.5 pr-2 font-semibold">{money(it.priceMinor)}</td>
+                        <td className="py-1.5 text-right">
+                          <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+              <label className="block text-sm">পণ্য
+                <select className="input mt-1 w-64" value={plProductId} onChange={(e) => void onPlProductChange(e.target.value)}>
+                  <option value="">— পণ্য বেছে নিন —</option>
+                  {orgProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({money(p.priceMinor)})</option>)}
+                </select>
+              </label>
+              <label className="block text-sm">ভ্যারিয়েন্ট (ঐচ্ছিক)
+                <select className="input mt-1 w-48" value={plVariantId} onChange={(e) => setPlVariantId(e.target.value)} disabled={!plProductId || plVariants.length === 0}>
+                  <option value="">সব ভ্যারিয়েন্ট</option>
+                  {plVariants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-sm">গ্রুপ দাম (৳)
+                <input className="input mt-1 w-36" inputMode="decimal" placeholder="যেমন: 450" value={plPriceTaka} onChange={(e) => setPlPriceTaka(e.target.value)} />
+              </label>
+              <button className="btn-primary btn-sm" disabled={groupBusy !== "" || !plProductId || !plPriceTaka.trim()} onClick={addPlItem}>
+                {groupBusy === "pl-add" ? "যোগ হচ্ছে…" : "আইটেম যোগ করুন"}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+              <label className="block text-sm">সব সক্রিয় পণ্যে বাল্ক ছাড় (%)
+                <input className="input mt-1 w-32" type="number" min="1" max="99" placeholder="যেমন: 10" value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)} />
+              </label>
+              <button className="btn-secondary btn-sm" disabled={groupBusy !== "" || !bulkPercent.trim()} onClick={applyBulkPercent}>
+                {groupBusy === "bulk" ? "প্রয়োগ হচ্ছে…" : "ছাড় প্রয়োগ করুন"}
+              </button>
+              <span className="text-xs text-slate-500">ছাড়টি প্রতিটি পণ্যের জন্য আলাদা দাম হিসেবে লিস্টে লেখা হবে (পণ্য-স্তরের দাম বদলে যাবে, ভ্যারিয়েন্টের দাম নয়)।</span>
+              {bulkResult ? <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{bulkResult}</span> : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {/* GB6 (GC15): segments manager — definitions with live
+          member counts; selecting one above filters the list. */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">🧩 গ্রাহক সেগমেন্ট</h2>
+        <p className="text-xs text-slate-500">শর্ত মিলিয়ে গ্রাহকদের দল বানান। সব শর্ত একসাথে মিলতে হবে; কোনো শর্ত না দিলে সব গ্রাহকই এই সেগমেন্টে পড়বে। সদস্য সংখ্যা প্রতিবার লাইভ হিসাব হয়। শুধু Owner/Admin সেগমেন্ট তৈরি/বদল/মুছতে পারেন।</p>
+        {segError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{segError}</p> : null}
+        {segNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{segNotice}</p> : null}
+        {segments.length === 0 ? <p className="text-sm text-slate-400">কোনো সেগমেন্ট নেই — নিচে প্রথমটি বানান।</p> : segments.map((s) => (
+          <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+            <span>
+              <span className="font-medium">{s.name}</span>
+              <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{s.memberCount} জন সদস্য</span>
+              <span className="block text-xs text-slate-400">{segmentCriteriaSummary(s.criteria)}</span>
+            </span>
+            <span className="flex gap-2">
+              <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>তালিকায় দেখুন</button>
+              <button className="btn-secondary btn-sm" onClick={() => editSegment(s)}>সম্পাদনা</button>
+              <button className="btn-secondary btn-sm text-red-600" disabled={segBusy !== ""} onClick={() => deleteSegment(s)}>মুছুন</button>
+            </span>
+          </div>
+        ))}
+        <div className="space-y-3 border-t pt-3">
+          <h3 className="text-sm font-semibold">{editingSegmentId ? "সেগমেন্ট সম্পাদনা" : "নতুন সেগমেন্ট"}</h3>
+          <label className="block text-sm">সেগমেন্টের নাম
+            <input className="input mt-1 w-full max-w-md" value={segName} onChange={(e) => setSegName(e.target.value)} placeholder="যেমন: ঢাকার বড় ক্রেতা" maxLength={130} />
+          </label>
+          <div>
+            <div className="mb-1 text-sm font-medium">ট্যাগ — যেকোনো একটি থাকলেই চলবে (tagsAny)</div>
+            <div className="flex flex-wrap gap-1.5">
+              {segDraft.tagsAny.map((t) => (
+                <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                  #{t}
+                  <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                    onClick={() => setSegDraft({ ...segDraft, tagsAny: segDraft.tagsAny.filter((x) => x !== t) })}>×</button>
+                </span>
+              ))}
+              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ শর্ত নেই</span> : null}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input className="input w-56" placeholder="ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSegTag(); } }} />
+              <button type="button" className="btn-secondary btn-sm" onClick={addSegTag}>যোগ করুন</button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={segDraft.vipOnly} onChange={(e) => setSegDraft({ ...segDraft, vipOnly: e.target.checked })} />
+              শুধু VIP
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={segDraft.repeatOnly} onChange={(e) => setSegDraft({ ...segDraft, repeatOnly: e.target.checked })} />
+              শুধু পুনরাবৃত্ত (কমপক্ষে ২টি বিক্রি সম্পন্ন অর্ডার)
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <label className="block text-sm">সর্বনিম্ন মোট কেনাকাটা (৳) — লাইফটাইম মূল্য
+              <input className="input mt-1 w-44" inputMode="decimal" placeholder="যেমন: 10000" value={segDraft.minSpentTaka}
+                onChange={(e) => setSegDraft({ ...segDraft, minSpentTaka: e.target.value })} />
+            </label>
+            <label className="block text-sm">জেলা
+              <input className="input mt-1 w-44" placeholder="যেমন: খুলনা" value={segDraft.district}
+                onChange={(e) => setSegDraft({ ...segDraft, district: e.target.value })} />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-primary" disabled={segBusy !== ""} onClick={saveSegment}>
+              {segBusy === "save" ? "সংরক্ষণ হচ্ছে…" : editingSegmentId ? "সেগমেন্ট হালনাগাদ করুন" : "সেগমেন্ট তৈরি করুন"}
+            </button>
+            {editingSegmentId ? (
+              <button className="btn-secondary" onClick={() => { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegError(""); }}>বাতিল</button>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

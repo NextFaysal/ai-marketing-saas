@@ -88,6 +88,7 @@ const BASE_INPUT = {
   badOutcomeCount: 0, reliabilityPercent: null as number | null, reliabilityDecided: 0,
   priorOrderCount: 10, totalMinor: 1000n, highValueMinor: 500000n,
   nameMismatch: false, mismatchedName: null as string | null, blocked: false,
+  deviceVelocity: 0,
 };
 
 // ---------- pure scorer ----------

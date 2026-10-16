@@ -44,7 +44,7 @@ const GROUPS: NavGroup[] = [
     id: "settings",
     title: "টিম ও সেটিংস",
     icon: "⚙️",
-    hrefs: ["/dashboard/team", "/dashboard/settings", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog", "/dashboard/connections", "/dashboard/setup"],
+    hrefs: ["/dashboard/team", "/dashboard/settings", "/dashboard/settings/webhooks", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog", "/dashboard/connections", "/dashboard/setup"],
   },
 ];
 
@@ -461,6 +461,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [drawer, setDrawer] = useState(false);
   const [email, setEmail] = useState("");
   const [branding, setBranding] = useState<OrgBrandingLite | null>(null);
+  // GC21 (GB9): the email-verification wall. me() reports
+  // verificationRequired exactly when the API gate would 403
+  // tenant routes (grandfathered users never see this).
+  const [verifRequired, setVerifRequired] = useState(false);
+  const [verifMsg, setVerifMsg] = useState("");
+  const [verifBusy, setVerifBusy] = useState(false);
+
+  const checkVerification = React.useCallback(async () => {
+    try {
+      const me = await apiFetch<{ verificationRequired?: boolean }>("/auth/me");
+      setVerifRequired(me.verificationRequired === true);
+      return me.verificationRequired === true;
+    } catch { return false; }
+  }, []);
+
+  useEffect(() => { if (getToken()) void checkVerification(); }, [checkVerification]);
+
+  async function resendVerification() {
+    setVerifBusy(true); setVerifMsg("");
+    try {
+      const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/email", { method: "POST" });
+      setVerifMsg(out.sent
+        ? "✅ যাচাইকরণ লিংক আবার পাঠানো হয়েছে — ইমেইল (ও Spam ফোল্ডার) চেক করুন।"
+        : "ইমেইল পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।");
+    } catch { setVerifMsg("ইমেইল পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।"); }
+    finally { setVerifBusy(false); }
+  }
+
   const [searchQuery, setSearchQuery] = useState("");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
@@ -515,6 +543,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex flex-col items-center gap-3 text-sm text-slate-500">
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
           <span className="font-medium">ড্যাশবোর্ড প্রস্তুত করা হচ্ছে...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // GC21 (GB9): blocking verification wall — shown INSTEAD of
+  // the dashboard while the account email is unverified and the
+  // platform gate applies to this user.
+  if (verifRequired) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="card w-full max-w-md space-y-4 p-6 text-center">
+          <div className="text-4xl">✉️</div>
+          <h1 className="text-lg font-bold">আগে ইমেইল যাচাই করুন</h1>
+          <p className="text-sm leading-relaxed text-slate-500">
+            ড্যাশবোর্ড ব্যবহারের আগে আপনার ইমেইল যাচাই করা আবশ্যক। রেজিস্ট্রেশনের সময়
+            <b> {email || "আপনার ইমেইলে"} </b>
+            একটি যাচাইকরণ লিংক পাঠানো হয়েছে — লিংকে ক্লিক করলেই যাচাই সম্পন্ন হবে।
+          </p>
+          {verifMsg ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-900">{verifMsg}</p> : null}
+          <div className="flex flex-col gap-2">
+            <button className="btn-primary min-h-[44px]" disabled={verifBusy} onClick={resendVerification}>
+              {verifBusy ? "অপেক্ষা করুন…" : "যাচাইকরণ লিংক আবার পাঠান"}
+            </button>
+            <button className="btn-secondary min-h-[44px]" disabled={verifBusy} onClick={async () => {
+              setVerifBusy(true);
+              const still = await checkVerification();
+              setVerifMsg(still ? "এখনো যাচাই হয়নি — ইমেইলের লিংকে ক্লিক করে আবার চেষ্টা করুন।" : "");
+              setVerifBusy(false);
+            }}>আমি যাচাই করেছি, আবার চেক করুন</button>
+            <button className="text-sm text-slate-400 underline" onClick={() => { localStorage.clear(); router.push("/login"); }}>লগআউট</button>
+          </div>
         </div>
       </div>
     );

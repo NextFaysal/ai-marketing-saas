@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import type { Response } from "express";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { PaymentsService } from "../payments/payments.service";
@@ -18,6 +19,13 @@ class GrantDto {
 }
 class ReasonDto {
   @IsString() @MinLength(3) reason!: string;
+}
+/** GC21 (GB9): merchant verification decision. The note is
+ * required on reject (enforced in the service, where the
+ * merchant-facing wording lives). */
+class OrgVerificationDto {
+  @IsIn(["approve", "reject"]) decision!: string;
+  @IsOptional() @IsString() @MinLength(1) note?: string;
 }
 class SettingsDto {
   @IsOptional() @IsBoolean() maintenanceMode?: boolean;
@@ -66,6 +74,8 @@ class LimitsDto {
   @IsOptional() aiDailyLimitOverride?: number | null;
   @IsOptional() broadcastCapOverride?: number | null;
   @IsOptional() seatLimit?: number | null;
+  // AB8 (AX24): white-label toggle on the same org-update PATCH.
+  @IsOptional() @IsBoolean() whiteLabel?: boolean;
 }
 class RetryDto { @IsIn(["scheduled_job", "sync_job"]) kind!: string; @IsString() id!: string; }
 class QueueActionDto {
@@ -161,6 +171,15 @@ class LinkedinAppConfigDto {
   @IsOptional() @IsString() clientId?: string;
   @IsOptional() @IsString() clientSecret?: string;
   @IsOptional() @IsString() redirectUri?: string;
+  @IsOptional() @IsBoolean() clearSecret?: boolean;
+  @IsOptional() @IsBoolean() clear?: boolean;
+}
+/** AB8 (AX26): staff Google SSO app — separate from the
+ * YouTube googleApp DTO above. Blank clientSecret = keep. */
+class GoogleOAuthConfigDto {
+  @IsOptional() @IsString() clientId?: string;
+  @IsOptional() @IsString() clientSecret?: string;
+  @IsOptional() @IsBoolean() enabled?: boolean;
   @IsOptional() @IsBoolean() clearSecret?: boolean;
   @IsOptional() @IsBoolean() clear?: boolean;
 }
@@ -279,6 +298,12 @@ export class AdminController {
     return this.admin.listOrgs(q, Number(page ?? 1) || 1, Math.min(100, Number(take ?? 25) || 25));
   }
   @Get("orgs/:id") org(@Param("id") id: string) { return this.admin.orgDetail(id); }
+  // GC21 (GB9): merchant verification review (approve/reject
+  // with a merchant-visible note on reject).
+  @Post("organizations/:id/verification") @AdminTier("SUPER", "SUPPORT")
+  orgVerification(@Req() req: any, @Param("id") id: string, @Body() dto: OrgVerificationDto) {
+    return this.admin.reviewOrgVerification(req.adminUser, id, dto.decision, dto.note, req.ip);
+  }
   @Post("orgs/:id/status") @AdminTier("SUPER", "SUPPORT")
   orgStatus(@Req() req: any, @Param("id") id: string, @Body() dto: StatusDto) {
     return this.admin.setOrgStatus(req.adminUser, id, dto.status, dto.reason, req.ip);
@@ -314,6 +339,8 @@ export class AdminController {
   updateGoogleConfig(@Req() req: any, @Body() dto: GoogleAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "google", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/linkedin") @AdminTier("SUPER")
   updateLinkedinConfig(@Req() req: any, @Body() dto: LinkedinAppConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "linkedin", dto as unknown as Record<string, unknown>, req.ip); }
+  @Patch("platform-config/google-oauth") @AdminTier("SUPER")
+  updateGoogleOAuthConfig(@Req() req: any, @Body() dto: GoogleOAuthConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "googleOAuth", dto as unknown as Record<string, unknown>, req.ip); }
   @Patch("platform-config/wallet") @AdminTier("SUPER")
   updateWalletConfig(@Req() req: any, @Body() dto: WalletConfigDto) { return this.admin.updatePlatformConfig(req.adminUser, "wallet", dto as unknown as Record<string, unknown>, req.ip); }
 
@@ -597,6 +624,15 @@ export class AdminController {
   updateSubscription(@Req() req: any, @Param("id") id: string, @Body() dto: SubscriptionDto) {
     return this.admin.updateSubscription(req.adminUser, id, dto, dto.reason, req.ip);
   }
+  // GC22 (GB9): admin subscription pause/resume (reason required).
+  @Post("orgs/:id/subscription/pause") @AdminTier("SUPER", "FINANCE")
+  pauseSubscription(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) {
+    return this.admin.pauseOrgSubscription(req.adminUser, id, dto.reason, req.ip);
+  }
+  @Post("orgs/:id/subscription/resume") @AdminTier("SUPER", "FINANCE")
+  resumeSubscription(@Req() req: any, @Param("id") id: string, @Body() dto: ReasonDto) {
+    return this.admin.resumeOrgSubscription(req.adminUser, id, dto.reason, req.ip);
+  }
   @Get("billing/summary") billingSummary() { return this.admin.billingSummary(); }
   @Get("payments") payments(@Query("organizationId") orgId?: string, @Query("take") take?: string) {
     return this.admin.listPayments(orgId, Number(take ?? 50) || 50);
@@ -613,6 +649,15 @@ export class AdminController {
   }
   @Get("payments/:id/invoice") @Header("Content-Type", "text/html; charset=utf-8")
   paymentInvoice(@Param("id") id: string) { return this.admin.paymentInvoiceHtml(id); }
+  /** GC22 (GB9): the admin invoice as a PDF download. */
+  @Get("payments/:id/invoice.pdf")
+  async paymentInvoicePdf(@Param("id") id: string, @Res() res: Response) {
+    const buf = await this.admin.paymentInvoicePdf(id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="invoice-${id}.pdf"`);
+    res.setHeader("Content-Length", String(buf.length));
+    res.end(buf);
+  }
   @Post("payments/:id/invoice-email") @AdminTier("SUPER", "FINANCE")
   invoiceEmail(@Req() req: any, @Param("id") id: string) { return this.admin.sendInvoiceEmail(req.adminUser, id, req.ip); }
   @Get("billing/checkouts")

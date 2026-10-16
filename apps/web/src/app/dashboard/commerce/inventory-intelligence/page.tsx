@@ -3,6 +3,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { minorToTakaString } from "@/lib/storefront-money";
+import {
+  demandBasisLabel, pickStockoutDisplay, trendGrowthDisplay,
+  type VelocityV2Fields,
+} from "@/lib/ab7";
 
 // EC33 — Inventory Intelligence: বিক্রির গতি (velocity), গতি-ভিত্তিক
 // পুনঃঅর্ডার পরামর্শ, dead stock ও গুদামের মোট মূল্যায়ন। সব সংখ্যা
@@ -21,7 +25,54 @@ import { minorToTakaString } from "@/lib/storefront-money";
 //   valuedProducts, unvaluedProducts, items } (items are the
 //   valued rows only, value desc, max 100).
 
-interface Settings { leadTimeDays: number }
+interface Settings { leadTimeDays: number; allowBackorder?: boolean; reserveMinutes?: number }
+
+interface AvailabilityItem {
+  productId: string;
+  productName: string;
+  variantId: string | null;
+  variantName: string | null;
+  sku: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+}
+
+interface DamageItem {
+  productId: string;
+  productName: string;
+  variantId: string | null;
+  variantName: string | null;
+  reason: string;
+  quantity: number;
+  costValueMinor: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+interface DamageReport {
+  from: string;
+  to: string;
+  totals: {
+    damagedQty: number;
+    lostQty: number;
+    expiredQty: number;
+    totalQty: number;
+    costValueMinor: string | null;
+    uncostedMovements: number;
+  };
+  items: DamageItem[];
+}
+
+const DAMAGE_REASON_LABELS: Record<string, string> = {
+  damaged: "নষ্ট",
+  lost: "হারানো",
+  expired: "মেয়াদোত্তীর্ণ",
+};
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
 
 interface SimpleSuggestion {
   productId: string;
@@ -70,6 +121,14 @@ interface VelocityItem {
   dailyVelocity: number;
   daysOfStockLeft: number | null;
   projectedStockoutDate: string | null;
+  // AB7 (AX20): v2 forecast fields arrive alongside the v1 fields
+  // above; optional here so a pre-v2 response still renders v1.
+  trendGrowthPct?: number | null;
+  weekdayFactors?: number[];
+  projectedDailyDemand?: number;
+  projectedStockoutDateV2?: string | null;
+  daysOfStockLeftV2?: number | null;
+  demandBasis?: VelocityV2Fields["demandBasis"];
 }
 
 interface DeadStockItem {
@@ -138,7 +197,21 @@ export default function InventoryIntelligencePage() {
 
   // Settings
   const [leadTimeDays, setLeadTimeDays] = useState("14");
+  const [allowBackorder, setAllowBackorder] = useState(false);
+  const [reserveMinutes, setReserveMinutes] = useState("0");
   const [savingSettings, setSavingSettings] = useState(false);
+
+  // GC7: availability
+  const [availabilityItems, setAvailabilityItems] = useState<AvailabilityItem[]>([]);
+  const [availBusy, setAvailBusy] = useState(false);
+  const [availLoaded, setAvailLoaded] = useState(false);
+
+  // GC7: damage / loss report
+  const [damageFrom, setDamageFrom] = useState(() => isoDate(new Date(Date.now() - 29 * 24 * 60 * 60 * 1000)));
+  const [damageTo, setDamageTo] = useState(() => isoDate(new Date()));
+  const [damageReport, setDamageReport] = useState<DamageReport | null>(null);
+  const [damageBusy, setDamageBusy] = useState(false);
+  const [damageLoaded, setDamageLoaded] = useState(false);
 
   // Reorder suggestions
   const [mode, setMode] = useState<"simple" | "velocity">("simple");
@@ -170,9 +243,40 @@ export default function InventoryIntelligencePage() {
     try {
       const s = await apiFetch<Settings>(`/organizations/${orgId}/inventory/settings`);
       setLeadTimeDays(String(s.leadTimeDays ?? 14));
+      setAllowBackorder(!!s.allowBackorder);
+      setReserveMinutes(String(s.reserveMinutes ?? 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : "সেটিংস লোড করা যায়নি");
     }
+  }, []);
+
+  const loadAvailability = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setAvailBusy(true);
+    try {
+      const res = await apiFetch<{ items: AvailabilityItem[] }>(`/organizations/${orgId}/inventory/availability`);
+      setAvailabilityItems(res.items ?? []);
+      setAvailLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "প্রাপ্যতা লোড করা যায়নি");
+    } finally { setAvailBusy(false); }
+  }, []);
+
+  const loadDamageReport = useCallback(async (from: string, to: string) => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    if (!from || !to) { setError("শুরুর ও শেষের তারিখ দুটোই দিতে হবে"); return; }
+    setDamageBusy(true);
+    try {
+      const res = await apiFetch<DamageReport>(
+        `/organizations/${orgId}/inventory/damage-report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      );
+      setDamageReport(res);
+      setDamageLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ক্ষতির রিপোর্ট লোড করা যায়নি");
+    } finally { setDamageBusy(false); }
   }, []);
 
   const loadSuggestions = useCallback(async (m: "simple" | "velocity") => {
@@ -243,7 +347,12 @@ export default function InventoryIntelligencePage() {
     void loadVelocity("30");
     void loadDeadStock("90");
     void loadValuation();
-  }, [loadSettings, loadSuggestions, loadVelocity, loadDeadStock, loadValuation]);
+    void loadAvailability();
+    void loadDamageReport(
+      isoDate(new Date(Date.now() - 29 * 24 * 60 * 60 * 1000)),
+      isoDate(new Date()),
+    );
+  }, [loadSettings, loadSuggestions, loadVelocity, loadDeadStock, loadValuation, loadAvailability, loadDamageReport]);
 
   function onModeChange(m: "simple" | "velocity") {
     setMode(m);
@@ -259,14 +368,22 @@ export default function InventoryIntelligencePage() {
       setError("লিড টাইম ১ থেকে ১৮০ দিনের মধ্যে পূর্ণসংখ্যা হতে হবে");
       return;
     }
+    const reserve = Number(reserveMinutes);
+    if (!Number.isInteger(reserve) || reserve < 0) {
+      setError("কার্ট রিজার্ভ মিনিট ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+      return;
+    }
     setSavingSettings(true); setError(""); setNotice("");
     try {
+      // Partial PUT — only the fields shown on this card are sent.
       const saved = await apiFetch<Settings>(`/organizations/${orgId}/inventory/settings`, {
         method: "PUT",
-        body: JSON.stringify({ leadTimeDays: days }),
+        body: JSON.stringify({ leadTimeDays: days, allowBackorder, reserveMinutes: reserve }),
       });
       setLeadTimeDays(String(saved.leadTimeDays ?? days));
-      setNotice("✅ লিড টাইম সংরক্ষিত হয়েছে।");
+      setAllowBackorder(!!saved.allowBackorder);
+      setReserveMinutes(String(saved.reserveMinutes ?? reserve));
+      setNotice("✅ ইনভেন্টরি সেটিংস সংরক্ষিত হয়েছে।");
       if (mode === "velocity") void loadSuggestions("velocity");
     } catch (err) {
       setError(err instanceof Error ? err.message : "সংরক্ষণ ব্যর্থ হয়েছে");
@@ -323,7 +440,7 @@ export default function InventoryIntelligencePage() {
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <form onSubmit={saveSettings} className="card space-y-3 p-5">
-        <h2 className="font-semibold">লিড টাইম সেটিংস</h2>
+        <h2 className="font-semibold">ইনভেন্টরি সেটিংস</h2>
         <p className="text-xs text-slate-500">
           সরবরাহকারীর কাছে অর্ডার দেওয়ার পর পণ্য হাতে পেতে যত দিন লাগে। এই সংখ্যাটাই velocity (বিক্রির গতি)
           মোডের পুনঃঅর্ডার পরামর্শ চালায় — স্টক যেন লিড টাইমের বিক্রি মেটাতে পারে, সেভাবে পরামর্শিত পরিমাণ হিসাব হয়।
@@ -333,10 +450,22 @@ export default function InventoryIntelligencePage() {
             <label className={labelCls}>লিড টাইম (দিন)</label>
             <input className={inputCls} type="number" min={1} max={180} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} />
           </div>
+          <div className="w-56">
+            <label className={labelCls}>কার্ট রিজার্ভ (মিনিট)</label>
+            <input className={inputCls} type="number" min={0} value={reserveMinutes} onChange={(e) => setReserveMinutes(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">কার্ট রিজার্ভ: ক্রেতা কার্টে পণ্য রাখলে যত মিনিট স্টক তার জন্য রিজার্ভ থাকবে; ০ = বন্ধ</p>
+          </div>
           <button type="submit" className="btn-primary" disabled={savingSettings}>
             {savingSettings ? "সংরক্ষণ হচ্ছে…" : "সংরক্ষণ করুন"}
           </button>
         </div>
+        <label className="flex items-start gap-2 text-sm text-slate-700">
+          <input type="checkbox" className="mt-0.5" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} />
+          <span>
+            <span className="font-semibold">ব্যাকঅর্ডার অনুমোদন (Allow backorder)</span>
+            <span className="block text-xs text-slate-500">চালু থাকলে স্টক শেষ হয়ে গেলেও অনলাইন চেকআউটে অর্ডার নেওয়া হবে এবং স্টক ঋণাত্মক হতে পারে</span>
+          </span>
+        </label>
       </form>
 
       <div className="card space-y-4 p-5">
@@ -451,6 +580,9 @@ export default function InventoryIntelligencePage() {
         <p className="text-xs text-slate-500">
           শুধু সম্পন্ন/ডেলিভারি-প্রমাণিত বিক্রি ধরা হয়। গতি শূন্য হলে stockout-এর কোনো সৎ পূর্বাভাস নেই — তাই সেই ঘরে "—" থাকে।
         </p>
+        <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+          পূর্বাভাসের ঘরগুলো সম্পর্কে: পরিসংখ্যানভিত্তিক অনুমান — নিশ্চয়তা নয়
+        </p>
         {velBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
         {!velBusy && velLoaded && velocityItems.length === 0 ? (
           <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
@@ -463,21 +595,50 @@ export default function InventoryIntelligencePage() {
                   <th className="py-2 pr-3">বিক্রি (ইউনিট)</th>
                   <th className="py-2 pr-3">দৈনিক গতি</th>
                   <th className="py-2 pr-3">বর্তমান স্টক</th>
+                  <th className="py-2 pr-3">পূর্বাভাসের ভিত্তি</th>
+                  <th className="py-2 pr-3">ট্রেন্ড</th>
                   <th className="py-2 pr-3">কতদিন চলবে</th>
                   <th className="py-2">সম্ভাব্য Stockout তারিখ</th>
                 </tr>
               </thead>
               <tbody>
-                {velocityItems.map((it) => (
+                {velocityItems.map((it) => {
+                  const trend = trendGrowthDisplay(it.trendGrowthPct);
+                  const stockout = pickStockoutDisplay(it.projectedStockoutDate, it.projectedStockoutDateV2);
+                  const trendCls = trend.tone === "up" ? "text-emerald-600"
+                    : trend.tone === "down" ? "text-rose-600" : "text-slate-500";
+                  return (
                   <tr key={`${it.productId}-${it.variantId ?? ""}`} className="border-b last:border-0">
                     <ProductCell name={it.productName} variantName={it.variantName} sku={it.sku} />
                     <td className="py-2 pr-3">{it.unitsSold}টি</td>
                     <td className="py-2 pr-3">{velocityText(it.dailyVelocity)} / দিন</td>
                     <td className="py-2 pr-3">{it.currentStock}</td>
-                    <td className="py-2 pr-3">{daysLeftText(it.daysOfStockLeft)}</td>
-                    <td className="py-2">{it.projectedStockoutDate ? new Date(it.projectedStockoutDate).toLocaleDateString("bn-BD") : "—"}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${it.demandBasis === "trend_seasonal" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"}`}>
+                        {demandBasisLabel(it.demandBasis)}
+                      </span>
+                      {it.projectedDailyDemand != null ? (
+                        <span className="block text-xs text-slate-400">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span>
+                      ) : null}
+                    </td>
+                    <td className={`py-2 pr-3 font-semibold ${trendCls}`}>{trend.text}</td>
+                    <td className="py-2 pr-3">
+                      {daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft)}
+                      {it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? (
+                        <span className="block text-xs font-normal text-slate-400">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span>
+                      ) : null}
+                    </td>
+                    <td className="py-2">
+                      {stockout.primary ? new Date(stockout.primary).toLocaleDateString("bn-BD") : "—"}
+                      {stockout.secondary ? (
+                        <span className="block text-xs text-slate-400">
+                          গতি-ভিত্তিক হিসাবে: {new Date(stockout.secondary).toLocaleDateString("bn-BD")}
+                        </span>
+                      ) : null}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -578,6 +739,103 @@ export default function InventoryIntelligencePage() {
         ) : (
           <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
         )}
+      </div>
+
+      <div className="card space-y-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">স্টক প্রাপ্যতা (Availability)</h2>
+          <button type="button" className="btn-secondary" disabled={availBusy} onClick={() => void loadAvailability()}>
+            {availBusy ? "লোড হচ্ছে…" : "রিফ্রেশ"}
+          </button>
+        </div>
+        <p className="text-xs text-slate-500">শুধু ট্র্যাক করা স্টক Row দেখানো হয় — হাতে থাকা স্টক থেকে কার্ট রিজার্ভ বাদ দিলে যা সত্যিই পাওয়া যাবে।</p>
+        {availBusy && !availLoaded ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+        {availLoaded && availabilityItems.length === 0 ? (
+          <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
+        ) : availabilityItems.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-slate-500">
+                  <th className="py-2 pr-3">পণ্য / ভ্যারিয়েন্ট</th>
+                  <th className="py-2 pr-3">হাতে আছে</th>
+                  <th className="py-2 pr-3">রিজার্ভ</th>
+                  <th className="py-2">পাওয়া যাবে</th>
+                </tr>
+              </thead>
+              <tbody>
+                {availabilityItems.map((it) => (
+                  <tr key={`${it.productId}-${it.variantId ?? ""}`} className="border-b last:border-0">
+                    <ProductCell name={it.productName} variantName={it.variantName} sku={it.sku} />
+                    <td className="py-2 pr-3">{it.onHand}</td>
+                    <td className="py-2 pr-3">{it.reserved}</td>
+                    <td className="py-2 font-semibold">{it.available}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card space-y-4 p-5">
+        <h2 className="font-semibold">ক্ষতি / হারানো রিপোর্ট (Damage &amp; Loss)</h2>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-44">
+            <label className={labelCls}>শুরুর তারিখ</label>
+            <input className={inputCls} type="date" value={damageFrom} onChange={(e) => setDamageFrom(e.target.value)} />
+          </div>
+          <div className="w-44">
+            <label className={labelCls}>শেষের তারিখ</label>
+            <input className={inputCls} type="date" value={damageTo} onChange={(e) => setDamageTo(e.target.value)} />
+          </div>
+          <button type="button" className="btn-primary" disabled={damageBusy} onClick={() => void loadDamageReport(damageFrom, damageTo)}>
+            {damageBusy ? "লোড হচ্ছে…" : "রিপোর্ট দেখুন"}
+          </button>
+        </div>
+        {damageBusy && !damageLoaded ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+        {damageLoaded && damageReport && damageReport.items.length === 0 ? (
+          <p className="text-sm text-slate-500">এই সময়ে কোনো নষ্ট / হারানো / মেয়াদোত্তীর্ণ পণ্যের রেকর্ড নেই।</p>
+        ) : damageReport && damageReport.items.length > 0 ? (
+          <>
+            {damageReport.totals.uncostedMovements > 0 ? (
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
+                {damageReport.totals.uncostedMovements}টি Movement-এর খরচ রেকর্ড নেই — মোট খরচ মূল্য শুধু খরচ-জানা Movementগুলোর উপর হিসাব করা।
+              </p>
+            ) : null}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-slate-500">
+                    <th className="py-2 pr-3">তারিখ</th>
+                    <th className="py-2 pr-3">পণ্য</th>
+                    <th className="py-2 pr-3">কারণ</th>
+                    <th className="py-2 pr-3">পরিমাণ</th>
+                    <th className="py-2">আনুমানিক খরচ মূল্য</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {damageReport.items.map((it, i) => (
+                    <tr key={`${it.productId}-${it.variantId ?? ""}-${it.createdAt}-${i}`} className="border-b last:border-0">
+                      <td className="py-2 pr-3">{new Date(it.createdAt).toLocaleDateString("bn-BD")}</td>
+                      <ProductCell name={it.productName} variantName={it.variantName} sku={null} />
+                      <td className="py-2 pr-3">{DAMAGE_REASON_LABELS[it.reason] ?? it.reason}</td>
+                      <td className="py-2 pr-3">{it.quantity}</td>
+                      <td className="py-2">{it.costValueMinor != null ? taka(it.costValueMinor) : "—"}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-semibold">
+                    <td className="py-2 pr-3" colSpan={3}>
+                      মোট — নষ্ট {damageReport.totals.damagedQty} · হারানো {damageReport.totals.lostQty} · মেয়াদোত্তীর্ণ {damageReport.totals.expiredQty}
+                    </td>
+                    <td className="py-2 pr-3">{damageReport.totals.totalQty}</td>
+                    <td className="py-2">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor) : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

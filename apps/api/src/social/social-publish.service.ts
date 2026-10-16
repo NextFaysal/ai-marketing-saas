@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { SocialService, videoOnlyViolation } from "./social.service";
@@ -883,9 +884,7 @@ export class SocialPublishService {
       const title = `Social পোস্ট প্রকাশ ব্যর্থ হয়েছে: ${accountName}`;
       const body = `${excerpt}\nত্রুটি: ${errorMessage}\nSocial Posts পেজে পোস্টটি Failed অবস্থায় আছে — সমস্যা ঠিক করে আবার শিডিউল বা প্রকাশ করুন। Token-এর মেয়াদ শেষ হলে অ্যাকাউন্টটি আবার কানেক্ট করুন।`;
       for (const userId of recipients) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId: post.organizationId, userId, type: "social_post_failed", title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId: post.organizationId, userId, type: "social_post_failed", title, body, conversationId: null }).catch(() => undefined);
       }
     } catch (e) {
       this.logger.warn(`social post failure notification failed for post ${post?.id}: ${e instanceof Error ? e.message : "unknown"}`);

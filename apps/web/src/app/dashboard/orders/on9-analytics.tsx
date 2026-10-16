@@ -6,6 +6,7 @@ import {
   buildAnalyticsPath, digestResultLabel, districtBarPct, formatMoneyMinor, formatPct,
   rangeForPreset, type AnalyticsPayload, type DigestRunSummary, type DigestStatus,
 } from "@/lib/orders-on9";
+import type { SourcesPayload } from "@/lib/ab7";
 
 /**
  * ON9 — Orders Analytics v2 + Owner Digest panel (opened from
@@ -27,6 +28,9 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [data, setData] = useState<AnalyticsPayload | null>(null);
+  // AB7 (AX19): বিক্রির উৎস — loads independently so a failure
+  // here never blanks the rest of the analytics panel.
+  const [sources, setSources] = useState<SourcesPayload | null>(null);
   const [digest, setDigest] = useState<DigestStatus | null>(null);
   const [runResult, setRunResult] = useState<DigestRunSummary | null>(null);
   const [busy, setBusy] = useState("");
@@ -42,6 +46,10 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "অ্যানালিটিক্স লোড ব্যর্থ হয়েছে");
     }
+    try {
+      const s = await apiFetch<SourcesPayload>(`/organizations/${orgId}/commerce/analytics/sources`);
+      setSources(s);
+    } catch { /* sources section stays hidden until the endpoint answers */ }
   }, [base, orgId]);
 
   useEffect(() => { void load(from, to); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -180,6 +188,37 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                 </table>
               </div>
             ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো পণ্য সতর্কতার সীমা ছাড়ায়নি।</p>}
+
+            {/* AB7 (AX19): বিক্রির উৎস */}
+            <h3 className="mt-5 font-semibold">বিক্রির উৎস</h3>
+            <p className="text-xs text-slate-500">
+              শুধু এই দোকানের নিজের চেকআউট থেকে আসা অর্ডারে উৎসের ছাপ থাকে; POS/বাইরের দোকানের অর্ডার
+              &lsquo;সরাসরি/অজানা&rsquo;-তে গণনা হয়।
+            </p>
+            {sources && sources.rows.length ? (
+              <>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-slate-500">
+                      <th className="py-1 pr-2">উৎস</th><th className="py-1 pr-2">অর্ডার</th><th className="py-1">রেভিনিউ</th>
+                    </tr></thead>
+                    <tbody>
+                      {sources.rows.map((r) => (
+                        <tr key={r.source} className="border-t">
+                          <td className="py-1 pr-2 font-medium">{r.source}</td>
+                          <td className="py-1 pr-2">{r.orders}টি</td>
+                          <td className="py-1">{formatMoneyMinor(r.revenueMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-sm text-slate-600">
+                  মোট: {sources.totals.orders}টি অর্ডার · {formatMoneyMinor(sources.totals.revenueMinor)} ·
+                  Click ID-সহ {sources.totals.withClickId}টি · উৎসের ছাপ আছে {sources.totals.stampedOrders}টিতে
+                </p>
+              </>
+            ) : <p className="mt-2 text-sm text-slate-500">উৎস অনুযায়ী কোনো অর্ডারের তথ্য পাওয়া যায়নি।</p>}
           </>
         ) : <p className="mt-4 text-sm text-slate-500">লোড হচ্ছে…</p>}
 

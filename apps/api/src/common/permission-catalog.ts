@@ -127,18 +127,82 @@ export function findUnknownAreas(raw: { grants?: unknown; denies?: unknown }): s
   return bad;
 }
 
-export type AccessSource = "owner" | "role" | "grant" | "deny" | "none";
+/**
+ * GB6 (GC16): preset role profiles. Deliberately NOT new Role
+ * enum values — the linear rank hierarchy cannot express the
+ * FINANCE subset (billing's minRole is ADMIN, so an enum
+ * FINANCE would need rank >= 80 and would inherit every ADMIN
+ * area) nor INVENTORY_MANAGER (products/inventory controllers
+ * are role-list endpoints with no area tag). Instead a profile
+ * is a named bundle of permission AREAS, materialized per org
+ * as a CustomRole row with presetKey set; a member assigned
+ * that custom role reaches exactly the listed areas (plus any
+ * per-member grants, minus any denies) on area-tagged
+ * endpoints. The profile governs area surfaces only — the
+ * member's base preset role still governs role-list endpoints.
+ */
+export interface PresetRoleProfile {
+  key: string;
+  label: string;
+  labelBn: string;
+  areas: string[];
+  noteBn: string;
+}
+
+export const PRESET_ROLE_PROFILES: PresetRoleProfile[] = [
+  {
+    key: "ORDER_MANAGER",
+    label: "Order Manager",
+    labelBn: "অর্ডার ম্যানেজার",
+    areas: ["inbox", "orders", "customers", "courier", "analytics"],
+    noteBn: "অর্ডার, ইনবক্স, গ্রাহক, কুরিয়ার ও অ্যানালিটিক্স — দৈনন্দিন অর্ডার পরিচালনার জন্য",
+  },
+  {
+    key: "INVENTORY_MANAGER",
+    label: "Inventory Manager",
+    labelBn: "ইনভেন্টরি ম্যানেজার",
+    areas: ["orders", "analytics"],
+    noteBn: "গুদাম/ক্রয়/ফুলফিলমেন্ট সবই “orders” এরিয়ার আওতায়; পণ্য/ইনভেন্টরি লেখা সদস্যের মূল ভূমিকা দিয়েই নিয়ন্ত্রিত থাকে",
+  },
+  {
+    key: "FINANCE",
+    label: "Finance",
+    labelBn: "ফাইন্যান্স",
+    areas: ["billing", "analytics", "orders", "customers"],
+    noteBn: "বিলিং, অ্যানালিটিক্স, অর্ডার ও গ্রাহক — হিসাব-নিকাশ ও পেমেন্টের জন্য",
+  },
+];
+
+export function presetProfile(key: unknown): PresetRoleProfile | undefined {
+  if (typeof key !== "string") return undefined;
+  return PRESET_ROLE_PROFILES.find((p) => p.key === key);
+}
+
+export type AccessSource = "owner" | "role" | "grant" | "deny" | "custom" | "none";
 export interface EffectiveAccessEntry {
   key: string; labelBn: string; label: string; minRole: Role;
   allowed: boolean; source: AccessSource;
 }
 
-/** What this member can actually reach, area by area. */
-export function effectiveAccess(role: Role, overridesRaw: unknown): EffectiveAccessEntry[] {
+/** What this member can actually reach, area by area.
+ * GB6 (GC16): when `customAreas` (a member's CustomRole areas)
+ * is provided and the role is not OWNER, the custom role is the
+ * baseline instead of the role rank: an area is allowed iff the
+ * custom role lists it (source "custom"). Denies still close an
+ * area outright and grants still add one. Two-argument calls
+ * behave exactly as before. */
+export function effectiveAccess(role: Role, overridesRaw: unknown, customAreas?: string[]): EffectiveAccessEntry[] {
   const overrides = normalizeOverrides(overridesRaw);
+  const hasCustom = Array.isArray(customAreas);
+  const custom = hasCustom ? customAreas!.filter((k) => AREA_BY_KEY.has(k)) : [];
   return PERMISSION_AREAS.map((a) => {
     if (role === "OWNER") return { ...a, allowed: true, source: "owner" as AccessSource };
     if (overrides.denies.includes(a.key)) return { ...a, allowed: false, source: "deny" as AccessSource };
+    if (hasCustom) {
+      if (custom.includes(a.key)) return { ...a, allowed: true, source: "custom" as AccessSource };
+      if (overrides.grants.includes(a.key)) return { ...a, allowed: true, source: "grant" as AccessSource };
+      return { ...a, allowed: false, source: "none" as AccessSource };
+    }
     if (hasRoleAtLeast(role, a.minRole)) return { ...a, allowed: true, source: "role" as AccessSource };
     if (overrides.grants.includes(a.key)) return { ...a, allowed: true, source: "grant" as AccessSource };
     return { ...a, allowed: false, source: "none" as AccessSource };

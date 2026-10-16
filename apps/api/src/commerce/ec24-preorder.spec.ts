@@ -204,12 +204,15 @@ describe("EC24a storefront stock gate", () => {
   it("preorder product bypasses assertStock at zero stock; normal zero-stock product is refused as today", async () => {
     const prisma = fakePrisma();
     const svc = new StorefrontService(prisma);
-    expect(() =>
+    // GB2 (GC7): assertStock became async (availability-aware);
+    // the intent of these assertions is unchanged — preorder
+    // bypasses, a normal zero-stock product is refused.
+    await expect(
       (svc as any).assertStock({ name: "Pre", stockQuantity: 0, preorderEnabled: true }, null, 5),
-    ).not.toThrow();
-    expect(() =>
+    ).resolves.toBeUndefined();
+    await expect(
       (svc as any).assertStock({ name: "Norm", stockQuantity: 0, preorderEnabled: false }, null, 1),
-    ).toThrow(BadRequestException);
+    ).rejects.toThrow(BadRequestException);
   });
 });
 

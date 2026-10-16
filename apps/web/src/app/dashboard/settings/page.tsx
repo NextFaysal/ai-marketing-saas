@@ -1,8 +1,20 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch, API_URL } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
+import {
+  MERCHANT_API_SCOPES, canDownloadExport, dataExportKindLabel, dataExportStatusLabel,
+  dataExportsFromPayload, exportDownloadFilename,
+  formatExportSize, formatMerchantKeyPrefix, merchantApiKeyStatusLabel, merchantApiScopeLabel,
+  merchantKeysFromPayload,
+  validateMerchantKeyDraft, type CreatedMerchantApiKey, type DataExportRow,
+  type MerchantApiKeyRecord,
+} from "@/lib/ab8";
+import {
+  NOTIFICATION_CATEGORIES, canRevokeOwnSession, isCategoryEnabled, toggleMutedCategory,
+  type LoginHistoryRow, type OwnSession,
+} from "@/lib/gb6-team";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
@@ -151,6 +163,285 @@ function BrandingCard() {
   );
 }
 
+/**
+ * AB8 (AX21): merchant developer API keys. The plaintext key is
+ * returned exactly once at creation — it is kept only in this
+ * card's local state, shown in a copyable box with the one-time
+ * warning, and never re-fetched (the list carries prefixes only).
+ */
+function DeveloperApiCard() {
+  const [keys, setKeys] = useState<MerchantApiKeyRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["products:read"]);
+  const [createdKey, setCreatedKey] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
+    try {
+      // Contract shape is { items }; the delivered API returns
+      // the bare array — the lib normalizer accepts both.
+      const out = await apiFetch<unknown>(`/organizations/${orgId}/merchant-api-keys`);
+      setKeys(merchantKeysFromPayload(out));
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function toggleScope(scope: string) {
+    setScopes((prev) => (prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]));
+  }
+
+  async function createKey() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const err = validateMerchantKeyDraft(name, scopes);
+    if (err) { setError(err); return; }
+    setBusy("create"); setMsg(""); setError(""); setCreatedKey(""); setCopied(false);
+    try {
+      const out = await apiFetch<CreatedMerchantApiKey>(`/organizations/${orgId}/merchant-api-keys`, {
+        method: "POST", body: JSON.stringify({ name: name.trim(), scopes }),
+      });
+      setCreatedKey(out.key);
+      setName("");
+      setMsg("✅ নতুন API কী তৈরি হয়েছে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "কী তৈরি করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function copyCreatedKey() {
+    try {
+      await navigator.clipboard.writeText(createdKey);
+      setCopied(true);
+    } catch { setError("কপি করা যায়নি — কীটি হাতে কপি করুন।"); }
+  }
+
+  async function revokeKey(k: MerchantApiKeyRecord) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm(`"${k.name}" কীটি বাতিল করবেন? এই কী দিয়ে চলা সব সংযোগ সঙ্গে সঙ্গে বন্ধ হয়ে যাবে — এটি আর ফিরিয়ে আনা যাবে না।`)) return;
+    setBusy(`revoke-${k.id}`); setMsg(""); setError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/merchant-api-keys/${k.id}`, { method: "DELETE" });
+      setMsg("কীটি বাতিল করা হয়েছে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "কী বাতিল করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <section id="hub-developer-api" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🔑" title="ডেভেলপার API" hint="নিজের অ্যাপ/স্ক্রিপ্ট থেকে এই প্রতিষ্ঠানের পণ্য, অর্ডার ও গ্রাহকের তথ্যে প্রোগ্রাম দিয়ে অ্যাক্সেসের জন্য API কী। প্রতিটি কী শুধু বেছে দেওয়া স্কোপগুলোতেই কাজ করে।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      {createdKey ? (
+        <div className="mb-4 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
+          <p className="text-sm font-semibold text-amber-900">⚠️ এই কীটি আর দেখানো হবে না — এখনই সংরক্ষণ করুন</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 break-all rounded bg-white p-2 font-mono text-sm ring-1 ring-amber-200">{createdKey}</code>
+            <button type="button" className="btn-secondary btn-sm" onClick={copyCreatedKey}>{copied ? "✓ কপি হয়েছে" : "কপি করুন"}</button>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => { setCreatedKey(""); setCopied(false); }}>আমি সংরক্ষণ করেছি, লুকিয়ে দিন</button>
+          </div>
+        </div>
+      ) : null}
+      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="space-y-5">
+          <div>
+            {keys.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো API কী তৈরি করা হয়নি।</p> : (
+              <ul className="space-y-1.5">
+                {keys.map((k) => (
+                  <li key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="font-medium text-slate-800">{k.name}</span>
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${k.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{merchantApiKeyStatusLabel(k.status)}</span>
+                      <span className="block font-mono text-xs text-slate-500">{formatMerchantKeyPrefix(k.keyPrefix)}</span>
+                      <span className="mt-1 flex flex-wrap gap-1">
+                        {(k.scopes ?? []).map((s) => (
+                          <span key={s} className="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">{merchantApiScopeLabel(s)}</span>
+                        ))}
+                      </span>
+                      <span className="block text-[11px] text-slate-400">
+                        তৈরি: {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার: {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}
+                      </span>
+                    </span>
+                    {k.status === "active" ? (
+                      <button type="button" className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => revokeKey(k)}>
+                        {busy === `revoke-${k.id}` ? "বাতিল হচ্ছে…" : "বাতিল করুন"}
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">নতুন কী তৈরি করুন</h3>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="block min-w-52 flex-1 text-sm text-slate-600">কী-এর নাম
+                <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="যেমন: ওয়েবসাইট সিঙ্ক" maxLength={80} />
+              </label>
+            </div>
+            <div className="mt-3">
+              <div className="mb-1.5 text-[13px] font-medium text-slate-600">স্কোপ (অনুমতি)</div>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {MERCHANT_API_SCOPES.map((s) => (
+                  <label key={s.key} className="flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
+                    <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={scopes.includes(s.key)}
+                      onChange={() => toggleScope(s.key)} aria-label={s.label} />
+                    <span>{s.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button type="button" className="btn-primary mt-4 min-h-[44px]" disabled={busy !== ""} onClick={createKey}>
+              {busy === "create" ? "তৈরি হচ্ছে…" : "API কী তৈরি করুন"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * AB8 (AX25): self-serve data exports + the weekly backup
+ * preference. Exports carry the org's FULL records — the card
+ * says so plainly, and a download is offered only while an
+ * export is ready (the API enforces org ownership + expiry).
+ */
+function DataToolsCard() {
+  const [items, setItems] = useState<DataExportRow[]>([]);
+  const [backupEnabled, setBackupEnabled] = useState(false);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setLoaded(true); return; }
+    try {
+      // Contract shape is { items, backupPreference }; the
+      // delivered API returns the rows under `exports` — the
+      // lib normalizer accepts both.
+      const out = dataExportsFromPayload(await apiFetch<unknown>(`/organizations/${orgId}/data-exports`));
+      setItems(out.items);
+      setBackupEnabled(out.backupPreference.enabled);
+      setLastBackupAt(out.backupPreference.lastBackupAt);
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleBackup(enabled: boolean) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("backup-pref"); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<{ enabled: boolean; lastBackupAt: string | null }>(
+        `/organizations/${orgId}/data-exports/backup-preference`,
+        { method: "PUT", body: JSON.stringify({ enabled }) },
+      );
+      setBackupEnabled(Boolean(out.enabled));
+      setLastBackupAt(out.lastBackupAt ?? null);
+      setMsg(enabled ? "সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ চালু হয়েছে।" : "সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ বন্ধ করা হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "পছন্দ সংরক্ষণ করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function createExport() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("export"); setMsg(""); setError("");
+    try {
+      await apiFetch<DataExportRow>(`/organizations/${orgId}/data-exports`, { method: "POST" });
+      setMsg("✅ এক্সপোর্টের অনুরোধ তৈরি হয়েছে — প্রস্তুত হলে নিচের তালিকা থেকে ডাউনলোড করা যাবে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট শুরু করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function downloadExport(row: DataExportRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(`download-${row.id}`); setMsg(""); setError("");
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_URL}/organizations/${orgId}/data-exports/${row.id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("ডাউনলোড করা যায়নি — এক্সপোর্টটির মেয়াদ শেষ হয়ে থাকতে পারে।");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = exportDownloadFilename(row.id);
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { setError(e instanceof Error ? e.message : "ডাউনলোড করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <section id="hub-data-tools" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="💾" title="ডেটা ও ব্যাকআপ" hint="প্রতিষ্ঠানের পুরো ডেটা এক্সপোর্ট করুন, সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ চালু করুন, আর কে কখন কী বদলেছে তা কার্যকলাপ লগে দেখুন।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">⚠️ এক্সপোর্টে এই প্রতিষ্ঠানের সম্পূর্ণ রেকর্ড থাকে — ফাইলটি যত্নে নিরাপদ জায়গায় সংরক্ষণ করুন এবং অপরিচিত কারও সঙ্গে শেয়ার করবেন না।</p>
+      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="space-y-5">
+          <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
+            <span>
+              সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ
+              <span className="block text-xs font-normal text-slate-400">
+                {lastBackupAt ? `সর্বশেষ ব্যাকআপ: ${new Date(lastBackupAt).toLocaleString("bn-BD")}` : "এখনো কোনো ব্যাকআপ হয়নি"}
+              </span>
+            </span>
+            <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={backupEnabled} disabled={busy !== ""}
+              onChange={(e) => toggleBackup(e.target.checked)} aria-label="সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ" />
+          </label>
+
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-700">এক্সপোর্টসমূহ</h3>
+              <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={createExport}>
+                {busy === "export" ? "অনুরোধ হচ্ছে…" : "এখনই এক্সপোর্ট করুন"}
+              </button>
+            </div>
+            {items.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো এক্সপোর্ট করা হয়নি।</p> : (
+              <ul className="space-y-1.5">
+                {items.map((row) => (
+                  <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="font-medium text-slate-800">{dataExportKindLabel(row.kind)}</span>
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${row.status === "ready" ? "bg-emerald-100 text-emerald-700" : row.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-200 text-slate-600"}`}>{dataExportStatusLabel(row.status)}</span>
+                      <span className="block text-xs text-slate-500">
+                        আকার: {formatExportSize(row.sizeBytes)} · তৈরি: {new Date(row.createdAt).toLocaleString("bn-BD")}
+                        {row.completedAt ? ` · সম্পন্ন: ${new Date(row.completedAt).toLocaleString("bn-BD")}` : ""}
+                        {row.expiresAt ? ` · মেয়াদ: ${new Date(row.expiresAt).toLocaleString("bn-BD")}` : ""}
+                      </span>
+                      {row.status === "failed" && row.error ? <span className="block text-xs text-red-600">{row.error}</span> : null}
+                    </span>
+                    {canDownloadExport(row) ? (
+                      <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
+                        {busy === `download-${row.id}` ? "ডাউনলোড হচ্ছে…" : "ডাউনলোড"}
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <p className="text-sm text-slate-600">
+            কে কখন কোন রেকর্ডে কী করেছেন —{" "}
+            <a href="/dashboard/settings/audit-logs" className="font-semibold text-indigo-700 hover:underline">কার্যকলাপ লগ দেখুন →</a>
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Organization Design v2 (2026-10-11): the Command Center in a
  * modern, fully responsive shell — gradient brain hero with a
  * progress ring, sticky section navigation (sidebar on desktop,
@@ -165,8 +456,366 @@ const HUB_NAV = [
   { id: "hub-payment", icon: "💳", label: "পেমেন্ট" },
   { id: "hub-ai", icon: "🤖", label: "AI এর আচরণ" },
   { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
+  { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
+  { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
   { id: "hub-security", icon: "🔐", label: "নিরাপত্তা (2FA)" },
+  { id: "hub-my-security", icon: "🖥️", label: "আমার সেশন ও নোটিফিকেশন" },
+  { id: "hub-developer-api", icon: "🔑", label: "ডেভেলপার API" },
+  { id: "hub-data-tools", icon: "💾", label: "ডেটা ও ব্যাকআপ" },
 ] as const;
+
+/**
+ * GB6 (GC16): my sessions + login history + notification
+ * preferences (per current organization).
+ *
+ * Own-session revoke choice (from AuthService.revokeMySession):
+ * the API revokes ANY of the caller's own sessions, including
+ * the current one — revoking the current session would
+ * invalidate the token in use and log the user out on the spot.
+ * The UI therefore disables revoke on the current session with
+ * an explanatory note instead of offering a one-click logout.
+ */
+function MySecurityCard() {
+  const [sessions, setSessions] = useState<OwnSession[]>([]);
+  const [history, setHistory] = useState<LoginHistoryRow[]>([]);
+  const [muted, setMuted] = useState<string[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId();
+    try {
+      const [s, h] = await Promise.all([
+        apiFetch<OwnSession[]>("/auth/sessions"),
+        apiFetch<LoginHistoryRow[]>("/auth/login-history"),
+      ]);
+      setSessions(s); setHistory(h);
+      if (orgId) {
+        const prefs = await apiFetch<{ mutedCategories: string[] }>(`/organizations/${orgId}/my-notification-preferences`);
+        setMuted(prefs.mutedCategories ?? []);
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    finally { setLoaded(true); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function revokeSession(s: OwnSession) {
+    setBusy(`session-${s.id}`); setMsg(""); setError("");
+    try {
+      await apiFetch(`/auth/sessions/${s.id}`, { method: "DELETE" });
+      setMsg("সেশনটি বাতিল হয়েছে — ওই ডিভাইস/ব্রাউজার থেকে লগআউট হয়ে যাবে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সেশন বাতিল করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function toggleCategory(key: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const next = toggleMutedCategory(muted, key);
+    setBusy(`cat-${key}`); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<{ mutedCategories: string[] }>(`/organizations/${orgId}/my-notification-preferences`, {
+        method: "PATCH", body: JSON.stringify({ mutedCategories: next }),
+      });
+      setMuted(out.mutedCategories ?? next);
+      setMsg("নোটিফিকেশন পছন্দ সংরক্ষিত হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <section id="hub-my-security" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🖥️" title="আমার সেশন, লগইন ইতিহাস ও নোটিফিকেশন" hint="আপনি যেসব ডিভাইস/ব্রাউজার থেকে লগইন করেছেন, সাম্প্রতিক লগইন চেষ্টা, আর এই Organization-এ কোন ধরনের ইন-অ্যাপ নোটিফিকেশন পাবেন।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="space-y-6">
+          <div>
+            <h3 className="mb-2 text-sm font-semibold">সক্রিয় সেশন ({sessions.length})</h3>
+            {sessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সক্রিয় সেশন পাওয়া যায়নি।</p> : sessions.map((s) => (
+              <div key={s.id} className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                <span>
+                  <span className="font-medium">{s.ip ?? "IP অজানা"}</span>
+                  {s.current ? <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">বর্তমান সেশন</span> : null}
+                  <span className="block max-w-lg truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? "ডিভাইস অজানা"}</span>
+                  <span className="block text-[11px] text-slate-400">শুরু: {new Date(s.createdAt).toLocaleString("bn-BD")} · শেষ দেখা: {new Date(s.lastSeenAt).toLocaleString("bn-BD")}</span>
+                </span>
+                {canRevokeOwnSession(s) ? (
+                  <button className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => revokeSession(s)}>সেশন বাতিল করুন</button>
+                ) : (
+                  <span className="max-w-56 text-right text-[11px] text-slate-400">এটি আপনার বর্তমান সেশন — এটি বাতিল করলে আপনি সঙ্গে সঙ্গে লগআউট হয়ে যাবেন, তাই এখান থেকে বাতিল করা যাবে না। লগআউট করতে চাইলে স্বাভাবিক লগআউট করুন।</span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-sm font-semibold">আমার লগইন ইতিহাস (শেষ ৫০টি)</h3>
+            {history.length === 0 ? <p className="text-sm text-slate-400">কোনো লগইন ইতিহাস নেই।</p> : (
+              <ul className="max-h-72 space-y-1 overflow-y-auto text-sm">
+                {history.map((h, i) => (
+                  <li key={h.id ?? i} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5">
+                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? "সফল" : "ব্যর্থ"}</span>
+                    <span className="text-slate-600">{h.ip ?? "IP অজানা"}</span>
+                    <span className="max-w-52 truncate text-[11px] text-slate-400" title={h.userAgent ?? ""}>{h.userAgent ?? ""}</span>
+                    <span className="text-[11px] text-slate-400">{new Date(h.createdAt).toLocaleString("bn-BD")}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-1 text-xs text-slate-400">অচেনা IP/ডিভাইস থেকে সফল লগইন দেখলে ওই সেশনটি ওপরে বাতিল করুন এবং পাসওয়ার্ড বদলে ফেলুন।</p>
+          </div>
+
+          <div>
+            <h3 className="mb-1 text-sm font-semibold">নোটিফিকেশন পছন্দ — এই Organization-এর জন্য</h3>
+            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">এটি শুধু অ্যাপের ভিতরের নোটিফিকেশন বন্ধ করে — এটি কোনো নিরাপত্তা সেটিং নয়। বন্ধ করা ধরনের নোটিফিকেশন তৈরি হবে না; ইমেইল বা অন্য চ্যানেলে এর কোনো প্রভাব নেই। পছন্দটি শুধু এই Organization-এর জন্য প্রযোজ্য।</p>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {NOTIFICATION_CATEGORIES.map((c) => {
+                const enabled = isCategoryEnabled(muted, c.key);
+                return (
+                  <label key={c.key} className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
+                    <span>{c.labelBn} <span className="text-xs font-normal text-slate-400">({c.label})</span></span>
+                    <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={enabled} disabled={busy !== ""}
+                      onChange={() => toggleCategory(c.key)} aria-label={`${c.labelBn} নোটিফিকেশন`} />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface MeVerification {
+  email: string; emailVerifiedAt: string | null; phone: string | null; phoneVerifiedAt: string | null;
+}
+
+/**
+ * GC21 (GB9): account verification — email status + resend, and
+ * the phone OTP inline flow. The API is honest about platform
+ * SMS availability (reason "sms_not_configured"); the card shows
+ * that state plainly instead of pretending a code was sent.
+ */
+function AccountVerificationCard() {
+  const [me, setMe] = useState<MeVerification | null>(null);
+  const [phone, setPhone] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [smsUnavailable, setSmsUnavailable] = useState(false);
+  const [code, setCode] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const m = await apiFetch<MeVerification>("/auth/me");
+      setMe(m);
+      setPhone((prev) => prev || (m.phone ?? ""));
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function resendEmail() {
+    setBusy("email"); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/email", { method: "POST" });
+      if (out.sent) setMsg("✅ যাচাইকরণ ইমেইল আবার পাঠানো হয়েছে — ইনবক্স (ও Spam) দেখুন। লিংকটি ২৪ ঘণ্টা বৈধ।");
+      else if (out.reason === "already_verified") setMsg("আপনার ইমেইল ইতিমধ্যে যাচাই করা হয়েছে।");
+      else setError("ইমেইল পাঠানো যায়নি — প্ল্যাটফর্মের ইমেইল সেটআপে সমস্যা থাকতে পারে। পরে আবার চেষ্টা করুন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "পাঠানো যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function savePhone() {
+    setBusy("phone"); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<{ phone: string; phoneVerifiedAt: string | null }>("/auth/verification/phone", {
+        method: "POST", body: JSON.stringify({ phone }),
+      });
+      setPhone(out.phone);
+      setMsg("মোবাইল নম্বর সংরক্ষিত হয়েছে। এবার OTP পাঠিয়ে যাচাই করুন।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function requestOtp() {
+    setBusy("otp"); setMsg(""); setError(""); setSmsUnavailable(false);
+    try {
+      const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/phone/otp", { method: "POST" });
+      if (out.sent) { setOtpSent(true); setMsg("✅ OTP পাঠানো হয়েছে — ৫ মিনিটের মধ্যে কোডটি দিন।"); }
+      else if (out.reason === "sms_not_configured") setSmsUnavailable(true);
+      else if (out.reason === "already_verified") setMsg("আপনার ফোন নম্বর ইতিমধ্যে যাচাই করা হয়েছে।");
+      else setError("SMS পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।");
+    } catch (e) { setError(e instanceof Error ? e.message : "OTP পাঠানো যায়নি"); }
+    finally { setBusy(""); }
+  }
+
+  async function verifyOtp() {
+    setBusy("verify"); setMsg(""); setError("");
+    try {
+      await apiFetch("/auth/verification/phone/verify", { method: "POST", body: JSON.stringify({ code }) });
+      setOtpSent(false); setCode("");
+      setMsg("✅ ফোন নম্বর যাচাই সম্পন্ন হয়েছে।");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "কোড মেলেনি"); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <section id="hub-verification" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="✅" title="যাচাইকরণ — ইমেইল ও ফোন" hint="যাচাই করা অ্যাকাউন্ট মার্চেন্ট হিসেবে আস্থা বাড়ায়; প্ল্যাটফর্ম যাচাইকরণ চালু করলে নতুন অ্যাকাউন্টের জন্য ইমেইল যাচাই বাধ্যতামূলক হতে পারে।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      {!me ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-slate-700">ইমেইল: <span className="font-semibold">{me.email}</span></div>
+              <div className="text-xs text-slate-500">{me.emailVerifiedAt ? `যাচাই করা হয়েছে · ${new Date(me.emailVerifiedAt).toLocaleString("bn-BD")}` : "এখনো যাচাই করা হয়নি"}</div>
+            </div>
+            {me.emailVerifiedAt
+              ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত</span>
+              : <button className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={resendEmail}>{busy === "email" ? "পাঠানো হচ্ছে…" : "যাচাইকরণ লিংক আবার পাঠান"}</button>}
+          </div>
+
+          <div className="rounded-xl bg-slate-50 px-4 py-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-slate-700">মোবাইল নম্বর</span>
+              {me.phoneVerifiedAt
+                ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত</span>
+                : <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">যাচাই বাকি</span>}
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block text-sm text-slate-600">নম্বর (01 দিয়ে শুরু)
+                <input className="input mt-1 w-56" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXXXXXXXX" inputMode="tel" />
+              </label>
+              <button className="btn-secondary min-h-[44px]" disabled={busy !== "" || !phone.trim()} onClick={savePhone}>{busy === "phone" ? "অপেক্ষা করুন…" : "নম্বর সংরক্ষণ করুন"}</button>
+              {!me.phoneVerifiedAt ? (
+                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || !me.phone} onClick={requestOtp}>{busy === "otp" ? "পাঠানো হচ্ছে…" : "OTP পাঠান"}</button>
+              ) : null}
+            </div>
+            {smsUnavailable ? (
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">📵 এসএমএস যাচাই এখন উপলব্ধ নয় — প্ল্যাটফর্মে SMS গেটওয়ে সেটআপ করা নেই। ইমেইল যাচাই দিয়েই আপাতত চলবে।</p>
+            ) : null}
+            {otpSent && !me.phoneVerifiedAt ? (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="block text-sm text-slate-600">৬ সংখ্যার OTP কোড
+                  <input className="input mt-1 w-44 tracking-[0.3em]" value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" maxLength={6} inputMode="numeric" />
+                </label>
+                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || code.trim().length < 6} onClick={verifyOtp}>{busy === "verify" ? "যাচাই হচ্ছে…" : "কোড যাচাই করুন"}</button>
+                <span className="text-xs text-slate-400">কোডের মেয়াদ ৫ মিনিট · ৫ বার ভুল চেষ্টা করলে কোডটি বাতিল হয়ে যাবে।</span>
+              </div>
+            ) : null}
+            {!me.phone ? <p className="mt-2 text-xs text-slate-400">আগে নম্বর সংরক্ষণ করুন, তারপর OTP পাঠানো যাবে।</p> : null}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface OrgVerificationState {
+  verificationStatus: string; verificationNote: string | null; verificationSubmittedAt: string | null;
+}
+
+function formatBytesBn(bytesStr: string): string {
+  const n = Number(bytesStr);
+  if (!Number.isFinite(n) || n <= 0) return "০ বাইট";
+  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  let v = n; let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
+}
+
+/**
+ * GC21 (GB9): merchant (organization) verification + recorded
+ * storage usage. Submit goes to the API, which validates the
+ * Business Profile pieces and names anything missing in Bengali;
+ * a rejected submission shows the admin's note verbatim so the
+ * merchant knows exactly what to fix.
+ */
+function OrgVerificationCard() {
+  const [org, setOrg] = useState<OrgVerificationState | null>(null);
+  const [storage, setStorage] = useState<{ storageBytes: string; assetCount: number; meteredFrom: string } | null>(null);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const [o, s] = await Promise.all([
+        apiFetch<OrgVerificationState>(`/organizations/${orgId}`),
+        apiFetch<{ storageBytes: string; assetCount: number; meteredFrom: string }>(`/organizations/${orgId}/storage-usage`).catch(() => null),
+      ]);
+      setOrg(o); setStorage(s);
+    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function submit() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy(true); setMsg(""); setError("");
+    try {
+      const out = await apiFetch<OrgVerificationState>(`/organizations/${orgId}/verification/submit`, { method: "POST" });
+      setOrg(out);
+      setMsg("✅ যাচাইয়ের আবেদন জমা পড়েছে — প্ল্যাটফর্ম টিম রিভিউ করে সিদ্ধান্ত জানাবে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "জমা দেওয়া যায়নি"); }
+    finally { setBusy(false); }
+  }
+
+  const badge = (status: string) => {
+    switch (status) {
+      case "verified": return <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত প্রতিষ্ঠান</span>;
+      case "pending": return <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">⏳ রিভিউ চলছে</span>;
+      case "rejected": return <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">✗ আবেদন ফিরিয়ে দেওয়া হয়েছে</span>;
+      default: return <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">যাচাই করা হয়নি</span>;
+    }
+  };
+
+  return (
+    <section id="hub-org-verification" className="card scroll-mt-24 p-5 sm:p-6">
+      <SectionHead icon="🏅" title="প্রতিষ্ঠান যাচাইকরণ ও স্টোরেজ" hint="ট্রেড লাইসেন্সসহ ব্যবসার তথ্য জমা দিলে প্ল্যাটফর্ম টিম যাচাই করে যাচাইকৃত ব্যাজ দেয়। জমা দেওয়ার আগে ওপরের ফর্মে প্রতিষ্ঠানের নাম, ঠিকানা, যোগাযোগের ফোন/ইমেইল ও ট্রেড লাইসেন্স নম্বর পূরণ করে সংরক্ষণ করুন।" />
+      {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+      {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
+      {!org ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-slate-700">বর্তমান অবস্থা:</span>
+            {badge(org.verificationStatus)}
+            {org.verificationSubmittedAt ? <span className="text-xs text-slate-400">সর্বশেষ জমা: {new Date(org.verificationSubmittedAt).toLocaleString("bn-BD")}</span> : null}
+          </div>
+          {org.verificationStatus === "rejected" && org.verificationNote ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">প্ল্যাটফর্ম টিমের নোট: “{org.verificationNote}” — তথ্য ঠিক করে আবার জমা দিন।</p>
+          ) : null}
+          {org.verificationStatus === "verified" && org.verificationNote ? (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">প্ল্যাটফর্ম টিমের নোট: “{org.verificationNote}”</p>
+          ) : null}
+          {org.verificationStatus !== "verified" ? (
+            <button className="btn-primary min-h-[44px]" disabled={busy} onClick={submit}>
+              {busy ? "অপেক্ষা করুন…" : org.verificationStatus === "pending" ? "আবার জমা দিন" : org.verificationStatus === "rejected" ? "ঠিক করে আবার জমা দিন" : "যাচাইয়ের জন্য জমা দিন"}
+            </button>
+          ) : null}
+
+          <div className="rounded-xl bg-slate-50 px-4 py-3">
+            <div className="text-sm font-medium text-slate-700">📦 স্টোরেজ ব্যবহার</div>
+            {storage ? (
+              <p className="mt-1 text-sm text-slate-600">
+                মিডিয়া লাইব্রেরিতে <b>{formatBytesBn(storage.storageBytes)}</b> · {storage.assetCount.toLocaleString("bn-BD")}টি ফাইল
+                <span className="block text-xs text-slate-400">{storage.meteredFrom} — ব্যান্ডউইডথ হিসাব করা হয় না।</span>
+              </p>
+            ) : <p className="mt-1 text-sm text-slate-400">স্টোরেজ তথ্য লোড করা যায়নি।</p>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function SectionHead({ icon, title, hint }: { icon: string; title: string; hint?: string }) {
   return (
@@ -211,14 +860,25 @@ function BusinessHub() {
           websiteUrl: p.websiteUrl ?? "", brandVoice: p.brandVoice ?? "", uniqueSellingPoints: p.uniqueSellingPoints ?? "",
           goals: p.goals ?? "", contactEmail: p.contactEmail ?? "", contactPhone: p.contactPhone ?? "",
           address: p.address ?? "", city: p.city ?? "",
+          tradeLicenseNo: p.tradeLicenseNo ?? "", businessAddress: p.businessAddress ?? "",
           deliveryChargeInside: taka(p.deliveryChargeInsideMinor), deliveryChargeOutside: taka(p.deliveryChargeOutsideMinor),
           freeDeliveryAbove: taka(p.freeDeliveryAboveMinor), minOrder: taka(p.minOrderMinor),
           deliveryDaysInside: p.deliveryDaysInside != null ? String(p.deliveryDaysInside) : "",
           deliveryDaysOutside: p.deliveryDaysOutside != null ? String(p.deliveryDaysOutside) : "",
           bkashNumber: p.bkashNumber ?? "", nagadNumber: p.nagadNumber ?? "", paymentNote: p.paymentNote ?? "",
+          // GB3 (GC8): COD rules — minor -> taka for display, districts joined.
+          codMaxOrder: taka(p.codMaxOrderMinor), codAdvanceAbove: taka(p.codAdvanceRequiredAboveMinor),
+          codBlockedDistricts: Array.isArray(p.codBlockedDistricts) ? p.codBlockedDistricts.join(", ") : "",
           advancePaymentPercent: p.advancePaymentPercent != null ? String(p.advancePaymentPercent) : "",
           returnWindowDays: p.returnWindowDays != null ? String(p.returnWindowDays) : "",
           aiReplyLanguage: p.aiReplyLanguage ?? "auto",
+          // AB4 (AX5): deposit config — the read exposes a nested
+          // `deposit` object; flat fields are accepted as fallback.
+          depositMode: p.deposit?.mode ?? p.depositMode ?? "",
+          depositPercent: (p.deposit?.percent ?? p.depositPercent) != null ? String(p.deposit?.percent ?? p.depositPercent) : "",
+          depositFixed: taka(p.deposit?.fixedMinor ?? p.depositFixedMinor),
+          depositAppliesTo: p.deposit?.appliesTo ?? p.depositAppliesTo ?? "all",
+          depositNote: p.deposit?.note ?? p.depositNote ?? "",
         });
         setCod(Boolean(p.codAvailable));
         if (p.businessHours?.windows) {
@@ -248,12 +908,27 @@ function BusinessHub() {
       websiteUrl: form.websiteUrl, brandVoice: form.brandVoice, uniqueSellingPoints: form.uniqueSellingPoints,
       goals: form.goals, contactEmail: form.contactEmail, contactPhone: form.contactPhone,
       address: form.address, city: form.city,
+      tradeLicenseNo: form.tradeLicenseNo, businessAddress: form.businessAddress,
       deliveryChargeInsideMinor: minor(form.deliveryChargeInside ?? ""), deliveryChargeOutsideMinor: minor(form.deliveryChargeOutside ?? ""),
       freeDeliveryAboveMinor: minor(form.freeDeliveryAbove ?? ""), minOrderMinor: minor(form.minOrder ?? ""),
       deliveryDaysInside: intOrNull(form.deliveryDaysInside ?? ""), deliveryDaysOutside: intOrNull(form.deliveryDaysOutside ?? ""),
       codAvailable: cod, bkashNumber: form.bkashNumber, nagadNumber: form.nagadNumber, paymentNote: form.paymentNote,
+      // GB3 (GC8): COD rules — taka -> minor ints (empty = null/off);
+      // districts split+trim+filter (empty = null).
+      codMaxOrderMinor: minor(form.codMaxOrder ?? ""), codAdvanceRequiredAboveMinor: minor(form.codAdvanceAbove ?? ""),
+      codBlockedDistricts: (form.codBlockedDistricts ?? "").split(",").map((s) => s.trim()).filter(Boolean).length
+        ? (form.codBlockedDistricts ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+        : null,
       advancePaymentPercent: intOrNull(form.advancePaymentPercent ?? ""), returnWindowDays: intOrNull(form.returnWindowDays ?? ""),
       aiReplyLanguage: form.aiReplyLanguage ?? "auto",
+      // AB4 (AX5): deposit config — flat fields on the profile
+      // PATCH (mode "" = off/null; money taka -> paisa like the
+      // neighbouring fields).
+      depositMode: form.depositMode ? form.depositMode : null,
+      depositPercent: intOrNull(form.depositPercent ?? ""),
+      depositFixedMinor: minor(form.depositFixed ?? ""),
+      depositAppliesTo: form.depositAppliesTo || "all",
+      depositNote: form.depositNote ?? "",
     };
     if (hoursTouched) {
       const windows: Record<string, [string, string][]> = {};
@@ -328,7 +1003,10 @@ function BusinessHub() {
           <label className={label}>বিশেষত্ব (USP)<input className={input} value={form.uniqueSellingPoints ?? ""} onChange={set("uniqueSellingPoints")} placeholder="অরিজিনাল পণ্য, ৭ দিনের রিপ্লেসমেন্ট…" /></label>
           <label className={label}>ওয়েবসাইট<input className={input} value={form.websiteUrl ?? ""} onChange={set("websiteUrl")} placeholder="https://…" /></label>
           <label className={label}>ব্যবসার লক্ষ্য<input className={input} value={form.goals ?? ""} onChange={set("goals")} placeholder="মাসে ৫০০ অর্ডার…" /></label>
+          <label className={label}>ট্রেড লাইসেন্স নম্বর<input className={input} value={form.tradeLicenseNo ?? ""} onChange={set("tradeLicenseNo")} placeholder="ট্রেড লাইসেন্স অনুযায়ী হুবহু" /></label>
+          <label className={label}>ব্যবসার ঠিকানা (লাইসেন্স অনুযায়ী)<input className={input} value={form.businessAddress ?? ""} onChange={set("businessAddress")} placeholder="দোকান/অফিসের পূর্ণ ঠিকানা" /></label>
         </div>
+        <p className="mt-3 text-xs text-slate-400">ট্রেড লাইসেন্স নম্বর ও ব্যবসার ঠিকানা প্রতিষ্ঠান যাচাইকরণে (নিচের “প্রতিষ্ঠান যাচাইকরণ” কার্ড) জমা দেওয়ার জন্য লাগে।</p>
       </section>
 
       <section id="hub-contact" className="card scroll-mt-24 p-5 sm:p-6">
@@ -391,8 +1069,50 @@ function BusinessHub() {
           <label className={label}>বিকাশ নম্বর<input className={input} value={form.bkashNumber ?? ""} onChange={set("bkashNumber")} placeholder="01XXXXXXXXX" /></label>
           <label className={label}>নগদ নম্বর<input className={input} value={form.nagadNumber ?? ""} onChange={set("nagadNumber")} placeholder="01XXXXXXXXX" /></label>
           <label className={label}>অগ্রিম পেমেন্ট (%)<input type="number" min={0} max={100} className={input} value={form.advancePaymentPercent ?? ""} onChange={set("advancePaymentPercent")} placeholder="না লাগলে খালি" /></label>
+          <label className={label}>COD সর্বোচ্চ অর্ডার (৳)<input type="number" min={0} className={input} value={form.codMaxOrder ?? ""} onChange={set("codMaxOrder")} placeholder="খালি = সীমা নেই" /></label>
+          <label className={label}>অগ্রিম আবশ্যকের সীমা (৳)<input type="number" min={0} className={input} value={form.codAdvanceAbove ?? ""} onChange={set("codAdvanceAbove")} placeholder="খালি = নেই" /></label>
+          <label className={label}>COD বন্ধ জেলা<input className={input} value={form.codBlockedDistricts ?? ""} onChange={set("codBlockedDistricts")} placeholder="খুলনা, বরিশাল" />
+            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে জেলার নাম লিখুন — যেমন: খুলনা, বরিশাল</span>
+          </label>
         </div>
         <label className={`${label} mt-4`}>পেমেন্ট সম্পর্কে নোট<textarea className={input} rows={2} value={form.paymentNote ?? ""} onChange={set("paymentNote")} placeholder="যেমন: অর্ডারের পর বিকাশে অগ্রিম পাঠিয়ে শেষ ৪ ডিজিট জানাবেন…" /></label>
+
+        {/* AB4 (AX5): deposit / advance collection rules. */}
+        <div className="mt-5 space-y-4 rounded-xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-100">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">💰 ডিপোজিট / Advance collection</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+              চালু থাকলে চেকআউটে ক্রেতাকে মোটের একটি অংশ এখন পরিশোধ করতে বলা হবে — বাকি টাকা ডেলিভারির সময়।
+              অনলাইন গেটওয়ে থাকলে ডিপোজিটটি সরাসরি অনলাইনে নেওয়া যায়; না থাকলে ক্রেতা ম্যানুয়াল নম্বরে পাঠাবে।
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <label className={label}>ডিপোজিটের ধরন
+              <select className={input} value={form.depositMode ?? ""} onChange={(e) => setForm({ ...form, depositMode: e.target.value })}>
+                <option value="">বন্ধ</option>
+                <option value="percent">শতাংশ</option>
+                <option value="fixed">নির্দিষ্ট টাকা</option>
+              </select>
+            </label>
+            {form.depositMode === "percent" ? (
+              <label className={label}>ডিপোজিটের হার (%) — ১ থেকে ৯০<input type="number" min={1} max={90} className={input} value={form.depositPercent ?? ""} onChange={set("depositPercent")} placeholder="যেমন: ২০" /></label>
+            ) : null}
+            {form.depositMode === "fixed" ? (
+              <label className={label}>ডিপোজিটের পরিমাণ (৳)<input type="number" min={0} className={input} value={form.depositFixed ?? ""} onChange={set("depositFixed")} placeholder="যেমন: ২০০" /></label>
+            ) : null}
+            <label className={label}>কোন পেমেন্টে প্রযোজ্য
+              <select className={input} value={form.depositAppliesTo ?? "all"} onChange={(e) => setForm({ ...form, depositAppliesTo: e.target.value })}>
+                <option value="cod">শুধু COD</option>
+                <option value="online">শুধু অনলাইন</option>
+                <option value="all">সব</option>
+              </select>
+            </label>
+          </div>
+          <label className={label}>ক্রেতাকে দেখানোর নোট
+            <textarea className={input} rows={2} value={form.depositNote ?? ""} onChange={set("depositNote")} placeholder="ডিপোজিট পরিশোধের পর বাকি টাকা ডেলিভারির সময় দিতে হবে।" />
+            <span className="mt-1 block text-xs font-normal text-slate-400">খালি রাখলে ডিফল্ট বার্তা দেখাবে — নিজের কথা লিখলে সেটাই ক্রেতা দেখবে।</span>
+          </label>
+        </div>
       </section>
 
       <section id="hub-ai" className="card scroll-mt-24 p-5 sm:p-6">
@@ -511,6 +1231,8 @@ export default function SettingsPage() {
         <div className="min-w-0 space-y-4 sm:space-y-5">
           <BusinessHub />
 
+          <OrgVerificationCard />
+
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
             <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />
             {status && !status.totpEnabled ? (
@@ -556,7 +1278,15 @@ export default function SettingsPage() {
             </p>
           </section>
 
+          <MySecurityCard />
+
+          <AccountVerificationCard />
+
           <BrandingCard />
+
+          <DeveloperApiCard />
+
+          <DataToolsCard />
         </div>
       </div>
     </div>

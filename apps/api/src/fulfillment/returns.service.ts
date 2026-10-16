@@ -7,6 +7,7 @@ import { InventoryService } from "../inventory/inventory.service";
 import { OrdersService } from "../orders/orders.service";
 import { InboxService } from "../inbox/inbox.service";
 import { EmailProvider } from "../messaging/email.provider";
+import { EventsService } from "../common/events.service";
 import { resolveShopifyClient } from "../integrations/commerce/shopify-catalog";
 import { readExternalVariantMap } from "../integrations/commerce/catalog-content";
 
@@ -69,6 +70,9 @@ export class ReturnsService {
     @Optional() private readonly orders?: OrdersService,
     @Optional() private readonly inbox?: InboxService,
     @Optional() private readonly email?: EmailProvider,
+    // GC23: bus for the "order.returned" webhook event (appended
+    // LAST + @Optional, the established discipline).
+    @Optional() private readonly events?: EventsService,
   ) {}
 
   private pub(rr: any) {
@@ -102,6 +106,17 @@ export class ReturnsService {
       organizationId, userId: actorId, action: "returns.link_created",
       entityType: "ReturnRequest", entityId: rr.id, metadata: { orderId: order.id },
     }).catch(() => undefined);
+    // GC23: this create() is the ONLY ReturnRequest creation
+    // point in the codebase and returns previously emitted NO bus
+    // event — emit "order.returned" here (failure-isolated) so
+    // outgoing webhooks (GC23) can map it. Status at creation is
+    // "requested" (the link exists; the customer may not have
+    // submitted yet — the payload says exactly that).
+    try {
+      this.events?.emit("order.returned", {
+        organizationId, context: { returnRequestId: rr.id, orderId: order.id, status: rr.status },
+      });
+    } catch { /* webhooks never block return creation */ }
     return this.pub(rr);
   }
 

@@ -1,0 +1,295 @@
+63eafbfeaed507c65bdf8ee526f4b12d
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.QuoteCourierDto = exports.BulkBookDto = exports.BookShipmentDto = exports.ManualShipmentStatusDto = exports.ConnectCourierDto = void 0;
+const class_validator_1 = require("class-validator");
+class ConnectCourierDto {
+    provider; // steadfast | pathao | redx | ecourier (default steadfast)
+    // Steadfast
+    apiKey;
+    secretKey;
+    // Pathao
+    clientId;
+    clientSecret;
+    username;
+    password;
+    // RedX (accessToken) + shared baseUrl override (sandbox / legacy)
+    accessToken;
+    baseUrl;
+    // eCourier (GB5): the merchant's self-serve API credentials —
+    // API Key + API Secret + User ID (apiKey above is reused as
+    // the eCourier API_KEY).
+    apiSecret;
+    userId;
+}
+exports.ConnectCourierDto = ConnectCourierDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "apiKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "secretKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "clientId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "clientSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "username", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "password", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "accessToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "baseUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "apiSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectCourierDto.prototype, "userId", void 0);
+/** GB5 (GC14): staff manual tracking update — the status is the
+ * INTERNAL vocabulary (validated again in the service). */
+class ManualShipmentStatusDto {
+    status;
+    note;
+}
+exports.ManualShipmentStatusDto = ManualShipmentStatusDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ManualShipmentStatusDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ManualShipmentStatusDto.prototype, "note", void 0);
+class BookShipmentDto {
+    provider;
+    // CC29: the explicit per-order courier ACCOUNT choice (an
+    // Integration row id of the chosen provider). Omitted → the
+    // EC22 rule's pinned account, else the provider default.
+    courierIntegrationId;
+    orderId;
+    recipientName;
+    recipientPhone;
+    recipientAddress;
+    note;
+    /** ON4: explicit staff override for a review-held order (audited). */
+    overrideReviewHold;
+    pathao;
+    redx;
+    // GB5: eCourier's order call requires city + thana + area
+    // + zip by name, an assigned package_code and a payment method.
+    ecourier;
+}
+exports.BookShipmentDto = BookShipmentDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "courierIntegrationId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "orderId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "recipientName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "recipientPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "recipientAddress", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], BookShipmentDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], BookShipmentDto.prototype, "overrideReviewHold", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BookShipmentDto.prototype, "pathao", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BookShipmentDto.prototype, "redx", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BookShipmentDto.prototype, "ecourier", void 0);
+/** Milestone 53: bulk booking — up to 50 orders through one provider. */
+class BulkBookDto {
+    provider;
+    // CC29: one explicit courier account for the whole batch.
+    courierIntegrationId;
+    orderIds;
+    recipientName;
+    recipientPhone;
+    recipientAddress;
+    note;
+    pathao;
+    redx;
+    ecourier;
+}
+exports.BulkBookDto = BulkBookDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["steadfast", "pathao", "redx", "ecourier"]),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "courierIntegrationId", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayMinSize)(1),
+    (0, class_validator_1.ArrayMaxSize)(50),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], BulkBookDto.prototype, "orderIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "recipientName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "recipientPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "recipientAddress", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BulkBookDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BulkBookDto.prototype, "pathao", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BulkBookDto.prototype, "redx", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], BulkBookDto.prototype, "ecourier", void 0);
+/** Milestone 52: pre-booking delivery-charge quotation. */
+class QuoteCourierDto {
+    provider; // steadfast | pathao | redx
+    orderId; // derives the COD collection amount when present
+    // The schema carries no product/order weight, so the weight is
+    // explicit user input from the booking form (kg like the form,
+    // or raw grams); nothing is ever guessed.
+    weightKg;
+    weightGrams;
+    pathao;
+    redx;
+}
+exports.QuoteCourierDto = QuoteCourierDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], QuoteCourierDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], QuoteCourierDto.prototype, "orderId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    __metadata("design:type", Number)
+], QuoteCourierDto.prototype, "weightKg", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    __metadata("design:type", Number)
+], QuoteCourierDto.prototype, "weightGrams", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], QuoteCourierDto.prototype, "pathao", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], QuoteCourierDto.prototype, "redx", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvdXJpZXIvY291cmllci5kdG8udHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7O0FBQUEscURBQXVKO0FBRXZKLE1BQWEsaUJBQWlCO0lBQ0YsUUFBUSxDQUFVLENBQUMsMkRBQTJEO0lBQ3hHLFlBQVk7SUFDYyxNQUFNLENBQVU7SUFDaEIsU0FBUyxDQUFVO0lBQzdDLFNBQVM7SUFDaUIsUUFBUSxDQUFVO0lBQ2xCLFlBQVksQ0FBVTtJQUN0QixRQUFRLENBQVU7SUFDbEIsUUFBUSxDQUFVO0lBQzVDLGtFQUFrRTtJQUN4QyxXQUFXLENBQVU7SUFDckIsT0FBTyxDQUFVO0lBQzNDLDhEQUE4RDtJQUM5RCw0REFBNEQ7SUFDNUQseUJBQXlCO0lBQ0MsU0FBUyxDQUFVO0lBQ25CLE1BQU0sQ0FBVTtDQUMzQztBQWxCRCw4Q0FrQkM7QUFqQjJCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQW1CO0FBRWxCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7aURBQWlCO0FBQ2hCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7b0RBQW9CO0FBRW5CO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQW1CO0FBQ2xCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7dURBQXVCO0FBQ3RCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQW1CO0FBQ2xCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQW1CO0FBRWxCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7c0RBQXNCO0FBQ3JCO0lBQXpCLElBQUEsNEJB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QXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7b0RBQXNCO0FBQ3JCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7K0NBR3ZCO0FBQ3dCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7NkNBRXZCIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jb3VyaWVyL2NvdXJpZXIuZHRvLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IEFycmF5TWF4U2l6ZSwgQXJyYXlNaW5TaXplLCBJc0FycmF5LCBJc0Jvb2xlYW4sIElzSW4sIElzTnVtYmVyLCBJc09iamVjdCwgSXNPcHRpb25hbCwgSXNTdHJpbmcsIE1heExlbmd0aCwgTWluTGVuZ3RoIH0gZnJvbSBcImNsYXNzLXZhbGlkYXRvclwiO1xuXG5leHBvcnQgY2xhc3MgQ29ubmVjdENvdXJpZXJEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHByb3ZpZGVyPzogc3RyaW5nOyAvLyBzdGVhZGZhc3QgfCBwYXRoYW8gfCByZWR4IHwgZWNvdXJpZXIgKGRlZmF1bHQgc3RlYWRmYXN0KVxuICAvLyBTdGVhZGZhc3RcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhcGlLZXk/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc2VjcmV0S2V5Pzogc3RyaW5nO1xuICAvLyBQYXRoYW9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjbGllbnRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjbGllbnRTZWNyZXQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdXNlcm5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgcGFzc3dvcmQ/OiBzdHJpbmc7XG4gIC8vIFJlZFggKGFjY2Vzc1Rva2VuKSArIHNoYXJlZCBiYXNlVXJsIG92ZXJyaWRlIChzYW5kYm94IC8gbGVnYWN5KVxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGFjY2Vzc1Rva2VuPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGJhc2VVcmw/OiBzdHJpbmc7XG4gIC8vIGVDb3VyaWVyIChHQjUpOiB0aGUgbWVyY2hhbnQncyBzZWxmLXNlcnZlIEFQSSBjcmVkZW50aWFscyDigJRcbiAgLy8gQVBJIEtleSArIEFQSSBTZWNyZXQgKyBVc2VyIElEIChhcGlLZXkgYWJvdmUgaXMgcmV1c2VkIGFzXG4gIC8vIHRoZSBlQ291cmllciBBUElfS0VZKS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhcGlTZWNyZXQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdXNlcklkPzogc3RyaW5nO1xufVxuXG4vKiogR0I1IChHQzE0KTogc3RhZmYgbWFudWFsIHRyYWNraW5nIHVwZGF0ZSDigJQgdGhlIHN0YXR1cyBpcyB0aGVcbiAqIElOVEVSTkFMIHZvY2FidWxhcnkgKHZhbGlkYXRlZCBhZ2FpbiBpbiB0aGUgc2VydmljZSkuICovXG5leHBvcnQgY2xhc3MgTWFudWFsU2hpcG1lbnRTdGF0dXNEdG8ge1xuICBASXNTdHJpbmcoKSBzdGF0dXMhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg1MDApIG5vdGU/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBCb29rU2hpcG1lbnREdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHByb3ZpZGVyPzogc3RyaW5nO1xuICAvLyBDQzI5OiB0aGUgZXhwbGljaXQgcGVyLW9yZGVyIGNvdXJpZXIgQUNDT1VOVCBjaG9pY2UgKGFuXG4gIC8vIEludGVncmF0aW9uIHJvdyBpZCBvZiB0aGUgY2hvc2VuIHByb3ZpZGVyKS4gT21pdHRlZCDihpIgdGhlXG4gIC8vIEVDMjIgcnVsZSdzIHBpbm5lZCBhY2NvdW50LCBlbHNlIHRoZSBwcm92aWRlciBkZWZhdWx0LlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGNvdXJpZXJJbnRlZ3JhdGlvbklkPzogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBvcmRlcklkITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTIwKSByZWNpcGllbnROYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzApIHJlY2lwaWVudFBob25lPzogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDgpIEBNYXhMZW5ndGgoNTAwKSByZWNpcGllbnRBZGRyZXNzITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzAwKSBub3RlPzogc3RyaW5nO1xuICAvKiogT040OiBleHBsaWNpdCBzdGFmZiBvdmVycmlkZSBmb3IgYSByZXZpZXctaGVsZCBvcmRlciAoYXVkaXRlZCkuICovXG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIG92ZXJyaWRlUmV2aWV3SG9sZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgcGF0aGFvPzoge1xuICAgIHN0b3JlSWQ/OiBudW1iZXI7IGNpdHlJZD86IG51bWJlcjsgem9uZUlkPzogbnVtYmVyOyBhcmVhSWQ/OiBudW1iZXI7XG4gICAgZGVsaXZlcnlUeXBlPzogbnVtYmVyOyBpdGVtVHlwZT86IG51bWJlcjsgaXRlbVdlaWdodEtnPzogbnVtYmVyOyBpdGVtRGVzY3JpcHRpb24/OiBzdHJpbmc7XG4gIH07XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgcmVkeD86IHtcbiAgICBkZWxpdmVyeUFyZWFJZD86IG51bWJlcjsgZGVsaXZlcnlBcmVhPzogc3RyaW5nOyBwaWNrdXBTdG9yZUlkPzogbnVtYmVyOyBwYXJjZWxXZWlnaHRLZz86IG51bWJlcjtcbiAgfTtcbiAgLy8gR0I1OiBlQ291cmllcidzIG9yZGVyIGNhbGwgcmVxdWlyZXMgY2l0eSArIHRoYW5hICsgYXJlYVxuICAvLyArIHppcCBieSBuYW1lLCBhbiBhc3NpZ25lZCBwYWNrYWdlX2NvZGUgYW5kIGEgcGF5bWVudCBtZXRob2QuXG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgZWNvdXJpZXI/OiB7XG4gICAgY2l0eT86IHN0cmluZzsgdGhhbmE/OiBzdHJpbmc7IGFyZWE/OiBzdHJpbmc7IHppcD86IHN0cmluZzsgcGFja2FnZUNvZGU/OiBzdHJpbmc7IHBheW1lbnRNZXRob2Q/OiBzdHJpbmc7XG4gIH07XG59XG5cbi8qKiBNaWxlc3RvbmUgNTM6IGJ1bGsgYm9va2luZyDigJQgdXAgdG8gNTAgb3JkZXJzIHRocm91Z2ggb25lIHByb3ZpZGVyLiAqL1xuZXhwb3J0IGNsYXNzIEJ1bGtCb29rRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNJbihbXCJzdGVhZGZhc3RcIiwgXCJwYXRoYW9cIiwgXCJyZWR4XCIsIFwiZWNvdXJpZXJcIl0pIHByb3ZpZGVyPzogc3RyaW5nO1xuICAvLyBDQzI5OiBvbmUgZXhwbGljaXQgY291cmllciBhY2NvdW50IGZvciB0aGUgd2hvbGUgYmF0Y2guXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgY291cmllckludGVncmF0aW9uSWQ/OiBzdHJpbmc7XG4gIEBJc0FycmF5KCkgQEFycmF5TWluU2l6ZSgxKSBAQXJyYXlNYXhTaXplKDUwKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIG9yZGVySWRzITogc3RyaW5nW107XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgcmVjaXBpZW50TmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSByZWNpcGllbnRQaG9uZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSByZWNpcGllbnRBZGRyZXNzPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG5vdGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgcGF0aGFvPzogeyBzdG9yZUlkPzogbnVtYmVyOyBjaXR5SWQ/OiBudW1iZXI7IHpvbmVJZD86IG51bWJlcjsgYXJlYUlkPzogbnVtYmVyOyBkZWxpdmVyeVR5cGU/OiBudW1iZXI7IGl0ZW1UeXBlPzogbnVtYmVyOyBpdGVtV2VpZ2h0S2c/OiBudW1iZXI7IGl0ZW1EZXNjcmlwdGlvbj86IHN0cmluZyB9O1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIHJlZHg/OiB7IGRlbGl2ZXJ5QXJlYUlkPzogbnVtYmVyOyBkZWxpdmVyeUFyZWE/OiBzdHJpbmc7IHBpY2t1cFN0b3JlSWQ/OiBudW1iZXI7IHBhcmNlbFdlaWdodEtnPzogbnVtYmVyIH07XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgZWNvdXJpZXI/OiB7IGNpdHk/OiBzdHJpbmc7IHRoYW5hPzogc3RyaW5nOyBhcmVhPzogc3RyaW5nOyB6aXA/OiBzdHJpbmc7IHBhY2thZ2VDb2RlPzogc3RyaW5nOyBwYXltZW50TWV0aG9kPzogc3RyaW5nIH07XG59XG5cbi8qKiBNaWxlc3RvbmUgNTI6IHByZS1ib29raW5nIGRlbGl2ZXJ5LWNoYXJnZSBxdW90YXRpb24uICovXG5leHBvcnQgY2xhc3MgUXVvdGVDb3VyaWVyRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBwcm92aWRlcj86IHN0cmluZzsgLy8gc3RlYWRmYXN0IHwgcGF0aGFvIHwgcmVkeFxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG9yZGVySWQ/OiBzdHJpbmc7IC8vIGRlcml2ZXMgdGhlIENPRCBjb2xsZWN0aW9uIGFtb3VudCB3aGVuIHByZXNlbnRcbiAgLy8gVGhlIHNjaGVtYSBjYXJyaWVzIG5vIHByb2R1Y3Qvb3JkZXIgd2VpZ2h0LCBzbyB0aGUgd2VpZ2h0IGlzXG4gIC8vIGV4cGxpY2l0IHVzZXIgaW5wdXQgZnJvbSB0aGUgYm9va2luZyBmb3JtIChrZyBsaWtlIHRoZSBmb3JtLFxuICAvLyBvciByYXcgZ3JhbXMpOyBub3RoaW5nIGlzIGV2ZXIgZ3Vlc3NlZC5cbiAgQElzT3B0aW9uYWwoKSBASXNOdW1iZXIoKSB3ZWlnaHRLZz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNOdW1iZXIoKSB3ZWlnaHRHcmFtcz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNPYmplY3QoKSBwYXRoYW8/OiB7XG4gICAgc3RvcmVJZD86IG51bWJlcjsgY2l0eUlkPzogbnVtYmVyOyB6b25lSWQ/OiBudW1iZXI7XG4gICAgZGVsaXZlcnlUeXBlPzogbnVtYmVyOyBpdGVtVHlwZT86IG51bWJlcjsgaXRlbVdlaWdodEtnPzogbnVtYmVyO1xuICB9O1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIHJlZHg/OiB7XG4gICAgZGVsaXZlcnlBcmVhSWQ/OiBudW1iZXI7IHBpY2t1cEFyZWFJZD86IG51bWJlcjsgcGFyY2VsV2VpZ2h0S2c/OiBudW1iZXI7XG4gIH07XG59XG4iXSwidmVyc2lvbiI6M30=

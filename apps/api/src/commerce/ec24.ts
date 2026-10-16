@@ -141,14 +141,14 @@ export function selectWholesaleTier(tiers: unknown, qty: number): WholesaleTier 
  * only flips one flag still validates against stored values. */
 export function assertEc24Conditionals(effective: {
   digital?: unknown; digitalFileUrl?: unknown; digitalStorageKey?: unknown;
+  digitalDeliveryType?: unknown;
   subscriptionEnabled?: unknown; subscriptionIntervalDays?: unknown;
 }): void {
-  // RB6/RM9: an R2-hosted file (digitalStorageKey) satisfies the
-  // "a digital product must have a file" rule exactly like the
-  // merchant-hosted URL does — the effective state carries the
-  // stored key, so later unrelated edits of an R2-backed digital
-  // product keep validating.
-  if (effective.digital && !String(effective.digitalFileUrl ?? "").trim() && !String(effective.digitalStorageKey ?? "").trim()) {
+  // Union (RB6/RM9 + AB5/AX9): a license-only product delivers
+  // pool keys, not a file, so it legitimately has no file URL;
+  // "file"/"both" still require one — satisfied by EITHER the
+  // merchant-hosted URL or an R2-hosted file (digitalStorageKey).
+  if (effective.digital && effective.digitalDeliveryType !== "license" && !String(effective.digitalFileUrl ?? "").trim() && !String(effective.digitalStorageKey ?? "").trim()) {
     throw new BadRequestException("ডিজিটাল পণ্য চালু করতে ফাইল URL আবশ্যক");
   }
   if (effective.subscriptionEnabled && !(Number(effective.subscriptionIntervalDays) >= 1)) {

@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ProductsService } from "./products.service";
-import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, PushBatchDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto, PresignProductImageDto, CompleteProductImageDto, PresignDigitalFileDto, CompleteDigitalFileDto, SetProductImageAutoMirrorDto } from "./products.dto";
+import { clientIpFromRequest } from "../fraud/client-ip";
+import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, PublicCheckoutOrderDto, BulkEditDto, PushBatchDto, CreateCategoryDto, UpdateCategoryDto, CreateTagDto, AddProductImageDto, ReorderProductImagesDto, AddBundleItemDto, PresignProductImageDto, CompleteProductImageDto, PresignDigitalFileDto, CompleteDigitalFileDto, SetProductImageAutoMirrorDto, CreateBrandDto, UpdateBrandDto, BulkDeleteDto } from "./products.dto";
 import { CurrentUser, AuthUser, Roles, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -19,8 +20,8 @@ export class PublicCheckoutController {
 
   @Public()
   @Post(":slug/order")
-  placePublicOrder(@Param("slug") slug: string, @Body() dto: PublicCheckoutOrderDto) {
-    return this.products.placePublicOrder(slug, dto);
+  placePublicOrder(@Param("slug") slug: string, @Body() dto: PublicCheckoutOrderDto, @Req() req: any) {
+    return this.products.placePublicOrder(slug, dto, { ip: clientIpFromRequest(req) });
   }
 }
 
@@ -35,8 +36,47 @@ export class ProductsController {
   }
 
   @Get()
-  list(@Param("organizationId") orgId: string, @Query() q: { search?: string; category?: string; status?: string; page?: string; pageSize?: string }) {
-    return this.products.list(orgId, { search: q.search, category: q.category, status: q.status, page: q.page ? Number(q.page) : undefined, pageSize: q.pageSize ? Number(q.pageSize) : undefined });
+  list(@Param("organizationId") orgId: string, @Query() q: { search?: string; category?: string; status?: string; brandId?: string; page?: string; pageSize?: string }) {
+    return this.products.list(orgId, { search: q.search, category: q.category, status: q.status, brandId: q.brandId, page: q.page ? Number(q.page) : undefined, pageSize: q.pageSize ? Number(q.pageSize) : undefined });
+  }
+
+  /** GB2 (GC6): product export — the importer's own CSV column
+   * shape. Declared BEFORE :productId so "export" is not
+   * captured as a product id. */
+  @Get("export")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", "attachment; filename=products-export.csv")
+  exportCsv(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.products.exportProductsCsv(orgId, user.userId);
+  }
+
+  // ---- GB2 (GC6): brands — static segments BEFORE :productId ----
+
+  @Get("brands")
+  listBrands(@Param("organizationId") orgId: string) {
+    return this.products.listBrands(orgId);
+  }
+
+  @Post("brands") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createBrand(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateBrandDto) {
+    return this.products.createBrand(orgId, user.userId, dto);
+  }
+
+  @Patch("brands/:brandId") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  updateBrand(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("brandId") brandId: string, @Body() dto: UpdateBrandDto) {
+    return this.products.updateBrand(orgId, user.userId, brandId, dto);
+  }
+
+  @Delete("brands/:brandId") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  deleteBrand(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("brandId") brandId: string) {
+    return this.products.deleteBrand(orgId, user.userId, brandId);
+  }
+
+  /** GB2 (GC6): bulk delete with per-product outcomes
+   * (ordered → archived, never-ordered → hard-deleted). */
+  @Post("bulk-delete") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  bulkDelete(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: BulkDeleteDto) {
+    return this.products.bulkDelete(orgId, user.userId, dto.ids);
   }
 
   /** Sales & Data S6: product-wise sales report. Declared BEFORE
@@ -119,6 +159,12 @@ export class ProductsController {
 
   @Get(":productId")
   getOne(@Param("organizationId") orgId: string, @Param("productId") id: string) { return this.products.getOne(orgId, id); }
+
+  /** GB2 (GC6): product change history (AuditLog trail). */
+  @Get(":productId/history")
+  history(@Param("organizationId") orgId: string, @Param("productId") id: string) {
+    return this.products.productHistory(orgId, id);
+  }
 
   @Post(":productId/duplicate") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   duplicate(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("productId") id: string) {

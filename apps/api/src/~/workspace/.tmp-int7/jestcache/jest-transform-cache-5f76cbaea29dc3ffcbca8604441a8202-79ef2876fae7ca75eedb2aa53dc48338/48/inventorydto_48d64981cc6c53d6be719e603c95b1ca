@@ -1,0 +1,65 @@
+20a30baff1602357c4ca6e6cc082b7f0
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.StockAdjustmentDto = void 0;
+const class_validator_1 = require("class-validator");
+const inventory_service_1 = require("./inventory.service");
+class StockAdjustmentDto {
+    variantId;
+    delta;
+    setTo;
+    // GB2 (GC7): NEW merchant channel for the adjustment reason —
+    // before GB2 this DTO had no reason field at all, so merchant
+    // adjustments always landed as "manual_adjustment". The reason
+    // is constrained to the merchant vocabulary; system flows call
+    // adjust() directly with their own reasons.
+    reason;
+    note;
+    // AB3 (AX4): optional explicit bin the adjustment posts to
+    // (damage/lost picker, bin-scoped counts). Validated against
+    // the org in InventoryService.adjust; without it the delta
+    // posts to the resolved default bin.
+    binId;
+}
+exports.StockAdjustmentDto = StockAdjustmentDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], StockAdjustmentDto.prototype, "variantId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], StockAdjustmentDto.prototype, "delta", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], StockAdjustmentDto.prototype, "setTo", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)([...inventory_service_1.ADJUSTMENT_REASONS]),
+    __metadata("design:type", String)
+], StockAdjustmentDto.prototype, "reason", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], StockAdjustmentDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], StockAdjustmentDto.prototype, "binId", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ludmVudG9yeS9pbnZlbnRvcnkuZHRvLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7OztBQUFBLHFEQUErRTtBQUMvRSwyREFBeUQ7QUFFekQsTUFBYSxrQkFBa0I7SUFDSCxTQUFTLENBQVU7SUFDdEIsS0FBSyxDQUFVO0lBQ2YsS0FBSyxDQUFVO0lBQ3RDLDhEQUE4RDtJQUM5RCw4REFBOEQ7SUFDOUQsK0RBQStEO0lBQy9ELCtEQUErRDtJQUMvRCw0Q0FBNEM7SUFDQyxNQUFNLENBQVU7SUFDbkIsSUFBSSxDQUFVO0lBQ3hELDJEQUEyRDtJQUMzRCw2REFBNkQ7SUFDN0QsMkRBQTJEO0lBQzNELHFDQUFxQztJQUNYLEtBQUssQ0FBVTtDQUMxQztBQWhCRCxnREFnQkM7QUFmMkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztxREFBb0I7QUFDdEI7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOztpREFBZ0I7QUFDZjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O2lEQUFnQjtBQU1PO0lBQTVDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsc0JBQUksRUFBQyxDQUFDLEdBQUcsc0NBQWtCLENBQUMsQ0FBQzs7a0RBQWlCO0FBQ25CO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O2dEQUFlO0FBSzlCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7aURBQWdCIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9pbnZlbnRvcnkvaW52ZW50b3J5LmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJc0luLCBJc0ludCwgSXNPcHRpb25hbCwgSXNTdHJpbmcsIE1heExlbmd0aCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcbmltcG9ydCB7IEFESlVTVE1FTlRfUkVBU09OUyB9IGZyb20gXCIuL2ludmVudG9yeS5zZXJ2aWNlXCI7XG5cbmV4cG9ydCBjbGFzcyBTdG9ja0FkanVzdG1lbnREdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHZhcmlhbnRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBkZWx0YT86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBzZXRUbz86IG51bWJlcjtcbiAgLy8gR0IyIChHQzcpOiBORVcgbWVyY2hhbnQgY2hhbm5lbCBmb3IgdGhlIGFkanVzdG1lbnQgcmVhc29uIOKAlFxuICAvLyBiZWZvcmUgR0IyIHRoaXMgRFRPIGhhZCBubyByZWFzb24gZmllbGQgYXQgYWxsLCBzbyBtZXJjaGFudFxuICAvLyBhZGp1c3RtZW50cyBhbHdheXMgbGFuZGVkIGFzIFwibWFudWFsX2FkanVzdG1lbnRcIi4gVGhlIHJlYXNvblxuICAvLyBpcyBjb25zdHJhaW5lZCB0byB0aGUgbWVyY2hhbnQgdm9jYWJ1bGFyeTsgc3lzdGVtIGZsb3dzIGNhbGxcbiAgLy8gYWRqdXN0KCkgZGlyZWN0bHkgd2l0aCB0aGVpciBvd24gcmVhc29ucy5cbiAgQElzT3B0aW9uYWwoKSBASXNJbihbLi4uQURKVVNUTUVOVF9SRUFTT05TXSkgcmVhc29uPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzAwKSBub3RlPzogc3RyaW5nO1xuICAvLyBBQjMgKEFYNCk6IG9wdGlvbmFsIGV4cGxpY2l0IGJpbiB0aGUgYWRqdXN0bWVudCBwb3N0cyB0b1xuICAvLyAoZGFtYWdlL2xvc3QgcGlja2VyLCBiaW4tc2NvcGVkIGNvdW50cykuIFZhbGlkYXRlZCBhZ2FpbnN0XG4gIC8vIHRoZSBvcmcgaW4gSW52ZW50b3J5U2VydmljZS5hZGp1c3Q7IHdpdGhvdXQgaXQgdGhlIGRlbHRhXG4gIC8vIHBvc3RzIHRvIHRoZSByZXNvbHZlZCBkZWZhdWx0IGJpbi5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBiaW5JZD86IHN0cmluZztcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

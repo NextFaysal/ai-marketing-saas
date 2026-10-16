@@ -1,0 +1,133 @@
+a7339ddb7c444f456dd8e43bedfc7561
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SocialRasterService = void 0;
+const common_1 = require("@nestjs/common");
+const node_crypto_1 = require("node:crypto");
+const sharp_1 = __importDefault(require("sharp"));
+const prisma_service_1 = require("../prisma/prisma.service");
+const audit_service_1 = require("../audit/audit.service");
+const media_store_1 = require("../inbox/media-store");
+const media_url_1 = require("../storage/media-url");
+/**
+ * PP1 — SVG → PNG rasterizer.
+ *
+ * SP4's Template Poster is an SVG, but Meta/Instagram publishing
+ * needs raster PNG/JPEG (SP6 gated SVG posts for exactly this
+ * reason). This service converts an SVG MediaAsset into a PNG
+ * MediaAsset ONCE and caches it as a derived asset:
+ * MediaAsset.derivedFromId points at the source, origin is
+ * PRESERVED (origin describes the content's provenance — a
+ * rasterized template poster is still template content; the
+ * derivation itself is mechanical and recorded by derivedFromId).
+ *
+ * Seams (public fields, the lightest replaceable pattern used in
+ * this codebase — cf. MetaSocialPublisher's injected fetch):
+ * specs substitute `converter` to count calls / force failures
+ * and `readBytes`/`writeBytes` to avoid a real MediaStore.
+ */
+let SocialRasterService = class SocialRasterService {
+    prisma;
+    audit;
+    /** sharp: SVG → PNG at the poster's native 1080 width. */
+    converter = async (svgBytes) => (0, sharp_1.default)(svgBytes).resize({ width: 1080 }).png().toBuffer();
+    /** Byte source — defaults to the shared MediaStore. */
+    readBytes = (storageKey) => media_store_1.MediaStore.fromEnv().get(storageKey);
+    /** Byte sink — defaults to the shared MediaStore. */
+    writeBytes = (storageKey, bytes, contentType) => media_store_1.MediaStore.fromEnv().put(storageKey, bytes, contentType);
+    constructor(prisma, audit) {
+        this.prisma = prisma;
+        this.audit = audit;
+    }
+    /** Convert raw SVG bytes to PNG bytes (through the seam). */
+    async convertSvgToPng(svgBytes) {
+        return this.converter(svgBytes);
+    }
+    /** SocialService.serializeAsset shape (+ derivedFromId). */
+    serializeAsset(row) {
+        if (!row)
+            return row;
+        return {
+            id: row.id, kind: row.kind, name: row.name, contentType: row.contentType,
+            sizeBytes: row.sizeBytes, createdAt: row.createdAt,
+            publicUrl: (0, media_url_1.storedAssetPublicUrl)(row),
+            origin: row.origin ?? "upload",
+            prompt: row.prompt ?? null,
+            derivedFromId: row.derivedFromId ?? null,
+        };
+    }
+    /**
+     * Return the cached PNG derived from `sourceAsset`, creating it
+     * on first use. The cache lookup is organization-scoped — a PNG
+     * derived under another tenant is NEVER reused, even when it
+     * claims the same derivedFromId. Returns the plain asset row
+     * (the shape the publish service consumes).
+     */
+    async ensurePngAsset(organizationId, actorId, sourceAsset) {
+        const prisma = this.prisma;
+        const cached = await prisma.mediaAsset.findFirst({
+            where: { organizationId, derivedFromId: sourceAsset.id, contentType: "image/png" },
+        });
+        if (cached)
+            return cached;
+        const svgBytes = await this.readBytes(sourceAsset.storageKey);
+        if (!svgBytes) {
+            throw new Error(`SVG ফাইলের ডেটা Storage-এ পাওয়া যায়নি — মিডিয়াটি আবার তৈরি করে চেষ্টা করুন। (asset: ${sourceAsset.id})`);
+        }
+        const pngBytes = await this.convertSvgToPng(svgBytes);
+        const id = (0, node_crypto_1.randomUUID)();
+        const storageKey = `${organizationId}/social/${id}.png`;
+        await this.writeBytes(storageKey, pngBytes, "image/png");
+        return prisma.mediaAsset.create({
+            data: {
+                id, organizationId, kind: "image",
+                name: `${sourceAsset.name} (PNG)`,
+                contentType: "image/png", sizeBytes: pngBytes.length,
+                storageKey, origin: sourceAsset.origin ?? "upload",
+                derivedFromId: sourceAsset.id, createdById: actorId,
+            },
+        });
+    }
+    /**
+     * Library action (POST media/:id/rasterize): build (or reuse)
+     * the PNG version of one SVG asset so the tenant can pick it in
+     * the composer directly. Non-SVG → honest 400; cross-org /
+     * missing → 404, matching the neighbouring media routes.
+     */
+    async rasterizeAsset(organizationId, actorId, assetId) {
+        const asset = await this.prisma.mediaAsset.findFirst({
+            where: { id: assetId, organizationId },
+        });
+        if (!asset)
+            throw new common_1.NotFoundException("Media asset not found in this organization");
+        if (!String(asset.contentType ?? "").includes("svg")) {
+            throw new common_1.BadRequestException("শুধু SVG ছবির PNG সংস্করণ তৈরি করা যায় — এই ফাইলটি SVG নয়।");
+        }
+        const png = await this.ensurePngAsset(organizationId, actorId, asset);
+        await this.audit.log({
+            organizationId, userId: actorId, action: "social.media_rasterized",
+            entityType: "MediaAsset", entityId: png.id,
+            metadata: { sourceAssetId: asset.id, derivedAssetId: png.id },
+        });
+        return this.serializeAsset(png);
+    }
+};
+exports.SocialRasterService = SocialRasterService;
+exports.SocialRasterService = SocialRasterService = __decorate([
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        audit_service_1.AuditService])
+], SocialRasterService);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3NvY2lhbC9zb2NpYWwtcmFzdGVyLnNlcnZpY2UudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQW9GO0FBQ3BGLDZDQUF5QztBQUN6QyxrREFBMEI7QUFDMUIsNkRBQXlEO0FBQ3pELDBEQUFzRDtBQUN0RCxzREFBa0Q7QUFDbEQsb0RBQTREO0FBSzVEOzs7Ozs7Ozs7Ozs7Ozs7O0dBZ0JHO0FBRUksSUFBTSxtQkFBbUIsR0FBekIsTUFBTSxtQkFBbUI7SUFjWDtJQUNBO0lBZG5CLDBEQUEwRDtJQUMxRCxTQUFTLEdBQXNCLEtBQUssRUFBRSxRQUFnQixFQUFFLEVBQUUsQ0FDeEQsSUFBQSxlQUFLLEVBQUMsUUFBUSxDQUFDLENBQUMsTUFBTSxDQUFDLEVBQUUsS0FBSyxFQUFFLElBQUksRUFBRSxDQUFDLENBQUMsR0FBRyxFQUFFLENBQUMsUUFBUSxFQUFFLENBQUM7SUFFM0QsdURBQXVEO0lBQ3ZELFNBQVMsR0FBbUQsQ0FBQyxVQUFVLEVBQUUsRUFBRSxDQUN6RSx3QkFBVSxDQUFDLE9BQU8sRUFBRSxDQUFDLEdBQUcsQ0FBQyxVQUFVLENBQUMsQ0FBQztJQUV2QyxxREFBcUQ7SUFDckQsVUFBVSxHQUE4RSxDQUFDLFVBQVUsRUFBRSxLQUFLLEVBQUUsV0FBVyxFQUFFLEVBQUUsQ0FDekgsd0JBQVUsQ0FBQyxPQUFPLEVBQUUsQ0FBQyxHQUFHLENBQUMsVUFBVSxFQUFFLEtBQUssRUFBRSxXQUFXLENBQUMsQ0FBQztJQUUzRCxZQUNtQixNQUFxQixFQUNyQixLQUFtQjtRQURuQixXQUFNLEdBQU4sTUFBTSxDQUFlO1FBQ3JCLFVBQUssR0FBTCxLQUFLLENBQWM7SUFDbkMsQ0FBQztJQUVKLDZEQUE2RDtJQUM3RCxLQUFLLENBQUMsZUFBZSxDQUFDLFFBQWdCO1FBQ3BDLE9BQU8sSUFBSSxDQUFDLFNBQVMsQ0FBQyxRQUFRLENBQUMsQ0FBQztJQUNsQyxD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USxDQUFDLEtBQUssQ0FBQyxFQUFFLENBQUM7WUFDckQsTUFBTSxJQUFJLDRCQUFtQixDQUFDLDhEQUE4RCxDQUFDLENBQUM7UUFDaEcsQ0FBQztRQUNELE1BQU0sR0FBRyxHQUFHLE1BQU0sSUFBSSxDQUFDLGNBQWMsQ0FBQyxjQUFjLEVBQUUsT0FBTyxFQUFFLEtBQUssQ0FBQyxDQUFDO1FBQ3RFLE1BQU0sSUFBSSxDQUFDLEtBQUssQ0FBQyxHQUFHLENBQUM7WUFDbkIsY0FBYyxFQUFFLE1BQU0sRUFBRSxPQUFPLEVBQUUsTUFBTSxFQUFFLHlCQUF5QjtZQUNsRSxVQUFVLEVBQUUsWUFBWSxFQUFFLFFBQVEsRUFBRSxHQUFHLENBQUMsRUFBRTtZQUMxQyxRQUFRLEVBQUUsRUFBRSxhQUFhLEVBQUUsS0FBSyxDQUFDLEVBQUUsRUFBRSxjQUFjLEVBQUUsR0FBRyxDQUFDLEVBQUUsRUFBRTtTQUM5RCxDQUFDLENBQUM7UUFDSCxPQUFPLElBQUksQ0FBQyxjQUFjLENBQUMsR0FBRyxDQUFDLENBQUM7SUFDbEMsQ0FBQztDQUNGLENBQUE7QUEzRlksa0RBQW1COzhCQUFuQixtQkFBbUI7SUFEL0IsSUFBQSxtQkFBVSxHQUFFO3FDQWVnQiw4QkFBYTtRQUNkLDRCQUFZO0dBZjNCLG1CQUFtQixDQTJGL0IiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3NvY2lhbC9zb2NpYWwtcmFzdGVyLnNlcnZpY2UudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQmFkUmVxdWVzdEV4Y2VwdGlvbiwgSW5qZWN0YWJsZSwgTm90Rm91bmRFeGNlcHRpb24gfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IHJhbmRvbVVVSUQgfSBmcm9tIFwibm9kZTpjcnlwdG9cIjtcbmltcG9ydCBzaGFycCBmcm9tIFwic2hhcnBcIjtcbmltcG9ydCB7IFByaXNtYVNlcnZpY2UgfSBmcm9tIFwiLi4vcHJpc21hL3ByaXNtYS5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBBdWRpdFNlcnZpY2UgfSBmcm9tIFwiLi4vYXVkaXQvYXVkaXQuc2VydmljZVwiO1xuaW1wb3J0IHsgTWVkaWFTdG9yZSB9IGZyb20gXCIuLi9pbmJveC9tZWRpYS1zdG9yZVwiO1xuaW1wb3J0IHsgc3RvcmVkQXNzZXRQdWJsaWNVcmwgfSBmcm9tIFwiLi4vc3RvcmFnZS9tZWRpYS11cmxcIjtcblxuLyoqIENvbnZlcnRzIFNWRyBieXRlcyB0byBQTkcgYnl0ZXMgKHRoZSByZWFsIGltcGxlbWVudGF0aW9uIGlzIHNoYXJwKS4gKi9cbmV4cG9ydCB0eXBlIFN2Z1RvUG5nQ29udmVydGVyID0gKHN2Z0J5dGVzOiBCdWZmZXIpID0+IFByb21pc2U8QnVmZmVyPjtcblxuLyoqXG4gKiBQUDEg4oCUIFNWRyDihpIgUE5HIHJhc3Rlcml6ZXIuXG4gKlxuICogU1A0J3MgVGVtcGxhdGUgUG9zdGVyIGlzIGFuIFNWRywgYnV0IE1ldGEvSW5zdGFncmFtIHB1Ymxpc2hpbmdcbiAqIG5lZWRzIHJhc3RlciBQTkcvSlBFRyAoU1A2IGdhdGVkIFNWRyBwb3N0cyBmb3IgZXhhY3RseSB0aGlzXG4gKiByZWFzb24pLiBUaGlzIHNlcnZpY2UgY29udmVydHMgYW4gU1ZHIE1lZGlhQXNzZXQgaW50byBhIFBOR1xuICogTWVkaWFBc3NldCBPTkNFIGFuZCBjYWNoZXMgaXQgYXMgYSBkZXJpdmVkIGFzc2V0OlxuICogTWVkaWFBc3NldC5kZXJpdmVkRnJvbUlkIHBvaW50cyBhdCB0aGUgc291cmNlLCBvcmlnaW4gaXNcbiAqIFBSRVNFUlZFRCAob3JpZ2luIGRlc2NyaWJlcyB0aGUgY29udGVudCdzIHByb3ZlbmFuY2Ug4oCUIGFcbiAqIHJhc3Rlcml6ZWQgdGVtcGxhdGUgcG9zdGVyIGlzIHN0aWxsIHRlbXBsYXRlIGNvbnRlbnQ7IHRoZVxuICogZGVyaXZhdGlvbiBpdHNlbGYgaXMgbWVjaGFuaWNhbCBhbmQgcmVjb3JkZWQgYnkgZGVyaXZlZEZyb21JZCkuXG4gKlxuICogU2VhbXMgKHB1YmxpYyBmaWVsZHMsIHRoZSBsaWdodGVzdCByZXBsYWNlYWJsZSBwYXR0ZXJuIHVzZWQgaW5cbiAqIHRoaXMgY29kZWJhc2Ug4oCUIGNmLiBNZXRhU29jaWFsUHVibGlzaGVyJ3MgaW5qZWN0ZWQgZmV0Y2gpOlxuICogc3BlY3Mgc3Vic3RpdHV0ZSBgY29udmVydGVyYCB0byBjb3VudCBjYWxscyAvIGZvcmNlIGZhaWx1cmVzXG4gKiBhbmQgYHJlYWRCeXRlc2AvYHdyaXRlQnl0ZXNgIHRvIGF2b2lkIGEgcmVhbCBNZWRpYVN0b3JlLlxuICovXG5ASW5qZWN0YWJsZSgpXG5leHBvcnQgY2xhc3MgU29jaWFsUmFzdGVyU2VydmljZSB7XG4gIC8qKiBzaGFycDogU1ZHIOKGkiBQTkcgYXQgdGhlIHBvc3RlcidzIG5hdGl2ZSAxMDgwIHdpZHRoLiAqL1xuICBjb252ZXJ0ZXI6IFN2Z1RvUG5nQ29udmVydGVyID0gYXN5bmMgKHN2Z0J5dGVzOiBCdWZmZXIpID0+XG4gICAgc2hhcnAoc3ZnQnl0ZXMpLnJlc2l6ZSh7IHdpZHRoOiAxMDgwIH0pLnBuZygpLnRvQnVmZmVyKCk7XG5cbiAgLyoqIEJ5dGUgc291cmNlIOKAlCBkZWZhdWx0cyB0byB0aGUgc2hhcmVkIE1lZGlhU3RvcmUuICovXG4gIHJlYWRCeXRlczogKHN0b3JhZ2VLZXk6IHN0cmluZykgPT4gUHJvbWlzZTxCdWZmZXIgfCBudWxsPiA9IChzdG9yYWdlS2V5KSA9PlxuICAgIE1lZGlhU3RvcmUuZnJvbUVudigpLmdldChzdG9yYWdlS2V5KTtcblxuICAvKiogQnl0ZSBzaW5rIOKAlCBkZWZhdWx0cyB0byB0aGUgc2hhcmVkIE1lZGlhU3RvcmUuICovXG4gIHdyaXRlQnl0ZXM6IChzdG9yYWdlS2V5OiBzdHJpbmcsIGJ5dGVzOiBCdWZmZXIsIGNvbnRlbnRUeXBlOiBzdHJpbmcpID0+IFByb21pc2U8dm9pZD4gPSAoc3RvcmFnZUtleSwgYnl0ZXMsIGNvbnRlbnRUeXBlKSA9PlxuICAgIE1lZGlhU3RvcmUuZnJvbUVudigpLnB1dChzdG9yYWdlS2V5LCBieXRlcywgY29udGVudFR5cGUpO1xuXG4gIGNvbnN0cnVjdG9yKFxuICAgIHByaXZhdGUgcmVhZG9ubHkgcHJpc21hOiBQcmlzbWFTZXJ2aWNlLFxuICAgIHByaXZhdGUgcmVhZG9ubHkgYXVkaXQ6IEF1ZGl0U2VydmljZSxcbiAgKSB7fVxuXG4gIC8qKiBDb252ZXJ0IHJhdyBTVkcgYnl0ZXMgdG8gUE5HIGJ5dGVzICh0aHJvdWdoIHRoZSBzZWFtKS4gKi9cbiAgYXN5bmMgY29udmVydFN2Z1RvUG5nKHN2Z0J5dGVzOiBCdWZmZXIpOiBQcm9taXNlPEJ1ZmZlcj4ge1xuICAgIHJldHVybiB0aGlzLmNvbnZlcnRlcihzdmdCeXRlcyk7XG4gIH1cblxuICAvKiogU29jaWFsU2VydmljZS5zZXJpYWxpemVBc3NldCBzaGFwZSAoKyBkZXJpdmVkRnJvbUlkKS4gKi9cbiAgc2VyaWFsaXplQXNzZXQocm93OiBhbnkpIHtcbiAgICBpZiAoIXJvdykgcmV0dXJuIHJvdztcbiAgICByZXR1cm4ge1xuICAgICAgaWQ6IHJvdy5pZCwga2luZDogcm93LmtpbmQsIG5hbWU6IHJvdy5uYW1lLCBjb250ZW50VHlwZTogcm93LmNvbnRlbnRUeXBlLFxuICAgICAgc2l6ZUJ5dGVzOiByb3cuc2l6ZUJ5dGVzLCBjcmVhdGVkQXQ6IHJvdy5jcmVhdGVkQXQsXG4gICAgICBwdWJsaWNVcmw6IHN0b3JlZEFzc2V0UHVibGljVXJsKHJvdyksXG4gICAgICBvcmlnaW46IHJvdy5vcmlnaW4gPz8gXCJ1cGxvYWRcIixcbiAgICAgIHByb21wdDogcm93LnByb21wdCA/PyBudWxsLFxuICAgICAgZGVyaXZlZEZyb21JZDogcm93LmRlcml2ZWRGcm9tSWQgPz8gbnVsbCxcbiAgICB9O1xuICB9XG5cbiAgLyoqXG4gICAqIFJldHVybiB0aGUgY2FjaGVkIFBORyBkZXJpdmVkIGZyb20gYHNvdXJjZUFzc2V0YCwgY3JlYXRpbmcgaXRcbiAgICogb24gZmlyc3QgdXNlLiBUaGUgY2FjaGUgbG9va3VwIGlzIG9yZ2FuaXphdGlvbi1zY29wZWQg4oCUIGEgUE5HXG4gICAqIGRlcml2ZWQgdW5kZXIgYW5vdGhlciB0ZW5hbnQgaXMgTkVWRVIgcmV1c2VkLCBldmVuIHdoZW4gaXRcbiAgICogY2xhaW1zIHRoZSBzYW1lIGRlcml2ZWRGcm9tSWQuIFJldHVybnMgdGhlIHBsYWluIGFzc2V0IHJvd1xuICAgKiAodGhlIHNoYXBlIHRoZSBwdWJsaXNoIHNlcnZpY2UgY29uc3VtZXMpLlxuICAgKi9cbiAgYXN5bmMgZW5zdXJlUG5nQXNzZXQob3JnYW5pemF0aW9uSWQ6IHN0cmluZywgYWN0b3JJZDogc3RyaW5nLCBzb3VyY2VBc3NldDogYW55KTogUHJvbWlzZTxhbnk+IHtcbiAgICBjb25zdCBwcmlzbWEgPSB0aGlzLnByaXNtYSBhcyBhbnk7XG4gICAgY29uc3QgY2FjaGVkID0gYXdhaXQgcHJpc21hLm1lZGlhQXNzZXQuZmluZEZpcnN0KHtcbiAgICAgIHdoZXJlOiB7IG9yZ2FuaXphdGlvbklkLCBkZXJpdmVkRnJvbUlkOiBzb3VyY2VBc3NldC5pZCwgY29udGVudFR5cGU6IFwiaW1hZ2UvcG5nXCIgfSxcbiAgICB9KTtcbiAgICBpZiAoY2FjaGVkKSByZXR1cm4gY2FjaGVkO1xuXG4gICAgY29uc3Qgc3ZnQnl0ZXMgPSBhd2FpdCB0aGlzLnJlYWRCeXRlcyhzb3VyY2VBc3NldC5zdG9yYWdlS2V5KTtcbiAgICBpZiAoIXN2Z0J5dGVzKSB7XG4gICAgICB0aHJvdyBuZXcgRXJyb3IoYFNWRyDgpqvgpr7gpofgprLgp4fgprAg4Kah4KeH4Kaf4Ka+IFN0b3JhZ2Ut4KaPIOCmquCmvuCmk+Cmr+CmvOCmviDgpq/gpr7gpq/gprzgpqjgpr8g4oCUIOCmruCmv+CmoeCmv+Cmr+CmvOCmvuCmn+CmvyDgpobgpqzgpr7gprAg4Kak4KeI4Kaw4Ka/IOCmleCmsOCnhyDgpprgp4fgprfgp43gpp/gpr4g4KaV4Kaw4KeB4Kao4KWkIChhc3NldDogJHtzb3VyY2VBc3NldC5pZH0pYCk7XG4gICAgfVxuICAgIGNvbnN0IHBuZ0J5dGVzID0gYXdhaXQgdGhpcy5jb252ZXJ0U3ZnVG9Qbmcoc3ZnQnl0ZXMpO1xuICAgIGNvbnN0IGlkID0gcmFuZG9tVVVJRCgpO1xuICAgIGNvbnN0IHN0b3JhZ2VLZXkgPSBgJHtvcmdhbml6YXRpb25JZH0vc29jaWFsLyR7aWR9LnBuZ2A7XG4gICAgYXdhaXQgdGhpcy53cml0ZUJ5dGVzKHN0b3JhZ2VLZXksIHBuZ0J5dGVzLCBcImltYWdlL3BuZ1wiKTtcbiAgICByZXR1cm4gcHJpc21hLm1lZGlhQXNzZXQuY3JlYXRlKHtcbiAgICAgIGRhdGE6IHtcbiAgICAgICAgaWQsIG9yZ2FuaXphdGlvbklkLCBraW5kOiBcImltYWdlXCIsXG4gICAgICAgIG5hbWU6IGAke3NvdXJjZUFzc2V0Lm5hbWV9IChQTkcpYCxcbiAgICAgICAgY29udGVudFR5cGU6IFwiaW1hZ2UvcG5nXCIsIHNpemVCeXRlczogcG5nQnl0ZXMubGVuZ3RoLFxuICAgICAgICBzdG9yYWdlS2V5LCBvcmlnaW46IHNvdXJjZUFzc2V0Lm9yaWdpbiA/PyBcInVwbG9hZFwiLFxuICAgICAgICBkZXJpdmVkRnJvbUlkOiBzb3VyY2VBc3NldC5pZCwgY3JlYXRlZEJ5SWQ6IGFjdG9ySWQsXG4gICAgICB9LFxuICAgIH0pO1xuICB9XG5cbiAgLyoqXG4gICAqIExpYnJhcnkgYWN0aW9uIChQT1NUIG1lZGlhLzppZC9yYXN0ZXJpemUpOiBidWlsZCAob3IgcmV1c2UpXG4gICAqIHRoZSBQTkcgdmVyc2lvbiBvZiBvbmUgU1ZHIGFzc2V0IHNvIHRoZSB0ZW5hbnQgY2FuIHBpY2sgaXQgaW5cbiAgICogdGhlIGNvbXBvc2VyIGRpcmVjdGx5LiBOb24tU1ZHIOKGkiBob25lc3QgNDAwOyBjcm9zcy1vcmcgL1xuICAgKiBtaXNzaW5nIOKGkiA0MDQsIG1hdGNoaW5nIHRoZSBuZWlnaGJvdXJpbmcgbWVkaWEgcm91dGVzLlxuICAgKi9cbiAgYXN5bmMgcmFzdGVyaXplQXNzZXQob3JnYW5pemF0aW9uSWQ6IHN0cmluZywgYWN0b3JJZDogc3RyaW5nLCBhc3NldElkOiBzdHJpbmcpIHtcbiAgICBjb25zdCBhc3NldCA9IGF3YWl0ICh0aGlzLnByaXNtYSBhcyBhbnkpLm1lZGlhQXNzZXQuZmluZEZpcnN0KHtcbiAgICAgIHdoZXJlOiB7IGlkOiBhc3NldElkLCBvcmdhbml6YXRpb25JZCB9LFxuICAgIH0pO1xuICAgIGlmICghYXNzZXQpIHRocm93IG5ldyBOb3RGb3VuZEV4Y2VwdGlvbihcIk1lZGlhIGFzc2V0IG5vdCBmb3VuZCBpbiB0aGlzIG9yZ2FuaXphdGlvblwiKTtcbiAgICBpZiAoIVN0cmluZyhhc3NldC5jb250ZW50VHlwZSA/PyBcIlwiKS5pbmNsdWRlcyhcInN2Z1wiKSkge1xuICAgICAgdGhyb3cgbmV3IEJhZFJlcXVlc3RFeGNlcHRpb24oXCLgprbgp4Hgpqfgp4EgU1ZHIOCmm+CmrOCmv+CmsCBQTkcg4Ka44KaC4Ka44KeN4KaV4Kaw4KajIOCmpOCniOCmsOCmvyDgppXgprDgpr4g4Kav4Ka+4Kav4Ka8IOKAlCDgpo/gpocg4Kar4Ka+4KaH4Kay4Kaf4Ka/IFNWRyDgpqjgpq/gprzgpaRcIik7XG4gICAgfVxuICAgIGNvbnN0IHBuZyA9IGF3YWl0IHRoaXMuZW5zdXJlUG5nQXNzZXQob3JnYW5pemF0aW9uSWQsIGFjdG9ySWQsIGFzc2V0KTtcbiAgICBhd2FpdCB0aGlzLmF1ZGl0LmxvZyh7XG4gICAgICBvcmdhbml6YXRpb25JZCwgdXNlcklkOiBhY3RvcklkLCBhY3Rpb246IFwic29jaWFsLm1lZGlhX3Jhc3Rlcml6ZWRcIixcbiAgICAgIGVudGl0eVR5cGU6IFwiTWVkaWFBc3NldFwiLCBlbnRpdHlJZDogcG5nLmlkLFxuICAgICAgbWV0YWRhdGE6IHsgc291cmNlQXNzZXRJZDogYXNzZXQuaWQsIGRlcml2ZWRBc3NldElkOiBwbmcuaWQgfSxcbiAgICB9KTtcbiAgICByZXR1cm4gdGhpcy5zZXJpYWxpemVBc3NldChwbmcpO1xuICB9XG59XG4iXSwidmVyc2lvbiI6M30=

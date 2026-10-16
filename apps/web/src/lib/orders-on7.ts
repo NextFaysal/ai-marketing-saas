@@ -40,6 +40,16 @@ export interface ProfitReport {
   }[];
   perProductBasis: string;
   truncated: boolean;
+  /** GB8 / GC20 — finance overlay: period expenses + gateway
+   * fees folded into an estimated net. estimatedNetMinor is
+   * null unless product-cost coverage is complete; reasons
+   * explain why (verbatim from the server). */
+  finance?: {
+    periodExpensesMinor: string;
+    gatewayFeesMinor: string | null;
+    estimatedNetMinor: string | null;
+    reasons: string[];
+  };
 }
 
 export interface CodBoard {
@@ -61,10 +71,15 @@ export interface CodBoard {
 
 export interface CustomerKhata {
   customerId: string;
+  // AB5 (AX7): the customer's net terms in days (0 = no terms).
+  creditTermsDays?: number;
   orders: {
     id: string; number?: string | null; placedAt?: string | null;
     status: string; source: string;
     totalMinor: string; paidMinor: string; dueMinor: string;
+    // AB5 (AX7): net-terms due date snapshot + overdue flag.
+    creditDueDate?: string | null;
+    overdue?: boolean;
   }[];
   ordersTruncated: boolean;
   totalDueMinor: string;

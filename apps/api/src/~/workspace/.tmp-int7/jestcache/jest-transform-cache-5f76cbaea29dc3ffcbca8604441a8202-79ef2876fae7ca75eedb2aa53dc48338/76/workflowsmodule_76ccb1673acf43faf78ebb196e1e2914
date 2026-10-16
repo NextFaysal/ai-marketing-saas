@@ -1,0 +1,33 @@
+56e01bd0358153f62fd5e0178cf274c8
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WorkflowsModule = void 0;
+const common_1 = require("@nestjs/common");
+const workflows_controller_1 = require("./workflows.controller");
+const workflows_service_1 = require("./workflows.service");
+const messaging_module_1 = require("../messaging/messaging.module");
+const inbox_module_1 = require("../inbox/inbox.module");
+const ai_module_1 = require("../ai/ai.module");
+const commerce_module_1 = require("../commerce/commerce.module");
+let WorkflowsModule = class WorkflowsModule {
+};
+exports.WorkflowsModule = WorkflowsModule;
+exports.WorkflowsModule = WorkflowsModule = __decorate([
+    (0, common_1.Module)({
+        // AX18: CommerceModule supplies AbandonedCheckoutsService
+        // for the issue_recovery_coupon step. CommerceModule does
+        // not import WorkflowsModule (directly or transitively), so
+        // this import introduces no cycle.
+        imports: [messaging_module_1.MessagingModule, inbox_module_1.InboxModule, ai_module_1.AiModule, commerce_module_1.CommerceModule],
+        controllers: [workflows_controller_1.WorkflowsController],
+        providers: [workflows_service_1.WorkflowsService],
+        exports: [workflows_service_1.WorkflowsService],
+    })
+], WorkflowsModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3dvcmtmbG93cy93b3JrZmxvd3MubW9kdWxlLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7OztBQUFBLDJDQUF3QztBQUN4QyxpRUFBNkQ7QUFDN0QsMkRBQXVEO0FBQ3ZELG9FQUFnRTtBQUNoRSx3REFBb0Q7QUFDcEQsK0NBQTJDO0FBQzNDLGlFQUE2RDtBQVl0RCxJQUFNLGVBQWUsR0FBckIsTUFBTSxlQUFlO0NBQUcsQ0FBQTtBQUFsQiwwQ0FBZTswQkFBZixlQUFlO0lBVjNCLElBQUEsZUFBTSxFQUFDO1FBQ04sMERBQTBEO1FBQzFELDBEQUEwRDtRQUMxRCw0REFBNEQ7UUFDNUQsbUNBQW1DO1FBQ25DLE9BQU8sRUFBRSxDQUFDLGtDQUFlLEVBQUUsMEJBQVcsRUFBRSxvQkFBUSxFQUFFLGdDQUFjLENBQUM7UUFDakUsV0FBVyxFQUFFLENBQUMsMENBQW1CLENBQUM7UUFDbEMsU0FBUyxFQUFFLENBQUMsb0NBQWdCLENBQUM7UUFDN0IsT0FBTyxFQUFFLENBQUMsb0NBQWdCLENBQUM7S0FDNUIsQ0FBQztHQUNXLGVBQWUsQ0FBRyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvd29ya2Zsb3dzL3dvcmtmbG93cy5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBXb3JrZmxvd3NDb250cm9sbGVyIH0gZnJvbSBcIi4vd29ya2Zsb3dzLmNvbnRyb2xsZXJcIjtcbmltcG9ydCB7IFdvcmtmbG93c1NlcnZpY2UgfSBmcm9tIFwiLi93b3JrZmxvd3Muc2VydmljZVwiO1xuaW1wb3J0IHsgTWVzc2FnaW5nTW9kdWxlIH0gZnJvbSBcIi4uL21lc3NhZ2luZy9tZXNzYWdpbmcubW9kdWxlXCI7XG5pbXBvcnQgeyBJbmJveE1vZHVsZSB9IGZyb20gXCIuLi9pbmJveC9pbmJveC5tb2R1bGVcIjtcbmltcG9ydCB7IEFpTW9kdWxlIH0gZnJvbSBcIi4uL2FpL2FpLm1vZHVsZVwiO1xuaW1wb3J0IHsgQ29tbWVyY2VNb2R1bGUgfSBmcm9tIFwiLi4vY29tbWVyY2UvY29tbWVyY2UubW9kdWxlXCI7XG5cbkBNb2R1bGUoe1xuICAvLyBBWDE4OiBDb21tZXJjZU1vZHVsZSBzdXBwbGllcyBBYmFuZG9uZWRDaGVja291dHNTZXJ2aWNlXG4gIC8vIGZvciB0aGUgaXNzdWVfcmVjb3ZlcnlfY291cG9uIHN0ZXAuIENvbW1lcmNlTW9kdWxlIGRvZXNcbiAgLy8gbm90IGltcG9ydCBXb3JrZmxvd3NNb2R1bGUgKGRpcmVjdGx5IG9yIHRyYW5zaXRpdmVseSksIHNvXG4gIC8vIHRoaXMgaW1wb3J0IGludHJvZHVjZXMgbm8gY3ljbGUuXG4gIGltcG9ydHM6IFtNZXNzYWdpbmdNb2R1bGUsIEluYm94TW9kdWxlLCBBaU1vZHVsZSwgQ29tbWVyY2VNb2R1bGVdLFxuICBjb250cm9sbGVyczogW1dvcmtmbG93c0NvbnRyb2xsZXJdLFxuICBwcm92aWRlcnM6IFtXb3JrZmxvd3NTZXJ2aWNlXSxcbiAgZXhwb3J0czogW1dvcmtmbG93c1NlcnZpY2VdLFxufSlcbmV4cG9ydCBjbGFzcyBXb3JrZmxvd3NNb2R1bGUge31cblxuIl0sInZlcnNpb24iOjN9

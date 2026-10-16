@@ -2,8 +2,17 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import {
+  buildCustomRolePayload, buildCustomRoleUpdatePayload,
+  type CustomRole, type CustomRolesResponse, type LoginHistoryRow, type MemberSession, type PresetRoleProfile,
+} from "@/lib/gb6-team";
 
-interface Member { id: string; role: string; status: string; user: { id: string; name: string; email: string } }
+interface Member {
+  id: string; role: string; status: string; user: { id: string; name: string; email: string };
+  // GB6 (GC16): the member's custom role in this org (if any).
+  customRoleId?: string | null; customRoleName?: string | null;
+}
+interface AreaDef { key: string; labelBn: string; label?: string; noteBn: string; minRole: string }
 interface Invitation { id: string; email: string; role: string; status: string; expiresAt: string; emailSent: boolean; createdAt: string }
 interface SeatUsage { limit: number | null; activeMembers: number; suspendedMembers: number; pendingInvites: number; available: number | null }
 
@@ -66,6 +75,19 @@ export default function TeamPage() {
   const [feed, setFeed] = useState<FeedRow[]>([]);
   const [shiftTz, setShiftTz] = useState("Asia/Dhaka");
   const [shiftDays, setShiftDays] = useState<Record<string, { on: boolean; start: string; end: string }>>({});
+  // GB6 (GC16): custom roles manager + member history/sessions.
+  const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
+  const [presetProfiles, setPresetProfiles] = useState<PresetRoleProfile[]>([]);
+  const [areaCatalog, setAreaCatalog] = useState<AreaDef[]>([]);
+  const [roleName, setRoleName] = useState("");
+  const [roleAreas, setRoleAreas] = useState<string[]>([]);
+  const [presetKey, setPresetKey] = useState("");
+  const [editingRoleId, setEditingRoleId] = useState("");
+  const [roleError, setRoleError] = useState("");
+  const [historyFor, setHistoryFor] = useState("");
+  const [loginHistory, setLoginHistory] = useState<LoginHistoryRow[]>([]);
+  const [memberSessions, setMemberSessions] = useState<MemberSession[]>([]);
+  const [panelError, setPanelError] = useState("");
 
   // Milestone 69: the live board refreshes itself every 30s.
   const refreshActivity = useCallback((orgId: string) => {
@@ -90,6 +112,11 @@ export default function TeamPage() {
       setUsage(u);
       const mine = (orgs as { id: string; myRole: string }[]).find((o) => o.id === orgId);
       if (mine) setMyRole(mine.myRole);
+      // GB6 (GC16): custom roles + preset profiles + the real area catalog.
+      apiFetch<CustomRolesResponse>(`/organizations/${orgId}/custom-roles`)
+        .then((r) => { setCustomRoles(r.roles ?? []); setPresetProfiles(r.presetProfiles ?? []); })
+        .catch(() => { setCustomRoles([]); setPresetProfiles([]); });
+      apiFetch<AreaDef[]>(`/organizations/${orgId}/access-catalog`).then(setAreaCatalog).catch(() => setAreaCatalog([]));
       apiFetch<ScheduleRow[]>(`/organizations/${orgId}/inbox/agent-schedules`).then(setSchedules).catch(() => setSchedules([]));
       apiFetch<{ id: string }>("/auth/me").then((me) => setMyUserId(me.id)).catch(() => undefined);
       refreshActivity(orgId);
@@ -254,6 +281,117 @@ export default function TeamPage() {
     });
   }
 
+  // ---- GB6 (GC16): custom roles ----
+  async function reloadCustomRoles(orgId: string) {
+    const r = await apiFetch<CustomRolesResponse>(`/organizations/${orgId}/custom-roles`);
+    setCustomRoles(r.roles ?? []); setPresetProfiles(r.presetProfiles ?? []);
+  }
+
+  async function createCustomRoleFromPreset() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const { payload, errors } = buildCustomRolePayload({ mode: "preset", presetKey });
+    if (!payload) { setRoleError(errors.join(" ")); return; }
+    setBusy("role-preset"); setRoleError(""); setError(""); setNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/custom-roles`, { method: "POST", body: JSON.stringify(payload) });
+      setNotice("প্রিসেট থেকে কাস্টম রোল তৈরি হয়েছে।");
+      setPresetKey("");
+      await reloadCustomRoles(orgId);
+    } catch (e) { setRoleError(e instanceof Error ? e.message : "রোল তৈরি ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function saveCustomRole() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const built = editingRoleId
+      ? buildCustomRoleUpdatePayload(roleName, roleAreas)
+      : buildCustomRolePayload({ mode: "scratch", name: roleName, areas: roleAreas });
+    if (!built.payload) { setRoleError(built.errors.join(" ")); return; }
+    setBusy("role-save"); setRoleError(""); setError(""); setNotice("");
+    try {
+      if (editingRoleId) {
+        await apiFetch(`/organizations/${orgId}/custom-roles/${editingRoleId}`, { method: "PATCH", body: JSON.stringify(built.payload) });
+        setNotice("কাস্টম রোল হালনাগাদ হয়েছে।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/custom-roles`, { method: "POST", body: JSON.stringify(built.payload) });
+        setNotice("কাস্টম রোল তৈরি হয়েছে।");
+      }
+      setEditingRoleId(""); setRoleName(""); setRoleAreas([]);
+      await reloadCustomRoles(orgId);
+      await load();
+    } catch (e) { setRoleError(e instanceof Error ? e.message : "রোল সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  async function deleteCustomRole(r: CustomRole) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm(`“${r.name}” কাস্টম রোলটি মুছে ফেলবেন?`)) return;
+    setBusy(`role-del-${r.id}`); setRoleError(""); setError(""); setNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/custom-roles/${r.id}`, { method: "DELETE" });
+      setNotice("কাস্টম রোল মুছে ফেলা হয়েছে।");
+      if (editingRoleId === r.id) { setEditingRoleId(""); setRoleName(""); setRoleAreas([]); }
+      await reloadCustomRoles(orgId);
+    } catch (e) {
+      // Server refuses while the role is still assigned — show its message verbatim.
+      setRoleError(e instanceof Error ? e.message : "রোল মোছা ব্যর্থ");
+    } finally { setBusy(""); }
+  }
+
+  async function assignCustomRole(m: Member, customRoleId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    await wrap(`custom-role-${m.user.id}`, async () => {
+      await apiFetch(`/organizations/${orgId}/members/${m.user.id}/custom-role`, {
+        method: "PATCH", body: JSON.stringify({ customRoleId: customRoleId || null }),
+      });
+      setNotice(customRoleId
+        ? `${m.user.name} এর কাস্টম রোল এখন ${customRoles.find((r) => r.id === customRoleId)?.name ?? ""}।`
+        : `${m.user.name} এর কাস্টম রোল তুলে নেওয়া হয়েছে।`);
+      await load();
+    });
+  }
+
+  // ---- GB6 (GC16): member login history + sessions ----
+  // Both are USER-global (all organizations), not per-org slices
+  // — the panel labels say so.
+  async function openHistoryPanel(m: Member) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (historyFor === m.user.id) { setHistoryFor(""); return; }
+    setHistoryFor(m.user.id); setPanelError(""); setLoginHistory([]); setMemberSessions([]);
+    try {
+      const [h, s] = await Promise.all([
+        apiFetch<LoginHistoryRow[]>(`/organizations/${orgId}/members/${m.user.id}/login-history`),
+        apiFetch<MemberSession[]>(`/organizations/${orgId}/members/${m.user.id}/sessions`),
+      ]);
+      setLoginHistory(h); setMemberSessions(s);
+    } catch (e) { setPanelError(e instanceof Error ? e.message : "ইতিহাস লোড করা যায়নি"); }
+  }
+
+  async function reloadMemberSessions(userId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setMemberSessions(await apiFetch<MemberSession[]>(`/organizations/${orgId}/members/${userId}/sessions`));
+  }
+
+  async function revokeMemberSession(m: Member, sessionId: string) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    await wrap(`msession-${sessionId}`, async () => {
+      await apiFetch(`/organizations/${orgId}/members/${m.user.id}/sessions/${sessionId}`, { method: "DELETE" });
+      setNotice(`${m.user.name} এর একটি সেশন বাতিল হয়েছে।`);
+      await reloadMemberSessions(m.user.id);
+    });
+  }
+
+  async function revokeAllMemberSessions(m: Member) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm(`${m.user.name} এর সব সক্রিয় সেশন বাতিল করবেন? তিনি সব ডিভাইস থেকে লগআউট হয়ে যাবেন।`)) return;
+    await wrap(`msessions-all-${m.user.id}`, async () => {
+      // Server field is `revokedCount` (verified in organizations.service.ts).
+      const out = await apiFetch<{ revokedCount: number }>(`/organizations/${orgId}/members/${m.user.id}/sessions/revoke-all`, { method: "POST" });
+      setNotice(`${m.user.name} এর ${out.revokedCount}টি সেশন বাতিল হয়েছে।`);
+      await reloadMemberSessions(m.user.id);
+    });
+  }
+
   async function revoke(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap(`revoke-${id}`, async () => {
@@ -343,6 +481,7 @@ export default function TeamPage() {
 
       <div className="card p-5">
         <h2 className="mb-3 font-semibold">সদস্যরা ({members.length})</h2>
+        <p className="mb-3 text-xs text-slate-400">মূল (preset) ভূমিকা ও কাস্টম রোল দুটোই থাকে: মূল ভূমিকা কিছু নির্দিষ্ট পেজ/কাজ নিয়ন্ত্রণ করে, আর কাস্টম রোলের এলাকাগুলো এলাকা-ভিত্তিক (area-checked) পেজগুলো নিয়ন্ত্রণ করে। কাস্টম রোল দিলে এলাকা-ভিত্তিক পেজে মূল ভূমিকার বদলে কাস্টম রোলের এলাকাই প্রযোজ্য হয় (per-member Grant/Deny এর ওপরে প্রযোজ্য থাকে)।</p>
         {members.length === 0 ? <p className="text-sm text-slate-500">কোনো সদস্য নেই।</p> : (
           <table className="w-full text-sm">
             <thead><tr className="text-left text-slate-500"><th className="py-2">নাম</th><th>ইমেইল</th><th>ভূমিকা</th><th>অবস্থা</th><th></th></tr></thead>
@@ -360,6 +499,20 @@ export default function TeamPage() {
                         ))}
                       </select>
                     ) : m.role}
+                    {/* GB6 (GC16): custom-role assignment alongside the
+                        base preset role. Both stay visible: the base
+                        role governs role-list surfaces, the custom
+                        role's areas govern area-checked surfaces. */}
+                    {m.role !== "OWNER" ? (
+                      <div className="mt-1.5">
+                        <select className="input w-44" value={m.customRoleId ?? ""} disabled={!canManage || busy === `custom-role-${m.user.id}`}
+                          onChange={(e) => assignCustomRole(m, e.target.value)} aria-label="কাস্টম রোল">
+                          <option value="">কোনো কাস্টম রোল নেই</option>
+                          {customRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                        </select>
+                        <span className="block text-[11px] text-slate-400">কাস্টম রোল{!canManage ? " (বদলাতে OWNER/ADMIN লাগবে)" : ""}</span>
+                      </div>
+                    ) : <span className="block text-[11px] text-slate-400">মালিকের কাস্টম রোল হয় না</span>}
                   </td>
                   <td>{m.status === "SUSPENDED" ? <span className="font-semibold text-red-600">সাময়িক বন্ধ</span> : m.status}
                     {scheduleOf(m.user.id)?.hasSchedule ? (
@@ -384,6 +537,9 @@ export default function TeamPage() {
                     ) : null}
                     {canManage && m.role !== "OWNER" ? (
                       <button className="btn-secondary" onClick={() => (editingAccess === m.user.id ? setEditingAccess("") : openAccessEditor(m))}>অ্যাক্সেস</button>
+                    ) : null}
+                    {canManage ? (
+                      <button className="btn-secondary" onClick={() => openHistoryPanel(m)}>লগইন ও সেশন</button>
                     ) : null}
                     <button className="btn-secondary" disabled={busy === `totp-${m.user.id}`} onClick={() => resetTotp(m.user.id, m.user.name)}>2FA রিসেট</button>
                   </td>
@@ -464,12 +620,123 @@ export default function TeamPage() {
                     </td>
                   </tr>
                 ) : null}
+                {historyFor === m.user.id ? (
+                  <tr className="border-t bg-slate-50">
+                    <td colSpan={5} className="p-3">
+                      <div className="mb-2 text-sm">
+                        <strong>{m.user.name} এর লগইন ইতিহাস ও সক্রিয় সেশন</strong>
+                        <span className="ml-2 text-xs text-amber-700">মনে রাখুন: এটি এই ব্যক্তির সামগ্রিক (সব Organization মিলিয়ে) লগইন ইতিহাস — অ্যাকাউন্টটি সব Organization-এ একটাই, তাই শুধু এই Organization-এর আলাদা ইতিহাস হয় না।</span>
+                      </div>
+                      {panelError ? <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{panelError}</p> : null}
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div>
+                          <h3 className="mb-1 text-sm font-semibold">সক্রিয় সেশন ({memberSessions.length})</h3>
+                          {memberSessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সক্রিয় সেশন নেই।</p> : memberSessions.map((s) => (
+                            <div key={s.id} className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2 py-1.5 text-sm">
+                              <span>
+                                <span className="font-medium">{s.ip ?? "IP অজানা"}</span>
+                                <span className="block max-w-md truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? "ডিভাইস অজানা"}</span>
+                                <span className="block text-[11px] text-slate-400">শুরু: {new Date(s.createdAt).toLocaleString("bn-BD")} · শেষ দেখা: {new Date(s.lastSeenAt).toLocaleString("bn-BD")}</span>
+                              </span>
+                              <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msession-${s.id}`} onClick={() => revokeMemberSession(m, s.id)}>সেশন বাতিল</button>
+                            </div>
+                          ))}
+                          {memberSessions.length > 0 ? (
+                            <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msessions-all-${m.user.id}`} onClick={() => revokeAllMemberSessions(m)}>সব সেশন বাতিল</button>
+                          ) : null}
+                        </div>
+                        <div>
+                          <h3 className="mb-1 text-sm font-semibold">শেষ ৫০টি লগইন চেষ্টা</h3>
+                          {loginHistory.length === 0 ? <p className="text-sm text-slate-400">কোনো লগইন ইতিহাস নেই।</p> : (
+                            <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
+                              {loginHistory.map((h, i) => (
+                                <li key={h.id ?? i} className="flex flex-wrap items-center gap-2 rounded bg-white px-2 py-1.5">
+                                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? "সফল" : "ব্যর্থ"}</span>
+                                  <span className="text-slate-600">{h.ip ?? "IP অজানা"}</span>
+                                  <span className="max-w-40 truncate text-[11px] text-slate-400" title={h.userAgent ?? ""}>{h.userAgent ?? ""}</span>
+                                  <span className="text-[11px] text-slate-400">{new Date(h.createdAt).toLocaleString("bn-BD")}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <button className="btn-secondary btn-sm mt-3" onClick={() => setHistoryFor("")}>বন্ধ করুন</button>
+                    </td>
+                  </tr>
+                ) : null}
                 </React.Fragment>
               ))}
             </tbody>
           </table>
         )}
         {canManage ? null : <p className="mt-2 text-xs text-slate-400">ভূমিকা ও অবস্থা বদলাতে OWNER বা ADMIN হতে হয়; সদস্য সরাতে শুধু OWNER পারে।</p>}
+      </div>
+
+      {/* GB6 (GC16): custom roles manager */}
+      <div className="card p-5">
+        <h2 className="mb-1 font-semibold">🎭 কাস্টম রোল</h2>
+        <p className="mb-3 text-xs text-slate-400">নাম দেওয়া অনুমতির এলাকার বান্ডল। কোনো সদস্যকে কাস্টম রোল দিলে এলাকা-ভিত্তিক পেজে তার মূল ভূমিকার বদলে এই এলাকাগুলোই প্রযোজ্য হয়। যে রোল কোনো সদস্যের কাছে আছে, সেটি মোছা যাবে না — আগে সদস্যের কাছ থেকে তুলে নিন (সার্ভারের বার্তা 그대로 দেখানো হয়)।</p>
+        {roleError ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{roleError}</div> : null}
+        {customRoles.length === 0 ? <p className="mb-3 text-sm text-slate-500">কোনো কাস্টম রোল নেই।</p> : (
+          <div className="mb-4 space-y-2">
+            {customRoles.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span>
+                  <span className="font-medium">{r.name}</span>
+                  {r.presetKey ? <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">প্রিসেট: {r.presetKey}</span> : null}
+                  <span className="ml-2 text-xs text-slate-500">{r.memberCount} জন সদস্য</span>
+                  <span className="block text-xs text-slate-400">
+                    {r.areas.map((a) => areaCatalog.find((c) => c.key === a)?.labelBn ?? a).join(", ") || "কোনো এলাকা নেই"}
+                  </span>
+                </span>
+                {canManage ? (
+                  <span className="flex gap-2">
+                    <button className="btn-secondary btn-sm" onClick={() => { setEditingRoleId(r.id); setRoleName(r.name); setRoleAreas([...r.areas]); setRoleError(""); }}>সম্পাদনা</button>
+                    <button className="btn-secondary btn-sm text-red-600" disabled={busy === `role-del-${r.id}`} onClick={() => deleteCustomRole(r)}>মুছুন</button>
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+        {canManage ? (
+          <div className="grid gap-4 border-t pt-4 lg:grid-cols-2">
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">{editingRoleId ? "রোল সম্পাদনা" : "নতুন রোল — নিজে বানান"}</h3>
+              <input className="input w-full" placeholder="রোলের নাম (১–৬০ অক্ষর)" value={roleName} onChange={(e) => setRoleName(e.target.value)} maxLength={70} />
+              <div className="grid gap-1 sm:grid-cols-2">
+                {(areaCatalog.length ? areaCatalog : []).map((a) => (
+                  <label key={a.key} className="flex items-start gap-2 rounded bg-slate-50 px-2 py-1.5 text-sm">
+                    <input type="checkbox" className="mt-0.5" checked={roleAreas.includes(a.key)}
+                      onChange={(e) => setRoleAreas(e.target.checked ? [...roleAreas, a.key] : roleAreas.filter((k) => k !== a.key))} />
+                    <span><span className="font-medium">{a.labelBn}</span><span className="block text-[11px] text-slate-400">{a.noteBn}</span></span>
+                  </label>
+                ))}
+                {areaCatalog.length === 0 ? <p className="text-xs text-slate-400">এলাকার তালিকা লোড হয়নি — পেজটি আবার লোড করুন।</p> : null}
+              </div>
+              <div className="flex gap-2">
+                <button className="btn-primary" disabled={busy === "role-save"} onClick={saveCustomRole}>{editingRoleId ? "হালনাগাদ করুন" : "রোল তৈরি করুন"}</button>
+                {editingRoleId ? <button className="btn-secondary" onClick={() => { setEditingRoleId(""); setRoleName(""); setRoleAreas([]); }}>বাতিল</button> : null}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">প্রিসেট থেকে তৈরি</h3>
+              <p className="text-xs text-slate-400">প্রিসেট বেছে তৈরি করলে নাম ও এলাকা প্রিসেট থেকেই আসে — তৈরি হওয়ার পর চাইলে সম্পাদনা করে বদলাতে পারবেন।</p>
+              <select className="input w-full" value={presetKey} onChange={(e) => setPresetKey(e.target.value)}>
+                <option value="">প্রিসেট বেছে নিন</option>
+                {presetProfiles.map((p) => <option key={p.key} value={p.key}>{p.labelBn} ({p.label})</option>)}
+              </select>
+              {presetKey ? (
+                <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  {presetProfiles.find((p) => p.key === presetKey)?.noteBn}
+                  <span className="block mt-1">এলাকা: {(presetProfiles.find((p) => p.key === presetKey)?.areas ?? []).map((a) => areaCatalog.find((c) => c.key === a)?.labelBn ?? a).join(", ")}</span>
+                </p>
+              ) : null}
+              <button className="btn-primary" disabled={busy === "role-preset" || !presetKey} onClick={createCustomRoleFromPreset}>প্রিসেট থেকে তৈরি করুন</button>
+            </div>
+          </div>
+        ) : <p className="text-xs text-slate-400">কাস্টম রোল বানাতে/বদলাতে OWNER বা ADMIN হতে হয়।</p>}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

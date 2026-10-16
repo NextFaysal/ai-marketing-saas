@@ -1,9 +1,11 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { compareSync, hashSync } from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { RegisterDto, LoginDto } from "./auth.dto";
+import { VerificationService, readEmailVerificationGate, verificationRequiredFor } from "./verification.service";
 
 @Injectable()
 export class AuthService {
@@ -11,9 +13,35 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    // GC21 (GB9): registration fires the verification email
+    // through this (optional so older direct constructions in
+    // specs keep working; absent = no email is attempted).
+    @Optional() private readonly verification?: VerificationService,
   ) {}
 
-  async register(dto: RegisterDto, ip?: string) {
+  /** GB6 (GC16): one LoginEvent row per completed/failed login
+   * attempt. Failure-isolated by design — recording must NEVER
+   * block or break authentication. The attempted email is
+   * stored; passwords and tokens are never stored. */
+  private async recordLoginEvent(e: { userId: string | null; email: string; success: boolean; ip?: string; userAgent?: string; method?: string }) {
+    try {
+      await (this.prisma as any).loginEvent?.create?.({
+        data: {
+          userId: e.userId ?? null,
+          email: e.email,
+          success: e.success,
+          // AB8 (AX26): "password" (default) | "google" — a TOTP
+          // completion records the ORIGINATING method (the
+          // challenge token's `via` claim), never "totp".
+          method: e.method ?? "password",
+          ip: e.ip ?? null,
+          userAgent: e.userAgent ? String(e.userAgent).slice(0, 200) : null,
+        },
+      });
+    } catch { /* a login-event failure never blocks auth */ }
+  }
+
+  async register(dto: RegisterDto, ip?: string, userAgent?: string) {
     const { platformSetting } = await import("../common/platform-settings");
     if ((await platformSetting(this.prisma as any, "signupOpen")) === false) {
       throw new ForbiddenException("New signups are currently closed by the platform team. Please try again later.");
@@ -25,6 +53,12 @@ export class AuthService {
       data: { email, name: dto.name.trim(), passwordHash: hashSync(dto.password, 10) },
     });
     await this.audit.log({ userId: user.id, action: "auth.register", entityType: "User", entityId: user.id, ipAddress: ip });
+    // GC21 (GB9): send the email-verification link, fire-and-
+    // forget — a mail failure NEVER blocks registration (same
+    // isolation as the referral block below).
+    try {
+      void this.verification?.requestEmailVerification(user.id)?.catch?.(() => undefined);
+    } catch { /* verification email is best-effort at signup */ }
     // Milestone 41: record the referral when the signup carried a
     // valid code. A bad/unknown code never blocks registration.
     if (dto.referralCode) {
@@ -61,7 +95,7 @@ export class AuthService {
           await (this.prisma as any).referralCampaign.update({
             where: { id: campaign.id }, data: { usedCount: campaign.usedCount + 1 },
           }).catch(() => undefined);
-          return this.issueToken(user);
+          return this.issueToken(user, { ip, userAgent });
         }
         const referrer = await (this.prisma as any).user.findUnique({ where: { referralCode: code } });
         if (referrer && referrer.id !== user.id) {
@@ -76,18 +110,16 @@ export class AuthService {
             where: { userId: referrer.id },
           })?.catch?.(() => null);
           if (home) {
-            await (this.prisma as any).agentNotification?.create?.({
-              data: {
+            await createAgentNotification(this.prisma as any, {
                 organizationId: home.organizationId, userId: referrer.id, type: "referral",
                 title: "🎉 নতুন রেফারেল সাইন আপ",
                 body: `${dto.name.trim()} আপনার রেফারেল লিংক দিয়ে সাইন আপ করেছেন। তিনি প্রথম পেমেন্ট করলেই আপনি রিওয়ার্ড পাবেন।`,
-              },
-            })?.catch?.(() => null);
+              })?.catch?.(() => null);
           }
         }
       } catch { /* duplicate or unavailable — signup stands */ }
     }
-    return this.issueToken(user);
+    return this.issueToken(user, { ip, userAgent });
   }
 
   /** Milestone 41: the caller's referral code, link and stats. */
@@ -159,7 +191,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto, ip?: string) {
+  async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const email = dto.email.toLowerCase().trim();
     const user = await (this.prisma as any).user.findUnique({ where: { email } });
     if (!user || user.status === "DELETED" || !compareSync(dto.password, user.passwordHash)) {
@@ -170,6 +202,9 @@ export class AuthService {
         userId: user?.id, action: "auth.login_failed", entityType: "User", entityId: user?.id,
         metadata: { email }, ipAddress: ip,
       }).catch(() => undefined);
+      // GB6 (GC16): the same failure lands in the per-user login
+      // history (userId null for unknown emails).
+      await this.recordLoginEvent({ userId: user?.id ?? null, email, success: false, ip, userAgent });
       throw new UnauthorizedException("Invalid email or password");
     }
     if (user.status === "SUSPENDED") {
@@ -188,7 +223,10 @@ export class AuthService {
     }
     await (this.prisma as any).user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
     await this.audit.log({ userId: user.id, action: user.isSuperAdmin ? "admin.login" : "auth.login", entityType: "User", entityId: user.id, ipAddress: ip });
-    return this.issueToken(user);
+    // GB6 (GC16): a completed login. (A TOTP-pending response
+    // above is NOT a completed login and records nothing.)
+    await this.recordLoginEvent({ userId: user.id, email: user.email, success: true, ip, userAgent });
+    return this.issueToken(user, { ip, userAgent });
   }
 
   /** Consume an admin-issued password reset token. Using it bumps
@@ -209,12 +247,16 @@ export class AuthService {
 
   /** Second step of a TOTP login: exchange challenge + 6-digit code
    * for a real session token. */
-  async verifyTotpLogin(challengeToken: string, code: string, ip?: string) {
+  async verifyTotpLogin(challengeToken: string, code: string, ip?: string, userAgent?: string) {
     const { verifyAdminToken } = await import("../common/admin-token");
     const { verifyTotp } = await import("../common/totp");
     const { decryptJson } = await import("../integrations/crypto");
     const body = verifyAdminToken(challengeToken, "totp-challenge");
     if (!body) throw new UnauthorizedException("This sign-in challenge is invalid or has expired. Please sign in again.");
+    // AB8 (AX26): a challenge minted by a Google SSO login
+    // carries via:"google" — its completion is a GOOGLE login,
+    // recorded as such; password challenges record "password".
+    const method = (body as any).via === "google" ? "google" : "password";
     const user = await (this.prisma as any).user.findUnique({ where: { id: body.sub } });
     if (!user || user.status !== "ACTIVE" || !user.totpEnabled || !user.totpSecretEncrypted || (user.tokenVersion ?? 0) !== body.tv) {
       throw new UnauthorizedException("This sign-in challenge is no longer valid. Please sign in again.");
@@ -222,10 +264,43 @@ export class AuthService {
     let secret: string;
     try { secret = (decryptJson(user.totpSecretEncrypted) as { secret: string }).secret; }
     catch { throw new UnauthorizedException("Two-factor authentication is misconfigured for this account. Contact the platform team."); }
-    if (!verifyTotp(secret, code)) throw new UnauthorizedException("That authentication code is incorrect");
+    if (!verifyTotp(secret, code)) {
+      // GB6 (GC16): a wrong code is a failed login attempt.
+      await this.recordLoginEvent({ userId: body.sub, email: user.email, success: false, ip, userAgent, method });
+      throw new UnauthorizedException("That authentication code is incorrect");
+    }
     await (this.prisma as any).user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
     await this.audit.log({ userId: user.id, action: user.isSuperAdmin ? "admin.login" : "auth.login", entityType: "User", entityId: user.id, metadata: { totp: true }, ipAddress: ip });
-    return this.issueToken(user);
+    await this.recordLoginEvent({ userId: user.id, email: user.email, success: true, ip, userAgent, method });
+    return this.issueToken(user, { ip, userAgent });
+  }
+
+  /** AB8 (AX26): complete a Google SSO login for an ALREADY
+   * VERIFIED identity (GoogleSsoService exchanged the code,
+   * confirmed email_verified, and matched the email to this
+   * user). Mirrors login()'s completion discipline EXACTLY:
+   * a TOTP-enabled account gets a challenge (carrying
+   * via:"google", so its completion records method "google")
+   * and NO success event/token yet — SSO NEVER bypasses TOTP.
+   * Only a plain completion records the success LoginEvent
+   * (method "google") and issues the session token. */
+  async completeGoogleLogin(userId: string, ip?: string, userAgent?: string) {
+    const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
+    if (!user || user.status !== "ACTIVE") {
+      throw new UnauthorizedException("এই অ্যাকাউন্টে সাইন ইন করা যাচ্ছে না — আবার চেষ্টা করুন");
+    }
+    if (user.totpEnabled && user.totpSecretEncrypted) {
+      const { issueAdminToken } = await import("../common/admin-token");
+      return {
+        requiresTotp: true,
+        challengeToken: issueAdminToken({ purpose: "totp-challenge", sub: user.id, tv: user.tokenVersion ?? 0, via: "google" } as any, 5),
+        user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin, totpEnabled: true },
+      };
+    }
+    await (this.prisma as any).user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
+    await this.audit.log({ userId: user.id, action: user.isSuperAdmin ? "admin.login" : "auth.login", entityType: "User", entityId: user.id, metadata: { method: "google" }, ipAddress: ip });
+    await this.recordLoginEvent({ userId: user.id, email: user.email, success: true, ip, userAgent, method: "google" });
+    return this.issueToken(user, { ip, userAgent });
   }
 
   // ---- Milestone 35 (Phase N1): self-service TOTP for ANY user ----
@@ -292,14 +367,93 @@ export class AuthService {
   async me(userId: string) {
     const user = await (this.prisma as any).user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, name: true, isSuperAdmin: true, createdAt: true },
+      select: {
+        id: true, email: true, name: true, isSuperAdmin: true, createdAt: true,
+        // GC21 (GB9): verification status surface. Additive —
+        // existing consumers keep working untouched.
+        emailVerifiedAt: true, phoneVerifiedAt: true, phone: true,
+      },
     });
     if (!user) throw new UnauthorizedException("User not found");
-    return user;
+    // verificationRequired mirrors the JwtAuthGuard gate exactly
+    // (same helper): the web shell uses it to show the blocking
+    // verification wall before any tenant call starts failing.
+    const gate = await readEmailVerificationGate(this.prisma as any).catch(() => ({ enforced: false, since: null }));
+    return {
+      ...user,
+      emailVerifiedAt: user.emailVerifiedAt ?? null,
+      phoneVerifiedAt: user.phoneVerifiedAt ?? null,
+      phone: user.phone ?? null,
+      verificationRequired: verificationRequiredFor(user, gate),
+    };
   }
 
-  private async issueToken(user: { id: string; email: string; isSuperAdmin: boolean; name: string }) {
-    const accessToken = await this.jwt.signAsync({ sub: user.id, email: user.email, isSuperAdmin: user.isSuperAdmin, tv: (user as any).tokenVersion ?? 0 });
+  // ---- GB6 (GC16): own sessions + login history ----
+
+  /** The caller's active sessions, newest first (cap 50), with
+   * the current one flagged from the token's sid claim. */
+  async mySessions(userId: string, currentSid?: string) {
+    try {
+      const rows = (await (this.prisma as any).userSession?.findMany?.({
+        where: { userId, revokedAt: null }, orderBy: { createdAt: "desc" }, take: 50,
+      })) ?? [];
+      return (rows as any[]).map((s) => ({
+        id: s.id, createdAt: s.createdAt, lastSeenAt: s.lastSeenAt,
+        ip: s.ip ?? null, userAgent: s.userAgent ?? null,
+        current: currentSid != null && s.id === currentSid,
+      }));
+    } catch { return []; }
+  }
+
+  /** Revoke one of the caller's OWN sessions (another user's
+   * session id reads as not found). Already-revoked is ok. */
+  async revokeMySession(userId: string, sessionId: string) {
+    let session: any = null;
+    try {
+      session = await (this.prisma as any).userSession?.findFirst?.({ where: { id: sessionId, userId } });
+    } catch { session = null; }
+    if (!session) throw new NotFoundException("Session not found");
+    const alreadyRevoked = Boolean(session.revokedAt);
+    if (!alreadyRevoked) {
+      await (this.prisma as any).userSession.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
+    }
+    return { ok: true, id: session.id, alreadyRevoked };
+  }
+
+  /** The caller's own last 50 login events, newest first. */
+  async myLoginHistory(userId: string) {
+    try {
+      const rows = (await (this.prisma as any).loginEvent?.findMany?.({
+        where: { userId }, orderBy: { createdAt: "desc" }, take: 50,
+      })) ?? [];
+      return (rows as any[]).map((r) => ({
+        success: r.success === true, email: r.email,
+        ip: r.ip ?? null, userAgent: r.userAgent ?? null, createdAt: r.createdAt,
+      }));
+    } catch { return []; }
+  }
+
+  private async issueToken(user: { id: string; email: string; isSuperAdmin: boolean; name: string }, ctx?: { ip?: string; userAgent?: string }) {
+    // GB6 (GC16): register a server-side session row and carry
+    // its id as the `sid` claim, so the session can later be
+    // revoked (JwtAuthGuard rejects revoked sids). ANY failure
+    // here signs WITHOUT sid — the legacy stateless behaviour —
+    // and never blocks a login.
+    let sid: string | undefined;
+    try {
+      const row = await (this.prisma as any).userSession?.create?.({
+        data: {
+          userId: user.id,
+          ip: ctx?.ip ?? null,
+          userAgent: ctx?.userAgent ? String(ctx.userAgent).slice(0, 200) : null,
+        },
+      });
+      if (row?.id) sid = String(row.id);
+    } catch { sid = undefined; }
+    const accessToken = await this.jwt.signAsync({
+      sub: user.id, email: user.email, isSuperAdmin: user.isSuperAdmin, tv: (user as any).tokenVersion ?? 0,
+      ...(sid ? { sid } : {}),
+    });
     return { accessToken, user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin } };
   }
 }

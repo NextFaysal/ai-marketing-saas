@@ -231,6 +231,7 @@ export default function BillingPage() {
             <td className="atd">
               <div className="flex flex-wrap gap-1.5">
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => openAuthed(`/admin/payments/${p.id}/invoice`)}>🧾 Invoice</button>
+                <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => openAuthed(`/admin/payments/${p.id}/invoice.pdf`, `invoice-${p.id}.pdf`)}>📄 PDF</button>
                 <button className="abtn-secondary !px-2 !py-1 text-xs" onClick={async () => {
                   try { const out = await apiFetch<any>(`/admin/payments/${p.id}/invoice-email`, { method: "POST", body: "{}" }); setMsg(`Invoice ইমেইল পাঠানো হয়েছে (${out.sent} জনকে)।`); }
                   catch (e) { setMsg(e instanceof Error ? e.message : "ইমেইল ব্যর্থ"); }

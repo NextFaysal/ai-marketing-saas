@@ -187,10 +187,15 @@ describe("CX6 courier_auto_sync job", () => {
       organization: { findFirst: async () => null },
     };
     const svc = new CourierService(prisma as any, { log: async () => undefined } as any);
+    // GB5 (GC13): clientFor now returns the provider-neutral
+    // CourierClient adapter, so the stub speaks statusOf()
+    // instead of the Steadfast concrete method. The test's
+    // assertions are unchanged — only the stubbed seam's shape
+    // follows the new contract (see the GB5 acceptance doc).
     (svc as any).clientFor = async () => ({
-      statusByTrackingCode: async (code: string) => {
-        if (code === "T2") throw new Error("provider down");
-        return "delivered";
+      statusOf: async (ref: { trackingCode: string | null }) => {
+        if (ref.trackingCode === "T2") throw new Error("provider down");
+        return { status: "delivered", rawStatus: "delivered" };
       },
     });
     const out = await svc.syncAll("org-1");

@@ -1,0 +1,51 @@
+c0dffcf118b813c9f104d6307bd08b95
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AD_HEALTH_STALE_MS = void 0;
+exports.computeAdAccountHealth = computeAdAccountHealth;
+/**
+ * AD health band — the single source of truth for AdAccount
+ * connection health. Extracted (AA5) from the inline computation
+ * in AdsService.listAccounts() so the tenant list and the admin
+ * operator board can never drift: same bands, same 48h stale
+ * threshold, same wording. Pure function — no I/O, no DI.
+ *
+ * Bands:
+ * - sourceType "api" + syncDisabled → "sync_disabled" (AD5: sync
+ *   deliberately off — NOT stale, no sync is expected to run)
+ * - no integrationId → "disconnected" for api accounts,
+ *   "manual" for csv/manual accounts
+ * - integrationId present but integration row missing →
+ *   "disconnected" (dangling pointer)
+ * - integration ERROR → "error", DISCONNECTED → "disconnected"
+ * - integration CONNECTED → "stale" when lastSyncAt is null,
+ *   unparseable, or older than AD_HEALTH_STALE_MS, else
+ *   "connected"
+ * - any other integration status → "disconnected"
+ */
+exports.AD_HEALTH_STALE_MS = 48 * 3600 * 1000;
+function computeAdAccountHealth(account, integration, now) {
+    if (account.sourceType === "api" && account.syncDisabled) {
+        return "sync_disabled";
+    }
+    if (!account.integrationId) {
+        return account.sourceType === "api" ? "disconnected" : "manual";
+    }
+    if (!integration) {
+        return "disconnected";
+    }
+    if (integration.status === "ERROR")
+        return "error";
+    if (integration.status === "DISCONNECTED")
+        return "disconnected";
+    if (integration.status === "CONNECTED") {
+        const last = integration.lastSyncAt
+            ? new Date(integration.lastSyncAt).getTime()
+            : null;
+        return last === null || Number.isNaN(last) || now - last > exports.AD_HEALTH_STALE_MS
+            ? "stale"
+            : "connected";
+    }
+    return "disconnected";
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2Fkcy9hZC1oZWFsdGgudHMiLCJtYXBwaW5ncyI6Ijs7O0FBc0JBLHdEQXlCQztBQS9DRDs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQW1CRztBQUNVLFFBQUEsa0JBQWtCLEdBQUcsRUFBRSxHQUFHLElBQUksR0FBRyxJQUFJLENBQUM7QUFFbkQsU0FBZ0Isc0JBQXNCLENBQ3BDLE9BQXFHLEVBQ3JHLFdBQWdGLEVBQ2hGLEdBQVc7SUFFWCxJQUFJLE9BQU8sQ0FBQyxVQUFVLEtBQUssS0FBSyxJQUFJLE9BQU8sQ0FBQyxZQUFZLEVBQUUsQ0FBQztRQUN6RCxPQUFPLGVBQWUsQ0FBQztJQUN6QixDQUFDO0lBQ0QsSUFBSSxDQUFDLE9BQU8sQ0FBQyxhQUFhLEVBQUUsQ0FBQztRQUMzQixPQUFPLE9BQU8sQ0FBQyxVQUFVLEtBQUssS0FBSyxDQUFDLENBQUMsQ0FBQyxjQUFjLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQztJQUNsRSxDQUFDO0lBQ0QsSUFBSSxDQUFDLFdBQVcsRUFBRSxDQUFDO1FBQ2pCLE9BQU8sY0FBYyxDQUFDO0lBQ3hCLENBQUM7SUFDRCxJQUFJLFdBQVcsQ0FBQyxNQUFNLEtBQUssT0FBTztRQUFFLE9BQU8sT0FBTyxDQUFDO0lBQ25ELElBQUksV0FBVyxDQUFDLE1BQU0sS0FBSyxjQUFjO1FBQUUsT0FBTyxjQUFjLENBQUM7SUFDakUsSUFBSSxXQUFXLENBQUMsTUFBTSxLQUFLLFdBQVcsRUFBRSxDQUFDO1FBQ3ZDLE1BQU0sSUFBSSxHQUFHLFdBQVcsQ0FBQyxVQUFVO1lBQ2pDLENBQUMsQ0FBQyxJQUFJLElBQUksQ0FBQyxXQUFXLENBQUMsVUFBaUIsQ0FBQyxDQUFDLE9BQU8sRUFBRTtZQUNuRCxDQUFDLENBQUMsSUFBSSxDQUFDO1FBQ1QsT0FBTyxJQUFJLEtBQUssSUFBSSxJQUFJLE1BQU0sQ0FBQyxLQUFLLENBQUMsSUFBSSxDQUFDLElBQUksR0FBRyxHQUFHLElBQUksR0FBRywwQkFBa0I7WUFDM0UsQ0FBQyxDQUFDLE9BQU87WUFDVCxDQUFDLENBQUMsV0FBVyxDQUFDO0lBQ2xCLENBQUM7SUFDRCxPQUFPLGNBQWMsQ0FBQztBQUN4QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9hZHMvYWQtaGVhbHRoLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQUQgaGVhbHRoIGJhbmQg4oCUIHRoZSBzaW5nbGUgc291cmNlIG9mIHRydXRoIGZvciBBZEFjY291bnRcbiAqIGNvbm5lY3Rpb24gaGVhbHRoLiBFeHRyYWN0ZWQgKEFBNSkgZnJvbSB0aGUgaW5saW5lIGNvbXB1dGF0aW9uXG4gKiBpbiBBZHNTZXJ2aWNlLmxpc3RBY2NvdW50cygpIHNvIHRoZSB0ZW5hbnQgbGlzdCBhbmQgdGhlIGFkbWluXG4gKiBvcGVyYXRvciBib2FyZCBjYW4gbmV2ZXIgZHJpZnQ6IHNhbWUgYmFuZHMsIHNhbWUgNDhoIHN0YWxlXG4gKiB0aHJlc2hvbGQsIHNhbWUgd29yZGluZy4gUHVyZSBmdW5jdGlvbiDigJQgbm8gSS9PLCBubyBESS5cbiAqXG4gKiBCYW5kczpcbiAqIC0gc291cmNlVHlwZSBcImFwaVwiICsgc3luY0Rpc2FibGVkIOKGkiBcInN5bmNfZGlzYWJsZWRcIiAoQUQ1OiBzeW5jXG4gKiAgIGRlbGliZXJhdGVseSBvZmYg4oCUIE5PVCBzdGFsZSwgbm8gc3luYyBpcyBleHBlY3RlZCB0byBydW4pXG4gKiAtIG5vIGludGVncmF0aW9uSWQg4oaSIFwiZGlzY29ubmVjdGVkXCIgZm9yIGFwaSBhY2NvdW50cyxcbiAqICAgXCJtYW51YWxcIiBmb3IgY3N2L21hbnVhbCBhY2NvdW50c1xuICogLSBpbnRlZ3JhdGlvbklkIHByZXNlbnQgYnV0IGludGVncmF0aW9uIHJvdyBtaXNzaW5nIOKGklxuICogICBcImRpc2Nvbm5lY3RlZFwiIChkYW5nbGluZyBwb2ludGVyKVxuICogLSBpbnRlZ3JhdGlvbiBFUlJPUiDihpIgXCJlcnJvclwiLCBESVNDT05ORUNURUQg4oaSIFwiZGlzY29ubmVjdGVkXCJcbiAqIC0gaW50ZWdyYXRpb24gQ09OTkVDVEVEIOKGkiBcInN0YWxlXCIgd2hlbiBsYXN0U3luY0F0IGlzIG51bGwsXG4gKiAgIHVucGFyc2VhYmxlLCBvciBvbGRlciB0aGFuIEFEX0hFQUxUSF9TVEFMRV9NUywgZWxzZVxuICogICBcImNvbm5lY3RlZFwiXG4gKiAtIGFueSBvdGhlciBpbnRlZ3JhdGlvbiBzdGF0dXMg4oaSIFwiZGlzY29ubmVjdGVkXCJcbiAqL1xuZXhwb3J0IGNvbnN0IEFEX0hFQUxUSF9TVEFMRV9NUyA9IDQ4ICogMzYwMCAqIDEwMDA7XG5cbmV4cG9ydCBmdW5jdGlvbiBjb21wdXRlQWRBY2NvdW50SGVhbHRoKFxuICBhY2NvdW50OiB7IHNvdXJjZVR5cGU/OiBzdHJpbmcgfCBudWxsOyBzeW5jRGlzYWJsZWQ/OiBib29sZWFuIHwgbnVsbDsgaW50ZWdyYXRpb25JZD86IHN0cmluZyB8IG51bGwgfSxcbiAgaW50ZWdyYXRpb246IHsgc3RhdHVzPzogc3RyaW5nIHwgbnVsbDsgbGFzdFN5bmNBdD86IHVua25vd24gfSB8IG51bGwgfCB1bmRlZmluZWQsXG4gIG5vdzogbnVtYmVyLFxuKTogc3RyaW5nIHtcbiAgaWYgKGFjY291bnQuc291cmNlVHlwZSA9PT0gXCJhcGlcIiAmJiBhY2NvdW50LnN5bmNEaXNhYmxlZCkge1xuICAgIHJldHVybiBcInN5bmNfZGlzYWJsZWRcIjtcbiAgfVxuICBpZiAoIWFjY291bnQuaW50ZWdyYXRpb25JZCkge1xuICAgIHJldHVybiBhY2NvdW50LnNvdXJjZVR5cGUgPT09IFwiYXBpXCIgPyBcImRpc2Nvbm5lY3RlZFwiIDogXCJtYW51YWxcIjtcbiAgfVxuICBpZiAoIWludGVncmF0aW9uKSB7XG4gICAgcmV0dXJuIFwiZGlzY29ubmVjdGVkXCI7XG4gIH1cbiAgaWYgKGludGVncmF0aW9uLnN0YXR1cyA9PT0gXCJFUlJPUlwiKSByZXR1cm4gXCJlcnJvclwiO1xuICBpZiAoaW50ZWdyYXRpb24uc3RhdHVzID09PSBcIkRJU0NPTk5FQ1RFRFwiKSByZXR1cm4gXCJkaXNjb25uZWN0ZWRcIjtcbiAgaWYgKGludGVncmF0aW9uLnN0YXR1cyA9PT0gXCJDT05ORUNURURcIikge1xuICAgIGNvbnN0IGxhc3QgPSBpbnRlZ3JhdGlvbi5sYXN0U3luY0F0XG4gICAgICA/IG5ldyBEYXRlKGludGVncmF0aW9uLmxhc3RTeW5jQXQgYXMgYW55KS5nZXRUaW1lKClcbiAgICAgIDogbnVsbDtcbiAgICByZXR1cm4gbGFzdCA9PT0gbnVsbCB8fCBOdW1iZXIuaXNOYU4obGFzdCkgfHwgbm93IC0gbGFzdCA+IEFEX0hFQUxUSF9TVEFMRV9NU1xuICAgICAgPyBcInN0YWxlXCJcbiAgICAgIDogXCJjb25uZWN0ZWRcIjtcbiAgfVxuICByZXR1cm4gXCJkaXNjb25uZWN0ZWRcIjtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

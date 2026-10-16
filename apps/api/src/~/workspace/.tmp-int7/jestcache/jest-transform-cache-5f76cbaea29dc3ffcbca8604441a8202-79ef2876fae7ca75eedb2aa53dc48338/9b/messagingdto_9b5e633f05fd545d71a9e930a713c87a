@@ -1,0 +1,762 @@
+c3330f707ad1b7565cff7a9e344d541c
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PreviewAudienceDto = exports.UpdateWorkflowDto = exports.CreateWorkflowDto = exports.SendTestEmailDto = exports.UpdateSenderRatesDto = exports.UpdateTenantSmsDto = exports.UpdateTenantEmailDto = exports.UpdateSavedAudienceDto = exports.CreateSavedAudienceDto = exports.PreviewBroadcastDto = exports.ImportPreferencesDto = exports.AddPreferenceDto = exports.ComposeCheckDto = exports.TestSendDto = exports.UpdateMessagingSettingDto = exports.UpdateBroadcastDto = exports.AiSubjectsDto = exports.AiDraftDto = exports.InstallJourneyPresetDto = exports.ScheduleBroadcastDto = exports.CreateBroadcastDto = exports.UpdateTemplateDto = exports.CreateTemplateDto = void 0;
+const class_validator_1 = require("class-validator");
+class CreateTemplateDto {
+    name;
+    channel;
+    subject;
+    body;
+    // MS5: optional HTML part (email only; the service 400s on sms).
+    htmlBody;
+}
+exports.CreateTemplateDto = CreateTemplateDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTemplateDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTemplateDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTemplateDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTemplateDto.prototype, "body", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTemplateDto.prototype, "htmlBody", void 0);
+class UpdateTemplateDto {
+    name;
+    subject;
+    body;
+    htmlBody;
+}
+exports.UpdateTemplateDto = UpdateTemplateDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTemplateDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTemplateDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTemplateDto.prototype, "body", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTemplateDto.prototype, "htmlBody", void 0);
+class CreateBroadcastDto {
+    name;
+    channel;
+    templateId;
+    subject;
+    body;
+    // MS5: optional HTML part (email only; the service 400s on
+    // sms/whatsapp). From a template, htmlBody comes from the
+    // template instead.
+    htmlBody;
+    audienceType;
+    audienceStage;
+    whatsappTemplateId;
+    templateParams;
+    // MS6: rich WhatsApp template parameters ({ headerMediaUrl?,
+    // headerTextParams?, buttonParams? }) — shape-only typing here;
+    // the VALUES are validated in the service (400 on a non-http(s)
+    // headerMediaUrl, a bad button index/subType, or when the
+    // channel is not whatsapp).
+    templateComponents;
+    audienceSegment;
+    abTest;
+    abSubject;
+    abBody;
+    abWhatsappTemplateId;
+    // CX10: drop recipients who already got a confirmed delivery
+    // from an earlier broadcast of this org (A/B variants inherit).
+    excludePreviousRecipients;
+    // Owner CX10 variant (his series): time-window + opt-out exclusions.
+    excludePastDays;
+    excludeOptOut;
+    // MS1: create the broadcast already scheduled (future ISO time).
+    scheduledAt;
+    // MS3: the new audience types. audienceDefinition is validated
+    // strictly by the pure audience-rules module in the service;
+    // audienceCsv accepts a pasted string OR a string array.
+    audienceDefinition;
+    audienceSavedId;
+    audienceCsv;
+    // MS8: recurrence ({ freq, interval, weekdays?, endsAt? }) —
+    // shape-only typing here; the VALUES are validated strictly by
+    // messaging/recurrence.ts in the service (400 on bad shape).
+    recurrence;
+}
+exports.CreateBroadcastDto = CreateBroadcastDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "templateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "body", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "htmlBody", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "audienceType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "audienceStage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "whatsappTemplateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], CreateBroadcastDto.prototype, "templateParams", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], CreateBroadcastDto.prototype, "templateComponents", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "audienceSegment", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateBroadcastDto.prototype, "abTest", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "abSubject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "abBody", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "abWhatsappTemplateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateBroadcastDto.prototype, "excludePreviousRecipients", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateBroadcastDto.prototype, "excludePastDays", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateBroadcastDto.prototype, "excludeOptOut", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "scheduledAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], CreateBroadcastDto.prototype, "audienceDefinition", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateBroadcastDto.prototype, "audienceSavedId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], CreateBroadcastDto.prototype, "audienceCsv", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], CreateBroadcastDto.prototype, "recurrence", void 0);
+/** MS1: set/move a schedule (ISO time), or cancel it (null). */
+class ScheduleBroadcastDto {
+    scheduledAt;
+    // MS8: when present, set/replace the recurrence alongside the
+    // schedule; explicit null clears it; absent leaves it as-is.
+    recurrence;
+}
+exports.ScheduleBroadcastDto = ScheduleBroadcastDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], ScheduleBroadcastDto.prototype, "scheduledAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], ScheduleBroadcastDto.prototype, "recurrence", void 0);
+/** MS8: install a messaging journey preset (optional rename). */
+class InstallJourneyPresetDto {
+    name;
+}
+exports.InstallJourneyPresetDto = InstallJourneyPresetDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InstallJourneyPresetDto.prototype, "name", void 0);
+/** MS9: AI copy draft request. Drafts are RETURNED ONLY — the
+ * DTO has no save/send target by design. */
+class AiDraftDto {
+    channel;
+    goal;
+    productId;
+    audienceHint;
+    language;
+}
+exports.AiDraftDto = AiDraftDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiDraftDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiDraftDto.prototype, "goal", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiDraftDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiDraftDto.prototype, "audienceHint", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiDraftDto.prototype, "language", void 0);
+/** MS9: AI subject-line variants (same usage feature as drafts). */
+class AiSubjectsDto {
+    subject;
+    goal;
+}
+exports.AiSubjectsDto = AiSubjectsDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiSubjectsDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AiSubjectsDto.prototype, "goal", void 0);
+/** MS10: edit a broadcast (draft/scheduled/paused only — the
+ * service enforces the status matrix and reuses create-time
+ * validation; null clears templateId / htmlBody / the schedule
+ * exactly where create semantics allow it). */
+class UpdateBroadcastDto {
+    name;
+    subject;
+    body;
+    htmlBody;
+    templateId;
+    whatsappTemplateId;
+    templateParams;
+    // Shape-only typing; values validated by the shared service
+    // validator (same as create).
+    templateComponents;
+    scheduledAt;
+}
+exports.UpdateBroadcastDto = UpdateBroadcastDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateBroadcastDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateBroadcastDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateBroadcastDto.prototype, "body", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateBroadcastDto.prototype, "htmlBody", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateBroadcastDto.prototype, "templateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateBroadcastDto.prototype, "whatsappTemplateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], UpdateBroadcastDto.prototype, "templateParams", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], UpdateBroadcastDto.prototype, "templateComponents", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], UpdateBroadcastDto.prototype, "scheduledAt", void 0);
+/** MS2: per-org messaging consent settings. The service re-validates
+ * strictly (cap integer 0..20); these decorators are the first gate. */
+class UpdateMessagingSettingDto {
+    frequencyCapPerDay;
+    whatsappOptInRequired;
+    // MS5: broadcast link tracking (UTM + signed redirect wrap).
+    linkTrackingEnabled;
+}
+exports.UpdateMessagingSettingDto = UpdateMessagingSettingDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(20),
+    __metadata("design:type", Number)
+], UpdateMessagingSettingDto.prototype, "frequencyCapPerDay", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateMessagingSettingDto.prototype, "whatsappOptInRequired", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateMessagingSettingDto.prototype, "linkTrackingEnabled", void 0);
+/** MS5: test-send a broadcast / template to one address. */
+class TestSendDto {
+    to;
+}
+exports.TestSendDto = TestSendDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TestSendDto.prototype, "to", void 0);
+/** MS5: advisory compose check (never blocks a send). */
+class ComposeCheckDto {
+    channel;
+    subject;
+    body;
+}
+exports.ComposeCheckDto = ComposeCheckDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ComposeCheckDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ComposeCheckDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ComposeCheckDto.prototype, "body", void 0);
+class AddPreferenceDto {
+    channel;
+    address;
+    status;
+    note;
+}
+exports.AddPreferenceDto = AddPreferenceDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddPreferenceDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddPreferenceDto.prototype, "address", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddPreferenceDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddPreferenceDto.prototype, "note", void 0);
+class ImportPreferencesDto {
+    channel;
+    addresses;
+}
+exports.ImportPreferencesDto = ImportPreferencesDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ImportPreferencesDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], ImportPreferencesDto.prototype, "addresses", void 0);
+/** CX10: preview the audience of a not-yet-created broadcast.
+ * Same fields the create form holds; the response carries counts
+ * + a masked sample only (never full addresses, never ids).
+ * MS3 adds the new audience fields; MS4 adds `body` (the form's
+ * current message text, used only for the SMS-parts cost
+ * estimate — never stored). */
+class PreviewBroadcastDto {
+    channel;
+    audienceType;
+    audienceStage;
+    audienceSegment;
+    excludePreviousRecipients;
+    // Owner CX10 variant fields (his series).
+    excludePastDays;
+    excludeOptOut;
+    audienceDefinition;
+    audienceSavedId;
+    audienceCsv;
+    body;
+}
+exports.PreviewBroadcastDto = PreviewBroadcastDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "audienceType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "audienceStage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "audienceSegment", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PreviewBroadcastDto.prototype, "excludePreviousRecipients", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], PreviewBroadcastDto.prototype, "excludePastDays", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PreviewBroadcastDto.prototype, "excludeOptOut", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], PreviewBroadcastDto.prototype, "audienceDefinition", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "audienceSavedId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], PreviewBroadcastDto.prototype, "audienceCsv", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PreviewBroadcastDto.prototype, "body", void 0);
+// ---------- MS3: saved audiences ----------
+class CreateSavedAudienceDto {
+    name;
+    // Validated strictly by audience-rules in the service.
+    definition;
+}
+exports.CreateSavedAudienceDto = CreateSavedAudienceDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateSavedAudienceDto.prototype, "name", void 0);
+class UpdateSavedAudienceDto {
+    name;
+    definition;
+}
+exports.UpdateSavedAudienceDto = UpdateSavedAudienceDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateSavedAudienceDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], UpdateSavedAudienceDto.prototype, "definition", void 0);
+// ---------- MS4: per-tenant senders ----------
+class UpdateTenantEmailDto {
+    smtpHost;
+    smtpPort;
+    smtpUser;
+    smtpPass;
+    fromAddress;
+    fromName;
+    dkimSelector;
+    clear;
+}
+exports.UpdateTenantEmailDto = UpdateTenantEmailDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "smtpHost", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(65535),
+    __metadata("design:type", Number)
+], UpdateTenantEmailDto.prototype, "smtpPort", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "smtpUser", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "smtpPass", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "fromAddress", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "fromName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantEmailDto.prototype, "dkimSelector", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateTenantEmailDto.prototype, "clear", void 0);
+class UpdateTenantSmsDto {
+    smsGateway;
+    smsApiKey;
+    smsSenderId;
+    smsApiUrl;
+    clear;
+}
+exports.UpdateTenantSmsDto = UpdateTenantSmsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantSmsDto.prototype, "smsGateway", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantSmsDto.prototype, "smsApiKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantSmsDto.prototype, "smsSenderId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateTenantSmsDto.prototype, "smsApiUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateTenantSmsDto.prototype, "clear", void 0);
+class UpdateSenderRatesDto {
+    smsCostPerPartMinor;
+    whatsappCostPerMessageMinor;
+    emailCostPerMessageMinor;
+}
+exports.UpdateSenderRatesDto = UpdateSenderRatesDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Object)
+], UpdateSenderRatesDto.prototype, "smsCostPerPartMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Object)
+], UpdateSenderRatesDto.prototype, "whatsappCostPerMessageMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Object)
+], UpdateSenderRatesDto.prototype, "emailCostPerMessageMinor", void 0);
+class SendTestEmailDto {
+    to;
+}
+exports.SendTestEmailDto = SendTestEmailDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SendTestEmailDto.prototype, "to", void 0);
+class CreateWorkflowDto {
+    name;
+    trigger;
+    conditions;
+    steps;
+    // Workflows W6 governance (settable at create too).
+    cooldownMinutes;
+    dailyRunCap;
+}
+exports.CreateWorkflowDto = CreateWorkflowDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateWorkflowDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateWorkflowDto.prototype, "trigger", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], CreateWorkflowDto.prototype, "conditions", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], CreateWorkflowDto.prototype, "steps", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateWorkflowDto.prototype, "cooldownMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], CreateWorkflowDto.prototype, "dailyRunCap", void 0);
+class UpdateWorkflowDto {
+    name;
+    enabled;
+    // Workflows W1: the definition itself is editable now,
+    // validated exactly like create.
+    trigger;
+    conditions;
+    steps;
+    // Workflows W6 governance.
+    cooldownMinutes;
+    dailyRunCap;
+}
+exports.UpdateWorkflowDto = UpdateWorkflowDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateWorkflowDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateWorkflowDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateWorkflowDto.prototype, "trigger", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Object)
+], UpdateWorkflowDto.prototype, "conditions", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], UpdateWorkflowDto.prototype, "steps", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], UpdateWorkflowDto.prototype, "cooldownMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], UpdateWorkflowDto.prototype, "dailyRunCap", void 0);
+/** Owner-series alias: his controller validates preview requests
+ * with this name; same fields as PreviewBroadcastDto. */
+class PreviewAudienceDto extends PreviewBroadcastDto {
+}
+exports.PreviewAudienceDto = PreviewAudienceDto;
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL21lc3NhZ2luZy9tZXNzYWdpbmcuZHRvLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7OztBQUFBLHFEQUE0RjtBQUU1RixNQUFhLGlCQUFpQjtJQUNoQixJQUFJLENBQVU7SUFDZCxPQUFPLENBQVU7SUFDSCxPQUFPLENBQVU7SUFDL0IsSUFBSSxDQUFVO0lBQzFCLGlFQUFpRTtJQUN2QyxRQUFRLENBQVU7Q0FDN0M7QUFQRCw4Q0FPQztBQU5hO0lBQVgsSUFBQSwwQkFBUSxHQUFFOzsrQ0FBZTtBQUNkO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztrREFBa0I7QUFDSDtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2tEQUFrQjtBQUMvQjtJQUFYLElBQUEsMEJBQVEsR0FBRTs7K0NBQWU7QUFFQTtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O21EQUFtQjtBQUU5QyxNQUFhLGlCQUFpQjtJQUNGLElBQUksQ0FBVTtJQUNkLE9BQU8sQ0FBVTtJQUNqQixJQUFJLENBQVU7SUFDZCxRQUFRLENBQVU7Q0FDN0M7QUFMRCw4Q0FLQztBQUoyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OytDQUFlO0FBQ2Q7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztrREFBa0I7QUFDakI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzsrQ0FBZTtBQUNkO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQW1CO0FBRTlDLE1BQWEsa0JBQWtCO0lBQ2pCLElBQUksQ0FBVTtJQUNkLE9BQU8sQ0FBVTtJQUNILFVBQVUsQ0FBVTtJQUNwQixPQUFPLENBQVU7SUFDakIsSUFBSSxDQUFVO0lBQ3hDLDJEQUEyRDtJ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LDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7OzBEQUEwQjtBQUN6QjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O3NEQUE2QjtBQUVyRCxNQUFhLGlCQUFpQjtJQUNGLElBQUksQ0FBVTtJQUNiLE9BQU8sQ0FBVztJQUM3Qyx1REFBdUQ7SUFDdkQsaUNBQWlDO0lBQ1AsT0FBTyxDQUFVO0lBQzdCLFVBQVUsQ0FBVztJQUNWLEtBQUssQ0FBUztJQUN2QywyQkFBMkI7SUFDSixlQUFlLENBQVU7SUFDekIsV0FBVyxDQUFpQjtDQUNwRDtBQVhELDhDQVdDO0FBVjJCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7K0NBQWU7QUFDYjtJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O2tEQUFtQjtBQUduQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2tEQUFrQjtBQUM3QjtJQUFiLElBQUEsNEJBQVUsR0FBRTs7cURBQXNCO0FBQ1Y7SUFBeEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx5QkFBTyxHQUFFOztnREFBZTtBQUVoQjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7OzBEQUEwQjtBQUN6QjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O3NEQUE2QjtBQUdyRDt5REFDeUQ7QUFDekQsTUFBYSxrQkFBbUIsU0FBUSxtQkFBbUI7Q0FBRztBQUE5RCxnREFBOEQiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL21lc3NhZ2luZy9tZXNzYWdpbmcuZHRvLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IElzQXJyYXksIElzQm9vbGVhbiwgSXNJbnQsIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXgsIE1pbiB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcblxuZXhwb3J0IGNsYXNzIENyZWF0ZVRlbXBsYXRlRHRvIHtcbiAgQElzU3RyaW5nKCkgbmFtZSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgY2hhbm5lbCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzdWJqZWN0Pzogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBib2R5ITogc3RyaW5nO1xuICAvLyBNUzU6IG9wdGlvbmFsIEhUTUwgcGFydCAoZW1haWwgb25seTsgdGhlIHNlcnZpY2UgNDAwcyBvbiBzbXMpLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGh0bWxCb2R5Pzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIFVwZGF0ZVRlbXBsYXRlRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBuYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHN1YmplY3Q/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYm9keT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBodG1sQm9keT86IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBDcmVhdGVCcm9hZGNhc3REdG8ge1xuICBASXNTdHJpbmcoKSBuYW1lITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBjaGFubmVsITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHRlbXBsYXRlSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc3ViamVjdD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBib2R5Pzogc3RyaW5nO1xuICAvLyBNUzU6IG9wdGlvbmFsIEhUTUwgcGFydCAoZW1haWwgb25seTsgdGhlIHNlcnZpY2UgNDAwcyBvblxuICAvLyBzbXMvd2hhdHNhcHApLiBGcm9tIGEgdGVtcGxhdGUsIGh0bWxCb2R5IGNvbWVzIGZyb20gdGhlXG4gIC8vIHRlbXBsYXRlIGluc3RlYWQuXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgaHRtbEJvZHk/OiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIGF1ZGllbmNlVHlwZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhdWRpZW5jZVN0YWdlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHdoYXRzYXBwVGVtcGxhdGVJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIHRlbXBsYXRlUGFyYW1zPzogc3RyaW5nW107XG4gIC8vIE1TNjogcmljaCBXaGF0c0FwcCB0ZW1wbGF0ZSBwYXJhbWV0ZXJzICh7IGhlYWRlck1lZGlhVXJsPyxcbiAgLy8gaGVhZGVyVGV4dFBhcmFtcz8sIGJ1dHRvblBhcmFtcz8gfSkg4oCUIHNoYXBlLW9ubHkgdHlwaW5nIGhlcmU7XG4gIC8vIHRoZSBWQUxVRVMgYXJlIHZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSAoNDAwIG9uIGEgbm9uLWh0dHAocylcbiAgLy8gaGVhZGVyTWVkaWFVcmwsIGEgYmFkIGJ1dHRvbiBpbmRleC9zdWJUeXBlLCBvciB3aGVuIHRoZVxuICAvLyBjaGFubmVsIGlzIG5vdCB3aGF0c2FwcCkuXG4gIEBJc09wdGlvbmFsKCkgdGVtcGxhdGVDb21wb25lbnRzPzogeyBoZWFkZXJNZWRpYVVybD86IHN0cmluZzsgaGVhZGVyVGV4dFBhcmFtcz86IHN0cmluZ1tdOyBidXR0b25QYXJhbXM/OiB7IGluZGV4OiBudW1iZXI7IHN1YlR5cGU6IFwidXJsXCIgfCBcInF1aWNrX3JlcGx5XCI7IHRleHQ/OiBzdHJpbmc7IHBheWxvYWQ/OiBzdHJpbmcgfVtdIH07XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYXVkaWVuY2VTZWdtZW50Pzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIGFiVGVzdD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYWJTdWJqZWN0Pzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGFiQm9keT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhYldoYXRzYXBwVGVtcGxhdGVJZD86IHN0cmluZztcbiAgLy8gQ1gxMDogZHJvcCByZWNpcGllbnRzIHdobyBhbHJlYWR5IGdvdCBhIGNvbmZpcm1lZCBkZWxpdmVyeVxuICAvLyBmcm9tIGFuIGVhcmxpZXIgYnJvYWRjYXN0IG9mIHRoaXMgb3JnIChBL0IgdmFyaWFudHMgaW5oZXJpdCkuXG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGV4Y2x1ZGVQcmV2aW91c1JlY2lwaWVudHM/OiBib29sZWFuO1xuICAvLyBPd25lciBDWDEwIHZhcmlhbnQgKGhpcyBzZXJpZXMpOiB0aW1lLXdpbmRvdyArIG9wdC1vdXQgZXhjbHVzaW9ucy5cbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBleGNsdWRlUGFzdERheXM/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGV4Y2x1ZGVPcHRPdXQ/OiBib29sZWFuO1xuICAvLyBNUzE6IGNyZWF0ZSB0aGUgYnJvYWRjYXN0IGFscmVhZHkgc2NoZWR1bGVkIChmdXR1cmUgSVNPIHRpbWUpLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHNjaGVkdWxlZEF0Pzogc3RyaW5nO1xuICAvLyBNUzM6IHRoZSBuZXcgYXVkaWVuY2UgdHlwZXMuIGF1ZGllbmNlRGVmaW5pdGlvbiBpcyB2YWxpZGF0ZWRcbiAgLy8gc3RyaWN0bHkgYnkgdGhlIHB1cmUgYXVkaWVuY2UtcnVsZXMgbW9kdWxlIGluIHRoZSBzZXJ2aWNlO1xuICAvLyBhdWRpZW5jZUNzdiBhY2NlcHRzIGEgcGFzdGVkIHN0cmluZyBPUiBhIHN0cmluZyBhcnJheS5cbiAgQElzT3B0aW9uYWwoKSBhdWRpZW5jZURlZmluaXRpb24/OiB1bmtub3duO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGF1ZGllbmNlU2F2ZWRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBhdWRpZW5jZUNzdj86IHVua25vd247XG4gIC8vIE1TODogcmVjdXJyZW5jZSAoeyBmcmVxLCBpbnRlcnZhbCwgd2Vla2RheXM/LCBlbmRzQXQ/IH0pIOKAlFxuICAvLyBzaGFwZS1vbmx5IHR5cGluZyBoZXJlOyB0aGUgVkFMVUVTIGFyZSB2YWxpZGF0ZWQgc3RyaWN0bHkgYnlcbiAgLy8gbWVzc2FnaW5nL3JlY3VycmVuY2UudHMgaW4gdGhlIHNlcnZpY2UgKDQwMCBvbiBiYWQgc2hhcGUpLlxuICBASXNPcHRpb25hbCgpIHJlY3VycmVuY2U/OiB1bmtub3duO1xufVxuXG4vKiogTVMxOiBzZXQvbW92ZSBhIHNjaGVkdWxlIChJU08gdGltZSksIG9yIGNhbmNlbCBpdCAobnVsbCkuICovXG5leHBvcnQgY2xhc3MgU2NoZWR1bGVCcm9hZGNhc3REdG8ge1xuICBASXNPcHRpb25hbCgpIHNjaGVkdWxlZEF0Pzogc3RyaW5nIHwgbnVsbDtcbiAgLy8gTVM4OiB3aGVuIHByZXNlbnQsIHNldC9yZXBsYWNlIHRoZSByZWN1cnJlbmNlIGFsb25nc2lkZSB0aGVcbiAgLy8gc2NoZWR1bGU7IGV4cGxpY2l0IG51bGwgY2xlYXJzIGl0OyBhYnNlbnQgbGVhdmVzIGl0IGFzLWlzLlxuICBASXNPcHRpb25hbCgpIHJlY3VycmVuY2U/OiB1bmtub3duO1xufVxuXG4vKiogTVM4OiBpbnN0YWxsIGEgbWVzc2FnaW5nIGpvdXJuZXkgcHJlc2V0IChvcHRpb25hbCByZW5hbWUpLiAqL1xuZXhwb3J0IGNsYXNzIEluc3RhbGxKb3VybmV5UHJlc2V0RHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBuYW1lPzogc3RyaW5nO1xufVxuXG4vKiogTVM5OiBBSSBjb3B5IGRyYWZ0IHJlcXVlc3QuIERyYWZ0cyBhcmUgUkVUVVJORUQgT05MWSDigJQgdGhlXG4gKiBEVE8gaGFzIG5vIHNhdmUvc2VuZCB0YXJnZXQgYnkgZGVzaWduLiAqL1xuZXhwb3J0IGNsYXNzIEFpRHJhZnREdG8ge1xuICBASXNTdHJpbmcoKSBjaGFubmVsITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBnb2FsITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHByb2R1Y3RJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhdWRpZW5jZUhpbnQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgbGFuZ3VhZ2U/OiBzdHJpbmc7XG59XG5cbi8qKiBNUzk6IEFJIHN1YmplY3QtbGluZSB2YXJpYW50cyAoc2FtZSB1c2FnZSBmZWF0dXJlIGFzIGRyYWZ0cykuICovXG5leHBvcnQgY2xhc3MgQWlTdWJqZWN0c0R0byB7XG4gIEBJc1N0cmluZygpIHN1YmplY3QhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZ29hbD86IHN0cmluZztcbn1cblxuLyoqIE1TMTA6IGVkaXQgYSBicm9hZGNhc3QgKGRyYWZ0L3NjaGVkdWxlZC9wYXVzZWQgb25seSDigJQgdGhlXG4gKiBzZXJ2aWNlIGVuZm9yY2VzIHRoZSBzdGF0dXMgbWF0cml4IGFuZCByZXVzZXMgY3JlYXRlLXRpbWVcbiAqIHZhbGlkYXRpb247IG51bGwgY2xlYXJzIHRlbXBsYXRlSWQgLyBodG1sQm9keSAvIHRoZSBzY2hlZHVsZVxuICogZXhhY3RseSB3aGVyZSBjcmVhdGUgc2VtYW50aWNzIGFsbG93IGl0KS4gKi9cbmV4cG9ydCBjbGFzcyBVcGRhdGVCcm9hZGNhc3REdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc3ViamVjdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYm9keT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBodG1sQm9keT86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdGVtcGxhdGVJZD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgd2hhdHNhcHBUZW1wbGF0ZUlkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgdGVtcGxhdGVQYXJhbXM/OiBzdHJpbmdbXTtcbiAgLy8gU2hhcGUtb25seSB0eXBpbmc7IHZhbHVlcyB2YWxpZGF0ZWQgYnkgdGhlIHNoYXJlZCBzZXJ2aWNlXG4gIC8vIHZhbGlkYXRvciAoc2FtZSBhcyBjcmVhdGUpLlxuICBASXNPcHRpb25hbCgpIHRlbXBsYXRlQ29tcG9uZW50cz86IHVua25vd247XG4gIEBJc09wdGlvbmFsKCkgc2NoZWR1bGVkQXQ/OiBzdHJpbmcgfCBudWxsO1xufVxuXG4vKiogTVMyOiBwZXItb3JnIG1lc3NhZ2luZyBjb25zZW50IHNldHRpbmdzLiBUaGUgc2VydmljZSByZS12YWxpZGF0ZXNcbiAqIHN0cmljdGx5IChjYXAgaW50ZWdlciAwLi4yMCk7IHRoZXNlIGRlY29yYXRvcnMgYXJlIHRoZSBmaXJzdCBnYXRlLiAqL1xuZXhwb3J0IGNsYXNzIFVwZGF0ZU1lc3NhZ2luZ1NldHRpbmdEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCgyMCkgZnJlcXVlbmN5Q2FwUGVyRGF5PzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSB3aGF0c2FwcE9wdEluUmVxdWlyZWQ/OiBib29sZWFuO1xuICAvLyBNUzU6IGJyb2FkY2FzdCBsaW5rIHRyYWNraW5nIChVVE0gKyBzaWduZWQgcmVkaXJlY3Qgd3JhcCkuXG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGxpbmtUcmFja2luZ0VuYWJsZWQ/OiBib29sZWFuO1xufVxuXG4vKiogTVM1OiB0ZXN0LXNlbmQgYSBicm9hZGNhc3QgLyB0ZW1wbGF0ZSB0byBvbmUgYWRkcmVzcy4gKi9cbmV4cG9ydCBjbGFzcyBUZXN0U2VuZER0byB7XG4gIEBJc1N0cmluZygpIHRvITogc3RyaW5nO1xufVxuXG4vKiogTVM1OiBhZHZpc29yeSBjb21wb3NlIGNoZWNrIChuZXZlciBibG9ja3MgYSBzZW5kKS4gKi9cbmV4cG9ydCBjbGFzcyBDb21wb3NlQ2hlY2tEdG8ge1xuICBASXNTdHJpbmcoKSBjaGFubmVsITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHN1YmplY3Q/OiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIGJvZHkhOiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBBZGRQcmVmZXJlbmNlRHRvIHtcbiAgQElzU3RyaW5nKCkgY2hhbm5lbCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgYWRkcmVzcyE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzdGF0dXM/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgbm90ZT86IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIEltcG9ydFByZWZlcmVuY2VzRHRvIHtcbiAgQElzU3RyaW5nKCkgY2hhbm5lbCE6IHN0cmluZztcbiAgQElzQXJyYXkoKSBhZGRyZXNzZXMhOiBzdHJpbmdbXTtcbn1cblxuLyoqIENYMTA6IHByZXZpZXcgdGhlIGF1ZGllbmNlIG9mIGEgbm90LXlldC1jcmVhdGVkIGJyb2FkY2FzdC5cbiAqIFNhbWUgZmllbGRzIHRoZSBjcmVhdGUgZm9ybSBob2xkczsgdGhlIHJlc3BvbnNlIGNhcnJpZXMgY291bnRzXG4gKiArIGEgbWFza2VkIHNhbXBsZSBvbmx5IChuZXZlciBmdWxsIGFkZHJlc3NlcywgbmV2ZXIgaWRzKS5cbiAqIE1TMyBhZGRzIHRoZSBuZXcgYXVkaWVuY2UgZmllbGRzOyBNUzQgYWRkcyBgYm9keWAgKHRoZSBmb3JtJ3NcbiAqIGN1cnJlbnQgbWVzc2FnZSB0ZXh0LCB1c2VkIG9ubHkgZm9yIHRoZSBTTVMtcGFydHMgY29zdFxuICogZXN0aW1hdGUg4oCUIG5ldmVyIHN0b3JlZCkuICovXG5leHBvcnQgY2xhc3MgUHJldmlld0Jyb2FkY2FzdER0byB7XG4gIEBJc1N0cmluZygpIGNoYW5uZWwhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIGF1ZGllbmNlVHlwZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhdWRpZW5jZVN0YWdlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGF1ZGllbmNlU2VnbWVudD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgZXhjbHVkZVByZXZpb3VzUmVjaXBpZW50cz86IGJvb2xlYW47XG4gIC8vIE93bmVyIENYMTAgdmFyaWFudCBmaWVsZHMgKGhpcyBzZXJpZXMpLlxuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIGV4Y2x1ZGVQYXN0RGF5cz86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgZXhjbHVkZU9wdE91dD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgYXVkaWVuY2VEZWZpbml0aW9uPzogdW5rbm93bjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBhdWRpZW5jZVNhdmVkSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgYXVkaWVuY2VDc3Y/OiB1bmtub3duO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGJvZHk/OiBzdHJpbmc7XG59XG5cbi8vIC0tLS0tLS0tLS0gTVMzOiBzYXZlZCBhdWRpZW5jZXMgLS0tLS0tLS0tLVxuZXhwb3J0IGNsYXNzIENyZWF0ZVNhdmVkQXVkaWVuY2VEdG8ge1xuICBASXNTdHJpbmcoKSBuYW1lITogc3RyaW5nO1xuICAvLyBWYWxpZGF0ZWQgc3RyaWN0bHkgYnkgYXVkaWVuY2UtcnVsZXMgaW4gdGhlIHNlcnZpY2UuXG4gIGRlZmluaXRpb24hOiB1bmtub3duO1xufVxuZXhwb3J0IGNsYXNzIFVwZGF0ZVNhdmVkQXVkaWVuY2VEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgZGVmaW5pdGlvbj86IHVua25vd247XG59XG5cbi8vIC0tLS0tLS0tLS0gTVM0OiBwZXItdGVuYW50IHNlbmRlcnMgLS0tLS0tLS0tLVxuZXhwb3J0IGNsYXNzIFVwZGF0ZVRlbmFudEVtYWlsRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzbXRwSG9zdD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDEpIEBNYXgoNjU1MzUpIHNtdHBQb3J0PzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHNtdHBVc2VyPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHNtdHBQYXNzPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGZyb21BZGRyZXNzPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGZyb21OYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGRraW1TZWxlY3Rvcj86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgY2xlYXI/OiBib29sZWFuO1xufVxuZXhwb3J0IGNsYXNzIFVwZGF0ZVRlbmFudFNtc0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc21zR2F0ZXdheT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzbXNBcGlLZXk/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc21zU2VuZGVySWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc21zQXBpVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBjbGVhcj86IGJvb2xlYW47XG59XG5leHBvcnQgY2xhc3MgVXBkYXRlU2VuZGVyUmF0ZXNEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgc21zQ29zdFBlclBhcnRNaW5vcj86IG51bWJlciB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigwKSB3aGF0c2FwcENvc3RQZXJNZXNzYWdlTWlub3I/OiBudW1iZXIgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgZW1haWxDb3N0UGVyTWVzc2FnZU1pbm9yPzogbnVtYmVyIHwgbnVsbDtcbn1cbmV4cG9ydCBjbGFzcyBTZW5kVGVzdEVtYWlsRHRvIHtcbiAgQElzU3RyaW5nKCkgdG8hOiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgQ3JlYXRlV29ya2Zsb3dEdG8ge1xuICBASXNTdHJpbmcoKSBuYW1lITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSB0cmlnZ2VyITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIGNvbmRpdGlvbnM/OiB1bmtub3duO1xuICBASXNBcnJheSgpIHN0ZXBzITogYW55W107XG4gIC8vIFdvcmtmbG93cyBXNiBnb3Zlcm5hbmNlIChzZXR0YWJsZSBhdCBjcmVhdGUgdG9vKS5cbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBjb29sZG93bk1pbnV0ZXM/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgZGFpbHlSdW5DYXA/OiBudW1iZXIgfCBudWxsO1xufVxuZXhwb3J0IGNsYXNzIFVwZGF0ZVdvcmtmbG93RHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBuYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBlbmFibGVkPzogYm9vbGVhbjtcbiAgLy8gV29ya2Zsb3dzIFcxOiB0aGUgZGVmaW5pdGlvbiBpdHNlbGYgaXMgZWRpdGFibGUgbm93LFxuICAvLyB2YWxpZGF0ZWQgZXhhY3RseSBsaWtlIGNyZWF0ZS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB0cmlnZ2VyPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIGNvbmRpdGlvbnM/OiB1bmtub3duO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgc3RlcHM/OiBhbnlbXTtcbiAgLy8gV29ya2Zsb3dzIFc2IGdvdmVybmFuY2UuXG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgY29vbGRvd25NaW51dGVzPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIGRhaWx5UnVuQ2FwPzogbnVtYmVyIHwgbnVsbDtcbn1cblxuLyoqIE93bmVyLXNlcmllcyBhbGlhczogaGlzIGNvbnRyb2xsZXIgdmFsaWRhdGVzIHByZXZpZXcgcmVxdWVzdHNcbiAqIHdpdGggdGhpcyBuYW1lOyBzYW1lIGZpZWxkcyBhcyBQcmV2aWV3QnJvYWRjYXN0RHRvLiAqL1xuZXhwb3J0IGNsYXNzIFByZXZpZXdBdWRpZW5jZUR0byBleHRlbmRzIFByZXZpZXdCcm9hZGNhc3REdG8ge31cbiJdLCJ2ZXJzaW9uIjozfQ==

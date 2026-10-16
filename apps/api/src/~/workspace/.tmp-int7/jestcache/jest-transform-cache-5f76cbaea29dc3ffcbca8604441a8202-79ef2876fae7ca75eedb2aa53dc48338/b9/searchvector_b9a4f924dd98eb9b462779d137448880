@@ -1,0 +1,49 @@
+f018d792f5d696a425c731e328a4e473
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.searchVectorExpression = searchVectorExpression;
+exports.refreshProductSearchVector = refreshProductSearchVector;
+exports.refreshOrgSearchVectors = refreshOrgSearchVectors;
+exports.refreshCategorySearchVectors = refreshCategorySearchVectors;
+exports.refreshBrandSearchVectors = refreshBrandSearchVectors;
+const db_1 = require("@repo/db");
+/**
+ * AB6 (AX11) — Product.searchVector maintenance.
+ *
+ * The SET expression below EXACTLY mirrors the backfill in
+ * migration 20261017060000_ab6_discovery_content:
+ *   weight A: name + nameEn, product SKU + variant SKUs
+ *             (string_agg subquery over ProductVariant)
+ *   weight B: structured Category name (subquery) + legacy
+ *             category string + Brand name (subquery)
+ *   weight C: description + descriptionEn
+ * Config 'simple' throughout (Bengali + English token matching;
+ * no stemming is claimed). The Product table is aliased "p".
+ *
+ * These functions THROW on error — every caller wraps them
+ * failure-isolated (a search-vector refresh must never fail the
+ * merchant's own product write).
+ */
+function searchVectorExpression() {
+    return db_1.Prisma.sql `setweight(to_tsvector('simple', coalesce(p."name", '') || ' ' || coalesce(p."nameEn", '')), 'A') || setweight(to_tsvector('simple', coalesce(p."sku", '') || ' ' || coalesce((SELECT string_agg(v."sku", ' ') FROM "ProductVariant" v WHERE v."productId" = p."id" AND v."sku" IS NOT NULL), '')), 'A') || setweight(to_tsvector('simple', coalesce((SELECT c."name" FROM "Category" c WHERE c."id" = p."categoryId"), '') || ' ' || coalesce(p."category", '') || ' ' || coalesce((SELECT b."name" FROM "Brand" b WHERE b."id" = p."brandId"), '')), 'B') || setweight(to_tsvector('simple', coalesce(p."description", '') || ' ' || coalesce(p."descriptionEn", '')), 'C')`;
+}
+/** Refresh ONE product's search vector. Throws on error. */
+async function refreshProductSearchVector(prisma, productId) {
+    await prisma.$executeRaw(db_1.Prisma.sql `UPDATE "Product" p SET "searchVector" = ${searchVectorExpression()} WHERE p."id" = ${productId}`);
+}
+/** Refresh every product of an org; returns the affected count. Throws on error. */
+async function refreshOrgSearchVectors(prisma, orgId) {
+    const n = await prisma.$executeRaw(db_1.Prisma.sql `UPDATE "Product" p SET "searchVector" = ${searchVectorExpression()} WHERE p."organizationId" = ${orgId}`);
+    return Number(n ?? 0);
+}
+/** Refresh every product linked to a category; returns the affected count. Throws on error. */
+async function refreshCategorySearchVectors(prisma, categoryId) {
+    const n = await prisma.$executeRaw(db_1.Prisma.sql `UPDATE "Product" p SET "searchVector" = ${searchVectorExpression()} WHERE p."categoryId" = ${categoryId}`);
+    return Number(n ?? 0);
+}
+/** Refresh every product linked to a brand; returns the affected count. Throws on error. */
+async function refreshBrandSearchVectors(prisma, brandId) {
+    const n = await prisma.$executeRaw(db_1.Prisma.sql `UPDATE "Product" p SET "searchVector" = ${searchVectorExpression()} WHERE p."brandId" = ${brandId}`);
+    return Number(n ?? 0);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3Byb2R1Y3RzL3NlYXJjaC12ZWN0b3IudHMiLCJtYXBwaW5ncyI6Ijs7QUFtQkEsd0RBRUM7QUFHRCxnRUFJQztBQUdELDBEQUtDO0FBR0Qsb0VBS0M7QUFHRCw4REFLQztBQXBERCxpQ0FBa0M7QUFFbEM7Ozs7Ozs7Ozs7Ozs7Ozs7R0FnQkc7QUFDSCxTQUFnQixzQkFBc0I7SUFDcEMsT0FBTyxXQUFNLENBQUMsR0FBRyxDQUFBLDhvQkFBOG9CLENBQUM7QUFDbHFCLENBQUM7QUFFRCw0REFBNEQ7QUFDckQsS0FBSyxVQUFVLDBCQUEwQixDQUFDLE1BQVcsRUFBRSxTQUFpQjtJQUM3RSxNQUFNLE1BQU0sQ0FBQyxXQUFXLENBQ3RCLFdBQU0sQ0FBQyxHQUFHLENBQUEsMkNBQTJDLHNCQUFzQixFQUFFLG1CQUFtQixTQUFTLEVBQUUsQ0FDNUcsQ0FBQztBQUNKLENBQUM7QUFFRCxvRkFBb0Y7QUFDN0UsS0FBSyxVQUFVLHVCQUF1QixDQUFDLE1BQVcsRUFBRSxLQUFhO0lBQ3RFLE1BQU0sQ0FBQyxHQUFHLE1BQU0sTUFBTSxDQUFDLFdBQVcsQ0FDaEMsV0FBTSxDQUFDLEdBQUcsQ0FBQSwyQ0FBMkMsc0JBQXNCLEVBQUUsK0JBQStCLEtBQUssRUFBRSxDQUNwSCxDQUFDO0lBQ0YsT0FBTyxNQUFNLENBQUMsQ0FBQyxJQUFJLENBQUMsQ0FBQyxDQUFDO0FBQ3hCLENBQUM7QUFFRCwrRkFBK0Y7QUFDeEYsS0FBSyxVQUFVLDRCQUE0QixDQUFDLE1BQVcsRUFBRSxVQUFrQjtJQUNoRixNQUFNLENBQUMsR0FBRyxNQUFNLE1BQU0sQ0FBQyxXQUFXLENBQ2hDLFdBQU0sQ0FBQyxHQUFHLENBQUEsMkNBQTJDLHNCQUFzQixFQUFFLDJCQUEyQixVQUFVLEVBQUUsQ0FDckgsQ0FBQztJQUNGLE9BQU8sTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQztBQUN4QixDQUFDO0FBRUQsNEZBQTRGO0FBQ3JGLEtBQUssVUFBVSx5QkFBeUIsQ0FBQyxNQUFXLEVBQUUsT0FBZTtJQUMxRSxNQUFNLENBQUMsR0FBRyxNQUFNLE1BQU0sQ0FBQyxXQUFXLENBQ2hDLFdBQU0sQ0FBQyxHQUFHLENBQUEsMkNBQTJDLHNCQUFzQixFQUFFLHdCQUF3QixPQUFPLEVBQUUsQ0FDL0csQ0FBQztJQUNGLE9BQU8sTUFBTSxDQUFDLENBQUMsSUFBSSxDQUFDLENBQUMsQ0FBQztBQUN4QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9wcm9kdWN0cy9zZWFyY2gtdmVjdG9yLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IFByaXNtYSB9IGZyb20gXCJAcmVwby9kYlwiO1xuXG4vKipcbiAqIEFCNiAoQVgxMSkg4oCUIFByb2R1Y3Quc2VhcmNoVmVjdG9yIG1haW50ZW5hbmNlLlxuICpcbiAqIFRoZSBTRVQgZXhwcmVzc2lvbiBiZWxvdyBFWEFDVExZIG1pcnJvcnMgdGhlIGJhY2tmaWxsIGluXG4gKiBtaWdyYXRpb24gMjAyNjEwMTcwNjAwMDBfYWI2X2Rpc2NvdmVyeV9jb250ZW50OlxuICogICB3ZWlnaHQgQTogbmFtZSArIG5hbWVFbiwgcHJvZHVjdCBTS1UgKyB2YXJpYW50IFNLVXNcbiAqICAgICAgICAgICAgIChzdHJpbmdfYWdnIHN1YnF1ZXJ5IG92ZXIgUHJvZHVjdFZhcmlhbnQpXG4gKiAgIHdlaWdodCBCOiBzdHJ1Y3R1cmVkIENhdGVnb3J5IG5hbWUgKHN1YnF1ZXJ5KSArIGxlZ2FjeVxuICogICAgICAgICAgICAgY2F0ZWdvcnkgc3RyaW5nICsgQnJhbmQgbmFtZSAoc3VicXVlcnkpXG4gKiAgIHdlaWdodCBDOiBkZXNjcmlwdGlvbiArIGRlc2NyaXB0aW9uRW5cbiAqIENvbmZpZyAnc2ltcGxlJyB0aHJvdWdob3V0IChCZW5nYWxpICsgRW5nbGlzaCB0b2tlbiBtYXRjaGluZztcbiAqIG5vIHN0ZW1taW5nIGlzIGNsYWltZWQpLiBUaGUgUHJvZHVjdCB0YWJsZSBpcyBhbGlhc2VkIFwicFwiLlxuICpcbiAqIFRoZXNlIGZ1bmN0aW9ucyBUSFJPVyBvbiBlcnJvciDigJQgZXZlcnkgY2FsbGVyIHdyYXBzIHRoZW1cbiAqIGZhaWx1cmUtaXNvbGF0ZWQgKGEgc2VhcmNoLXZlY3RvciByZWZyZXNoIG11c3QgbmV2ZXIgZmFpbCB0aGVcbiAqIG1lcmNoYW50J3Mgb3duIHByb2R1Y3Qgd3JpdGUpLlxuICovXG5leHBvcnQgZnVuY3Rpb24gc2VhcmNoVmVjdG9yRXhwcmVzc2lvbigpOiBQcmlzbWEuU3FsIHtcbiAgcmV0dXJuIFByaXNtYS5zcWxgc2V0d2VpZ2h0KHRvX3RzdmVjdG9yKCdzaW1wbGUnLCBjb2FsZXNjZShwLlwibmFtZVwiLCAnJykgfHwgJyAnIHx8IGNvYWxlc2NlKHAuXCJuYW1lRW5cIiwgJycpKSwgJ0EnKSB8fCBzZXR3ZWlnaHQodG9fdHN2ZWN0b3IoJ3NpbXBsZScsIGNvYWxlc2NlKHAuXCJza3VcIiwgJycpIHx8ICcgJyB8fCBjb2FsZXNjZSgoU0VMRUNUIHN0cmluZ19hZ2codi5cInNrdVwiLCAnICcpIEZST00gXCJQcm9kdWN0VmFyaWFudFwiIHYgV0hFUkUgdi5cInByb2R1Y3RJZFwiID0gcC5cImlkXCIgQU5EIHYuXCJza3VcIiBJUyBOT1QgTlVMTCksICcnKSksICdBJykgfHwgc2V0d2VpZ2h0KHRvX3RzdmVjdG9yKCdzaW1wbGUnLCBjb2FsZXNjZSgoU0VMRUNUIGMuXCJuYW1lXCIgRlJPTSBcIkNhdGVnb3J5XCIgYyBXSEVSRSBjLlwiaWRcIiA9IHAuXCJjYXRlZ29yeUlkXCIpLCAnJykgfHwgJyAnIHx8IGNvYWxlc2NlKHAuXCJjYXRlZ29yeVwiLCAnJykgfHwgJyAnIHx8IGNvYWxlc2NlKChTRUxFQ1QgYi5cIm5hbWVcIiBGUk9NIFwiQnJhbmRcIiBiIFdIRVJFIGIuXCJpZFwiID0gcC5cImJyYW5kSWRcIiksICcnKSksICdCJykgfHwgc2V0d2VpZ2h0KHRvX3RzdmVjdG9yKCdzaW1wbGUnLCBjb2FsZXNjZShwLlwiZGVzY3JpcHRpb25cIiwgJycpIHx8ICcgJyB8fCBjb2FsZXNjZShwLlwiZGVzY3JpcHRpb25FblwiLCAnJykpLCAnQycpYDtcbn1cblxuLyoqIFJlZnJlc2ggT05FIHByb2R1Y3QncyBzZWFyY2ggdmVjdG9yLiBUaHJvd3Mgb24gZXJyb3IuICovXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gcmVmcmVzaFByb2R1Y3RTZWFyY2hWZWN0b3IocHJpc21hOiBhbnksIHByb2R1Y3RJZDogc3RyaW5nKTogUHJvbWlzZTx2b2lkPiB7XG4gIGF3YWl0IHByaXNtYS4kZXhlY3V0ZVJhdyhcbiAgICBQcmlzbWEuc3FsYFVQREFURSBcIlByb2R1Y3RcIiBwIFNFVCBcInNlYXJjaFZlY3RvclwiID0gJHtzZWFyY2hWZWN0b3JFeHByZXNzaW9uKCl9IFdIRVJFIHAuXCJpZFwiID0gJHtwcm9kdWN0SWR9YCxcbiAgKTtcbn1cblxuLyoqIFJlZnJlc2ggZXZlcnkgcHJvZHVjdCBvZiBhbiBvcmc7IHJldHVybnMgdGhlIGFmZmVjdGVkIGNvdW50LiBUaHJvd3Mgb24gZXJyb3IuICovXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gcmVmcmVzaE9yZ1NlYXJjaFZlY3RvcnMocHJpc21hOiBhbnksIG9yZ0lkOiBzdHJpbmcpOiBQcm9taXNlPG51bWJlcj4ge1xuICBjb25zdCBuID0gYXdhaXQgcHJpc21hLiRleGVjdXRlUmF3KFxuICAgIFByaXNtYS5zcWxgVVBEQVRFIFwiUHJvZHVjdFwiIHAgU0VUIFwic2VhcmNoVmVjdG9yXCIgPSAke3NlYXJjaFZlY3RvckV4cHJlc3Npb24oKX0gV0hFUkUgcC5cIm9yZ2FuaXphdGlvbklkXCIgPSAke29yZ0lkfWAsXG4gICk7XG4gIHJldHVybiBOdW1iZXIobiA/PyAwKTtcbn1cblxuLyoqIFJlZnJlc2ggZXZlcnkgcHJvZHVjdCBsaW5rZWQgdG8gYSBjYXRlZ29yeTsgcmV0dXJucyB0aGUgYWZmZWN0ZWQgY291bnQuIFRocm93cyBvbiBlcnJvci4gKi9cbmV4cG9ydCBhc3luYyBmdW5jdGlvbiByZWZyZXNoQ2F0ZWdvcnlTZWFyY2hWZWN0b3JzKHByaXNtYTogYW55LCBjYXRlZ29yeUlkOiBzdHJpbmcpOiBQcm9taXNlPG51bWJlcj4ge1xuICBjb25zdCBuID0gYXdhaXQgcHJpc21hLiRleGVjdXRlUmF3KFxuICAgIFByaXNtYS5zcWxgVVBEQVRFIFwiUHJvZHVjdFwiIHAgU0VUIFwic2VhcmNoVmVjdG9yXCIgPSAke3NlYXJjaFZlY3RvckV4cHJlc3Npb24oKX0gV0hFUkUgcC5cImNhdGVnb3J5SWRcIiA9ICR7Y2F0ZWdvcnlJZH1gLFxuICApO1xuICByZXR1cm4gTnVtYmVyKG4gPz8gMCk7XG59XG5cbi8qKiBSZWZyZXNoIGV2ZXJ5IHByb2R1Y3QgbGlua2VkIHRvIGEgYnJhbmQ7IHJldHVybnMgdGhlIGFmZmVjdGVkIGNvdW50LiBUaHJvd3Mgb24gZXJyb3IuICovXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gcmVmcmVzaEJyYW5kU2VhcmNoVmVjdG9ycyhwcmlzbWE6IGFueSwgYnJhbmRJZDogc3RyaW5nKTogUHJvbWlzZTxudW1iZXI+IHtcbiAgY29uc3QgbiA9IGF3YWl0IHByaXNtYS4kZXhlY3V0ZVJhdyhcbiAgICBQcmlzbWEuc3FsYFVQREFURSBcIlByb2R1Y3RcIiBwIFNFVCBcInNlYXJjaFZlY3RvclwiID0gJHtzZWFyY2hWZWN0b3JFeHByZXNzaW9uKCl9IFdIRVJFIHAuXCJicmFuZElkXCIgPSAke2JyYW5kSWR9YCxcbiAgKTtcbiAgcmV0dXJuIE51bWJlcihuID8/IDApO1xufVxuIl0sInZlcnNpb24iOjN9

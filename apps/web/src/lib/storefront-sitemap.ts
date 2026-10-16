@@ -56,6 +56,9 @@ export function buildShopSitemapEntries(
   base: string,
   orgSlug: string,
   products: Array<{ slug?: string | null; updatedAt?: string | Date | null }>,
+  // AB6 (AX12): published blog posts — a /blog index entry is
+  // emitted only when at least one post exists.
+  blogPosts: Array<{ slug?: string | null; updatedAt?: string | Date | null }> = [],
 ): ShopSitemapEntry[] {
   const seen = new Set<string>();
   const productEntries: ShopSitemapEntry[] = [];
@@ -71,5 +74,26 @@ export function buildShopSitemapEntries(
       lastModified: valid,
     });
   }
-  return [{ url: buildSitemapUrl(base, `/shop/${orgSlug}`), lastModified: newest }, ...productEntries];
+  const blogSeen = new Set<string>();
+  const blogEntries: ShopSitemapEntry[] = [];
+  let blogNewest: Date | null = null;
+  for (const p of blogPosts) {
+    if (!p.slug || blogSeen.has(p.slug)) continue;
+    blogSeen.add(p.slug);
+    const d = p.updatedAt ? new Date(p.updatedAt) : null;
+    const valid = d && !Number.isNaN(d.getTime()) ? d : null;
+    if (valid && (!blogNewest || valid.getTime() > blogNewest.getTime())) blogNewest = valid;
+    blogEntries.push({
+      url: buildSitemapUrl(base, `/shop/${orgSlug}/blog/${encodeURIComponent(p.slug)}`),
+      lastModified: valid,
+    });
+  }
+  const entries: ShopSitemapEntry[] = [
+    { url: buildSitemapUrl(base, `/shop/${orgSlug}`), lastModified: newest },
+    ...productEntries,
+  ];
+  if (blogEntries.length > 0) {
+    entries.push({ url: buildSitemapUrl(base, `/shop/${orgSlug}/blog`), lastModified: blogNewest }, ...blogEntries);
+  }
+  return entries;
 }

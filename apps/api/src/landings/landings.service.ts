@@ -16,14 +16,31 @@ import { StorefrontService } from "../storefront/storefront.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
-import { PromotionsService, type CheckoutEvaluation } from "../commerce/promotions.service";
+import { PromotionsService, type CheckoutEvaluation, type LoyaltyRedeemInput } from "../commerce/promotions.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
+import { GiftCardsService } from "../commerce/gift-cards.service";
+import { PriceListsService, pickGroupPrice } from "../commerce/price-lists.service";
 import { serializeTaxBreakdown } from "../commerce/tax";
 import { assertPreorderLimit, preorderInfo } from "../commerce/ec24";
 import type { PromotionLine } from "../commerce/promotions";
 import { InventoryService } from "../inventory/inventory.service";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { CheckoutGuardService } from "../fraud/checkout-guard.service";
+import { normalizeDeviceHash } from "../fraud/identifier-utils";
+import { IdempotencyService } from "../fraud/idempotency.service";
+import { evaluateCodRules } from "../fraud/cod-rules";
+import { depositFor } from "../fraud/deposit";
+import { validateFieldAnswers } from "../storefront/checkout-fields";
+import { buildCheckoutTrust, termsRefFor } from "../fraud/checkout-trust";
+import { TenantPaymentsService } from "../connections/tenant-payments.service";
+import { parseBdAddress } from "../orders/bd-address";
+import { bdPhoneMatchKey } from "../orders/phone-utils";
 import { normalizeSections, validateSections } from "./sections";
+import { conversionRate, twoProportionZTest } from "./significance";
+import { displayProductDescription, displayProductName } from "../products/product-display";
+import { isOrderLimitBlocked, OrderLimitBlockedError, SHOPPER_ORDER_BLOCK_MESSAGE,} from "../common/plan-limit-checks";
+import { normalizeAttribution } from "../common/attribution.dto";
 import type {
   CreateLandingDto,
   CreateLandingVariantDto,
@@ -158,7 +175,55 @@ export class LandingsService {
     // ON4: checkout blocklist refusal. LAST param + Optional,
     // same discipline; absent keeps checkout exactly as before.
     @Optional() private readonly blockedPhones?: BlockedPhoneService,
+    // GB3 (GC8/GC9): checkout gate + idempotency replay. LAST
+    // params + Optional, same discipline; absent keeps checkout
+    // exactly as before GB3.
+    @Optional() private readonly checkoutGuard?: CheckoutGuardService,
+    @Optional() private readonly idempotency?: IdempotencyService,
+    // GC10: online-payment options + marker validation. LAST
+    // param + Optional, same discipline; absent offers none.
+    @Optional() private readonly tenantPayments?: TenantPaymentsService,
+    // AB1 (AX1): loyalty snapshot + placement-time points spend.
+    // LAST param + Optional, same discipline; absent keeps the
+    // checkout exactly as before AB1.
+    @Optional() private readonly loyalty?: LoyaltyService,
+    // AB2 (AX3): gift-card redemption resolution + placement-time
+    // balance spend. LAST param + Optional, same discipline;
+    // absent keeps the checkout exactly as before AB2.
+    @Optional() private readonly giftCards?: GiftCardsService,
+    // AB5 (AX7): B2B group price lists as a checkout PRICE
+    // SOURCE. LAST param + Optional, same discipline; absent
+    // keeps the checkout exactly as before AB5.
+    @Optional() private readonly priceLists?: PriceListsService,
   ) {}
+
+  /** GC10: failure-isolated payment options for payloads. */
+  private async paymentOptionsFor(orgId: string) {
+    if (!this.tenantPayments?.publicPaymentOptions) return { online: [] as any[] };
+    return this.tenantPayments.publicPaymentOptions(orgId).catch(() => ({ online: [] as any[] }));
+  }
+
+  /** GC10: validate an online selection (400 when not really
+   * offered); null when not selected. */
+  private async resolveOnlineSelection(orgId: string, dto: LandingOrderDto) {
+    if (!dto.onlinePayment) return null;
+    if (!this.tenantPayments?.assertPublicPaymentOption) {
+      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+    }
+    return this.tenantPayments.assertPublicPaymentOption(orgId, dto.onlinePayment);
+  }
+
+  /** AB4 (AX5b): the org's ACTIVE custom checkout-field defs,
+   * failure-isolated (a missing table reads as no defs). */
+  private async loadCheckoutFieldDefs(orgId: string): Promise<any[]> {
+    try {
+      const table = this.t("checkoutFieldDef");
+      if (!table?.findMany) return [];
+      return (await table.findMany({ where: { organizationId: orgId, active: true } }).catch(() => [])) ?? [];
+    } catch {
+      return [];
+    }
+  }
 
   private t(name: string): any {
     return (this.prisma as any)[name];
@@ -216,6 +281,30 @@ export class LandingsService {
     } catch {
       return empty;
     }
+  }
+
+  /** GB3 (GC8): terms trust for this org from the
+   * storefrontSetting + shopPage tables. Failure-isolated. */
+  private async loadTermsTrust(
+    organizationId: string,
+  ): Promise<{ required: boolean; ref: string | null; url: string | null; setting: any }> {
+    let setting: any = null;
+    let page: any = null;
+    try {
+      setting = await this.t("storefrontSetting")
+        .findFirst({ where: { organizationId } })
+        .catch(() => null);
+    } catch { setting = null; }
+    try {
+      const pTable = this.t("shopPage");
+      page = pTable?.findFirst
+        ? await pTable
+            .findFirst({ where: { organizationId, slug: "terms", published: true } })
+            .catch(() => null)
+        : null;
+    } catch { page = null; }
+    const t = termsRefFor(setting, page);
+    return { required: t.required, ref: t.ref, url: t.url, setting };
   }
 
   // ---------- EC18: delivery slots (local equivalents of the
@@ -629,19 +718,89 @@ export class LandingsService {
     const checkoutStarted = events.filter((e) => e.kind === "checkout_started").length;
     const revenue = orders.reduce((sum, o) => sum + BigInt(o.totalMinor ?? 0), 0n);
 
-    const variants = [];
+    // AB7 (AX20): per-variant conversionRate + vs-control
+    // significance (DISPLAY ONLY — serving/weights untouched).
+    // Conversions reuse the EXISTING definition above: orders
+    // attributed to the variant (landingVariantId) over its
+    // "view" events.
+    //
+    // Control rule: the variant with the MOST VIEWS is the
+    // control for significance purposes (this is independent of
+    // the isControl serving flag); ties go to the earliest
+    // created variant (variantsOf returns createdAt asc, so the
+    // first strict maximum wins). The control's own vsControl
+    // is null.
+    //
+    // Significance rule: significant = two-sided p < 0.05 AND
+    // both variants have >= 30 views. When either side has
+    // < 30 views no test is reported at all: pValue null,
+    // significant false, note "insufficient_data" — not enough
+    // data to test honestly.
+    //
+    // Winner rule (winnerId): the highest-conversionRate variant
+    // that is DISTINGUISHABLE from the control —
+    //  - a non-control variant qualifies when its vsControl is
+    //    significant AND its rate is HIGHER than the control's;
+    //  - the control qualifies when at least one rival is
+    //    significant with a LOWER rate AND the control holds
+    //    the top rate.
+    // If the top-rate variant is not distinguishable, winnerId
+    // is null (no honest winner yet).
+    const rawVariants: Array<{
+      variantId: string; name: string; views: number; orders: number;
+      revenueMinor: string; conversionPct: number | null; conversionRate: number;
+    }> = [];
     for (const v of await this.variantsOf(landing.id)) {
       const vViews = events.filter((e) => e.kind === "view" && e.variantId === v.id).length;
       const vOrders = orders.filter((o) => o.landingVariantId === v.id);
       const vRevenue = vOrders.reduce((sum, o) => sum + BigInt(o.totalMinor ?? 0), 0n);
-      variants.push({
+      rawVariants.push({
         variantId: v.id,
         name: v.name,
         views: vViews,
         orders: vOrders.length,
         revenueMinor: vRevenue.toString(),
         conversionPct: conversionPct(vOrders.length, vViews),
+        conversionRate: conversionRate(vOrders.length, vViews),
       });
+    }
+    let controlIdx = -1;
+    for (let i = 0; i < rawVariants.length; i++) {
+      if (controlIdx < 0 || rawVariants[i].views > rawVariants[controlIdx].views) controlIdx = i;
+    }
+    const control = controlIdx >= 0 ? rawVariants[controlIdx] : null;
+    const variants = rawVariants.map((row, i) => {
+      if (!control || i === controlIdx) return { ...row, vsControl: null as null | { pValue: number | null; significant: boolean; note?: "insufficient_data" } };
+      if (row.views < 30 || control.views < 30) {
+        return { ...row, vsControl: { pValue: null, significant: false, note: "insufficient_data" as const } };
+      }
+      const { pValue } = twoProportionZTest(row.orders, row.views, control.orders, control.views);
+      return {
+        ...row,
+        vsControl: {
+          pValue: Math.round(pValue * 1e6) / 1e6,
+          significant: pValue < 0.05,
+        },
+      };
+    });
+    let winnerId: string | null = null;
+    if (control) {
+      const topRate = Math.max(...rawVariants.map((r) => r.conversionRate));
+      const qualified: Array<{ variantId: string; rate: number }> = [];
+      variants.forEach((row, i) => {
+        if (i === controlIdx) return;
+        if (row.vsControl?.significant && row.conversionRate > control.conversionRate) {
+          qualified.push({ variantId: row.variantId, rate: row.conversionRate });
+        }
+      });
+      const controlDistinguishable =
+        control.conversionRate >= topRate &&
+        variants.some(
+          (row, i) => i !== controlIdx && row.vsControl?.significant && row.conversionRate < control.conversionRate,
+        );
+      if (controlDistinguishable) qualified.push({ variantId: control.variantId, rate: control.conversionRate });
+      qualified.sort((a, b) => b.rate - a.rate);
+      winnerId = qualified[0]?.variantId ?? null;
     }
 
     return {
@@ -652,6 +811,7 @@ export class LandingsService {
       revenueMinor: revenue.toString(),
       conversionPct: conversionPct(orders.length, views),
       variants,
+      winnerId,
     };
   }
 
@@ -740,13 +900,24 @@ export class LandingsService {
       sections = normalizeSections(null);
     }
 
+    // GB3 (GC8): shared checkout-trust payload.
+    const trustSetting = (await this.loadTermsTrust(organizationId)).setting;
+    const checkoutTrust = await buildCheckoutTrust(
+      this.prisma, this.checkoutGuard, organizationId, trustSetting, bp,
+    );
+
     return {
+      checkoutTrust,
+      // GC10: real online-payment options beside checkoutTrust.
+      paymentOptions: await this.paymentOptionsFor(organizationId),
       landing: { id: landing.id, slug: landing.slug, title: landing.title },
       product: {
         id: p.id,
-        name: p.name,
+        // AB6 (AX13): shop-locale display name/description —
+        // the locale rides the loadTermsTrust setting loaded above.
+        name: displayProductName(p, trustSetting?.locale),
         slug: p.slug,
-        description: p.description ?? null,
+        description: displayProductDescription(p, trustSetting?.locale),
         category: p.category ?? null,
         imageUrl: p.imageUrl ?? null,
         images: galleryUrls.length ? galleryUrls : p.imageUrl ? [p.imageUrl] : [],
@@ -757,6 +928,9 @@ export class LandingsService {
         preorder: preorderInfo(p),
         // EC24b: ONLY the flag — the file URL is never public.
         digital: !!p.digital,
+        // AB2 (AX3): gift-card flag + face-value config.
+        isGiftCard: !!(p as any).isGiftCard,
+        giftCardConfig: (p as any).giftCardConfig ?? null,
         bumpTitle: p.bumpTitle || null,
         bumpPriceMinor: p.bumpPriceMinor != null ? BigInt(p.bumpPriceMinor).toString() : null,
         bumpImageUrl: p.bumpImageUrl || null,
@@ -819,9 +993,36 @@ export class LandingsService {
 
   // ================= Public: order =================
 
-  async placeOrder(slug: string, dto: LandingOrderDto) {
+  async placeOrder(slug: string, dto: LandingOrderDto, ctx?: { ip?: string | null }) {
     const landing = await this.getPublishedLanding(slug);
     const organizationId = landing.organizationId;
+
+    // GB3 (GC8): idempotency replay (scope "landing").
+    if (dto.idempotencyKey && this.idempotency) {
+      const replay = await this.idempotency.findReplay(organizationId, dto.idempotencyKey);
+      if (replay) return replay;
+    }
+    // GB3 (GC8): terms consent.
+    const termsTrust = await this.loadTermsTrust(organizationId);
+    if (termsTrust.required && dto.termsAccepted !== true) {
+      throw new BadRequestException("অর্ডার সম্পূর্ণ করতে শর্তাবলি পড়ে সম্মতি দেওয়া বাধ্যতামূলক");
+    }
+    // AB8 (AX27): normalized device hash (invalid/absent = null).
+    const deviceHash = normalizeDeviceHash((dto as any).deviceHash);
+    // GB3 (GC9): the checkout gate (channel "landing").
+    if (this.checkoutGuard) {
+      await this.checkoutGuard.evaluateGate(organizationId, "landing", {
+        phone: dto.customerPhone,
+        email: null,
+        ip: ctx?.ip ?? null,
+        deviceHash,
+        captchaToken: dto.captchaToken ?? null,
+        surface: "checkout",
+      });
+    }
+    // GC10: re-validate an online selection server-side (400
+    // when the pair is not really offered).
+    const onlinePayment = await this.resolveOnlineSelection(organizationId, dto);
 
     const p = await this.t("product").findFirst({
       where: { id: landing.productId, organizationId, status: "ACTIVE" },
@@ -845,13 +1046,59 @@ export class LandingsService {
         throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
       }
     }
+    // AB5 (AX7) PRICE SOURCE precedence (variant-aware here):
+    // gift-card lines keep face value → an explicit price-list
+    // price REPLACES catalog/variant price AND beats
+    // wholesale-tier math (negotiated price is more specific
+    // than a quantity tier) → catalog/variant price otherwise.
+    // The buyer is resolved by phone via the same
+    // promotions.customerIdForPhone the GB7 block below uses.
+    // Failure-isolated: no map ⇒ today's price, byte-identical.
+    let priceListBreakdown: Array<{ productId: string; variantId: string | null; priceMinor: string }> = [];
+    let ax7UnitPrice: bigint | null = null;
+    if (this.priceLists && !(p as any).isGiftCard && this.promotions && typeof (this.promotions as any).customerIdForPhone === "function") {
+      const ax7CustomerId = await (this.promotions as any)
+        .customerIdForPhone(organizationId, dto.customerPhone)
+        .catch(() => null);
+      if (ax7CustomerId) {
+        const map = await this.priceLists.priceMapForCustomer(organizationId, ax7CustomerId).catch(() => null);
+        ax7UnitPrice = pickGroupPrice(map, p.id, productVariant?.id ?? null);
+        if (ax7UnitPrice != null) {
+          priceListBreakdown = [{
+            productId: p.id,
+            variantId: productVariant?.id ?? null,
+            priceMinor: ax7UnitPrice.toString(),
+          }];
+        }
+      }
+    }
     const unitPriceMinor =
-      productVariant?.priceMinor != null ? BigInt(productVariant.priceMinor) : BigInt(p.priceMinor);
+      ax7UnitPrice ??
+      (productVariant?.priceMinor != null ? BigInt(productVariant.priceMinor) : BigInt(p.priceMinor));
     let subtotal = unitPriceMinor * BigInt(qty);
+
+    // GB2 (GC7): stock enforcement — landing checkouts
+    // previously had NO stock check (preorder limit only) and
+    // could oversell tracked stock without bound. Assert-stock
+    // semantics through the ONE checker: variant stock wins when
+    // a variant is chosen; preorder bypasses; allowBackorder is
+    // the merchant's own setting. There is no cart session here,
+    // so no reservation exclusion applies (and none is created —
+    // documented coverage window).
+    if (this.inventory?.checkAvailability) {
+      const verdict = await this.inventory.checkAvailability(organizationId, p, productVariant, qty);
+      if (!verdict.ok) {
+        throw new BadRequestException(
+          `দুঃখিত, "${p.name}"-এর স্টকে মাত্র ${Math.max(0, verdict.available)}টি আছে — এর বেশি অর্ডার করা যাবে না`,
+        );
+      }
+    }
 
     const items: any[] = [
       {
-        name: p.name,
+        // AB6 (AX13): shop-locale display name — the locale
+        // rides the termsTrust setting loaded at the top.
+        name: displayProductName(p, termsTrust.setting?.locale),
         sku: productVariant?.sku || p.sku || undefined,
         quantity: qty,
         priceMinor: unitPriceMinor,
@@ -884,6 +1131,43 @@ export class LandingsService {
     let ec16Evaluation: CheckoutEvaluation | null = null;
     const bumpMinorForEval =
       dto.includeBump && p.bumpPriceMinor && p.bumpTitle ? BigInt(p.bumpPriceMinor) : 0n;
+    // GB7: resolve the buyer's customer + prior-order count ONCE
+    // before the evaluation. When the promotions service is absent
+    // there is no such helper (DiscountsService has none), so the
+    // values stay undefined and customer-conditioned coupons then
+    // refuse conservatively in the pure validator.
+    let buyerCustomerId: string | null | undefined;
+    let buyerPriorOrderCount: number | null | undefined;
+    if (this.promotions) {
+      buyerCustomerId =
+        typeof (this.promotions as any).customerIdForPhone === "function"
+          ? await this.promotions.customerIdForPhone(organizationId, dto.customerPhone)
+          : null;
+      buyerPriorOrderCount =
+        typeof (this.promotions as any).priorOrderCountFor === "function"
+          ? await this.promotions.priorOrderCountFor(organizationId, buyerCustomerId)
+          : null;
+    }
+    // AB1 (AX1): loyalty snapshot for the phone-resolved
+    // customer (the evaluator prices from the snapshot only).
+    let loyaltyInput: LoyaltyRedeemInput | null = null;
+    if (this.loyalty && dto.loyaltyPoints != null && dto.loyaltyPoints > 0 && buyerCustomerId) {
+      const snap = await this.loyalty
+        .checkoutSnapshot(organizationId, buyerCustomerId)
+        .catch(() => null);
+      if (snap) loyaltyInput = { pointsToRedeem: dto.loyaltyPoints, ...snap };
+    }
+    // AB2 (AX3): gift-card redemption snapshot (dto.giftCardCode
+    // is inherited from PublicCheckoutOrderDto). Refusals throw
+    // BEFORE placement, like coupons. The cart is the landing's
+    // single product, so cartHasGiftCardProduct is its flag.
+    let giftCardInput: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null = null;
+    if (this.giftCards && dto.giftCardCode?.trim()) {
+      const snap = await this.giftCards.resolveForCheckout(organizationId, dto.giftCardCode, {
+        cartHasGiftCardProduct: !!(p as any).isGiftCard,
+      });
+      giftCardInput = { giftCardId: snap.giftCardId, balanceMinor: snap.balanceMinor, codeLast4: snap.codeLast4 };
+    }
     if (this.promotions) {
       ec16Evaluation = await this.promotions.evaluateCheckout(organizationId, {
         lines: [
@@ -899,6 +1183,10 @@ export class LandingsService {
         couponCode: dto.couponCode ?? null,
         referralCode: dto.referralCode ?? null,
         buyerPhone: dto.customerPhone,
+        customerId: buyerCustomerId,
+        priorOrderCount: buyerPriorOrderCount,
+        loyalty: loyaltyInput,
+        giftCard: giftCardInput,
       });
       discountMinor = ec16Evaluation.totalDiscountMinor;
       freeShippingApplied = ec16Evaluation.couponFreeShipping;
@@ -916,6 +1204,10 @@ export class LandingsService {
             totalMinor: unitPriceMinor * BigInt(qty),
           },
         ],
+        // GB7: values computed above; undefined when the promotions
+        // service (the helper's owner) is absent in this deployment.
+        priorOrderCount: buyerPriorOrderCount,
+        customerId: buyerCustomerId,
       });
       if (!v.valid) {
         throw new BadRequestException(
@@ -965,6 +1257,9 @@ export class LandingsService {
         res = await resolver.call(this.storefront, organizationId, zone, {
           weightGrams,
           discountedSubtotal,
+          // GB2 (GC6): the landing's only product line decides
+          // the all-free test on its own flag.
+          allFreeShipping: !!(p as any).freeShipping,
         });
       } else {
         const free =
@@ -978,6 +1273,9 @@ export class LandingsService {
       shippingMinor = res.deliveryMinor;
       deliveryStamp = { zoneFreeShipping: res.zoneFreeShipping, zoneId: zone.id, rateRuleId: res.rateRuleId };
       if (freeShippingApplied) shippingMinor = 0n;
+      // GB2 (GC6): the legacy-fallback branch honors the flag
+      // too (the resolver branch zeroes inside the resolver).
+      if ((p as any).freeShipping) shippingMinor = 0n;
     } else {
       const bp = await this.businessProfile(organizationId);
       const isOutside = dto.deliveryZone === "outside_dhaka";
@@ -985,6 +1283,8 @@ export class LandingsService {
         ? ((bp as any)?.deliveryChargeOutsideMinor ?? 12000n)
         : ((bp as any)?.deliveryChargeInsideMinor ?? 6000n);
       if (freeShippingApplied) shippingMinor = 0n;
+      // GB2 (GC6): free-shipping product zeroes the flat fee.
+      if ((p as any).freeShipping) shippingMinor = 0n;
     }
 
     // EC18: a chosen slot is validated after pricing, BEFORE
@@ -1007,11 +1307,64 @@ export class LandingsService {
     const cleanPhone = dto.customerPhone.trim();
     const isCod = dto.paymentMethod !== "bkash" && dto.paymentMethod !== "nagad";
 
+    // GB3 (GC8): COD trust rules — structured district wins,
+    // else the parsed address at high|medium confidence.
+    let codAdvanceRequired = false;
+    if (isCod && !onlinePayment) {
+      const bp = await this.businessProfile(organizationId);
+      const parsed = parseBdAddress(dto.customerAddress);
+      const codEval = evaluateCodRules(bp, {
+        totalMinor: total,
+        district: dto.district?.trim() || null,
+        parsedDistrict: parsed.district,
+        parsedConfidence: parsed.confidence,
+      });
+      if (codEval.refused) {
+        throw new BadRequestException("দুঃখিত, এই অর্ডারের জন্য ক্যাশ অন ডেলিভারি প্রযোজ্য নয়");
+      }
+      codAdvanceRequired = codEval.advanceRequired;
+    }
+
+    // AB4 (AX5a/AX5b): custom field answers for the "landing"
+    // surface — validated BEFORE any order write — and the
+    // deposit slice for this placement's kind (NOTICE + stamp
+    // only on this surface; no initiation exists here). The
+    // profile is the one this flow already fetches for COD /
+    // delivery (re-read here so the deposit judges identically
+    // even on the zone-delivery branch).
+    const fieldValidation = validateFieldAnswers(
+      await this.loadCheckoutFieldDefs(organizationId), "landing", dto.fieldAnswers,
+    );
+    if (!fieldValidation.ok) throw new BadRequestException(fieldValidation.error);
+    const deposit = depositFor(await this.businessProfile(organizationId), {
+      totalMinor: total,
+      kind: onlinePayment ? "online" : isCod ? "cod" : "manual",
+    });
+
     if (!this.integrations) {
       throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
     }
     // ON4: blocklist refusal — generic message, never reveals the blocklist.
     if (this.blockedPhones && (await this.blockedPhones.isBlocked(organizationId, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    // GB3 (GC9): block_checkout fraud rules (guard writes the
+    // hit + attempt rows itself; the caller only refuses).
+    if (this.checkoutGuard) {
+      const stats = await this.checkoutGuard
+        .phoneOrderStats(organizationId, bdPhoneMatchKey(cleanPhone) ?? "")
+        .catch(() => null);
+      const { blockedBy } = await this.checkoutGuard.evaluateFraudRulesAtCheckout(organizationId, {
+        totalMinor: total,
+        isCod: onlinePayment ? false : isCod,
+        district: dto.district?.trim() || null,
+        openOrderCount: stats?.openCount ?? 0,
+        phone: cleanPhone,
+        channel: "landing",
+      });
+      if (blockedBy) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    }
+    // GC22: plan/order blocks on this PUBLIC landing checkout
+    // surface ONLY as the generic shopper message.
+    try {
     await this.integrations.upsertOrder(
       organizationId,
       null,
@@ -1029,6 +1382,12 @@ export class LandingsService {
         totalMinor: total,
         refundedMinor: 0n,
         placedAt: new Date(),
+        // AB7 (AX19): order-level attribution stamps
+        // (inherited DTO field — see LandingOrderDto) — only
+        // the keys actually presented; absent = columns null.
+        ...normalizeAttribution(dto.attribution),
+        // AB8 (AX27): device fingerprint stamp (valid hash only).
+        ...(deviceHash ? { deviceHash } : {}),
         customer: {
           externalId: cleanPhone,
           firstName: dto.customerName.trim(),
@@ -1036,23 +1395,33 @@ export class LandingsService {
           address: {
             address_1: dto.customerAddress.trim(),
             ...(dto.district?.trim() ? { district: dto.district.trim() } : {}),
-            note: dto.note || undefined,
+            // GC10: marker-only distinction (paymentMethod
+            // passes through exactly as today) — see Products.
+            note: onlinePayment
+              ? [dto.note?.trim(), `[অনলাইন পেমেন্ট (${onlinePayment.provider}) — যাচাই বাকি]`].filter(Boolean).join(" | ")
+              : dto.note || undefined,
           },
         },
         items,
       } as any,
       LANDING_SOURCE,
     );
+    } catch (e) {
+      if (isOrderLimitBlocked(e)) throw new BadRequestException((e as OrderLimitBlockedError).shopperMessage ?? SHOPPER_ORDER_BLOCK_MESSAGE);
+      throw e;
+    }
 
     // Attribution: fetch the created order and stamp it. The
     // served variant counts only when it belongs to THIS landing.
     let orderId: string | null = null;
+    let placedCustomerId: string | null = null;
     try {
       const order = await this.t("order").findFirst({
         where: { organizationId, source: LANDING_SOURCE, externalId },
       });
       if (order) {
         orderId = order.id;
+        placedCustomerId = order.customerId ?? null;
         let landingVariantId: string | null = null;
         if (dto.servedVariantId) {
           const served = await this.t("landingVariant")
@@ -1065,8 +1434,24 @@ export class LandingsService {
           data: {
             landingPageId: landing.id,
             landingVariantId,
+            // GB3 (GC8): terms-consent + COD-advance stamps ride
+            // the same attribution update.
+            ...(dto.termsAccepted === true && (termsTrust.required || termsTrust.ref)
+              ? { termsConsentedAt: new Date(), termsRef: termsTrust.ref }
+              : {}),
+            ...(codAdvanceRequired ? { codAdvanceRequired: true } : {}),
+            // AB4 (AX5a/AX5b): deposit due + validated field
+            // answers ride the same attribution update.
+            ...(deposit.active ? { depositDueMinor: deposit.amountMinor } : {}),
+            ...(Object.keys(fieldValidation.values).length > 0
+              ? { checkoutFields: fieldValidation.values }
+              : {}),
             // EC18: the slot stamp rides the same attribution update.
             ...(chosenSlot ? { deliverySlotId: chosenSlot.id, deliveryDate: dto.deliveryDate } : {}),
+            // AB5 (AX7): the group price-list snapshot rides the
+            // same attribution update (failure-isolated by the
+            // surrounding try/catch, like every stamp here).
+            ...(priceListBreakdown.length > 0 ? { priceListBreakdown } : {}),
             // EC16: the promotion/referral split rides it too.
             ...(ec16Evaluation
               ? {
@@ -1080,6 +1465,12 @@ export class LandingsService {
                       : null,
                   referralDiscountMinor: ec16Evaluation.referralDiscountMinor,
                   referralCode: ec16Evaluation.referralCodeToRecord,
+                  // AB1 (AX2): the resolved referrer rides the
+                  // same inline stamp (this path has no
+                  // stampOrder call — the split is stamped here).
+                  ...(ec16Evaluation.referrerCustomerIdToRecord
+                    ? { referrerCustomerId: ec16Evaluation.referrerCustomerIdToRecord }
+                    : {}),
                   // EC23: per-rate tax snapshot (amounts as strings).
                   taxBreakdown:
                     ec16Evaluation.taxBreakdown && ec16Evaluation.taxBreakdown.length > 0
@@ -1126,13 +1517,34 @@ export class LandingsService {
       });
     }
 
+    // AB1 (AX1): spend the redeemed points now that the order
+    // exists (failure-isolated inside LoyaltyService).
+    if (ec16Evaluation && (ec16Evaluation.loyaltyPointsApplied ?? 0) > 0 && this.loyalty && orderId) {
+      await this.loyalty.postPlacementRedeem(organizationId, {
+        orderId,
+        customerId: placedCustomerId,
+        points: ec16Evaluation.loyaltyPointsApplied ?? 0,
+      });
+    }
+
+    // AB2 (AX3): spend the redeemed gift-card balance now that
+    // the order exists (failure-isolated inside GiftCardsService;
+    // orderId comes from the same attribution re-read as loyalty).
+    if (ec16Evaluation && (ec16Evaluation.giftCardDiscountMinor ?? 0n) > 0n && ec16Evaluation.giftCardId && this.giftCards && orderId) {
+      await this.giftCards.postPlacementRedeem(organizationId, {
+        orderId,
+        giftCardId: ec16Evaluation.giftCardId,
+        amountMinor: ec16Evaluation.giftCardDiscountMinor ?? 0n,
+      });
+    }
+
     // EC16: the buyer's OWN referral code to share (additive,
     // failure-isolated; null when unresolvable).
     const yourReferralCode = this.promotions
       ? await this.promotions.yourReferralCodeForPhone(organizationId, cleanPhone)
       : null;
 
-    return {
+    const response = {
       success: true,
       orderId,
       orderNumber: externalNumber,
@@ -1156,10 +1568,31 @@ export class LandingsService {
       referralDiscountMinor: (ec16Evaluation?.referralDiscountMinor ?? 0n).toString(),
       referral: ec16Evaluation?.referral ? { code: ec16Evaluation.referral.code } : null,
       yourReferralCode,
+      // AB1 (AX1): the loyalty line of the placed order.
+      loyaltyDiscountMinor: (ec16Evaluation?.loyaltyDiscountMinor ?? 0n).toString(),
+      loyaltyPointsUsed: ec16Evaluation?.loyaltyPointsApplied ?? 0,
+      // AB2 (AX3): the gift-card line of the placed order.
+      giftCardDiscountMinor: (ec16Evaluation?.giftCardDiscountMinor ?? 0n).toString(),
+      giftCardCodeLast4: ec16Evaluation?.giftCardCodeLast4 ?? null,
+      // AB4 (AX5a): deposit NOTICE for this placement (no
+      // initiation exists on this surface — collection runs
+      // through the shop / resend / public payment paths).
+      deposit: deposit.active
+        ? { amountMinor: deposit.amountMinor.toString(), note: deposit.note }
+        : null,
       upsellEligible: !!landing.upsellProductId,
       // EC24b: success screen shows the digital-delivery note.
       hasDigitalItems: !!p.digital,
+      // GC10: online marker outcome (additive, online only) —
+      // this response already carries orderId + orderNumber
+      // (externalNumber), so it is initiation-ready.
+      ...(onlinePayment ? { paymentClaimStatus: "online_pending", onlinePayment } : {}),
     };
+    // GB3 (GC8): record the placement under the idempotency key.
+    if (dto.idempotencyKey && this.idempotency) {
+      return await this.idempotency.record(organizationId, dto.idempotencyKey, "landing", orderId, response);
+    }
+    return response;
   }
 
   // ================= Public: post-order upsell =================

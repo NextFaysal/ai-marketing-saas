@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
+import { checkMediaUpload } from "../common/plan-limit-checks";
 import { AuditService } from "../audit/audit.service";
 import { encryptJson } from "../integrations/crypto";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
@@ -382,9 +384,7 @@ export class SocialService {
   ): Promise<void> {
     try {
       for (const userId of [...new Set(userIds)]) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId, userId, type, title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId, userId, type, title, body, conversationId: null }).catch(() => undefined);
       }
     } catch (e) {
       this.logger.warn(`social notification (${type}) failed: ${e instanceof Error ? e.message : "unknown"}`);
@@ -622,6 +622,10 @@ export class SocialService {
     if (!detected || !(SOCIAL_MEDIA_KINDS as readonly string[]).includes(detected.kind)) {
       throw new BadRequestException("শুধু ছবি বা ভিডিও আপলোড করা যাবে।");
     }
+    // GC22 (GB9): plan enforcement — tenant library uploads are
+    // refused when paused / past-due-past-grace, or when the
+    // file would push recorded storage over storageLimitMb.
+    await checkMediaUpload(this.prisma as any, organizationId, bytes.length);
     const assetId = randomUUID();
     const storageKey = `${organizationId}/social/${assetId}.${extForContentType(detected.contentType)}`;
     await MediaStore.fromEnv().put(storageKey, bytes, detected.contentType);
@@ -668,6 +672,10 @@ export class SocialService {
   }) {
     const imageCap = SOCIAL_MEDIA_MAX_BYTES;
     const videoCap = socialVideoMaxBytes();
+    // GC22: fail fast on a commerce block / already-full storage
+    // BEFORE streaming the body in; the exact byte check runs
+    // again post-stream with the real total.
+    await checkMediaUpload(this.prisma as any, organizationId, 0);
     const tempPath = join(tmpdir(), `social-upload-${randomUUID()}`);
     let total = 0;
     let head = Buffer.alloc(0);
@@ -729,6 +737,10 @@ export class SocialService {
       if (total === 0) {
         throw new BadRequestException("ফাঁকা ফাইল আপলোড করা যাবে না।");
       }
+      // GC22: exact storage check with the real byte total —
+      // refusal here leaves no asset row and no stored object
+      // (the temp file is removed by the finally below).
+      await checkMediaUpload(this.prisma as any, organizationId, total);
       const assetId = randomUUID();
       const storageKey = `${organizationId}/social/${assetId}.${extForContentType(detected.contentType)}`;
       const store = MediaStore.fromEnv();

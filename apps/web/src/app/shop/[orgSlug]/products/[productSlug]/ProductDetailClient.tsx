@@ -1,13 +1,14 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
+import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
-import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
+import { fetchCart, getCartToken, patchCartLine } from "@/lib/storefront-cart";
+import { ExpressCheckout } from "../../ExpressCheckout";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
-import { MediaImage } from "@/components/media-image";
 import { StockAlertForm } from "../../StockAlertForm";
 
 export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
@@ -19,7 +20,15 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
     return list;
   }, [product]);
 
-  const [image, setImage] = useState(images[0] ?? "");
+  const hasVideo = !!product.video;
+  const slideOffset = hasVideo ? 1 : 0;
+  const [slide, setSlide] = useState(0);
+  const image = slide >= slideOffset ? (images[slide - slideOffset] ?? "") : "";
+  const isVideoSlide = hasVideo && slide === 0;
+  const [zoom, setZoom] = useState(false);
+  const [origin, setOrigin] = useState("50% 50%");
+  const [lightbox, setLightbox] = useState(false);
+  const [lightboxIdx, setLightboxIdx] = useState(0);
   const [variantId, setVariantId] = useState<string>("");
   const [quantity, setQuantity] = useState(1);
   const [includeBump, setIncludeBump] = useState(false);
@@ -27,18 +36,94 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
   const [error, setError] = useState("");
   const [added, setAdded] = useState(false);
 
+  // AB2 (AX3): gift-card purchase state — the chosen face value
+  // (a preset chip, or a custom taka amount when allowed) plus
+  // the optional recipient the card is delivered to.
+  const gcConfig = product.isGiftCard ? (product.giftCardConfig ?? null) : null;
+  const gcPresets = gcConfig?.presetAmountsMinor ?? [];
+  const [gcPreset, setGcPreset] = useState<number | null>(gcPresets[0] ?? null);
+  const [gcCustom, setGcCustom] = useState("");
+  const [gcName, setGcName] = useState("");
+  const [gcEmail, setGcEmail] = useState("");
+  const [gcPhone, setGcPhone] = useState("");
+  const [gcMessage, setGcMessage] = useState("");
+  const [gcHint, setGcHint] = useState("");
+
+  /** The face value (minor) the shopper picked, or null when
+   * the custom amount is not a usable number yet. */
+  function gcAmountMinor(): number | null {
+    if (!product.isGiftCard) return null;
+    if (gcCustom.trim()) {
+      const taka = Number(gcCustom);
+      if (!Number.isFinite(taka) || taka <= 0) return null;
+      return Math.round(taka * 100);
+    }
+    if (gcPreset != null) return gcPreset;
+    const price = Number(product.priceMinor);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(false);
+      if (e.key === "ArrowRight") setLightboxIdx((i) => (images.length ? (i + 1) % images.length : i));
+      if (e.key === "ArrowLeft") setLightboxIdx((i) => (images.length ? (i - 1 + images.length) % images.length : i));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, images.length]);
+
   const variant = product.variants.find((v) => v.id === variantId) ?? null;
   const unitMinor = variant?.priceMinor ?? product.priceMinor;
   const stockState = variant ? variant.stockState : product.stockState;
   // EC24a: preorder products are orderable at zero stock.
-  const outOfStock = stockState === "out_of_stock" && !product.preorder;
-  const badge = stockBadge(stockState, locale);
+  // AB2: gift-card products are minted value, not stock — the API
+  // bypasses the stock guard for them, so they are never out of stock.
+  const outOfStock = !product.isGiftCard && stockState === "out_of_stock" && !product.preorder;
+  const badge = product.isGiftCard ? null : stockBadge(stockState, locale);
 
   async function addToCart() {
     setBusy(true);
     setError("");
     setAdded(false);
+    setGcHint("");
     try {
+      // AB2: a gift-card line carries its face value + recipient
+      // through the SAME cart PATCH. Client-side min/max checks
+      // are a hint only — the server re-validates the amount
+      // against the product's giftCardConfig.
+      let gcFields: {
+        giftCardAmountMinor?: string;
+        giftCardRecipientName?: string;
+        giftCardRecipientEmail?: string;
+        giftCardRecipientPhone?: string;
+        giftCardRecipientMessage?: string;
+      } = {};
+      if (product.isGiftCard) {
+        const amount = gcAmountMinor();
+        if (amount == null) {
+          setGcHint("গিফট কার্ডের পরিমাণটি সঠিকভাবে লিখুন।");
+          return;
+        }
+        if (gcCustom.trim() && gcConfig?.allowCustomAmount) {
+          if (gcConfig.minAmountMinor != null && amount < gcConfig.minAmountMinor) {
+            setGcHint(`সর্বনিম্ন পরিমাণ ${priceText(String(gcConfig.minAmountMinor))} — এর কমে কার্ড কেনা যাবে না।`);
+            return;
+          }
+          if (gcConfig.maxAmountMinor != null && amount > gcConfig.maxAmountMinor) {
+            setGcHint(`সর্বোচ্চ পরিমাণ ${priceText(String(gcConfig.maxAmountMinor))} — এর বেশি কার্ড কেনা যাবে না।`);
+            return;
+          }
+        }
+        gcFields = {
+          giftCardAmountMinor: String(amount),
+          ...(gcName.trim() ? { giftCardRecipientName: gcName.trim() } : {}),
+          ...(gcEmail.trim() ? { giftCardRecipientEmail: gcEmail.trim() } : {}),
+          ...(gcPhone.trim() ? { giftCardRecipientPhone: gcPhone.trim() } : {}),
+          ...(gcMessage.trim() ? { giftCardRecipientMessage: gcMessage.trim() } : {}),
+        };
+      }
       // PATCH sets the line's absolute quantity — merge with any
       // existing line for the same product/variant first.
       const cart = await fetchCart(orgSlug);
@@ -50,7 +135,8 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         productId: product.id,
         variantId: variantId || null,
         quantity: nextQty,
-        includeBump,
+        includeBump: product.isGiftCard ? false : includeBump,
+        ...gcFields,
       });
       setAdded(true);
     } catch (e) {
@@ -62,27 +148,100 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
-      {/* Gallery */}
+      {/* Gallery — GC: video slide 0 + image zoom + lightbox */}
       <div className="space-y-3">
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
-          {image ? (
-            <MediaImage src={image} alt={product.name} width={1200} height={1200} priority sizes="(max-width: 768px) 100vw, 600px" className="aspect-square w-full object-cover" />
+          {isVideoSlide && product.video ? (
+            product.video.kind === "file" ? (
+              <video controls poster={product.video.posterUrl ?? undefined} src={product.video.url} className="aspect-square w-full bg-black object-contain" />
+            ) : (
+              <iframe
+                src={product.video.embedUrl}
+                title={t.product.watchVideo}
+                allowFullScreen
+                className="aspect-square w-full bg-black"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              />
+            )
+          ) : image ? (
+            <div
+              className="relative overflow-hidden"
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = rect.width ? ((e.clientX - rect.left) / rect.width) * 100 : 50;
+                const y = rect.height ? ((e.clientY - rect.top) / rect.height) * 100 : 50;
+                setOrigin(`${x}% ${y}%`);
+              }}
+              onMouseEnter={() => {
+                try {
+                  if (window.matchMedia("(hover: hover)").matches) setZoom(true);
+                } catch { /* no hover — no zoom */ }
+              }}
+              onMouseLeave={() => setZoom(false)}
+              onClick={() => {
+                setLightboxIdx(Math.max(0, slide - slideOffset));
+                setLightbox(true);
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <MediaImage
+                src={image}
+                alt={product.name}
+                width={1200}
+                height={1200}
+                priority
+                sizes="(max-width: 768px) 100vw, 600px"
+                style={{ transformOrigin: origin }}
+                className={`aspect-square w-full cursor-zoom-in object-cover transition-transform duration-200 ${zoom ? "scale-[1.8]" : ""}`}
+              />
+            </div>
           ) : (
             <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-7xl">📦</div>
           )}
         </div>
-        {images.length > 1 ? (
+        {images.length + slideOffset > 1 ? (
           <div className="flex flex-wrap gap-2">
-            {images.map((src) => (
+            {hasVideo && product.video ? (
+              <button
+                type="button"
+                onClick={() => setSlide(0)}
+                title={t.product.watchVideo}
+                aria-label={t.product.watchVideo}
+                className={`relative h-16 w-16 overflow-hidden rounded-xl border-2 ${slide === 0 ? "border-indigo-600" : "border-slate-200"}`}
+              >
+                {product.video.posterUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={product.video.posterUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center bg-slate-900" />
+                )}
+                <span className="absolute inset-0 flex items-center justify-center text-xl text-white drop-shadow">▶</span>
+              </button>
+            ) : null}
+            {images.map((src, i) => (
               <button
                 key={src}
                 type="button"
-                onClick={() => setImage(src)}
-                className={`h-16 w-16 overflow-hidden rounded-xl border-2 ${src === image ? "border-indigo-600" : "border-slate-200"}`}
+                onClick={() => setSlide(i + slideOffset)}
+                className={`h-16 w-16 overflow-hidden rounded-xl border-2 ${src === image && !isVideoSlide ? "border-indigo-600" : "border-slate-200"}`}
               >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
               </button>
             ))}
+          </div>
+        ) : null}
+        {lightbox && images.length > 0 ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setLightbox(false)}>
+            <button type="button" aria-label={t.popup.close} onClick={() => setLightbox(false)} className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-2xl text-white">×</button>
+            {images.length > 1 ? (
+              <>
+                <button type="button" aria-label="Previous" onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx - 1 + images.length) % images.length); }} className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white">‹</button>
+                <button type="button" aria-label="Next" onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx + 1) % images.length); }} className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white">›</button>
+              </>
+            ) : null}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={images[lightboxIdx]} alt={product.name} className="max-h-[90vh] max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
           </div>
         ) : null}
       </div>
@@ -96,6 +255,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
             {product.compareAtMinor && !variant ? (
               <span className="text-sm text-slate-400 line-through">{priceText(product.compareAtMinor)}</span>
             ) : null}
+            {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
             {badge ? <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
             {product.preorder ? (
               <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">
@@ -105,13 +265,95 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
             {product.digital ? (
               <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">ডিজিটাল পণ্য</span>
             ) : null}
+            {product.isGiftCard ? (
+              <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[11px] font-bold text-pink-700">🎁 গিফট কার্ড</span>
+            ) : null}
           </div>
           {product.sku ? <p className="mt-1 text-[11px] text-slate-400">SKU: {product.sku}</p> : null}
+          {product.brand ? (
+            <p className="mt-1 text-xs text-slate-500">
+              {t.brand.brandLabel}:{" "}
+              <Link href={`/shop/${orgSlug}/brands/${product.brand.slug}`} className="font-bold text-indigo-700 hover:underline">
+                {product.brand.name}
+              </Link>
+            </p>
+          ) : null}
         </div>
 
         {product.description ? <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{product.description}</p> : null}
 
-        {product.variants.length > 0 ? (
+        {/* AB2 (AX3): gift-card panel — face-value picker +
+            optional recipient, INSTEAD of the normal variant /
+            stock semantics (a gift card is minted value). */}
+        {product.isGiftCard ? (
+          <div className="space-y-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-4">
+            <p className="text-sm font-bold text-pink-900">🎁 গিফট কার্ডের পরিমাণ বেছে নিন</p>
+            <p className="text-xs leading-relaxed text-slate-600">
+              এটি একটি গিফট কার্ড — কেনার পর অর্ডার ডেলিভারি সম্পন্ন হলে কোডটি পাওয়া যাবে।
+              প্রাপকের ইমেইল বা ফোন দিলে কোডটি সরাসরি প্রাপকের কাছে পাঠানো হবে; না দিলে
+              ক্রেতা নিজের অর্ডারের ট্র্যাকিং পেজে কোডটি দেখতে পাবেন।
+            </p>
+            {gcPresets.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {gcPresets.map((preset) => {
+                  const active = !gcCustom.trim() && gcPreset === preset;
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => { setGcPreset(preset); setGcCustom(""); setGcHint(""); }}
+                      className={`rounded-xl px-4 py-2 text-sm font-extrabold ${active ? "bg-pink-600 text-white" : "border border-pink-300 bg-white text-pink-800"}`}
+                    >
+                      {priceText(String(preset))}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {gcConfig?.allowCustomAmount ? (
+              <div>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-custom-amount">নিজের পছন্দমতো পরিমাণ (৳)</label>
+                <input
+                  id="gc-custom-amount"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={gcCustom}
+                  onChange={(e) => { setGcCustom(e.target.value); setGcHint(""); }}
+                  placeholder="যেমন: ৭৫০"
+                  className="w-full rounded-xl border border-pink-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {gcConfig.minAmountMinor != null ? `সর্বনিম্ন ${priceText(String(gcConfig.minAmountMinor))}` : ""}
+                  {gcConfig.minAmountMinor != null && gcConfig.maxAmountMinor != null ? " · " : ""}
+                  {gcConfig.maxAmountMinor != null ? `সর্বোচ্চ ${priceText(String(gcConfig.maxAmountMinor))}` : ""}
+                  {(gcConfig.minAmountMinor != null || gcConfig.maxAmountMinor != null) ? " — চূড়ান্ত যাচাই সার্ভারেই হবে।" : "চূড়ান্ত যাচাই সার্ভারেই হবে।"}
+                </p>
+              </div>
+            ) : null}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-name">প্রাপকের নাম (ঐচ্ছিক)</label>
+                <input id="gc-recipient-name" value={gcName} onChange={(e) => setGcName(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-phone">প্রাপকের ফোন (ঐচ্ছিক)</label>
+                <input id="gc-recipient-phone" type="tel" value={gcPhone} onChange={(e) => setGcPhone(e.target.value)} placeholder="01XXXXXXXXX" className="w-full rounded-xl border border-slate-300 bg-white p-2.5 font-mono text-sm focus:border-pink-500 focus:outline-none" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-email">প্রাপকের ইমেইল (ঐচ্ছিক)</label>
+                <input id="gc-recipient-email" type="email" value={gcEmail} onChange={(e) => setGcEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-message">বার্তা (ঐচ্ছিক)</label>
+                <textarea id="gc-recipient-message" rows={2} maxLength={500} value={gcMessage} onChange={(e) => setGcMessage(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
+              </div>
+            </div>
+            {gcHint ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{gcHint}</p> : null}
+          </div>
+        ) : null}
+
+        {product.variants.length > 0 && !product.isGiftCard ? (
           <div>
             <label className="mb-1.5 block text-xs font-bold text-slate-700" htmlFor="variant">{t.product.variantLabel}</label>
             <select
@@ -138,7 +380,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         ) : null}
 
         <div className="flex items-center justify-between border-y py-3">
-          <span className="text-xs font-bold text-slate-700">{t.product.quantity}</span>
+          <span className="text-xs font-bold text-slate-700">{product.isGiftCard ? "কয়টি কার্ড" : t.product.quantity}</span>
           <div className="flex items-center overflow-hidden rounded-lg border">
             <button type="button" onClick={() => setQuantity(Math.max(1, quantity - 1))} className="bg-slate-50 px-3 py-1 font-bold text-slate-600 hover:bg-slate-100">−</button>
             <span className="px-4 py-1 text-sm font-bold text-slate-900">{quantity}</span>
@@ -146,7 +388,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
           </div>
         </div>
 
-        {product.bump ? (
+        {product.bump && !product.isGiftCard ? (
           <label
             className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-3.5 transition ${includeBump ? "border-amber-500 bg-amber-50/70 ring-2 ring-amber-400" : "border-dashed border-amber-300 bg-amber-50/20"}`}
           >
@@ -188,6 +430,32 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
             {outOfStock ? t.product.outOfStockOrder : busy ? t.product.adding : t.product.addToCart}
           </button>
         )}
+        {/* AB4 (AX5c): express checkout for logged-in shoppers —
+            ensures a cart for THIS product/variant/quantity first,
+            mirroring the add-to-cart merge above. Gift-card lines
+            need their recipient flow, so they stay on the normal
+            checkout. */}
+        {!product.isGiftCard && !outOfStock ? (
+          <ExpressCheckout
+            orgSlug={orgSlug}
+            ensureCart={async () => {
+              const cart = await fetchCart(orgSlug);
+              const existing = cart?.items.find(
+                (i) => i.productId === product.id && (i.variantId ?? null) === (variantId || null),
+              );
+              const nextQty = Math.min(99, (existing?.quantity ?? 0) + quantity);
+              await patchCartLine(orgSlug, {
+                productId: product.id,
+                variantId: variantId || null,
+                quantity: nextQty,
+                includeBump,
+              });
+              const token = getCartToken(orgSlug);
+              if (!token) throw new Error("কার্ট তৈরি করা যায়নি — আবার চেষ্টা করুন।");
+              return token;
+            }}
+          />
+        ) : null}
         <p className="text-center text-[11px] text-slate-400">{t.product.priceNote}</p>
 
         {/* EC28: back-in-stock alert — only while actually out of stock. */}

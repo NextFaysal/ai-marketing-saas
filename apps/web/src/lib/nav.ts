@@ -47,4 +47,5 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Setup Guide", href: "/dashboard/setup", icon: "🧭", ready: true },
   { label: "Team Settings", href: "/dashboard/team", icon: "👥", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", icon: "⚙️", ready: true },
+  { label: "Webhooks", href: "/dashboard/settings/webhooks", icon: "🔗", ready: true },
 ] as const;

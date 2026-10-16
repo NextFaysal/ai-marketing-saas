@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EmailProvider } from "../messaging/email.provider";
@@ -38,8 +39,12 @@ function toIso(value: any): string | null {
  *  - The "cart.abandoned" workflow event is emitted only after a
  *    provider-confirmed send.
  */
+const RECOVERY_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
 @Injectable()
 export class AbandonedCheckoutsService {
+  private readonly logger = new Logger(AbandonedCheckoutsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly audit?: AuditService,
@@ -47,6 +52,182 @@ export class AbandonedCheckoutsService {
     @Optional() private readonly events?: EventsService,
     @Optional() private readonly trackerCarts?: AbandonedCartsService,
   ) {}
+
+  // ---------- GB7: abandoned recovery coupon setting ----------
+
+  private serializeCouponSetting(row: any): any {
+    if (!row) {
+      return { enabled: false, kind: "percent", value: 0, expiryHours: 72, minOrderMinor: null };
+    }
+    return {
+      enabled: row.enabled ?? false,
+      kind: row.kind ?? "percent",
+      value: row.value ?? 0,
+      expiryHours: row.expiryHours ?? 72,
+      minOrderMinor: row.minOrderMinor == null ? null : String(row.minOrderMinor),
+    };
+  }
+
+  async getCouponSetting(orgId: string) {
+    let row: any = null;
+    try {
+      const table = (this.prisma as any).abandonedCouponSetting;
+      row = table?.findFirst ? await table.findFirst({ where: { organizationId: orgId } }) : null;
+    } catch {
+      row = null;
+    }
+    return this.serializeCouponSetting(row);
+  }
+
+  async updateCouponSetting(orgId: string, actorId: string, dto: any) {
+    const existing = await this.getCouponSetting(orgId);
+    const merged = {
+      enabled: dto?.enabled !== undefined ? dto.enabled === true : existing.enabled,
+      kind: dto?.kind !== undefined ? String(dto.kind) : existing.kind,
+      value: dto?.value !== undefined ? dto.value : existing.value,
+      expiryHours: dto?.expiryHours !== undefined ? dto.expiryHours : existing.expiryHours,
+      minOrderMinor:
+        dto?.minOrderMinor !== undefined ? dto.minOrderMinor : existing.minOrderMinor,
+    };
+    if (!["percent", "fixed"].includes(merged.kind)) {
+      throw new BadRequestException("কুপনের ধরন percent অথবা fixed হতে হবে");
+    }
+    if (merged.enabled) {
+      if (merged.kind === "percent") {
+        if (!Number.isInteger(merged.value) || merged.value < 1 || merged.value > 90) {
+          throw new BadRequestException("শতাংশ কুপনের মান ১–৯০ হতে হবে");
+        }
+      } else if (!Number.isInteger(merged.value) || merged.value < 1) {
+        throw new BadRequestException("নির্দিষ্ট পরিমাণ কুপনের মান কমপক্ষে ১ হতে হবে");
+      }
+    }
+    if (!Number.isInteger(merged.expiryHours) || merged.expiryHours < 1 || merged.expiryHours > 720) {
+      throw new BadRequestException("কুপনের মেয়াদ ১–৭২০ ঘণ্টা হতে হবে");
+    }
+    let minOrderMinor: bigint | null = null;
+    if (merged.minOrderMinor !== null && merged.minOrderMinor !== undefined && merged.minOrderMinor !== "") {
+      try {
+        minOrderMinor = BigInt(merged.minOrderMinor as any);
+      } catch {
+        throw new BadRequestException("ন্যূনতম অর্ডার পরিমাণ সঠিক সংখ্যা হতে হবে");
+      }
+      if (minOrderMinor < 0n) {
+        throw new BadRequestException("ন্যূনতম অর্ডার পরিমাণ ০ বা তার বেশি হতে হবে");
+      }
+    }
+    const data = {
+      enabled: merged.enabled,
+      kind: merged.kind,
+      value: merged.value,
+      expiryHours: merged.expiryHours,
+      minOrderMinor,
+    };
+    const table = (this.prisma as any).abandonedCouponSetting;
+    let row: any = null;
+    if (table?.upsert) {
+      row = await table.upsert({
+        where: { organizationId: orgId },
+        update: data,
+        create: { organizationId: orgId, ...data },
+      });
+    } else if (table?.findFirst) {
+      const found = await table.findFirst({ where: { organizationId: orgId } });
+      row = found
+        ? await table.update({ where: { id: found.id }, data })
+        : await table.create({ data: { organizationId: orgId, ...data } });
+    }
+    if (this.audit) {
+      await this.audit
+        .log({
+          organizationId: orgId,
+          userId: actorId,
+          action: "commerce.abandoned_coupon_setting_updated",
+          entityType: "AbandonedCouponSetting",
+          entityId: row?.id ?? orgId,
+          metadata: { enabled: data.enabled, kind: data.kind, value: data.value, expiryHours: data.expiryHours },
+        })
+        .catch(() => undefined);
+    }
+    return this.serializeCouponSetting(row ?? { ...data, organizationId: orgId });
+  }
+
+  /** GB7: issue a REAL recovery coupon when the setting is on.
+   * Failure-isolated: any failure (read or create) → null, and
+   * the recovery send continues WITHOUT a coupon.
+   *
+   * AX18: made PUBLIC as issueRecoveryCoupon so the workflow
+   * engine's issue_recovery_coupon action can reuse the exact
+   * same machinery. NOTE — this method does NOT dedupe by
+   * sourceRef: the EC10 call sites pass the checkout/cart id
+   * (String(checkoutId) / String(cartId)) and rely on their
+   * audit-marker duplicate-send guards, so calling this twice
+   * with the same ref issues TWO coupons. Exactly-once is the
+   * CALLER's job when it needs it — the workflow action does
+   * its own StoreDiscount pre-check keyed on its wf: sourceRef
+   * before calling here (see workflows.service.ts). */
+  async issueRecoveryCoupon(
+    orgId: string,
+    sourceRef: string,
+  ): Promise<{ code: string; kind: string; value: number; expiryHours: number } | null> {
+    try {
+      const table = (this.prisma as any).abandonedCouponSetting;
+      const setting = table?.findFirst
+        ? await table.findFirst({ where: { organizationId: orgId } }).catch(() => null)
+        : null;
+      if (!setting?.enabled) return null;
+      const expiryHours = Number(setting.expiryHours ?? 72);
+      let minOrderMinor: bigint | null = null;
+      if (setting.minOrderMinor != null) {
+        try { minOrderMinor = BigInt(setting.minOrderMinor); } catch { minOrderMinor = null; }
+      }
+      const discountTable = (this.prisma as any).storeDiscount;
+      if (!discountTable?.create) return null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const bytes = randomBytes(8);
+        let suffix = "";
+        for (let i = 0; i < 8; i++) suffix += RECOVERY_CODE_ALPHABET[bytes[i] % RECOVERY_CODE_ALPHABET.length];
+        const code = `RCV-${suffix}`;
+        try {
+          await discountTable.create({
+            data: {
+              organizationId: orgId,
+              code,
+              kind: setting.kind,
+              value: setting.value,
+              minOrderMinor,
+              endsAt: new Date(Date.now() + expiryHours * 3600_000),
+              perCustomerLimit: 1,
+              firstOrderOnly: false,
+              active: true,
+              origin: "abandoned_recovery",
+              sourceRef: String(sourceRef),
+            },
+          });
+          return { code, kind: String(setting.kind), value: Number(setting.value), expiryHours };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const isUnique = /unique|P2002/i.test(msg);
+          if (isUnique && attempt < 4) continue;
+          this.logger.warn(`recovery coupon issuance failed for org ${orgId}: ${msg}`);
+          return null;
+        }
+      }
+      return null;
+    } catch (e) {
+      this.logger.warn(
+        `recovery coupon issuance failed for org ${orgId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  private couponLines(coupon: { code: string; kind: string; value: number; expiryHours: number }): string[] {
+    const discountText = coupon.kind === "percent" ? `${coupon.value}% ছাড়` : `৳${coupon.value} ছাড়`;
+    return [
+      `আপনার জন্য একটি কুপন কোড: ${coupon.code} (${discountText})`,
+      `কোডটি ${coupon.expiryHours} ঘণ্টা পর্যন্ত বৈধ`,
+    ];
+  }
 
   /** Customer ids in this org matching the checkout's email/phone. */
   private async findCustomerIds(orgId: string, row: any): Promise<string[]> {
@@ -399,6 +580,10 @@ export class AbandonedCheckoutsService {
       throw new BadRequestException("ইমেইল পাঠানোর সুবিধা এই deployment-এ নেই");
     }
 
+    // GB7: after the duplicate-send guard, before composing the
+    // message — issue a real recovery coupon when enabled.
+    const recoveryCoupon = await this.issueRecoveryCoupon(orgId, String(checkoutId));
+
     let storeName = "আমাদের দোকান";
     try {
       const store = await (this.prisma as any).store.findFirst({
@@ -423,6 +608,9 @@ export class AbandonedCheckoutsService {
       }
     }
     lines.push("", `মোট মূল্য: ৳${minorToMajor(BigInt(row.totalMinor ?? 0))}`);
+    if (recoveryCoupon) {
+      lines.push("", ...this.couponLines(recoveryCoupon));
+    }
     if (row.checkoutUrl) {
       lines.push("", `আপনার অর্ডারটি সম্পূর্ণ করতে এখানে ফিরে যান: ${row.checkoutUrl}`);
     }
@@ -451,6 +639,7 @@ export class AbandonedCheckoutsService {
             storeId: row.storeId,
             to: row.email,
             providerMessageId,
+            ...(recoveryCoupon ? { couponCode: recoveryCoupon.code } : {}),
           },
         })
         .catch(() => undefined);
@@ -521,6 +710,10 @@ export class AbandonedCheckoutsService {
       throw new BadRequestException("কার্টটি খালি — recovery পাঠানোর কিছু নেই");
     }
 
+    // GB7: after the duplicate-send guard, before composing the
+    // message — issue a real recovery coupon when enabled.
+    const recoveryCoupon = await this.issueRecoveryCoupon(orgId, String(cartId));
+
     let shopName = "আমাদের দোকান";
     let shopUrl = "";
     try {
@@ -558,6 +751,9 @@ export class AbandonedCheckoutsService {
       lines.push(`- ${item.name}${item.quantity ? ` ×${item.quantity}` : ""}`);
     }
     lines.push("", `মোট মূল্য: ৳${minorToMajor(totalMinor)}`);
+    if (recoveryCoupon) {
+      lines.push("", ...this.couponLines(recoveryCoupon));
+    }
     if (shopUrl) lines.push("", `আপনার অর্ডারটি সম্পূর্ণ করতে এখানে ফিরে যান: ${shopUrl}`);
     lines.push("", "ধন্যবাদান্তে,", shopName);
     const text = lines.join("\n");
@@ -578,7 +774,12 @@ export class AbandonedCheckoutsService {
           action: NATIVE_CART_RECOVERY_ACTION,
           entityType: "StoreCart",
           entityId: cartId,
-          metadata: { to: cart.email, providerMessageId, lastCartActivity: lastActivity },
+          metadata: {
+            to: cart.email,
+            providerMessageId,
+            lastCartActivity: lastActivity,
+            ...(recoveryCoupon ? { couponCode: recoveryCoupon.code } : {}),
+          },
         })
         .catch(() => undefined);
     }
@@ -623,6 +824,103 @@ export class AbandonedCheckoutsService {
     }
     if (nativeRow) return this.sendNativeRecovery(orgId, actorId, id);
     throw new NotFoundException("Abandoned checkout not found in this organization");
+  }
+
+  /**
+   * AX18: EC10 sequence state for one checkout — is it enrolled
+   * in a workflow sequence, and where has that run got to?
+   *
+   * Achieved depth (following the real data): WorkflowRun has
+   * NO subject/checkout column and NO updatedAt column — the
+   * only link is the run's `context` Json. Runs are therefore
+   * matched IN JS against the context keys the real producers
+   * store: the EC10 recovery sends emit cart.abandoned with
+   * context.checkoutId (store checkout) / context.cartId
+   * (native cart), and sendStoreRecovery also stamps
+   * externalCheckoutId; `abandonedCheckoutId` is accepted too
+   * for forward compatibility. Tracker-derived carts carry
+   * visitorId/sessionKey instead and are NOT checkouts in this
+   * service, so they 404 here like any unknown id.
+   *
+   * stepsLog entries are { step, status, detail } (+ optional
+   * branch) with NO per-step timestamp, so no per-step `at` can
+   * be returned; lastActivityAt falls back to the run's
+   * createdAt (the only timestamp the model carries).
+   * currentStepIndex is the stored nextStepIndex verbatim —
+   * for a waiting run it is the NEXT step to execute; runs
+   * that never paused keep the schema default 0.
+   */
+  async getCheckoutSequence(orgId: string, checkoutId: string) {
+    const p = this.prisma as any;
+    let checkout: any = null;
+    try {
+      checkout = await p.abandonedStoreCheckout?.findFirst?.({
+        where: { id: checkoutId, organizationId: orgId },
+      });
+    } catch {
+      checkout = null;
+    }
+    if (!checkout) {
+      try {
+        checkout = await p.storeCart?.findFirst?.({
+          where: { id: checkoutId, organizationId: orgId },
+        });
+      } catch {
+        checkout = null;
+      }
+    }
+    if (!checkout) throw new NotFoundException("Abandoned checkout not found in this organization");
+
+    let runs: any[] = [];
+    try {
+      runs =
+        (await p.workflowRun?.findMany?.({
+          where: { organizationId: orgId },
+          orderBy: { createdAt: "desc" },
+          take: 200,
+        })) ?? [];
+    } catch {
+      runs = [];
+    }
+    const referencesCheckout = (run: any): boolean => {
+      const ctx = (run?.context ?? {}) as Record<string, any>;
+      return (
+        ctx.checkoutId === checkoutId ||
+        ctx.cartId === checkoutId ||
+        ctx.abandonedCheckoutId === checkoutId ||
+        (checkout.externalCheckoutId != null && ctx.externalCheckoutId === checkout.externalCheckoutId)
+      );
+    };
+    const run = (runs as any[]).find(referencesCheckout);
+    if (!run) return { enrolled: false };
+
+    let workflowName: string | undefined;
+    try {
+      const workflow = await p.workflow?.findFirst?.({
+        where: { id: run.workflowId, organizationId: orgId },
+      });
+      workflowName = workflow?.name ?? undefined;
+    } catch {
+      workflowName = undefined;
+    }
+
+    const steps = (Array.isArray(run.stepsLog) ? run.stepsLog : []).map((entry: any) => {
+      const out: Record<string, any> = {};
+      if (entry?.step !== undefined) out.step = entry.step;
+      if (entry?.status !== undefined) out.status = entry.status;
+      if (entry?.detail !== undefined) out.detail = entry.detail;
+      if (entry?.branch !== undefined) out.branch = entry.branch;
+      return out;
+    });
+    const lastActivity = run.updatedAt ?? run.createdAt;
+    return {
+      enrolled: true,
+      ...(workflowName ? { workflowName } : {}),
+      runStatus: run.status,
+      currentStepIndex: run.nextStepIndex ?? null,
+      steps,
+      lastActivityAt: toIso(lastActivity),
+    };
   }
 
   async backfillFromShopify(orgId: string, actorId: string, storeId: string) {

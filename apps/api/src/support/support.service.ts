@@ -14,6 +14,43 @@ import { EmailProvider } from "../messaging/email.provider";
  */
 const STATUSES = ["open", "pending", "resolved", "closed"] as const;
 
+/** GC23 — merchant-chosen ticket category vocabulary. */
+export const TICKET_CATEGORIES = ["billing", "technical", "account", "feature", "other"] as const;
+
+/**
+ * GC23 — first-response SLA (hours), configured by the platform
+ * via the SystemSetting "supportSlaHours" = { low, normal, high,
+ * urgent }; defaults below. Tickets today carry priority
+ * normal|high only — the map still covers all four keys and any
+ * unknown priority falls back to `normal`. Breach is COMPUTED ON
+ * READ (no stored state to drift): unresolved + no first admin
+ * response + past createdAt + slaHours.
+ */
+export const SUPPORT_SLA_DEFAULTS: Record<string, number> = { low: 72, normal: 24, high: 8, urgent: 4 };
+
+export async function loadSupportSlaHours(prisma: any): Promise<Record<string, number>> {
+  const out = { ...SUPPORT_SLA_DEFAULTS };
+  try {
+    const row = await prisma.systemSetting?.findUnique({ where: { key: "supportSlaHours" } });
+    const v = row?.value;
+    if (v && typeof v === "object") {
+      for (const key of Object.keys(SUPPORT_SLA_DEFAULTS)) {
+        const n = Number((v as any)[key]);
+        if (Number.isFinite(n) && n > 0) out[key] = n;
+      }
+    }
+  } catch { /* defaults apply — SLA display must never break the queue */ }
+  return out;
+}
+
+export function slaState(ticket: any, hours: Record<string, number>, now = new Date()) {
+  const h = hours[String(ticket?.priority ?? "normal")] ?? hours.normal ?? SUPPORT_SLA_DEFAULTS.normal;
+  const dueAt = new Date(new Date(ticket?.createdAt ?? now).getTime() + h * 3600_000);
+  const terminal = ticket?.status === "resolved" || ticket?.status === "closed";
+  const breached = !terminal && !ticket?.firstRespondedAt && now.getTime() > dueAt.getTime();
+  return { slaHours: h, slaDueAt: dueAt.toISOString(), slaBreached: breached };
+}
+
 @Injectable()
 export class SupportService {
   constructor(
@@ -39,14 +76,22 @@ export class SupportService {
 
   // ---------------- Tenant side ----------------
 
-  async createTicket(organizationId: string, userId: string, dto: { subject: string; body: string; priority?: string }) {
+  async createTicket(organizationId: string, userId: string, dto: { subject: string; body: string; priority?: string; category?: string }) {
     const subject = String(dto.subject ?? "").trim();
     const body = String(dto.body ?? "").trim();
     if (subject.length < 3) throw new BadRequestException("Subject is required (min 3 characters)");
     if (body.length < 1) throw new BadRequestException("Message body is required");
     const priority = dto.priority === "high" ? "high" : "normal";
+    // GC23: category — default "other"; anything outside the
+    // vocabulary is a client error, never silently coerced.
+    const category = dto.category === undefined || dto.category === null || dto.category === ""
+      ? "other"
+      : String(dto.category);
+    if (!(TICKET_CATEGORIES as readonly string[]).includes(category)) {
+      throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+    }
     const ticket = await (this.prisma as any).supportTicket.create({
-      data: { organizationId, createdById: userId, subject, priority, status: "open" },
+      data: { organizationId, createdById: userId, subject, priority, status: "open", category },
     });
     await (this.prisma as any).supportTicketMessage.create({
       data: { ticketId: ticket.id, authorId: userId, authorKind: "tenant", body },
@@ -95,18 +140,24 @@ export class SupportService {
 
   // ---------------- Admin side ----------------
 
-  async listTicketsAdmin(filter?: { status?: string; organizationId?: string }) {
+  async listTicketsAdmin(filter?: { status?: string; organizationId?: string; category?: string; slaBreached?: boolean }) {
     const where: any = {};
     if (filter?.status) where.status = filter.status;
     if (filter?.organizationId) where.organizationId = filter.organizationId;
+    if (filter?.category) where.category = filter.category;
     const rows = await (this.prisma as any).supportTicket.findMany({
       where, orderBy: { lastMessageAt: "desc" }, take: 100,
     });
     const withCounts = await this.withCounts(rows);
-    const out: any[] = [];
+    // GC23: SLA state is computed on read and added to ADMIN
+    // payloads only — tenant payloads never carry SLA internals.
+    const hours = await loadSupportSlaHours(this.prisma as any);
+    const now = new Date();
+    let out: any[] = [];
     for (const t of withCounts) {
-      out.push({ ...t, organizationName: await this.orgName(t.organizationId) });
+      out.push({ ...t, ...slaState(t, hours, now), organizationName: await this.orgName(t.organizationId) });
     }
+    if (filter?.slaBreached) out = out.filter((t) => t.slaBreached);
     return out;
   }
 
@@ -117,8 +168,9 @@ export class SupportService {
       where: { ticketId }, orderBy: { createdAt: "asc" },
     });
     const creator = await (this.prisma as any).user.findUnique({ where: { id: ticket.createdById } }).catch(() => null);
+    const hours = await loadSupportSlaHours(this.prisma as any);
     return {
-      ...ticket, messages,
+      ...ticket, messages, ...slaState(ticket, hours),
       organizationName: await this.orgName(ticket.organizationId),
       creatorEmail: creator?.email ?? null,
     };
@@ -134,7 +186,15 @@ export class SupportService {
     });
     await (this.prisma as any).supportTicket.update({
       where: { id: ticketId },
-      data: { lastMessageAt: new Date(), ...(ticket.status === "open" ? { status: "pending" } : {}) },
+      data: {
+        lastMessageAt: new Date(),
+        ...(ticket.status === "open" ? { status: "pending" } : {}),
+        // GC23: the FIRST admin response stamps firstRespondedAt
+        // in the same write (SLA clock stops here); later replies
+        // never move it. Part of this existing update, so a stamp
+        // failure has exactly the reply update's own semantics.
+        ...(ticket.firstRespondedAt ? {} : { firstRespondedAt: new Date() }),
+      },
     });
     await this.audit.log({
       organizationId: ticket.organizationId, userId: actor.id,
@@ -165,7 +225,7 @@ export class SupportService {
     return { message, emailSent, emailError };
   }
 
-  async updateAsAdmin(actor: any, ticketId: string, dto: { status?: string; assignedToId?: string | null; priority?: string }, ip?: string) {
+  async updateAsAdmin(actor: any, ticketId: string, dto: { status?: string; assignedToId?: string | null; priority?: string; category?: string }, ip?: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) throw new NotFoundException("Ticket not found");
     const data: Record<string, unknown> = {};
@@ -177,6 +237,13 @@ export class SupportService {
     if (dto.priority !== undefined) {
       if (dto.priority !== "normal" && dto.priority !== "high") throw new BadRequestException("priority must be normal | high");
       data.priority = dto.priority;
+    }
+    // GC23: admins can recategorize a ticket.
+    if (dto.category !== undefined) {
+      if (!(TICKET_CATEGORIES as readonly string[]).includes(dto.category)) {
+        throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+      }
+      data.category = dto.category;
     }
     const updated = await (this.prisma as any).supportTicket.update({ where: { id: ticketId }, data });
     await this.audit.log({

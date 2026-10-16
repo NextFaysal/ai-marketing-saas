@@ -1,0 +1,889 @@
+bcc330925c98992172a409a395bba129
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LicenseKeyImportDto = exports.QuoteRespondDto = exports.UpdateQuoteDto = exports.QuoteDto = exports.BulkPercentOffDto = exports.PriceListItemDto = exports.UpdateCustomerGroupDto = exports.CustomerGroupDto = exports.GiftCardAdjustDto = exports.GiftCardNoteDto = exports.ManualGiftCardIssueDto = exports.GiftCardSettingDto = exports.LoyaltyAdjustDto = exports.ReferralRewardSettingDto = exports.LoyaltySettingDto = exports.UpdateTrackingMetaKeyDto = exports.GenerateCampaignDto = exports.PromotionPreviewDto = exports.BundleDto = exports.SetPromotionActiveDto = exports.PromotionDto = exports.SetDiscountActiveDto = exports.AbandonedCouponSettingDto = exports.DiscountDto = exports.UpdateRefundPushDto = exports.UpdateLocationDto = exports.CreateLocationDto = exports.SaleScheduleDto = exports.ChannelPriceDto = exports.ResolveConflictDto = exports.UpdateSyncModeDto = void 0;
+const class_validator_1 = require("class-validator");
+class UpdateSyncModeDto {
+    // CP3: syncMode is now optional so the same store-settings
+    // surface can carry a weightUnit-only update.
+    syncMode;
+    fieldOwnership;
+    /** CP3: manual override of the store's weight unit (null clears
+     *  back to the legacy kg default). */
+    weightUnit;
+}
+exports.UpdateSyncModeDto = UpdateSyncModeDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateSyncModeDto.prototype, "syncMode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdateSyncModeDto.prototype, "fieldOwnership", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["g", "kg", "lb", "oz"]),
+    __metadata("design:type", Object)
+], UpdateSyncModeDto.prototype, "weightUnit", void 0);
+class ResolveConflictDto {
+    choice;
+    /** CP1: per_field only — { fieldName: "local" | "remote" } for
+     *  EXACTLY the fields in the conflict's fieldDiffs. */
+    choices;
+}
+exports.ResolveConflictDto = ResolveConflictDto;
+__decorate([
+    (0, class_validator_1.IsIn)(["keep_local", "take_remote", "per_field"]),
+    __metadata("design:type", String)
+], ResolveConflictDto.prototype, "choice", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], ResolveConflictDto.prototype, "choices", void 0);
+class ChannelPriceDto {
+    // Integer minor units as a decimal string, or null to clear the override.
+    channelPriceMinor;
+}
+exports.ChannelPriceDto = ChannelPriceDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], ChannelPriceDto.prototype, "channelPriceMinor", void 0);
+class SaleScheduleDto {
+    saleStartsAt;
+    saleEndsAt;
+}
+exports.SaleScheduleDto = SaleScheduleDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], SaleScheduleDto.prototype, "saleStartsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], SaleScheduleDto.prototype, "saleEndsAt", void 0);
+class CreateLocationDto {
+    name;
+    externalLocationId;
+    isDefault;
+}
+exports.CreateLocationDto = CreateLocationDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateLocationDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateLocationDto.prototype, "externalLocationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateLocationDto.prototype, "isDefault", void 0);
+class UpdateLocationDto {
+    name;
+    isDefault;
+}
+exports.UpdateLocationDto = UpdateLocationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], UpdateLocationDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateLocationDto.prototype, "isDefault", void 0);
+/** EC5: OWNER-only refund-push toggle (dedicated route + @Roles("OWNER")). */
+class UpdateRefundPushDto {
+    enabled;
+}
+exports.UpdateRefundPushDto = UpdateRefundPushDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateRefundPushDto.prototype, "enabled", void 0);
+/** EC7: create/update a StoreDiscount. minOrderMinor is minor units
+ *  as a decimal string (BigInt over the wire), same as channel price. */
+class DiscountDto {
+    code;
+    kind;
+    value;
+    minOrderMinor;
+    scopeType;
+    scopeIds;
+    startsAt;
+    endsAt;
+    usageLimit;
+    active;
+    storeIds;
+    // GB7 (GC17)
+    firstOrderOnly;
+    repeatCustomerOnly;
+    perCustomerLimit;
+    maxOrderMinor;
+    excludedProductIds;
+    excludedCategoryIds;
+}
+exports.DiscountDto = DiscountDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], DiscountDto.prototype, "code", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["percent", "fixed", "free_shipping"]),
+    __metadata("design:type", String)
+], DiscountDto.prototype, "kind", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(100000000),
+    __metadata("design:type", Number)
+], DiscountDto.prototype, "value", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "minOrderMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["all", "products", "categories"]),
+    __metadata("design:type", String)
+], DiscountDto.prototype, "scopeType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "scopeIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "startsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "endsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "usageLimit", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], DiscountDto.prototype, "active", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], DiscountDto.prototype, "storeIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], DiscountDto.prototype, "firstOrderOnly", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], DiscountDto.prototype, "repeatCustomerOnly", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(1000),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "perCustomerLimit", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "maxOrderMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "excludedProductIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Object)
+], DiscountDto.prototype, "excludedCategoryIds", void 0);
+/** GB7: per-org abandoned-cart recovery coupon template. */
+class AbandonedCouponSettingDto {
+    enabled;
+    kind;
+    value;
+    expiryHours;
+    minOrderMinor;
+}
+exports.AbandonedCouponSettingDto = AbandonedCouponSettingDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], AbandonedCouponSettingDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["percent", "fixed"]),
+    __metadata("design:type", String)
+], AbandonedCouponSettingDto.prototype, "kind", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(100000000),
+    __metadata("design:type", Number)
+], AbandonedCouponSettingDto.prototype, "value", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(720),
+    __metadata("design:type", Number)
+], AbandonedCouponSettingDto.prototype, "expiryHours", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], AbandonedCouponSettingDto.prototype, "minOrderMinor", void 0);
+class SetDiscountActiveDto {
+    active;
+}
+exports.SetDiscountActiveDto = SetDiscountActiveDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetDiscountActiveDto.prototype, "active", void 0);
+/** EC16: create/update a Promotion. `config` is the per-type
+ * document validated server-side by validatePromotionConfig
+ * (bogo | tiered | flash); dates are ISO strings or null. */
+class PromotionDto {
+    name;
+    type;
+    config;
+    startsAt;
+    endsAt;
+    active;
+    priority;
+}
+exports.PromotionDto = PromotionDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], PromotionDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["bogo", "tiered", "flash", "gift"]),
+    __metadata("design:type", String)
+], PromotionDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], PromotionDto.prototype, "config", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], PromotionDto.prototype, "startsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], PromotionDto.prototype, "endsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PromotionDto.prototype, "active", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(-100),
+    (0, class_validator_1.Max)(100),
+    __metadata("design:type", Number)
+], PromotionDto.prototype, "priority", void 0);
+class SetPromotionActiveDto {
+    active;
+}
+exports.SetPromotionActiveDto = SetPromotionActiveDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetPromotionActiveDto.prototype, "active", void 0);
+/** EC29: create/update a Bundle. `items` is the untyped
+ * component array ([{ productId, variantSku?, qty }]) validated
+ * server-side by BundlesService.validateItems; bundlePriceMinor
+ * is integer minor units as a decimal string. */
+class BundleDto {
+    name;
+    description;
+    imageUrl;
+    items;
+    /** AB5 (AX8): mix-and-match slots ([{ label, chooseQty,
+     *  sourceType, sourceRef }]) validated server-side by
+     *  BundlesService.validateSlots; when present (incl. []) the
+     *  bundle's slots are replaced wholesale, when absent they
+     *  are untouched. */
+    slots;
+    bundlePriceMinor;
+    active;
+    sortOrder;
+}
+exports.BundleDto = BundleDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], BundleDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", Object)
+], BundleDto.prototype, "description", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(1000),
+    __metadata("design:type", Object)
+], BundleDto.prototype, "imageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], BundleDto.prototype, "items", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], BundleDto.prototype, "slots", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], BundleDto.prototype, "bundlePriceMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], BundleDto.prototype, "active", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(10000),
+    __metadata("design:type", Number)
+], BundleDto.prototype, "sortOrder", void 0);
+/** EC16: cart-simulator preview — product ids + quantities are
+ * priced from the REAL product rows server-side; no client math. */
+class PromotionPreviewDto {
+    items;
+    couponCode;
+    referralCode;
+    buyerPhone;
+}
+exports.PromotionPreviewDto = PromotionPreviewDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], PromotionPreviewDto.prototype, "items", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], PromotionPreviewDto.prototype, "couponCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], PromotionPreviewDto.prototype, "referralCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(32),
+    __metadata("design:type", String)
+], PromotionPreviewDto.prototype, "buyerPhone", void 0);
+class GenerateCampaignDto {
+    prefix;
+    count;
+    kind;
+    value;
+    minOrderMinor;
+    startsAt;
+    endsAt;
+    usageLimit;
+}
+exports.GenerateCampaignDto = GenerateCampaignDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(16),
+    __metadata("design:type", String)
+], GenerateCampaignDto.prototype, "prefix", void 0);
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(500),
+    __metadata("design:type", Number)
+], GenerateCampaignDto.prototype, "count", void 0);
+__decorate([
+    (0, class_validator_1.IsIn)(["percent", "fixed", "free_shipping"]),
+    __metadata("design:type", String)
+], GenerateCampaignDto.prototype, "kind", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(100000000),
+    __metadata("design:type", Number)
+], GenerateCampaignDto.prototype, "value", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], GenerateCampaignDto.prototype, "minOrderMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], GenerateCampaignDto.prototype, "startsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], GenerateCampaignDto.prototype, "endsAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Object)
+], GenerateCampaignDto.prototype, "usageLimit", void 0);
+/** EC5: the store's shipment-plugin tracking meta key (nullable to clear). */
+class UpdateTrackingMetaKeyDto {
+    courierTrackingMetaKey;
+}
+exports.UpdateTrackingMetaKeyDto = UpdateTrackingMetaKeyDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", Object)
+], UpdateTrackingMetaKeyDto.prototype, "courierTrackingMetaKey", void 0);
+/** AB1 (AX1): loyalty program settings. All fields optional —
+ * the service applies only the provided ones (null clears the
+ * nullable caps). Range validation lives in LoyaltyService so
+ * the Bengali errors match the rest of the commerce surface. */
+class LoyaltySettingDto {
+    enabled;
+    earnPointsPer1000Minor;
+    redeemValueMinorPerPoint;
+    minRedeemPoints;
+    maxRedeemSharePct;
+    pointsExpiryDays;
+}
+exports.LoyaltySettingDto = LoyaltySettingDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], LoyaltySettingDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], LoyaltySettingDto.prototype, "earnPointsPer1000Minor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], LoyaltySettingDto.prototype, "redeemValueMinorPerPoint", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], LoyaltySettingDto.prototype, "minRedeemPoints", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], LoyaltySettingDto.prototype, "maxRedeemSharePct", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], LoyaltySettingDto.prototype, "pointsExpiryDays", void 0);
+/** AB1 (AX2): referral reward settings — what the REFERRER
+ * earns when a referred order becomes sold. */
+class ReferralRewardSettingDto {
+    enabled;
+    rewardType;
+    rewardPoints;
+    couponPercent;
+    rewardMinOrderMinor;
+}
+exports.ReferralRewardSettingDto = ReferralRewardSettingDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ReferralRewardSettingDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["points", "coupon"]),
+    __metadata("design:type", String)
+], ReferralRewardSettingDto.prototype, "rewardType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], ReferralRewardSettingDto.prototype, "rewardPoints", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], ReferralRewardSettingDto.prototype, "couponPercent", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], ReferralRewardSettingDto.prototype, "rewardMinOrderMinor", void 0);
+/** AB1 (AX1): a staff manual points correction. The note is
+ * mandatory (enforced in the service) — every adjust explains
+ * itself in the customer's ledger. */
+class LoyaltyAdjustDto {
+    deltaPoints;
+    note;
+}
+exports.LoyaltyAdjustDto = LoyaltyAdjustDto;
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], LoyaltyAdjustDto.prototype, "deltaPoints", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], LoyaltyAdjustDto.prototype, "note", void 0);
+/** AB2 (AX3): gift-card settings. All fields optional — the
+ * service applies only the provided ones (null clears the
+ * default expiry). Range validation lives in GiftCardsService
+ * so the Bengali errors match the rest of the commerce surface. */
+class GiftCardSettingDto {
+    redemptionEnabled;
+    defaultExpiryDays;
+}
+exports.GiftCardSettingDto = GiftCardSettingDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], GiftCardSettingDto.prototype, "redemptionEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], GiftCardSettingDto.prototype, "defaultExpiryDays", void 0);
+/** AB2 (AX3): a staff manual gift-card issue. amountMinor is
+ * integer minor units as a decimal string (BigInt over the
+ * wire). A recipient contact (valid email or a phone) and the
+ * note are mandatory — enforced in the service, because the
+ * code is sent ONLY to the recipient and shown nowhere else. */
+class ManualGiftCardIssueDto {
+    amountMinor;
+    recipientName;
+    recipientEmail;
+    recipientPhone;
+    note;
+}
+exports.ManualGiftCardIssueDto = ManualGiftCardIssueDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ManualGiftCardIssueDto.prototype, "amountMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ManualGiftCardIssueDto.prototype, "recipientName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ManualGiftCardIssueDto.prototype, "recipientEmail", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], ManualGiftCardIssueDto.prototype, "recipientPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ManualGiftCardIssueDto.prototype, "note", void 0);
+/** AB2 (AX3): a staff gift-card action that must explain
+ * itself (void). The note is mandatory in the service. */
+class GiftCardNoteDto {
+    note;
+}
+exports.GiftCardNoteDto = GiftCardNoteDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], GiftCardNoteDto.prototype, "note", void 0);
+/** AB2 (AX3): a staff balance correction. deltaMinor is a
+ * signed integer-minor decimal string; the note is mandatory
+ * in the service — every adjust explains itself in the ledger. */
+class GiftCardAdjustDto {
+    deltaMinor;
+    note;
+}
+exports.GiftCardAdjustDto = GiftCardAdjustDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GiftCardAdjustDto.prototype, "deltaMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], GiftCardAdjustDto.prototype, "note", void 0);
+/** AB5 (AX7): a B2B customer group (name unique per org —
+ * enforced in PriceListsService with a Bengali 400). */
+class CustomerGroupDto {
+    name;
+}
+exports.CustomerGroupDto = CustomerGroupDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CustomerGroupDto.prototype, "name", void 0);
+class UpdateCustomerGroupDto {
+    name;
+}
+exports.UpdateCustomerGroupDto = UpdateCustomerGroupDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], UpdateCustomerGroupDto.prototype, "name", void 0);
+/** AB5 (AX7): one explicit price-list row. priceMinor is
+ * integer minor units as a decimal string; variantId null /
+ * absent = the product-level price. */
+class PriceListItemDto {
+    productId;
+    variantId;
+    priceMinor;
+}
+exports.PriceListItemDto = PriceListItemDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PriceListItemDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], PriceListItemDto.prototype, "variantId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], PriceListItemDto.prototype, "priceMinor", void 0);
+/** AB5 (AX7): materialize a %-off as explicit product-level
+ * rows (percentOff 1..99 validated in the service). */
+class BulkPercentOffDto {
+    percentOff;
+    productIds;
+}
+exports.BulkPercentOffDto = BulkPercentOffDto;
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], BulkPercentOffDto.prototype, "percentOff", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], BulkPercentOffDto.prototype, "productIds", void 0);
+/** AB5 (AX7): a staff-issued quote. Lines are validated +
+ * snapshotted (name/sku) in QuotesService; totals are
+ * Σ lines + deliveryChargeMinor with NO tax/promotion
+ * evaluation. customerId OR walk-in details identify the buyer. */
+class QuoteDto {
+    customerId;
+    walkinName;
+    walkinPhone;
+    lines;
+    deliveryChargeMinor;
+    expiresAt;
+    note;
+}
+exports.QuoteDto = QuoteDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], QuoteDto.prototype, "customerId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], QuoteDto.prototype, "walkinName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", Object)
+], QuoteDto.prototype, "walkinPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], QuoteDto.prototype, "lines", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], QuoteDto.prototype, "deliveryChargeMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], QuoteDto.prototype, "expiresAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", Object)
+], QuoteDto.prototype, "note", void 0);
+class UpdateQuoteDto {
+    customerId;
+    walkinName;
+    walkinPhone;
+    lines;
+    deliveryChargeMinor;
+    expiresAt;
+    note;
+}
+exports.UpdateQuoteDto = UpdateQuoteDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateQuoteDto.prototype, "customerId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], UpdateQuoteDto.prototype, "walkinName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", Object)
+], UpdateQuoteDto.prototype, "walkinPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    __metadata("design:type", Array)
+], UpdateQuoteDto.prototype, "lines", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateQuoteDto.prototype, "deliveryChargeMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateQuoteDto.prototype, "expiresAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", Object)
+], UpdateQuoteDto.prototype, "note", void 0);
+/** AB5 (AX7): the public quote-page response (accept/decline). */
+class QuoteRespondDto {
+    accept;
+}
+exports.QuoteRespondDto = QuoteRespondDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], QuoteRespondDto.prototype, "accept", void 0);
+/** AB5 (AX9): a staff license-key pool import. `text` is the raw
+ * newline-separated key list (one vendor key per line; the exact
+ * trimmed string is canonical and case-sensitive). Line-level
+ * dedupe / invalid rules + the 500-line ceiling live in
+ * LicenseKeysService with Bengali errors. */
+class LicenseKeyImportDto {
+    productId;
+    text;
+    batch;
+}
+exports.LicenseKeyImportDto = LicenseKeyImportDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LicenseKeyImportDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200000),
+    __metadata("design:type", String)
+], LicenseKeyImportDto.prototype, "text", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], LicenseKeyImportDto.prototype, "batch", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvbW1lcmNlL2NvbW1lcmNlLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBdUg7QUFFdkgsTUFBYSxpQkFBaUI7SUFDNUIsMkRBQTJEO0lBQzNELDhDQUE4QztJQUNwQixRQUFRLENBQVU7SUFDbEIsY0FBYyxDQUEyQjtJQUNuRTswQ0FDc0M7SUFDTyxVQUFVLENBQWlCO0NBQ3pFO0FBUkQsOENBUUM7QUFMMkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzttREFBbUI7QUFDbEI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzt5REFBMEM7QUFHdEI7SUFBNUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSxzQkFBSSxFQUFDLENBQUMsR0FBRyxFQUFFLElBQUksRUFBRSxJQUFJLEVBQUUsSUFBSSxDQUFDLENBQUM7O3FEQUE0QjtBQUcxRSxNQUFhLGtCQUFrQjtJQUNxQixNQUFNLENBQVU7SUFDbEU7MkRBQ3VEO0lBQzdCLE9BQU8sQ0FBMEI7Q0FDNUQ7QUFMRCxnREFLQztBQUptRDtJQUFqRCxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxZQUFZLEVBQUUsYUFBYSxFQUFFLFdBQVcsQ0FBQyxDQUFDOztrREFBaUI7QUFHeEM7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzttREFBa0M7QUFHN0QsTUFBYSxlQUFlO0lBQzFCLDBFQUEwRTtJQUNoRCxpQkFBaUIsQ0FBaUI7Q0FDN0Q7QUFIRCwwQ0FHQztBQUQyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzBEQUFtQztBQUc5RCxNQUFhLGVBQWU7SUFDQSxZQUFZLENBQWlCO0lBQzdCLFVBQVUsQ0FBaUI7Q0FDdEQ7QUFIRCwwQ0FHQztBQUYyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3FEQUE4QjtBQUM3QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O21EQUE0QjtBQUd2RCxNQUFhLGlCQUFpQjtJQUNBLElBQUksQ0FBVTtJQUNBLGtCQUFrQixDQUFVO0lBQzNDLFNBQVMsQ0FBVztDQUNoRDtBQUpELDhDQUlDO0FBSDZCO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OytDQUFlO0FBQ0E7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7NkRBQTZCO0FBQzNDO0lBQTFCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMkJBQVMsR0FBRTs7b0RBQXFCO0FBR2pELE1BQWEsaUJBQWlCO0lBQ2MsSUFBSSxDQUFVO0lBQzdCLFNBQVMsQ0FBVztDQUNoRDtBQUhELDhDQUdDO0FBRjJDO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OytDQUFlO0FBQzdCO0lBQTFCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMkJBQVMsR0FBRTs7b0RBQXFCO0FBR2pELDhFQUE4RTtBQUM5RSxNQUFhLG1CQUFtQjtJQUNqQixPQUFPLENBQVc7Q0FDaEM7QUFGRCxrREFFQztBQURjO0lBQVosSUFBQSwyQkFBUyxHQUFFOztvREFBbUI7QUFHakM7eUVBQ3lFO0FBQ3pFLE1BQWEsV0FBVztJQUNtQixJQUFJLENBQVU7SUFDSSxJQUFJLENBQVU7SUFDMUIsS0FBSyxDQUFVO0lBQ3BDLGFBQWEsQ0FBaUI7SUFDRCxTQUFTLENBQVU7SUFDdkIsUUFBUSxDQUFtQjtJQUNwRCxRQUFRLENBQWlCO0lBQ3pCLE1BQU0sQ0FBaUI7SUFDbEIsVUFBVSxDQUFpQjtJQUMvQixNQUFNLENBQVc7SUFDTyxRQUFRLENBQVk7SUFDdkUsYUFBYTtJQUNjLGNBQWMsQ0FBVztJQUN6QixrQkFBa0IsQ0FBVztJQUNkLGdCQUFnQixDQUFpQjtJQUNqRCxhQUFhLENBQWlCO0lBQ0wsa0JBQWtCLENBQW1CO0lBQ3JDLG1CQUFtQixDQUFtQjtDQUMxRjtBQW5CRCxrQ0FtQkM7QUFsQjBDO0lBQXhDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7O3lDQUFlO0FBQ0k7SUFBMUQsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSxzQkFBSSxFQUFDLENBQUMsU0FBUyxFQUFFLE9BQU8sRUFBRSxlQUFlLENBQUMsQ0FBQzs7eUNBQWU7QUFDMUI7SUFBOUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFO0lBQUUsSUFBQSxxQkFBRyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEscUJBQUcsRUFBQyxTQUFTLENBQUM7OzBDQUFnQjtBQUNwQztJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2tEQUErQjtBQUNEO0lBQXRELElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsc0JBQUksRUFBQyxDQUFDLEtBQUssRUFBRSxVQUFVLEVBQUUsWUFBWSxDQUFDLENBQUM7OzhDQUFvQjtBQUN2QjtJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7OzZDQUE0QjtBQUNwRDtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzZDQUEwQjtBQUN6QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJDQUF3QjtBQUNsQjtJQUE5QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7SUFBRSxJQUFBLHFCQUFHLEVBQUMsQ0FBQyxDQUFDOzsrQ0FBNEI7QUFDL0I7SUFBMUIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxHQUFFOzsyQ0FBa0I7QUFDTztJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7OzZDQUFxQjtBQUU1QztJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O21EQUEwQjtBQUN6QjtJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O3VEQUE4QjtBQUNkO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsdUJBQUssR0FBRTtJQUFFLElBQUEscUJBQUcsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLHFCQUFHLEVBQUMsSUFBSSxDQUFDOztxREFBa0M7QUFDakQ7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztrREFBK0I7QUFDTDtJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3VEQUFzQztBQUNyQztJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3dEQUF1QztBQUczRiw0REFBNEQ7QUFDNUQsTUFBYSx5QkFBeUI7SUFDVCxPQUFPLENBQVc7SUFDSCxJQUFJLENBQXVCO0lBQ3RCLEtBQUssQ0FBVTtJQUNyQixXQUFXLENBQVU7SUFDcEMsYUFBYSxDQUFpQjtDQUN6RDtBQU5ELDhEQU1DO0FBTDRCO0lBQTFCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMkJBQVMsR0FBRTs7MERBQW1CO0FBQ0g7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSxzQkFBSSxFQUFDLENBQUMsU0FBUyxFQUFFLE9BQU8sQ0FBQyxDQUFDOzt1REFBNEI7QUFDdEI7SUFBOUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFO0lBQUUsSUFBQSxxQkFBRyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEscUJBQUcsRUFBQyxTQUFTLENBQUM7O3dEQUFnQjtBQUNyQjtJQUF4QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7SUFBRSxJQUFBLHFCQUFHLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSxxQkFBRyxFQUFDLEdBQUcsQ0FBQzs7OERBQXNCO0FBQ3BDO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7Z0VBQStCO0FBRzFELE1BQWEsb0JBQW9CO0lBQ2xCLE1BQU0sQ0FBVztDQUMvQjtBQUZELG9EQUVDO0FBRGM7SUFBWixJQUFBLDJCQUFTLEdBQUU7O29EQUFrQjtBQUdoQzs7NkRBRTZEO0FBQzdELE1BQWEsWUFBWTtJQUNtQixJQUFJLENBQVU7SUFDQyxJQUFJLENBQVU7SUFDN0MsTUFBTSxDQUEyQjtJQUNqQyxRQUFRLENBQWlCO0lBQ3pCLE1BQU0sQ0FBaUI7SUFDdEIsTUFBTSxDQUFXO0lBQ0EsUUFBUSxDQUFVO0NBQy9EO0FBUkQsb0NBUUM7QUFQMkM7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7MENBQWU7QUFDQztJQUF4RCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxNQUFNLEVBQUUsUUFBUSxFQUFFLE9BQU8sRUFBRSxNQUFNLENBQUMsQ0FBQzs7MENBQWU7QUFDN0M7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzs0Q0FBa0M7QUFDakM7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzs4Q0FBMEI7QUFDekI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzs0Q0FBd0I7QUFDdEI7SUFBMUIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxHQUFFOzs0Q0FBa0I7QUFDQTtJQUEzQyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7SUFBRSxJQUFBLHFCQUFHLEVBQUMsQ0FBQyxHQUFHLENBQUM7SUFBRSxJQUFBLHFCQUFHLEVBQUMsR0FBRyxDQUFDOzs4Q0FBbUI7QUFHaEUsTUFBYSxxQkFBcUI7SUFDbkIsTUFBTSxDQUFXO0NBQy9CO0FBRkQsc0RBRUM7QUFEYztJQUFaLElBQUEsMkJBQVMsR0FBRTs7cURBQWtCO0FBR2hDOzs7aURBR2lEO0FBQ2pELE1BQWEsU0FBUztJQUNzQixJQUFJLENBQVU7SUFDYixXQUFXLENBQWlCO0lBQzVCLFFBQVEsQ0FBaUI7SUFDM0MsS0FBSyxDQUFTO0lBQ3ZDOzs7O3lCQUlxQjtJQUNJLEtBQUssQ0FBUztJQUNiLGdCQUFnQixDQUFVO0lBQ3pCLE1BQU0sQ0FBVztJQUNELFNBQVMsQ0FBVTtDQUMvRDtBQWRELDhCQWNDO0FBYjJDO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3VDQUFlO0FBQ2I7SUFBMUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLElBQUksQ0FBQzs7OENBQTZCO0FBQzVCO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7OzJDQUEwQjtBQUMzQztJQUF4QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7O3dDQUFlO0FBTWQ7SUFBeEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx5QkFBTyxHQUFFOzt3Q0FBZTtBQUNiO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7bURBQTJCO0FBQ3pCO0lBQTFCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMkJBQVMsR0FBRTs7eUNBQWtCO0FBQ0Q7SUFBMUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFO0lBQUUsSUFBQSxxQkFBRyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEscUJBQUcsRUFBQyxLQUFLLENBQUM7OzRDQUFvQjtBQUdoRTtvRUFDb0U7QUFDcEUsTUFBYSxtQkFBbUI7SUFDbkIsS0FBSyxDQUFtRDtJQUMxQixVQUFVLENBQVU7SUFDcEIsWUFBWSxDQUFVO0lBQ3RCLFVBQVUsQ0FBVTtDQUM5RDtBQUxELGtEQUtDO0FBSlk7SUFBVixJQUFBLHlCQUFPLEdBQUU7OEJBQVMsS0FBSztrREFBMkM7QUFDMUI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7dURBQXFCO0FBQ3BCO0lBQXhDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7O3lEQUF1QjtBQUN0QjtJQUF4QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOzt1REFBcUI7QUFHL0QsTUFBYSxtQkFBbUI7SUFDSCxNQUFNLENBQVU7SUFDaEIsS0FBSyxDQUFVO0lBQ0csSUFBSSxDQUFVO0lBQ1osS0FBSyxDQUFVO0lBQ3BDLGFBQWEsQ0FBaUI7SUFDOUIsUUFBUSxDQUFpQjtJQUN6QixNQUFNLENBQWlCO0lBQ2xCLFVBQVUsQ0FBaUI7Q0FDM0Q7QUFURCxrREFTQztBQVI0QjtJQUExQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOzttREFBaUI7QUFDaEI7SUFBMUIsSUFBQSx1QkFBSyxHQUFFO0lBQUUsSUFBQSxxQkFBRyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEscUJBQUcsRUFBQyxHQUFHLENBQUM7O2tEQUFnQjtBQUNHO0lBQTVDLElBQUEsc0JBQUksRUFBQyxDQUFDLFNBQVMsRUFBRSxPQUFPLEVBQUUsZUFBZSxDQUFDLENBQUM7O2lEQUFlO0FBQ1o7SUFBOUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFO0lBQUUsSUFBQSxxQkFBRyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEscUJBQUcsRUFBQyxTQUFTLENBQUM7O2tEQUFnQjtBQUNwQztJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzBEQUErQjtBQUM5QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3FEQUEwQjtBQUN6QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O21EQUF3QjtBQUNsQjtJQUE5QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7SUFBRSxJQUFBLHFCQUFHLEVBQUMsQ0FBQyxDQUFDOzt1REFBNEI7QUFHNUQsOEVBQThFO0FBQzlFLE1BQWEsd0JBQXdCO0lBQ08sc0JBQXNCLENBQWlCO0NBQ2xGO0FBRkQsNERBRUM7QUFEMkM7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7d0VBQXdDO0FBR25GOzs7Z0VBR2dFO0FBQ2hFLE1BQWEsaUJBQWlCO0lBQ0QsT0FBTyxDQUFXO0lBQ3RCLHNCQUFzQixDQUFVO0lBQ2hDLHdCQUF3QixDQUFVO0lBQ2xDLGVBQWUsQ0FBVTtJQUN6QixpQkFBaUIsQ0FBaUI7SUFDbEMsZ0JBQWdCLENBQWlCO0NBQ3pEO0FBUEQsOENBT0M7QUFONEI7SUFBMUIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxHQUFFOztrREFBbUI7QUFDdEI7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOztpRUFBaUM7QUFDaEM7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOzttRUFBbUM7QUFDbEM7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOzswREFBMEI7QUFDekI7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOzs0REFBbUM7QUFDbEM7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOzsyREFBa0M7QUFHMUQ7K0NBQytDO0FBQy9DLE1BQWEsd0JBQXdCO0lBQ1IsT0FBTyxDQUFXO0lBQ0gsVUFBVSxDQUF1QjtJQUNwRCxZQUFZLENBQWlCO0lBQzdCLGFBQWEsQ0FBaUI7SUFDM0IsbUJBQW1CLENBQWlCO0NBQy9EO0FBTkQsNERBTUM7QUFMNEI7SUFBMUIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxHQUFFOzt5REFBbUI7QUFDSDtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxRQUFRLEVBQUUsUUFBUSxDQUFDLENBQUM7OzREQUFrQztBQUNwRDtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7OzhEQUE4QjtBQUM3QjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7OytEQUErQjtBQUMzQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3FFQUFxQztBQUdoRTs7c0NBRXNDO0FBQ3RDLE1BQWEsZ0JBQWdCO0lBQ2xCLFdBQVcsQ0FBVTtJQUNGLElBQUksQ0FBVTtDQUMzQztBQUhELDRDQUdDO0FBRlU7SUFBUixJQUFBLHVCQUFLLEdBQUU7O3FEQUFzQjtBQUNGO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzhDQUFlO0FBRzVDOzs7bUVBR21FO0FBQ25FLE1BQWEsa0JBQWtCO0lBQ0YsaUJBQWlCLENBQVc7SUFDaEMsaUJBQWlCLENBQWlCO0NBQzFEO0FBSEQsZ0RBR0M7QUFGNEI7SUFBMUIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxHQUFFOzs2REFBNkI7QUFDaEM7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOzs2REFBbUM7QUFHM0Q7Ozs7Z0VBSWdFO0FBQ2hFLE1BQWEsc0JBQXNCO0lBQ3JCLFdBQVcsQ0FBVTtJQUNTLGFBQWEsQ0FBVTtJQUN2QixjQUFjLENBQVU7SUFDekIsY0FBYyxDQUFVO0lBQ3JDLElBQUksQ0FBVTtDQUMzQztBQU5ELHdEQU1DO0FBTGE7SUFBWCxJQUFBLDBCQUFRLEdBQUU7OzJEQUFzQjtBQUNTO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzZEQUF3QjtBQUN2QjtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs4REFBeUI7QUFDekI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7OERBQXlCO0FBQ3JDO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O29EQUFlO0FBRzVDOzBEQUMwRDtBQUMxRCxNQUFhLGVBQWU7SUFDRSxJQUFJLENBQVU7Q0FDM0M7QUFGRCwwQ0FFQztBQUQ2QjtJQUEzQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs2Q0FBZTtBQUc1Qzs7a0VBRWtFO0FBQ2xFLE1BQWEsaUJBQWlCO0lBQ2hCLFVBQVUsQ0FBVTtJQUNKLElBQUksQ0FBVTtDQUMzQztBQUhELDhDQUdDO0FBRmE7SUFBWCxJQUFBLDBCQUFRLEdBQUU7O3FEQUFxQjtBQUNKO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OytDQUFlO0FBRzVDO3dEQUN3RDtBQUN4RCxNQUFhLGdCQUFnQjtJQUNDLElBQUksQ0FBVTtDQUMzQztBQUZELDRDQUVDO0FBRDZCO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzhDQUFlO0FBRzVDLE1BQWEsc0JBQXNCO0lBQ1MsSUFBSSxDQUFVO0NBQ3pEO0FBRkQsd0RBRUM7QUFEMkM7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7b0RBQWU7QUFHMUQ7O3VDQUV1QztBQUN2QyxNQUFhLGdCQUFnQjtJQUNmLFNBQVMsQ0FBVTtJQUNMLFNBQVMsQ0FBaUI7SUFDeEMsVUFBVSxDQUFVO0NBQ2pDO0FBSkQsNENBSUM7QUFIYTtJQUFYLElBQUEsMEJBQVEsR0FBRTs7bURBQW9CO0FBQ0w7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzttREFBMkI7QUFDeEM7SUFBWCxJQUFBLDBCQUFRLEdBQUU7O29EQUFxQjtBQUdsQzt1REFDdUQ7QUFDdkQsTUFBYSxpQkFBaUI7SUFDbkIsVUFBVSxDQUFVO0lBQ3NCLFVBQVUsQ0FBWTtDQUMxRTtBQUhELDhDQUdDO0FBRlU7SUFBUixJQUFBLHVCQUFLLEdBQUU7O3FEQUFxQjtBQUNzQjtJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3FEQUF1QjtBQUczRTs7O21FQUdtRTtBQUNuRSxNQUFhLFFBQVE7SUFDTyxVQUFVLENBQWlCO0lBQ1gsVUFBVSxDQUFpQjtJQUM1QixXQUFXLENBQWlCO0lBQzVDLEtBQUssQ0FBUztJQUNiLG1CQUFtQixDQUFVO0lBQzdCLFNBQVMsQ0FBaUI7SUFDVCxJQUFJLENBQWlCO0NBQ2pFO0FBUkQsNEJBUUM7QUFQMkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzs0Q0FBNEI7QUFDWDtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs0Q0FBNEI7QUFDNUI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7NkNBQTZCO0FBQzVDO0lBQXhCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEseUJBQU8sR0FBRTs7dUNBQWU7QUFDYjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3FEQUE4QjtBQUM3QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJDQUEyQjtBQUNUO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7O3NDQUFzQjtBQUdsRSxNQUFhLGNBQWM7SUFDQyxVQUFVLENBQWlCO0lBQ1gsVUFBVSxDQUFpQjtJQUM1QixXQUFXLENBQWlCO0lBQzVDLEtBQUssQ0FBUztJQUNiLG1CQUFtQixDQUFVO0lBQzdCLFNBQVMsQ0FBaUI7SUFDVCxJQUFJLENBQWlCO0NBQ2pFO0FBUkQsd0NBUUM7QUFQMkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztrREFBNEI7QUFDWDtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOztrREFBNEI7QUFDNUI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7bURBQTZCO0FBQzVDO0lBQXhCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEseUJBQU8sR0FBRTs7NkNBQWU7QUFDYjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJEQUE4QjtBQUM3QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2lEQUEyQjtBQUNUO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7OzRDQUFzQjtBQUdsRSxrRUFBa0U7QUFDbEUsTUFBYSxlQUFlO0lBQ2IsTUFBTSxDQUFXO0NBQy9CO0FBRkQsMENBRUM7QUFEYztJQUFaLElBQUEsMkJBQVMsR0FBRTs7K0NBQWtCO0FBR2hDOzs7OzZDQUk2QztBQUM3QyxNQUFhLG1CQUFtQjtJQUNsQixTQUFTLENBQVU7SUFDQSxJQUFJLENBQVU7SUFDSCxLQUFLLENBQVU7Q0FDMUQ7QUFKRCxrREFJQztBQUhhO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztzREFBb0I7QUFDQTtJQUE5QixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsTUFBTSxDQUFDOztpREFBZTtBQUNIO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O2tEQUFnQiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvY29tbWVyY2UvY29tbWVyY2UuZHRvLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IElzQXJyYXksIElzQm9vbGVhbiwgSXNJbiwgSXNJbnQsIElzT2JqZWN0LCBJc09wdGlvbmFsLCBJc1N0cmluZywgTWF4LCBNYXhMZW5ndGgsIE1pbiB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcblxuZXhwb3J0IGNsYXNzIFVwZGF0ZVN5bmNNb2RlRHRvIHtcbiAgLy8gQ1AzOiBzeW5jTW9kZSBpcyBub3cgb3B0aW9uYWwgc28gdGhlIHNhbWUgc3RvcmUtc2V0dGluZ3NcbiAgLy8gc3VyZmFjZSBjYW4gY2FycnkgYSB3ZWlnaHRVbml0LW9ubHkgdXBkYXRlLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHN5bmNNb2RlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIGZpZWxkT3duZXJzaGlwPzogUmVjb3JkPHN0cmluZywgdW5rbm93bj47XG4gIC8qKiBDUDM6IG1hbnVhbCBvdmVycmlkZSBvZiB0aGUgc3RvcmUncyB3ZWlnaHQgdW5pdCAobnVsbCBjbGVhcnNcbiAgICogIGJhY2sgdG8gdGhlIGxlZ2FjeSBrZyBkZWZhdWx0KS4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNJbihbXCJnXCIsIFwia2dcIiwgXCJsYlwiLCBcIm96XCJdKSB3ZWlnaHRVbml0Pzogc3RyaW5nIHwgbnVsbDtcbn1cblxuZXhwb3J0IGNsYXNzIFJlc29sdmVDb25mbGljdER0byB7XG4gIEBJc0luKFtcImtlZXBfbG9jYWxcIiwgXCJ0YWtlX3JlbW90ZVwiLCBcInBlcl9maWVsZFwiXSkgY2hvaWNlITogc3RyaW5nO1xuICAvKiogQ1AxOiBwZXJfZmllbGQgb25seSDigJQgeyBmaWVsZE5hbWU6IFwibG9jYWxcIiB8IFwicmVtb3RlXCIgfSBmb3JcbiAgICogIEVYQUNUTFkgdGhlIGZpZWxkcyBpbiB0aGUgY29uZmxpY3QncyBmaWVsZERpZmZzLiAqL1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIGNob2ljZXM/OiBSZWNvcmQ8c3RyaW5nLCBzdHJpbmc+O1xufVxuXG5leHBvcnQgY2xhc3MgQ2hhbm5lbFByaWNlRHRvIHtcbiAgLy8gSW50ZWdlciBtaW5vciB1bml0cyBhcyBhIGRlY2ltYWwgc3RyaW5nLCBvciBudWxsIHRvIGNsZWFyIHRoZSBvdmVycmlkZS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjaGFubmVsUHJpY2VNaW5vcj86IHN0cmluZyB8IG51bGw7XG59XG5cbmV4cG9ydCBjbGFzcyBTYWxlU2NoZWR1bGVEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHNhbGVTdGFydHNBdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgc2FsZUVuZHNBdD86IHN0cmluZyB8IG51bGw7XG59XG5cbmV4cG9ydCBjbGFzcyBDcmVhdGVMb2NhdGlvbkR0byB7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBuYW1lITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBleHRlcm5hbExvY2F0aW9uSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGlzRGVmYXVsdD86IGJvb2xlYW47XG59XG5cbmV4cG9ydCBjbGFzcyBVcGRhdGVMb2NhdGlvbkR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGlzRGVmYXVsdD86IGJvb2xlYW47XG59XG5cbi8qKiBFQzU6IE9XTkVSLW9ubHkgcmVmdW5kLXB1c2ggdG9nZ2xlIChkZWRpY2F0ZWQgcm91dGUgKyBAUm9sZXMoXCJPV05FUlwiKSkuICovXG5leHBvcnQgY2xhc3MgVXBkYXRlUmVmdW5kUHVzaER0byB7XG4gIEBJc0Jvb2xlYW4oKSBlbmFibGVkITogYm9vbGVhbjtcbn1cblxuLyoqIEVDNzogY3JlYXRlL3VwZGF0ZSBhIFN0b3JlRGlzY291bnQuIG1pbk9yZGVyTWlub3IgaXMgbWlub3IgdW5pdHNcbiAqICBhcyBhIGRlY2ltYWwgc3RyaW5nIChCaWdJbnQgb3ZlciB0aGUgd2lyZSksIHNhbWUgYXMgY2hhbm5lbCBwcmljZS4gKi9cbmV4cG9ydCBjbGFzcyBEaXNjb3VudER0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgY29kZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbihbXCJwZXJjZW50XCIsIFwiZml4ZWRcIiwgXCJmcmVlX3NoaXBwaW5nXCJdKSBraW5kPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCgxMDAwMDAwMDApIHZhbHVlPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG1pbk9yZGVyTWlub3I/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0luKFtcImFsbFwiLCBcInByb2R1Y3RzXCIsIFwiY2F0ZWdvcmllc1wiXSkgc2NvcGVUeXBlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBzY29wZUlkcz86IHN0cmluZ1tdIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzdGFydHNBdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZW5kc0F0Pzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDEpIHVzYWdlTGltaXQ/OiBudW1iZXIgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBhY3RpdmU/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBzdG9yZUlkcz86IHN0cmluZ1tdO1xuICAvLyBHQjcgKEdDMTcpXG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGZpcnN0T3JkZXJPbmx5PzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgcmVwZWF0Q3VzdG9tZXJPbmx5PzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDEpIEBNYXgoMTAwMCkgcGVyQ3VzdG9tZXJMaW1pdD86IG51bWJlciB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgbWF4T3JkZXJNaW5vcj86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIGV4Y2x1ZGVkUHJvZHVjdElkcz86IHN0cmluZ1tdIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIEBJc1N0cmluZyh7IGVhY2g6IHRydWUgfSkgZXhjbHVkZWRDYXRlZ29yeUlkcz86IHN0cmluZ1tdIHwgbnVsbDtcbn1cblxuLyoqIEdCNzogcGVyLW9yZyBhYmFuZG9uZWQtY2FydCByZWNvdmVyeSBjb3Vwb24gdGVtcGxhdGUuICovXG5leHBvcnQgY2xhc3MgQWJhbmRvbmVkQ291cG9uU2V0dGluZ0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGVuYWJsZWQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0luKFtcInBlcmNlbnRcIiwgXCJmaXhlZFwiXSkga2luZD86IFwicGVyY2VudFwiIHwgXCJmaXhlZFwiO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCgxMDAwMDAwMDApIHZhbHVlPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMSkgQE1heCg3MjApIGV4cGlyeUhvdXJzPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG1pbk9yZGVyTWlub3I/OiBzdHJpbmcgfCBudWxsO1xufVxuXG5leHBvcnQgY2xhc3MgU2V0RGlzY291bnRBY3RpdmVEdG8ge1xuICBASXNCb29sZWFuKCkgYWN0aXZlITogYm9vbGVhbjtcbn1cblxuLyoqIEVDMTY6IGNyZWF0ZS91cGRhdGUgYSBQcm9tb3Rpb24uIGBjb25maWdgIGlzIHRoZSBwZXItdHlwZVxuICogZG9jdW1lbnQgdmFsaWRhdGVkIHNlcnZlci1zaWRlIGJ5IHZhbGlkYXRlUHJvbW90aW9uQ29uZmlnXG4gKiAoYm9nbyB8IHRpZXJlZCB8IGZsYXNoKTsgZGF0ZXMgYXJlIElTTyBzdHJpbmdzIG9yIG51bGwuICovXG5leHBvcnQgY2xhc3MgUHJvbW90aW9uRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgbmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbihbXCJib2dvXCIsIFwidGllcmVkXCIsIFwiZmxhc2hcIiwgXCJnaWZ0XCJdKSB0eXBlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIGNvbmZpZz86IFJlY29yZDxzdHJpbmcsIHVua25vd24+O1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHN0YXJ0c0F0Pzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBlbmRzQXQ/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBhY3RpdmU/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oLTEwMCkgQE1heCgxMDApIHByaW9yaXR5PzogbnVtYmVyO1xufVxuXG5leHBvcnQgY2xhc3MgU2V0UHJvbW90aW9uQWN0aXZlRHRvIHtcbiAgQElzQm9vbGVhbigpIGFjdGl2ZSE6IGJvb2xlYW47XG59XG5cbi8qKiBFQzI5OiBjcmVhdGUvdXBkYXRlIGEgQnVuZGxlLiBgaXRlbXNgIGlzIHRoZSB1bnR5cGVkXG4gKiBjb21wb25lbnQgYXJyYXkgKFt7IHByb2R1Y3RJZCwgdmFyaWFudFNrdT8sIHF0eSB9XSkgdmFsaWRhdGVkXG4gKiBzZXJ2ZXItc2lkZSBieSBCdW5kbGVzU2VydmljZS52YWxpZGF0ZUl0ZW1zOyBidW5kbGVQcmljZU1pbm9yXG4gKiBpcyBpbnRlZ2VyIG1pbm9yIHVuaXRzIGFzIGEgZGVjaW1hbCBzdHJpbmcuICovXG5leHBvcnQgY2xhc3MgQnVuZGxlRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgbmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMDApIGRlc2NyaXB0aW9uPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMDApIGltYWdlVXJsPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIGl0ZW1zPzogYW55W107XG4gIC8qKiBBQjUgKEFYOCk6IG1peC1hbmQtbWF0Y2ggc2xvdHMgKFt7IGxhYmVsLCBjaG9vc2VRdHksXG4gICAqICBzb3VyY2VUeXBlLCBzb3VyY2VSZWYgfV0pIHZhbGlkYXRlZCBzZXJ2ZXItc2lkZSBieVxuICAgKiAgQnVuZGxlc1NlcnZpY2UudmFsaWRhdGVTbG90czsgd2hlbiBwcmVzZW50IChpbmNsLiBbXSkgdGhlXG4gICAqICBidW5kbGUncyBzbG90cyBhcmUgcmVwbGFjZWQgd2hvbGVzYWxlLCB3aGVuIGFic2VudCB0aGV5XG4gICAqICBhcmUgdW50b3VjaGVkLiAqL1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgc2xvdHM/OiBhbnlbXTtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBidW5kbGVQcmljZU1pbm9yPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBhY3RpdmU/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCgxMDAwMCkgc29ydE9yZGVyPzogbnVtYmVyO1xufVxuXG4vKiogRUMxNjogY2FydC1zaW11bGF0b3IgcHJldmlldyDigJQgcHJvZHVjdCBpZHMgKyBxdWFudGl0aWVzIGFyZVxuICogcHJpY2VkIGZyb20gdGhlIFJFQUwgcHJvZHVjdCByb3dzIHNlcnZlci1zaWRlOyBubyBjbGllbnQgbWF0aC4gKi9cbmV4cG9ydCBjbGFzcyBQcm9tb3Rpb25QcmV2aWV3RHRvIHtcbiAgQElzQXJyYXkoKSBpdGVtcyE6IEFycmF5PHsgcHJvZHVjdElkOiBzdHJpbmc7IHF1YW50aXR5PzogbnVtYmVyIH0+O1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNDApIGNvdXBvbkNvZGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgcmVmZXJyYWxDb2RlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzIpIGJ1eWVyUGhvbmU/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBHZW5lcmF0ZUNhbXBhaWduRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxNikgcHJlZml4ITogc3RyaW5nO1xuICBASXNJbnQoKSBATWluKDEpIEBNYXgoNTAwKSBjb3VudCE6IG51bWJlcjtcbiAgQElzSW4oW1wicGVyY2VudFwiLCBcImZpeGVkXCIsIFwiZnJlZV9zaGlwcGluZ1wiXSkga2luZCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDApIEBNYXgoMTAwMDAwMDAwKSB2YWx1ZT86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBtaW5PcmRlck1pbm9yPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBzdGFydHNBdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZW5kc0F0Pzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDEpIHVzYWdlTGltaXQ/OiBudW1iZXIgfCBudWxsO1xufVxuXG4vKiogRUM1OiB0aGUgc3RvcmUncyBzaGlwbWVudC1wbHVnaW4gdHJhY2tpbmcgbWV0YSBrZXkgKG51bGxhYmxlIHRvIGNsZWFyKS4gKi9cbmV4cG9ydCBjbGFzcyBVcGRhdGVUcmFja2luZ01ldGFLZXlEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTIwKSBjb3VyaWVyVHJhY2tpbmdNZXRhS2V5Pzogc3RyaW5nIHwgbnVsbDtcbn1cblxuLyoqIEFCMSAoQVgxKTogbG95YWx0eSBwcm9ncmFtIHNldHRpbmdzLiBBbGwgZmllbGRzIG9wdGlvbmFsIOKAlFxuICogdGhlIHNlcnZpY2UgYXBwbGllcyBvbmx5IHRoZSBwcm92aWRlZCBvbmVzIChudWxsIGNsZWFycyB0aGVcbiAqIG51bGxhYmxlIGNhcHMpLiBSYW5nZSB2YWxpZGF0aW9uIGxpdmVzIGluIExveWFsdHlTZXJ2aWNlIHNvXG4gKiB0aGUgQmVuZ2FsaSBlcnJvcnMgbWF0Y2ggdGhlIHJlc3Qgb2YgdGhlIGNvbW1lcmNlIHN1cmZhY2UuICovXG5leHBvcnQgY2xhc3MgTG95YWx0eVNldHRpbmdEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBlbmFibGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBlYXJuUG9pbnRzUGVyMTAwME1pbm9yPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIHJlZGVlbVZhbHVlTWlub3JQZXJQb2ludD86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBtaW5SZWRlZW1Qb2ludHM/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgbWF4UmVkZWVtU2hhcmVQY3Q/OiBudW1iZXIgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIHBvaW50c0V4cGlyeURheXM/OiBudW1iZXIgfCBudWxsO1xufVxuXG4vKiogQUIxIChBWDIpOiByZWZlcnJhbCByZXdhcmQgc2V0dGluZ3Mg4oCUIHdoYXQgdGhlIFJFRkVSUkVSXG4gKiBlYXJucyB3aGVuIGEgcmVmZXJyZWQgb3JkZXIgYmVjb21lcyBzb2xkLiAqL1xuZXhwb3J0IGNsYXNzIFJlZmVycmFsUmV3YXJkU2V0dGluZ0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGVuYWJsZWQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0luKFtcInBvaW50c1wiLCBcImNvdXBvblwiXSkgcmV3YXJkVHlwZT86IFwicG9pbnRzXCIgfCBcImNvdXBvblwiO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIHJld2FyZFBvaW50cz86IG51bWJlciB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgY291cG9uUGVyY2VudD86IG51bWJlciB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgcmV3YXJkTWluT3JkZXJNaW5vcj86IHN0cmluZyB8IG51bGw7XG59XG5cbi8qKiBBQjEgKEFYMSk6IGEgc3RhZmYgbWFudWFsIHBvaW50cyBjb3JyZWN0aW9uLiBUaGUgbm90ZSBpc1xuICogbWFuZGF0b3J5IChlbmZvcmNlZCBpbiB0aGUgc2VydmljZSkg4oCUIGV2ZXJ5IGFkanVzdCBleHBsYWluc1xuICogaXRzZWxmIGluIHRoZSBjdXN0b21lcidzIGxlZGdlci4gKi9cbmV4cG9ydCBjbGFzcyBMb3lhbHR5QWRqdXN0RHRvIHtcbiAgQElzSW50KCkgZGVsdGFQb2ludHMhOiBudW1iZXI7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTAwKSBub3RlITogc3RyaW5nO1xufVxuXG4vKiogQUIyIChBWDMpOiBnaWZ0LWNhcmQgc2V0dGluZ3MuIEFsbCBmaWVsZHMgb3B0aW9uYWwg4oCUIHRoZVxuICogc2VydmljZSBhcHBsaWVzIG9ubHkgdGhlIHByb3ZpZGVkIG9uZXMgKG51bGwgY2xlYXJzIHRoZVxuICogZGVmYXVsdCBleHBpcnkpLiBSYW5nZSB2YWxpZGF0aW9uIGxpdmVzIGluIEdpZnRDYXJkc1NlcnZpY2VcbiAqIHNvIHRoZSBCZW5nYWxpIGVycm9ycyBtYXRjaCB0aGUgcmVzdCBvZiB0aGUgY29tbWVyY2Ugc3VyZmFjZS4gKi9cbmV4cG9ydCBjbGFzcyBHaWZ0Q2FyZFNldHRpbmdEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSByZWRlbXB0aW9uRW5hYmxlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgZGVmYXVsdEV4cGlyeURheXM/OiBudW1iZXIgfCBudWxsO1xufVxuXG4vKiogQUIyIChBWDMpOiBhIHN0YWZmIG1hbnVhbCBnaWZ0LWNhcmQgaXNzdWUuIGFtb3VudE1pbm9yIGlzXG4gKiBpbnRlZ2VyIG1pbm9yIHVuaXRzIGFzIGEgZGVjaW1hbCBzdHJpbmcgKEJpZ0ludCBvdmVyIHRoZVxuICogd2lyZSkuIEEgcmVjaXBpZW50IGNvbnRhY3QgKHZhbGlkIGVtYWlsIG9yIGEgcGhvbmUpIGFuZCB0aGVcbiAqIG5vdGUgYXJlIG1hbmRhdG9yeSDigJQgZW5mb3JjZWQgaW4gdGhlIHNlcnZpY2UsIGJlY2F1c2UgdGhlXG4gKiBjb2RlIGlzIHNlbnQgT05MWSB0byB0aGUgcmVjaXBpZW50IGFuZCBzaG93biBub3doZXJlIGVsc2UuICovXG5leHBvcnQgY2xhc3MgTWFudWFsR2lmdENhcmRJc3N1ZUR0byB7XG4gIEBJc1N0cmluZygpIGFtb3VudE1pbm9yITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSByZWNpcGllbnROYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSByZWNpcGllbnRFbWFpbD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSByZWNpcGllbnRQaG9uZT86IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg1MDApIG5vdGUhOiBzdHJpbmc7XG59XG5cbi8qKiBBQjIgKEFYMyk6IGEgc3RhZmYgZ2lmdC1jYXJkIGFjdGlvbiB0aGF0IG11c3QgZXhwbGFpblxuICogaXRzZWxmICh2b2lkKS4gVGhlIG5vdGUgaXMgbWFuZGF0b3J5IGluIHRoZSBzZXJ2aWNlLiAqL1xuZXhwb3J0IGNsYXNzIEdpZnRDYXJkTm90ZUR0byB7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTAwKSBub3RlITogc3RyaW5nO1xufVxuXG4vKiogQUIyIChBWDMpOiBhIHN0YWZmIGJhbGFuY2UgY29ycmVjdGlvbi4gZGVsdGFNaW5vciBpcyBhXG4gKiBzaWduZWQgaW50ZWdlci1taW5vciBkZWNpbWFsIHN0cmluZzsgdGhlIG5vdGUgaXMgbWFuZGF0b3J5XG4gKiBpbiB0aGUgc2VydmljZSDigJQgZXZlcnkgYWRqdXN0IGV4cGxhaW5zIGl0c2VsZiBpbiB0aGUgbGVkZ2VyLiAqL1xuZXhwb3J0IGNsYXNzIEdpZnRDYXJkQWRqdXN0RHRvIHtcbiAgQElzU3RyaW5nKCkgZGVsdGFNaW5vciE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg1MDApIG5vdGUhOiBzdHJpbmc7XG59XG5cbi8qKiBBQjUgKEFYNyk6IGEgQjJCIGN1c3RvbWVyIGdyb3VwIChuYW1lIHVuaXF1ZSBwZXIgb3JnIOKAlFxuICogZW5mb3JjZWQgaW4gUHJpY2VMaXN0c1NlcnZpY2Ugd2l0aCBhIEJlbmdhbGkgNDAwKS4gKi9cbmV4cG9ydCBjbGFzcyBDdXN0b21lckdyb3VwRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIG5hbWUhOiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBVcGRhdGVDdXN0b21lckdyb3VwRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgbmFtZT86IHN0cmluZztcbn1cblxuLyoqIEFCNSAoQVg3KTogb25lIGV4cGxpY2l0IHByaWNlLWxpc3Qgcm93LiBwcmljZU1pbm9yIGlzXG4gKiBpbnRlZ2VyIG1pbm9yIHVuaXRzIGFzIGEgZGVjaW1hbCBzdHJpbmc7IHZhcmlhbnRJZCBudWxsIC9cbiAqIGFic2VudCA9IHRoZSBwcm9kdWN0LWxldmVsIHByaWNlLiAqL1xuZXhwb3J0IGNsYXNzIFByaWNlTGlzdEl0ZW1EdG8ge1xuICBASXNTdHJpbmcoKSBwcm9kdWN0SWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdmFyaWFudElkPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzU3RyaW5nKCkgcHJpY2VNaW5vciE6IHN0cmluZztcbn1cblxuLyoqIEFCNSAoQVg3KTogbWF0ZXJpYWxpemUgYSAlLW9mZiBhcyBleHBsaWNpdCBwcm9kdWN0LWxldmVsXG4gKiByb3dzIChwZXJjZW50T2ZmIDEuLjk5IHZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSkuICovXG5leHBvcnQgY2xhc3MgQnVsa1BlcmNlbnRPZmZEdG8ge1xuICBASXNJbnQoKSBwZXJjZW50T2ZmITogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBwcm9kdWN0SWRzPzogc3RyaW5nW107XG59XG5cbi8qKiBBQjUgKEFYNyk6IGEgc3RhZmYtaXNzdWVkIHF1b3RlLiBMaW5lcyBhcmUgdmFsaWRhdGVkICtcbiAqIHNuYXBzaG90dGVkIChuYW1lL3NrdSkgaW4gUXVvdGVzU2VydmljZTsgdG90YWxzIGFyZVxuICogzqMgbGluZXMgKyBkZWxpdmVyeUNoYXJnZU1pbm9yIHdpdGggTk8gdGF4L3Byb21vdGlvblxuICogZXZhbHVhdGlvbi4gY3VzdG9tZXJJZCBPUiB3YWxrLWluIGRldGFpbHMgaWRlbnRpZnkgdGhlIGJ1eWVyLiAqL1xuZXhwb3J0IGNsYXNzIFF1b3RlRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjdXN0b21lcklkPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgd2Fsa2luTmFtZT86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgd2Fsa2luUGhvbmU/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgbGluZXM/OiBhbnlbXTtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBkZWxpdmVyeUNoYXJnZU1pbm9yPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGV4cGlyZXNBdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBub3RlPzogc3RyaW5nIHwgbnVsbDtcbn1cblxuZXhwb3J0IGNsYXNzIFVwZGF0ZVF1b3RlRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjdXN0b21lcklkPzogc3RyaW5nIHwgbnVsbDtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgd2Fsa2luTmFtZT86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgd2Fsa2luUGhvbmU/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgbGluZXM/OiBhbnlbXTtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBkZWxpdmVyeUNoYXJnZU1pbm9yPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGV4cGlyZXNBdD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBub3RlPzogc3RyaW5nIHwgbnVsbDtcbn1cblxuLyoqIEFCNSAoQVg3KTogdGhlIHB1YmxpYyBxdW90ZS1wYWdlIHJlc3BvbnNlIChhY2NlcHQvZGVjbGluZSkuICovXG5leHBvcnQgY2xhc3MgUXVvdGVSZXNwb25kRHRvIHtcbiAgQElzQm9vbGVhbigpIGFjY2VwdCE6IGJvb2xlYW47XG59XG5cbi8qKiBBQjUgKEFYOSk6IGEgc3RhZmYgbGljZW5zZS1rZXkgcG9vbCBpbXBvcnQuIGB0ZXh0YCBpcyB0aGUgcmF3XG4gKiBuZXdsaW5lLXNlcGFyYXRlZCBrZXkgbGlzdCAob25lIHZlbmRvciBrZXkgcGVyIGxpbmU7IHRoZSBleGFjdFxuICogdHJpbW1lZCBzdHJpbmcgaXMgY2Fub25pY2FsIGFuZCBjYXNlLXNlbnNpdGl2ZSkuIExpbmUtbGV2ZWxcbiAqIGRlZHVwZSAvIGludmFsaWQgcnVsZXMgKyB0aGUgNTAwLWxpbmUgY2VpbGluZyBsaXZlIGluXG4gKiBMaWNlbnNlS2V5c1NlcnZpY2Ugd2l0aCBCZW5nYWxpIGVycm9ycy4gKi9cbmV4cG9ydCBjbGFzcyBMaWNlbnNlS2V5SW1wb3J0RHRvIHtcbiAgQElzU3RyaW5nKCkgcHJvZHVjdElkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMDAwMCkgdGV4dCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMCkgYmF0Y2g/OiBzdHJpbmc7XG59XG4iXSwidmVyc2lvbiI6M30=

@@ -5,6 +5,9 @@ import { BD_DISTRICTS } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
+import { ReferralRewardSettingsCard } from "@/components/loyalty-referral-settings";
+import { PushPanel } from "@/components/push-panel";
+import { SocialProofSettingsCard } from "@/components/social-proof-settings";
 
 // EC8 staff storefront administration. Consumes
 // GET /organizations/:id/storefront (staffState):
@@ -42,6 +45,46 @@ interface Setting {
   returnPolicyText?: string | null;
   deliveryPromiseText?: string | null;
   supportPhone?: string | null;
+  // GC1: theme + branding + floating contact buttons.
+  themeId?: string;
+  faviconUrl?: string | null;
+  whatsappNumber?: string | null;
+  messengerUrl?: string | null;
+  // GB3 (GC8): checkout terms consent.
+  requireTermsConsent?: boolean;
+  termsUrl?: string | null;
+  // GB7 (GC18): tracking & analytics IDs (nullable strings).
+  // AB8 (AX23): merchant custom CSS/JS for the shop only.
+  customCss?: string | null;
+  customJs?: string | null;
+  customJsEnabled?: boolean;
+  ga4MeasurementId?: string | null;
+  gtmContainerId?: string | null;
+  googleAdsId?: string | null;
+  googleAdsConversionLabel?: string | null;
+  searchConsoleVerification?: string | null;
+}
+interface StorefrontPopup {
+  enabled: boolean;
+  title: string | null;
+  body: string | null;
+  imageUrl: string | null;
+  ctaText: string | null;
+  ctaUrl: string | null;
+  trigger: string;
+  delaySeconds: number | null;
+  scrollPercent: number | null;
+  frequencyDays: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  showOn: string;
+  impressions: number;
+  clicks: number;
+}
+interface ShopPageSummary {
+  id: string;
+  published: boolean;
+  isSystem: boolean;
 }
 interface Slot {
   id: string;
@@ -93,6 +136,61 @@ interface ProductOpt { id: string; name: string }
 interface VerifyTokenOut { domain: string; recordHost: string; recordType: string; recordValue: string; token: string }
 interface RoutingOut { routingActive: boolean; checkedUrl: string | null; status?: number; evidence?: string; reason?: string }
 
+const THEME_OPTIONS = [
+  { id: "classic", label: "ক্লাসিক", desc: "চেনা, ভারসাম্যপূর্ণ দোকানের লুক" },
+  { id: "bold", label: "বোল্ড", desc: "বড় হিরো, গাঢ় রঙ, নজরকাড়া অফার" },
+  { id: "minimal", label: "মিনিমাল", desc: "হালকা, পরিষ্কার, পণ্যে ফোকাস" },
+] as const;
+
+/** GC1: pure-div mini shop mock used as a theme preview (no images). */
+function ThemePreview({ theme }: { theme: string }) {
+  const styles: Record<string, { wrap: string; header: string; hero: string; tile: string }> = {
+    classic: {
+      wrap: "rounded-lg border border-slate-200 bg-white",
+      header: "h-3 rounded-t-lg bg-indigo-600",
+      hero: "mx-2 mt-2 h-9 rounded-md bg-indigo-100",
+      tile: "h-7 rounded-md bg-slate-200",
+    },
+    bold: {
+      wrap: "border-2 border-slate-900 bg-white",
+      header: "h-4 bg-slate-900",
+      hero: "h-11 bg-orange-500",
+      tile: "h-7 border-2 border-slate-900 bg-amber-200",
+    },
+    minimal: {
+      wrap: "rounded-sm border border-slate-200 bg-white",
+      header: "h-3 border-b border-slate-200 bg-white",
+      hero: "mx-3 mt-2 h-7 bg-slate-50",
+      tile: "h-7 border border-slate-200 bg-white",
+    },
+  };
+  const s = styles[theme] ?? styles.classic;
+  return (
+    <div className={`overflow-hidden ${s.wrap}`} aria-hidden="true">
+      <div className={s.header} />
+      <div className={s.hero} />
+      <div className="grid grid-cols-3 gap-1.5 p-2">
+        <div className={s.tile} />
+        <div className={s.tile} />
+        <div className={s.tile} />
+      </div>
+    </div>
+  );
+}
+
+function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function datetimeLocalToIso(value: string): string | null {
+  if (!value.trim()) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 const KIND_LABEL: Record<string, string> = {
   inside_dhaka: "ঢাকার ভিতরে",
   outside_dhaka: "ঢাকার বাইরে",
@@ -131,6 +229,43 @@ export default function StorefrontStaffPage() {
   // EC29: gift wrap settings
   const [giftWrapEnabled, setGiftWrapEnabled] = useState(false);
   const [giftWrapFee, setGiftWrapFee] = useState("");
+  // GC1: theme / favicon / floating contact buttons (same settings PATCH)
+  const [themeId, setThemeId] = useState("classic");
+  const [faviconUrl, setFaviconUrl] = useState("");
+  const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [messengerUrl, setMessengerUrl] = useState("");
+  // GB3 (GC8): checkout terms consent (same settings PATCH).
+  const [requireTermsConsent, setRequireTermsConsent] = useState(false);
+  const [termsUrl, setTermsUrl] = useState("");
+  // GB7 (GC18): tracking & analytics IDs (same settings PATCH).
+  const [ga4MeasurementId, setGa4MeasurementId] = useState("");
+  const [gtmContainerId, setGtmContainerId] = useState("");
+  const [googleAdsId, setGoogleAdsId] = useState("");
+  const [googleAdsConversionLabel, setGoogleAdsConversionLabel] = useState("");
+  const [searchConsoleVerification, setSearchConsoleVerification] = useState("");
+  // AB8 (AX23): custom CSS/JS (same settings PATCH).
+  const [customCss, setCustomCss] = useState("");
+  const [customJs, setCustomJs] = useState("");
+  const [customJsEnabled, setCustomJsEnabled] = useState(false);
+  // GC2: promotional popup (own GET/PUT endpoints)
+  const [popup, setPopup] = useState<StorefrontPopup | null>(null);
+  const [popupEnabled, setPopupEnabled] = useState(false);
+  const [popupTitle, setPopupTitle] = useState("");
+  const [popupBody, setPopupBody] = useState("");
+  const [popupImageUrl, setPopupImageUrl] = useState("");
+  const [popupCtaText, setPopupCtaText] = useState("");
+  const [popupCtaUrl, setPopupCtaUrl] = useState("");
+  const [popupTrigger, setPopupTrigger] = useState("delay_seconds");
+  const [popupDelaySeconds, setPopupDelaySeconds] = useState("");
+  const [popupScrollPercent, setPopupScrollPercent] = useState("");
+  const [popupFrequencyDays, setPopupFrequencyDays] = useState("");
+  const [popupShowOn, setPopupShowOn] = useState("home");
+  const [popupStartsAt, setPopupStartsAt] = useState("");
+  const [popupEndsAt, setPopupEndsAt] = useState("");
+  const [popupError, setPopupError] = useState("");
+  const [popupNotice, setPopupNotice] = useState("");
+  // GC3: content pages summary for the card (full manager is its own page)
+  const [shopPages, setShopPages] = useState<ShopPageSummary[]>([]);
 
   // EC18 delivery slot form
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
@@ -175,6 +310,24 @@ export default function StorefrontStaffPage() {
   const [pActive, setPActive] = useState(true);
   const [pointError, setPointError] = useState("");
 
+  // AB4 (AX5): checkout field definitions (own staff API).
+  type CheckoutFieldRow = {
+    id: string; key: string; label: string; type: string;
+    options: string[] | null; required: boolean; appliesTo: string;
+    sortOrder: number; active: boolean;
+  };
+  const [fieldDefs, setFieldDefs] = useState<CheckoutFieldRow[]>([]);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [fKey, setFKey] = useState("");
+  const [fLabel, setFLabel] = useState("");
+  const [fType, setFType] = useState("text");
+  const [fOptions, setFOptions] = useState("");
+  const [fRequired, setFRequired] = useState(false);
+  const [fAppliesTo, setFAppliesTo] = useState("all");
+  const [fSortOrder, setFSortOrder] = useState("0");
+  const [fActive, setFActive] = useState(true);
+  const [fieldError, setFieldError] = useState("");
+
   // domain
   const [tokenOut, setTokenOut] = useState<VerifyTokenOut | null>(null);
   const [domainError, setDomainError] = useState("");
@@ -211,6 +364,20 @@ export default function StorefrontStaffPage() {
       setReferralMinSubtotal(minorToTakaString(st.referralMinSubtotalMinor));
       setGiftWrapEnabled(st.giftWrapEnabled ?? false);
       setGiftWrapFee(minorToTakaString(st.giftWrapFeeMinor));
+      setThemeId(st.themeId ?? "classic");
+      setFaviconUrl(st.faviconUrl ?? "");
+      setWhatsappNumber(st.whatsappNumber ?? "");
+      setMessengerUrl(st.messengerUrl ?? "");
+      setRequireTermsConsent(st.requireTermsConsent ?? false);
+      setTermsUrl(st.termsUrl ?? "");
+      setGa4MeasurementId(st.ga4MeasurementId ?? "");
+      setGtmContainerId(st.gtmContainerId ?? "");
+      setGoogleAdsId(st.googleAdsId ?? "");
+      setGoogleAdsConversionLabel(st.googleAdsConversionLabel ?? "");
+      setSearchConsoleVerification(st.searchConsoleVerification ?? "");
+      setCustomCss(st.customCss ?? "");
+      setCustomJs(st.customJs ?? "");
+      setCustomJsEnabled(st.customJsEnabled ?? false);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "লোড ব্যর্থ");
@@ -233,6 +400,142 @@ export default function StorefrontStaffPage() {
     setPickupPoints(pointsRes.points ?? []);
   }, []);
   useEffect(() => { void loadPricing(); }, [loadPricing]);
+
+  // GC2/GC3: popup + content-page counts load independently (own endpoints).
+  const loadPopup = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const out = await apiFetch<{ popup: StorefrontPopup | null }>(`/organizations/${orgId}/storefront/popup`);
+      const p = out.popup;
+      setPopup(p);
+      if (p) {
+        setPopupEnabled(!!p.enabled);
+        setPopupTitle(p.title ?? "");
+        setPopupBody(p.body ?? "");
+        setPopupImageUrl(p.imageUrl ?? "");
+        setPopupCtaText(p.ctaText ?? "");
+        setPopupCtaUrl(p.ctaUrl ?? "");
+        setPopupTrigger(p.trigger ?? "delay_seconds");
+        setPopupDelaySeconds(p.delaySeconds != null ? String(p.delaySeconds) : "");
+        setPopupScrollPercent(p.scrollPercent != null ? String(p.scrollPercent) : "");
+        setPopupFrequencyDays(p.frequencyDays != null ? String(p.frequencyDays) : "");
+        setPopupShowOn(p.showOn ?? "home");
+        setPopupStartsAt(isoToDatetimeLocal(p.startsAt));
+        setPopupEndsAt(isoToDatetimeLocal(p.endsAt));
+      }
+    } catch { /* popup card stays empty until the endpoint answers */ }
+  }, []);
+  useEffect(() => { void loadPopup(); }, [loadPopup]);
+
+  // AB4: checkout field defs load independently (own endpoint).
+  const loadFieldDefs = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const out = await apiFetch<unknown>(`/organizations/${orgId}/storefront/checkout-fields`);
+      const items = Array.isArray(out)
+        ? (out as CheckoutFieldRow[])
+        : ((out as { items?: CheckoutFieldRow[]; fields?: CheckoutFieldRow[] }).items
+          ?? (out as { fields?: CheckoutFieldRow[] }).fields ?? []);
+      setFieldDefs(items);
+    } catch { /* section stays empty until the endpoint answers */ }
+  }, []);
+  useEffect(() => { void loadFieldDefs(); }, [loadFieldDefs]);
+
+  function resetFieldForm() {
+    setEditingFieldId(null); setFKey(""); setFLabel(""); setFType("text");
+    setFOptions(""); setFRequired(false); setFAppliesTo("all");
+    setFSortOrder("0"); setFActive(true); setFieldError("");
+  }
+  function startEditField(f: CheckoutFieldRow) {
+    setEditingFieldId(f.id); setFKey(f.key); setFLabel(f.label); setFType(f.type);
+    setFOptions((f.options ?? []).join("\n"));
+    setFRequired(f.required); setFAppliesTo(f.appliesTo || "all");
+    setFSortOrder(String(f.sortOrder ?? 0)); setFActive(f.active); setFieldError("");
+  }
+  async function saveField() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!fLabel.trim()) { setFieldError("ফিল্ডের লেবেল দিন।"); return; }
+    if (!editingFieldId && !fKey.trim()) { setFieldError("ফিল্ডের key দিন (ইংরেজি, যেমন: gift_note)।"); return; }
+    setBusy("field"); setFieldError(""); setError(""); setNotice("");
+    const options = fType === "select"
+      ? fOptions.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+      : null;
+    const body: Record<string, unknown> = {
+      label: fLabel.trim(),
+      type: fType,
+      options,
+      required: fRequired,
+      appliesTo: fAppliesTo,
+      sortOrder: parseInt(fSortOrder || "0", 10) || 0,
+      active: fActive,
+    };
+    if (!editingFieldId) body.key = fKey.trim();
+    try {
+      if (editingFieldId) {
+        await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${editingFieldId}`, { method: "PATCH", body: JSON.stringify(body) });
+        setNotice("চেকআউট ফিল্ড আপডেট হয়েছে।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/storefront/checkout-fields`, { method: "POST", body: JSON.stringify(body) });
+        setNotice("নতুন চেকআউট ফিল্ড তৈরি হয়েছে।");
+      }
+      resetFieldForm();
+      await loadFieldDefs();
+    } catch (e) { setFieldError(e instanceof Error ? e.message : "ফিল্ড সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+  async function deleteField(f: CheckoutFieldRow) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!window.confirm(`"${f.label}" ফিল্ডটি মুছে ফেলবেন? আগের অর্ডারে দেওয়া উত্তরগুলো থেকে যাবে।`)) return;
+    setBusy(`field-del-${f.id}`); setError(""); setNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${f.id}`, { method: "DELETE" });
+      setNotice("চেকআউট ফিল্ড মুছে ফেলা হয়েছে।");
+      if (editingFieldId === f.id) resetFieldForm();
+      await loadFieldDefs();
+    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  const loadShopPages = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const out = await apiFetch<{ pages: ShopPageSummary[] }>(`/organizations/${orgId}/storefront/pages`);
+      setShopPages(out.pages ?? []);
+    } catch { /* counts stay at zero until the endpoint answers */ }
+  }, []);
+  useEffect(() => { void loadShopPages(); }, [loadShopPages]);
+
+  async function savePopup() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("popup"); setPopupError(""); setPopupNotice("");
+    try {
+      const out = await apiFetch<{ popup: StorefrontPopup }>(`/organizations/${orgId}/storefront/popup`, {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: popupEnabled,
+          title: popupTitle.trim() || null,
+          body: popupBody.trim() || null,
+          imageUrl: popupImageUrl.trim() || null,
+          ctaText: popupCtaText.trim() || null,
+          ctaUrl: popupCtaUrl.trim() || null,
+          trigger: popupTrigger,
+          delaySeconds: popupDelaySeconds.trim() ? Number(popupDelaySeconds) : null,
+          scrollPercent: popupScrollPercent.trim() ? Number(popupScrollPercent) : null,
+          frequencyDays: popupFrequencyDays.trim() ? Number(popupFrequencyDays) : null,
+          showOn: popupShowOn,
+          startsAt: datetimeLocalToIso(popupStartsAt),
+          endsAt: datetimeLocalToIso(popupEndsAt),
+        }),
+      });
+      if (out.popup) setPopup(out.popup);
+      setPopupNotice("পপআপ সংরক্ষণ হয়েছে।");
+      await loadPopup();
+    } catch (e) { setPopupError(e instanceof Error ? e.message : "পপআপ সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
 
   const orgSlug = state?.organization.slug ?? "";
   const shopPath = orgSlug ? `/shop/${orgSlug}` : "";
@@ -274,6 +577,23 @@ export default function StorefrontStaffPage() {
           referralMinSubtotalMinor: referralMinSubtotal.trim() ? takaToMinorString(referralMinSubtotal) : null,
           giftWrapEnabled,
           giftWrapFeeMinor: giftWrapEnabled && giftWrapFee.trim() ? takaToMinorString(giftWrapFee) : null,
+          themeId,
+          faviconUrl: faviconUrl.trim() || null,
+          whatsappNumber: whatsappNumber.trim() || null,
+          messengerUrl: messengerUrl.trim() || null,
+          requireTermsConsent,
+          termsUrl: termsUrl.trim() || null,
+          ga4MeasurementId: ga4MeasurementId.trim() || null,
+          gtmContainerId: gtmContainerId.trim() || null,
+          googleAdsId: googleAdsId.trim() || null,
+          googleAdsConversionLabel: googleAdsConversionLabel.trim() || null,
+          searchConsoleVerification: searchConsoleVerification.trim() || null,
+          // AB8 (AX23): empty = null (feature off); the API
+          // validates lengths + rejects closing-tag breakouts
+          // with a 400 whose message this page shows verbatim.
+          customCss: customCss.trim() || null,
+          customJs: customJs.trim() || null,
+          customJsEnabled,
         }),
       });
       setNotice("দোকানের সেটিংস সংরক্ষণ হয়েছে।");
@@ -696,6 +1016,52 @@ export default function StorefrontStaffPage() {
             </label>
           </div>
         </div>
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">থিম ও ফেভিকন</div>
+          <p className="text-xs text-slate-500">দোকানের চেহারা বেছে নিন — প্রিভিউগুলো শুধু ধারণা দেওয়ার জন্য (CSS মক)। নিচের &ldquo;সেটিংস সংরক্ষণ করুন&rdquo; বাটনেই থিম ও ফেভিকন সেভ হবে।</p>
+          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="দোকানের থিম">
+            {THEME_OPTIONS.map((t) => {
+              const selected = themeId === t.id;
+              return (
+                <button key={t.id} type="button" role="radio" aria-checked={selected} onClick={() => setThemeId(t.id)}
+                  className={`rounded-xl border p-2 text-left transition ${selected ? "border-indigo-600 ring-2 ring-indigo-600" : "border-slate-200 hover:border-slate-300"}`}>
+                  <ThemePreview theme={t.id} />
+                  <div className="mt-2 flex items-center gap-2 text-sm font-semibold">
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${selected ? "border-indigo-600" : "border-slate-300"}`}>
+                      {selected ? <span className="h-2 w-2 rounded-full bg-indigo-600" /> : null}
+                    </span>
+                    {t.label}
+                  </div>
+                  <div className="mt-0.5 text-xs font-normal text-slate-500">{t.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          <label className="block text-sm">ফেভিকন URL (ব্রাউজার ট্যাবের ছোট আইকন)
+            <div className="mt-1 flex items-center gap-3">
+              <input className="input flex-1" value={faviconUrl} onChange={(e) => setFaviconUrl(e.target.value)} placeholder="https://…/favicon.png" />
+              {faviconUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={faviconUrl.trim()} alt="ফেভিকন প্রিভিউ" className="h-8 w-8 rounded border bg-white object-contain" />
+              ) : null}
+            </div>
+            <span className="mt-1 block text-xs font-normal text-slate-500">খালি রাখলে লোগো ব্যবহৃত হবে।</span>
+          </label>
+        </div>
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">যোগাযোগ বোতাম</div>
+          <p className="text-xs text-slate-500">ভর্তি থাকলে দোকানে ভাসমান WhatsApp / Messenger বোতাম দেখাবে — ক্রেতা এক ক্লিকে চ্যাট শুরু করতে পারবে। খালি রাখলে সেই বোতামটি দেখাবে না।</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block text-sm">WhatsApp নম্বর
+              <input className="input mt-1" value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="8801XXXXXXXXX" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">দেশের কোডসহ, যেমন 8801XXXXXXXXX</span>
+            </label>
+            <label className="block text-sm">Messenger লিংক
+              <input className="input mt-1" value={messengerUrl} onChange={(e) => setMessengerUrl(e.target.value)} placeholder="https://m.me/yourpage" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">পেজের m.me লিংক</span>
+            </label>
+          </div>
+        </div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={trackingPageEnabled} onChange={(e) => setTrackingPageEnabled(e.target.checked)} />
           পাবলিক অর্ডার ট্র্যাকিং পেজ চালু (trackingPageEnabled)
@@ -703,6 +1069,68 @@ export default function StorefrontStaffPage() {
         {orgSlug && trackingPageEnabled ? (
           <p className="text-xs text-slate-500">ট্র্যাকিং পেজ: <span className="font-mono text-indigo-700">{typeof window !== "undefined" ? `${window.location.origin}/track/${orgSlug}` : `/track/${orgSlug}`}</span> — ক্রেতা অর্ডার নম্বর + ফোন দিয়ে অবস্থা দেখতে পারবে।</p>
         ) : null}
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">শর্তাবলি</div>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={requireTermsConsent} onChange={(e) => setRequireTermsConsent(e.target.checked)} />
+            শর্তাবলি সম্মতি আবশ্যক
+          </label>
+          <label className="block text-sm">শর্তাবলির পেজ URL (ঐচ্ছিক)
+            <input className="input mt-1" value={termsUrl} onChange={(e) => setTermsUrl(e.target.value)} placeholder="https://…/terms" />
+            <span className="mt-1 block text-xs font-normal text-slate-500">URL না দিলে দোকানের Terms পেজটি ব্যবহৃত হবে।</span>
+          </label>
+        </div>
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">ট্র্যাকিং ও অ্যানালিটিক্স</div>
+          <p className="text-xs text-slate-500">আপনার নিজের Google অ্যাকাউন্টের আইডি বসান — ভর্তি থাকলেই দোকানে সেই ট্যাগ চলবে, খালি রাখলে কোনো ট্যাগ যাবে না।</p>
+          {gtmContainerId.trim() && ga4MeasurementId.trim() ? (
+            <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+              ⚠️ GTM দিয়ে GA4 চালালে এখানে আবার বসাবেন না — দ্বিগুণ গণনা হতে পারে।
+            </p>
+          ) : null}
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block text-sm">GA4 Measurement ID
+              <input className="input mt-1" value={ga4MeasurementId} onChange={(e) => setGa4MeasurementId(e.target.value)} placeholder="G-XXXXXXXXXX" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Analytics &gt; Admin &gt; Data Streams — ওয়েব স্ট্রিমের Measurement ID।</span>
+            </label>
+            <label className="block text-sm">GTM কন্টেইনার ID
+              <input className="input mt-1" value={gtmContainerId} onChange={(e) => setGtmContainerId(e.target.value)} placeholder="GTM-XXXXXXX" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Tag Manager — ওয়ার্কস্পেসের কন্টেইনার ID।</span>
+            </label>
+            <label className="block text-sm">Google Ads ID
+              <input className="input mt-1" value={googleAdsId} onChange={(e) => setGoogleAdsId(e.target.value)} placeholder="AW-XXXXXXXXX" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Ads &gt; Conversions — কনভার্সন অ্যাকশনের ট্যাগ আইডি।</span>
+            </label>
+            <label className="block text-sm">Google Ads কনভার্সন লেবেল
+              <input className="input mt-1" value={googleAdsConversionLabel} onChange={(e) => setGoogleAdsConversionLabel(e.target.value)} placeholder="যেমন: AbC-D_efGhIjK" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Ads &gt; Conversions — একই কনভার্সন অ্যাকশনের লেবেল। ক্রয়ের কনভার্সন গুনতে আইডি ও লেবেল দুটোই লাগবে।</span>
+            </label>
+            <label className="block text-sm md:col-span-2">Search Console যাচাইকরণ টোকেন
+              <input className="input mt-1" value={searchConsoleVerification} onChange={(e) => setSearchConsoleVerification(e.target.value)} placeholder="শুধু টোকেন অংশটি বসান" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Search Console — HTML tag পদ্ধতিতে পাওয়া মেটা ট্যাগের content মানটি (শুধু টোকেন)।</span>
+            </label>
+          </div>
+        </div>
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">কাস্টম CSS/JS</div>
+          <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+            ⚠️ নিজের দায়িত্বে ব্যবহার করুন — ভুল কোড দোকানের পেজ ভেঙে দিতে পারে। কাস্টম JS শুধু দোকানের নিজের হোস্টে চলে (মূল অ্যাপের হোস্টে নয়)।
+          </p>
+          <p className="text-xs text-slate-500">
+            বন্ধ করার ট্যাগ (&lt;/style&gt;, &lt;/script&gt;) সার্ভার গ্রহণ করে না — এমন কোড দিলে সংরক্ষণ ব্যর্থ হবে এবং সার্ভারের বার্তাটি ওপরে দেখানো হবে।
+            CSS শুধু দোকানের পেজে প্রযোজ্য; JS চালু করতে নিচের টগলটি অন করতে হবে, নাহলে JS সংরক্ষিত থাকলেও চলবে না।
+          </p>
+          <label className="block text-sm">কাস্টম CSS
+            <textarea className="input mt-1 font-mono text-xs" rows={6} value={customCss} onChange={(e) => setCustomCss(e.target.value)} placeholder={".my-class { color: #b91c1c; }"} spellCheck={false} />
+          </label>
+          <label className="block text-sm">কাস্টম JS
+            <textarea className="input mt-1 font-mono text-xs" rows={6} value={customJs} onChange={(e) => setCustomJs(e.target.value)} placeholder={"console.log('hello');"} spellCheck={false} />
+          </label>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={customJsEnabled} onChange={(e) => setCustomJsEnabled(e.target.checked)} />
+            কাস্টম JS চালু করুন
+          </label>
+        </div>
         <div>
           <div className="text-sm font-medium">ফিচার্ড পণ্য ({featuredIds.length}/৫০) — ক্রম অনুযায়ী দেখাবে</div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -721,6 +1149,140 @@ export default function StorefrontStaffPage() {
         <button type="button" onClick={saveSettings} disabled={busy === "settings"} className="btn-primary disabled:opacity-50">
           {busy === "settings" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
         </button>
+      </section>
+
+      {/* AB1 (AX2): referral REWARD settings — the shared card,
+          placed beside the buyer-side referral % discount in the
+          settings section above (that discount goes to the
+          referred buyer; this reward goes to the referrer). The
+          same component renders on the loyalty page. */}
+      <ReferralRewardSettingsCard />
+
+      {/* GC2: promotional popup */}
+      <section className="card space-y-4 p-5">
+        <div className="font-semibold">প্রমোশনাল পপআপ</div>
+        <p className="text-sm text-slate-600">
+          অবস্থা: <b>{popupEnabled ? "চালু" : "বন্ধ"}</b>
+          {popup ? <> · ইমপ্রেশন: <b>{popup.impressions ?? 0}</b> · ক্লিক: <b>{popup.clicks ?? 0}</b></> : null}
+        </p>
+        {popupError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{popupError}</p> : null}
+        {popupNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{popupNotice}</p> : null}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-semibold">
+              <input type="checkbox" checked={popupEnabled} onChange={(e) => setPopupEnabled(e.target.checked)} />
+              পপআপ চালু করুন
+            </label>
+            <label className="block text-sm">শিরোনাম
+              <input className="input mt-1" value={popupTitle} onChange={(e) => setPopupTitle(e.target.value)} placeholder="যেমন: ঈদ অফার — ২০% ছাড়!" />
+            </label>
+            <label className="block text-sm">বডি
+              <textarea className="input mt-1" rows={3} value={popupBody} onChange={(e) => setPopupBody(e.target.value)} placeholder="অফারের সংক্ষিপ্ত বর্ণনা…" />
+            </label>
+            <label className="block text-sm">ছবির URL (ঐচ্ছিক)
+              <input className="input mt-1" value={popupImageUrl} onChange={(e) => setPopupImageUrl(e.target.value)} placeholder="https://…" />
+            </label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block text-sm">বাটনের লেখা (CTA)
+                <input className="input mt-1" value={popupCtaText} onChange={(e) => setPopupCtaText(e.target.value)} placeholder="এখনই কিনুন" />
+              </label>
+              <label className="block text-sm">বাটনের লিংক (CTA URL)
+                <input className="input mt-1" value={popupCtaUrl} onChange={(e) => setPopupCtaUrl(e.target.value)} placeholder="https://…" />
+              </label>
+              <label className="block text-sm">কখন দেখাবে (ট্রিগার)
+                <select className="input mt-1" value={popupTrigger} onChange={(e) => setPopupTrigger(e.target.value)}>
+                  <option value="delay_seconds">কিছুক্ষণ পর</option>
+                  <option value="scroll_percent">স্ক্রল করলে</option>
+                  <option value="exit_intent">চলে যেতে চাইলে</option>
+                </select>
+              </label>
+              <label className="block text-sm">কোন পেজে দেখাবে
+                <select className="input mt-1" value={popupShowOn} onChange={(e) => setPopupShowOn(e.target.value)}>
+                  <option value="home">শুধু হোমপেজে</option>
+                  <option value="all">সব পেজে</option>
+                </select>
+              </label>
+              {popupTrigger === "delay_seconds" ? (
+                <label className="block text-sm">দেরি (সেকেন্ড)
+                  <input className="input mt-1" type="number" min="0" value={popupDelaySeconds} onChange={(e) => setPopupDelaySeconds(e.target.value)} placeholder="যেমন: 5" />
+                </label>
+              ) : null}
+              {popupTrigger === "scroll_percent" ? (
+                <label className="block text-sm">স্ক্রল (%)
+                  <input className="input mt-1" type="number" min="0" max="100" value={popupScrollPercent} onChange={(e) => setPopupScrollPercent(e.target.value)} placeholder="যেমন: 50" />
+                </label>
+              ) : null}
+              <label className="block text-sm">একই ক্রেতাকে আবার দেখানোর ব্যবধান (দিন)
+                <input className="input mt-1" type="number" min="0" value={popupFrequencyDays} onChange={(e) => setPopupFrequencyDays(e.target.value)} placeholder="যেমন: 7" />
+              </label>
+              <label className="block text-sm">শুরু (ঐচ্ছিক)
+                <input className="input mt-1" type="datetime-local" value={popupStartsAt} onChange={(e) => setPopupStartsAt(e.target.value)} />
+              </label>
+              <label className="block text-sm">শেষ (ঐচ্ছিক)
+                <input className="input mt-1" type="datetime-local" value={popupEndsAt} onChange={(e) => setPopupEndsAt(e.target.value)} />
+              </label>
+            </div>
+            <button type="button" onClick={savePopup} disabled={busy === "popup"} className="btn-primary disabled:opacity-50">
+              {busy === "popup" ? "সংরক্ষণ হচ্ছে…" : "পপআপ সংরক্ষণ করুন"}
+            </button>
+          </div>
+          <div>
+            <div className="text-sm font-medium">প্রিভিউ — ক্রেতা যেভাবে দেখবে</div>
+            <div className="mt-2 flex items-center justify-center rounded-xl bg-slate-100 p-6">
+              <div className="relative w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+                <span className="absolute right-3 top-2 text-lg leading-none text-slate-400" aria-hidden="true">×</span>
+                {popupImageUrl.trim() ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={popupImageUrl.trim()} alt="" className="mx-auto mb-3 max-h-36 w-full rounded-lg object-cover" />
+                ) : null}
+                <div className="text-base font-bold">{popupTitle.trim() || "পপআপের শিরোনাম"}</div>
+                <p className="mt-1 text-sm text-slate-600">{popupBody.trim() || "অফারের বর্ণনা এখানে দেখাবে।"}</p>
+                <span className="btn-primary mt-3 inline-block">{popupCtaText.trim() || "বাটন"}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* AB7 (AX16): web push settings + composer + history,
+          beside the GC2 popup card above. */}
+      <PushPanel />
+
+      {/* AB7 (AX17): social-proof settings, beside the push card. */}
+      <SocialProofSettingsCard />
+
+      {/* GC3: content pages summary */}
+      <section className="card flex flex-wrap items-center gap-3 p-5">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">কনটেন্ট পেজ</div>
+          <p className="text-sm text-slate-500">
+            মোট পেজ: <b>{shopPages.length}</b> · প্রকাশিত: <b>{shopPages.filter((p) => p.published).length}</b>
+            {" "}— রিটার্ন নীতি, শর্তাবলি, আমাদের সম্পর্কে ইত্যাদি পেজ এখান থেকে বানান ও সম্পাদনা করুন।
+          </p>
+        </div>
+        <Link href="/dashboard/commerce/storefront/pages" className="btn-primary">পেজ পরিচালনা করুন →</Link>
+      </section>
+
+      {/* AB6 (AX12): blog manager */}
+      <section className="card flex flex-wrap items-center gap-3 p-5">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">ব্লগ</div>
+          <p className="text-sm text-slate-500">
+            দোকানের ব্লগ পোস্ট বানান ও সম্পাদনা করুন — প্রকাশিত পোস্ট <span className="font-mono">/blog</span> পেজে দেখা যাবে।
+          </p>
+        </div>
+        <Link href="/dashboard/commerce/storefront/blog" className="btn-primary">ব্লগ পরিচালনা করুন →</Link>
+      </section>
+
+      {/* AB6 (AX11): search analytics + synonyms */}
+      <section className="card flex flex-wrap items-center gap-3 p-5">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">দোকানের সার্চ</div>
+          <p className="text-sm text-slate-500">
+            সার্চ বিশ্লেষণ, সমার্থক শব্দ ও পুনঃসূচী — সার্চ কীওয়ার্ড / পূর্ণ-টেক্সট অনুসন্ধান (FTS) ভিত্তিক।
+          </p>
+        </div>
+        <Link href="/dashboard/commerce/storefront/search" className="btn-primary">সার্চ পরিচালনা করুন →</Link>
       </section>
 
       {/* EC18: Delivery slots */}
@@ -1015,6 +1577,86 @@ export default function StorefrontStaffPage() {
               {busy === "point" ? "সংরক্ষণ হচ্ছে…" : editingPointId ? "পয়েন্ট আপডেট করুন" : "পয়েন্ট তৈরি করুন"}
             </button>
             {editingPointId ? <button type="button" onClick={resetPointForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+          </div>
+        </div>
+      </section>
+
+      {/* AB4 (AX5): checkout field definitions */}
+      <section className="card space-y-4 p-5">
+        <div className="font-semibold">চেকআউট ফিল্ড</div>
+        <p className="text-xs leading-relaxed text-slate-500">
+          চেকআউটে ক্রেতার কাছ থেকে অতিরিক্ত তথ্য নিন — যেমন উপহারের বার্তা, সাইজ বা বিশেষ নির্দেশনা।
+          ক্রেতার দেওয়া উত্তরগুলো সরাসরি অর্ডারের বিবরণে (Dashboard → Orders) দেখা যাবে।
+          ফিল্ডের <b>key</b> তৈরি করার পর বদলানো যায় না — উত্তরের হিসাব এই key দিয়েই রাখা হয়।
+        </p>
+        {fieldDefs.length === 0 ? (
+          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো চেকআউট ফিল্ড নেই — নিচে তৈরি করুন।</p>
+        ) : (
+          <div className="space-y-2">
+            {fieldDefs.map((f) => (
+              <div key={f.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm ${f.active ? "bg-white" : "bg-slate-50 opacity-70"}`}>
+                <span className="font-semibold">{f.label}</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{f.key}</span>
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                  {f.type === "textarea" ? "বড় লেখা" : f.type === "select" ? "তালিকা থেকে বাছাই" : f.type === "checkbox" ? "টিক বাক্স" : "এক লাইনের লেখা"}
+                </span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                  {f.appliesTo === "shop" ? "শপ চেকআউট" : f.appliesTo === "single" ? "সিঙ্গল প্রোডাক্ট" : f.appliesTo === "landing" ? "ল্যান্ডিং" : "সব সারফেস"}
+                </span>
+                {f.required ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">আবশ্যক</span> : null}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${f.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{f.active ? "সক্রিয়" : "বন্ধ"}</span>
+                <span className="ml-auto flex gap-1.5">
+                  <button type="button" onClick={() => startEditField(f)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">{editingFieldId ? "চেকআউট ফিল্ড সম্পাদনা" : "নতুন চেকআউট ফিল্ড"}</div>
+          {fieldError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{fieldError}</p> : null}
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="block text-sm">Key (ইংরেজি, বদলানো যায় না)
+              <input className="input mt-1 font-mono" value={fKey} disabled={!!editingFieldId} onChange={(e) => setFKey(e.target.value)} placeholder="যেমন: gift_note" />
+            </label>
+            <label className="block text-sm">লেবেল (ক্রেতা যা দেখবে)
+              <input className="input mt-1" value={fLabel} onChange={(e) => setFLabel(e.target.value)} placeholder="যেমন: উপহারের বার্তা" />
+            </label>
+            <label className="block text-sm">ধরন
+              <select className="input mt-1" value={fType} onChange={(e) => setFType(e.target.value)}>
+                <option value="text">এক লাইনের লেখা</option>
+                <option value="textarea">বড় লেখা</option>
+                <option value="select">তালিকা থেকে বাছাই</option>
+                <option value="checkbox">টিক বাক্স (হ্যাঁ/না)</option>
+              </select>
+            </label>
+            <label className="block text-sm">কোন সারফেসে দেখাবে
+              <select className="input mt-1" value={fAppliesTo} onChange={(e) => setFAppliesTo(e.target.value)}>
+                <option value="all">সব সারফেস</option>
+                <option value="shop">শপ চেকআউট</option>
+                <option value="single">সিঙ্গল প্রোডাক্ট</option>
+                <option value="landing">ল্যান্ডিং</option>
+              </select>
+            </label>
+            <label className="block text-sm">ক্রম (sortOrder)
+              <input className="input mt-1" type="number" value={fSortOrder} onChange={(e) => setFSortOrder(e.target.value)} />
+            </label>
+            {fType === "select" ? (
+              <label className="block text-sm">অপশন (প্রতি লাইনে একটি)
+                <textarea className="input mt-1" rows={3} value={fOptions} onChange={(e) => setFOptions(e.target.value)} placeholder={"M\nL\nXL"} />
+              </label>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={fRequired} onChange={(e) => setFRequired(e.target.checked)} /> আবশ্যক — উত্তর ছাড়া অর্ডার হবে না</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={fActive} onChange={(e) => setFActive(e.target.checked)} /> সক্রিয়</label>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => void saveField()} disabled={busy === "field" || !fLabel.trim() || (!editingFieldId && !fKey.trim())} className="btn-primary disabled:opacity-50">
+              {busy === "field" ? "সংরক্ষণ হচ্ছে…" : editingFieldId ? "ফিল্ড আপডেট করুন" : "ফিল্ড তৈরি করুন"}
+            </button>
+            {editingFieldId ? <button type="button" onClick={resetFieldForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
           </div>
         </div>
       </section>

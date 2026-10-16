@@ -1,0 +1,61 @@
+1b8955179bd43d2f60c68330c2d5135a
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.QuotesPublicController = void 0;
+const common_1 = require("@nestjs/common");
+const quotes_service_1 = require("./quotes.service");
+const decorators_1 = require("../common/decorators");
+const commerce_dto_1 = require("./commerce.dto");
+/**
+ * AB5 (AX7) public quote page API. All routes are @Public —
+ * the unguessable token in the path is the only credential
+ * (its SHA-256 hash is what's stored), exactly like the
+ * public landing / review surfaces.
+ */
+let QuotesPublicController = class QuotesPublicController {
+    quotes;
+    constructor(quotes) {
+        this.quotes = quotes;
+    }
+    get(token) {
+        return this.quotes.getByToken(token);
+    }
+    respond(token, dto) {
+        return this.quotes.publicRespond(token, dto ?? {});
+    }
+};
+exports.QuotesPublicController = QuotesPublicController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)(":token"),
+    __param(0, (0, common_1.Param)("token")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], QuotesPublicController.prototype, "get", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":token/respond"),
+    __param(0, (0, common_1.Param)("token")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, commerce_dto_1.QuoteRespondDto]),
+    __metadata("design:returntype", void 0)
+], QuotesPublicController.prototype, "respond", null);
+exports.QuotesPublicController = QuotesPublicController = __decorate([
+    (0, common_1.Controller)("public/quote"),
+    __metadata("design:paramtypes", [quotes_service_1.QuotesService])
+], QuotesPublicController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvbW1lcmNlL3F1b3Rlcy1wdWJsaWMuY29udHJvbGxlci50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQ0FBb0U7QUFDcEUscURBQWlEO0FBQ2pELHFEQUE4QztBQUM5QyxpREFBaUQ7QUFFakQ7Ozs7O0dBS0c7QUFFSSxJQUFNLHNCQUFzQixHQUE1QixNQUFNLHNCQUFzQjtJQUNKO0lBQTdCLFlBQTZCLE1BQXFCO1FBQXJCLFdBQU0sR0FBTixNQUFNLENBQWU7SUFBRyxDQUFDO0lBSXRELEdBQUcsQ0FBaUIsS0FBYTtRQUMvQixPQUFPLElBQUksQ0FBQyxNQUFNLENBQUMsVUFBVSxDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQ3ZDLENBQUM7SUFJRCxPQUFPLENBQWlCLEtBQWEsRUFBVSxHQUFvQjtRQUNqRSxPQUFPLElBQUksQ0FBQyxNQUFNLENBQUMsYUFBYSxDQUFDLEtBQUssRUFBRSxHQUFHLElBQUssRUFBc0IsQ0FBQyxDQUFDO0lBQzFFLENBQUM7Q0FDRixDQUFBO0FBZFksd0RBQXNCO0FBS2pDO0lBRkMsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxZQUFHLEVBQUMsUUFBUSxDQUFDO0lBQ1QsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTs7OztpREFFbEI7QUFJRDtJQUZDLElBQUEsbUJBQU0sR0FBRTtJQUNSLElBQUEsYUFBSSxFQUFDLGdCQUFnQixDQUFDO0lBQ2QsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7OzZDQUFNLDhCQUFlOztxREFFbEU7aUNBYlUsc0JBQXNCO0lBRGxDLElBQUEsbUJBQVUsRUFBQyxjQUFjLENBQUM7cUNBRVksOEJBQWE7R0FEdkMsc0JBQXNCLENBY2xDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jb21tZXJjZS9xdW90ZXMtcHVibGljLmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQm9keSwgQ29udHJvbGxlciwgR2V0LCBQYXJhbSwgUG9zdCB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUXVvdGVzU2VydmljZSB9IGZyb20gXCIuL3F1b3Rlcy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBQdWJsaWMgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IFF1b3RlUmVzcG9uZER0byB9IGZyb20gXCIuL2NvbW1lcmNlLmR0b1wiO1xuXG4vKipcbiAqIEFCNSAoQVg3KSBwdWJsaWMgcXVvdGUgcGFnZSBBUEkuIEFsbCByb3V0ZXMgYXJlIEBQdWJsaWMg4oCUXG4gKiB0aGUgdW5ndWVzc2FibGUgdG9rZW4gaW4gdGhlIHBhdGggaXMgdGhlIG9ubHkgY3JlZGVudGlhbFxuICogKGl0cyBTSEEtMjU2IGhhc2ggaXMgd2hhdCdzIHN0b3JlZCksIGV4YWN0bHkgbGlrZSB0aGVcbiAqIHB1YmxpYyBsYW5kaW5nIC8gcmV2aWV3IHN1cmZhY2VzLlxuICovXG5AQ29udHJvbGxlcihcInB1YmxpYy9xdW90ZVwiKVxuZXhwb3J0IGNsYXNzIFF1b3Rlc1B1YmxpY0NvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IHF1b3RlczogUXVvdGVzU2VydmljZSkge31cblxuICBAUHVibGljKClcbiAgQEdldChcIjp0b2tlblwiKVxuICBnZXQoQFBhcmFtKFwidG9rZW5cIikgdG9rZW46IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLnF1b3Rlcy5nZXRCeVRva2VuKHRva2VuKTtcbiAgfVxuXG4gIEBQdWJsaWMoKVxuICBAUG9zdChcIjp0b2tlbi9yZXNwb25kXCIpXG4gIHJlc3BvbmQoQFBhcmFtKFwidG9rZW5cIikgdG9rZW46IHN0cmluZywgQEJvZHkoKSBkdG86IFF1b3RlUmVzcG9uZER0bykge1xuICAgIHJldHVybiB0aGlzLnF1b3Rlcy5wdWJsaWNSZXNwb25kKHRva2VuLCBkdG8gPz8gKHt9IGFzIFF1b3RlUmVzcG9uZER0bykpO1xuICB9XG59XG4iXSwidmVyc2lvbiI6M30=

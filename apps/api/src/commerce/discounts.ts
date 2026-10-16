@@ -9,7 +9,26 @@ export type DiscountValidation = {
   discountMinor: bigint;
   freeShipping: boolean;
   discount?: any;
+  // GB7 (GC17): the discount's customer-condition fields, carried
+  // on the input discount shape validateDiscount reads (kept here
+  // as optional so existing callers/shapes are unchanged).
+  firstOrderOnly?: boolean;
+  repeatCustomerOnly?: boolean;
+  perCustomerLimit?: number | null;
+  maxOrderMinor?: bigint | null;
+  excludedProductIds?: string[] | null;
+  excludedCategoryIds?: string[] | null;
 };
+
+export interface ValidationCtx {
+  subtotalMinor: bigint;
+  items: Array<{ productId?: string | null; categoryId?: string | null; totalMinor: bigint }>;
+  now?: Date;
+  /** GB7: buyer's prior (counting) order count; null = unverifiable. */
+  priorOrderCount?: number | null;
+  /** GB7: this customer's prior uses of THIS coupon; null = unverifiable. */
+  customerUsageCount?: number | null;
+}
 
 export function normalizeDiscountCode(code: string): string {
   return String(code ?? "").trim().toUpperCase();
@@ -24,6 +43,11 @@ export const DISCOUNT_REASON_MESSAGES: Record<string, string> = {
   below_min_order: "এই কুপনের জন্য ন্যূনতম অর্ডার পরিমাণ পূরণ হয়নি",
   no_eligible_items: "এই কুপনটি আপনার কার্টের কোনো পণ্যের জন্য প্রযোজ্য নয়",
   invalid_kind: "এই কুপনের ধরনটি সঠিক নয়",
+  not_first_order: "এই কুপনটি শুধু প্রথম অর্ডারের জন্য প্রযোজ্য",
+  not_repeat_customer: "এই কুপনটি শুধু আগের অর্ডার আছে এমন গ্রাহকদের জন্য",
+  customer_limit_reached: "আপনি এই কুপনটির প্রতি-গ্রাহক সর্বোচ্চ ব্যবহার সীমায় পৌঁছে গেছেন",
+  above_max_order: "এই কুপনটি এত বড় অর্ডারে প্রযোজ্য নয়",
+  excluded_items: "আপনার কার্টের কিছু পণ্যে এই কুপনটি প্রযোজ্য নয়",
 };
 
 function scopeIdsOf(discount: any): string[] {
@@ -32,13 +56,14 @@ function scopeIdsOf(discount: any): string[] {
   return raw.map((x: any) => String(x));
 }
 
+function idListOf(v: any): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x: any) => String(x));
+}
+
 export function validateDiscount(
   discount: any,
-  ctx: {
-    subtotalMinor: bigint;
-    items: Array<{ productId?: string | null; categoryId?: string | null; totalMinor: bigint }>;
-    now?: Date;
-  },
+  ctx: ValidationCtx,
 ): DiscountValidation {
   const fail = (reason: string): DiscountValidation => ({
     valid: false,
@@ -54,6 +79,10 @@ export function validateDiscount(
     return fail("usage_limit_reached");
   if (discount.minOrderMinor != null && ctx.subtotalMinor < BigInt(discount.minOrderMinor))
     return fail("below_min_order");
+  // GB7: maximum order value (mirror of minOrderMinor, reversed).
+  const maxOrderMinorRaw = discount.maxOrderMinor ?? null;
+  if (maxOrderMinorRaw != null && ctx.subtotalMinor > BigInt(maxOrderMinorRaw))
+    return fail("above_max_order");
 
   const scopeType = discount.scopeType ?? "all";
   const scopeIds = scopeIdsOf(discount);
@@ -64,6 +93,30 @@ export function validateDiscount(
     eligible = eligible.filter((i) => i.categoryId != null && scopeIds.includes(String(i.categoryId)));
   }
   const base = eligible.reduce((sum, i) => sum + BigInt(i.totalMinor ?? 0), 0n);
+  // GB7: exclusions — ANY cart item whose product/category is
+  // excluded refuses the coupon outright (no partial application).
+  const excludedProductIds = idListOf(discount.excludedProductIds);
+  const excludedCategoryIds = idListOf(discount.excludedCategoryIds);
+  if (excludedProductIds.length > 0 || excludedCategoryIds.length > 0) {
+    const hasExcluded = (ctx.items ?? []).some(
+      (i) =>
+        (i.productId != null && excludedProductIds.includes(String(i.productId))) ||
+        (i.categoryId != null && excludedCategoryIds.includes(String(i.categoryId))),
+    );
+    if (hasExcluded) return fail("excluded_items");
+  }
+  // GB7: customer conditions. A null count means the buyer's
+  // identity/history is unverifiable ⇒ refuse (conservative).
+  if (discount.firstOrderOnly) {
+    if (ctx.priorOrderCount == null || ctx.priorOrderCount > 0) return fail("not_first_order");
+  }
+  if (discount.repeatCustomerOnly) {
+    if (ctx.priorOrderCount == null || ctx.priorOrderCount < 1) return fail("not_repeat_customer");
+  }
+  if (discount.perCustomerLimit != null) {
+    if (ctx.customerUsageCount == null || ctx.customerUsageCount >= Number(discount.perCustomerLimit))
+      return fail("customer_limit_reached");
+  }
   if (scopeType !== "all" && eligible.length === 0) return fail("no_eligible_items");
   if (base <= 0n) return fail("no_eligible_items");
 

@@ -1,0 +1,32 @@
+7f8ab783be4579170f1b615156fdaa5a
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MulterErrorFilter = void 0;
+const common_1 = require("@nestjs/common");
+const multer_1 = require("multer");
+/**
+ * CX9: multer raises its own error type from inside FileInterceptor,
+ * before the route handler runs — without this filter an oversized
+ * upload would surface as a bare 500. Convert the size limit into the
+ * honest Bengali 400 the rest of the upload path uses; anything else
+ * is rethrown untouched.
+ */
+let MulterErrorFilter = class MulterErrorFilter {
+    catch(exception, host) {
+        if (exception.code === "LIMIT_FILE_SIZE") {
+            throw new common_1.BadRequestException("ফাইল অনেক বড় — সর্বোচ্চ ১০MB আপলোড করা যাবে");
+        }
+        throw exception;
+    }
+};
+exports.MulterErrorFilter = MulterErrorFilter;
+exports.MulterErrorFilter = MulterErrorFilter = __decorate([
+    (0, common_1.Catch)(multer_1.MulterError)
+], MulterErrorFilter);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2tub3dsZWRnZS9tdWx0ZXItZXJyb3IuZmlsdGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7OztBQUFBLDJDQUE0RjtBQUM1RixtQ0FBcUM7QUFFckM7Ozs7OztHQU1HO0FBRUksSUFBTSxpQkFBaUIsR0FBdkIsTUFBTSxpQkFBaUI7SUFDNUIsS0FBSyxDQUFDLFNBQXNCLEVBQUUsSUFBbUI7UUFDL0MsSUFBSSxTQUFTLENBQUMsSUFBSSxLQUFLLGlCQUFpQixFQUFFLENBQUM7WUFDekMsTUFBTSxJQUFJLDRCQUFtQixDQUFDLDhDQUE4QyxDQUFDLENBQUM7UUFDaEYsQ0FBQztRQUNELE1BQU0sU0FBUyxDQUFDO0lBQ2xCLENBQUM7Q0FDRixDQUFBO0FBUFksOENBQWlCOzRCQUFqQixpQkFBaUI7SUFEN0IsSUFBQSxjQUFLLEVBQUMsb0JBQVcsQ0FBQztHQUNOLGlCQUFpQixDQU83QiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMva25vd2xlZGdlL211bHRlci1lcnJvci5maWx0ZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQXJndW1lbnRzSG9zdCwgQmFkUmVxdWVzdEV4Y2VwdGlvbiwgQ2F0Y2gsIEV4Y2VwdGlvbkZpbHRlciB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgTXVsdGVyRXJyb3IgfSBmcm9tIFwibXVsdGVyXCI7XG5cbi8qKlxuICogQ1g5OiBtdWx0ZXIgcmFpc2VzIGl0cyBvd24gZXJyb3IgdHlwZSBmcm9tIGluc2lkZSBGaWxlSW50ZXJjZXB0b3IsXG4gKiBiZWZvcmUgdGhlIHJvdXRlIGhhbmRsZXIgcnVucyDigJQgd2l0aG91dCB0aGlzIGZpbHRlciBhbiBvdmVyc2l6ZWRcbiAqIHVwbG9hZCB3b3VsZCBzdXJmYWNlIGFzIGEgYmFyZSA1MDAuIENvbnZlcnQgdGhlIHNpemUgbGltaXQgaW50byB0aGVcbiAqIGhvbmVzdCBCZW5nYWxpIDQwMCB0aGUgcmVzdCBvZiB0aGUgdXBsb2FkIHBhdGggdXNlczsgYW55dGhpbmcgZWxzZVxuICogaXMgcmV0aHJvd24gdW50b3VjaGVkLlxuICovXG5AQ2F0Y2goTXVsdGVyRXJyb3IpXG5leHBvcnQgY2xhc3MgTXVsdGVyRXJyb3JGaWx0ZXIgaW1wbGVtZW50cyBFeGNlcHRpb25GaWx0ZXIge1xuICBjYXRjaChleGNlcHRpb246IE11bHRlckVycm9yLCBob3N0OiBBcmd1bWVudHNIb3N0KSB7XG4gICAgaWYgKGV4Y2VwdGlvbi5jb2RlID09PSBcIkxJTUlUX0ZJTEVfU0laRVwiKSB7XG4gICAgICB0aHJvdyBuZXcgQmFkUmVxdWVzdEV4Y2VwdGlvbihcIuCmq+CmvuCmh+CmsiDgpoXgpqjgp4fgppUg4Kas4Kah4Ka8IOKAlCDgprjgprDgp43gpqzgp4vgpprgp43gppog4Ken4KemTUIg4KaG4Kaq4Kay4KeL4KahIOCmleCmsOCmviDgpq/gpr7gpqzgp4dcIik7XG4gICAgfVxuICAgIHRocm93IGV4Y2VwdGlvbjtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

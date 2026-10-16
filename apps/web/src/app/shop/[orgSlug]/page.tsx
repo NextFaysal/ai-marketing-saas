@@ -2,17 +2,20 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { fetchShopHome } from "@/lib/storefront-server";
+import { fetchShopHome, shopSortOf } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
+import { themeOf } from "@/lib/shop-theme";
 import { buildShopJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "./ProductCard";
+import { FlashCountdown } from "./FlashCountdown";
 import { AffiliateRefCapture } from "./AffiliateRefCapture";
 import { BundleCard } from "./BundleCard";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
+import { SortSelect } from "./SortSelect";
 
 type Params = Promise<{ orgSlug: string }>;
-type Search = Promise<{ q?: string; category?: string; page?: string }>;
+type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { orgSlug } = await params;
@@ -34,10 +37,12 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
-function shopHref(orgSlug: string, q: string, category: string, page: number): string {
+function shopHref(orgSlug: string, q: string, category: string, page: number, sort = "featured", brand = ""): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (category) params.set("category", category);
+  if (brand) params.set("brand", brand);
+  if (sort && sort !== "featured") params.set("sort", sort);
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
   return `/shop/${orgSlug}${qs ? `?${qs}` : ""}`;
@@ -48,16 +53,20 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const category = (sp.category ?? "").trim();
+  const brand = (sp.brand ?? "").trim();
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const sort = shopSortOf(sp.sort);
 
-  const home = await fetchShopHome(orgSlug, q, category, String(page), "24");
+  const home = await fetchShopHome(orgSlug, q, category, String(page), "24", sort, brand);
   if (!home) notFound();
 
   const { settings, categories, featuredProducts, products, pagination } = home;
+  const brands = home.brands ?? [];
   const accent = home.organization.primaryColor || "#4f46e5";
-  const filtering = !!q || !!category;
+  const filtering = !!q || !!category || !!brand;
   const locale = shopLocaleOf(settings.locale);
   const t = shopT(locale);
+  const theme = themeOf(settings.themeId);
 
   return (
     <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
@@ -79,12 +88,13 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* EC32: capture a partner ?ref= code for checkout attribution. */}
       <AffiliateRefCapture orgSlug={orgSlug} />
       {/* Hero */}
-      <section className="rounded-3xl bg-white p-8 text-center shadow-sm border border-slate-200">
-        <h1 className="text-3xl font-black text-slate-900 sm:text-4xl">{settings.shopName}</h1>
-        {settings.metaDescription ? <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">{settings.metaDescription}</p> : null}
+      <section className={theme.heroClass}>
+        <h1 className={theme.heroTitleClass}>{settings.shopName}</h1>
+        {settings.metaDescription ? <p className={`mx-auto mt-2 max-w-xl text-sm ${settings.themeId === "bold" ? "text-slate-300" : "text-slate-500"}`}>{settings.metaDescription}</p> : null}
         {settings.showSearch ? (
           <form method="get" action={`/shop/${orgSlug}`} className="mx-auto mt-5 flex max-w-md gap-2">
             {category ? <input type="hidden" name="category" value={category} /> : null}
+            {brand ? <input type="hidden" name="brand" value={brand} /> : null}
             <input
               type="search"
               name="q"
@@ -103,7 +113,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {settings.showCategories && categories.length > 0 ? (
         <section className="flex flex-wrap items-center gap-2">
           <Link
-            href={shopHref(orgSlug, q, "", 1)}
+            href={shopHref(orgSlug, q, "", 1, sort, brand)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold ${!category ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
             style={!category ? { backgroundColor: accent } : undefined}
           >
@@ -115,11 +125,38 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
             return (
               <Link
                 key={`${c.id ?? "legacy"}-${c.name}`}
-                href={shopHref(orgSlug, q, value, 1)}
+                href={shopHref(orgSlug, q, value, 1, sort, brand)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
                 style={active ? { backgroundColor: accent } : undefined}
               >
                 {c.name} ({c.productCount})
+              </Link>
+            );
+          })}
+        </section>
+      ) : null}
+
+      {/* GC6: brand filter — only when the shop has brands with products */}
+      {brands.length > 0 ? (
+        <section className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-slate-500">{t.brand.brandLabel}:</span>
+          <Link
+            href={shopHref(orgSlug, q, category, 1, sort, "")}
+            className={`rounded-full px-4 py-1.5 text-xs font-bold ${!brand ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+            style={!brand ? { backgroundColor: accent } : undefined}
+          >
+            {t.brand.allBrands}
+          </Link>
+          {brands.map((b) => {
+            const active = brand === b.slug;
+            return (
+              <Link
+                key={b.id}
+                href={shopHref(orgSlug, q, category, 1, sort, b.slug)}
+                className={`rounded-full px-4 py-1.5 text-xs font-bold ${active ? "text-white" : "bg-white text-slate-700 border border-slate-200"}`}
+                style={active ? { backgroundColor: accent } : undefined}
+              >
+                {b.name} ({b.productCount})
               </Link>
             );
           })}
@@ -138,13 +175,30 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
         </section>
       ) : null}
 
+      {/* GB7 (GC18): flash-sale section — countdown on the server clock */}
+      {(home.flashSales?.sales ?? []).length > 0 ? (
+        <section className="space-y-4 rounded-3xl border border-rose-200 bg-rose-50 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xl font-black text-rose-700">⚡ {t.home.flashSale}</h2>
+            <span className="text-sm text-rose-700">
+              <FlashCountdown endsAt={home.flashSales!.sales[0].endsAt} serverNow={home.flashSales!.serverNow} locale={locale} />
+            </span>
+          </div>
+          <div className={theme.gridClass}>
+            {home.flashSales!.sales[0].products.map((p) => (
+              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales!.serverNow} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* Featured */}
       {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
         <section className="space-y-4">
           <h2 className="text-xl font-black text-slate-900">{t.home.featured}</h2>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div className={theme.featuredGridClass}>
             {featuredProducts.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
             ))}
           </div>
         </section>
@@ -155,10 +209,13 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
 
       {/* Product grid */}
       <section className="space-y-4">
-        <h2 className="text-xl font-black text-slate-900">
-          {filtering ? t.home.searchResults : t.home.allProducts}
-          <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}{t.home.itemsSuffix})</span>
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-black text-slate-900">
+            {filtering ? t.home.searchResults : t.home.allProducts}
+            <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}{t.home.itemsSuffix})</span>
+          </h2>
+          <SortSelect orgSlug={orgSlug} locale={locale} value={sort} q={q} category={category} brand={brand} />
+        </div>
         {products.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
             <p className="text-3xl">🔍</p>
@@ -172,9 +229,9 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
             ) : null}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+          <div className={theme.gridClass}>
             {products.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
             ))}
           </div>
         )}
@@ -182,13 +239,13 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
         {pagination.totalPages > 1 ? (
           <nav className="flex items-center justify-center gap-2 pt-2">
             {page > 1 ? (
-              <Link href={shopHref(orgSlug, q, category, page - 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
+              <Link href={shopHref(orgSlug, q, category, page - 1, sort, brand)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
                 {t.home.prevPage}
               </Link>
             ) : null}
             <span className="text-xs font-semibold text-slate-500">{t.home.page} {pagination.page} / {pagination.totalPages}</span>
             {page < pagination.totalPages ? (
-              <Link href={shopHref(orgSlug, q, category, page + 1)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
+              <Link href={shopHref(orgSlug, q, category, page + 1, sort, brand)} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold text-slate-700">
                 {t.home.nextPage}
               </Link>
             ) : null}

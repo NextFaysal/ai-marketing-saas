@@ -1,0 +1,54 @@
+44e161297a7ec418629bd314b5eb7396
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CrmReportController = void 0;
+const common_1 = require("@nestjs/common");
+const leads_service_1 = require("./leads.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+/**
+ * CRM C6: read-only CRM reporting under the `crm` path family
+ * (the same prefix CustomFieldsController uses). The funnel is
+ * computed from real Lead rows only — see LeadsService.funnel
+ * and docs/crm-c6-acceptance.md for the definitions.
+ */
+let CrmReportController = class CrmReportController {
+    leads;
+    constructor(leads) {
+        this.leads = leads;
+    }
+    /** Lead funnel per source over the last `days` Dhaka calendar
+     * days (1..365, default 30). */
+    funnel(orgId, days) {
+        return this.leads.funnel(orgId, days);
+    }
+};
+exports.CrmReportController = CrmReportController;
+__decorate([
+    (0, common_1.Get)("funnel"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("days")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CrmReportController.prototype, "funnel", null);
+exports.CrmReportController = CrmReportController = __decorate([
+    (0, decorators_1.PermissionArea)("customers"),
+    (0, common_1.Controller)("organizations/:organizationId/crm"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [leads_service_1.LeadsService])
+], CrmReportController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NybS9jcm0tcmVwb3J0LmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQTBFO0FBQzFFLG1EQUErQztBQUMvQyxxREFBc0Q7QUFDdEQseURBQXFEO0FBQ3JELHVEQUFtRDtBQUVuRDs7Ozs7R0FLRztBQUlJLElBQU0sbUJBQW1CLEdBQXpCLE1BQU0sbUJBQW1CO0lBQ0Q7SUFBN0IsWUFBNkIsS0FBbUI7UUFBbkIsVUFBSyxHQUFMLEtBQUssQ0FBYztJQUFHLENBQUM7SUFFcEQ7b0NBQ2dDO0lBRWhDLE1BQU0sQ0FBMEIsS0FBYSxFQUFpQixJQUFhO1FBQ3pFLE9BQU8sSUFBSSxDQUFDLEtBQUssQ0FBQyxNQUFNLENBQUMsS0FBSyxFQUFFLElBQUksQ0FBQyxDQUFDO0lBQ3hDLENBQUM7Q0FDRixDQUFBO0FBVFksa0RBQW1CO0FBTTlCO0lBREMsSUFBQSxZQUFHLEVBQUMsUUFBUSxDQUFDO0lBQ04sV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQWlCLFdBQUEsSUFBQSxjQUFLLEVBQUMsTUFBTSxDQUFDLENBQUE7Ozs7aURBRTVEOzhCQVJVLG1CQUFtQjtJQUgvQixJQUFBLDJCQUFjLEVBQUMsV0FBVyxDQUFDO0lBQzNCLElBQUEsbUJBQVUsRUFBQyxtQ0FBbUMsQ0FBQztJQUMvQyxJQUFBLGtCQUFTLEVBQUMsMEJBQVcsRUFBRSx3QkFBVSxDQUFDO3FDQUVHLDRCQUFZO0dBRHJDLG1CQUFtQixDQVMvQiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvY3JtL2NybS1yZXBvcnQuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBDb250cm9sbGVyLCBHZXQsIFBhcmFtLCBRdWVyeSwgVXNlR3VhcmRzIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBMZWFkc1NlcnZpY2UgfSBmcm9tIFwiLi9sZWFkcy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBQZXJtaXNzaW9uQXJlYSB9IGZyb20gXCIuLi9jb21tb24vZGVjb3JhdG9yc1wiO1xuaW1wb3J0IHsgVGVuYW50R3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3RlbmFudC5ndWFyZFwiO1xuaW1wb3J0IHsgUm9sZXNHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vcm9sZXMuZ3VhcmRcIjtcblxuLyoqXG4gKiBDUk0gQzY6IHJlYWQtb25seSBDUk0gcmVwb3J0aW5nIHVuZGVyIHRoZSBgY3JtYCBwYXRoIGZhbWlseVxuICogKHRoZSBzYW1lIHByZWZpeCBDdXN0b21GaWVsZHNDb250cm9sbGVyIHVzZXMpLiBUaGUgZnVubmVsIGlzXG4gKiBjb21wdXRlZCBmcm9tIHJlYWwgTGVhZCByb3dzIG9ubHkg4oCUIHNlZSBMZWFkc1NlcnZpY2UuZnVubmVsXG4gKiBhbmQgZG9jcy9jcm0tYzYtYWNjZXB0YW5jZS5tZCBmb3IgdGhlIGRlZmluaXRpb25zLlxuICovXG5AUGVybWlzc2lvbkFyZWEoXCJjdXN0b21lcnNcIilcbkBDb250cm9sbGVyKFwib3JnYW5pemF0aW9ucy86b3JnYW5pemF0aW9uSWQvY3JtXCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIENybVJlcG9ydENvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IGxlYWRzOiBMZWFkc1NlcnZpY2UpIHt9XG5cbiAgLyoqIExlYWQgZnVubmVsIHBlciBzb3VyY2Ugb3ZlciB0aGUgbGFzdCBgZGF5c2AgRGhha2EgY2FsZW5kYXJcbiAgICogZGF5cyAoMS4uMzY1LCBkZWZhdWx0IDMwKS4gKi9cbiAgQEdldChcImZ1bm5lbFwiKVxuICBmdW5uZWwoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFF1ZXJ5KFwiZGF5c1wiKSBkYXlzPzogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMubGVhZHMuZnVubmVsKG9yZ0lkLCBkYXlzKTtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

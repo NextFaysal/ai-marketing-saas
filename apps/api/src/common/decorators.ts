@@ -12,7 +12,7 @@ export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
 export const PERMISSION_AREA_KEY = "permissionArea";
 export const PermissionArea = (area: string) => SetMetadata(PERMISSION_AREA_KEY, area);
 
-export interface AuthUser { userId: string; email: string; isSuperAdmin: boolean }
+export interface AuthUser { userId: string; email: string; isSuperAdmin: boolean; sid?: string }
 
 export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext): AuthUser => {
   return ctx.switchToHttp().getRequest().user;

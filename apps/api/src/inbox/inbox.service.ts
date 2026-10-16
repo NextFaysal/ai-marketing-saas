@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, HttpException, Injectable, Not
 import { isConnectionDenied, isMemberConnectionDenied } from "../common/permission-catalog";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { encryptJson, decryptJson } from "../integrations/crypto";
 import { MetaMessagingClient, MessagingSecrets } from "./meta-messaging.client";
@@ -6047,9 +6048,7 @@ export class InboxService {
 
   // ----- Agent notifications + presence (Phase F) -----
   private async notify(organizationId: string, userId: string, type: string, title: string, body: string | null, conversationId: string | null) {
-    await (this.prisma as any).agentNotification?.create({
-      data: { organizationId, userId, type, title, body, conversationId },
-    }).catch(() => undefined);
+    await createAgentNotification(this.prisma as any, { organizationId, userId, type, title, body, conversationId }).catch(() => undefined);
   }
 
   private async notifyUrgent(organizationId: string, conversation: any) {

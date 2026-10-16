@@ -1,0 +1,35 @@
+8cfa932a6cac57ac19f842a551e3c364
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AffiliatesModule = void 0;
+const common_1 = require("@nestjs/common");
+const affiliates_controller_1 = require("./affiliates.controller");
+const affiliates_service_1 = require("./affiliates.service");
+const audit_module_1 = require("../audit/audit.module");
+/**
+ * EC32 — affiliate program. Leaf module: PrismaModule is global
+ * and EventsModule is global, so the service's constructor
+ * injections resolve without imports beyond AuditModule.
+ * StorefrontModule / LandingsModule / ProductsModule import this
+ * module for the failure-isolated checkout attribution stamp;
+ * none of those modules is imported here, so the graph stays
+ * acyclic.
+ */
+let AffiliatesModule = class AffiliatesModule {
+};
+exports.AffiliatesModule = AffiliatesModule;
+exports.AffiliatesModule = AffiliatesModule = __decorate([
+    (0, common_1.Module)({
+        imports: [audit_module_1.AuditModule],
+        controllers: [affiliates_controller_1.AffiliatesController],
+        providers: [affiliates_service_1.AffiliatesService],
+        exports: [affiliates_service_1.AffiliatesService],
+    })
+], AffiliatesModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FmZmlsaWF0ZXMvYWZmaWxpYXRlcy5tb2R1bGUudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7O0FBQUEsMkNBQXdDO0FBQ3hDLG1FQUErRDtBQUMvRCw2REFBeUQ7QUFDekQsd0RBQW9EO0FBRXBEOzs7Ozs7OztHQVFHO0FBT0ksSUFBTSxnQkFBZ0IsR0FBdEIsTUFBTSxnQkFBZ0I7Q0FBRyxDQUFBO0FBQW5CLDRDQUFnQjsyQkFBaEIsZ0JBQWdCO0lBTjVCLElBQUEsZUFBTSxFQUFDO1FBQ04sT0FBTyxFQUFFLENBQUMsMEJBQVcsQ0FBQztRQUN0QixXQUFXLEVBQUUsQ0FBQyw0Q0FBb0IsQ0FBQztRQUNuQyxTQUFTLEVBQUUsQ0FBQyxzQ0FBaUIsQ0FBQztRQUM5QixPQUFPLEVBQUUsQ0FBQyxzQ0FBaUIsQ0FBQztLQUM3QixDQUFDO0dBQ1csZ0JBQWdCLENBQUciLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FmZmlsaWF0ZXMvYWZmaWxpYXRlcy5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBBZmZpbGlhdGVzQ29udHJvbGxlciB9IGZyb20gXCIuL2FmZmlsaWF0ZXMuY29udHJvbGxlclwiO1xuaW1wb3J0IHsgQWZmaWxpYXRlc1NlcnZpY2UgfSBmcm9tIFwiLi9hZmZpbGlhdGVzLnNlcnZpY2VcIjtcbmltcG9ydCB7IEF1ZGl0TW9kdWxlIH0gZnJvbSBcIi4uL2F1ZGl0L2F1ZGl0Lm1vZHVsZVwiO1xuXG4vKipcbiAqIEVDMzIg4oCUIGFmZmlsaWF0ZSBwcm9ncmFtLiBMZWFmIG1vZHVsZTogUHJpc21hTW9kdWxlIGlzIGdsb2JhbFxuICogYW5kIEV2ZW50c01vZHVsZSBpcyBnbG9iYWwsIHNvIHRoZSBzZXJ2aWNlJ3MgY29uc3RydWN0b3JcbiAqIGluamVjdGlvbnMgcmVzb2x2ZSB3aXRob3V0IGltcG9ydHMgYmV5b25kIEF1ZGl0TW9kdWxlLlxuICogU3RvcmVmcm9udE1vZHVsZSAvIExhbmRpbmdzTW9kdWxlIC8gUHJvZHVjdHNNb2R1bGUgaW1wb3J0IHRoaXNcbiAqIG1vZHVsZSBmb3IgdGhlIGZhaWx1cmUtaXNvbGF0ZWQgY2hlY2tvdXQgYXR0cmlidXRpb24gc3RhbXA7XG4gKiBub25lIG9mIHRob3NlIG1vZHVsZXMgaXMgaW1wb3J0ZWQgaGVyZSwgc28gdGhlIGdyYXBoIHN0YXlzXG4gKiBhY3ljbGljLlxuICovXG5ATW9kdWxlKHtcbiAgaW1wb3J0czogW0F1ZGl0TW9kdWxlXSxcbiAgY29udHJvbGxlcnM6IFtBZmZpbGlhdGVzQ29udHJvbGxlcl0sXG4gIHByb3ZpZGVyczogW0FmZmlsaWF0ZXNTZXJ2aWNlXSxcbiAgZXhwb3J0czogW0FmZmlsaWF0ZXNTZXJ2aWNlXSxcbn0pXG5leHBvcnQgY2xhc3MgQWZmaWxpYXRlc01vZHVsZSB7fVxuIl0sInZlcnNpb24iOjN9

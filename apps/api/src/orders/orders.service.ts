@@ -18,9 +18,14 @@ import type { AdvanceVerificationDto, AssignAgentDto, BulkAssignAgentDto, Create
 import { parseBdAddress } from "./bd-address";
 import { computeIntakeWarnings } from "./intake-warnings";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { CheckoutGuardService } from "../fraud/checkout-guard.service";
+import { deviceHashPrefix } from "../fraud/identifier-utils";
+import { QuotesService } from "../commerce/quotes.service";
+import { bdPhoneMatchKey } from "./phone-utils";
 // ON6: the SLA helper is PURE (no Nest/Prisma imports), so
 // importing it from fulfillment/ creates no module cycle.
 import { computeSlaStage, SLA_DEFAULTS } from "../fulfillment/sla";
+import { classifyShipmentStatus } from "../courier/courier-performance";
 import { phoneKey } from "./risk-score";
 
 function pubOrder(o: any) {
@@ -35,6 +40,19 @@ function pubOrder(o: any) {
     // giftPromotionId / giftSkipped / giftMessage — ride the
     // spread above untouched).
     giftWrapMinor: o.giftWrapMinor?.toString() ?? "0",
+    // AB4 (AX5a/AX5b): the stamped deposit due (BigInt → string,
+    // null = no deposit applied) and the validated custom
+    // checkout-field answers, made explicit so the BigInt never
+    // rides the spread raw.
+    depositDueMinor: o.depositDueMinor != null ? o.depositDueMinor.toString() : null,
+    checkoutFields: o.checkoutFields ?? null,
+    // AB7 (AX19): the order-level attribution stamps, made
+    // explicit like checkoutFields above (null = untracked —
+    // POS / manual / external orders are never stamped). Only
+    // the source + click-id TYPE ride the staff payloads; the
+    // raw clickId / full UTM set stay on the row.
+    utmSource: o.utmSource ?? null,
+    clickIdType: o.clickIdType ?? null,
     totalMinor: o.totalMinor?.toString(), refundedMinor: o.refundedMinor?.toString(),
     items: o.items?.map((i: any) => ({ ...i, priceMinor: i.priceMinor?.toString(), totalMinor: i.totalMinor?.toString() })),
   };
@@ -85,6 +103,17 @@ export class OrdersService {
     // LAST + @Optional (FraudModule is imported by OrdersModule);
     // absent leaves warnings without the blocked check.
     @Optional() private readonly blockedPhones?: BlockedPhoneService,
+    // GB3 (GC9): open-order stats for the manual-order warning +
+    // queue support. Appended LAST + @Optional, same discipline;
+    // absent leaves manual warnings exactly as before GB3.
+    @Optional() private readonly checkoutGuard?: CheckoutGuardService,
+    // AB5 (AX7): quote conversion. Appended LAST + @Optional,
+    // same discipline. OrdersModule already imports
+    // CommerceModule (which exports QuotesService) and
+    // CommerceModule never imports OrdersModule, so this
+    // direction is acyclic — the codebase-consistent route for
+    // conversion (no forwardRef anywhere in the codebase).
+    @Optional() private readonly quotes?: QuotesService,
   ) {}
 
   /**
@@ -150,7 +179,14 @@ export class OrdersService {
     await this.audit?.log({
       organizationId, userId: actorId, action: "orders.manual_created",
       entityType: "Order", entityId: order?.id ?? externalId,
-      metadata: { externalId, result, totalMinor: (total > 0n ? total : 0n).toString() },
+      metadata: {
+        externalId, result, totalMinor: (total > 0n ? total : 0n).toString(),
+        // AB5 (AX7): quote conversions identify themselves in
+        // the audit metadata; non-quote calls are byte-identical.
+        ...((dto as any).quoteId
+          ? { quoteId: String((dto as any).quoteId), source: "quote_conversion" }
+          : {}),
+      },
     }).catch(() => undefined);
     if (!order) throw new NotFoundException("Order was recorded but could not be reloaded");
     // ON11: intake warnings ride the response (never blocking —
@@ -170,7 +206,91 @@ export class OrdersService {
       intakeWarnings = intake.warnings;
       addressSuggestion = intake.addressSuggestion;
     } catch { /* warnings are advisory only */ }
+    // GB2 (GC7): manual orders WARN on stock, never block —
+    // staff can always override (the order already exists; the
+    // placement decrement records the truth, negative included).
+    // Lines are matched to catalog stock through the reloaded
+    // order items (upsertOrder resolved productId by SKU);
+    // free-text lines without a productId stay silent.
+    try {
+      if (this.inventory?.checkAvailability) {
+        for (const item of ((order as any).items ?? []) as any[]) {
+          if (!item.productId || item.isPreorder) continue;
+          const product = await (this.prisma as any).product
+            .findFirst({ where: { id: item.productId, organizationId } })
+            .catch(() => null);
+          if (!product) continue;
+          const variant = item.variantId
+            ? await (this.prisma as any).productVariant.findFirst({ where: { id: item.variantId } }).catch(() => null)
+            : null;
+          const verdict = await this.inventory.checkAvailability(organizationId, product, variant, Number(item.quantity) || 0);
+          if (!verdict.ok) {
+            intakeWarnings.push({
+              key: "insufficient_stock",
+              label: `«${product.name}»-এর স্টক কম — উপলব্ধ ${Math.max(0, verdict.available)}টি, অর্ডারে ${item.quantity}টি (স্টাফ অর্ডার, তাই তৈরি হয়েছে)`,
+            });
+          }
+        }
+      }
+    } catch { /* warnings are advisory only */ }
+    // GB3 (GC9): open-order warning — the same phone already has
+    // open orders (excluding the one just created). Advisory
+    // only, failure-isolated like the other warning blocks.
+    try {
+      if (this.checkoutGuard) {
+        const phoneForStats = (order as any).customer?.phone ?? phone;
+        const key = bdPhoneMatchKey(phoneForStats);
+        if (key) {
+          const settings = await this.checkoutGuard
+            .loadFraudSettings(organizationId)
+            .catch(() => null);
+          const windowHours = Number(settings?.openOrderWindowHours ?? 72) || 72;
+          const count = await this.checkoutGuard.countOpenOrders(
+            organizationId, key, windowHours, (order as any).id,
+          );
+          if (count >= 1) {
+            intakeWarnings.push({
+              key: "open_order_exists",
+              label: `এই নম্বরে আরও ${count}টি খোলা অর্ডার আছে`,
+            });
+          }
+        }
+      }
+    } catch { /* warnings are advisory only */ }
     return { ...pubOrder(order), upsertResult: result, warnings: intakeWarnings, addressSuggestion };
+  }
+
+  /**
+   * AB5 (AX7): convert an ACCEPTED quote into a real order
+   * through the manual-order path (snapshot prices, delivery
+   * charge as shipping, discount 0). This lives on the ORDERS
+   * side by design: OrdersModule imports CommerceModule, never
+   * the reverse, so OrdersService can compose QuotesService
+   * with no module cycle and no forwardRef. QuotesService
+   * validates (accepted-only, not already converted, buyer
+   * phone resolvable) and stamps the outcome; the preview of
+   * the same math is QuotesService.previewConversion.
+   */
+  async convertQuote(organizationId: string, actorId: string, quoteId: string) {
+    if (!this.quotes?.buildConversionInput || !this.quotes?.markConverted) {
+      throw new BadRequestException("কোট রূপান্তর সুবিধা এই deployment-এ নেই");
+    }
+    const { manualDto } = await this.quotes.buildConversionInput(organizationId, quoteId);
+    const order: any = await this.createManual(organizationId, actorId, manualDto as any);
+    const orderId = order?.id ? String(order.id) : null;
+    if (!orderId) throw new NotFoundException("Order was recorded but could not be reloaded");
+    const { quote } = await this.quotes.markConverted(organizationId, actorId, quoteId, orderId);
+    return { order, quote };
+  }
+
+  /** AB5 (AX7): the conversion preview from the orders side —
+   * the same read-only manual-math preview QuotesService
+   * exposes on the commerce surface (creates nothing). */
+  async previewQuoteConversion(organizationId: string, quoteId: string) {
+    if (!this.quotes?.previewConversion) {
+      throw new BadRequestException("কোট রূপান্তর সুবিধা এই deployment-এ নেই");
+    }
+    return this.quotes.previewConversion(organizationId, quoteId);
   }
 
   // ---------- Sales & Data S2: order actions (PATCH) ----------
@@ -394,6 +514,49 @@ export class OrdersService {
       amountMinor: row.amountMinor != null ? String(row.amountMinor) : null,
       expectedAmountMinor: row.expectedAmountMinor != null ? String(row.expectedAmountMinor) : null,
     };
+  }
+
+  /** AB4 (AX5b): the org's CheckoutFieldDef rows, failure-isolated
+   * (a missing pre-migration table reads as no defs, never a 500
+   * into the order paths). `activeOnly` restricts to active defs. */
+  private async checkoutFieldDefRows(organizationId: string, activeOnly: boolean): Promise<any[]> {
+    try {
+      const table = (this.prisma as any).checkoutFieldDef;
+      if (!table?.findMany) return [];
+      const rows: any[] =
+        (await table
+          .findMany({ where: { organizationId, ...(activeOnly ? { active: true } : {}) } })
+          .catch(() => [])) ?? [];
+      return rows.filter((r: any) => !activeOnly || r.active !== false);
+    } catch {
+      return [];
+    }
+  }
+
+  /** AB4 (AX5b): ACTIVE defs in staff order (sortOrder asc, then
+   * createdAt asc) for the CSV export's `field:<key>` columns. */
+  private async activeCheckoutFieldDefs(organizationId: string): Promise<any[]> {
+    const rows = await this.checkoutFieldDefRows(organizationId, true);
+    return [...rows].sort(
+      (a, b) =>
+        Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) ||
+        new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime(),
+    );
+  }
+
+  /** AB4 (AX5b): [{ key, label }] for the answer keys PRESENT on
+   * this order; a def deleted after placement falls back to the
+   * key itself as its label. Failure-isolated like the def load. */
+  private async checkoutFieldDefsForOrder(organizationId: string, order: any): Promise<Array<{ key: string; label: string }>> {
+    const answers =
+      order?.checkoutFields && typeof order.checkoutFields === "object" && !Array.isArray(order.checkoutFields)
+        ? (order.checkoutFields as Record<string, unknown>)
+        : {};
+    const keys = Object.keys(answers);
+    if (keys.length === 0) return [];
+    const rows = await this.checkoutFieldDefRows(organizationId, false);
+    const labelByKey = new Map(rows.map((r: any) => [String(r.key), String(r.label ?? r.key)]));
+    return keys.map((key) => ({ key, label: labelByKey.get(key) ?? key }));
   }
 
   /** Sum of APPROVED verification amounts (null amounts count 0). */
@@ -767,7 +930,27 @@ export class OrdersService {
           status: { in: ["pending", "on-hold", "processing"] },
         },
       });
-      return idsOf(rows ?? []);
+      const awaitingIds = idsOf(rows ?? []);
+      // GB3 (GC8): COD orders that crossed the advance threshold
+      // also need confirmation — unioned in (awaiting first,
+      // deduped). Failure-isolated: an old fake without the
+      // codAdvanceRequired field shape keeps just the first set.
+      try {
+        const advanceRows = await orderTable.findMany({
+          where: {
+            organizationId, isPractice: false, isCod: true, codAdvanceRequired: true,
+            status: { in: ["pending", "on-hold", "processing"] },
+          },
+        });
+        const seen = new Set(awaitingIds);
+        const merged = [...awaitingIds];
+        for (const id of idsOf(advanceRows ?? [])) {
+          if (!seen.has(id)) { seen.add(id); merged.push(id); }
+        }
+        return merged;
+      } catch {
+        return awaitingIds;
+      }
     }
     if (key === "deliveries_today") {
       // Only the slot/date signal exists: the order vocabulary has
@@ -927,6 +1110,43 @@ export class OrdersService {
       const breached = candidates.filter((o: any) =>
         computeSlaStage(o, fulfillmentsByOrder.get(String(o.id)) ?? [], shipmentsByOrder.get(String(o.id)) ?? [], setting, now).breached);
       return idsOf(breached);
+    }
+    if (key === "rto_attention") {
+      // GB5 (GC14): RTO attention = the order has a shipment in
+      // a returned-family status (the standard classifier), the
+      // ORDER itself is not yet in a terminal returned/refunded
+      // state, and no ReturnRequest has reached a completed
+      // resolution — "completed" here means status received or
+      // completed, or a restock already applied (restockAppliedAt
+      // set). An OPEN request (requested/approved/return_shipped)
+      // does NOT clear the order: the parcel is back but nobody
+      // has closed the loop. Same load shape as in_transit_stuck.
+      const shipments: any[] = ((await (this.prisma as any).courierShipment?.findMany({
+        where: { organizationId },
+      }).catch(() => [])) ?? []);
+      const returnedOrderIds = new Set(
+        shipments
+          .filter((s: any) => classifyShipmentStatus(String(s.status)) === "returned")
+          .map((s: any) => String(s.orderId)),
+      );
+      if (returnedOrderIds.size === 0) return [];
+      const rows = await orderTable.findMany({
+        where: {
+          organizationId, isPractice: false, id: { in: [...returnedOrderIds] },
+          status: { notIn: ["returned", "refunded"] },
+        },
+      });
+      const candidates = rows ?? [];
+      if (candidates.length === 0) return [];
+      const returns: any[] = ((await (this.prisma as any).returnRequest?.findMany({
+        where: { organizationId, orderId: { in: candidates.map((o: any) => String(o.id)) } },
+      }).catch(() => [])) ?? []);
+      const resolvedOrderIds = new Set(
+        returns
+          .filter((r: any) => ["received", "completed"].includes(String(r.status)) || r.restockAppliedAt != null)
+          .map((r: any) => String(r.orderId)),
+      );
+      return idsOf(candidates.filter((o: any) => !resolvedOrderIds.has(String(o.id))));
     }
     // returns_open
     const returns: any[] = ((await (this.prisma as any).returnRequest?.findMany({
@@ -1295,11 +1515,16 @@ export class OrdersService {
       where, orderBy: { placedAt: "desc" }, take: 5000, // cap mirrors the leads export (5000 rows, newest first)
       include: { customer: true, items: true },
     });
-    const headers = ["order_id", "external_id", "external_number", "source", "status", "is_cod", "payment_method", "customer_name", "customer_phone", "customer_email", "items", "subtotal", "shipping", "discount", "tax", "total", "refunded", "currency", "placed_at", "created_at"];
+    // AB4 (AX5b): the org's ACTIVE custom checkout-field defs
+    // append one `field:<key>` column each (sortOrder order).
+    // Failure-isolated — a missing table (older deploy) or no
+    // defs leaves the export byte-identical to before.
+    const fieldDefs = await this.activeCheckoutFieldDefs(organizationId);
+    const headers = ["order_id", "external_id", "external_number", "source", "status", "is_cod", "payment_method", "customer_name", "customer_phone", "customer_email", "items", "subtotal", "shipping", "discount", "tax", "total", "refunded", "currency", "placed_at", "created_at", ...fieldDefs.map((d: any) => `field:${d.key}`)];
     const rows = (orders as any[]).map((o) => {
       const customer = o.customer ?? {};
       const customerName = [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.name || "";
-      return [
+      const row: any[] = [
         o.id ?? "", o.externalId ?? "", o.externalNumber ?? "", o.source ?? "", o.status ?? "",
         o.isCod ? "yes" : "no", o.paymentMethod ?? "",
         customerName, customer.phone ?? "", customer.email ?? "",
@@ -1314,6 +1539,17 @@ export class OrdersService {
         o.placedAt ? new Date(o.placedAt).toISOString() : "",
         o.createdAt ? new Date(o.createdAt).toISOString() : "",
       ];
+      if (fieldDefs.length > 0) {
+        const answers =
+          o.checkoutFields && typeof o.checkoutFields === "object" && !Array.isArray(o.checkoutFields)
+            ? (o.checkoutFields as Record<string, unknown>)
+            : {};
+        for (const def of fieldDefs) {
+          const v = answers[String(def.key)];
+          row.push(v === undefined || v === null ? "" : typeof v === "boolean" ? (v ? "yes" : "no") : String(v));
+        }
+      }
+      return row;
     });
     return toCsv(headers, rows);
   }
@@ -1324,6 +1560,10 @@ export class OrdersService {
     });
     if (!o) throw new NotFoundException("Order not found in this organization");
     const out: any = pubOrder(o);
+    // AB8 (AX27): staff payload carries ONLY the device-hash
+    // prefix — the full hash never leaves the API.
+    out.deviceHashPrefix = o.deviceHash ? deviceHashPrefix(o.deviceHash) : null;
+    delete out.deviceHash;
     // EC19: payment verifications + advance/due math. The paid
     // advance is the sum of APPROVED rows only, capped at the
     // order total; the due is what remains (>= 0).
@@ -1334,14 +1574,83 @@ export class OrdersService {
     out.paymentVerifications = verificationRows.map((row: any) => this.serializeVerification(row));
     out.advancePaidMinor = advancePaid.toString();
     out.amountDueMinor = (total - advancePaid).toString();
+    // AB4 (AX5b): labels for the custom checkout-field answers
+    // PRESENT on this order ([{ key, label }] — a deleted def's
+    // label falls back to the key itself).
+    out.checkoutFieldDefs = await this.checkoutFieldDefsForOrder(organizationId, o);
+    // AB4 (AX5a): the deposit block — null unless a deposit was
+    // stamped at placement. Paid = Σ APPROVED verification rows
+    // written by the gateway deposit flow (source
+    // "gateway_deposit") only, capped at the amount due; the
+    // rows are the ones already loaded above, no second query.
+    if (o.depositDueMinor === null || o.depositDueMinor === undefined) {
+      out.deposit = null;
+    } else {
+      let due = 0n;
+      try { due = BigInt(o.depositDueMinor as any); } catch { due = 0n; }
+      const depositPaidSum = this.approvedAdvanceSum(
+        verificationRows.filter((row: any) => row.source === "gateway_deposit"),
+      );
+      const depositPaid = depositPaidSum > due ? due : depositPaidSum;
+      out.deposit = {
+        dueMinor: due.toString(),
+        paidMinor: depositPaid.toString(),
+        outstandingMinor: (due - depositPaid).toString(),
+      };
+    }
     // EC18: the chosen delivery slot, when one was picked.
     out.deliverySlot = await this.deliverySlotForOrder(organizationId, o);
     // EC30: the chosen pickup point, when the order is a pickup.
     out.pickupPoint = await this.pickupPointForOrder(organizationId, o);
+    // AB3 (AX4): the order's stock allocations — ALL rows (active
+    // + settled), enriched with warehouse/bin labels, so the
+    // order detail can show which bins this order's deduction is
+    // attributed to and offer staff re-allocation. Additive only;
+    // failure-isolated (a missing pre-migration table reads as
+    // an empty list, never a broken order detail).
+    out.allocations = await this.allocationsForOrder(organizationId, orderId);
     if (this.risk) {
       try { out.risk = await this.risk.forOrder(organizationId, o); } catch { /* advisory only */ }
     }
     return out;
+  }
+
+  /** AB3: ALL StockAllocation rows of an order (active +
+   * settled), oldest first, with warehouse/bin labels resolved
+   * failure-isolated per table. */
+  private async allocationsForOrder(organizationId: string, orderId: string): Promise<any[]> {
+    try {
+      const table = (this.prisma as any).stockAllocation;
+      if (!table?.findMany) return [];
+      const rows: any[] = ((await table.findMany({ where: { organizationId, orderId } }).catch(() => [])) ?? []) as any[];
+      const sorted = [...rows].sort((a: any, b: any) =>
+        new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
+        || String(a.id ?? "").localeCompare(String(b.id ?? "")));
+      const out: any[] = [];
+      for (const row of sorted) {
+        const warehouse = row.warehouseId
+          ? await (this.prisma as any).warehouse?.findFirst({ where: { id: row.warehouseId, organizationId } }).catch(() => null)
+          : null;
+        const bin = row.binId
+          ? await (this.prisma as any).binLocation?.findFirst({ where: { id: row.binId, organizationId } }).catch(() => null)
+          : null;
+        out.push({
+          id: row.id,
+          orderItemId: row.orderItemId ?? null,
+          productId: row.productId,
+          variantId: row.variantId ?? null,
+          warehouseId: row.warehouseId,
+          warehouseName: warehouse?.name ?? null,
+          binId: row.binId,
+          binCode: bin?.code ?? null,
+          qty: row.qty,
+          status: row.status,
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /** M50 dedicated endpoint: the full assessment with verbatim reasons. */

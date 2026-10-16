@@ -7,10 +7,14 @@ import { StorageRegistryService } from "../storage/storage-registry.service";
 import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
 import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
-import { PERMISSION_AREAS, effectiveAccess, findUnknownAreas, normalizeOverrides } from "../common/permission-catalog";
+import { PERMISSION_AREAS, PERMISSION_AREA_KEYS, PRESET_ROLE_PROFILES, effectiveAccess, findUnknownAreas, normalizeOverrides, presetProfile } from "../common/permission-catalog";
+import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_KEYS } from "../common/agent-notify";
 import { isValidTimezone, isValidWindows } from "../inbox/working-hours";
 import { parseAiSchedule } from "../inbox/ai-schedule";
 import { EmailProvider } from "../messaging/email.provider";
+import { storageUsageForOrg } from "../common/storage-usage";
+import { depositConfigOf } from "../fraud/deposit";
+import { dhakaMonthStartUtc, todayDhakaKey } from "../common/plan-limit-checks";
 import { Role } from "@repo/db";
 
 const INVITABLE_ROLES: Role[] = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER"] as Role[];
@@ -62,11 +66,25 @@ export class OrganizationsService {
   }
 
   async listMembers(organizationId: string) {
-    return (this.prisma as any).membership.findMany({
+    const members = await (this.prisma as any).membership.findMany({
       where: { organizationId },
       include: { user: { select: { id: true, name: true, email: true } } },
       orderBy: { createdAt: "asc" },
     });
+    // GB6 (GC16): each row also carries its CustomRole (id +
+    // name) from ONE extra findMany for the org's roles.
+    let nameById = new Map<string, string>();
+    try {
+      const roles = (await (this.prisma as any).customRole?.findMany?.({
+        where: { organizationId }, select: { id: true, name: true },
+      })) ?? [];
+      nameById = new Map((roles as any[]).map((r) => [r.id, r.name]));
+    } catch { /* custom-role table unavailable — names stay null */ }
+    return (members as any[]).map((m) => ({
+      ...m,
+      customRoleId: m.customRoleId ?? null,
+      customRoleName: m.customRoleId ? (nameById.get(m.customRoleId) ?? null) : null,
+    }));
   }
 
   /**
@@ -152,10 +170,43 @@ export class OrganizationsService {
         scheduledChange: !!sub.pendingPlan,
       };
     })();
+    // GC22 (GB9): plan resource usage vs the plan's resource
+    // limits (null limit = unlimited). Every figure is a real
+    // count/aggregate; any single read failure degrades that
+    // metric to 0 rather than breaking the billing payload.
+    const resourceLimits = await ps.planResourceLimits(this.prisma as any, organizationId).catch(() => null);
+    const graceDays = await ps.billingGraceDays(this.prisma as any).catch(() => 3);
+    const safeCount = async (fn: () => Promise<unknown>): Promise<number> => {
+      try { const n = await fn(); return typeof n === "number" ? n : 0; } catch { return 0; }
+    };
+    const [productCount, ordersThisMonth, storage, apiRow] = await Promise.all([
+      safeCount(() => (this.prisma as any).product.count({ where: { organizationId, status: { not: "ARCHIVED" } } })),
+      safeCount(() => (this.prisma as any).order.count({ where: { organizationId, createdAt: { gte: dhakaMonthStartUtc() } } })),
+      storageUsageForOrg(this.prisma as any, organizationId),
+      (async () => {
+        try {
+          return await (this.prisma as any).apiUsageDaily?.findUnique?.({
+            where: { organizationId_day: { organizationId, day: todayDhakaKey() } },
+          });
+        } catch { return null; }
+      })(),
+    ]);
+    const resourceUsage = {
+      products: { used: productCount, limit: resourceLimits?.productLimit ?? null },
+      ordersThisMonth: { used: ordersThisMonth, limit: resourceLimits?.orderLimit ?? null },
+      storage: { usedBytes: storage.storageBytes, assetCount: storage.assetCount, limitMb: resourceLimits?.storageLimitMb ?? null },
+      apiToday: { used: typeof apiRow?.count === "number" ? apiRow.count : 0, limit: resourceLimits?.apiDailyLimit ?? null },
+    };
+    const pastDueGraceEndsAt = sub?.status === "PAST_DUE" && sub.currentPeriodEnd
+      ? new Date(new Date(sub.currentPeriodEnd).getTime() + graceDays * 24 * 3600 * 1000)
+      : null;
     return {
       nextInvoice,
+      paused: !!sub?.pausedAt,
+      pastDueGraceEndsAt,
+      resourceUsage,
       subscription: sub
-        ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd, pendingPlan: sub.pendingPlan ?? null, billingCycle: sub.billingCycle ?? "monthly", priceMinor: String((sub.billingCycle === "yearly" ? yearlyPrices : prices)[sub.plan] ?? 0), currency: "BDT" }
+        ? { plan: sub.plan, status: sub.status, currentPeriodEnd: sub.currentPeriodEnd, pendingPlan: sub.pendingPlan ?? null, billingCycle: sub.billingCycle ?? "monthly", priceMinor: String((sub.billingCycle === "yearly" ? yearlyPrices : prices)[sub.plan] ?? 0), currency: "BDT", pausedAt: sub.pausedAt ?? null }
         : null,
       // Milestone 39: credit balance + which gateways the
       // platform team has actually configured (buttons in the
@@ -220,6 +271,39 @@ export class OrganizationsService {
       metadata: { from: current, to: dto.requestedPlan, note: dto.note ?? null }, ipAddress: ip,
     });
     return { ok: true, currentPlan: current, requestedPlan: dto.requestedPlan };
+  }
+
+  // ---- GC22 (GB9): subscription pause / resume ----
+  // Pause stamps pausedAt on the org's LATEST subscription;
+  // while set, the PlanLimit choke points refuse commerce
+  // writes. Resume clears the stamp. Both are audited
+  // (entitlement mutations). No subscription, or pausing a
+  // CANCELLED one, is refused.
+
+  async pauseSubscription(organizationId: string, actorId: string, ip?: string) {
+    const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
+    if (!sub) throw new BadRequestException("কোনো সাবস্ক্রিপশন পাওয়া যায়নি — pause করার মতো কিছু নেই।");
+    if (sub.status === "CANCELLED") throw new BadRequestException("বাতিল হওয়া সাবস্ক্রিপশন pause করা যাবে না।");
+    if (sub.pausedAt) return { ok: true, paused: true, pausedAt: sub.pausedAt };
+    const pausedAt = new Date();
+    await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "billing.subscription_paused", entityType: "Subscription", entityId: sub.id,
+      metadata: { plan: sub.plan, status: sub.status }, ipAddress: ip,
+    });
+    return { ok: true, paused: true, pausedAt };
+  }
+
+  async resumeSubscription(organizationId: string, actorId: string, ip?: string) {
+    const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
+    if (!sub) throw new BadRequestException("কোনো সাবস্ক্রিপশন পাওয়া যায়নি — resume করার মতো কিছু নেই।");
+    if (!sub.pausedAt) return { ok: true, paused: false, pausedAt: null };
+    await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: null } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "billing.subscription_resumed", entityType: "Subscription", entityId: sub.id,
+      metadata: { plan: sub.plan, status: sub.status }, ipAddress: ip,
+    });
+    return { ok: true, paused: false, pausedAt: null };
   }
 
   // ---- Milestone 34 (Phase N1): email member invitations ----
@@ -652,11 +736,28 @@ export class OrganizationsService {
     });
     if (!target) throw new NotFoundException("That user is not a member of this organization");
     const overrides = normalizeOverrides(target.permissionOverrides);
+    const customRole = await this.customRoleOf(organizationId, target);
     return {
       userId: targetUserId, role: target.role,
       overrides,
-      effective: effectiveAccess(target.role, target.permissionOverrides),
+      customRole,
+      effective: effectiveAccess(target.role, target.permissionOverrides, customRole ? customRole.areas : undefined),
     };
+  }
+
+  /** GB6 (GC16): the member's CustomRole in this org (areas
+   * filtered to known catalog keys), or null. Defensive: any
+   * lookup failure reads as "no custom role". */
+  private async customRoleOf(organizationId: string, membership: any) {
+    if (!membership?.customRoleId) return null;
+    try {
+      const row = await (this.prisma as any).customRole?.findUnique?.({ where: { id: membership.customRoleId } });
+      if (!row || row.organizationId !== organizationId) return null;
+      const areas = Array.isArray(row.areas)
+        ? row.areas.filter((k: unknown): k is string => typeof k === "string" && PERMISSION_AREA_KEYS.includes(k))
+        : [];
+      return { id: row.id, name: row.name, areas, presetKey: row.presetKey ?? null };
+    } catch { return null; }
   }
 
   /** Replace a member's overrides (OWNER/ADMIN only — enforced
@@ -687,6 +788,281 @@ export class OrganizationsService {
       ipAddress: ip,
     });
     return this.getMemberAccess(organizationId, actorId, targetUserId);
+  }
+
+  // ---------- GB6 (GC16): custom roles (named area bundles) ----------
+
+  private validateCustomRoleName(raw: unknown): string {
+    const name = typeof raw === "string" ? raw.trim() : "";
+    if (name.length < 1 || name.length > 60) {
+      throw new BadRequestException("Custom role name must be 1–60 characters");
+    }
+    return name;
+  }
+
+  private validateCustomRoleAreas(raw: unknown): string[] {
+    if (!Array.isArray(raw) || raw.length === 0) {
+      throw new BadRequestException("A custom role needs at least one permission area");
+    }
+    const unknown = raw.filter((k) => typeof k !== "string" || !PERMISSION_AREA_KEYS.includes(k as string)).map((k) => String(k));
+    if (unknown.length) throw new BadRequestException(`Unknown permission areas: ${unknown.join(", ")}`);
+    return [...new Set(raw as string[])];
+  }
+
+  private async customRoleMemberCount(organizationId: string, roleId: string): Promise<number> {
+    try {
+      return (await (this.prisma as any).membership.count({ where: { organizationId, customRoleId: roleId } })) ?? 0;
+    } catch { return 0; }
+  }
+
+  private async customRoleView(organizationId: string, row: any) {
+    return {
+      id: row.id, name: row.name,
+      areas: Array.isArray(row.areas) ? row.areas : [],
+      presetKey: row.presetKey ?? null,
+      memberCount: await this.customRoleMemberCount(organizationId, row.id),
+    };
+  }
+
+  private isUniqueViolation(e: unknown): boolean {
+    return (e as any)?.code === "P2002";
+  }
+
+  /** The org's custom roles + the platform preset profiles a
+   * new role can be materialized from. */
+  async listCustomRoles(organizationId: string) {
+    const rows = await (this.prisma as any).customRole.findMany({
+      where: { organizationId }, orderBy: { createdAt: "asc" },
+    });
+    const roles = [];
+    for (const row of rows as any[]) roles.push(await this.customRoleView(organizationId, row));
+    return { roles, presetProfiles: PRESET_ROLE_PROFILES };
+  }
+
+  /** Create a custom role — either free-form (name + areas) or
+   * from a preset profile (presetKey ALONE: an explicit name or
+   * areas alongside it is rejected so the request can never be
+   * ambiguous about which source won). Name is unique per org. */
+  async createCustomRole(organizationId: string, actorId: string, dto: { name?: string; areas?: string[]; presetKey?: string }, ip?: string) {
+    const p = this.prisma as any;
+    let name: string; let areas: string[]; let presetKey: string | null = null;
+    if (dto.presetKey != null && dto.presetKey !== "") {
+      if (dto.name !== undefined || dto.areas !== undefined) {
+        throw new BadRequestException("When presetKey is given, the name and areas come from the preset profile — send presetKey on its own");
+      }
+      const profile = presetProfile(dto.presetKey);
+      if (!profile) throw new BadRequestException(`Unknown preset role profile: ${dto.presetKey}`);
+      name = profile.label; areas = [...profile.areas]; presetKey = profile.key;
+    } else {
+      name = this.validateCustomRoleName(dto.name);
+      areas = this.validateCustomRoleAreas(dto.areas);
+    }
+    const existing = await p.customRole.findFirst({ where: { organizationId, name } });
+    if (existing) throw new BadRequestException(`A custom role named "${name}" already exists in this organization`);
+    let row: any;
+    try {
+      row = await p.customRole.create({ data: { organizationId, name, areas, presetKey } });
+    } catch (e) {
+      if (this.isUniqueViolation(e)) {
+        throw new BadRequestException(`A custom role named "${name}" already exists in this organization`);
+      }
+      throw e;
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.custom_role_created",
+      entityType: "CustomRole", entityId: row.id,
+      metadata: { name, areas }, ipAddress: ip,
+    });
+    return this.customRoleView(organizationId, row);
+  }
+
+  /** Rename / re-scope a custom role. presetKey is immutable —
+   * it records where the role came from; sending it is ignored. */
+  async updateCustomRole(organizationId: string, actorId: string, roleId: string, dto: { name?: string; areas?: string[] }, ip?: string) {
+    const p = this.prisma as any;
+    const row = await p.customRole.findFirst({ where: { id: roleId, organizationId } });
+    if (!row) throw new NotFoundException("Custom role not found in this organization");
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = this.validateCustomRoleName(dto.name);
+    if (dto.areas !== undefined) data.areas = this.validateCustomRoleAreas(dto.areas);
+    if (Object.keys(data).length === 0) return this.customRoleView(organizationId, row);
+    if (typeof data.name === "string" && data.name !== row.name) {
+      const clash = await p.customRole.findFirst({ where: { organizationId, name: data.name } });
+      if (clash) throw new BadRequestException(`A custom role named "${data.name}" already exists in this organization`);
+    }
+    let updated: any;
+    try {
+      updated = await p.customRole.update({ where: { id: row.id }, data });
+    } catch (e) {
+      if (this.isUniqueViolation(e)) {
+        throw new BadRequestException(`A custom role named "${String(data.name ?? row.name)}" already exists in this organization`);
+      }
+      throw e;
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.custom_role_updated",
+      entityType: "CustomRole", entityId: row.id,
+      metadata: { name: updated.name, areas: Array.isArray(updated.areas) ? updated.areas : [] }, ipAddress: ip,
+    });
+    return this.customRoleView(organizationId, updated);
+  }
+
+  /** Deleting a role that members still use is refused — the
+   * manager unassigns it first, so nobody's access changes
+   * silently under them. */
+  async deleteCustomRole(organizationId: string, actorId: string, roleId: string, ip?: string) {
+    const p = this.prisma as any;
+    const row = await p.customRole.findFirst({ where: { id: roleId, organizationId } });
+    if (!row) throw new NotFoundException("Custom role not found in this organization");
+    const inUse = await this.customRoleMemberCount(organizationId, roleId);
+    if (inUse > 0) {
+      throw new BadRequestException(`This custom role is assigned to ${inUse} member(s) — unassign it from them before deleting`);
+    }
+    await p.customRole.delete({ where: { id: row.id } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.custom_role_deleted",
+      entityType: "CustomRole", entityId: row.id,
+      metadata: { name: row.name, areas: Array.isArray(row.areas) ? row.areas : [] }, ipAddress: ip,
+    });
+    return { ok: true, deleted: true, id: row.id };
+  }
+
+  /** Assign (or clear, with null) a member's custom role. The
+   * role must belong to THIS org; the OWNER's access can never
+   * be customized. Returns the member's full access picture. */
+  async assignMemberCustomRole(organizationId: string, actorId: string, targetUserId: string, dto: { customRoleId?: string | null }, ip?: string) {
+    const p = this.prisma as any;
+    const membership = await this.memberOrThrow(organizationId, targetUserId);
+    if (membership.role === "OWNER") {
+      throw new BadRequestException("The owner's access cannot be customized — the owner always has full access");
+    }
+    let roleRow: any = null;
+    const customRoleId = dto.customRoleId ?? null;
+    if (customRoleId !== null) {
+      roleRow = await p.customRole.findFirst({ where: { id: customRoleId, organizationId } });
+      if (!roleRow) throw new NotFoundException("Custom role not found in this organization");
+    }
+    await p.membership.update({ where: { id: membership.id }, data: { customRoleId } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.member_custom_role_updated",
+      entityType: "Membership", entityId: membership.id,
+      metadata: { targetUserId, customRoleId: roleRow?.id ?? null, customRoleName: roleRow?.name ?? null },
+      ipAddress: ip,
+    });
+    return this.getMemberAccess(organizationId, actorId, targetUserId);
+  }
+
+  // ---------- GB6 (GC16): member login history + sessions ----------
+  // NOTE on scope: LoginEvents and UserSessions are per USER,
+  // not per org — an account is global across organizations, so
+  // a member's history/sessions shown here are their account's,
+  // full stop. The manager's authority to see them comes from
+  // the target being a member of THIS org (memberOrThrow);
+  // there is no per-org slice of a session to show.
+
+  async getMemberLoginHistory(organizationId: string, targetUserId: string) {
+    await this.memberOrThrow(organizationId, targetUserId);
+    try {
+      const rows = (await (this.prisma as any).loginEvent?.findMany?.({
+        where: { userId: targetUserId }, orderBy: { createdAt: "desc" }, take: 50,
+      })) ?? [];
+      return (rows as any[]).map((r) => ({
+        id: r.id, email: r.email, success: r.success === true,
+        ip: r.ip ?? null, userAgent: r.userAgent ?? null, createdAt: r.createdAt,
+      }));
+    } catch { return []; }
+  }
+
+  async getMemberSessions(organizationId: string, targetUserId: string) {
+    await this.memberOrThrow(organizationId, targetUserId);
+    try {
+      const rows = (await (this.prisma as any).userSession?.findMany?.({
+        where: { userId: targetUserId, revokedAt: null }, orderBy: { createdAt: "desc" },
+      })) ?? [];
+      return (rows as any[]).map((s) => ({
+        id: s.id, ip: s.ip ?? null, userAgent: s.userAgent ?? null,
+        createdAt: s.createdAt, lastSeenAt: s.lastSeenAt,
+      }));
+    } catch { return []; }
+  }
+
+  async revokeMemberSession(organizationId: string, actorId: string, targetUserId: string, sessionId: string, ip?: string) {
+    await this.memberOrThrow(organizationId, targetUserId);
+    let session: any = null;
+    try {
+      session = await (this.prisma as any).userSession?.findFirst?.({
+        where: { id: sessionId, userId: targetUserId },
+      });
+    } catch { session = null; }
+    if (!session) throw new NotFoundException("Session not found for this member");
+    const alreadyRevoked = Boolean(session.revokedAt);
+    if (!alreadyRevoked) {
+      await (this.prisma as any).userSession.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
+      await this.audit.log({
+        organizationId, userId: actorId, action: "org.member_session_revoked",
+        entityType: "UserSession", entityId: session.id,
+        metadata: { targetUserId }, ipAddress: ip,
+      });
+    }
+    return { ok: true, id: session.id, alreadyRevoked };
+  }
+
+  async revokeAllMemberSessions(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
+    await this.memberOrThrow(organizationId, targetUserId);
+    let count = 0;
+    try {
+      const out = await (this.prisma as any).userSession?.updateMany?.({
+        where: { userId: targetUserId, revokedAt: null }, data: { revokedAt: new Date() },
+      });
+      count = out?.count ?? 0;
+    } catch { count = 0; }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.member_sessions_revoked_all",
+      entityType: "User", entityId: targetUserId,
+      metadata: { targetUserId, count }, ipAddress: ip,
+    });
+    return { ok: true, revokedCount: count };
+  }
+
+  // ---------- GB6 (GC16): own notification preferences ----------
+
+  /** The caller's notification preferences in this org: the
+   * full category catalog + which categories they muted. */
+  async getMyNotificationPreferences(organizationId: string, userId: string) {
+    let mutedCategories: string[] = [];
+    try {
+      const pref = await (this.prisma as any).notificationPreference?.findUnique?.({
+        where: { userId_organizationId: { userId, organizationId } },
+      });
+      if (Array.isArray(pref?.mutedCategories)) {
+        mutedCategories = pref.mutedCategories.filter(
+          (k: unknown): k is string => typeof k === "string" && NOTIFICATION_CATEGORY_KEYS.includes(k),
+        );
+      }
+    } catch { mutedCategories = []; }
+    return { categories: NOTIFICATION_CATEGORIES, mutedCategories };
+  }
+
+  async updateMyNotificationPreferences(organizationId: string, userId: string, dto: { mutedCategories?: string[] }, ip?: string) {
+    if (!Array.isArray(dto?.mutedCategories)) {
+      throw new BadRequestException("mutedCategories must be an array of notification category keys");
+    }
+    const unknown = dto.mutedCategories
+      .filter((k) => typeof k !== "string" || !NOTIFICATION_CATEGORY_KEYS.includes(k as string))
+      .map((k) => String(k));
+    if (unknown.length) throw new BadRequestException(`Unknown notification categories: ${unknown.join(", ")}`);
+    const mutedCategories = [...new Set(dto.mutedCategories)];
+    await (this.prisma as any).notificationPreference.upsert({
+      where: { userId_organizationId: { userId, organizationId } },
+      update: { mutedCategories },
+      create: { userId, organizationId, mutedCategories },
+    });
+    await this.audit.log({
+      organizationId, userId, action: "org.notification_preferences_updated",
+      entityType: "NotificationPreference", entityId: userId,
+      metadata: { count: mutedCategories.length }, ipAddress: ip,
+    });
+    return this.getMyNotificationPreferences(organizationId, userId);
   }
 
   /** Milestone 69 (Team W1): the member activity feed — real
@@ -746,6 +1122,60 @@ export class OrganizationsService {
     return OrganizationsService.profileJson(profile);
   }
 
+  /**
+   * GC21 (GB9): merchant verification submit. Everything the
+   * reviewer needs must already be on record — the org name, a
+   * business address (profile.address or the dedicated
+   * businessAddress), a contact channel (phone or email) and the
+   * trade licence number. Missing pieces come back as a 400
+   * naming each one in Bengali so the merchant can fix them in
+   * one pass. Submit is allowed from unverified / rejected /
+   * pending (a re-submit refreshes the stamp and clears the old
+   * admin note); a verified org cannot re-enter the queue.
+   */
+  async submitVerification(organizationId: string, actorId: string, ip?: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (org.verificationStatus === "verified") {
+      throw new BadRequestException("এই প্রতিষ্ঠানটি ইতিমধ্যে যাচাইকৃত — আবার জমা দেওয়ার দরকার নেই");
+    }
+    const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
+    const has = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+    const missing: string[] = [];
+    if (!has(org.name)) missing.push("প্রতিষ্ঠানের নাম");
+    if (!has(profile?.address) && !has(profile?.businessAddress)) missing.push("ব্যবসার ঠিকানা");
+    if (!has(profile?.contactPhone) && !has(profile?.contactEmail)) missing.push("যোগাযোগের ফোন বা ইমেইল");
+    if (!has(profile?.tradeLicenseNo)) missing.push("ট্রেড লাইসেন্স নম্বর");
+    if (missing.length) {
+      throw new BadRequestException({
+        statusCode: 400,
+        message: `যাচাইয়ের জন্য জমা দিতে আরও তথ্য লাগবে: ${missing.join(", ")} — Business Profile এ এগুলো পূরণ করে আবার জমা দিন।`,
+        missing,
+        error: "Bad Request",
+      } as any);
+    }
+    const updated = await (this.prisma as any).organization.update({
+      where: { id: organizationId },
+      data: { verificationStatus: "pending", verificationSubmittedAt: new Date(), verificationNote: null },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "org.verification.submit", entityType: "Organization", entityId: organizationId, ipAddress: ip });
+    return {
+      ...updated,
+      creditMinor: BigInt(updated.creditMinor ?? 0).toString(),
+      verificationStatus: updated.verificationStatus,
+      verificationNote: updated.verificationNote ?? null,
+      verificationSubmittedAt: updated.verificationSubmittedAt ?? null,
+    };
+  }
+
+  /** GC21 (GB9): recorded storage usage (MediaAsset registry
+   * only — see common/storage-usage for the honesty contract). */
+  async storageUsage(organizationId: string) {
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId }, select: { id: true } }).catch(() => null);
+    if (!org) throw new NotFoundException("Organization not found");
+    return storageUsageForOrg(this.prisma as any, organizationId);
+  }
+
   /** BigInt money fields cannot cross JSON as-is ("Do not
    * know how to serialize a BigInt" — the profile GET 500'd
    * once a charge was set). Minor units travel as strings,
@@ -753,8 +1183,15 @@ export class OrganizationsService {
   static profileJson(profile: any) {
     if (!profile) return profile;
     const out: Record<string, unknown> = { ...profile };
-    for (const k of ["monthlyBudgetMinor", "deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor"]) {
+    for (const k of ["monthlyBudgetMinor", "deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor", "codMaxOrderMinor", "codAdvanceRequiredAboveMinor", "depositFixedMinor"]) {
       if (typeof out[k] === "bigint") out[k] = (out[k] as bigint).toString();
+    }
+    // AB4 (AX5a): the deposit config in its canonical settings
+    // shape (mode/percent/fixedMinor/appliesTo/note).
+    out.deposit = depositConfigOf(profile);
+    // GB3 (GC8): codBlockedDistricts travels as an array or null.
+    if (out.codBlockedDistricts !== undefined && !Array.isArray(out.codBlockedDistricts)) {
+      out.codBlockedDistricts = null;
     }
     return out;
   }
@@ -762,9 +1199,26 @@ export class OrganizationsService {
   async updateBusinessProfile(organizationId: string, actorId: string, dto: UpdateBusinessProfileDto) {
     // Milestone 75: validate + normalize the operational layer.
     const data: Record<string, unknown> = { ...dto };
-    const MONEY = ["deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor"];
+    const MONEY = ["deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor", "codMaxOrderMinor", "codAdvanceRequiredAboveMinor", "depositFixedMinor"];
     for (const key of MONEY) {
       if (data[key] != null) data[key] = BigInt(Math.round(Number(data[key])));
+    }
+    // GB3 (GC8): blocked districts — a bounded list of trimmed,
+    // non-empty names; an empty array or null clears to null.
+    if ((dto as any).codBlockedDistricts !== undefined) {
+      const raw = (dto as any).codBlockedDistricts;
+      if (raw === null) {
+        data.codBlockedDistricts = null;
+      } else {
+        if (!Array.isArray(raw) || raw.length > 64) {
+          throw new BadRequestException("COD ব্লক করা জেলার তালিকা সর্বোচ্চ ৬৪টি হতে পারবে");
+        }
+        const cleaned = raw.map((d: any) => String(d ?? "").trim());
+        if (cleaned.some((d: string) => d.length === 0 || d.length > 100)) {
+          throw new BadRequestException("COD ব্লক করা প্রতিটি জেলার নাম ১–১০০ অক্ষরের হতে হবে");
+        }
+        data.codBlockedDistricts = cleaned.length ? cleaned : null;
+      }
     }
     for (const key of ["bkashNumber", "nagadNumber"] as const) {
       const raw = data[key];

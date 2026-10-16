@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { CommerceService } from "./commerce.service";
 import { OrderPushService } from "./order-push.service";
 import { SyncOutboxService } from "./sync-outbox.service";
@@ -7,11 +7,31 @@ import { PromotionsService } from "./promotions.service";
 import { BundlesService } from "./bundles.service";
 import { AbandonedCheckoutsService } from "./abandoned-checkouts.service";
 import { CommerceAnalyticsService } from "./commerce-analytics.service";
+import { LoyaltyService } from "./loyalty.service";
+import { GiftCardsService } from "./gift-cards.service";
+import { LicenseKeysService } from "./license-keys.service";
+import { PriceListsService } from "./price-lists.service";
+import { QuotesService } from "./quotes.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 import {
+  AbandonedCouponSettingDto,
   BundleDto,
+  LoyaltyAdjustDto,
+  LoyaltySettingDto,
+  ReferralRewardSettingDto,
+  GiftCardAdjustDto,
+  GiftCardNoteDto,
+  GiftCardSettingDto,
+  LicenseKeyImportDto,
+  ManualGiftCardIssueDto,
+  BulkPercentOffDto,
+  CustomerGroupDto,
+  PriceListItemDto,
+  QuoteDto,
+  UpdateCustomerGroupDto,
+  UpdateQuoteDto,
   ChannelPriceDto,
   CreateLocationDto,
   DiscountDto,
@@ -48,6 +68,11 @@ export class CommerceController {
     private readonly abandoned: AbandonedCheckoutsService,
     private readonly analytics: CommerceAnalyticsService,
     private readonly bundles: BundlesService,
+    private readonly loyalty: LoyaltyService,
+    private readonly giftCards: GiftCardsService,
+    private readonly priceLists: PriceListsService,
+    private readonly quotes: QuotesService,
+    private readonly licenseKeys: LicenseKeysService,
   ) {}
 
   // ---------- EC11: per-store analytics + Commerce Hub ----------
@@ -78,6 +103,12 @@ export class CommerceController {
       days,
       limit,
     });
+  }
+
+  /** AB7 (AX19): order attribution stamps grouped by utmSource. */
+  @Get("analytics/sources")
+  sourceBreakdown(@Param("organizationId") orgId: string, @Query("days") days?: string) {
+    return this.analytics.sourceBreakdown(orgId, days);
   }
 
   @Get("hub-summary")
@@ -285,8 +316,8 @@ export class CommerceController {
   // ---------- EC7: discounts & promotions ----------
 
   @Get("discounts")
-  listDiscounts(@Param("organizationId") orgId: string) {
-    return this.discounts.list(orgId);
+  listDiscounts(@Param("organizationId") orgId: string, @Query("origin") origin?: string) {
+    return this.discounts.list(orgId, origin ? { origin } : undefined);
   }
 
   @Get("discounts/:discountId")
@@ -335,6 +366,15 @@ export class CommerceController {
   }
 
   // ---------- EC16: promotions v2 ----------
+
+  @Get("promotions/report")
+  promotionsReport(
+    @Param("organizationId") orgId: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.promotions.promotionsReport(orgId, from, to);
+  }
 
   @Get("promotions")
   listPromotions(@Param("organizationId") orgId: string) {
@@ -446,6 +486,36 @@ export class CommerceController {
     return this.abandoned.listUnified(orgId);
   }
 
+  @Get("abandoned/coupon-setting")
+  getAbandonedCouponSetting(@Param("organizationId") orgId: string) {
+    return this.abandoned.getCouponSetting(orgId);
+  }
+
+  @Put("abandoned/coupon-setting")
+  @Roles(...WRITE_ROLES)
+  updateAbandonedCouponSetting(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: AbandonedCouponSettingDto,
+  ) {
+    return this.abandoned.updateCouponSetting(orgId, user.userId, dto);
+  }
+
+  // AX18: EC10 sequence state for one checkout — commerce-
+  // prefixed aliases of the canonical route. The canonical
+  // path the AX18 spec + the dashboard sequence view call is
+  // organizations/:organizationId/abandoned-checkouts/:id/sequence,
+  // which sits OUTSIDE this controller's commerce prefix, so it
+  // is served by AbandonedSequenceController below (same
+  // guards, same handler).
+  @Get(["abandoned/:checkoutId/sequence", "abandoned-checkouts/:checkoutId/sequence"])
+  getAbandonedSequence(
+    @Param("organizationId") orgId: string,
+    @Param("checkoutId") checkoutId: string,
+  ) {
+    return this.abandoned.getCheckoutSequence(orgId, checkoutId);
+  }
+
   @Post("abandoned/:checkoutId/recover")
   @Roles(...WRITE_ROLES)
   recoverAbandoned(
@@ -466,5 +536,364 @@ export class CommerceController {
     @Param("storeId") storeId: string,
   ) {
     return this.abandoned.backfillFromShopify(orgId, user.userId, storeId);
+  }
+
+  // ---------- AB1: loyalty points (AX1) + referral rewards (AX2) ----------
+
+  @Get("loyalty/settings")
+  getLoyaltySetting(@Param("organizationId") orgId: string) {
+    return this.loyalty.getLoyaltySetting(orgId);
+  }
+
+  @Put("loyalty/settings")
+  @Roles(...WRITE_ROLES)
+  updateLoyaltySetting(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: LoyaltySettingDto,
+  ) {
+    return this.loyalty.updateLoyaltySetting(orgId, user.userId, dto);
+  }
+
+  @Get("loyalty/referral-settings")
+  getReferralRewardSetting(@Param("organizationId") orgId: string) {
+    return this.loyalty.getReferralRewardSetting(orgId);
+  }
+
+  @Put("loyalty/referral-settings")
+  @Roles(...WRITE_ROLES)
+  updateReferralRewardSetting(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: ReferralRewardSettingDto,
+  ) {
+    return this.loyalty.updateReferralRewardSetting(orgId, user.userId, dto);
+  }
+
+  @Get("loyalty/customers/:customerId")
+  getCustomerLoyalty(
+    @Param("organizationId") orgId: string,
+    @Param("customerId") customerId: string,
+  ) {
+    return this.loyalty.getCustomerLoyalty(orgId, customerId);
+  }
+
+  @Post("loyalty/customers/:customerId/adjust")
+  @Roles(...WRITE_ROLES)
+  adjustCustomerLoyalty(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("customerId") customerId: string,
+    @Body() dto: LoyaltyAdjustDto,
+  ) {
+    return this.loyalty.adjustPoints(orgId, user.userId, customerId, dto);
+  }
+
+  @Get("loyalty/orders/:orderId")
+  getOrderLoyalty(
+    @Param("organizationId") orgId: string,
+    @Param("orderId") orderId: string,
+  ) {
+    return this.loyalty.getOrderLoyalty(orgId, orderId);
+  }
+
+  // ---------- AB2: gift cards (AX3) ----------
+
+  @Get("gift-cards/settings")
+  getGiftCardSetting(@Param("organizationId") orgId: string) {
+    return this.giftCards.getSetting(orgId);
+  }
+
+  @Put("gift-cards/settings")
+  @Roles(...WRITE_ROLES)
+  updateGiftCardSetting(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: GiftCardSettingDto,
+  ) {
+    return this.giftCards.updateSetting(orgId, user.userId, dto);
+  }
+
+  @Get("gift-cards/liability")
+  giftCardLiability(
+    @Param("organizationId") orgId: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.giftCards.liabilityReport(orgId, from, to);
+  }
+
+  @Get("gift-cards")
+  listGiftCards(
+    @Param("organizationId") orgId: string,
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    return this.giftCards.listCards(orgId, {
+      search: search || undefined,
+      status: status || undefined,
+      page: parseIntDef(page, 1),
+      pageSize: parseIntDef(pageSize, 20),
+    });
+  }
+
+  @Post("gift-cards/issue")
+  @Roles(...WRITE_ROLES)
+  manualIssueGiftCard(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: ManualGiftCardIssueDto,
+  ) {
+    return this.giftCards.manualIssue(orgId, user.userId, dto);
+  }
+
+  @Get("gift-cards/:id")
+  getGiftCard(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.giftCards.getCard(orgId, id);
+  }
+
+  @Post("gift-cards/:id/void")
+  @Roles(...WRITE_ROLES)
+  voidGiftCard(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: GiftCardNoteDto,
+  ) {
+    return this.giftCards.voidCard(orgId, user.userId, id, dto);
+  }
+
+  @Post("gift-cards/:id/adjust")
+  @Roles(...WRITE_ROLES)
+  adjustGiftCard(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("id") id: string,
+    @Body() dto: GiftCardAdjustDto,
+  ) {
+    return this.giftCards.adjustBalance(orgId, user.userId, id, dto);
+  }
+
+  // ---------- AB5 (AX9): license-key pools ----------
+
+  @Post("license-keys/import")
+  @Roles(...WRITE_ROLES)
+  importLicenseKeys(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: LicenseKeyImportDto,
+  ) {
+    return this.licenseKeys.importKeys(orgId, user.userId, dto.productId, dto);
+  }
+
+  @Get("license-keys/pool-summary")
+  poolSummary(
+    @Param("organizationId") orgId: string,
+    @Query("productId") productId?: string,
+  ) {
+    return this.licenseKeys.poolSummary(orgId, productId ?? "");
+  }
+
+  @Get("license-keys")
+  listLicenseKeys(
+    @Param("organizationId") orgId: string,
+    @Query("productId") productId?: string,
+    @Query("status") status?: string,
+    @Query("take") take?: string,
+  ) {
+    return this.licenseKeys.listKeys(orgId, {
+      productId: productId || undefined,
+      status: status || undefined,
+      take: take ? parseIntDef(take, 100) : undefined,
+    });
+  }
+
+  @Post("license-keys/:keyId/revoke")
+  @Roles(...WRITE_ROLES)
+  revokeLicenseKey(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("keyId") keyId: string,
+  ) {
+    return this.licenseKeys.revokeKey(orgId, user.userId, keyId);
+  }
+
+  // ---------- AB5 (AX7): B2B customer groups + price lists ----------
+
+  @Get("customer-groups")
+  listCustomerGroups(@Param("organizationId") orgId: string) {
+    return this.priceLists.listGroups(orgId);
+  }
+
+  @Post("customer-groups")
+  @Roles(...WRITE_ROLES)
+  createCustomerGroup(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: CustomerGroupDto,
+  ) {
+    return this.priceLists.createGroup(orgId, user.userId, dto);
+  }
+
+  @Patch("customer-groups/:groupId")
+  @Roles(...WRITE_ROLES)
+  updateCustomerGroup(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("groupId") groupId: string,
+    @Body() dto: UpdateCustomerGroupDto,
+  ) {
+    return this.priceLists.updateGroup(orgId, user.userId, groupId, dto);
+  }
+
+  @Delete("customer-groups/:groupId")
+  @Roles(...WRITE_ROLES)
+  deleteCustomerGroup(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("groupId") groupId: string,
+  ) {
+    return this.priceLists.deleteGroup(orgId, user.userId, groupId);
+  }
+
+  @Get("customer-groups/:groupId/price-list")
+  getPriceList(@Param("organizationId") orgId: string, @Param("groupId") groupId: string) {
+    return this.priceLists.getPriceList(orgId, groupId);
+  }
+
+  @Post("customer-groups/:groupId/price-list/items")
+  @Roles(...WRITE_ROLES)
+  setPriceListItem(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("groupId") groupId: string,
+    @Body() dto: PriceListItemDto,
+  ) {
+    return this.priceLists.setItem(orgId, user.userId, groupId, dto);
+  }
+
+  @Delete("customer-groups/:groupId/price-list/items/:itemId")
+  @Roles(...WRITE_ROLES)
+  removePriceListItem(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("groupId") groupId: string,
+    @Param("itemId") itemId: string,
+  ) {
+    return this.priceLists.removeItem(orgId, user.userId, groupId, itemId);
+  }
+
+  @Post("customer-groups/:groupId/price-list/bulk-percent")
+  @Roles(...WRITE_ROLES)
+  bulkPercentOff(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("groupId") groupId: string,
+    @Body() dto: BulkPercentOffDto,
+  ) {
+    return this.priceLists.bulkPercentOff(orgId, user.userId, groupId, dto);
+  }
+
+  // ---------- AB5 (AX7): quotes ----------
+  // NOTE: conversion is NOT here — it creates a real order via
+  // OrdersService.createManual, and OrdersModule imports this
+  // module (never the reverse), so the convert route lives on
+  // the orders side: POST organizations/:id/orders/from-quote/:quoteId/convert.
+  // The read-only preview (manual-path math, creates nothing)
+  // lives here with the rest of the quote surface.
+
+  @Get("quotes")
+  listQuotes(
+    @Param("organizationId") orgId: string,
+    @Query("status") status?: string,
+    @Query("customerId") customerId?: string,
+  ) {
+    return this.quotes.listQuotes(orgId, {
+      status: status || undefined,
+      customerId: customerId || undefined,
+    });
+  }
+
+  @Post("quotes")
+  @Roles(...WRITE_ROLES)
+  createQuote(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Body() dto: QuoteDto,
+  ) {
+    return this.quotes.createQuote(orgId, user.userId, dto);
+  }
+
+  @Get("quotes/:quoteId")
+  getQuote(@Param("organizationId") orgId: string, @Param("quoteId") quoteId: string) {
+    return this.quotes.getQuote(orgId, quoteId);
+  }
+
+  @Patch("quotes/:quoteId")
+  @Roles(...WRITE_ROLES)
+  updateQuote(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("quoteId") quoteId: string,
+    @Body() dto: UpdateQuoteDto,
+  ) {
+    return this.quotes.updateQuote(orgId, user.userId, quoteId, dto);
+  }
+
+  @Post("quotes/:quoteId/cancel")
+  @Roles(...WRITE_ROLES)
+  cancelQuote(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("quoteId") quoteId: string,
+  ) {
+    return this.quotes.cancelQuote(orgId, user.userId, quoteId);
+  }
+
+  @Post("quotes/:quoteId/send")
+  @Roles(...WRITE_ROLES)
+  sendQuote(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("quoteId") quoteId: string,
+  ) {
+    return this.quotes.sendQuote(orgId, user.userId, quoteId);
+  }
+
+  @Get("quotes/:quoteId/convert-preview")
+  previewQuoteConversion(
+    @Param("organizationId") orgId: string,
+    @Param("quoteId") quoteId: string,
+  ) {
+    return this.quotes.previewConversion(orgId, quoteId);
+  }
+}
+
+/**
+ * AX18: canonical EC10 sequence-state route —
+ * GET organizations/:organizationId/abandoned-checkouts/:checkoutId/sequence.
+ * This is the exact path the AX18 spec names and the dashboard
+ * abandoned page calls (apiFetch without the commerce segment).
+ * It lives in its own controller class only because
+ * CommerceController's class prefix is
+ * "organizations/:organizationId/commerce"; guards and the
+ * backing service are identical to the sibling abandoned
+ * routes, and a foreign/unknown checkout 404s inside
+ * AbandonedCheckoutsService.getCheckoutSequence.
+ */
+@PermissionArea("integrations")
+@Controller("organizations/:organizationId")
+@UseGuards(TenantGuard, RolesGuard)
+export class AbandonedSequenceController {
+  constructor(private readonly abandoned: AbandonedCheckoutsService) {}
+
+  @Get("abandoned-checkouts/:checkoutId/sequence")
+  getAbandonedSequence(
+    @Param("organizationId") orgId: string,
+    @Param("checkoutId") checkoutId: string,
+  ) {
+    return this.abandoned.getCheckoutSequence(orgId, checkoutId);
   }
 }

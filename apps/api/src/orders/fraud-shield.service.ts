@@ -5,6 +5,10 @@ import { EventsService } from "../common/events.service";
 import { RiskService } from "./risk.service";
 import { OrderInsightsService } from "./order-insights.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { IdentifierListsService } from "../fraud/identifier-lists.service";
+import { CheckoutGuardService } from "../fraud/checkout-guard.service";
+import { FraudRulesService, fraudRuleMatches } from "../fraud/fraud-rules.service";
+import { seal } from "../common/platform-config";
 import { bdPhoneMatchKey } from "./phone-utils";
 import { namesMateriallyDifferent, scoreFraud } from "./fraud-score";
 
@@ -27,6 +31,16 @@ export const FRAUD_SETTING_DEFAULTS = {
   highValueMinor: 500000n,
   burstCount: 3,
   burstWindowHours: 24,
+  // GB3 (GC9): checkout-gate policy + Turnstile CAPTCHA defaults.
+  openOrderPolicy: "off",
+  openOrderWindowHours: 72,
+  waitingPeriodMinutes: 0,
+  maxOrdersPerPhonePerDay: 0,
+  turnstileSiteKey: null as string | null,
+  turnstileSecretEncrypted: null as string | null,
+  captchaEnabled: false,
+  captchaOnCheckout: true,
+  captchaOnOtp: false,
 } as const;
 
 const COD_CALL_OUTCOMES = ["confirmed", "rejected", "unreachable", "callback_requested"] as const;
@@ -51,6 +65,17 @@ function displayName(customer: any): string {
   return [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
 }
 
+/** GB3 (GC9): the order's district for fraud-rule facts —
+ * Customer.address is Json; the canonical district field is
+ * address.district (ON11). Null when absent / not an object. */
+function orderDistrict(order: any): string | null {
+  try {
+    const addr: any = order?.customer?.address;
+    if (addr && typeof addr === "object" && addr.district) return String(addr.district);
+  } catch { /* no district */ }
+  return null;
+}
+
 /** EC33 sold predicate — mirrors order-insights.isSoldOrder. */
 function isSoldOrder(order: any, shipmentStatuses: string[]): boolean {
   const status = String(order?.status ?? "");
@@ -68,6 +93,12 @@ export class FraudShieldService {
     @Optional() private readonly audit?: AuditService,
     @Optional() private readonly events?: EventsService,
     @Optional() private readonly insights?: OrderInsightsService,
+    // GB3 (GC9): identifier lists / checkout guard / fraud rules,
+    // all provided by the leaf FraudModule (OrdersModule already
+    // imports it). Optional so older wirings keep working.
+    @Optional() private readonly identifiers?: IdentifierListsService,
+    @Optional() private readonly checkoutGuard?: CheckoutGuardService,
+    @Optional() private readonly fraudRules?: FraudRulesService,
   ) {
     // Mirror the ConversionsService subscription pattern: the
     // handler is fire-and-forget and assessOrder never throws.
@@ -88,6 +119,18 @@ export class FraudShieldService {
       highValueMinor: (() => { try { return BigInt(row.highValueMinor ?? 500000).toString(); } catch { return "500000"; } })(),
       burstCount: row.burstCount ?? 3,
       burstWindowHours: row.burstWindowHours ?? 24,
+      // GB3 (GC9): gate policy + CAPTCHA public view. The
+      // Turnstile SECRET is never exposed — only whether one
+      // is set (turnstileSecretSet); the site key is public.
+      openOrderPolicy: row.openOrderPolicy ?? "off",
+      openOrderWindowHours: row.openOrderWindowHours ?? 72,
+      waitingPeriodMinutes: row.waitingPeriodMinutes ?? 0,
+      maxOrdersPerPhonePerDay: row.maxOrdersPerPhonePerDay ?? 0,
+      captchaEnabled: row.captchaEnabled === true,
+      captchaOnCheckout: row.captchaOnCheckout !== false,
+      captchaOnOtp: row.captchaOnOtp === true,
+      turnstileSiteKey: row.turnstileSiteKey ?? null,
+      turnstileSecretSet: Boolean(row.turnstileSecretEncrypted),
     };
   }
 
@@ -111,6 +154,15 @@ export class FraudShieldService {
             highValueMinor: FRAUD_SETTING_DEFAULTS.highValueMinor,
             burstCount: FRAUD_SETTING_DEFAULTS.burstCount,
             burstWindowHours: FRAUD_SETTING_DEFAULTS.burstWindowHours,
+            openOrderPolicy: FRAUD_SETTING_DEFAULTS.openOrderPolicy,
+            openOrderWindowHours: FRAUD_SETTING_DEFAULTS.openOrderWindowHours,
+            waitingPeriodMinutes: FRAUD_SETTING_DEFAULTS.waitingPeriodMinutes,
+            maxOrdersPerPhonePerDay: FRAUD_SETTING_DEFAULTS.maxOrdersPerPhonePerDay,
+            turnstileSiteKey: FRAUD_SETTING_DEFAULTS.turnstileSiteKey,
+            turnstileSecretEncrypted: FRAUD_SETTING_DEFAULTS.turnstileSecretEncrypted,
+            captchaEnabled: FRAUD_SETTING_DEFAULTS.captchaEnabled,
+            captchaOnCheckout: FRAUD_SETTING_DEFAULTS.captchaOnCheckout,
+            captchaOnOtp: FRAUD_SETTING_DEFAULTS.captchaOnOtp,
           },
         }).catch(() => null);
         if (created) return created;
@@ -162,6 +214,61 @@ export class FraudShieldService {
     if (dto?.autoHoldEnabled !== undefined) {
       if (typeof dto.autoHoldEnabled !== "boolean") throw new BadRequestException("autoHoldEnabled boolean হতে হবে");
       data.autoHoldEnabled = dto.autoHoldEnabled;
+    }
+    // GB3 (GC9): gate policy fields.
+    if (dto?.openOrderPolicy !== undefined) {
+      if (!["off", "warn", "block"].includes(String(dto.openOrderPolicy))) {
+        throw new BadRequestException("openOrderPolicy হতে হবে off, warn অথবা block");
+      }
+      data.openOrderPolicy = String(dto.openOrderPolicy);
+    }
+    if (dto?.openOrderWindowHours !== undefined) {
+      const v = Number(dto.openOrderWindowHours);
+      if (!Number.isInteger(v) || v < 1 || v > 720) {
+        throw new BadRequestException("openOrderWindowHours ১–৭২০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+      }
+      data.openOrderWindowHours = v;
+    }
+    if (dto?.waitingPeriodMinutes !== undefined) {
+      const v = Number(dto.waitingPeriodMinutes);
+      if (!Number.isInteger(v) || v < 0 || v > 10080) {
+        throw new BadRequestException("waitingPeriodMinutes ০–১০০৮০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+      }
+      data.waitingPeriodMinutes = v;
+    }
+    if (dto?.maxOrdersPerPhonePerDay !== undefined) {
+      const v = Number(dto.maxOrdersPerPhonePerDay);
+      if (!Number.isInteger(v) || v < 0 || v > 100) {
+        throw new BadRequestException("maxOrdersPerPhonePerDay ০–১০০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+      }
+      data.maxOrdersPerPhonePerDay = v;
+    }
+    for (const key of ["captchaEnabled", "captchaOnCheckout", "captchaOnOtp"] as const) {
+      if (dto?.[key] !== undefined) {
+        if (typeof dto[key] !== "boolean") throw new BadRequestException(`${key} boolean হতে হবে`);
+        data[key] = dto[key];
+      }
+    }
+    if (dto?.turnstileSiteKey !== undefined) {
+      if (dto.turnstileSiteKey === null) {
+        data.turnstileSiteKey = null;
+      } else {
+        const v = String(dto.turnstileSiteKey).trim();
+        if (v.length > 200) throw new BadRequestException("turnstileSiteKey সর্বোচ্চ ২০০ অক্ষরের হতে হবে");
+        data.turnstileSiteKey = v ? v : null;
+      }
+    }
+    if (dto?.turnstileSecret !== undefined) {
+      // Sealed at rest (platform-config seal()); an empty string
+      // clears the stored secret, undefined leaves it unchanged.
+      // The audit below records only the changed KEY name.
+      if (dto.turnstileSecret === null || dto.turnstileSecret === "") {
+        data.turnstileSecretEncrypted = null;
+      } else {
+        const v = String(dto.turnstileSecret);
+        if (v.length > 200) throw new BadRequestException("turnstileSecret সর্বোচ্চ ২০০ অক্ষরের হতে হবে");
+        data.turnstileSecretEncrypted = seal(v);
+      }
     }
 
     const current = await this.loadSettingsRow(orgId);
@@ -246,6 +353,48 @@ export class FraudShieldService {
       }
     } catch { /* fall through */ }
     return null;
+  }
+
+  /** GB3 (GC9, iii): post-placement fraud rules (hold | tag)
+   * against order facts. Each firing records a FraudRuleHit.
+   * When allowHold is false (trusted orders), hold actions are
+   * skipped but tag actions still apply. Returns the hold
+   * reason for the FIRST matching hold rule and the merged tag
+   * array when it changed. Failure-isolated: never throws. */
+  private async evaluatePostPlacementRules(
+    orgId: string,
+    order: any,
+    facts: { totalMinor: bigint; isCod: boolean; district: string | null; openOrderCount: number; riskScore: number | null },
+    allowHold: boolean,
+  ): Promise<{ holdReason: string | null; tags: string[] | null }> {
+    const out: { holdReason: string | null; tags: string[] | null } = { holdReason: null, tags: null };
+    try {
+      if (!this.fraudRules) return out;
+      const rules = (await this.fraudRules.listEnabled(orgId, ["hold", "tag"]).catch(() => [])) ?? [];
+      const newTags: string[] = [];
+      for (const rule of rules) {
+        try {
+          if (!fraudRuleMatches(rule.conditions, facts, { atCheckout: false })) continue;
+          await this.fraudRules.recordHit(orgId, rule.id, order.id, String(rule.action));
+          if (rule.action === "hold" && allowHold && !out.holdReason) {
+            out.holdReason = `নিয়ম: ${rule.name}`;
+          }
+          if (rule.action === "tag" && rule.tagValue) {
+            const t = String(rule.tagValue).trim();
+            if (t && !newTags.includes(t)) newTags.push(t);
+          }
+        } catch { /* per-rule isolation */ }
+      }
+      if (newTags.length) {
+        const existing: string[] = Array.isArray(order.tags) ? order.tags.map((t: any) => String(t)) : [];
+        const merged = [...existing];
+        for (const t of newTags) {
+          if (!merged.includes(t) && merged.length < 10) merged.push(t);
+        }
+        if (merged.length !== existing.length) out.tags = merged;
+      }
+    } catch { /* assessment never throws */ }
+    return out;
   }
 
   // ---------- assessment ----------
@@ -345,9 +494,49 @@ export class FraudShieldService {
       if (!order) return null;
 
       const phone = await this.resolveOrderPhone(orgId, order);
+      const phoneKey = phone ? bdPhoneMatchKey(phone) : null;
+
+      // GB3 (GC9, i): a TRUSTED phone short-circuits scoring —
+      // stamp 0/low with the single trusted reason, never hold,
+      // skip every signal. Tag-action rules still apply (iii).
+      if (phoneKey && this.identifiers) {
+        const trusted = await this.identifiers.isTrustedPhone(orgId, phoneKey).catch(() => false);
+        if (trusted) {
+          const reasons = [{ key: "trusted_phone", label: "বিশ্বস্ত তালিকাভুক্ত নম্বর", points: 0 }];
+          let trustedTotal = 0n;
+          try { trustedTotal = BigInt(order.totalMinor ?? 0); } catch { trustedTotal = 0n; }
+          let trustedOpen = 0;
+          if (this.checkoutGuard) {
+            trustedOpen = await this.checkoutGuard.countOpenOrders(
+              orgId, phoneKey, Number(settings.openOrderWindowHours ?? 72), order.id,
+            ).catch(() => 0);
+          }
+          const ruleOut = await this.evaluatePostPlacementRules(orgId, order, {
+            totalMinor: trustedTotal, isCod: order.isCod === true,
+            district: orderDistrict(order), openOrderCount: trustedOpen, riskScore: 0,
+          }, false);
+          const trustedData: Record<string, unknown> = {
+            riskScore: 0, riskBand: "low", riskReasons: reasons, riskAssessedAt: new Date(),
+          };
+          if (ruleOut.tags) trustedData.tags = ruleOut.tags;
+          await (this.prisma as any).order.update({ where: { id: order.id }, data: trustedData }).catch(() => undefined);
+          return { score: 0, band: "low", reasons, reviewHold: order.reviewHold === true };
+        }
+      }
+
       let blocked = false;
       if (this.blockedPhones && phone) {
         blocked = await this.blockedPhones.isBlocked(orgId, phone).catch(() => false);
+      }
+      // GB3 (GC9): a BlockedIdentifier phone entry also counts
+      // as blocked for the score (either source → blocked). The
+      // gate enforces these at checkout; this covers orders
+      // that arrive through other channels.
+      if (!blocked && this.identifiers && phoneKey) {
+        const res = await this.identifiers.isBlocked(orgId, { phoneKey }).catch(
+          () => ({ blocked: false, kind: null as string | null }),
+        );
+        if (res.blocked) blocked = true;
       }
 
       let historyBand: string | null = null;
@@ -369,6 +558,8 @@ export class FraudShieldService {
       let priorOrderCount = 0;
       let nameMismatch = false;
       let mismatchedName: string | null = null;
+      // AB8 (AX27): device velocity over the SAME bounded load.
+      let deviceVelocity = 0;
       try {
         const rows: any[] = ((await (this.prisma as any).order.findMany({
           where: { organizationId: orgId },
@@ -403,6 +594,24 @@ export class FraudShieldService {
             }
           }
         }
+        // AB8 (AX27): DISTINCT other phones on the SAME
+        // deviceHash within 24h (pool already excludes the
+        // order itself and practice orders).
+        if (order.deviceHash) {
+          const ownKey = bdPhoneMatchKey(order.customer?.phone ?? null) ?? targetKey;
+          const deviceCutoff = Date.now() - 24 * 3600 * 1000;
+          const hash = String(order.deviceHash).toLowerCase();
+          const keys = new Set<string>();
+          for (const r of pool) {
+            if (!r.deviceHash || String(r.deviceHash).toLowerCase() !== hash) continue;
+            const t = new Date(r.createdAt ?? 0).getTime();
+            if (Number.isNaN(t) || t < deviceCutoff) continue;
+            const key = bdPhoneMatchKey(r.customer?.phone ?? null);
+            if (!key || (ownKey && key === ownKey)) continue;
+            keys.add(key);
+          }
+          deviceVelocity = keys.size;
+        }
       } catch { /* signals degrade to zero */ }
 
       let totalMinor = 0n;
@@ -425,6 +634,7 @@ export class FraudShieldService {
         nameMismatch,
         mismatchedName,
         blocked,
+        deviceVelocity,
       });
 
       const now = new Date();
@@ -448,6 +658,39 @@ export class FraudShieldService {
         holdNow = true;
         holdReason = `স্বয়ংক্রিয়: ${top?.label ?? ""}`;
       }
+      // GB3 (GC9, ii + iii): open-order policy hold + post-
+      // placement fraud rules. The policy "block" value reaches
+      // assessment only for store-synced / staff orders (native
+      // checkouts are refused at the gate); warn and block both
+      // hold here. Failure-isolated like every signal above.
+      try {
+        let openCountGb3 = 0;
+        if (phoneKey && this.checkoutGuard) {
+          openCountGb3 = await this.checkoutGuard.countOpenOrders(
+            orgId, phoneKey, Number(settings.openOrderWindowHours ?? 72), order.id,
+          ).catch(() => 0);
+        }
+        if (
+          (settings.openOrderPolicy === "warn" || settings.openOrderPolicy === "block") &&
+          openCountGb3 >= 1 && !holdNow
+        ) {
+          holdNow = true;
+          holdReason = "একই নম্বরে খোলা অর্ডার আছে";
+        }
+        if (this.fraudRules) {
+          const ruleOut = await this.evaluatePostPlacementRules(orgId, order, {
+            totalMinor, isCod: order.isCod === true,
+            district: orderDistrict(order), openOrderCount: openCountGb3,
+            riskScore: result.score,
+          }, true);
+          if (ruleOut.holdReason && !holdNow) {
+            holdNow = true;
+            holdReason = ruleOut.holdReason;
+          }
+          if (ruleOut.tags) data.tags = ruleOut.tags;
+        }
+      } catch { /* GB3 signals degrade silently */ }
+
       // Never CLEAR an existing hold during assessment; a held
       // order keeps its original reason untouched.
       if (holdNow && !alreadyHeld) {

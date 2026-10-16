@@ -1,0 +1,107 @@
+44e43652559245660d526efb0e10e845
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.UpdateCustomFieldDto = exports.CreateCustomFieldDto = void 0;
+const class_validator_1 = require("class-validator");
+class CreateCustomFieldDto {
+    entity; // lead | customer (validated in the service)
+    key;
+    label;
+    type; // text | number | date | select (validated in the service)
+    options;
+    required;
+    sortOrder;
+}
+exports.CreateCustomFieldDto = CreateCustomFieldDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCustomFieldDto.prototype, "entity", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], CreateCustomFieldDto.prototype, "key", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateCustomFieldDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCustomFieldDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], CreateCustomFieldDto.prototype, "options", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateCustomFieldDto.prototype, "required", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateCustomFieldDto.prototype, "sortOrder", void 0);
+class UpdateCustomFieldDto {
+    key; // must equal the stored key — the service rejects changes
+    label;
+    type;
+    options;
+    required;
+    sortOrder;
+    archived;
+}
+exports.UpdateCustomFieldDto = UpdateCustomFieldDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCustomFieldDto.prototype, "key", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], UpdateCustomFieldDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCustomFieldDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], UpdateCustomFieldDto.prototype, "options", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateCustomFieldDto.prototype, "required", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], UpdateCustomFieldDto.prototype, "sortOrder", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateCustomFieldDto.prototype, "archived", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NybS9jdXN0b20tZmllbGRzLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBNkY7QUFFN0YsTUFBYSxvQkFBb0I7SUFDbkIsTUFBTSxDQUFVLENBQUMsNkNBQTZDO0lBQ2pDLEdBQUcsQ0FBVTtJQUMxQixLQUFLLENBQVU7SUFDL0IsSUFBSSxDQUFVLENBQUMsMkRBQTJEO0lBQ25DLE9BQU8sQ0FBWTtJQUMzQyxRQUFRLENBQVc7SUFDdkIsU0FBUyxDQUFVO0NBQzNDO0FBUkQsb0RBUUM7QUFQYTtJQUFYLElBQUEsMEJBQVEsR0FBRTs7b0RBQWlCO0FBQ2E7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7aURBQWM7QUFDMUI7SUFBM0IsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7bURBQWdCO0FBQy9CO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztrREFBZTtBQUN5QjtJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3FEQUFvQjtBQUMzQztJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O3NEQUFvQjtBQUN2QjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O3VEQUFvQjtBQUc1QyxNQUFhLG9CQUFvQjtJQUNMLEdBQUcsQ0FBVSxDQUFDLDBEQUEwRDtJQUN4RCxLQUFLLENBQVU7SUFDL0IsSUFBSSxDQUFVO0lBQ1csT0FBTyxDQUFZO0lBQzNDLFFBQVEsQ0FBVztJQUN2QixTQUFTLENBQVU7SUFDZixRQUFRLENBQVc7Q0FDL0M7QUFSRCxvREFRQztBQVAyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2lEQUFjO0FBQ0c7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7bURBQWdCO0FBQy9CO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7a0RBQWU7QUFDVztJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3FEQUFvQjtBQUMzQztJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O3NEQUFvQjtBQUN2QjtJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O3VEQUFvQjtBQUNmO0lBQTFCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMkJBQVMsR0FBRTs7c0RBQW9CIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jcm0vY3VzdG9tLWZpZWxkcy5kdG8udHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgSXNBcnJheSwgSXNCb29sZWFuLCBJc0ludCwgSXNPcHRpb25hbCwgSXNTdHJpbmcsIE1heExlbmd0aCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcblxuZXhwb3J0IGNsYXNzIENyZWF0ZUN1c3RvbUZpZWxkRHRvIHtcbiAgQElzU3RyaW5nKCkgZW50aXR5ITogc3RyaW5nOyAvLyBsZWFkIHwgY3VzdG9tZXIgKHZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSlcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDYwKSBrZXk/OiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTIwKSBsYWJlbCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgdHlwZSE6IHN0cmluZzsgLy8gdGV4dCB8IG51bWJlciB8IGRhdGUgfCBzZWxlY3QgKHZhbGlkYXRlZCBpbiB0aGUgc2VydmljZSlcbiAgQElzT3B0aW9uYWwoKSBASXNBcnJheSgpIEBJc1N0cmluZyh7IGVhY2g6IHRydWUgfSkgb3B0aW9ucz86IHN0cmluZ1tdO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSByZXF1aXJlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgc29ydE9yZGVyPzogbnVtYmVyO1xufVxuXG5leHBvcnQgY2xhc3MgVXBkYXRlQ3VzdG9tRmllbGREdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGtleT86IHN0cmluZzsgLy8gbXVzdCBlcXVhbCB0aGUgc3RvcmVkIGtleSDigJQgdGhlIHNlcnZpY2UgcmVqZWN0cyBjaGFuZ2VzXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMjApIGxhYmVsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHR5cGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIG9wdGlvbnM/OiBzdHJpbmdbXTtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgcmVxdWlyZWQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIHNvcnRPcmRlcj86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgYXJjaGl2ZWQ/OiBib29sZWFuO1xufVxuIl0sInZlcnNpb24iOjN9

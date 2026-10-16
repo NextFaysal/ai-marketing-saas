@@ -16,12 +16,14 @@ import {
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
 import { rateLimitStats } from "../common/throttler.guard";
+import { storageUsageForOrg } from "../common/storage-usage";
 import { buildLlmProvider } from "../ai/llm/llm.factory";
 import { buildImageProvider } from "../ai/images/image.factory";
 import { EmailProvider } from "../messaging/email.provider";
-import { buildInvoiceHtml } from "../payments/payments.service";
+import { buildInvoiceHtml, buildSaasInvoicePdf, saasInvoiceData } from "../payments/payments.service";
 import { SmsProvider, normalizeBdPhone } from "../messaging/sms.provider";
 import { AuditService } from "../audit/audit.service";
+import { buildOrgDataBundle } from "../organizations/org-data-export";
 import { issueAdminToken } from "../common/admin-token";
 import { computeAdAccountHealth } from "../ads/ad-health";
 import { SocialHealthService } from "../social/social-health.service";
@@ -272,13 +274,67 @@ export class AdminService {
       (this.prisma as any).channelConversation.count({ where: { organizationId: id } }).catch(() => 0),
       (this.prisma as any).campaignPlan.count({ where: { organizationId: id } }),
     ]);
+    // GC21 (GB9): the merchant-verification review surface —
+    // the submitted BusinessProfile (trade licence, business
+    // address, contacts) plus recorded storage usage. Profile
+    // money fields are BigInt; they cross as strings, the same
+    // rule as OrganizationsService.profileJson.
+    const profileRaw = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: id } }).catch(() => null) ?? null;
+    let businessProfile: any = null;
+    if (profileRaw) {
+      businessProfile = { ...profileRaw };
+      for (const k of ["monthlyBudgetMinor", "deliveryChargeInsideMinor", "deliveryChargeOutsideMinor", "freeDeliveryAboveMinor", "minOrderMinor", "codMaxOrderMinor", "codAdvanceRequiredAboveMinor"]) {
+        if (typeof businessProfile[k] === "bigint") businessProfile[k] = (businessProfile[k] as bigint).toString();
+      }
+    }
+    const storage = await storageUsageForOrg(this.prisma as any, id);
     return {
       ...org,
+      // AB8 (AX24): explicit so the detail payload always carries
+      // the flag (the spread above already rides the row's value).
+      whiteLabel: org.whiteLabel === true,
       creditMinor: BigInt(org.creditMinor ?? 0).toString(),
       members: memberships.map((m: any) => ({ ...m, user: users.find((u: any) => u.id === m.userId) ?? null })),
       integrations: integrations.map((i: any) => ({ id: i.id, provider: i.provider, status: i.status })),
       subscription,
       counts: { products, orders, conversations, campaigns },
+      businessProfile,
+      storageBytes: storage.storageBytes,
+      storageAssetCount: storage.assetCount,
+      storageMeteredFrom: storage.meteredFrom,
+    };
+  }
+
+  /**
+   * GC21 (GB9): merchant verification review. Only a `pending`
+   * submission can be decided. Approve → status "verified"
+   * (note optional). Reject → status "rejected" and the note is
+   * REQUIRED — it is shown to the merchant verbatim so they know
+   * what to fix before resubmitting. Audited via the standard
+   * admin audit pattern (logAdmin).
+   */
+  async reviewOrgVerification(actor: any, id: string, decision: string, note?: string, ip?: string) {
+    if (!["approve", "reject"].includes(decision)) throw new BadRequestException("decision must be approve or reject");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id } });
+    if (!org) throw new NotFoundException("Organization not found");
+    if (org.verificationStatus !== "pending") {
+      throw new BadRequestException("শুধু জমা পড়া (pending) আবেদনই রিভিউ করা যায়");
+    }
+    const trimmedNote = typeof note === "string" ? note.trim() : "";
+    if (decision === "reject" && !trimmedNote) {
+      throw new BadRequestException("Reject করলে কারণ/নোট লিখতে হবে — মার্চেন্ট সেটি দেখে ঠিক করে আবার জমা দেবেন");
+    }
+    const from = org.verificationStatus;
+    const to = decision === "approve" ? "verified" : "rejected";
+    const updated = await (this.prisma as any).organization.update({
+      where: { id },
+      data: { verificationStatus: to, verificationNote: trimmedNote || null },
+    });
+    await this.logAdmin(actor, "org_verification_review", "Organization", id, { from, to, decision, note: trimmedNote || undefined }, ip);
+    return {
+      id, verificationStatus: updated.verificationStatus,
+      verificationNote: updated.verificationNote ?? null,
+      verificationSubmittedAt: updated.verificationSubmittedAt ?? null,
     };
   }
 
@@ -616,7 +672,7 @@ export class AdminService {
     return row;
   }
 
-  async updateOrgLimits(actor: any, organizationId: string, patch: { aiDailyLimitOverride?: number | null; broadcastCapOverride?: number | null; seatLimit?: number | null }, ip?: string) {
+  async updateOrgLimits(actor: any, organizationId: string, patch: { aiDailyLimitOverride?: number | null; broadcastCapOverride?: number | null; seatLimit?: number | null; whiteLabel?: boolean }, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
     const data: Record<string, unknown> = {};
@@ -627,7 +683,14 @@ export class AdminService {
         data[field] = v;
       }
     }
-    const before = { aiDailyLimitOverride: org.aiDailyLimitOverride ?? null, broadcastCapOverride: org.broadcastCapOverride ?? null, seatLimit: org.seatLimit ?? null };
+    // AB8 (AX24): white-label toggle rides this same org-update
+    // path (the only admin org PATCH) — boolean-only, audited
+    // through logAdmin in the before/after below like the limits.
+    if (patch.whiteLabel !== undefined) {
+      if (typeof patch.whiteLabel !== "boolean") throw new BadRequestException("whiteLabel must be a boolean");
+      data.whiteLabel = patch.whiteLabel;
+    }
+    const before = { aiDailyLimitOverride: org.aiDailyLimitOverride ?? null, broadcastCapOverride: org.broadcastCapOverride ?? null, seatLimit: org.seatLimit ?? null, whiteLabel: org.whiteLabel === true };
     await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
     await this.logAdmin(actor, "org_limits", "Organization", organizationId, { before, after: { ...before, ...data } }, ip);
     const updated = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
@@ -1445,6 +1508,34 @@ export class AdminService {
     return { ...row, prorationCreditMinor: prorationCredit.toString() };
   }
 
+  /** GC22 (GB9): admin pause/resume of an org's subscription —
+   * the same pausedAt stamp the tenant endpoints write, with
+   * the admin reason + audit pattern. */
+  async pauseOrgSubscription(actor: any, organizationId: string, reason: string, ip?: string) {
+    const why = this.requireReason(reason);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
+    if (!sub) throw new BadRequestException("Organization has no subscription to pause");
+    if (sub.status === "CANCELLED") throw new BadRequestException("A CANCELLED subscription cannot be paused");
+    if (sub.pausedAt) return { ...sub, alreadyPaused: true };
+    const row = await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: new Date() } });
+    await this.logAdmin(actor, "subscription_paused", "Organization", organizationId, { subscriptionId: sub.id, plan: sub.plan, status: sub.status, reason: why }, ip);
+    return row;
+  }
+
+  async resumeOrgSubscription(actor: any, organizationId: string, reason: string, ip?: string) {
+    const why = this.requireReason(reason);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
+    if (!sub) throw new BadRequestException("Organization has no subscription to resume");
+    if (!sub.pausedAt) return { ...sub, alreadyResumed: true };
+    const row = await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: null } });
+    await this.logAdmin(actor, "subscription_resumed", "Organization", organizationId, { subscriptionId: sub.id, plan: sub.plan, status: sub.status, reason: why }, ip);
+    return row;
+  }
+
   async recordPayment(actor: any, dto: { organizationId: string; amountMinor: string | number; currency?: string; method: string; reference?: string; periodStart?: string; periodEnd?: string; note?: string }, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: dto.organizationId } });
     if (!org) throw new NotFoundException("Organization not found");
@@ -1561,6 +1652,14 @@ export class AdminService {
     const { payment, org } = await this.paymentWithOrg(id);
     const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: payment.organizationId } })?.catch?.(() => null) ?? null;
     return buildInvoiceHtml({ payment, orgName: org?.name ?? payment.organizationId, buyer: { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null } });
+  }
+
+  /** GC22 (GB9): the same invoice as a PDF, from the shared
+   * saasInvoiceData assembly (identical number/amounts). */
+  async paymentInvoicePdf(id: string): Promise<Buffer> {
+    const { payment, org } = await this.paymentWithOrg(id);
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: payment.organizationId } })?.catch?.(() => null) ?? null;
+    return buildSaasInvoicePdf(saasInvoiceData(payment, org?.name ?? payment.organizationId, { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null }));
   }
 
   async sendInvoiceEmail(actor: any, id: string, ip?: string) {
@@ -1807,13 +1906,13 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
-      this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"),
+      this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"), this.rawConfigRow("googleOAuthConfig"),
     ]);
     return {
       llm: {
@@ -1884,6 +1983,16 @@ export class AdminService {
         redirectUri: li?.redirectUri ?? (process.env.LINKEDIN_REDIRECT_URI || null),
         secretConfigured: Boolean(li?.clientSecretEncrypted || process.env.LINKEDIN_CLIENT_SECRET),
       },
+      googleOAuth: {
+        // AB8 (AX26): staff Google SSO — a SEPARATE app from
+        // googleApp (YouTube). Admin-only by design: NO env
+        // fallback is reported here, because there is none —
+        // SSO must be an explicit operator act.
+        source: goauth?.clientId ? "admin" : "none",
+        clientId: goauth?.clientId ?? null,
+        enabled: goauth ? goauth.enabled === true : false,
+        secretConfigured: Boolean(goauth?.clientSecretEncrypted),
+      },
       wallet: {
         // CC10: the platform fee on platform-gateway payments.
         // Unset ⇒ 0 — a fee is never invented.
@@ -1906,7 +2015,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -1946,6 +2055,14 @@ export class AdminService {
     } else if (area === "linkedin") {
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "googleOAuth") {
+      // AB8 (AX26): staff SSO app. A blank/omitted clientSecret
+      // keeps the stored secret (setSecret discipline, same as
+      // every neighbour); `enabled` is the operator's explicit
+      // switch — credentials alone never turn SSO on.
+      setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
+      if (patch.enabled !== undefined) setField("enabled", patch.enabled === true);
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "meta") {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
@@ -3058,54 +3175,16 @@ export class AdminService {
    * only. Audited (admin.data_exported) with row counts.
    */
   async exportOrgData(actor: any, organizationId: string, ip?: string) {
-    const p = this.prisma as any;
-    const org = await p.organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
-    const take = 5000;
-    const grab = (table: string, extra: Record<string, unknown> = {}) =>
-      p[table]?.findMany({ where: { organizationId, ...extra }, take }).catch(() => []) ?? Promise.resolve([]);
-    const [profile, memberships, products, orders, customers, leads, conversations, plans, integrations, subscription, payments, tickets] = await Promise.all([
-      p.businessProfile?.findUnique({ where: { organizationId } }).catch(() => null) ?? Promise.resolve(null),
-      grab("membership"),
-      grab("product"),
-      grab("order"),
-      grab("customer"),
-      grab("lead"),
-      grab("channelConversation"),
-      grab("campaignPlan"),
-      grab("integration"),
-      p.subscription?.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } }).catch(() => null) ?? Promise.resolve(null),
-      grab("saasPayment"),
-      grab("supportTicket"),
-    ]);
-    const memberUsers = await p.user.findMany({
-      where: { id: { in: (memberships as any[]).map((m) => m.userId) } },
-      select: { id: true, email: true, name: true, status: true },
-    }).catch(() => []);
-    const bundle = {
-      exportedAt: new Date().toISOString(),
-      exportedBy: actor.email,
-      organization: { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() },
-      businessProfile: profile,
-      members: (memberships as any[]).map((m) => ({ ...m, user: (memberUsers as any[]).find((u) => u.id === m.userId) ?? null })),
-      products, orders, customers, leads, conversations, campaignPlans: plans,
-      integrations: (integrations as any[]).map((i) => ({ id: i.id, provider: i.provider, status: i.status, externalAccountId: i.externalAccountId, lastSyncAt: i.lastSyncAt, createdAt: i.createdAt })),
-      subscription,
-      payments: (payments as any[]).map((pay) => ({ ...pay, amountMinor: BigInt(pay.amountMinor ?? 0).toString(), refundedMinor: BigInt(pay.refundedMinor ?? 0).toString() })),
-      supportTickets: tickets,
-    };
-    const counts = Object.fromEntries(Object.entries(bundle).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]));
+    // AB8 (AX25): the bundle is built by the shared builder
+    // (apps/api/src/organizations/org-data-export.ts); the admin
+    // path returns its `legacyBundle` untouched, so this
+    // endpoint's historical response shape is byte-identical.
+    // Counts keep their historical semantics: computed over the
+    // returned bundle's own entries.
+    const { legacyBundle } = await buildOrgDataBundle(this.prisma as any, organizationId, { exportedBy: actor.email });
+    const counts = Object.fromEntries(Object.entries(legacyBundle).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]));
     await this.logAdmin(actor, "data_exported", "Organization", organizationId, { counts }, ip);
-    // Money columns are BigInt — the export must be plain JSON.
-    const jsonSafe = (v: any): any => {
-      if (typeof v === "bigint") return v.toString();
-      if (Array.isArray(v)) return v.map(jsonSafe);
-      if (v && typeof v === "object" && !(v instanceof Date)) {
-        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, jsonSafe(x)]));
-      }
-      return v;
-    };
-    return jsonSafe(bundle);
+    return legacyBundle;
   }
 
   /**

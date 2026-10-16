@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { sequenceStatusLabel, type CheckoutSequence } from "@/lib/ab7";
 
 // EC10 — unified abandoned view: S4 tracker carts (source "tracker")
 // + Shopify store checkouts (source "shopify") in one value-sorted
@@ -40,12 +41,36 @@ function ageText(iso?: string | null): string {
   return `${Math.floor(h / 24)} দিন আগে`;
 }
 
+// GB7 (GC17): recovery-coupon setting payload.
+interface CouponSetting {
+  enabled: boolean;
+  kind: "percent" | "fixed";
+  value: number;
+  expiryHours: number;
+  minOrderMinor: string | null;
+}
+
 export default function AbandonedPage() {
   const [items, setItems] = useState<AbandonedItem[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // GB7 (GC17): recovery coupon setting form
+  const [couponEnabled, setCouponEnabled] = useState(false);
+  const [couponKind, setCouponKind] = useState<"percent" | "fixed">("percent");
+  const [couponValue, setCouponValue] = useState("10");
+  const [couponExpiryHours, setCouponExpiryHours] = useState("72");
+  const [couponMinOrder, setCouponMinOrder] = useState("");
+  const [couponError, setCouponError] = useState("");
+  const [couponNotice, setCouponNotice] = useState("");
+
+  // AB7 (AX18): per-checkout automation sequence state (expandable row)
+  const [expandedId, setExpandedId] = useState("");
+  const [seqById, setSeqById] = useState<Record<string, CheckoutSequence>>({});
+  const [seqBusyId, setSeqBusyId] = useState("");
+  const [seqErrorById, setSeqErrorById] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
@@ -58,6 +83,57 @@ export default function AbandonedPage() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const loadCouponSetting = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const s = await apiFetch<CouponSetting>(`/organizations/${orgId}/commerce/abandoned/coupon-setting`);
+      setCouponEnabled(!!s.enabled);
+      setCouponKind(s.kind === "fixed" ? "fixed" : "percent");
+      setCouponValue(String(s.value ?? 10));
+      setCouponExpiryHours(String(s.expiryHours ?? 72));
+      setCouponMinOrder(s.minOrderMinor ? String(Number(s.minOrderMinor) / 100) : "");
+    } catch { /* card keeps defaults until the endpoint answers */ }
+  }, []);
+  useEffect(() => { void loadCouponSetting(); }, [loadCouponSetting]);
+
+  async function saveCouponSetting() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("coupon-setting"); setCouponError(""); setCouponNotice("");
+    try {
+      await apiFetch<CouponSetting>(`/organizations/${orgId}/commerce/abandoned/coupon-setting`, {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: couponEnabled,
+          kind: couponKind,
+          value: Math.max(0, parseInt(couponValue || "0", 10) || 0),
+          expiryHours: Math.max(1, parseInt(couponExpiryHours || "72", 10) || 72),
+          minOrderMinor: couponMinOrder ? String(Math.round(parseFloat(couponMinOrder) * 100)) : null,
+        }),
+      });
+      setCouponNotice("পুনরুদ্ধার কুপনের সেটিংস সংরক্ষণ হয়েছে।");
+      await loadCouponSetting();
+    } catch (e) { setCouponError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
+  // AB7 (AX18): fetch the sequence state for one checkout on first expand.
+  async function toggleSequence(item: AbandonedItem) {
+    if (expandedId === item.id) { setExpandedId(""); return; }
+    setExpandedId(item.id);
+    if (seqById[item.id]) return;
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setSeqBusyId(item.id);
+    setSeqErrorById((m) => ({ ...m, [item.id]: "" }));
+    try {
+      const out = await apiFetch<CheckoutSequence>(
+        `/organizations/${orgId}/abandoned-checkouts/${encodeURIComponent(item.id)}/sequence`,
+      );
+      setSeqById((m) => ({ ...m, [item.id]: out }));
+    } catch (e) {
+      setSeqErrorById((m) => ({ ...m, [item.id]: e instanceof Error ? e.message : "সিকোয়েন্স লোড ব্যর্থ" }));
+    } finally { setSeqBusyId(""); }
+  }
 
   async function recover(item: AbandonedItem) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -104,6 +180,42 @@ export default function AbandonedPage() {
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
+      <div className="card p-5 space-y-4">
+        <div>
+          <div className="font-semibold">🎟️ পুনরুদ্ধার কুপন</div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+            এই সেটিং on থাকলে, recovery পাঠানোর সময় একটি আসল কুপন তৈরি হয়ে মেসেজে সেই কোডটি যাবে —
+            কাস্টমার কোডটি চেকআউটে ব্যবহার করতে পারবেন। Off থাকলে আগের মতোই কুপন ছাড়া recovery পাঠানো হবে।
+          </p>
+        </div>
+        {couponError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{couponError}</p> : null}
+        {couponNotice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{couponNotice}</p> : null}
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input type="checkbox" checked={couponEnabled} onChange={(e) => setCouponEnabled(e.target.checked)} />
+          পুনরুদ্ধার কুপন চালু করুন
+        </label>
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="block text-sm">ছাড়ের ধরন
+            <select className="input mt-1" value={couponKind} onChange={(e) => setCouponKind(e.target.value as "percent" | "fixed")} disabled={!couponEnabled}>
+              <option value="percent">শতাংশ (%)</option>
+              <option value="fixed">নির্দিষ্ট টাকা</option>
+            </select>
+          </label>
+          <label className="block text-sm">{couponKind === "percent" ? "শতাংশ (%)" : "টাকার পরিমাণ"}
+            <input className="input mt-1" type="number" min="0" value={couponValue} onChange={(e) => setCouponValue(e.target.value)} disabled={!couponEnabled} />
+          </label>
+          <label className="block text-sm">কুপনের মেয়াদ (ঘণ্টা)
+            <input className="input mt-1" type="number" min="1" value={couponExpiryHours} onChange={(e) => setCouponExpiryHours(e.target.value)} disabled={!couponEnabled} />
+          </label>
+          <label className="block text-sm">সর্বনিম্ন অর্ডার (টাকা, খালি = নেই)
+            <input className="input mt-1" type="number" value={couponMinOrder} onChange={(e) => setCouponMinOrder(e.target.value)} disabled={!couponEnabled} />
+          </label>
+        </div>
+        <button className="btn-primary" disabled={busy !== ""} onClick={saveCouponSetting}>
+          {busy === "coupon-setting" ? "সেভ হচ্ছে…" : "সেটিংস সেভ করুন"}
+        </button>
+      </div>
+
       {shopifyStoreIds.length > 0 ? (
         <div className="card p-4 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">Shopify থেকে পুরনো abandoned checkout টানুন:</span>
@@ -131,7 +243,8 @@ export default function AbandonedPage() {
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <tr key={`${item.source}-${item.id}`} className="border-b last:border-0 align-top">
+                  <React.Fragment key={`${item.source}-${item.id}`}>
+                  <tr className="border-b last:border-0 align-top">
                     <td className="py-2">
                       <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${item.source === "shopify" ? "bg-emerald-100 text-emerald-700" : "bg-indigo-100 text-indigo-700"}`}>
                         {item.source === "shopify" ? "Shopify" : "Tracker"}
@@ -165,9 +278,50 @@ export default function AbandonedPage() {
                         {item.checkoutUrl ? (
                           <a href={item.checkoutUrl} target="_blank" rel="noreferrer" className="rounded-lg border px-2 py-1 text-xs font-semibold">Checkout লিংক ↗</a>
                         ) : null}
+                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={seqBusyId === item.id} onClick={() => void toggleSequence(item)}>
+                          {seqBusyId === item.id ? "লোড হচ্ছে…" : expandedId === item.id ? "🔁 সিকোয়েন্স লুকান" : "🔁 সিকোয়েন্স"}
+                        </button>
                       </div>
                     </td>
                   </tr>
+                  {expandedId === item.id ? (
+                    <tr className="border-b bg-slate-50/60">
+                      <td colSpan={7} className="px-3 py-3">
+                        {seqBusyId === item.id ? (
+                          <p className="text-xs text-slate-400">সিকোয়েন্স লোড হচ্ছে…</p>
+                        ) : seqErrorById[item.id] ? (
+                          <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{seqErrorById[item.id]}</p>
+                        ) : !seqById[item.id] ? (
+                          <p className="text-xs text-slate-400">সিকোয়েন্সের তথ্য পাওয়া যায়নি।</p>
+                        ) : !seqById[item.id].enrolled ? (
+                          <p className="text-xs font-semibold text-slate-600">কোনো অটোমেশন সিকোয়েন্সে নেই</p>
+                        ) : (
+                          <div className="space-y-2 text-xs">
+                            <p className="text-slate-700">
+                              ওয়ার্কফ্লো: <b>{seqById[item.id].workflowName ?? "—"}</b>
+                              {" "}· রানের অবস্থা: <b>{sequenceStatusLabel(seqById[item.id].runStatus)}</b>
+                              {seqById[item.id].currentStepIndex != null ? <> · বর্তমান ধাপ: <b>{seqById[item.id].currentStepIndex! + 1}</b></> : null}
+                              {seqById[item.id].lastActivityAt ? <> · সর্বশেষ কার্যকলাপ: {new Date(seqById[item.id].lastActivityAt!).toLocaleString("bn-BD")}</> : null}
+                            </p>
+                            {(seqById[item.id].steps ?? []).length > 0 ? (
+                              <ul className="space-y-1">
+                                {(seqById[item.id].steps ?? []).map((s, i) => (
+                                  <li key={i} className="flex flex-wrap items-center gap-2 rounded-lg bg-white px-2.5 py-1.5">
+                                    <span className="font-semibold text-slate-700">{i + 1}. {s.step}</span>
+                                    <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{sequenceStatusLabel(s.status)}</span>
+                                    {s.detail ? <span className="text-slate-500">{s.detail}</span> : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-slate-500">ধাপের লগ এখনো নেই।</p>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : null}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

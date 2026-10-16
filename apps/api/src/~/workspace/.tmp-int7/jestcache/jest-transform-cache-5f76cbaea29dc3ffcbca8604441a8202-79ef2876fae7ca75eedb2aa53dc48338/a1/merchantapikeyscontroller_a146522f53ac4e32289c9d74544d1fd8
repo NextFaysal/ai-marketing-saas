@@ -1,0 +1,98 @@
+8677539ff23321c91c0e1d7525319cbc
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MerchantApiKeysController = void 0;
+const common_1 = require("@nestjs/common");
+const class_validator_1 = require("class-validator");
+const merchant_api_service_1 = require("./merchant-api.service");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const decorators_1 = require("../common/decorators");
+class CreateMerchantApiKeyDto {
+    name;
+    scopes;
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateMerchantApiKeyDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], CreateMerchantApiKeyDto.prototype, "scopes", void 0);
+const READ_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER"];
+const WRITE_ROLES = ["OWNER", "ADMIN"];
+/**
+ * AB8 (AX21) — staff key management for the merchant developer
+ * API, guarded exactly like the GC23 webhooks controller
+ * (TenantGuard + RolesGuard; org from the tenant-guarded route
+ * param). Writes are OWNER/ADMIN only: a key grants programmatic
+ * access to the org's products/orders/customers, so minting or
+ * revoking one is an admin act. The plaintext key is returned
+ * exactly once, by the create response.
+ */
+let MerchantApiKeysController = class MerchantApiKeysController {
+    keys;
+    constructor(keys) {
+        this.keys = keys;
+    }
+    create(user, orgId, dto) {
+        return this.keys.createKey(orgId, user.userId, { name: dto.name, scopes: dto.scopes });
+    }
+    list(orgId) {
+        return this.keys.listKeys(orgId);
+    }
+    revoke(user, orgId, keyId) {
+        return this.keys.revokeKey(orgId, keyId, user.userId);
+    }
+};
+exports.MerchantApiKeysController = MerchantApiKeysController;
+__decorate([
+    (0, common_1.Post)(),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, CreateMerchantApiKeyDto]),
+    __metadata("design:returntype", void 0)
+], MerchantApiKeysController.prototype, "create", null);
+__decorate([
+    (0, common_1.Get)(),
+    (0, decorators_1.Roles)(...READ_ROLES),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], MerchantApiKeysController.prototype, "list", null);
+__decorate([
+    (0, common_1.Delete)(":keyId"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("keyId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], MerchantApiKeysController.prototype, "revoke", null);
+exports.MerchantApiKeysController = MerchantApiKeysController = __decorate([
+    (0, common_1.Controller)("organizations/:organizationId/merchant-api-keys"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [merchant_api_service_1.MerchantApiService])
+], MerchantApiKeysController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL21lcmNoYW50LWFwaS9tZXJjaGFudC1hcGkta2V5cy5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUF1RjtBQUN2RixxREFBMEU7QUFDMUUsaUVBQTREO0FBQzVELHlEQUFxRDtBQUNyRCx1REFBbUQ7QUFDbkQscURBQXlFO0FBRXpFLE1BQU0sdUJBQXVCO0lBQ2MsSUFBSSxDQUFVO0lBQ2xCLE1BQU0sQ0FBWTtDQUN4RDtBQUYwQztJQUF4QyxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7cURBQWU7QUFDbEI7SUFBcEMsSUFBQSx5QkFBTyxHQUFFO0lBQUUsSUFBQSwwQkFBUSxFQUFDLEVBQUUsSUFBSSxFQUFFLElBQUksRUFBRSxDQUFDOzt1REFBbUI7QUFHekQsTUFBTSxVQUFVLEdBQUcsQ0FBQyxPQUFPLEVBQUUsT0FBTyxFQUFFLG1CQUFtQixFQUFFLFlBQVksRUFBRSxlQUFlLEVBQUUsU0FBUyxFQUFFLFFBQVEsQ0FBVSxDQUFDO0FBQ3hILE1BQU0sV0FBVyxHQUFHLENBQUMsT0FBTyxFQUFFLE9BQU8sQ0FBVSxDQUFDO0FBRWhEOzs7Ozs7OztHQVFHO0FBR0ksSUFBTSx5QkFBeUIsR0FBL0IsTUFBTSx5QkFBeUI7SUFDUDtJQUE3QixZQUE2QixJQUF3QjtRQUF4QixTQUFJLEdBQUosSUFBSSxDQUFvQjtJQUFHLENBQUM7SUFJekQsTUFBTSxDQUFnQixJQUFjLEVBQTJCLEtBQWEsRUFBVSxHQUE0QjtRQUNoSCxPQUFPLElBQUksQ0FBQyxJQUFJLENBQUMsU0FBUyxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEVBQUUsSUFBSSxFQUFFLEdBQUcsQ0FBQyxJQUFJLEVBQUUsTUFBTSxFQUFFLEdBQUcsQ0FBQyxNQUFNLEVBQUUsQ0FBQyxDQUFDO0lBQ3pGLENBQUM7SUFJRCxJQUFJLENBQTBCLEtBQWE7UUFDekMsT0FBTyxJQUFJLENBQUMsSUFBSSxDQUFDLFFBQVEsQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUNuQyxDQUFDO0lBSUQsTUFBTSxDQUFnQixJQUFjLEVBQTJCLEtBQWEsRUFBa0IsS0FBYTtRQUN6RyxPQUFPLElBQUksQ0FBQyxJQUFJLENBQUMsU0FBUyxDQUFDLEtBQUssRUFBRSxLQUFLLEVBQUUsSUFBSSxDQUFDLE1BQU0sQ0FBQyxDQUFDO0lBQ3hELENBQUM7Q0FDRixDQUFBO0FBcEJZLDhEQUF5QjtBQUtwQztJQUZDLElBQUEsYUFBSSxHQUFFO0lBQ04sSUFBQSxrQkFBSyxFQUFDLEdBQUcsV0FBVyxDQUFDO0lBQ2QsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUFrQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGFBQUksR0FBRSxDQUFBOztxREFBTSx1QkFBdUI7O3VEQUVqSDtBQUlEO0lBRkMsSUFBQSxZQUFHLEdBQUU7SUFDTCxJQUFBLGtCQUFLLEVBQUMsR0FBRyxVQUFVLENBQUM7SUFDZixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7Ozs7cURBRTVCO0FBSUQ7SUFGQyxJQUFBLGVBQU0sRUFBQyxRQUFRLENBQUM7SUFDaEIsSUFBQSxrQkFBSyxFQUFDLEdBQUcsV0FBVyxDQUFDO0lBQ2QsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUFrQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFBaUIsV0FBQSxJQUFBLGNBQUssRUFBQyxPQUFPLENBQUMsQ0FBQTs7Ozt1REFFNUY7b0NBbkJVLHlCQUF5QjtJQUZyQyxJQUFBLG1CQUFVLEVBQUMsaURBQWlELENBQUM7SUFDN0QsSUFBQSxrQkFBUyxFQUFDLDBCQUFXLEVBQUUsd0JBQVUsQ0FBQztxQ0FFRSx5Q0FBa0I7R0FEMUMseUJBQXlCLENBb0JyQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvbWVyY2hhbnQtYXBpL21lcmNoYW50LWFwaS1rZXlzLmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgQm9keSwgQ29udHJvbGxlciwgRGVsZXRlLCBHZXQsIFBhcmFtLCBQb3N0LCBVc2VHdWFyZHMgfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IElzQXJyYXksIElzU3RyaW5nLCBNYXhMZW5ndGgsIE1pbkxlbmd0aCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcbmltcG9ydCB7IE1lcmNoYW50QXBpU2VydmljZSB9IGZyb20gXCIuL21lcmNoYW50LWFwaS5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBUZW5hbnRHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vdGVuYW50Lmd1YXJkXCI7XG5pbXBvcnQgeyBSb2xlc0d1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi9yb2xlcy5ndWFyZFwiO1xuaW1wb3J0IHsgQ3VycmVudFVzZXIsIFJvbGVzLCB0eXBlIEF1dGhVc2VyIH0gZnJvbSBcIi4uL2NvbW1vbi9kZWNvcmF0b3JzXCI7XG5cbmNsYXNzIENyZWF0ZU1lcmNoYW50QXBpS2V5RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDgwKSBuYW1lITogc3RyaW5nO1xuICBASXNBcnJheSgpIEBJc1N0cmluZyh7IGVhY2g6IHRydWUgfSkgc2NvcGVzITogc3RyaW5nW107XG59XG5cbmNvbnN0IFJFQURfUk9MRVMgPSBbXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIiwgXCJBRFZFUlRJU0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiLCBcIkFOQUxZU1RcIiwgXCJWSUVXRVJcIl0gYXMgY29uc3Q7XG5jb25zdCBXUklURV9ST0xFUyA9IFtcIk9XTkVSXCIsIFwiQURNSU5cIl0gYXMgY29uc3Q7XG5cbi8qKlxuICogQUI4IChBWDIxKSDigJQgc3RhZmYga2V5IG1hbmFnZW1lbnQgZm9yIHRoZSBtZXJjaGFudCBkZXZlbG9wZXJcbiAqIEFQSSwgZ3VhcmRlZCBleGFjdGx5IGxpa2UgdGhlIEdDMjMgd2ViaG9va3MgY29udHJvbGxlclxuICogKFRlbmFudEd1YXJkICsgUm9sZXNHdWFyZDsgb3JnIGZyb20gdGhlIHRlbmFudC1ndWFyZGVkIHJvdXRlXG4gKiBwYXJhbSkuIFdyaXRlcyBhcmUgT1dORVIvQURNSU4gb25seTogYSBrZXkgZ3JhbnRzIHByb2dyYW1tYXRpY1xuICogYWNjZXNzIHRvIHRoZSBvcmcncyBwcm9kdWN0cy9vcmRlcnMvY3VzdG9tZXJzLCBzbyBtaW50aW5nIG9yXG4gKiByZXZva2luZyBvbmUgaXMgYW4gYWRtaW4gYWN0LiBUaGUgcGxhaW50ZXh0IGtleSBpcyByZXR1cm5lZFxuICogZXhhY3RseSBvbmNlLCBieSB0aGUgY3JlYXRlIHJlc3BvbnNlLlxuICovXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL21lcmNoYW50LWFwaS1rZXlzXCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIE1lcmNoYW50QXBpS2V5c0NvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IGtleXM6IE1lcmNoYW50QXBpU2VydmljZSkge31cblxuICBAUG9zdCgpXG4gIEBSb2xlcyguLi5XUklURV9ST0xFUylcbiAgY3JlYXRlKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAQm9keSgpIGR0bzogQ3JlYXRlTWVyY2hhbnRBcGlLZXlEdG8pIHtcbiAgICByZXR1cm4gdGhpcy5rZXlzLmNyZWF0ZUtleShvcmdJZCwgdXNlci51c2VySWQsIHsgbmFtZTogZHRvLm5hbWUsIHNjb3BlczogZHRvLnNjb3BlcyB9KTtcbiAgfVxuXG4gIEBHZXQoKVxuICBAUm9sZXMoLi4uUkVBRF9ST0xFUylcbiAgbGlzdChAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMua2V5cy5saXN0S2V5cyhvcmdJZCk7XG4gIH1cblxuICBARGVsZXRlKFwiOmtleUlkXCIpXG4gIEBSb2xlcyguLi5XUklURV9ST0xFUylcbiAgcmV2b2tlKEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLCBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJrZXlJZFwiKSBrZXlJZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMua2V5cy5yZXZva2VLZXkob3JnSWQsIGtleUlkLCB1c2VyLnVzZXJJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

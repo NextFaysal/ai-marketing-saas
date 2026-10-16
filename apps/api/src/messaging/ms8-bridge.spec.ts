@@ -272,9 +272,9 @@ describe("MS8 recurrence chaining through the sweep", () => {
 });
 
 describe("MS8 journey presets through the real WorkflowsService", () => {
-  it("the catalogue holds the five audited presets — winback_sweep was dropped (schedule context has no recipient)", () => {
+  it("the catalogue holds the audited presets — winback_sweep was dropped (schedule context has no recipient); AX18 added cart_recovery_3step", () => {
     expect(JOURNEY_PRESETS.map((p) => p.key)).toEqual([
-      "post_purchase_thanks", "post_purchase_thanks_sms", "delivered_review_ask", "cart_recovery", "lead_followup",
+      "post_purchase_thanks", "post_purchase_thanks_sms", "delivered_review_ask", "cart_recovery", "lead_followup", "cart_recovery_3step",
     ]);
     const b = build();
     expect(b.messaging.listJourneyPresets().map((p: any) => p.key)).not.toContain("winback_sweep");
@@ -315,8 +315,8 @@ describe("MS8 journey presets through the real WorkflowsService", () => {
       expect(res.workflow.trigger).toBe(preset.trigger);
       expect(res.template.channel).toBe(preset.channel);
     }
-    expect(b.tables.workflow.rows).toHaveLength(5);
-    expect(b.tables.messageTemplate.rows).toHaveLength(5);
+    expect(b.tables.workflow.rows).toHaveLength(6);
+    expect(b.tables.messageTemplate.rows).toHaveLength(6);
   });
 
   it("end-to-end: an installed journey's send step is SKIPPED for an opted-out recipient (MS2 suppression via sendToRecipient)", async () => {

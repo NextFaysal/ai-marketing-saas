@@ -27,6 +27,14 @@ export interface DiscountDto {
   usageLimit?: number | null;
   active?: boolean;
   storeIds?: string[];
+  // GB7 (GC17)
+  firstOrderOnly?: boolean;
+  repeatCustomerOnly?: boolean;
+  perCustomerLimit?: number | null;
+  maxOrderMinor?: string | null;
+  excludedProductIds?: string[] | null;
+  excludedCategoryIds?: string[] | null;
+  sourceRef?: string | null;
 }
 
 const KINDS = ["percent", "fixed", "free_shipping"];
@@ -120,7 +128,55 @@ export class DiscountsService {
 
   serialize(d: any): any {
     if (!d) return d;
-    return { ...d, minOrderMinor: d.minOrderMinor == null ? null : String(d.minOrderMinor) };
+    return {
+      ...d,
+      minOrderMinor: d.minOrderMinor == null ? null : String(d.minOrderMinor),
+      // GB7 (GC17)
+      maxOrderMinor: d.maxOrderMinor == null ? null : String(d.maxOrderMinor),
+      firstOrderOnly: d.firstOrderOnly ?? false,
+      repeatCustomerOnly: d.repeatCustomerOnly ?? false,
+      perCustomerLimit: d.perCustomerLimit ?? null,
+      excludedProductIds: Array.isArray(d.excludedProductIds) ? d.excludedProductIds : [],
+      excludedCategoryIds: Array.isArray(d.excludedCategoryIds) ? d.excludedCategoryIds : [],
+      sourceRef: d.sourceRef ?? null,
+    };
+  }
+
+  /** GB7: validate exclusion ids against the org catalog at save.
+   * Products must exist as Product rows of the org; categories as
+   * Category rows of the org (the codebase's product-category
+   * model — prisma.category, with productCategory as a fallback
+   * accessor name). Unknown id → Bengali BadRequest naming the list. */
+  private async validateExclusionIds(
+    orgId: string,
+    excludedProductIds?: string[] | null,
+    excludedCategoryIds?: string[] | null,
+  ): Promise<void> {
+    if (excludedProductIds?.length) {
+      for (const pid of excludedProductIds) {
+        const p = await (this.prisma as any).product.findFirst({
+          where: { id: pid, organizationId: orgId },
+        });
+        if (!p) {
+          throw new BadRequestException(
+            `বাদ দেওয়া পণ্য তালিকায় অজানা পণ্য আছে (${pid}) — আগে যাচাই করে নিন`,
+          );
+        }
+      }
+    }
+    if (excludedCategoryIds?.length) {
+      const categoryTable = (this.prisma as any).category ?? (this.prisma as any).productCategory;
+      for (const cid of excludedCategoryIds) {
+        const c = categoryTable?.findFirst
+          ? await categoryTable.findFirst({ where: { id: cid, organizationId: orgId } })
+          : null;
+        if (!c) {
+          throw new BadRequestException(
+            `বাদ দেওয়া ক্যাটাগরি তালিকায় অজানা ক্যাটাগরি আছে (${cid}) — আগে যাচাই করে নিন`,
+          );
+        }
+      }
+    }
   }
 
   private async withSyncs(orgId: string, rows: any[]): Promise<any[]> {
@@ -156,9 +212,9 @@ export class DiscountsService {
     return row;
   }
 
-  async list(orgId: string) {
+  async list(orgId: string, opts?: { origin?: string }) {
     const rows = (await this.table().findMany({
-      where: { organizationId: orgId },
+      where: { organizationId: orgId, ...(opts?.origin ? { origin: opts.origin } : {}) },
       orderBy: { createdAt: "desc" },
     })) ?? [];
     return { items: await this.withSyncs(orgId, rows) };
@@ -179,6 +235,7 @@ export class DiscountsService {
     if (!SCOPE_TYPES.includes(scopeType)) throw new BadRequestException("ডিসকাউন্টের scope সঠিক নয়");
     const dup = await this.table().findFirst({ where: { organizationId: orgId, code } });
     if (dup) throw new ConflictException("এই কোডে ইতিমধ্যে একটি ডিসকাউন্ট আছে");
+    await this.validateExclusionIds(orgId, dto.excludedProductIds, dto.excludedCategoryIds);
     const discount = await this.table().create({
       data: {
         organizationId: orgId,
@@ -197,6 +254,18 @@ export class DiscountsService {
         usedCount: 0,
         active: true,
         origin: "manual",
+        firstOrderOnly: dto.firstOrderOnly ?? false,
+        repeatCustomerOnly: dto.repeatCustomerOnly ?? false,
+        perCustomerLimit: dto.perCustomerLimit ?? null,
+        maxOrderMinor:
+          dto.maxOrderMinor !== undefined && dto.maxOrderMinor !== null && dto.maxOrderMinor !== ""
+            ? BigInt(dto.maxOrderMinor)
+            : null,
+        excludedProductIds:
+          dto.excludedProductIds && dto.excludedProductIds.length > 0 ? dto.excludedProductIds : null,
+        excludedCategoryIds:
+          dto.excludedCategoryIds && dto.excludedCategoryIds.length > 0 ? dto.excludedCategoryIds : null,
+        sourceRef: dto.sourceRef ?? null,
       },
     });
     const pushes = dto.storeIds?.length ? await this.enqueuePushes(orgId, discount, dto.storeIds) : [];
@@ -238,6 +307,30 @@ export class DiscountsService {
     if (dto.endsAt !== undefined) data.endsAt = toDateOrNull(dto.endsAt);
     if (dto.usageLimit !== undefined) data.usageLimit = dto.usageLimit;
     if (dto.active !== undefined) data.active = dto.active;
+    // GB7 (GC17)
+    if (dto.firstOrderOnly !== undefined) data.firstOrderOnly = dto.firstOrderOnly;
+    if (dto.repeatCustomerOnly !== undefined) data.repeatCustomerOnly = dto.repeatCustomerOnly;
+    if (dto.perCustomerLimit !== undefined) data.perCustomerLimit = dto.perCustomerLimit;
+    if (dto.maxOrderMinor !== undefined) {
+      data.maxOrderMinor =
+        dto.maxOrderMinor === null || dto.maxOrderMinor === "" ? null : BigInt(dto.maxOrderMinor);
+    }
+    if (dto.excludedProductIds !== undefined || dto.excludedCategoryIds !== undefined) {
+      await this.validateExclusionIds(
+        orgId,
+        dto.excludedProductIds !== undefined ? dto.excludedProductIds : undefined,
+        dto.excludedCategoryIds !== undefined ? dto.excludedCategoryIds : undefined,
+      );
+    }
+    if (dto.excludedProductIds !== undefined) {
+      data.excludedProductIds =
+        dto.excludedProductIds && dto.excludedProductIds.length > 0 ? dto.excludedProductIds : null;
+    }
+    if (dto.excludedCategoryIds !== undefined) {
+      data.excludedCategoryIds =
+        dto.excludedCategoryIds && dto.excludedCategoryIds.length > 0 ? dto.excludedCategoryIds : null;
+    }
+    if (dto.sourceRef !== undefined) data.sourceRef = dto.sourceRef;
     const updated = await this.table().update({ where: { id }, data });
     const pushes = dto.storeIds?.length ? await this.enqueuePushes(orgId, updated, dto.storeIds) : [];
     await this.audit?.log({
@@ -493,13 +586,69 @@ export class DiscountsService {
   async validateForCheckout(
     orgId: string,
     code: string,
-    ctx: { subtotalMinor: bigint; items: Array<{ productId?: string | null; categoryId?: string | null; totalMinor: bigint }> },
+    ctx: {
+      subtotalMinor: bigint;
+      items: Array<{ productId?: string | null; categoryId?: string | null; totalMinor: bigint }>;
+      priorOrderCount?: number | null;
+      customerId?: string | null;
+      excludeOrderId?: string | null;
+    },
   ): Promise<DiscountValidation> {
     const row = await this.table().findFirst({
       where: { organizationId: orgId, code: normalizeDiscountCode(code) },
     });
     if (!row) return { valid: false, reason: "not_found", discountMinor: 0n, freeShipping: false };
-    return validateDiscount(row, ctx);
+    // GB7: per-customer usage is counted ONLY when this coupon
+    // actually has a per-customer cap (stamped orders carrying
+    // this code for this customer; counting set excludes
+    // cancelled/failed/refunded and practice orders).
+    let customerUsageCount: number | null | undefined = undefined;
+    if (row.perCustomerLimit != null) {
+      if (!ctx.customerId) {
+        customerUsageCount = null;
+      } else {
+        const orderTable = (this.prisma as any).order;
+        customerUsageCount = orderTable?.count
+          ? await orderTable.count({
+              where: {
+                organizationId: orgId,
+                customerId: ctx.customerId,
+                couponCode: row.code,
+                isPractice: false,
+                status: { notIn: ["cancelled", "failed", "refunded"] },
+                ...(ctx.excludeOrderId ? { id: { not: ctx.excludeOrderId } } : {}),
+              },
+            })
+          : null;
+      }
+    }
+    const parseIds = (v: any): string[] | null => {
+      if (v == null) return null;
+      if (Array.isArray(v)) return v.map((x: any) => String(x));
+      if (typeof v === "string") {
+        try {
+          const parsed = JSON.parse(v);
+          return Array.isArray(parsed) ? parsed.map((x: any) => String(x)) : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+    const discountForValidation = {
+      ...row,
+      firstOrderOnly: row.firstOrderOnly ?? false,
+      repeatCustomerOnly: row.repeatCustomerOnly ?? false,
+      perCustomerLimit: row.perCustomerLimit ?? null,
+      maxOrderMinor: row.maxOrderMinor != null ? BigInt(row.maxOrderMinor) : null,
+      excludedProductIds: parseIds(row.excludedProductIds),
+      excludedCategoryIds: parseIds(row.excludedCategoryIds),
+    };
+    return validateDiscount(discountForValidation, {
+      ...ctx,
+      priorOrderCount: ctx.priorOrderCount,
+      customerUsageCount,
+    });
   }
 
   async redeem(orgId: string, discountId: string) {
