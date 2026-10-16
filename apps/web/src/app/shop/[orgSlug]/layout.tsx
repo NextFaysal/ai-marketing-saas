@@ -10,6 +10,7 @@ import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { TrackingTags } from "./TrackingTags";
 import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
+import { ShopBottomNav } from "./ShopBottomNav";
 import { ShopContactButtons } from "./ShopContactButtons";
 import { AttributionCapture } from "./AttributionCapture";
 import { ShopPushPrompt } from "./ShopPushPrompt";
@@ -185,6 +186,11 @@ export default async function ShopLayout({
           ) : null}
         </div>
       </footer>
+      {/* ED7: v2-only mobile bottom nav (fixed) + an in-flow spacer
+          so page content / the footer are never covered by it.
+          Legacy themes get NO extra node here. */}
+      {effThemeId === "v2" ? <ShopBottomNav orgSlug={orgSlug} locale={locale} /> : null}
+      {effThemeId === "v2" ? <div className="h-16 lg:hidden" aria-hidden="true" /> : null}
       {/* AB8 (AX23): merchant custom JS — the very last node of
           the layout, and only when enabled + host-allowed. */}
       {renderCustomJs && customJs ? (

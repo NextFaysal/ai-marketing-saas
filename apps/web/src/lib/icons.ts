@@ -26,6 +26,7 @@ import {
   GitBranch,
   Handshake,
   Heart,
+  Home,
   Images,
   Layers,
   LifeBuoy,
@@ -169,6 +170,7 @@ export const SHOP_ICONS = {
   close: X,
   print: Printer,
   receipt: Receipt,
+  home: Home,
 } as const satisfies Record<string, LucideIcon>;
 
 export type ShopIconName = keyof typeof SHOP_ICONS;
