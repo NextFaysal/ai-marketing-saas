@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DELIVERY_ATTEMPT_OUTCOMES, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS, TEMPLATE_VARIABLES, TEMPLATE_VARIABLE_HELP,
   deliveryAttemptOutcomeLabel, formatAge, notificationChannelLabel, notificationEventLabel, notificationStatusLabel, slaStageLabel,
+  DEFAULT_TEMPLATES, calculateSmsSegments, renderNotificationTemplate, generateWhatsAppTrackingShareUrl,
 } from "./orders-on5";
 
 describe("NOTIFICATION_EVENTS / event labels", () => {
@@ -107,3 +108,67 @@ describe("formatAge", () => {
     expect(formatAge(-3)).toBe("—");
   });
 });
+
+describe("DEFAULT_TEMPLATES", () => {
+  it("provides templates for all 8 notification events", () => {
+    for (const ev of NOTIFICATION_EVENTS) {
+      expect(DEFAULT_TEMPLATES[ev]).toBeTruthy();
+      expect(DEFAULT_TEMPLATES[ev]).toContain("আসসালামু আলাইকুম");
+    }
+  });
+});
+
+describe("renderNotificationTemplate", () => {
+  it("substitutes double and single brace tokens accurately", () => {
+    const tpl = "হ্যালো {{customerName}}, আপনার অর্ডার {{orderNumber}} এর মোট টাকা {total}।";
+    const rendered = renderNotificationTemplate(tpl, {
+      customerName: "শাকিব খান",
+      orderNumber: "ORD-101",
+      total: "৳1,500",
+    });
+    expect(rendered).toBe("হ্যালো শাকিব খান, আপনার অর্ডার ORD-101 এর মোট টাকা ৳1,500।");
+  });
+
+  it("handles missing variables without throwing or printing undefined", () => {
+    const tpl = "হ্যালো {{customerName}}, ট্র্যাকিং: {{trackingUrl}}";
+    const rendered = renderNotificationTemplate(tpl, {
+      customerName: "রাকিব",
+    });
+    expect(rendered).toBe("হ্যালো রাকিব, ট্র্যাকিং: ");
+  });
+});
+
+describe("calculateSmsSegments", () => {
+  it("calculates English ASCII GSM-7 segments", () => {
+    const single = calculateSmsSegments("Hello, your order is confirmed!");
+    expect(single.isUnicode).toBe(false);
+    expect(single.segments).toBe(1);
+    expect(single.maxPerSegment).toBe(160);
+
+    const longAscii = "A".repeat(161);
+    const multi = calculateSmsSegments(longAscii);
+    expect(multi.isUnicode).toBe(false);
+    expect(multi.segments).toBe(2);
+  });
+
+  it("calculates Bengali Unicode segments (70 single, 67 multi)", () => {
+    const singleBn = calculateSmsSegments("আপনার অর্ডার গ্রহণ করা হয়েছে।");
+    expect(singleBn.isUnicode).toBe(true);
+    expect(singleBn.segments).toBe(1);
+    expect(singleBn.maxPerSegment).toBe(70);
+
+    const longBn = "বাংলা ".repeat(20); // ~120 chars
+    const multiBn = calculateSmsSegments(longBn);
+    expect(multiBn.isUnicode).toBe(true);
+    expect(multiBn.segments).toBe(Math.ceil(longBn.length / 67));
+  });
+});
+
+describe("generateWhatsAppTrackingShareUrl", () => {
+  it("formats Bangladeshi phone numbers and encodes message", () => {
+    const url = generateWhatsAppTrackingShareUrl("01712345678", "আপনার ট্র্যাকিং লিঙ্ক: https://shop.com/track/123");
+    expect(url).toContain("https://wa.me/8801712345678?text=");
+    expect(decodeURIComponent(url)).toContain("আপনার ট্র্যাকিং লিঙ্ক: https://shop.com/track/123");
+  });
+});
+

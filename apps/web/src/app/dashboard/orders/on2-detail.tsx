@@ -5,6 +5,8 @@ import { getOrganizationId } from "@/lib/org";
 import {
   DELIVERY_ATTEMPT_OUTCOMES, deliveryAttemptOutcomeLabel,
   notificationChannelLabel, notificationEventLabel, notificationStatusLabel,
+  DEFAULT_TEMPLATES, renderNotificationTemplate, generateWhatsAppTrackingShareUrl,
+  type NotificationEventKey,
 } from "@/lib/orders-on5";
 import { formatMinor } from "@repo/contracts";
 import {
@@ -331,6 +333,10 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
   const [attemptDate, setAttemptDate] = useState("");
   const [logs, setLogs] = useState<NotificationLog[] | null>(null);
   const [logsError, setLogsError] = useState("");
+  const [notifModalOpen, setNotifModalOpen] = useState(false);
+  const [selectedNotifEvent, setSelectedNotifEvent] = useState<NotificationEventKey>("handed_to_courier");
+  const [customMsgText, setCustomMsgText] = useState("");
+  const [notifCopied, setNotifCopied] = useState(false);
 
   // Sync the tag draft when the order changes OR its tags arrive
   // late (the parent enriches actOrder from GET /:orderId after
@@ -635,7 +641,20 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
 
         {/* ON5: notification log for this order */}
         <div className="space-y-2 rounded-xl border bg-white p-3">
-          <h4 className="text-sm font-semibold">🔔 বিজ্ঞপ্তি লগ — গ্রাহককে পাঠানো বার্তা</h4>
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">🔔 বিজ্ঞপ্তি লগ — গ্রাহককে পাঠানো বার্তা</h4>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomMsgText("");
+                setNotifModalOpen(true);
+              }}
+              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs transition"
+            >
+              📲 WhatsApp / SMS পাঠান
+            </button>
+          </div>
+
           {logsError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{logsError}</p> : logs === null ? (
             <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
           ) : logs.length === 0 ? (
@@ -658,6 +677,140 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
             </ul>
           )}
         </div>
+
+        {/* Quick Send WhatsApp / SMS Modal */}
+        {notifModalOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b pb-2">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <span>📲 গ্রাহককে ট্র্যাকিং মেসেজ পাঠান</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setNotifModalOpen(false)}
+                  className="text-xs text-slate-400 hover:text-slate-600 font-bold"
+                >
+                  ✕ বন্ধ করুন
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">গ্রাহকের নাম ও ফোন:</span>
+                    <strong className="text-slate-800">
+                      {c360?.customer?.name || "গ্রাহক"} ({c360?.customer?.phone || "ফোন নম্বর নেই"})
+                    </strong>
+                  </div>
+                  <span className="font-mono font-bold text-slate-600">{orderLabel}</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    মেসেজ ইভেন্ট বেছে নিন:
+                  </label>
+                  <select
+                    value={selectedNotifEvent}
+                    onChange={(e) => {
+                      setSelectedNotifEvent(e.target.value as NotificationEventKey);
+                      setCustomMsgText("");
+                    }}
+                    className="w-full rounded-xl border border-slate-300 p-2 text-xs bg-white text-slate-800"
+                  >
+                    <option value="handed_to_courier">🚚 কুরিয়ারে হস্তান্তর ও ট্র্যাকিং কোড</option>
+                    <option value="out_for_delivery">🛵 ডেলিভারির পথে (রাইডার বের হয়েছে)</option>
+                    <option value="order_placed">📦 অর্ডার গ্রহণ ও কনফার্মেশন</option>
+                    <option value="delivered">🎉 সফল ডেলিভারি সম্পন্ন</option>
+                    <option value="delivery_failed">⚠️ ডেলিভারি ব্যর্থ / কাস্টমার নট রিসিভড</option>
+                    <option value="delivery_rescheduled">🔄 ডেলিভারি পুনঃনির্ধারিত</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    পাঠানোর মেসেজ প্রিভিউ:
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={
+                      customMsgText.trim()
+                        ? customMsgText
+                        : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
+                            customerName: c360?.customer?.name || "গ্রাহক",
+                            orderNumber: orderLabel,
+                            total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                            due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                            trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
+                            shopName: "আমাদের শপ",
+                            courierName: "কুরিয়ার",
+                            trackingCode: orderId.slice(0, 8).toUpperCase(),
+                            rescheduleDate: "আগামীকাল",
+                          })
+                    }
+                    onChange={(e) => setCustomMsgText(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-800 leading-relaxed"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <a
+                  href={generateWhatsAppTrackingShareUrl(
+                    c360?.customer?.phone || "",
+                    customMsgText.trim()
+                      ? customMsgText
+                      : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
+                          customerName: c360?.customer?.name || "গ্রাহক",
+                          orderNumber: orderLabel,
+                          total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
+                          shopName: "আমাদের শপ",
+                          courierName: "কুরিয়ার",
+                          trackingCode: orderId.slice(0, 8).toUpperCase(),
+                          rescheduleDate: "আগামীকাল",
+                        })
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-xl bg-[#25D366] p-2.5 text-center text-xs font-bold text-white shadow hover:bg-[#20ba5a] transition"
+                >
+                  WhatsApp-এ পাঠান ↗
+                </a>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const txt = customMsgText.trim()
+                      ? customMsgText
+                      : renderNotificationTemplate(DEFAULT_TEMPLATES[selectedNotifEvent], {
+                          customerName: c360?.customer?.name || "গ্রাহক",
+                          orderNumber: orderLabel,
+                          total: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          due: c360?.openDueMinor ? money(c360.openDueMinor) : "৳0",
+                          trackingUrl: `https://shop.com/track/${orderId.slice(0, 8)}`,
+                          shopName: "আমাদের শপ",
+                          courierName: "কুরিয়ার",
+                          trackingCode: orderId.slice(0, 8).toUpperCase(),
+                          rescheduleDate: "আগামীকাল",
+                        });
+                    await navigator.clipboard.writeText(txt);
+                    setNotifCopied(true);
+                    setTimeout(() => setNotifCopied(false), 2000);
+                  }}
+                  className="rounded-xl border border-slate-300 bg-white p-2.5 text-center text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  {notifCopied ? "✓ কপি হয়েছে!" : "📋 কপি করুন"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

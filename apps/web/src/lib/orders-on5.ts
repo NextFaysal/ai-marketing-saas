@@ -118,3 +118,85 @@ export function formatAge(ageHours?: number | null): string {
   const rem = total % 24;
   return rem > 0 ? `${days} দিন ${rem} ঘণ্টা` : `${days} দিন`;
 }
+
+/** Built-in Bengali default templates per notification event. */
+export const DEFAULT_TEMPLATES: Record<NotificationEventKey, string> = {
+  order_placed:
+    "আসসালামু আলাইকুম {{customerName}}, {{shopName}} থেকে আপনার অর্ডার {{orderNumber}} গ্রহণ করা হয়েছে। মোট: {{total}}। ধন্যবাদ!",
+  order_packed:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} প্যাক করা হয়েছে — শীঘ্রই কুরিয়ারে দেওয়া হবে। — {{shopName}}",
+  handed_to_courier:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} {{courierName}} কুরিয়ারে দেওয়া হয়েছে। ট্র্যাকিং কোড: {{trackingCode}}। ট্র্যাক করুন: {{trackingUrl}} — {{shopName}}",
+  out_for_delivery:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} আজ ডেলিভারির জন্য বের হয়েছে ({{courierName}})। বকেয়া: {{due}}। — {{shopName}}",
+  delivered:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} ডেলিভারি সম্পন্ন হয়েছে। {{shopName}} থেকে কেনাকাটা করার জন্য ধন্যবাদ!",
+  delivery_failed:
+    "আসসালামু আলাইকুম {{customerName}}, দুঃখিত — আপনার অর্ডার {{orderNumber}} ডেলিভারি করা যায়নি। বিস্তারিত জানতে {{shopName}}-এ যোগাযোগ করুন।",
+  parcel_stuck:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}}-এর পার্সেলটি ({{courierName}}, ট্র্যাকিং: {{trackingCode}}) আটকে আছে বলে মনে হচ্ছে — আমরা খোঁজ নিচ্ছি। — {{shopName}}",
+  delivery_rescheduled:
+    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}}-এর ডেলিভারি পুনঃনির্ধারণ করা হয়েছে। ট্র্যাক করুন: {{trackingUrl}} — {{shopName}}",
+};
+
+/** Render template with token replacements, missing variables produce empty string. */
+export function renderNotificationTemplate(
+  template: string,
+  vars: Record<string, string | number | null | undefined>
+): string {
+  if (!template) return "";
+  const tokenRegex = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}|\{\s*([A-Za-z0-9_]+)\s*\}/g;
+  return template.replace(tokenRegex, (_match, a, b) => {
+    const key = a || b;
+    const val = vars[key];
+    return val === undefined || val === null ? "" : String(val);
+  });
+}
+
+/**
+ * Calculate characters and standard Bangladeshi SMS segments.
+ * GSM-7 (standard English): 160 chars for 1 segment, 153 chars/segment for multi-part.
+ * Unicode (Bengali script): 70 chars for 1 segment, 67 chars/segment for multi-part.
+ */
+export function calculateSmsSegments(text: string): {
+  chars: number;
+  segments: number;
+  isUnicode: boolean;
+  maxPerSegment: number;
+} {
+  const chars = text ? Array.from(text).length : 0;
+  if (chars === 0) {
+    return { chars: 0, segments: 0, isUnicode: false, maxPerSegment: 160 };
+  }
+
+  // Detect non-ASCII/Unicode (e.g. Bengali characters)
+  const isUnicode = /[^\u0000-\u007F]/.test(text);
+
+  if (isUnicode) {
+    if (chars <= 70) {
+      return { chars, segments: 1, isUnicode: true, maxPerSegment: 70 };
+    }
+    const segments = Math.ceil(chars / 67);
+    return { chars, segments, isUnicode: true, maxPerSegment: 67 };
+  } else {
+    if (chars <= 160) {
+      return { chars, segments: 1, isUnicode: false, maxPerSegment: 160 };
+    }
+    const segments = Math.ceil(chars / 153);
+    return { chars, segments, isUnicode: false, maxPerSegment: 153 };
+  }
+}
+
+/** Generate wa.me WhatsApp Click-to-Chat URL for BD customer phone */
+export function generateWhatsAppTrackingShareUrl(phone: string, text: string): string {
+  const digits = (phone || "").replace(/\D/g, "");
+  let bdPhone = digits;
+  if (digits.startsWith("01") && digits.length === 11) {
+    bdPhone = `88${digits}`;
+  } else if (digits.startsWith("+8801")) {
+    bdPhone = digits.replace("+", "");
+  }
+  const encoded = encodeURIComponent(text);
+  return `https://wa.me/${bdPhone}?text=${encoded}`;
+}
+
