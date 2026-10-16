@@ -1,9 +1,9 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { NAV_ITEMS } from "@/lib/nav";
+import { NAV_ITEMS, COMMERCE_NAV_ITEMS, COMMERCE_NAV_SECTIONS } from "@/lib/nav";
 import { NAV_ICONS, type NavIconName } from "@/lib/icons";
-import { ToastProvider, ConfirmProvider } from "@repo/ui/client";
+import { ToastProvider, ConfirmProvider, PromptProvider } from "@repo/ui/client";
 import {
   CalendarDays, Clock, Eye, FlaskConical, LogOut, Mail, Megaphone, Menu,
   OctagonX, Search, UserRound, Wrench, X,
@@ -31,10 +31,18 @@ const GROUPS: NavGroup[] = [
   },
   {
     id: "commerce",
-    title: "কমার্স ও সেলস",
+    title: "ইন্টিগ্রেশন ও প্রফিট",
     icon: "groupCommerce",
-    hrefs: ["/dashboard/products", "/dashboard/orders", "/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
+    hrefs: ["/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit"],
   },
+  // EB5/ED12: commerce task-grouped sections (বিক্রি/ক্যাটালগ/গ্রাহক/
+  // অপারেশন/বৃদ্ধি/টাকা/দোকান) — collapsible like every sibling group.
+  ...COMMERCE_NAV_SECTIONS.map((s) => ({
+    id: s.id,
+    title: s.title,
+    icon: "groupCommerce" as NavIconName,
+    hrefs: [...s.hrefs],
+  })),
   {
     id: "marketing",
     title: "বিজ্ঞাপন ও ক্যাম্পেইন",
@@ -45,7 +53,7 @@ const GROUPS: NavGroup[] = [
     id: "crm",
     title: "গ্রাহক ও অটোমেশন",
     icon: "groupCrm",
-    hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/customers", "/dashboard/comments", "/dashboard/messaging", "/dashboard/automations", "/dashboard/workflows", "/dashboard/ai-instructions"],
+    hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/comments", "/dashboard/messaging", "/dashboard/automations", "/dashboard/workflows", "/dashboard/ai-instructions"],
   },
   {
     id: "settings",
@@ -73,7 +81,10 @@ function NavContent({
   onNavigate?: () => void;
   searchQuery: string;
 }) {
-  const byHref = useMemo(() => new Map<string, (typeof NAV_ITEMS)[number]>(NAV_ITEMS.map((i) => [i.href as string, i])), []);
+  const byHref = useMemo(
+    () => new Map<string, (typeof NAV_ITEMS)[number]>([...NAV_ITEMS, ...COMMERCE_NAV_ITEMS].map((i) => [i.href as string, i])),
+    [],
+  );
 
   // Track collapsed groups
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -654,6 +665,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <ToastProvider>
       <ConfirmProvider>
+        <PromptProvider>
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
       {/* ED11 (EB4): route progress bar (soft-nav feedback). */}
       <RouteProgress />
@@ -826,6 +838,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           AI page itself, where the full workspace already lives. */}
       <GlobalAssistant />
     </div>
+        </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
   );

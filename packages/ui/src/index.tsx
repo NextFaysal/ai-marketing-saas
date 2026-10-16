@@ -227,3 +227,41 @@ export function ResponsiveTable({ table, cards, className = "" }: { table: React
     </div>
   );
 }
+
+/**
+ * Breadcrumb (EB5/ED12): kit-consistent trail for dashboard sub-pages.
+ * Items render as links except the last (current page, aria-current).
+ * Plain anchors keep it server-safe; callers pass Next <Link> output via
+ * `href` only when they render it from a client component — hrefs here are
+ * plain strings rendered as <a>, matching the dashboard's full reload-free
+ * SPA behaviour through Next's anchor handling.
+ */
+export function Breadcrumb({
+  items,
+  className = "",
+}: {
+  items: { label: string; href?: string }[];
+  className?: string;
+}) {
+  return (
+    <nav aria-label="breadcrumb" className={`mb-2 flex flex-wrap items-center gap-1 text-xs text-slate-500 ${className}`}>
+      {items.map((item, i) => {
+        const last = i === items.length - 1;
+        return (
+          <span key={`${item.label}-${i}`} className="inline-flex items-center gap-1">
+            {i > 0 ? <span aria-hidden="true" className="text-slate-300">/</span> : null}
+            {item.href && !last ? (
+              <a href={item.href} className="font-medium text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline">
+                {item.label}
+              </a>
+            ) : (
+              <span aria-current={last ? "page" : undefined} className={last ? "font-semibold text-slate-800" : ""}>
+                {item.label}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
