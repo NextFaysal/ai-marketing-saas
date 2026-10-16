@@ -145,6 +145,47 @@
 }
 
 @layer components {
+  /* EB6/ED16: skip link — visually hidden until focused, then a
+     visible pill at the top-left. Must be the first focusable
+     element wherever it is rendered (dashboard + shop layouts).
+     Token-driven: surface / ink-strong / brand-ring / shadow-pop. */
+  .skip-link {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .skip-link:focus,
+  .skip-link:focus-visible {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 10px 16px;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--ink-strong);
+    font-size: var(--text-body);
+    font-weight: 700;
+    text-decoration: none;
+    box-shadow: var(--shadow-pop);
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 2px;
+  }
+
   /* Premium surface used across every dashboard page.
      ED1: re-expressed on the token layer — border-soft = slate-200/80,
      surface = white, radius-lg = rounded-2xl, shadow-card is the
@@ -296,7 +337,7 @@
   .stat-icon-sky { background-image: linear-gradient(135deg, #0284c7, #38bdf8); }
   .stat-label { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500; }
   .stat-value { @apply mt-1 text-[26px] font-bold leading-none tracking-tight text-slate-900; }
-  .stat-hint { @apply mt-2 text-xs text-slate-400; }
+  .stat-hint { @apply mt-2 text-xs text-slate-500; }
 
   /* Quick-action tile inside the hero (real links, ≥44px targets). */
   .quick-action { @apply flex min-h-[44px] items-center gap-2.5 rounded-2xl bg-white/10 px-3.5 py-2.5 text-sm font-semibold text-white ring-1 ring-inset ring-white/20 backdrop-blur-sm transition duration-150 hover:bg-white/20 active:scale-[0.98]; }
@@ -478,7 +519,7 @@
   .manage-nav-btn:hover { background: var(--brand-soft); }
   .setting-row { @apply flex flex-col gap-1.5 rounded-2xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-200/50 sm:flex-row sm:items-center sm:justify-between sm:gap-4; }
   .setting-row-label { @apply text-sm font-medium text-slate-700 sm:max-w-[46%]; }
-  .setting-row-help { @apply mt-0.5 block text-[11px] font-normal leading-snug text-slate-400; }
+  .setting-row-help { @apply mt-0.5 block text-[11px] font-normal leading-snug text-slate-500; }
   .setting-row-control { @apply block w-full shrink-0 sm:w-56; }
 
   /* Context panel lower half v2 (assign/tags/notes/order form). */
