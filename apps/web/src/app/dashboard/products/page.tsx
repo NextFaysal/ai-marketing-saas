@@ -1847,10 +1847,10 @@ export default function ProductsPage() {
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name">
                   পণ্যের নাম (Product Name) *
                 </label>
-                <input
+                <input id="product-form-name"
                   type="text"
                   required
                   placeholder="যেমন: প্রিমিয়াম লেদার ওয়ালেট"
@@ -1862,8 +1862,8 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SKU কোড</label>
-                  <input
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-sku">SKU কোড</label>
+                  <input id="product-form-sku"
                     type="text"
                     placeholder="WLT-001"
                     value={form.sku}
@@ -1872,9 +1872,9 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ক্যাটাগরি</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-category">ক্যাটাগরি</label>
                   {ecCategories.length > 0 ? (
-                    <select
+                    <select id="product-form-category"
                       value={form.categoryId}
                       onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
                       className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1885,7 +1885,7 @@ export default function ProductsPage() {
                       ))}
                     </select>
                   ) : (
-                    <input
+                    <input id="product-form-category"
                       type="text"
                       placeholder="Fashion / Electronics"
                       value={form.category}
@@ -1899,8 +1899,8 @@ export default function ProductsPage() {
               {/* GC6: brand picker + free shipping */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ব্র্যান্ড</label>
-                  <select
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-brand">ব্র্যান্ড</label>
+                  <select id="product-form-brand"
                     value={form.brandId}
                     onChange={(e) => setForm({ ...form, brandId: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1948,7 +1948,7 @@ export default function ProductsPage() {
                 <div className="mt-2 flex gap-2">
                   <input
                     type="text"
-                    placeholder="নতুন ট্যাগ"
+                    placeholder="নতুন ট্যাগ" aria-label="নতুন ট্যাগ"
                     value={newTagName}
                     onChange={(e) => setNewTagName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickAddTag(); } }}
@@ -1964,46 +1964,46 @@ export default function ProductsPage() {
               {/* EC3: shipping dimensions / barcode / SEO */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ওজন (গ্রাম)</label>
-                  <input type="number" min="0" placeholder="500" value={form.weightGrams}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-weight">ওজন (গ্রাম)</label>
+                  <input id="product-form-weight" type="number" min="0" placeholder="500" value={form.weightGrams}
                     onChange={(e) => setForm({ ...form, weightGrams: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">দৈর্ঘ্য (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-length">দৈর্ঘ্য (সেমি)</label>
+                  <input id="product-form-length" type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
                     onChange={(e) => setForm({ ...form, lengthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">প্রস্থ (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-width">প্রস্থ (সেমি)</label>
+                  <input id="product-form-width" type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
                     onChange={(e) => setForm({ ...form, widthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">উচ্চতা (সেমি)</label>
-                  <input type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-height">উচ্চতা (সেমি)</label>
+                  <input id="product-form-height" type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
                     onChange={(e) => setForm({ ...form, heightCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">বারকোড</label>
-                <input type="text" placeholder="Barcode / EAN" value={form.barcode}
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-barcode">বারকোড</label>
+                <input id="product-form-barcode" type="text" placeholder="Barcode / EAN" value={form.barcode}
                   onChange={(e) => setForm({ ...form, barcode: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs font-mono" />
               </div>
               <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO টাইটেল</label>
-                  <input type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-title">SEO টাইটেল</label>
+                  <input id="product-form-seo-title" type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
                     onChange={(e) => setForm({ ...form, seoTitle: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">SEO বিবরণ</label>
-                  <textarea rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-description">SEO বিবরণ</label>
+                  <textarea id="product-form-seo-description" rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
                     onChange={(e) => setForm({ ...form, seoDescription: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
@@ -2011,10 +2011,10 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-price">
                     বিক্রয়মূল্য (BDT) *
                   </label>
-                  <input
+                  <input id="product-form-price"
                     type="number"
                     step="0.01"
                     required
@@ -2025,10 +2025,10 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-compare-at">
                     আসল দাম (Compare Price)
                   </label>
-                  <input
+                  <input id="product-form-compare-at"
                     type="number"
                     step="0.01"
                     placeholder="1500"
@@ -2038,10 +2038,10 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-cost">
                     ইউনিট কস্ট (Cost BDT)
                   </label>
-                  <input
+                  <input id="product-form-cost"
                     type="number"
                     step="0.01"
                     placeholder="750"
@@ -2054,10 +2054,10 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-stock">
                     স্টক পরিমাণ (Stock Quantity)
                   </label>
-                  <input
+                  <input id="product-form-stock"
                     type="number"
                     min="0"
                     placeholder="50"
@@ -2067,8 +2067,8 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">স্ট্যাটাস</label>
-                  <select
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-status">স্ট্যাটাস</label>
+                  <select id="product-form-status"
                     value={form.status}
                     onChange={(e) => setForm({ ...form, status: e.target.value as any })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -2081,10 +2081,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-low-stock">
                   কম স্টকের সতর্কতা (Low-stock alert, খালি = ৫)
                 </label>
-                <input
+                <input id="product-form-low-stock"
                   type="number"
                   min="0"
                   placeholder="5"
@@ -2095,10 +2095,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-tax-rate">
                   VAT হার % (ঐচ্ছিক — ফাঁকা = দোকানের ডিফল্ট)
                 </label>
-                <input
+                <input id="product-form-tax-rate"
                   type="number"
                   step="0.01"
                   min="0"
@@ -2111,10 +2111,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-image-url">
                   প্রোডাক্ট ইমেজ ইউআরএল (Image URL)
                 </label>
-                <input
+                <input id="product-form-image-url"
                   type="url"
                   placeholder="https://images.unsplash.com/photo-..."
                   value={form.imageUrl}
@@ -2124,10 +2124,10 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description">
                   বিস্তারিত বর্ণনা (Product Description)
                 </label>
-                <textarea
+                <textarea id="product-form-description"
                   rows={3}
                   placeholder="পণ্যের ফিচার, ওয়ারেন্টি এবং গুণমান সম্পর্কে লিখুন..."
                   value={form.description}
@@ -2141,8 +2141,8 @@ export default function ProductsPage() {
                 <div className="text-xs font-bold text-sky-950">ইংরেজি কনটেন্ট (English)</div>
                 <p className="text-[11px] text-slate-500">দোকানের ভাষা English হলে এই লেখা দেখাবে; খালি রাখলে মূল নাম/বিবরণই দেখাবে।</p>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি নাম (Name in English)</label>
-                  <input
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name-en">ইংরেজি নাম (Name in English)</label>
+                  <input id="product-form-name-en"
                     type="text"
                     placeholder="e.g. Premium Leather Wallet"
                     value={form.nameEn}
@@ -2151,8 +2151,8 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি বিবরণ (Description in English)</label>
-                  <textarea
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description-en">ইংরেজি বিবরণ (Description in English)</label>
+                  <textarea id="product-form-description-en"
                     rows={3}
                     placeholder="Product features, warranty and quality in English..."
                     value={form.descriptionEn}
@@ -2302,8 +2302,8 @@ export default function ProductsPage() {
                   <p className="text-[11px] font-semibold text-slate-600">পাইকারি স্তর (কমপক্ষে পরিমাণ → একক দাম ৳) — সর্বোচ্চ ১০টি, পরিমাণ বাড়তে হবে</p>
                   {ec24.tiers.map((t, i) => (
                     <div key={i} className="flex items-center gap-2">
-                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
-                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" aria-label="পাইকারি স্তরের পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" aria-label="পাইকারি স্তরের দাম (টাকা)" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
                       <button type="button" onClick={() => setEc24({ ...ec24, tiers: ec24.tiers.filter((_, xi) => xi !== i) })} className="rounded-lg bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700">মুছুন</button>
                     </div>
                   ))}
@@ -2339,10 +2339,10 @@ export default function ProductsPage() {
 
                 <div className="space-y-2 pt-1">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-title">
                       অ্যাড-অন অফার শিরোনাম (Bump Offer Title):
                     </label>
-                    <input
+                    <input id="product-form-bump-title"
                       type="text"
                       placeholder="যেমন: মাত্র ১৯০ টাকায় লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
                       value={form.bumpTitle}
@@ -2353,10 +2353,10 @@ export default function ProductsPage() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-price">
                         অ্যাড-অন প্রাইস (Bump Price BDT):
                       </label>
-                      <input
+                      <input id="product-form-bump-price"
                         type="number"
                         step="0.01"
                         placeholder="190"
@@ -2366,10 +2366,10 @@ export default function ProductsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-image">
                         অ্যাড-অন ইমেজ লিংক (ঐচ্ছিক):
                       </label>
-                      <input
+                      <input id="product-form-bump-image"
                         type="url"
                         placeholder="https://..."
                         value={form.bumpImageUrl}
