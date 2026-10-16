@@ -40,7 +40,18 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function ProductPage({ params }: { params: Params }) {
   const { orgSlug, productSlug } = await params;
-  const detail = await fetchProductDetail(orgSlug, productSlug);
+  // ED5 (EB2): detail and the reviews summary are independent reads,
+  // so they now start concurrently instead of detail → (flash) →
+  // reviews sequentially. Semantics are unchanged: a null detail
+  // still answers notFound(), a failed reviews fetch still degrades
+  // to null (so JSON-LD omits the rating), and the flash home fetch
+  // below stays conditional on detail.product.flashSale.
+  // EC27: the EC15 unified reviews summary feeds the JSON-LD
+  // aggregateRating — only when it really has reviews.
+  const [detail, reviewsSummary] = await Promise.all([
+    fetchProductDetail(orgSlug, productSlug),
+    fetchProductReviewsSummary(orgSlug, productSlug).catch(() => null),
+  ]);
   if (!detail) notFound();
   const { product, related } = detail;
   // GB7 (GC18): server clock for the flash countdown (cached fetch).
@@ -48,9 +59,6 @@ export default async function ProductPage({ params }: { params: Params }) {
   const flashServerNow = homeForFlash?.flashSales?.serverNow ?? null;
   const locale = shopLocaleOf(detail.settings?.locale);
   const t = shopT(locale);
-  // EC27: the EC15 unified reviews summary feeds the JSON-LD
-  // aggregateRating — only when it really has reviews.
-  const reviewsSummary = await fetchProductReviewsSummary(orgSlug, productSlug).catch(() => null);
   const boughtTogether = detail.boughtTogether ?? [];
 
   return (
