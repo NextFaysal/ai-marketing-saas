@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHOP_THEMES, themeIdOf, themeOf } from "./shop-theme";
+import { SHOP_THEMES, effectiveThemeId, isV2Theme, themeIdOf, themeOf } from "./shop-theme";
 
 describe("shop theme", () => {
   it("classic equals the pre-theme classes exactly", () => {
@@ -42,5 +42,49 @@ describe("shop theme", () => {
     });
     expect(themeIdOf("classic")).toBe("classic");
     expect(themeIdOf(42)).toBe("classic");
+  });
+
+  // ED7: legacy themes omit the new optional v2 fields entirely,
+  // so consumers fall back to their current rendering.
+  it("legacy themes omit the optional ED7 fields", () => {
+    for (const id of ["classic", "bold", "minimal"] as const) {
+      expect("cardBodyClass" in SHOP_THEMES[id]).toBe(false);
+      expect("cardPriceClass" in SHOP_THEMES[id]).toBe(false);
+      expect("sectionTitleClass" in SHOP_THEMES[id]).toBe(false);
+    }
+  });
+
+  it("pins the v2 theme object (ED7)", () => {
+    expect(SHOP_THEMES.v2).toEqual({
+      headerDark: false,
+      heroClass: "rounded-[var(--radius-xl)] bg-[var(--surface)] p-8 text-center shadow-[var(--shadow-card)] border border-[var(--border-soft)]",
+      heroTitleClass: "text-3xl font-black text-[var(--ink-strong)] sm:text-4xl",
+      gridClass: "grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4",
+      featuredGridClass: "grid grid-cols-2 gap-4 md:grid-cols-4",
+      cardClass: "rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)]",
+      cardImageWrapClass: "",
+      cardBodyClass: "space-y-1.5 p-4 text-[var(--ink-body)]",
+      cardPriceClass: "text-base font-extrabold text-[var(--brand)]",
+      sectionTitleClass: "text-xl font-black text-[var(--ink-strong)]",
+    });
+    expect(themeIdOf("v2")).toBe("v2");
+    expect(themeOf("v2")).toBe(SHOP_THEMES.v2);
+  });
+
+  it("isV2Theme / effectiveThemeId (ED7)", () => {
+    expect(isV2Theme("v2")).toBe(true);
+    expect(isV2Theme("classic")).toBe(false);
+    expect(isV2Theme(undefined)).toBe(false);
+    expect(isV2Theme(42)).toBe(false);
+    // Preview wins only when it is a valid theme id.
+    expect(effectiveThemeId("classic", "v2")).toBe("v2");
+    expect(effectiveThemeId("bold", "v2")).toBe("v2");
+    expect(effectiveThemeId("classic", "bold")).toBe("bold");
+    expect(effectiveThemeId("v2", null)).toBe("v2");
+    expect(effectiveThemeId("bold", undefined)).toBe("bold");
+    expect(effectiveThemeId("classic", "nope")).toBe("classic");
+    expect(effectiveThemeId("classic", 42)).toBe("classic");
+    expect(effectiveThemeId(undefined, null)).toBe("classic");
+    expect(effectiveThemeId("nope", "nope")).toBe("classic");
   });
 });
