@@ -154,34 +154,36 @@ export default async function ShopLayout({
         whatsappLabel={t.pages.whatsappLabel}
         messengerLabel={t.pages.messengerLabel}
       />
-      <footer className="mt-14 border-t border-slate-200 bg-white">
+      {/* ED7: v2 footer — SAME content blocks, token classes only.
+          Legacy themes keep the exact original class strings. */}
+      <footer className={effThemeId === "v2" ? "mt-14 border-t border-[var(--border-soft)] bg-[var(--surface)]" : "mt-14 border-t border-slate-200 bg-white"}>
         <div className="mx-auto max-w-6xl space-y-2 px-4 py-8 text-center sm:px-6">
-          <p className="text-sm font-bold text-slate-800">{shopName}</p>
+          <p className={effThemeId === "v2" ? "text-sm font-bold text-[var(--ink-strong)]" : "text-sm font-bold text-slate-800"}>{shopName}</p>
           {(home.pages?.footer ?? []).length > 0 ? (
             <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pb-2">
               {(home.pages?.footer ?? []).map((p) => (
-                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className="text-xs font-semibold text-slate-600 hover:text-indigo-700">
+                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className={effThemeId === "v2" ? "text-xs font-semibold text-[var(--ink-body)] hover:text-[var(--brand-strong)]" : "text-xs font-semibold text-slate-600 hover:text-indigo-700"}>
                   {p.title}
                 </Link>
               ))}
             </nav>
           ) : null}
           {home.businessProfile.codAvailable ? (
-            <p className="text-xs text-slate-500">{t.common.codAvailable}</p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.codAvailable}</p>
           ) : null}
-          {paymentNote ? <p className="text-xs text-slate-500">{paymentNote}</p> : null}
+          {paymentNote ? <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{paymentNote}</p> : null}
           {home.businessProfile.bkashNumber ? (
-            <p className="text-xs text-slate-500">{t.common.bkash}: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.bkash}: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
           ) : null}
           {home.businessProfile.nagadNumber ? (
-            <p className="text-xs text-slate-500">{t.common.nagad}: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.nagad}: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
           ) : null}
           {supportPhone ? (
-            <p className="text-xs text-slate-500">{t.common.supportPhoneLabel}: <span className="font-mono font-semibold">{supportPhone}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.supportPhoneLabel}: <span className="font-mono font-semibold">{supportPhone}</span></p>
           ) : null}
           {returnPolicyText ? (
-            <p className="mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-slate-500">
-              <span className="font-semibold text-slate-600">{t.common.returnPolicyLabel}: </span>{returnPolicyText}
+            <p className={effThemeId === "v2" ? "mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-[var(--ink-muted)]" : "mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-slate-500"}>
+              <span className={effThemeId === "v2" ? "font-semibold text-[var(--ink-body)]" : "font-semibold text-slate-600"}>{t.common.returnPolicyLabel}: </span>{returnPolicyText}
             </p>
           ) : null}
         </div>
