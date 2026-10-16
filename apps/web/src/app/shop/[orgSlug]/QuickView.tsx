@@ -11,10 +11,14 @@ export function QuickViewButton({
   orgSlug,
   product,
   locale = "bn",
+  large = false,
 }: {
   orgSlug: string;
   product: ShopProduct;
   locale?: ShopLocale | string;
+  /** ED8: v2 cards only — enlarges the hit area to ≥44px tall.
+   * Default false renders exactly as before. */
+  large?: boolean;
 }) {
   const t = shopT(locale);
   const [open, setOpen] = useState(false);
@@ -29,7 +33,7 @@ export function QuickViewButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1.5 text-[11px] font-bold text-slate-800 shadow-md transition hover:bg-white"
+        className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full bg-white/95 text-[11px] font-bold text-slate-800 shadow-md transition hover:bg-white ${large ? "min-h-11 px-3.5 py-3" : "px-2.5 py-1.5"}`}
       >
         <span aria-hidden="true">👁️</span>
         <span className="hidden sm:inline">{t.product.quickView}</span>

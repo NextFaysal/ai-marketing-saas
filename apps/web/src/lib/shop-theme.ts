@@ -98,6 +98,18 @@ export function isV2Theme(id: unknown): boolean {
 }
 
 /**
+ * ED8: v2 detection from a RESOLVED tokens object. ShopTheme
+ * carries no id, so consumers that receive tokens (ProductCard)
+ * detect v2 by the presence of the v2-only optional fields ED7
+ * added — the legacy themes omit them entirely (pinned by
+ * shop-theme.test.ts). This is THE chosen detection approach for
+ * token consumers; do not invent id-string checks there.
+ */
+export function isV2Tokens(theme: ShopTheme): boolean {
+  return theme.cardPriceClass !== undefined;
+}
+
+/**
  * ED7: the theme a request actually renders with. A preview id
  * wins ONLY when it is itself a valid theme id; anything else
  * (missing, unknown, non-string) falls back to the stored id's
