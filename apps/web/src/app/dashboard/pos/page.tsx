@@ -9,7 +9,11 @@ import {
 import {
   ScanDebouncer, barcodeDetectorSupported, normalizeScanCode,
 } from "@/lib/pos-scan";
-import { SHOP_ICONS } from "@/lib/icons";
+import { COMMERCE_ICONS, SHOP_ICONS } from "@/lib/icons";
+import {
+  Banknote, Camera, CircleCheck, Download, NotebookText, TriangleAlert, Wifi, WifiOff,
+} from "lucide-react";
+import { usePrompt, useToast } from "@repo/ui/client";
 
 // AB4: lib/api.ts surfaces a network failure (non-GET) as this
 // exact message; an HTTP error carries the server's message
@@ -132,6 +136,8 @@ const STOCK_BADGE: Record<string, { label: (p: PosProduct) => string; cls: strin
 };
 
 export default function PosPage() {
+  const prompt = usePrompt();
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosProduct[]>([]);
   const [searching, setSearching] = useState(false);
@@ -171,7 +177,6 @@ export default function PosPage() {
   // AB4: camera scanning.
   const [scanOpen, setScanOpen] = useState(false);
   const [scanNote, setScanNote] = useState("");
-  const [scanFeedback, setScanFeedback] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scanStreamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -292,7 +297,6 @@ export default function PosPage() {
       return;
     }
     setScanNote("");
-    setScanFeedback("");
     scanDebouncerRef.current.reset();
     setScanOpen(true);
   }, []);
@@ -327,7 +331,7 @@ export default function PosPage() {
             if (!raw) return;
             const code = normalizeScanCode(raw);
             if (!code || !scanDebouncerRef.current.accept(code)) return;
-            setScanFeedback(`স্ক্যান হয়েছে: ${code}`);
+            toast({ title: `স্ক্যান হয়েছে: ${code}`, tone: "success" });
             setQuery(code);
             await runSearchFor(code);
           } catch { /* a bad frame is not an error — keep scanning */ }
@@ -340,7 +344,7 @@ export default function PosPage() {
       }
     })();
     return () => { cancelled = true; stopScanner(); };
-  }, [scanOpen, runSearchFor, stopScanner]);
+  }, [scanOpen, runSearchFor, stopScanner, toast]);
 
   const changeLineVariant = (line: CartLine, variantId: string) => {
     const variant = line.variants.find((v) => v.id === variantId) ?? null;
@@ -357,6 +361,7 @@ export default function PosPage() {
   };
 
   const estimate = cart.reduce((s, l) => s + l.unitPriceMinor * l.quantity, 0);
+  const cartItemCount = cart.reduce((s, l) => s + l.quantity, 0);
 
   // AB4: queue a sale locally (offline). The cart snapshot +
   // client total ride the card so staff see exactly what was
@@ -497,7 +502,7 @@ export default function PosPage() {
   const discardLedgerRow = async (row: OfflineSyncRow) => {
     const orgId = getOrganizationId();
     if (!orgId || ledgerBusy) return;
-    const note = window.prompt("বাদ দেওয়ার নোট (ঐচ্ছিক):", "");
+    const note = await prompt({ title: "বাদ দেওয়ার নোট (ঐচ্ছিক):", initialValue: "" });
     if (note === null) return; // cancelled — do nothing
     setLedgerBusy(row.id); setSyncError("");
     try {
@@ -528,9 +533,9 @@ export default function PosPage() {
       {/* AB4: connection + outbox strip */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-2.5 text-sm">
         {online ? (
-          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">🟢 অনলাইন</span>
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700"><Wifi className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />অনলাইন</span>
         ) : (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">🔴 অফলাইন</span>
+          <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700"><WifiOff className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />অফলাইন</span>
         )}
         <span className="text-slate-600">সিঙ্ক বাকি: <strong>{outbox.length}টি</strong> অফলাইন বিক্রি</span>
         <button
@@ -539,7 +544,7 @@ export default function PosPage() {
           disabled={!online || syncing || outbox.length === 0}
           onClick={syncOutbox}
         >
-          {syncing ? "সিঙ্ক হচ্ছে…" : "🔄 সিঙ্ক করুন"}
+          <COMMERCE_ICONS.sync className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />{syncing ? "সিঙ্ক হচ্ছে…" : "সিঙ্ক করুন"}
         </button>
       </div>
       {syncError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{syncError}</p> : null}
@@ -566,7 +571,7 @@ export default function PosPage() {
               className="whitespace-nowrap rounded-lg border px-3 py-2.5 text-sm font-semibold"
               onClick={openScanner}
             >
-              📷 স্ক্যান
+              <Camera className="mr-1 inline h-4 w-4 -translate-y-px" />স্ক্যান
             </button>
           </form>
           {scanNote ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">{scanNote}</p> : null}
@@ -646,7 +651,7 @@ export default function PosPage() {
           {/* ---------- AB4: offline sync ledger ---------- */}
           <section className="rounded-xl border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">📥 অফলাইন সিঙ্ক</h2>
+              <h2 className="text-sm font-semibold"><Download className="mr-1 inline h-4 w-4 -translate-y-px" />অফলাইন সিঙ্ক</h2>
               <button type="button" className="text-xs font-semibold text-indigo-600 hover:underline" onClick={loadLedger}>
                 রিফ্রেশ
               </button>
@@ -716,7 +721,7 @@ export default function PosPage() {
 
           {lastSale ? (
             <div className="space-y-3 rounded-lg bg-emerald-50 p-3">
-              <p className="text-sm font-semibold text-emerald-800">✅ বিক্রি সম্পন্ন — {lastSale.receipt.orderNumber ?? ""}</p>
+              <p className="text-sm font-semibold text-emerald-800"><CircleCheck className="mr-1 inline h-4 w-4 -translate-y-px" />বিক্রি সম্পন্ন — {lastSale.receipt.orderNumber ?? ""}</p>
               <div className="space-y-1 text-sm text-emerald-900">
                 <div className="flex justify-between"><span>সাবটোটাল</span><span>{fmt(lastSale.receipt.subtotalMinor)}</span></div>
                 <div className="flex justify-between"><span>ছাড়</span><span>-{fmt(lastSale.receipt.discountMinor)}</span></div>
@@ -725,13 +730,13 @@ export default function PosPage() {
                   const disc = lastSale.receipt.loyaltyDiscountMinor ?? lastSale.loyaltyDiscountMinor;
                   return used > 0 ? (
                     <>
-                      <div className="flex justify-between"><span>⭐ লয়্যালটি পয়েন্ট ব্যবহার</span><span>{used} পয়েন্ট</span></div>
+                      <div className="flex justify-between"><span><COMMERCE_ICONS.loyalty className="mr-1 inline h-4 w-4 -translate-y-px" />লয়্যালটি পয়েন্ট ব্যবহার</span><span>{used} পয়েন্ট</span></div>
                       <div className="flex justify-between"><span>লয়্যালটি ছাড় (উপরের ছাড়ের অংশ)</span><span>-{fmt(disc)}</span></div>
                     </>
                   ) : null;
                 })()}
                 {lastSale.receipt.giftCard ? (
-                  <div className="flex justify-between"><span>🎁 গিফট কার্ড ছাড় (••••{lastSale.receipt.giftCard.codeLast4}, উপরের ছাড়ের অংশ)</span><span>-{fmt(lastSale.receipt.giftCard.discountMinor)}</span></div>
+                  <div className="flex justify-between"><span><COMMERCE_ICONS.giftCards className="mr-1 inline h-4 w-4 -translate-y-px" />গিফট কার্ড ছাড় (••••{lastSale.receipt.giftCard.codeLast4}, উপরের ছাড়ের অংশ)</span><span>-{fmt(lastSale.receipt.giftCard.discountMinor)}</span></div>
                 ) : null}
                 {Number(lastSale.receipt.taxAddedMinor) > 0 ? (
                   <div className="flex justify-between"><span>কর</span><span>{fmt(lastSale.receipt.taxAddedMinor)}</span></div>
@@ -752,7 +757,7 @@ export default function PosPage() {
               at sync time is the truth. */}
           {offlineReceipt ? (
             <div className="space-y-3 rounded-lg bg-amber-50 p-3">
-              <p className="text-sm font-semibold text-amber-800">📴 অফলাইন বিক্রি — সিঙ্ক বাকি</p>
+              <p className="text-sm font-semibold text-amber-800"><WifiOff className="mr-1 inline h-4 w-4 -translate-y-px" />অফলাইন বিক্রি — সিঙ্ক বাকি</p>
               <p className="text-xs text-amber-700">
                 স্থানীয় রসিদ নং: {offlineReceipt.entry.localReceiptNo} · এটি স্থানীয় আনুমানিক হিসাব — চূড়ান্ত হিসাব সিঙ্কের সময় সার্ভারে হবে।
               </p>
@@ -802,7 +807,7 @@ export default function PosPage() {
                     <button type="button" className="ml-auto text-xs font-semibold text-red-600 hover:underline" onClick={() => setCart((prev) => prev.filter((x) => x.key !== l.key))}>সরান</button>
                   </div>
                   {l.stockQuantity != null && l.quantity > l.stockQuantity ? (
-                    <p className="mt-1.5 text-xs font-medium text-red-600">⚠️ স্টকে মাত্র {l.stockQuantity}টি আছে — সার্ভার এই পরিমাণে বিক্রি আটকে দেবে</p>
+                    <p className="mt-1.5 text-xs font-medium text-red-600"><TriangleAlert className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />স্টকে মাত্র {l.stockQuantity}টি আছে — সার্ভার এই পরিমাণে বিক্রি আটকে দেবে</p>
                   ) : null}
                 </li>
               ))}
@@ -813,7 +818,7 @@ export default function PosPage() {
             <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="ক্রেতার ফোন (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
             <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="ক্রেতার নাম (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
             <input value={couponCode} onChange={(e) => setCouponCode(e.target.value)} placeholder="কুপন কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-            <input value={giftCardCode} onChange={(e) => setGiftCardCode(e.target.value)} placeholder="🎁 গিফট কার্ডের কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 font-mono text-sm" />
+            <input value={giftCardCode} onChange={(e) => setGiftCardCode(e.target.value)} placeholder="গিফট কার্ডের কোড (ঐচ্ছিক)" className="w-full rounded-lg border px-3 py-2 font-mono text-sm" />
             {customerPhone.trim() ? (
               <label className="block text-sm">লয়্যালটি পয়েন্ট ব্যবহার (ঐচ্ছিক)
                 <input value={loyaltyPoints} onChange={(e) => setLoyaltyPoints(e.target.value)} type="number" min="0" step="1" placeholder="কত পয়েন্ট খরচ করবেন" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" />
@@ -824,8 +829,8 @@ export default function PosPage() {
 
           <div className="space-y-2 border-t pt-3">
             <div className="flex gap-2">
-              <button type="button" onClick={() => setPayMode("paid")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "paid" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "text-slate-600"}`}>💵 নগদ / পেইড</button>
-              <button type="button" onClick={() => setPayMode("due")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "due" ? "border-amber-600 bg-amber-50 text-amber-700" : "text-slate-600"}`}>📒 বাকি / খাতা</button>
+              <button type="button" onClick={() => setPayMode("paid")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "paid" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "text-slate-600"}`}><Banknote className="mr-1 inline h-4 w-4 -translate-y-px" />নগদ / পেইড</button>
+              <button type="button" onClick={() => setPayMode("due")} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${payMode === "due" ? "border-amber-600 bg-amber-50 text-amber-700" : "text-slate-600"}`}><NotebookText className="mr-1 inline h-4 w-4 -translate-y-px" />বাকি / খাতা</button>
             </div>
             {payMode === "paid" ? (
               <div className="flex gap-2">
@@ -860,23 +865,47 @@ export default function PosPage() {
         </aside>
       </div>
 
+      {/* ED13-POS (EB5): mobile sticky pay bar — below lg the cart
+          stacks under the results with no reachable pay control,
+          so the total + complete-sale action stay thumb-reachable.
+          Sticky in-flow (same pattern as the support composer),
+          lifted above the dashboard shell's fixed mobile bottom
+          nav (58px bar + safe-area; the support composer uses
+          the same 62px offset). lg:hidden — on lg the cart column
+          above serves. The button wires the SAME completeSale
+          handler and selling/cart disabled state as the cart
+          panel's own complete-sale button; no checkout logic is
+          duplicated here. */}
+      <div className="sticky bottom-[calc(62px+env(safe-area-inset-bottom))] z-30 lg:hidden">
+        <div className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white/95 p-3 shadow-pop backdrop-blur">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-medium text-slate-500">{cartItemCount}টি আইটেম · আনুমানিক মোট</div>
+            <div className="truncate text-base font-bold">{fmt(estimate)}</div>
+          </div>
+          <button
+            type="button"
+            className="btn-primary shrink-0 px-4 py-2.5"
+            disabled={cart.length === 0 || selling}
+            onClick={completeSale}
+          >
+            {selling ? "বিক্রি হচ্ছে…" : "বিক্রি সম্পন্ন করুন"}
+          </button>
+        </div>
+      </div>
+
       {/* AB4: camera scan overlay — stays open (debounced) so
           staff can scan a whole basket; tracks stop on close. */}
       {scanOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">📷 বারকোড স্ক্যান করুন</h2>
+              <h2 className="text-sm font-semibold"><Camera className="mr-1 inline h-4 w-4 -translate-y-px" />বারকোড স্ক্যান করুন</h2>
               <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={closeScanner}>
                 বন্ধ করুন
               </button>
             </div>
             <video ref={videoRef} className="aspect-[4/3] w-full rounded-xl bg-black object-cover" playsInline muted />
-            {scanFeedback ? (
-              <p className="rounded-lg bg-emerald-50 p-2.5 text-sm font-medium text-emerald-700">{scanFeedback}</p>
-            ) : (
-              <p className="text-sm text-slate-500">বারকোডটি ক্যামেরার সামনে ধরুন — exact মিল সরাসরি কার্টে যোগ হবে।</p>
-            )}
+            <p className="text-sm text-slate-500">বারকোডটি ক্যামেরার সামনে ধরুন — exact মিল সরাসরি কার্টে যোগ হবে।</p>
           </div>
         </div>
       ) : null}
