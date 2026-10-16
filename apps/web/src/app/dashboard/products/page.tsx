@@ -4,6 +4,7 @@ import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
+import { MediaImage } from "@/components/MediaImage";
 import {
   EcBundleDialog, EcCategoryManagerDialog, EcChannelsDialog, EcGalleryDialog,
   type EcCategory, type EcTag,
@@ -1426,9 +1427,12 @@ export default function ProductsPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         {p.imageUrl ? (
-                          <img
+                          <MediaImage
                             src={p.imageUrl}
                             alt={p.name}
+                            width={80}
+                            height={80}
+                            sizes="40px"
                             className="h-10 w-10 rounded-lg object-cover border border-slate-200"
                           />
                         ) : (
@@ -2442,8 +2446,7 @@ export default function ProductsPage() {
                   <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-3 last:border-b-0">
                     <div className="flex items-center gap-3 text-sm">
                       {b.logoUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={b.logoUrl} alt={b.name} className="h-9 w-9 rounded-lg border border-slate-200 object-contain" />
+                        <MediaImage src={b.logoUrl} alt={b.name} width={72} height={72} sizes="36px" className="h-9 w-9 rounded-lg border border-slate-200 object-contain" />
                       ) : (
                         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-sm">🏷️</div>
                       )}

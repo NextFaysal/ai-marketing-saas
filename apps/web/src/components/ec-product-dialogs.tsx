@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
-import { MediaImage } from "@/components/media-image";
+import { MediaImage } from "@/components/MediaImage";
 
 // EC3/EC4 (Batch B2): product channel / gallery / bundle / category dialogs.
 // All error messages are the API's verbatim message (apiFetch throws
