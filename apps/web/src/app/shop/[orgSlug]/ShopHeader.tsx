@@ -9,6 +9,7 @@ import {
   getGuestWishlist,
   getShopSession,
 } from "@/lib/storefront-account";
+import { PLATFORM_APEX_DOMAIN } from "@repo/contracts";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { SHOP_ICONS } from "@/lib/icons";
 import {
@@ -316,6 +317,15 @@ export function ShopHeader({
           <Link href={`/shop/${orgSlug}/account`} className={navLinkCls}>
             <SHOP_ICONS.account className="h-5 w-5" /> {t.common.account}
           </Link>
+          {/* TD8 (TB2 carry-over): staff manage the shop ONLY on the
+              platform app host — the panel never lives on a shop
+              host (TD5), so this is a plain external link. */}
+          <a
+            href={`https://app.${PLATFORM_APEX_DOMAIN}`}
+            className="hidden rounded-lg px-3 py-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 md:inline"
+          >
+            ⚙️ {t.common.manageShop}
+          </a>
           <Link
             href={`/shop/${orgSlug}/cart`}
             className="relative rounded-lg px-3 py-2 text-white"

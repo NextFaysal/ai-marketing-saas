@@ -6088,6 +6088,31 @@ model OrgFeatureFlag {
   @@index([organizationId])
 }
 
+/// TD11 (Tenant Domain): slug cooldown tombstone. When an
+/// organization is PERMANENTLY deleted (AdminService
+/// .deleteOrgPermanent — the only hard-delete path; soft-delete
+/// status changes never write one), its slug is parked here for
+/// 180 days so a new org cannot immediately take over the deleted
+/// shop's {slug}.qosprey.com address (old links/customers would
+/// land on a stranger's shop). slugAvailability() refuses the
+/// name with reason "cooldown" while an unreleased, unexpired
+/// row exists. A SUPER admin can release a name early
+/// (POST /admin/slug-tombstones/:slug/release, reason mandatory,
+/// audited); released/expired rows stay as history and no longer
+/// block anything.
+model SlugTombstone {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  deletedOrgName String?
+  deletedAt      DateTime  @default(now())
+  expiresAt      DateTime
+  releasedAt     DateTime?
+  releasedById   String?
+  createdAt      DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
 model Announcement {
   id        String    @id @default(cuid())
   title     String

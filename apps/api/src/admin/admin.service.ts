@@ -30,6 +30,7 @@ import { SocialHealthService } from "../social/social-health.service";
 import { SocialPublishService } from "../social/social-publish.service";
 import { AdsService } from "../ads/ads.service";
 import { publicMediaServingEnabled } from "../storage/media-url";
+import { SLUG_TOMBSTONE_COOLDOWN_DAYS } from "../common/slug-availability";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -3291,12 +3292,75 @@ export class AdminService {
     try { await p.businessProfile?.deleteMany({ where: { organizationId } }); } catch { /* ignore */ }
     await p.organization.delete({ where: { id: organizationId } });
     certificate.organization = 1;
+    // TD11: park the slug for 180 days (subdomain takeover
+    // protection — the deleted shop's {slug}.qosprey.com address
+    // must not be claimable by a stranger tomorrow). Written
+    // immediately after the org row is gone; this delete path is
+    // deliberately NOT one big transaction (defensive multi-pass
+    // deletes above), so a tombstone failure does not resurrect
+    // anything — instead it is reported honestly in the return
+    // value and the audit certificate, so an operator can see
+    // the cooldown is missing and act.
+    let slugTombstoneWritten = false;
+    try {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + SLUG_TOMBSTONE_COOLDOWN_DAYS * 86400000);
+      const upserted = await p.slugTombstone?.upsert?.({
+        where: { slug: org.slug },
+        create: { slug: org.slug, deletedOrgName: org.name, deletedAt: now, expiresAt },
+        update: { deletedOrgName: org.name, deletedAt: now, expiresAt, releasedAt: null, releasedById: null },
+      });
+      slugTombstoneWritten = Boolean(upserted);
+    } catch { /* reported via slugTombstoneWritten below — never hidden */ }
     // The certificate lives in a PLATFORM audit row (no org) — it survives.
     await this.audit.log({
       userId: actor.id, action: "admin.org_deleted_permanently", entityType: "Organization", entityId: organizationId,
-      metadata: { organizationName: org.name, reason, certificate }, ipAddress: ip,
+      metadata: { organizationName: org.name, reason, certificate, slugTombstoneWritten }, ipAddress: ip,
     });
-    return { organizationId, organizationName: org.name, deleted: true, certificate };
+    return { organizationId, organizationName: org.name, deleted: true, certificate, slugTombstoneWritten };
+  }
+
+  // ---------------- TD11: slug tombstones (cooldown) ----------------
+
+  /** One tombstone row as the admin console shows it: the stored
+   * facts plus the computed state — active means the name is
+   * still parked (unreleased and unexpired right now). */
+  private slugTombstoneView(row: any) {
+    const active = !row.releasedAt && new Date(row.expiresAt).getTime() > Date.now();
+    return {
+      id: row.id, slug: row.slug, deletedOrgName: row.deletedOrgName ?? null,
+      deletedAt: row.deletedAt, expiresAt: row.expiresAt,
+      releasedAt: row.releasedAt ?? null, releasedById: row.releasedById ?? null,
+      createdAt: row.createdAt, active,
+    };
+  }
+
+  async listSlugTombstones() {
+    const p = this.prisma as any;
+    const rows = (await p.slugTombstone?.findMany?.({ orderBy: { deletedAt: "desc" }, take: 200 }).catch(() => [])) ?? [];
+    return { tombstones: rows.map((r: any) => this.slugTombstoneView(r)) };
+  }
+
+  /** SUPER-only early release of a parked slug (route carries
+   * @AdminTier("SUPER")). A reason ("note") is mandatory — it
+   * lands in the platform audit trail with the release. The row
+   * itself stays as history; only its blocking effect ends. */
+  async releaseSlugTombstone(actor: any, rawSlug: string, noteRaw: string, ip?: string) {
+    const note = this.requireReason(noteRaw);
+    const slug = String(rawSlug ?? "").trim().toLowerCase();
+    const p = this.prisma as any;
+    const row = await p.slugTombstone?.findUnique?.({ where: { slug } }).catch(() => null);
+    if (!row) throw new NotFoundException("No slug tombstone found for this name");
+    if (row.releasedAt) throw new BadRequestException("This slug was already released");
+    if (new Date(row.expiresAt).getTime() <= Date.now()) {
+      throw new BadRequestException("This slug's cooldown has already expired — no release is needed");
+    }
+    const updated = await p.slugTombstone.update({
+      where: { slug },
+      data: { releasedAt: new Date(), releasedById: actor.id },
+    });
+    await this.logAdmin(actor, "slug_tombstone_released", "SlugTombstone", row.id, { slug, note, expiresAt: row.expiresAt }, ip);
+    return { released: true, tombstone: this.slugTombstoneView(updated) };
   }
 
   // ---------------- Milestone 42 (Phase A6): Reliability Panel ----------------

@@ -7,7 +7,7 @@ import { RotateCcw, ShieldCheck, Truck } from "lucide-react";
 import { fetchProductDetail, fetchProductReviewsSummary, fetchShopHome } from "@/lib/storefront-server";
 import { effectiveThemeId, previewThemeIdFromHeaders, themeOf } from "@/lib/shop-theme";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
-import { buildProductJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
+import { buildProductJsonLd, canonicalShopBase, canonicalShopUrlAt, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "../../ProductCard";
 import { FlashCountdown } from "../../FlashCountdown";
@@ -25,7 +25,13 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   if (!detail) return { title: shopT("bn").common.productNotFound };
   const title = detail.product.seo.title ?? detail.product.name;
   const description = detail.product.seo.description ?? detail.product.description ?? home?.settings.metaDescription ?? undefined;
-  const canonical = canonicalShopUrl(sitemapUrlBase(), orgSlug, productSlug);
+  // TD7: canonical host base from the shop home payload's org
+  // (verified custom domain, else tenant subdomain); when the home
+  // payload is unavailable the subdomain rule still applies.
+  const canonical = canonicalShopUrlAt(
+    canonicalShopBase(home?.organization ?? { slug: orgSlug }),
+    productSlug,
+  );
   return {
     title: home ? `${title} — ${home.settings.shopName}` : title,
     description: description ?? undefined,
@@ -66,6 +72,9 @@ export default async function ProductPage({ params }: { params: Params }) {
   // React cache()-deduped with generateMetadata's fetch in the
   // same request (and with homeForFlash above when present).
   const homeForTheme = homeForFlash ?? (await fetchShopHome(orgSlug).catch(() => null));
+  // TD7: the JSON-LD canonical base reads the org's custom-domain
+  // fields from this same (React cache-deduped) shop-home payload.
+  const home = homeForTheme;
   const hdrs = await headers();
   const effThemeId = effectiveThemeId(homeForTheme?.settings.themeId, previewThemeIdFromHeaders(hdrs));
   const isV2 = effThemeId === "v2";
@@ -86,6 +95,7 @@ export default async function ProductPage({ params }: { params: Params }) {
             buildProductJsonLd({
               base: sitemapUrlBase(),
               orgSlug,
+              canonicalBase: canonicalShopBase(home?.organization ?? { slug: orgSlug }),
               product,
               reviewsSummary,
             }),

@@ -423,6 +423,14 @@ export class ContactMessageDto {
   @IsString() @MinLength(1) @MaxLength(2000) message!: string;
 }
 
+/** TD9: set / change / remove the org's custom domain via the
+ * storefront-owned write path. domain null (or omitted) removes
+ * the domain; format/platform/conflict rules live in
+ * StorefrontService.setCustomDomain. */
+export class SetCustomDomainDto {
+  @IsOptional() @IsString() @MaxLength(253) domain?: string | null;
+}
+
 const SLOT_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** EC18: a merchant-defined delivery time window. districtScope

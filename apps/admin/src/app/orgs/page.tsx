@@ -7,6 +7,56 @@ import { fmtDateTime } from "@/lib/dates";
 
 interface OrgRow { id: string; name: string; slug: string; status: string; country: string; createdAt: string; memberCount: number; orderCount: number; subscription?: { plan: string; status: string } | null }
 
+interface TombstoneRow { id: string; slug: string; deletedOrgName: string | null; deletedAt: string; expiresAt: string; releasedAt: string | null; releasedById: string | null; active: boolean }
+
+/** TD11: slug cooldown list — a permanently deleted org's slug
+ * stays parked for 180 days so its old shop address cannot be
+ * taken over. A SUPER admin can release a name early; the note
+ * is mandatory and lands in the audit trail (same prompt pattern
+ * as this page's bulk actions). Renders nothing when there are
+ * no tombstones or the list cannot be loaded. */
+function SlugTombstonesCard() {
+  const [rows, setRows] = React.useState<TombstoneRow[]>([]);
+  const [msg, setMsg] = React.useState("");
+  const load = React.useCallback(async () => {
+    const out = await apiFetch<{ tombstones: TombstoneRow[] }>(`/admin/slug-tombstones`).catch(() => null);
+    if (out) setRows(out.tombstones);
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const release = async (t: TombstoneRow) => {
+    const note = window.prompt(`"${t.slug}" নামটি cooldown থেকে মুক্ত করুন — কারণ লিখুন (Audit-এ থাকবে):`);
+    if (!note || note.trim().length < 3) return;
+    try {
+      await apiFetch(`/admin/slug-tombstones/${encodeURIComponent(t.slug)}/release`, { method: "POST", body: JSON.stringify({ note }) });
+      setMsg(`"${t.slug}" মুক্ত হয়েছে — নামটি এখন আবার ব্যবহার করা যাবে।`);
+      await load();
+    } catch (e) { setMsg(e instanceof Error ? e.message : "মুক্তি ব্যর্থ হয়েছে"); }
+  };
+  if (rows.length === 0) return null;
+  return (
+    <div className="acard mt-4 p-4">
+      <h3 className="text-sm font-semibold text-slate-200">🪦 Slug Cooldown — মুছে ফেলা দোকানের সংরক্ষিত নাম</h3>
+      <p className="mt-1 text-xs text-slate-500">চিরতরে মুছে ফেলা Organization-এর slug ১৮০ দিন সংরক্ষিত থাকে — ওই সময়ের মধ্যে নতুন কেউ ওই নামে দোকান খুলতে পারে না (পুরনো ঠিকানা দখল রোধ)। জরুরি হলে SUPER অ্যাডমিন কারণ লিখে আগেই মুক্ত করতে পারেন।</p>
+      {msg ? <p className="mt-2 rounded-lg bg-indigo-500/10 p-2.5 text-sm text-indigo-200">{msg}</p> : null}
+      <table className="atable mt-3">
+        <thead><tr>
+          <th className="ath">Slug</th><th className="ath">মুছে ফেলা দোকান</th><th className="ath">মোছা হয়েছে</th><th className="ath">Cooldown শেষ</th><th className="ath">অবস্থা</th><th className="ath"></th>
+        </tr></thead>
+        <tbody>{rows.map((t) => (
+          <tr key={t.id} className="arow border-t border-slate-800">
+            <td className="atd font-mono text-indigo-300">{t.slug}<span className="text-slate-500">.qosprey.com</span></td>
+            <td className="atd">{t.deletedOrgName ?? "—"}</td>
+            <td className="atd text-slate-400">{fmtDateTime(t.deletedAt, "date")}</td>
+            <td className="atd text-slate-400">{fmtDateTime(t.expiresAt, "date")}</td>
+            <td className="atd">{t.active ? <span className="abadge-amber">Cooldown চলছে</span> : t.releasedAt ? <span className="abadge-green">মুক্ত করা হয়েছে</span> : <span className="abadge-red">মেয়াদ শেষ</span>}</td>
+            <td className="atd">{t.active ? <button type="button" className="abtn-secondary !px-2 !py-1 text-xs" onClick={() => release(t)}>মুক্ত করুন</button> : null}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
 const STATUS_BADGE = (s: string) => (s === "ACTIVE" ? "abadge-green" : s === "SUSPENDED" ? "abadge-amber" : "abadge-red");
 
 export default function OrgsPage() {
@@ -122,6 +172,8 @@ export default function OrgsPage() {
         {loading && rows.length === 0 ? <div className="askel-table m-4" /> : null}
         {sorted.length === 0 && !loading && !error ? <EmptyState title="কোনো Organization পাওয়া যায়নি।" sub="খোঁজ বা ফিল্টার বদলে আবার দেখুন।" /> : null}
       </div>
+
+      <SlugTombstonesCard />
 
       <DetailDrawer
         open={quick !== null}

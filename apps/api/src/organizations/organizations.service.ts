@@ -9,6 +9,12 @@ import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBra
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, PERMISSION_AREA_KEYS, PRESET_ROLE_PROFILES, effectiveAccess, findUnknownAreas, normalizeOverrides, presetProfile } from "../common/permission-catalog";
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_KEYS } from "../common/agent-notify";
+import { slugAvailability } from "../common/slug-availability";
+import {
+  PLATFORM_CUSTOM_DOMAIN_MESSAGE,
+  isPlatformHostedDomain,
+  normalizeCustomDomainInput,
+} from "../common/custom-domain";
 import { isValidTimezone, isValidWindows } from "../inbox/working-hours";
 import { parseAiSchedule } from "../inbox/ai-schedule";
 import { EmailProvider } from "../messaging/email.provider";
@@ -31,9 +37,24 @@ export class OrganizationsService {
     @Optional() private readonly storageRegistry?: StorageRegistryService,
   ) {}
 
+  /** TD1/TD2: the live availability check behind
+   * GET /organizations/slug-available — the same decision create()
+   * enforces, so the onboarding picker can never promise a name
+   * the server would then refuse. */
+  async checkSlugAvailability(rawSlug: unknown) {
+    return slugAvailability(this.prisma as any, rawSlug);
+  }
+
   async create(userId: string, dto: CreateOrganizationDto, ip?: string) {
-    const slugTaken = await (this.prisma as any).organization.findUnique({ where: { slug: dto.slug } });
-    if (slugTaken) throw new ConflictException("This slug is already taken");
+    // TD1: server-side slug governance — format + reserved names
+    // (code lists + SUPER-added platform-setting extras) refuse
+    // with the Bengali reason; "taken" keeps its long-standing
+    // Conflict behaviour and message.
+    const availability = await slugAvailability(this.prisma as any, dto.slug);
+    if (!availability.available) {
+      if (availability.reason === "taken") throw new ConflictException("This slug is already taken");
+      throw new BadRequestException(availability.message);
+    }
     const org = await (this.prisma as any).$transaction(async (tx: any) => {
       const created = await tx.organization.create({
         data: {
@@ -1354,12 +1375,30 @@ export class OrganizationsService {
       else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new BadRequestException("প্রাইমারি রঙ হতে হবে #RRGGBB ফরম্যাটে (যেমন #4F46E5)");
       else data.primaryColor = color.toUpperCase();
     }
+    // TD9: when the domain field is present, read the CURRENT org
+    // before the update so a real change can be told apart from a
+    // re-save of the same value (only a change resets verification
+    // below). Normalised comparison on both sides.
+    let previousDomain: string | null = null;
+    if (dto.customDomain !== undefined) {
+      const current = await (this.prisma as any).organization
+        .findUnique({ where: { id: organizationId } })
+        .catch(() => null);
+      previousDomain = current?.customDomain
+        ? normalizeCustomDomainInput(current.customDomain) || null
+        : null;
+    }
     if (dto.customDomain !== undefined) {
       const domain = dto.customDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       if (domain === "") data.customDomain = null;
       else {
         if (!/^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/.test(domain)) {
           throw new BadRequestException("ডোমেইনটি সঠিক ফরম্যাটে লিখুন (যেমন reports.youragency.com) — প্রোটোকল বা পাথ ছাড়া");
+        }
+        // TD9: the platform's own domain / subdomains can never be
+        // claimed here either — same refusal as setCustomDomain.
+        if (isPlatformHostedDomain(domain)) {
+          throw new BadRequestException(PLATFORM_CUSTOM_DOMAIN_MESSAGE);
         }
         const taken = await (this.prisma as any).organization.findFirst({ where: { customDomain: domain, NOT: { id: organizationId } } });
         if (taken) throw new ConflictException("এই ডোমেইনটি অন্য একটি Organization ইতিমধ্যে সংরক্ষণ করেছে");
@@ -1368,6 +1407,32 @@ export class OrganizationsService {
     }
     if (Object.keys(data).length === 0) throw new BadRequestException("পরিবর্তন করার মতো কোনো ফিল্ড পাঠানো হয়নি");
     const org = await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
+    // TD9: a domain CHANGE on this path must also reset the
+    // storefront verification — the old domain's proof must never
+    // carry over to a new domain (the bug this fixes). Defensive
+    // by design: a prisma fake / partial deployment without the
+    // storefrontSetting table must not break branding updates, so
+    // the lookup is optional-chained and failure-isolated.
+    if (dto.customDomain !== undefined) {
+      const newDomain = data.customDomain ?? null;
+      if (previousDomain !== newDomain) {
+        try {
+          const settingTable = (this.prisma as any).storefrontSetting;
+          const setting = settingTable?.findUnique
+            ? await settingTable.findUnique({ where: { organizationId } }).catch(() => null)
+            : null;
+          if (setting && settingTable?.update) {
+            await settingTable.update({
+              where: { id: setting.id },
+              data: { domainVerifyToken: null, domainVerifiedAt: null },
+            });
+          }
+        } catch {
+          // Verification reset is best-effort here; the branding
+          // update itself has already succeeded.
+        }
+      }
+    }
     await this.audit.log({ organizationId, userId: actorId, action: "org.branding.update", entityType: "Organization", entityId: organizationId, metadata: data, ipAddress: ip });
     return { ...org, creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }

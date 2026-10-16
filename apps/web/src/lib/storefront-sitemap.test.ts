@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildShopSitemapEntries, buildShopSitemapUrls, buildSitemapUrl, sitemapPagePlan, sitemapUrlBase } from "./storefront-sitemap";
+import {
+  buildCanonicalShopSitemapEntries,
+  buildShopSitemapEntries,
+  buildShopSitemapUrls,
+  buildSitemapUrl,
+  sitemapPagePlan,
+  sitemapUrlBase,
+} from "./storefront-sitemap";
 
 describe("sitemapUrlBase", () => {
   it("uses NEXT_PUBLIC_WEB_URL (trailing slash trimmed) and nothing fabricated", () => {
@@ -78,6 +85,29 @@ describe("buildShopSitemapEntries (EC27 lastmod)", () => {
     ]);
     // Default (4th arg omitted) behaves the same.
     expect(buildShopSitemapEntries("", "s", []).map((e) => e.url)).toEqual(["/shop/s"]);
+  });
+});
+
+describe("buildCanonicalShopSitemapEntries (TD7)", () => {
+  it("puts home at the canonical origin root and products at /products/", () => {
+    const entries = buildCanonicalShopSitemapEntries("https://dhaka-fashion.qosprey.com", [
+      { slug: "a", updatedAt: "2026-10-01T00:00:00.000Z" },
+      { slug: "b", updatedAt: "2026-10-10T00:00:00.000Z" },
+      { slug: "a", updatedAt: "2026-10-05T00:00:00.000Z" }, // duplicate skipped
+      { slug: null, updatedAt: "2026-10-12T00:00:00.000Z" }, // slugless skipped
+    ]);
+    expect(entries.map((e) => e.url)).toEqual([
+      "https://dhaka-fashion.qosprey.com/",
+      "https://dhaka-fashion.qosprey.com/products/a",
+      "https://dhaka-fashion.qosprey.com/products/b",
+    ]);
+    expect(entries[0].lastModified?.toISOString()).toBe("2026-10-10T00:00:00.000Z");
+  });
+
+  it("works on a verified custom-domain base too", () => {
+    expect(buildCanonicalShopSitemapEntries("https://dhaka-fashion.com/", [])).toEqual([
+      { url: "https://dhaka-fashion.com/", lastModified: null },
+    ]);
   });
 });
 
