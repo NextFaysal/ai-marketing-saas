@@ -11,6 +11,15 @@ import {
 } from "@/lib/storefront-account";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { SHOP_ICONS } from "@/lib/icons";
+import {
+  getCachedCartCount,
+  getCachedWishlistCount,
+  invalidateCartCount,
+  invalidateWishlistCount,
+  setCachedCartCount,
+  setCachedWishlistCount,
+} from "@/lib/shop-header-cache";
+import { MediaImage } from "@/components/MediaImage";
 
 export function ShopHeader({
   orgSlug,
@@ -41,22 +50,42 @@ export function ShopHeader({
   const [count, setCount] = useState(0);
   const [wishCount, setWishCount] = useState(0);
 
+  // ED5 (EB2): both badges read the shared ~30s header cache first
+  // (lib/shop-header-cache) and only fetch when the entry is missing
+  // or stale — soft navigations no longer refetch cart + wishlist on
+  // every mount. Counts are the same values as before; they may be
+  // up to the TTL stale across soft navigations (see the cache lib).
   const refresh = useCallback(async () => {
+    const cached = getCachedCartCount(orgSlug);
+    if (cached !== null) {
+      setCount(cached);
+      return;
+    }
     const cart = await fetchCart(orgSlug);
-    setCount(cartItemCount(cart));
+    const next = cartItemCount(cart);
+    setCachedCartCount(orgSlug, next);
+    setCount(next);
   }, [orgSlug]);
 
   // EC25: wishlist badge — account wishlist size when logged in,
   // the local guest list otherwise.
   const refreshWish = useCallback(async () => {
+    const cached = getCachedWishlistCount(orgSlug);
+    if (cached !== null) {
+      setWishCount(cached);
+      return;
+    }
     if (getShopSession(orgSlug)) {
       try {
         const out = await fetchWishlist(orgSlug);
+        setCachedWishlistCount(orgSlug, out.items.length);
         setWishCount(out.items.length);
         return;
       } catch { /* fall back to the guest list size */ }
     }
-    setWishCount(getGuestWishlist(orgSlug).length);
+    const guestCount = getGuestWishlist(orgSlug).length;
+    setCachedWishlistCount(orgSlug, guestCount);
+    setWishCount(guestCount);
   }, [orgSlug]);
 
   useEffect(() => {
@@ -64,23 +93,40 @@ export function ShopHeader({
     refreshWish();
     const onUpdate = (e: Event) => {
       const detail = (e as CustomEvent<{ orgSlug?: string }>).detail;
-      if (!detail?.orgSlug || detail.orgSlug === orgSlug) refresh();
+      if (!detail?.orgSlug || detail.orgSlug === orgSlug) {
+        // ED5: a cart mutation invalidates the cached count, so the
+        // refresh below refetches instead of serving the stale entry.
+        invalidateCartCount(orgSlug);
+        refresh();
+      }
     };
     const onWish = (e: Event) => {
       const detail = (e as CustomEvent<{ orgSlug?: string }>).detail;
-      if (!detail?.orgSlug || detail.orgSlug === orgSlug) refreshWish();
+      if (!detail?.orgSlug || detail.orgSlug === orgSlug) {
+        // ED5: guest-wishlist changes and session changes both
+        // invalidate the cached wishlist count before recomputing.
+        // (Account-wishlist mutations dispatch no event — TTL-only,
+        // documented in lib/shop-header-cache.ts.)
+        invalidateWishlistCount(orgSlug);
+        refreshWish();
+      }
+    };
+    const onStorage = () => {
+      // Cross-tab change: neither cached badge can be trusted.
+      invalidateCartCount(orgSlug);
+      invalidateWishlistCount(orgSlug);
+      refresh();
+      refreshWish();
     };
     window.addEventListener(CART_UPDATED_EVENT, onUpdate);
     window.addEventListener(SHOP_SESSION_EVENT, onWish);
     window.addEventListener(GUEST_WISHLIST_EVENT, onWish);
-    window.addEventListener("storage", refresh);
-    window.addEventListener("storage", refreshWish);
+    window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(CART_UPDATED_EVENT, onUpdate);
       window.removeEventListener(SHOP_SESSION_EVENT, onWish);
       window.removeEventListener(GUEST_WISHLIST_EVENT, onWish);
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("storage", refreshWish);
+      window.removeEventListener("storage", onStorage);
     };
   }, [refresh, refreshWish, orgSlug]);
 
@@ -92,8 +138,11 @@ export function ShopHeader({
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <Link href={`/shop/${orgSlug}`} className="flex min-w-0 items-center gap-2.5">
           {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt={shopName} className="h-9 w-9 rounded-xl border border-slate-200 object-cover" />
+            // ED5 (EB2): shared MediaImage (ED4 contract) — CDN logos
+            // get a srcset, others fall back to a plain img with
+            // explicit dimensions + lazy loading. Same classes, so
+            // the rendered logo is visually unchanged.
+            <MediaImage src={logoUrl} alt={shopName} width={36} height={36} aspectRatio="1 / 1" className="h-9 w-9 rounded-xl border border-slate-200 object-cover" />
           ) : (
             <span
               className="flex h-9 w-9 items-center justify-center rounded-xl text-base font-black text-white"
