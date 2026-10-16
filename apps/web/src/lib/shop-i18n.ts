@@ -7,8 +7,8 @@
  * payload (`settings.locale`). The dashboard and the
  * single-product / landing checkouts stay Bengali by design.
  *
- * Keys are grouped: common.* home.* product.* cart.* checkout.*
- * success.* track.*. Both locales MUST expose exactly the same
+ * Keys are grouped: common.* chrome.* home.* product.* cart.*
+ * checkout.* success.* track.*. Both locales MUST expose exactly the same
  * key set — pinned by shop-i18n.test.ts.
  */
 
@@ -39,6 +39,11 @@ const bnDict = {
     nameAsc: "নাম অনুযায়ী",
   },
   popup: {
+    close: "বন্ধ করুন",
+  },
+  chrome: {
+    search: "খুঁজুন",
+    menu: "মেনু",
     close: "বন্ধ করুন",
   },
   brand: {
@@ -425,6 +430,11 @@ const enDict: ShopDict = {
     nameAsc: "Name A–Z",
   },
   popup: {
+    close: "Close",
+  },
+  chrome: {
+    search: "Search",
+    menu: "Menu",
     close: "Close",
   },
   brand: {
