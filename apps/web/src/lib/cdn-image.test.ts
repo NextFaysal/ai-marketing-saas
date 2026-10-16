@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CDN_IMAGE_WIDTHS, cdnImageUrl, cdnSrcSet, isCdnImageUrl } from "./cdn-image";
+import { CDN_IMAGE_WIDTHS, cdnImageUrl, cdnSrcSet, cdnWidthFor, isCdnImageUrl } from "./cdn-image";
 
 const CDN = "https://media.qosprey.com/org-1/product/p1/abc.png";
 
@@ -49,5 +49,24 @@ describe("cdn-image (RB5/RM6)", () => {
   it("rounds and floors the width", () => {
     expect(cdnImageUrl(CDN, 640.4)).toContain("width=640");
     expect(cdnImageUrl(CDN, 0)).toContain("width=1");
+  });
+
+  it("cdnWidthFor picks the largest preset step at or below the request (ED4)", () => {
+    expect(cdnWidthFor(320)).toBe(320);
+    expect(cdnWidthFor(500)).toBe(320);
+    expect(cdnWidthFor(640)).toBe(640);
+    expect(cdnWidthFor(800)).toBe(640);
+    expect(cdnWidthFor(1000)).toBe(960);
+    expect(cdnWidthFor(1280)).toBe(1280);
+    expect(cdnWidthFor(4000)).toBe(1280);
+    // Below the smallest step → smallest step (never upscale past a preset).
+    expect(cdnWidthFor(100)).toBe(320);
+    expect(cdnWidthFor(160)).toBe(320);
+    // Unknown / invalid → the 640 mid preset.
+    expect(cdnWidthFor()).toBe(640);
+    expect(cdnWidthFor(undefined)).toBe(640);
+    expect(cdnWidthFor(null)).toBe(640);
+    expect(cdnWidthFor(0)).toBe(640);
+    expect(cdnWidthFor(Number.NaN)).toBe(640);
   });
 });

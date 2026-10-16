@@ -50,6 +50,23 @@ export function cdnImageUrl(src: string, width: number): string {
   return `${base}/cdn-cgi/image/width=${w},quality=85,format=auto/${src}`;
 }
 
+/**
+ * ED4 — the preset step for a requested display width: the largest
+ * preset width that is <= the request (the smallest preset when the
+ * request is smaller than every step, the largest when it exceeds
+ * every step). Unknown/invalid requests fall back to 640, the
+ * mid preset used for cards and content images.
+ */
+export function cdnWidthFor(requestedWidth?: number | null): number {
+  const fallback = 640;
+  if (!requestedWidth || !Number.isFinite(requestedWidth) || requestedWidth <= 0) return fallback;
+  let step: number = CDN_IMAGE_WIDTHS[0];
+  for (const w of CDN_IMAGE_WIDTHS) {
+    if (w <= requestedWidth) step = w;
+  }
+  return step;
+}
+
 /** A srcset over the preset widths for CDN URLs; undefined for
  * anything else (callers then render a plain <img> src). */
 export function cdnSrcSet(
