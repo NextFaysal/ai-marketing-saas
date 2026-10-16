@@ -9,6 +9,7 @@ import {
   OctagonX, Search, UserRound, Wrench, X,
 } from "lucide-react";
 import { InstallButton } from "@/components/pwa";
+import { RouteProgress } from "@/components/route-progress";
 import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
@@ -654,6 +655,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <ToastProvider>
       <ConfirmProvider>
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+      {/* ED11 (EB4): route progress bar (soft-nav feedback). */}
+      <RouteProgress />
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-[270px] shrink-0 lg:block shadow-xl z-30">
         {sidebar}
@@ -805,8 +808,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <PlatformBanner />
         <SubscriptionBanner />
 
-        {/* Main Content Area */}
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-8 animate-rise">
+        {/* Main Content Area — ED11 (EB4): the entrance utility
+            is now the token-timed .animate-rise-in (same 350ms /
+            6px rise the tailwind animate-rise produced; one
+            animation, not two). */}
+        <main className="mx-auto w-full max-w-[1440px] flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-8 animate-rise-in">
           {children}
         </main>
 

@@ -75,7 +75,9 @@ export default async function ProductPage({ params }: { params: Params }) {
   const boughtTogether = detail.boughtTogether ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
+    // ED11 (EB4): one token-timed rise entrance for the PDP
+    // container (transform/opacity only, once per mount).
+    <div className="animate-rise-in mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
       {/* EC27: Product JSON-LD from real data (rating omitted when no reviews). */}
       <script
         type="application/ld+json"

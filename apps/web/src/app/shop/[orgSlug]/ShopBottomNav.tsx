@@ -11,6 +11,7 @@ import {
   setCachedCartCount,
 } from "@/lib/shop-header-cache";
 import { setNavLiftPx, useBuyBarActive } from "@/lib/shop-bottom-chrome";
+import { useBadgeBump } from "@/lib/use-badge-bump";
 
 /**
  * ED7 — v2 mobile bottom navigation. Rendered by the shop layout
@@ -30,6 +31,8 @@ export function ShopBottomNav({
   const pathname = usePathname();
   const buyBarActive = useBuyBarActive();
   const [count, setCount] = useState(0);
+  // ED11 (EB4): same increase-only badge bump as the header.
+  const cartBumpKey = useBadgeBump(count);
   const [hidden, setHidden] = useState(false);
   const lastYRef = useRef(0);
   const navRef = useRef<HTMLElement | null>(null);
@@ -163,7 +166,7 @@ export function ShopBottomNav({
           <span className="relative">
             <SHOP_ICONS.cart className="h-5 w-5" />
             {count > 0 ? (
-              <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+              <span key={cartBumpKey} className={`absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white${cartBumpKey > 0 ? " badge-bump" : ""}`}>
                 {count}
               </span>
             ) : null}

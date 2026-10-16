@@ -427,6 +427,20 @@
      for reduced-motion users with no extra code. */
   .fade-rise { animation: fade-rise 0.35s ease both; }
 
+  /* ED11 (EB4): token-timed rise entrance (transform + opacity
+     only — no layout shift, runs once per mount). Applied to the
+     shop home wrapper, the PDP container and the dashboard page
+     container. Duration = --motion-slow (350ms, the fade-rise
+     duration); the prefers-reduced-motion block below collapses
+     it like every other animation. */
+  .animate-rise-in { animation: rise-in var(--motion-slow) ease both; }
+
+  /* ED11 (EB4): cart-badge bump — a one-shot scale pulse replayed
+     (via a changing React key) when the cart count INCREASES.
+     Reduced-motion users never see it: the global block below
+     collapses all animation durations to 0.01ms. */
+  .badge-bump { animation: badge-bump var(--motion-slow) ease; }
+
   /* Thread canvas tint: a whisper of the org's brand colour under
      the white incoming bubbles (color-mix over the v2 thread-scroll
      radial accent). */
@@ -641,6 +655,10 @@
 }
 
 @keyframes fade-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes badge-bump { 0% { transform: scale(1); } 30% { transform: scale(1.35); } 100% { transform: scale(1); } }
 
 @keyframes inbox-pulse { 0% { transform: scale(0.7); opacity: 1; } 100% { transform: scale(1.25); opacity: 0; } }
 

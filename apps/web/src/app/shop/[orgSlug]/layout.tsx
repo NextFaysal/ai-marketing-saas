@@ -8,6 +8,7 @@ import { isWhiteLabel } from "@/lib/shop-pwa";
 import { trackingFromSettings } from "@/lib/shop-tracking";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { TrackingTags } from "./TrackingTags";
+import { RouteProgress } from "@/components/route-progress";
 import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
 import { ShopBottomNav } from "./ShopBottomNav";
@@ -118,6 +119,9 @@ export default async function ShopLayout({
       data-shop-theme={effThemeId}
       style={{ "--brand": accent } as React.CSSProperties}
     >
+      {/* ED11 (EB4): route progress bar — inside the shop root
+          so its gradient reads the org's --brand. */}
+      <RouteProgress />
       <TrackingTags tracking={trackingFromSettings(home.settings)} />
       {/* AB8 (AX23): merchant custom CSS — after the tracking /
           theme inputs, before the header, so it can restyle the

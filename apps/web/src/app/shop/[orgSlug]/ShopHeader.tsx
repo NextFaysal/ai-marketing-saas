@@ -20,6 +20,7 @@ import {
   setCachedWishlistCount,
 } from "@/lib/shop-header-cache";
 import { MediaImage } from "@/components/MediaImage";
+import { useBadgeBump } from "@/lib/use-badge-bump";
 import { Drawer } from "@repo/ui/client";
 import { ShopCartDrawer } from "./ShopCartDrawer";
 
@@ -51,6 +52,12 @@ export function ShopHeader({
   const menuPages = pages ?? [];
   const [count, setCount] = useState(0);
   const [wishCount, setWishCount] = useState(0);
+  // ED11 (EB4): cart-badge bump key — increments only when the
+  // count INCREASES (see lib/use-badge-bump); the badge span is
+  // keyed by it so the CSS pulse replays once per add. No
+  // drawer auto-open: the bump is the whole feedback (opening
+  // the drawer on every add would be obtrusive mid-browsing).
+  const cartBumpKey = useBadgeBump(count);
   // ED7 (v2 header only): expandable search row + mobile drawer nav.
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -216,7 +223,7 @@ export function ShopHeader({
               <button type="button" onClick={() => setCartDrawerOpen(true)} className="btn-brand relative flex h-11 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-3 text-sm font-bold" aria-label={t.common.cart}>
                 <SHOP_ICONS.cart className="h-5 w-5" /> <span className="hidden sm:inline">{t.common.cart}</span>
                 {count > 0 ? (
-                  <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white">
+                  <span key={cartBumpKey} className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white${cartBumpKey > 0 ? " badge-bump" : ""}`}>
                     {count}
                   </span>
                 ) : null}
@@ -316,7 +323,7 @@ export function ShopHeader({
           >
             <SHOP_ICONS.cart className="h-5 w-5" /> {t.common.cart}
             {count > 0 ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white">
+              <span key={cartBumpKey} className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white${cartBumpKey > 0 ? " badge-bump" : ""}`}>
                 {count}
               </span>
             ) : null}

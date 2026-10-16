@@ -126,7 +126,9 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const activeFilterCount = (category ? 1 : 0) + (brand ? 1 : 0) + (sort !== "featured" ? 1 : 0);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
+    // ED11 (EB4): one token-timed rise entrance for the home
+    // sections wrapper (transform/opacity only, once per mount).
+    <div className="animate-rise-in mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
       {/* EC27: Organization + WebSite JSON-LD from real shop data. */}
       <script
         type="application/ld+json"
