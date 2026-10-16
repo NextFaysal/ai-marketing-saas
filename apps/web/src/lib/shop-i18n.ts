@@ -28,6 +28,7 @@ const bnDict = {
     nagad: "নগদ",
     supportPhoneLabel: "সাপোর্ট",
     returnPolicyLabel: "রিটার্ন নীতি",
+    skipToContent: "মূল কন্টেন্টে যান",
   },
   sort: {
     label: "সাজান",
@@ -430,6 +431,7 @@ const enDict: ShopDict = {
     nagad: "Nagad",
     supportPhoneLabel: "Support",
     returnPolicyLabel: "Return policy",
+    skipToContent: "Skip to main content",
   },
   sort: {
     label: "Sort",

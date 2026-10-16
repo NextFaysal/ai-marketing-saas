@@ -7,6 +7,7 @@ import { customJsAllowedOnHost, primaryHostsFromEnv } from "@/lib/shop-custom-co
 import { isWhiteLabel } from "@/lib/shop-pwa";
 import { trackingFromSettings } from "@/lib/shop-tracking";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
+import { SkipLink } from "@repo/ui";
 import { TrackingTags } from "./TrackingTags";
 import { RouteProgress } from "@/components/route-progress";
 import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
@@ -115,10 +116,13 @@ export default async function ShopLayout({
     // reached only the announcement bar, header logo tile and a few
     // accents — never a buy/checkout button.
     <div
+      lang={locale}
       className="min-h-screen bg-slate-50"
       data-shop-theme={effThemeId}
       style={{ "--brand": accent } as React.CSSProperties}
     >
+      {/* EB6/ED16: skip link — first focusable element in the shop. */}
+      <SkipLink href="#shop-main">{t.common.skipToContent}</SkipLink>
       {/* ED11 (EB4): route progress bar — inside the shop root
           so its gradient reads the org's --brand. */}
       <RouteProgress />
@@ -142,7 +146,7 @@ export default async function ShopLayout({
           <p className="mx-auto max-w-6xl px-4 py-2">{home.settings.announcementText}</p>
         </div>
       ) : null}
-      <main>{children}</main>
+      <main id="shop-main" tabIndex={-1}>{children}</main>
       {/* AB7 (AX19): first-touch utm/click capture into tp_sess. */}
       <AttributionCapture />
       {/* ED6: popup deferred (renders nothing until its trigger). */}
