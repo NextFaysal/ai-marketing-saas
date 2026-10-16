@@ -45,6 +45,8 @@ const bnDict = {
     search: "খুঁজুন",
     menu: "মেনু",
     close: "বন্ধ করুন",
+    filter: "ফিল্টার",
+    categories: "ক্যাটাগরি",
   },
   brand: {
     freeDeliveryBadge: "ফ্রি ডেলিভারি",
@@ -436,6 +438,8 @@ const enDict: ShopDict = {
     search: "Search",
     menu: "Menu",
     close: "Close",
+    filter: "Filter",
+    categories: "Categories",
   },
   brand: {
     freeDeliveryBadge: "Free delivery",

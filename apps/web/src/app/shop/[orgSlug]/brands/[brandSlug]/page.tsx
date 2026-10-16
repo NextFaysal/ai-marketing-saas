@@ -4,12 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchShopBrand, fetchShopHome } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
-import { themeOf } from "@/lib/shop-theme";
+import { effectiveThemeId, themeOf } from "@/lib/shop-theme";
 import { ProductCard } from "../../ProductCard";
 import { MediaImage } from "@/components/MediaImage";
 
 type Params = Promise<{ orgSlug: string; brandSlug: string }>;
-type Search = Promise<{ page?: string }>;
+type Search = Promise<{ page?: string; themePreview?: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { orgSlug, brandSlug } = await params;
@@ -41,7 +41,9 @@ export default async function ShopBrandPage({ params, searchParams }: { params: 
   const { brand, products, pagination } = data;
   const locale = shopLocaleOf(home?.settings.locale);
   const t = shopT(locale);
-  const theme = themeOf(home?.settings.themeId);
+  // ED8: effective theme (?themePreview= wins when valid), so
+  // brand-page cards follow the same v2 switch as the listing.
+  const theme = themeOf(effectiveThemeId(home?.settings.themeId, sp.themePreview));
   const accent = home?.organization.primaryColor || "#4f46e5";
 
   return (
