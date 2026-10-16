@@ -963,7 +963,7 @@ export default function StorefrontStaffPage() {
           below (single-column layout, so a top chip row). */}
       <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label="সেকশন">
         {SECTION_NAV.map((n) => (
-          <a key={n.id} href={`#${n.id}`} className="shrink-0 rounded-full bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 shadow-card ring-1 ring-slate-200/70">
+          <a key={n.id} href={`#${n.id}`} className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 shadow-card ring-1 ring-slate-200/70">
             {n.label}
           </a>
         ))}
@@ -994,7 +994,7 @@ export default function StorefrontStaffPage() {
         <div className="font-semibold">দোকানের সেটিংস</div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={shopEnabled} onChange={(e) => setShopEnabled(e.target.checked)} />
-          দোকান চালু করুন (shopEnabled) {!state.setting.exists ? <span className="text-xs font-normal text-slate-400">— এখনো কোনো সেটিংস সেভ হয়নি</span> : null}
+          দোকান চালু করুন (shopEnabled) {!state.setting.exists ? <span className="text-xs font-normal text-slate-500">— এখনো কোনো সেটিংস সেভ হয়নি</span> : null}
         </label>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-sm">দোকানের নাম (খালি = ব্র্যান্ড/সংস্থার নাম)
@@ -1190,12 +1190,12 @@ export default function StorefrontStaffPage() {
         <div>
           <div className="text-sm font-medium">ফিচার্ড পণ্য ({featuredIds.length}/৫০) — ক্রম অনুযায়ী দেখাবে</div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {products.length === 0 ? <span className="text-xs text-slate-400">কোনো পণ্য পাওয়া যায়নি</span> : products.map((p) => {
+            {products.length === 0 ? <span className="text-xs text-slate-500">কোনো পণ্য পাওয়া যায়নি</span> : products.map((p) => {
               const on = featuredIds.includes(p.id);
               const order = on ? featuredIds.indexOf(p.id) + 1 : null;
               return (
                 <button key={p.id} type="button" onClick={() => toggleFeatured(p.id)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                   {order ? `${order}. ` : ""}{p.name}
                 </button>
               );
@@ -1378,8 +1378,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditSlot(s)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditSlot(s)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -1416,7 +1416,7 @@ export default function StorefrontStaffPage() {
                 const on = sDistricts.includes(d);
                 return (
                   <button key={d} type="button" onClick={() => setSDistricts(on ? sDistricts.filter((x) => x !== d) : [...sDistricts, d])}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                    className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                     {d}
                   </button>
                 );
@@ -1455,8 +1455,8 @@ export default function StorefrontStaffPage() {
                     <div className="text-xs text-slate-500">{KIND_LABEL[z.kind] ?? z.kind} · অবস্থান {z.position} · {z.active ? "সক্রিয়" : "বন্ধ"}</div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditZone(z)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditZone(z)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1507,7 +1507,7 @@ export default function StorefrontStaffPage() {
                   const on = zDistricts.includes(d);
                   return (
                     <button key={d} type="button" onClick={() => setZDistricts(on ? zDistricts.filter((x) => x !== d) : [...zDistricts, d])}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                      className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
                       {d}
                     </button>
                   );
@@ -1544,8 +1544,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditRule(r)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditRule(r)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1608,8 +1608,8 @@ export default function StorefrontStaffPage() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditPoint(p)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditPoint(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                    <button type="button" onClick={() => void deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
@@ -1685,8 +1685,8 @@ export default function StorefrontStaffPage() {
                 {f.required ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">আবশ্যক</span> : null}
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${f.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{f.active ? "সক্রিয়" : "বন্ধ"}</span>
                 <span className="ml-auto flex gap-1.5">
-                  <button type="button" onClick={() => startEditField(f)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                  <button type="button" onClick={() => startEditField(f)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
+                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
                 </span>
               </div>
             ))}
@@ -1746,17 +1746,17 @@ export default function StorefrontStaffPage() {
 
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${customDomain ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>১</span>
+            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${customDomain ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>১</span>
             <span className="font-semibold">ডোমেইন দেওয়া হয়েছে</span>
             {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— কোনো কাস্টম ডোমেইন সেট করা নেই</span>}
           </div>
           <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${verified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>২</span>
+            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${verified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>২</span>
             <span className="font-semibold">DNS যাচাই</span>
             {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
           </div>
           <div className="flex items-center gap-2">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${routing?.routingActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>৩</span>
+            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${routing?.routingActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>৩</span>
             <span className="font-semibold">Routing সক্রিয়</span>
             {routing?.routingActive ? (
               <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
@@ -1797,14 +1797,14 @@ export default function StorefrontStaffPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-sans text-slate-300">Host:</span>
                   <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                  <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="inline-flex min-h-[44px] items-center rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
                   <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
-                  <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                  <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="inline-flex min-h-[44px] items-center rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
                 </div>
-                <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                <p className="font-sans text-slate-500">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
               </div>
             ) : domain.verifyHost ? (
               <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
