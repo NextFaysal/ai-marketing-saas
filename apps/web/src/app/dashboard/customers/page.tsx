@@ -582,7 +582,6 @@ export default function CustomersPage() {
         </div>
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p> : null}
 
       {/* Main Mode Navigation Tabs */}
       <div className="flex border-b border-slate-200">

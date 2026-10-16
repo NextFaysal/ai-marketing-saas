@@ -365,6 +365,7 @@ export default function StorefrontStaffPage() {
   // domain
   const [tokenOut, setTokenOut] = useState<VerifyTokenOut | null>(null);
   const [domainError, setDomainError] = useState("");
+  const [domainNotice, setDomainNotice] = useState("");
   const [routing, setRouting] = useState<RoutingOut | null>(null);
   // TD9: step-1 domain input (prefilled from state on every load)
   const [domainInput, setDomainInput] = useState("");
