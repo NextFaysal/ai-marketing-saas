@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // AB6 (AX11) — staff shop-search page. Consumes:
 //   GET    /organizations/:id/storefront/search/analytics
@@ -36,11 +37,12 @@ function parseList(text: string): string[] {
 }
 
 export default function StorefrontSearchPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [analytics, setAnalytics] = useState<SearchAnalytics | null>(null);
   const [synonyms, setSynonyms] = useState<Synonym[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,25 +76,25 @@ export default function StorefrontSearchPage() {
     setEditingId(s.id);
     setTerm(s.term ?? "");
     setExpansions(expansionsOf(s).join(", "));
-    setError(""); setNotice("");
+    setError("");
   }
 
   async function saveSynonym() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!term.trim()) { setError("শব্দ (term) দিন।"); return; }
-    setBusy("synonym"); setError(""); setNotice("");
+    setBusy("synonym"); setError("");
     const body = { term: term.trim(), expansions: parseList(expansions) };
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/storefront/search/synonyms/${editingId}`, {
           method: "PATCH", body: JSON.stringify(body),
         });
-        setNotice("সমার্থক শব্দ আপডেট হয়েছে।");
+        toast({ title: "সমার্থক শব্দ আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/search/synonyms`, {
           method: "POST", body: JSON.stringify(body),
         });
-        setNotice("নতুন সমার্থক শব্দ যোগ হয়েছে।");
+        toast({ title: "নতুন সমার্থক শব্দ যোগ হয়েছে।", tone: "success" });
       }
       resetForm();
       await load();
@@ -102,11 +104,11 @@ export default function StorefrontSearchPage() {
 
   async function deleteSynonym(s: Synonym) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${s.term}" সমার্থক শব্দটি মুছে ফেলবেন?`)) return;
-    setBusy(`del-${s.id}`); setError(""); setNotice("");
+    if (!(await confirm({ title: `"${s.term}" সমার্থক শব্দটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setBusy(`del-${s.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/search/synonyms/${s.id}`, { method: "DELETE" });
-      setNotice("সমার্থক শব্দ মুছে ফেলা হয়েছে।");
+      toast({ title: "সমার্থক শব্দ মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingId === s.id) resetForm();
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -115,10 +117,10 @@ export default function StorefrontSearchPage() {
 
   async function reindex() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setBusy("reindex"); setError(""); setNotice("");
+    setBusy("reindex"); setError("");
     try {
       const out = await apiFetch<{ updated: number }>(`/organizations/${orgId}/storefront/search/reindex`, { method: "POST" });
-      setNotice(`সার্চ পুনঃসূচী সম্পন্ন — ${out.updated ?? 0}টি পণ্য আপডেট হয়েছে।`);
+      toast({ title: `সার্চ পুনঃসূচী সম্পন্ন — ${out.updated ?? 0}টি পণ্য আপডেট হয়েছে।`, tone: "success" });
     } catch (e) { setError(e instanceof Error ? e.message : "পুনঃসূচী ব্যর্থ"); }
     finally { setBusy(""); }
   }
@@ -165,7 +167,6 @@ export default function StorefrontSearchPage() {
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
 

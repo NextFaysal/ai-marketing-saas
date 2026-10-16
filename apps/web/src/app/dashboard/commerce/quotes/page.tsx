@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
+import { ResponsiveTable } from "@repo/ui";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
 
 // AB5 (AX7) — staff quotes dashboard. A quote is an OFFER
@@ -55,6 +57,8 @@ const statusChip = (s: string) =>
   : "bg-slate-100 text-slate-600";
 
 export default function QuotesPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [customers, setCustomers] = useState<CustomerOpt[]>([]);
@@ -201,10 +205,10 @@ export default function QuotesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/quotes/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("কোট হালনাগাদ হয়েছে।");
+        toast({ title: "কোট হালনাগাদ হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/quotes`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("কোট তৈরি হয়েছে (খসড়া)।");
+        toast({ title: "কোট তৈরি হয়েছে (খসড়া)।", tone: "success" });
       }
       setFormOpen(false); resetForm();
       await load();
@@ -245,11 +249,11 @@ export default function QuotesPage() {
 
   async function cancelQuote(q: Quote) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`কোট ${q.number} বাতিল করবেন?`)) return;
-    setBusy(`cancel-${q.id}`); setError("");
+    if (!(await confirm({ title: `কোট ${q.number} বাতিল করবেন?`, danger: true, confirmLabel: "বাতিল করুন" }))) return;
+    setBusy(`cancel-${q.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/quotes/${q.id}/cancel`, { method: "POST" });
-      setNotice(`কোট ${q.number} বাতিল হয়েছে।`);
+      toast({ title: `কোট ${q.number} বাতিল হয়েছে।`, tone: "success" });
       if (detail?.id === q.id) await refreshDetail(q.id); else await load();
     } catch (e) { setError(e instanceof Error ? e.message : "বাতিল ব্যর্থ"); }
     finally { setBusy(""); }
@@ -318,7 +322,7 @@ export default function QuotesPage() {
       <div className="flex flex-wrap items-center gap-2">
         {STATUS_FILTERS.map((f) => (
           <button key={f.value} onClick={() => setStatusFilter(f.value)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${statusFilter === f.value ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}>
+            className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold ${statusFilter === f.value ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}>
             {f.label}
           </button>
         ))}
@@ -331,8 +335,8 @@ export default function QuotesPage() {
         <div className="card space-y-4 p-5">
           <div className="font-semibold">{editingId ? "কোট সম্পাদনা (শুধু খসড়া)" : "নতুন কোট"}</div>
           <div className="flex flex-wrap gap-2 text-sm">
-            <button type="button" className={`rounded-lg px-3 py-1.5 font-semibold ${identityMode === "customer" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("customer")}>রেজিস্টার্ড কাস্টমার</button>
-            <button type="button" className={`rounded-lg px-3 py-1.5 font-semibold ${identityMode === "walkin" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("walkin")}>ওয়াক-ইন ক্রেতা</button>
+            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "customer" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("customer")}>রেজিস্টার্ড কাস্টমার</button>
+            <button type="button" className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 font-semibold ${identityMode === "walkin" ? "bg-indigo-600 text-white" : "border bg-white"}`} onClick={() => setIdentityMode("walkin")}>ওয়াক-ইন ক্রেতা</button>
           </div>
           {identityMode === "customer" ? (
             <div className="grid gap-3 md:grid-cols-2">
@@ -382,16 +386,16 @@ export default function QuotesPage() {
                   <input className="input mt-1 w-36" inputMode="decimal" value={r.unitPriceTaka}
                     onChange={(e) => { const n = [...lines]; n[i] = { ...r, unitPriceTaka: e.target.value }; setLines(n); }} placeholder="ক্যাটালগ দাম" />
                 </label>
-                <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
+                <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                   disabled={lines.length <= 1}
                   onClick={() => setLines(lines.filter((_, x) => x !== i))}>সারি মুছুন</button>
               </div>
             ))}
-            <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
+            <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
               onClick={() => setLines([...lines, { productId: "", variantId: "", qty: "1", unitPriceTaka: "", variants: [] }])}>
               + আরও লাইন যোগ করুন
             </button>
-            <p className="text-xs text-slate-400">একক দাম ক্যাটালগ থেকে আগাম পূরণ হয়, কিন্তু এটি একটি প্রস্তাব — দাম বদলে দিলে কোটে বদলানো দামটাই থাকবে (স্ন্যাপশট)।</p>
+            <p className="text-xs text-slate-500">একক দাম ক্যাটালগ থেকে আগাম পূরণ হয়, কিন্তু এটি একটি প্রস্তাব — দাম বদলে দিলে কোটে বদলানো দামটাই থাকবে (স্ন্যাপশট)।</p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
@@ -428,7 +432,7 @@ export default function QuotesPage() {
                 <span className="font-medium">{q.number}</span>
                 <span className="text-sm font-semibold">{formatMinorTaka(q.totalMinor)}</span>
               </div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span>{quoteBuyer(q)}</span>
                 <span className={`rounded px-1.5 py-0.5 font-semibold ${statusChip(q.status)}`}>{STATUS_LABEL[q.status] ?? q.status}</span>
                 {q.createdAt ? <span>{new Date(q.createdAt).toLocaleDateString("bn-BD")}</span> : null}
@@ -448,8 +452,10 @@ export default function QuotesPage() {
                 <span className={`rounded px-2 py-1 text-xs font-bold ${statusChip(detail.status)}`}>{STATUS_LABEL[detail.status] ?? detail.status}</span>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+              <ResponsiveTable
+                table={
+                  <div>
+                    <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs text-slate-500">
                       <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
@@ -461,15 +467,36 @@ export default function QuotesPage() {
                   <tbody>
                     {detail.lines.map((l, i) => (
                       <tr key={i} className="border-b last:border-0">
-                        <td className="py-1.5 pr-2 font-medium">{l.name}{l.variantName ? ` — ${l.variantName}` : ""}{l.sku ? <span className="block text-xs text-slate-400">SKU: {l.sku}</span> : null}</td>
+                        <td className="py-1.5 pr-2 font-medium">{l.name}{l.variantName ? ` — ${l.variantName}` : ""}{l.sku ? <span className="block text-xs text-slate-500">SKU: {l.sku}</span> : null}</td>
                         <td className="py-1.5 pr-2">{l.qty}</td>
                         <td className="py-1.5 pr-2">{formatMinorTaka(l.unitPriceMinor)}</td>
                         <td className="py-1.5">{formatMinorTaka(l.lineTotalMinor)}</td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                    </tbody>
+                    </table>
+                  </div>
+                }
+                cards={detail.lines.map((l, i) => (
+                  <div key={i} className="rounded-lg border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-medium">{l.name}{l.variantName ? ` — ${l.variantName}` : ""}</span>
+                      <span className="font-semibold">{formatMinorTaka(l.lineTotalMinor)}</span>
+                    </div>
+                    {l.sku ? <div className="mt-0.5 text-xs text-slate-500">SKU: {l.sku}</div> : null}
+                    <dl className="mt-2 space-y-1.5 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">পরিমাণ</dt>
+                        <dd>{l.qty}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">একক দাম</dt>
+                        <dd>{formatMinorTaka(l.unitPriceMinor)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                ))}
+              />
               <div className="space-y-1 border-t pt-3 text-sm">
                 <div className="flex justify-between"><span className="text-slate-500">ডেলিভারি চার্জ</span><span>{formatMinorTaka(detail.deliveryChargeMinor)}</span></div>
                 <div className="flex justify-between font-black"><span>মোট</span><span>{formatMinorTaka(detail.totalMinor)}</span></div>
@@ -495,7 +522,7 @@ export default function QuotesPage() {
                     <code className="min-w-0 flex-1 break-all rounded-lg bg-white px-2 py-1.5 font-mono text-xs">{sendResult.link}</code>
                     <button className="btn-secondary btn-sm" onClick={() => copyLink(sendResult.link)}>{copied ? "কপি হয়েছে ✅" : "লিংক কপি করুন"}</button>
                   </div>
-                  <p className="text-xs text-slate-400">আবার পাঠালে নতুন লিংক তৈরি হবে এবং আগের লিংকটি কাজ করবে না।</p>
+                  <p className="text-xs text-slate-500">আবার পাঠালে নতুন লিংক তৈরি হবে এবং আগের লিংকটি কাজ করবে না।</p>
                 </div>
               ) : null}
 
@@ -523,11 +550,11 @@ export default function QuotesPage() {
                   <div className="font-semibold">রূপান্তরের প্রিভিউ (কিছুই তৈরি হয়নি এখনো)</div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="rounded-lg bg-white p-3">
-                      <div className="text-xs text-slate-400">কোটের মোট</div>
+                      <div className="text-xs text-slate-500">কোটের মোট</div>
                       <div className="text-lg font-black">{formatMinorTaka(preview.quoteTotalMinor)}</div>
                     </div>
                     <div className="rounded-lg bg-white p-3">
-                      <div className="text-xs text-slate-400">অর্ডারের হিসাব</div>
+                      <div className="text-xs text-slate-500">অর্ডারের হিসাব</div>
                       <div className="text-sm">সাবটোটাল: <b>{formatMinorTaka(preview.orderSubtotalMinor)}</b></div>
                       <div className="text-sm">ডেলিভারি: <b>{formatMinorTaka(preview.orderShippingMinor)}</b></div>
                       <div className="text-lg font-black">মোট: {formatMinorTaka(preview.orderTotalMinor)}</div>
@@ -544,7 +571,7 @@ export default function QuotesPage() {
                 </div>
               ) : null}
               {detail.status === "accepted" && !detail.convertedOrderId && (!preview || previewFor !== detail.id) ? (
-                <p className="text-xs text-slate-400">অর্ডারে রূপান্তর করতে আগে প্রিভিউ লোড করুন — প্রিভিউ ছাড়া রূপান্তর বোতাম আসবে না।</p>
+                <p className="text-xs text-slate-500">অর্ডারে রূপান্তর করতে আগে প্রিভিউ লোড করুন — প্রিভিউ ছাড়া রূপান্তর বোতাম আসবে না।</p>
               ) : null}
             </div>
           ) : (

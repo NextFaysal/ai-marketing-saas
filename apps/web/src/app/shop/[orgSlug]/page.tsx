@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchShopHome, shopSortOf } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
-import { themeOf } from "@/lib/shop-theme";
+import { effectiveThemeId, themeOf } from "@/lib/shop-theme";
 import { buildShopJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "./ProductCard";
@@ -13,9 +13,10 @@ import { AffiliateRefCapture } from "./AffiliateRefCapture";
 import { BundleCard } from "./BundleCard";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
 import { SortSelect } from "./SortSelect";
+import { ListingFilterDrawer, type ListingFilterSection } from "./ListingFilterDrawer";
 
 type Params = Promise<{ orgSlug: string }>;
-type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string }>;
+type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string; themePreview?: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { orgSlug } = await params;
@@ -66,10 +67,68 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const filtering = !!q || !!category || !!brand;
   const locale = shopLocaleOf(settings.locale);
   const t = shopT(locale);
-  const theme = themeOf(settings.themeId);
+  // ED8: render with the EFFECTIVE theme (?themePreview= wins
+  // when valid) — the hero/grid/card tokens all follow from this.
+  const effThemeId = effectiveThemeId(settings.themeId, sp.themePreview);
+  const theme = themeOf(effThemeId);
+  const isV2 = effThemeId === "v2";
+
+  // ED8: precomputed link lists for the v2 mobile filter drawer —
+  // the SAME shopHref URLs and active rules as the inline chips
+  // and SortSelect below; the drawer adds no navigation logic.
+  const filterSections: ListingFilterSection[] = [];
+  if (settings.showCategories && categories.length > 0) {
+    filterSections.push({
+      heading: t.chrome.categories,
+      links: [
+        { label: t.home.allProducts, href: shopHref(orgSlug, q, "", 1, sort, brand), active: !category },
+        ...categories.map((c) => {
+          const value = c.slug ?? c.id ?? c.name;
+          return {
+            label: `${c.name} (${c.productCount})`,
+            href: shopHref(orgSlug, q, value, 1, sort, brand),
+            active: category === value || category === c.name || (c.id ? category === c.id : false),
+          };
+        }),
+      ],
+    });
+  }
+  if (brands.length > 0) {
+    filterSections.push({
+      heading: t.brand.brandLabel,
+      links: [
+        { label: t.brand.allBrands, href: shopHref(orgSlug, q, category, 1, sort, ""), active: !brand },
+        ...brands.map((b) => ({
+          label: `${b.name} (${b.productCount})`,
+          href: shopHref(orgSlug, q, category, 1, sort, b.slug),
+          active: brand === b.slug,
+        })),
+      ],
+    });
+  }
+  filterSections.push({
+    heading: t.sort.label,
+    links: (
+      [
+        ["featured", t.sort.featured],
+        ["newest", t.sort.newest],
+        ["price_asc", t.sort.priceAsc],
+        ["price_desc", t.sort.priceDesc],
+        ["best_selling", t.sort.bestSelling],
+        ["name_asc", t.sort.nameAsc],
+      ] as const
+    ).map(([value, label]) => ({
+      label,
+      href: shopHref(orgSlug, q, category, 1, value, brand),
+      active: sort === value,
+    })),
+  });
+  const activeFilterCount = (category ? 1 : 0) + (brand ? 1 : 0) + (sort !== "featured" ? 1 : 0);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
+    // ED11 (EB4): one token-timed rise entrance for the home
+    // sections wrapper (transform/opacity only, once per mount).
+    <div className="animate-rise-in mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
       {/* EC27: Organization + WebSite JSON-LD from real shop data. */}
       <script
         type="application/ld+json"
@@ -166,7 +225,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* EC29: bundles strip */}
       {(home.bundles ?? []).length > 0 && !filtering ? (
         <section className="space-y-4">
-          <h2 className="text-xl font-black text-slate-900">{t.home.bundlesHeading}</h2>
+          <h2 className={isV2 ? theme.sectionTitleClass : "text-xl font-black text-slate-900"}>{t.home.bundlesHeading}</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {(home.bundles ?? []).map((b) => (
               <BundleCard key={b.id} orgSlug={orgSlug} bundle={b} locale={locale} />
@@ -195,7 +254,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* Featured */}
       {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
         <section className="space-y-4">
-          <h2 className="text-xl font-black text-slate-900">{t.home.featured}</h2>
+          <h2 className={isV2 ? theme.sectionTitleClass : "text-xl font-black text-slate-900"}>{t.home.featured}</h2>
           <div className={theme.featuredGridClass}>
             {featuredProducts.map((p) => (
               <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
@@ -205,16 +264,24 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       ) : null}
 
       {/* EC27: recently viewed (localStorage only; hidden while filtering) */}
-      {!filtering ? <RecentlyViewedStrip orgSlug={orgSlug} locale={locale} /> : null}
+      {!filtering ? <RecentlyViewedStrip orgSlug={orgSlug} locale={locale} theme={isV2 ? theme : undefined} /> : null}
 
       {/* Product grid */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-black text-slate-900">
+          <h2 className={isV2 ? theme.sectionTitleClass : "text-xl font-black text-slate-900"}>
             {filtering ? t.home.searchResults : t.home.allProducts}
             <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}{t.home.itemsSuffix})</span>
           </h2>
-          <SortSelect orgSlug={orgSlug} locale={locale} value={sort} q={q} category={category} brand={brand} />
+          <div className="flex items-center gap-2">
+            {/* ED8: v2-only additional mobile affordance — the
+                inline chips + SortSelect stay exactly as they are
+                on every theme and viewport. */}
+            {isV2 ? (
+              <ListingFilterDrawer locale={locale} activeCount={activeFilterCount} sections={filterSections} />
+            ) : null}
+            <SortSelect orgSlug={orgSlug} locale={locale} value={sort} q={q} category={category} brand={brand} />
+          </div>
         </div>
         {products.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">

@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { ResponsiveTable } from "@repo/ui";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -130,7 +131,10 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
             <h3 className="mt-5 font-semibold">কুরিয়ার স্কোরকার্ড</h3>
             <p className="text-xs text-slate-500">হার = নিষ্পত্তি হওয়া (ডেলিভারি+ফেরত+বাতিল) শিপমেন্টের মধ্যে। গড় ট্রানজিট দিনের ভিত্তি শিপমেন্টের সর্বশেষ স্ট্যাটাস-আপডেটের সময় — জোড়ার সংখ্যা (n) পাশে দেওয়া আছে; জোড়া না থাকলে "—"।</p>
             {data.courierScorecard.length ? (
-              <div className="mt-2 overflow-x-auto">
+              <ResponsiveTable
+                className="mt-2"
+                table={
+                  <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="text-left text-slate-500">
                     <th className="py-1 pr-2">কুরিয়ার</th><th className="py-1 pr-2">শিপমেন্ট</th><th className="py-1 pr-2">ডেলিভারি %</th>
@@ -149,7 +153,21 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+                  </div>
+                }
+                cards={data.courierScorecard.map((c) => (
+                  <div key={c.provider} className="rounded-xl border bg-white p-3 shadow-sm">
+                    <div className="font-bold text-slate-900">{c.provider}</div>
+                    <dl className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">শিপমেন্ট</dt><dd className="font-medium">{c.shipments}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ডেলিভারি %</dt><dd className="font-medium">{formatPct(c.deliveredPct)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ফেরত %</dt><dd className="font-medium">{formatPct(c.returnedPct)}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">গড় ট্রানজিট (দিন)</dt><dd className="font-medium">{c.avgTransitDays === null ? "—" : `${c.avgTransitDays} (n=${c.transitPairs})`}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">COD আদায়ের গড় ব্যবধান (দিন)</dt><dd className="font-medium">{c.avgCodCollectLagDays === null ? "—" : `${c.avgCodCollectLagDays} (n=${c.codPairs})`}</dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো শিপমেন্ট বুক হয়নি।</p>}
 
             <h3 className="mt-5 font-semibold">শীর্ষ জেলা (বিক্রি অনুযায়ী)</h3>
@@ -172,7 +190,10 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
             <h3 className="mt-5 font-semibold">বেশি-ফেরত পণ্যের সতর্কতা</h3>
             <p className="text-xs text-slate-500">ফেরতের হার ≥ ২৫% এবং কমপক্ষে ১০টি অর্ডার থাকলেই সতর্কতা দেখায়।</p>
             {data.productReturnWarnings.length ? (
-              <div className="mt-2 overflow-x-auto">
+              <ResponsiveTable
+                className="mt-2"
+                table={
+                  <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2">পণ্য</th><th className="py-1 pr-2">অর্ডার</th><th className="py-1 pr-2">ফেরত</th><th className="py-1">হার</th></tr></thead>
                   <tbody>
@@ -186,7 +207,19 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+                  </div>
+                }
+                cards={data.productReturnWarnings.map((w) => (
+                  <div key={w.productId} className="rounded-xl border bg-white p-3 shadow-sm">
+                    <div className="font-bold text-slate-900">{w.productName || w.productId}</div>
+                    <dl className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">অর্ডার</dt><dd className="font-medium">{w.orders}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">ফেরত</dt><dd className="font-medium">{w.returns}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">হার</dt><dd className="font-medium text-red-600">{w.ratePct}%</dd></div>
+                    </dl>
+                  </div>
+                ))}
+              />
             ) : <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো পণ্য সতর্কতার সীমা ছাড়ায়নি।</p>}
 
             {/* AB7 (AX19): বিক্রির উৎস */}
@@ -197,7 +230,10 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
             </p>
             {sources && sources.rows.length ? (
               <>
-                <div className="mt-2 overflow-x-auto">
+                <ResponsiveTable
+                  className="mt-2"
+                  table={
+                    <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead><tr className="text-left text-slate-500">
                       <th className="py-1 pr-2">উৎস</th><th className="py-1 pr-2">অর্ডার</th><th className="py-1">রেভিনিউ</th>
@@ -212,7 +248,18 @@ export function OrderAnalyticsPanel({ onClose }: { onClose: () => void }) {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                    </div>
+                  }
+                  cards={sources.rows.map((r) => (
+                    <div key={r.source} className="rounded-xl border bg-white p-3 shadow-sm">
+                      <div className="font-bold text-slate-900">{r.source}</div>
+                      <dl className="mt-2 space-y-1 text-xs">
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">অর্ডার</dt><dd className="font-medium">{r.orders}টি</dd></div>
+                        <div className="flex justify-between gap-2"><dt className="text-slate-500">রেভিনিউ</dt><dd className="font-medium">{formatMoneyMinor(r.revenueMinor)}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                />
                 <p className="mt-2 text-sm text-slate-600">
                   মোট: {sources.totals.orders}টি অর্ডার · {formatMoneyMinor(sources.totals.revenueMinor)} ·
                   Click ID-সহ {sources.totals.withClickId}টি · উৎসের ছাপ আছে {sources.totals.stampedOrders}টিতে

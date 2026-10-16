@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC31 — কিস্তি প্ল্যানের due worklist + সব প্ল্যানের তালিকা।
 // সংখ্যা সবই InstallmentsService-এর serialized plan / due row
@@ -104,10 +105,12 @@ export default function InstallmentsPage() {
 
       <section className="space-y-3">
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setBucket("today")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${bucket === "today" ? "bg-indigo-600 text-white" : "border bg-white"}`}>আজকের due</button>
-          <button type="button" onClick={() => setBucket("overdue")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${bucket === "overdue" ? "bg-indigo-600 text-white" : "border bg-white"}`}>অতিবাহিত</button>
+          <button type="button" onClick={() => setBucket("today")} className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${bucket === "today" ? "bg-indigo-600 text-white" : "border bg-white"}`}>আজকের due</button>
+          <button type="button" onClick={() => setBucket("overdue")} className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${bucket === "overdue" ? "bg-indigo-600 text-white" : "border bg-white"}`}>অতিবাহিত</button>
         </div>
         {dueError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{dueError}</p> : null}
+        <ResponsiveTable
+          table={
         <div className="overflow-x-auto rounded-2xl border bg-white">
           <table className="w-full text-left text-sm">
             <thead>
@@ -140,12 +143,33 @@ export default function InstallmentsPage() {
             </tbody>
           </table>
         </div>
+          }
+          cards={
+            dueLoading ? (
+              <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">লোড হচ্ছে…</p>
+            ) : dueItems.length === 0 ? (
+              <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">{bucket === "today" ? "আজ কোনো কিস্তি due নেই" : "কোনো অতিবাহিত কিস্তি নেই"}</p>
+            ) : dueItems.map((r) => (
+              <div key={r.itemId} className="rounded-2xl border bg-white p-3 text-sm shadow-sm">
+                <dl className="space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার নম্বর</dt><dd className="text-right font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গ্রাহক</dt><dd className="text-right">{r.customerName ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ফোন</dt><dd className="text-right font-mono text-xs">{r.customerPhone ?? "—"}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কিস্তি #</dt><dd className="text-right">{r.seq}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তারিখ</dt><dd className="text-right">{r.dueDay}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বাকি</dt><dd className="text-right font-semibold">{formatMinorTaka(r.remainingMinor)}</dd></div>
+                  {bucket === "overdue" ? <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অতিবাহিত দিন</dt><dd className="text-right font-semibold text-red-600">{r.daysOverdue} দিন</dd></div> : null}
+                </dl>
+              </div>
+            ))
+          }
+        />
       </section>
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-bold text-slate-900">সব কিস্তি প্ল্যান{plansTotal ? ` (${plansTotal}টি)` : ""}</h2>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-xl border border-slate-300 p-2 text-sm">
+          <select aria-label="প্ল্যানের অবস্থা অনুযায়ী ফিল্টার" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="min-h-[44px] rounded-xl border border-slate-300 p-2 text-sm">
             <option value="">সব</option>
             <option value="active">সক্রিয়</option>
             <option value="completed">সম্পূর্ণ</option>
@@ -153,6 +177,8 @@ export default function InstallmentsPage() {
           </select>
         </div>
         {plansError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{plansError}</p> : null}
+        <ResponsiveTable
+          table={
         <div className="overflow-x-auto rounded-2xl border bg-white">
           <table className="w-full text-left text-sm">
             <thead>
@@ -185,6 +211,27 @@ export default function InstallmentsPage() {
             </tbody>
           </table>
         </div>
+          }
+          cards={
+            plansLoading ? (
+              <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">লোড হচ্ছে…</p>
+            ) : plans.length === 0 ? (
+              <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">কোনো কিস্তি প্ল্যান নেই</p>
+            ) : plans.map((p) => (
+              <div key={p.id} className="rounded-2xl border bg-white p-3 text-sm shadow-sm">
+                <dl className="space-y-1.5">
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অর্ডার</dt><dd className="text-right font-medium">#{p.orderNumber ?? p.orderId.slice(0, 8)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গ্রাহক</dt><dd className="text-right">{p.customerName ?? "—"}{p.customerPhone ? <span className="block text-xs text-slate-500">{p.customerPhone}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট</dt><dd className="text-right">{formatMinorTaka(p.totalMinor)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিশোধিত</dt><dd className="text-right font-medium text-emerald-700">{formatMinorTaka(p.paidMinor)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বাকি</dt><dd className="text-right font-semibold">{formatMinorTaka(p.remainingMinor)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কিস্তি সংখ্যা</dt><dd className="text-right">{p.installmentCount}টি</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${STATUS_CLS[p.status] ?? "bg-slate-100 text-slate-600"}`}>{STATUS_LABEL[p.status] ?? p.status}</span></dd></div>
+                </dl>
+              </div>
+            ))
+          }
+        />
       </section>
     </div>
   );

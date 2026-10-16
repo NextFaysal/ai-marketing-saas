@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC16 — promotions engine UI: BOGO / tiered / flash-sale rules plus
 // referrals (referral settings live on the storefront page). The
@@ -66,14 +68,14 @@ function ChipPicker({ options, selected, onToggle }: {
   selected: string[];
   onToggle: (id: string) => void;
 }) {
-  if (options.length === 0) return <span className="text-xs text-slate-400">কোনো অপশন নেই</span>;
+  if (options.length === 0) return <span className="text-xs text-slate-500">কোনো অপশন নেই</span>;
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((o) => {
         const on = selected.includes(o.id);
         return (
           <button key={o.id} type="button" onClick={() => onToggle(o.id)}
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+            className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
             {o.name}
           </button>
         );
@@ -83,11 +85,12 @@ function ChipPicker({ options, selected, onToggle }: {
 }
 
 export default function PromotionsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -258,7 +261,7 @@ export default function PromotionsPage() {
       setError("উপহার প্রমোশনের জন্য উপহার পণ্য বেছে নিন।");
       return;
     }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const priorOrders = minPriorOrders.trim() ? Math.max(0, parseInt(minPriorOrders, 10) || 0) : null;
     const body = {
       name: name.trim(),
@@ -276,10 +279,10 @@ export default function PromotionsPage() {
     try {
       if (editingId) {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("প্রমোশন আপডেট হয়েছে।");
+        toast({ title: "প্রমোশন আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("প্রমোশন তৈরি হয়েছে।");
+        toast({ title: "প্রমোশন তৈরি হয়েছে।", tone: "success" });
       }
       resetForm();
       await load();
@@ -301,7 +304,7 @@ export default function PromotionsPage() {
 
   async function remove(p: Promotion) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${p.name}" প্রমোশনটি মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `"${p.name}" প্রমোশনটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/promotions/${p.id}`, { method: "DELETE" });
@@ -348,6 +351,19 @@ export default function PromotionsPage() {
 
   const toggleIn = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
 
+  // ED15/ED16 (EB6): promotion row actions + status shared verbatim
+  // by the desktop table and the ResponsiveTable mobile card.
+  const renderPromotionStatus = (p: Promotion) => (
+    p.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>
+  );
+  const renderPromotionActions = (p: Promotion) => (
+    <div className="flex gap-2">
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(p)}>সম্পাদনা</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(p)}>{p.active ? "বন্ধ করুন" : "চালু করুন"}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(p)}>মুছুন</button>
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -361,7 +377,6 @@ export default function PromotionsPage() {
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="font-semibold">{editingId ? "প্রমোশন সম্পাদনা" : "নতুন প্রমোশন"}</div>
@@ -388,7 +403,7 @@ export default function PromotionsPage() {
           </label>
           <label className="block text-sm">কমপক্ষে আগের অর্ডার (খালি = শর্ত নেই)
             <input className="input mt-1" type="number" min="0" value={minPriorOrders} onChange={(e) => setMinPriorOrders(e.target.value)} placeholder="যেমন: ১" />
-            <span className="mt-1 block text-xs font-normal text-slate-400">সব ধরনের প্রমোশনেই প্রযোজ্য — ক্রেতার আগের অর্ডার অন্তত এই সংখ্যক হলেই প্রমোশনটি কাজ করবে।</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">সব ধরনের প্রমোশনেই প্রযোজ্য — ক্রেতার আগের অর্ডার অন্তত এই সংখ্যক হলেই প্রমোশনটি কাজ করবে।</span>
           </label>
         </div>
 
@@ -430,7 +445,7 @@ export default function PromotionsPage() {
                 <input className="input mt-1" type="number" min="1" value={getQty} onChange={(e) => setGetQty(e.target.value)} />
               </label>
             </div>
-            <p className="text-xs text-slate-400">ছাড়ের হার ১০০% = সম্পূর্ণ ফ্রি।</p>
+            <p className="text-xs text-slate-500">ছাড়ের হার ১০০% = সম্পূর্ণ ফ্রি।</p>
           </div>
         ) : null}
 
@@ -474,12 +489,12 @@ export default function PromotionsPage() {
                       const next = [...tiers]; next[i] = { ...t, percentOff: e.target.value }; setTiers(next);
                     }} />
                   </label>
-                  <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
+                  <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                     disabled={tiers.length <= 1}
                     onClick={() => setTiers(tiers.filter((_, x) => x !== i))}>সারি মুছুন</button>
                 </div>
               ))}
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
+              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
                 onClick={() => setTiers([...tiers, { thresholdKind: "amount", threshold: "", percentOff: "" }])}>
                 + আরও স্তর যোগ করুন
               </button>
@@ -549,10 +564,12 @@ export default function PromotionsPage() {
         {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : promotions.length === 0 ? (
           <p className="text-sm text-slate-500">এখনো কোনো প্রমোশন নেই।</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-xs text-slate-400">
+                <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">ধরন</th>
                   <th className="py-2 font-medium">অগ্রাধিকার</th><th className="py-2 font-medium">সময়সীমা</th>
                   <th className="py-2 font-medium">অবস্থা</th><th className="py-2 font-medium">অ্যাকশন</th>
@@ -569,19 +586,43 @@ export default function PromotionsPage() {
                     <td className="py-2"><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ?? p.type}</span></td>
                     <td className="py-2">{p.priority}</td>
                     <td className="py-2 text-xs text-slate-500">{p.startsAt ? new Date(p.startsAt).toLocaleString("bn-BD") : "—"} → {p.endsAt ? new Date(p.endsAt).toLocaleString("bn-BD") : "অসীম"}</td>
-                    <td className="py-2">{p.active ? <span className="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">সক্রিয়</span> : <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600">বন্ধ</span>}</td>
+                    <td className="py-2">{renderPromotionStatus(p)}</td>
                     <td className="py-2">
-                      <div className="flex gap-2">
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(p)}>সম্পাদনা</button>
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(p)}>{p.active ? "বন্ধ করুন" : "চালু করুন"}</button>
-                        <button className="rounded-lg border px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => remove(p)}>মুছুন</button>
-                      </div>
+                      {renderPromotionActions(p)}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={promotions.map((p) => (
+              <div key={p.id} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-semibold">{p.name}</span>
+                  {renderPromotionStatus(p)}
+                </div>
+                {typeof p.config?.minPriorOrders === "number" ? (
+                  <div className="mt-0.5 text-[11px] font-normal text-slate-500">কমপক্ষে {p.config.minPriorOrders}টি আগের অর্ডার</div>
+                ) : null}
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">ধরন</dt>
+                    <dd><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ?? p.type}</span></dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অগ্রাধিকার</dt>
+                    <dd>{p.priority}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">সময়সীমা</dt>
+                    <dd className="text-xs text-slate-500">{p.startsAt ? new Date(p.startsAt).toLocaleString("bn-BD") : "—"} → {p.endsAt ? new Date(p.endsAt).toLocaleString("bn-BD") : "অসীম"}</dd>
+                  </div>
+                </dl>
+                <div className="mt-2">{renderPromotionActions(p)}</div>
+              </div>
+            ))}
+          />
         )}
       </div>
 
@@ -606,12 +647,12 @@ export default function PromotionsPage() {
                   const next = [...simRows]; next[i] = { ...r, qty: e.target.value }; setSimRows(next);
                 }} />
               </label>
-              <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
+              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50"
                 disabled={simRows.length <= 1}
                 onClick={() => setSimRows(simRows.filter((_, x) => x !== i))}>সরান</button>
             </div>
           ))}
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
+          <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold"
             onClick={() => setSimRows([...simRows, { productId: "", qty: "1" }])}>+ পণ্য যোগ করুন</button>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
@@ -661,7 +702,7 @@ export default function PromotionsPage() {
             ) : null}
             <div className="flex justify-between border-t pt-2"><span className="font-semibold">মোট ছাড়:</span><span className="font-semibold text-emerald-700">− {money(preview.totalDiscountMinor)}</span></div>
             <div className="flex justify-between text-base font-black"><span>পণ্যের মোট (ছাড়ের পর):</span><span className="text-indigo-700">{money(preview.merchandiseTotalMinor)}</span></div>
-            <p className="text-xs text-slate-400">ডেলিভারি চার্জ এই প্রিভিউতে নেই — চেকআউটে জোন অনুযায়ী যোগ হয়। মুদ্রা: {preview.currency}</p>
+            <p className="text-xs text-slate-500">ডেলিভারি চার্জ এই প্রিভিউতে নেই — চেকআউটে জোন অনুযায়ী যোগ হয়। মুদ্রা: {preview.currency}</p>
           </div>
         ) : null}
       </div>
@@ -691,17 +732,19 @@ export default function PromotionsPage() {
                 ⚠️ এই রিপোর্ট আংশিক — স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি (সীমায় পৌঁছানোয় সব অর্ডার গণনা হয়নি)।
               </p>
             ) : (
-              <p className="text-xs text-slate-400">স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি</p>
+              <p className="text-xs text-slate-500">স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি</p>
             )}
             <div>
               <div className="mb-2 text-sm font-semibold">কুপন</div>
               {report.coupons.length === 0 ? (
                 <p className="text-sm text-slate-500">এই সময়ে কোনো কুপন রিডেমশন হয়নি।</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                <ResponsiveTable
+                  table={
+                    <div>
+                      <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b text-left text-xs text-slate-400">
+                      <tr className="border-b text-left text-xs text-slate-500">
                         <th className="py-2 font-medium">কোড</th><th className="py-2 font-medium">রিডেমশন</th>
                         <th className="py-2 font-medium">মোট ছাড়</th><th className="py-2 font-medium">আয়</th>
                       </tr>
@@ -715,9 +758,29 @@ export default function PromotionsPage() {
                           <td className="py-2 font-semibold">{money(c.revenueMinor)}</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </tbody>
+                      </table>
+                    </div>
+                  }
+                  cards={report.coupons.map((c) => (
+                    <div key={c.code} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-mono font-semibold">{c.code}</span>
+                        <span className="font-semibold">{money(c.revenueMinor)}</span>
+                      </div>
+                      <dl className="mt-2 space-y-1.5 text-sm">
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">রিডেমশন</dt>
+                          <dd>{c.redemptions}</dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মোট ছাড়</dt>
+                          <dd className="text-emerald-700">− {money(c.discountTotalMinor)}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ))}
+                />
               )}
             </div>
             <div>
@@ -725,10 +788,12 @@ export default function PromotionsPage() {
               {report.promotions.length === 0 ? (
                 <p className="text-sm text-slate-500">এই সময়ে কোনো অটোমেটিক প্রমোশন প্রয়োগ হয়নি।</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                <ResponsiveTable
+                  table={
+                    <div>
+                      <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b text-left text-xs text-slate-400">
+                      <tr className="border-b text-left text-xs text-slate-500">
                         <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">প্রয়োগ</th>
                         <th className="py-2 font-medium">মোট ছাড়</th>
                       </tr>
@@ -741,9 +806,26 @@ export default function PromotionsPage() {
                           <td className="py-2 text-emerald-700">− {money(pr.discountTotalMinor)}</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </tbody>
+                      </table>
+                    </div>
+                  }
+                  cards={report.promotions.map((pr) => (
+                    <div key={pr.promotionId} className="rounded-lg border p-3">
+                      <div className="font-semibold">{pr.name}</div>
+                      <dl className="mt-2 space-y-1.5 text-sm">
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">প্রয়োগ</dt>
+                          <dd>{pr.applications}</dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">মোট ছাড়</dt>
+                          <dd className="text-emerald-700">− {money(pr.discountTotalMinor)}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ))}
+                />
               )}
             </div>
           </div>

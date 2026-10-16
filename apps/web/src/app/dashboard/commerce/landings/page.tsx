@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import { ResponsiveTable } from "@repo/ui";
 import {
   formatConversionRate, formatPValue, variantSignificance,
   type VariantVsControl,
@@ -77,6 +79,8 @@ function statusPill(status: string) {
 }
 
 export default function LandingsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [landings, setLandings] = useState<LandingListItem[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,7 +159,7 @@ export default function LandingsPage() {
     return typeof window !== "undefined" ? `${window.location.origin}/l/${slug}` : `/l/${slug}`;
   }
   async function copyText(text: string) {
-    try { await navigator.clipboard.writeText(text); setNotice("লিংক কপি হয়েছে।"); }
+    try { await navigator.clipboard.writeText(text); toast({ title: "লিংক কপি হয়েছে।", tone: "success" }); }
     catch { setError("কপি করা যায়নি — লিংকটি হাতে কপি করুন।"); }
   }
 
@@ -196,7 +200,7 @@ export default function LandingsPage() {
           sections: ordered,
         }),
       });
-      setNotice("ল্যান্ডিং পেজ সংরক্ষণ হয়েছে।");
+      toast({ title: "ল্যান্ডিং পেজ সংরক্ষণ হয়েছে।", tone: "success" });
       await load();
       await loadDetail(selectedId);
     } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
@@ -205,11 +209,11 @@ export default function LandingsPage() {
 
   async function archive(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("ল্যান্ডিং পেজটি আর্কাইভ করবেন? পাবলিক লিংকটি বন্ধ হয়ে যাবে, তবে অর্ডারের ইতিহাস থেকে যাবে।")) return;
-    setBusy(`archive-${id}`); setError("");
+    if (!(await confirm({ title: "ল্যান্ডিং পেজটি আর্কাইভ করবেন?", body: "পাবলিক লিংকটি বন্ধ হয়ে যাবে, তবে অর্ডারের ইতিহাস থেকে যাবে।", danger: true, confirmLabel: "আর্কাইভ করুন" }))) return;
+    setBusy(`archive-${id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/landings/${id}`, { method: "DELETE" });
-      setNotice("ল্যান্ডিং পেজ আর্কাইভ হয়েছে।");
+      toast({ title: "ল্যান্ডিং পেজ আর্কাইভ হয়েছে।", tone: "success" });
       if (selectedId === id) { setSelectedId(null); setDetail(null); }
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "আর্কাইভ ব্যর্থ"); }
@@ -271,10 +275,10 @@ export default function LandingsPage() {
     try {
       if (editingVariantId) {
         await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants/${editingVariantId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("ভ্যারিয়েন্ট আপডেট হয়েছে।");
+        toast({ title: "ভ্যারিয়েন্ট আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন ভ্যারিয়েন্ট যোগ হয়েছে।");
+        toast({ title: "নতুন ভ্যারিয়েন্ট যোগ হয়েছে।", tone: "success" });
       }
       resetVariantForm();
       await loadDetail(selectedId);
@@ -283,16 +287,54 @@ export default function LandingsPage() {
   }
   async function deleteVariant(v: LandingVariant) {
     const orgId = getOrganizationId(); if (!orgId || !selectedId) return;
-    if (!window.confirm(`"${v.name}" ভ্যারিয়েন্টটি মুছে ফেলবেন?`)) return;
-    setBusy(`vdel-${v.id}`); setError("");
+    if (!(await confirm({ title: `"${v.name}" ভ্যারিয়েন্টটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setBusy(`vdel-${v.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants/${v.id}`, { method: "DELETE" });
-      setNotice("ভ্যারিয়েন্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "ভ্যারিয়েন্ট মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingVariantId === v.id) resetVariantForm();
       await loadDetail(selectedId);
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
     finally { setBusy(""); }
   }
+
+  // ED15/ED16 (EB6): public-link cell, row actions and the stats
+  // comparison cell are shared verbatim by the desktop tables and
+  // the ResponsiveTable mobile cards — same handlers, same order.
+  const renderLandingLink = (l: LandingListItem) => (
+    <>
+      <span className="font-mono text-xs text-indigo-700">/l/{l.slug}</span>
+      <button type="button" className="ml-2 inline-flex min-h-[44px] items-center rounded border bg-white px-2 py-0.5 text-[11px] font-semibold" onClick={() => copyText(publicLink(l.slug))}>কপি</button>
+      {l.status === "published" ? (
+        <Link href={`/l/${l.slug}`} target="_blank" className="ml-2 inline-flex min-h-[44px] items-center px-1 text-[11px] font-semibold text-indigo-700">খুলুন ↗</Link>
+      ) : null}
+    </>
+  );
+  const renderLandingActions = (l: LandingListItem) => (
+    <div className="flex gap-2">
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => setSelectedId(selectedId === l.id ? null : l.id)}>
+        {selectedId === l.id ? "বন্ধ করুন" : "সম্পাদনা"}
+      </button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => archive(l.id)}>আর্কাইভ</button>
+    </div>
+  );
+  const renderVariantComparison = (v: LandingStats["variants"][number]) => {
+    const sig = variantSignificance(v.vsControl);
+    return sig.kind === "significant" ? (
+      <span
+        className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700"
+        title={`p-value: ${formatPValue(v.vsControl?.pValue)}`}
+      >
+        তাৎপর্যপূর্ণ (p = {formatPValue(v.vsControl?.pValue)})
+      </span>
+    ) : sig.kind === "insufficient" ? (
+      <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">পর্যাপ্ত ডেটা নেই</span>
+    ) : v.vsControl ? (
+      <span className="text-xs text-slate-500" title={`p-value: ${formatPValue(v.vsControl.pValue)}`}>
+        তাৎপর্যপূর্ণ নয় (p = {formatPValue(v.vsControl.pValue)})
+      </span>
+    ) : "—";
+  };
 
   function sectionContentEditor(section: Section, idx: number) {
     const items: any[] = Array.isArray(section.data?.items) ? section.data.items : [];
@@ -302,22 +344,22 @@ export default function LandingsPage() {
           <div className="space-y-2">
             {items.map((it, i) => (
               <div key={i} className="flex flex-wrap items-start gap-2">
-                <input className="input w-16" placeholder="আইকন" value={it.icon ?? ""} onChange={(e) => {
+                <input className="input w-16" placeholder="আইকন" aria-label="সুবিধার আইকন" value={it.icon ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, icon: e.target.value } : x));
                   patchSectionData(idx, { items: next });
                 }} />
-                <input className="input flex-1" placeholder="শিরোনাম" value={it.title ?? ""} onChange={(e) => {
+                <input className="input flex-1" placeholder="শিরোনাম" aria-label="সুবিধার শিরোনাম" value={it.title ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, title: e.target.value } : x));
                   patchSectionData(idx, { items: next });
                 }} />
-                <input className="input flex-[2]" placeholder="বর্ণনা" value={it.text ?? ""} onChange={(e) => {
+                <input className="input flex-[2]" placeholder="বর্ণনা" aria-label="সুবিধার বর্ণনা" value={it.text ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, text: e.target.value } : x));
                   patchSectionData(idx, { items: next });
                 }} />
-                <button type="button" className="rounded-lg border px-2 py-2 text-xs font-semibold text-rose-600" onClick={() => patchSectionData(idx, { items: items.filter((_, j) => j !== i) })}>মুছুন</button>
+                <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-2 text-xs font-semibold text-rose-600" onClick={() => patchSectionData(idx, { items: items.filter((_, j) => j !== i) })}>মুছুন</button>
               </div>
             ))}
-            <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={items.length >= 8}
+            <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={items.length >= 8}
               onClick={() => patchSectionData(idx, { items: [...items, { icon: "✅", title: "", text: "" }] })}>
               + আইটেম যোগ করুন (সর্বোচ্চ ৮)
             </button>
@@ -328,18 +370,18 @@ export default function LandingsPage() {
           <div className="space-y-2">
             {items.map((it, i) => (
               <div key={i} className="flex flex-wrap items-start gap-2">
-                <input className="input flex-1" placeholder="প্রশ্ন" value={it.q ?? ""} onChange={(e) => {
+                <input className="input flex-1" placeholder="প্রশ্ন" aria-label="প্রশ্ন" value={it.q ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, q: e.target.value } : x));
                   patchSectionData(idx, { items: next });
                 }} />
-                <input className="input flex-[2]" placeholder="উত্তর" value={it.a ?? ""} onChange={(e) => {
+                <input className="input flex-[2]" placeholder="উত্তর" aria-label="উত্তর" value={it.a ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, a: e.target.value } : x));
                   patchSectionData(idx, { items: next });
                 }} />
-                <button type="button" className="rounded-lg border px-2 py-2 text-xs font-semibold text-rose-600" onClick={() => patchSectionData(idx, { items: items.filter((_, j) => j !== i) })}>মুছুন</button>
+                <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-2 text-xs font-semibold text-rose-600" onClick={() => patchSectionData(idx, { items: items.filter((_, j) => j !== i) })}>মুছুন</button>
               </div>
             ))}
-            <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={items.length >= 10}
+            <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={items.length >= 10}
               onClick={() => patchSectionData(idx, { items: [...items, { q: "", a: "" }] })}>
               + প্রশ্ন যোগ করুন (সর্বোচ্চ ১০)
             </button>
@@ -373,7 +415,7 @@ export default function LandingsPage() {
           </label>
         );
       default:
-        return <p className="text-xs text-slate-400">এই সেকশনের কনটেন্ট পণ্যের তথ্য থেকে স্বয়ংক্রিয়ভাবে আসে — আলাদা করে লেখার কিছু নেই।</p>;
+        return <p className="text-xs text-slate-500">এই সেকশনের কনটেন্ট পণ্যের তথ্য থেকে স্বয়ংক্রিয়ভাবে আসে — আলাদা করে লেখার কিছু নেই।</p>;
     }
   }
 
@@ -443,10 +485,12 @@ export default function LandingsPage() {
         {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : landings.length === 0 ? (
           <p className="text-sm text-slate-500">এখনো কোনো ল্যান্ডিং পেজ নেই।</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <ResponsiveTable
+            table={
+              <div>
+                <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-left text-xs text-slate-400">
+                <tr className="border-b text-left text-xs text-slate-500">
                   <th className="py-2 font-medium">শিরোনাম / পণ্য</th>
                   <th className="py-2 font-medium">অবস্থা</th>
                   <th className="py-2 font-medium">পাবলিক লিংক</th>
@@ -460,31 +504,50 @@ export default function LandingsPage() {
                   <tr key={l.id} className={`border-b last:border-0 align-top ${selectedId === l.id ? "bg-indigo-50/50" : ""}`}>
                     <td className="py-2">
                       <div className="font-semibold">{l.title}</div>
-                      <div className="text-xs text-slate-400">{l.productName ?? l.productId}</div>
+                      <div className="text-xs text-slate-500">{l.productName ?? l.productId}</div>
                     </td>
                     <td className="py-2">{statusPill(l.status)}</td>
                     <td className="py-2">
-                      <span className="font-mono text-xs text-indigo-700">/l/{l.slug}</span>
-                      <button type="button" className="ml-2 rounded border bg-white px-2 py-0.5 text-[11px] font-semibold" onClick={() => copyText(publicLink(l.slug))}>কপি</button>
-                      {l.status === "published" ? (
-                        <Link href={`/l/${l.slug}`} target="_blank" className="ml-2 text-[11px] font-semibold text-indigo-700">খুলুন ↗</Link>
-                      ) : null}
+                      {renderLandingLink(l)}
                     </td>
                     <td className="py-2">{l.orderCount ?? l.orders ?? 0}টি</td>
                     <td className="py-2 font-medium">{formatMinorTaka(l.revenueMinor)}</td>
                     <td className="py-2">
-                      <div className="flex gap-2">
-                        <button className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => setSelectedId(selectedId === l.id ? null : l.id)}>
-                          {selectedId === l.id ? "বন্ধ করুন" : "সম্পাদনা"}
-                        </button>
-                        <button className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => archive(l.id)}>আর্কাইভ</button>
-                      </div>
+                      {renderLandingActions(l)}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+                </table>
+              </div>
+            }
+            cards={landings.map((l) => (
+              <div key={l.id} className={`rounded-lg border p-3 ${selectedId === l.id ? "bg-indigo-50/50" : ""}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{l.title}</div>
+                    <div className="text-xs text-slate-500">{l.productName ?? l.productId}</div>
+                  </div>
+                  {statusPill(l.status)}
+                </div>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">পাবলিক লিংক</dt>
+                    <dd>{renderLandingLink(l)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                    <dd>{l.orderCount ?? l.orders ?? 0}টি</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">রেভিনিউ</dt>
+                    <dd className="font-medium">{formatMinorTaka(l.revenueMinor)}</dd>
+                  </div>
+                </dl>
+                <div className="mt-2">{renderLandingActions(l)}</div>
+              </div>
+            ))}
+          />
         )}
       </div>
 
@@ -535,8 +598,8 @@ export default function LandingsPage() {
                       </label>
                     </div>
                     <div className="flex gap-1.5">
-                      <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === 0} onClick={() => moveSection(idx, -1)}>↑ উপরে</button>
-                      <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === sections.length - 1} onClick={() => moveSection(idx, 1)}>↓ নিচে</button>
+                      <button type="button" className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === 0} onClick={() => moveSection(idx, -1)}>↑ উপরে</button>
+                      <button type="button" className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === sections.length - 1} onClick={() => moveSection(idx, 1)}>↓ নিচে</button>
                     </div>
                   </div>
                   {s.enabled ? <div className="mt-3">{sectionContentEditor(s, idx)}</div> : null}
@@ -562,10 +625,12 @@ export default function LandingsPage() {
                   <div className="rounded-lg bg-slate-50 p-3 text-center"><div className="text-xl font-bold">{stats.conversionPct != null ? `${stats.conversionPct}%` : "—"}</div><div className="text-[11px] text-slate-500">কনভার্সন (অর্ডার/ভিউ)</div></div>
                 </div>
                 {stats.variants.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                  <ResponsiveTable
+                    table={
+                      <div>
+                        <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b text-left text-xs text-slate-400">
+                        <tr className="border-b text-left text-xs text-slate-500">
                           <th className="py-2 font-medium">ভ্যারিয়েন্ট</th><th className="py-2 font-medium">ভিউ</th>
                           <th className="py-2 font-medium">অর্ডার</th><th className="py-2 font-medium">রেভিনিউ</th>
                           <th className="py-2 font-medium">কনভার্সন</th><th className="py-2 font-medium">কনভার্সন রেট</th>
@@ -574,7 +639,6 @@ export default function LandingsPage() {
                       </thead>
                       <tbody>
                         {stats.variants.map((v) => {
-                          const sig = variantSignificance(v.vsControl);
                           const isWinner = !!stats.winnerId && stats.winnerId === v.variantId;
                           return (
                           <tr key={v.variantId} className="border-b last:border-0">
@@ -590,30 +654,58 @@ export default function LandingsPage() {
                             <td className="py-2">{v.conversionPct != null ? `${v.conversionPct}%` : "—"}</td>
                             <td className="py-2">{formatConversionRate(v.conversionRate)}</td>
                             <td className="py-2">
-                              {sig.kind === "significant" ? (
-                                <span
-                                  className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700"
-                                  title={`p-value: ${formatPValue(v.vsControl?.pValue)}`}
-                                >
-                                  তাৎপর্যপূর্ণ (p = {formatPValue(v.vsControl?.pValue)})
-                                </span>
-                              ) : sig.kind === "insufficient" ? (
-                                <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">পর্যাপ্ত ডেটা নেই</span>
-                              ) : v.vsControl ? (
-                                <span className="text-xs text-slate-500" title={`p-value: ${formatPValue(v.vsControl.pValue)}`}>
-                                  তাৎপর্যপূর্ণ নয় (p = {formatPValue(v.vsControl.pValue)})
-                                </span>
-                              ) : "—"}
+                              {renderVariantComparison(v)}
                             </td>
                           </tr>
                           );
                         })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : <p className="text-xs text-slate-400">কোনো A/B ভ্যারিয়েন্ট নেই — সব ট্রাফিক ডিফল্ট রূপে যাচ্ছে।</p>}
+                        </tbody>
+                        </table>
+                      </div>
+                    }
+                    cards={stats.variants.map((v) => {
+                      const isWinner = !!stats.winnerId && stats.winnerId === v.variantId;
+                      return (
+                        <div key={v.variantId} className="rounded-lg border p-3">
+                          <div className="font-medium">
+                            {v.name}
+                            {isWinner ? (
+                              <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">🏆 বিজয়ী</span>
+                            ) : null}
+                          </div>
+                          <dl className="mt-2 space-y-1.5 text-sm">
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">ভিউ</dt>
+                              <dd>{v.views}</dd>
+                            </div>
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                              <dd>{v.orders}</dd>
+                            </div>
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">রেভিনিউ</dt>
+                              <dd>{formatMinorTaka(v.revenueMinor)}</dd>
+                            </div>
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কনভার্সন</dt>
+                              <dd>{v.conversionPct != null ? `${v.conversionPct}%` : "—"}</dd>
+                            </div>
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কনভার্সন রেট</dt>
+                              <dd>{formatConversionRate(v.conversionRate)}</dd>
+                            </div>
+                            <div className="flex gap-2">
+                              <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কন্ট্রোলের সাথে তুলনা</dt>
+                              <dd>{renderVariantComparison(v)}</dd>
+                            </div>
+                          </dl>
+                        </div>
+                      );
+                    })}
+                  />
+                ) : <p className="text-xs text-slate-500">কোনো A/B ভ্যারিয়েন্ট নেই — সব ট্রাফিক ডিফল্ট রূপে যাচ্ছে।</p>}
                 {stats.variants.length > 0 ? (
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     "বিজয়ী" ও "তাৎপর্যপূর্ণ" চিহ্ন শুধু তথ্যের জন্য — কোনো ভ্যারিয়েন্টে ট্রাফিক এখান থেকে
                     স্বয়ংক্রিয়ভাবে বদলায় না; ওজন বদলাতে চাইলে নিচের ভ্যারিয়েন্ট তালিকা থেকে নিজে করুন।
                   </p>
@@ -641,8 +733,8 @@ export default function LandingsPage() {
                       {v.ctaText ? <span className="block text-xs text-slate-500">CTA: {v.ctaText}</span> : null}
                     </span>
                     <span className="flex gap-2">
-                      <button className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => startEditVariant(v)}>সম্পাদনা</button>
-                      <button className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteVariant(v)}>মুছুন</button>
+                      <button className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => startEditVariant(v)}>সম্পাদনা</button>
+                      <button className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteVariant(v)}>মুছুন</button>
                     </span>
                   </li>
                 ))}

@@ -60,6 +60,16 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   ) {
+    // ED7: view-only theme preview. ?themePreview=v2 on a shop URL
+    // is forwarded as a request header the shop layout reads to
+    // render the v2 theme for THIS request only — the stored
+    // setting never changes, and anyone with the link can view it
+    // (the storefront is public; there is nothing secret to gate).
+    if (req.nextUrl.searchParams.get("themePreview") === "v2") {
+      const headers = new Headers(req.headers);
+      headers.set("x-shop-theme-preview", "v2");
+      return NextResponse.next({ request: { headers } });
+    }
     return NextResponse.next();
   }
 

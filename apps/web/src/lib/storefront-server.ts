@@ -291,9 +291,43 @@ export interface ShopProductDetail {
   };
 }
 
-async function serverGet<T>(path: string): Promise<T | null> {
+/**
+ * ED5 (EB2) cache policy for server-side shop reads.
+ *
+ * Every fetch through `serverGet` carries an explicit cache class:
+ *  - "public"  → Next Data Cache, `{ next: { revalidate: 60 } }`.
+ *    Used ONLY for public catalogue/content reads (the `/public/shop/*`
+ *    endpoints): the same payload is served to every visitor, it
+ *    contains no per-visitor, per-session or per-cart state, and it
+ *    is safe to serve stale for a short window.
+ *  - "private" → `{ cache: "no-store" }`. Reserved for anything
+ *    user-specific (cart, account, orders, tracking-by-token…).
+ *    NOTE: no export in this file is private today — those reads do
+ *    NOT go through this file at all. They are client-side
+ *    `/backend` fetches in lib/storefront-cart.ts (fetchCart) and
+ *    lib/storefront-account.ts (fetchWishlist, fetchMe, orders…),
+ *    keyed by a cart token / shop session in localStorage. The
+ *    "private" class exists so a future export cannot silently
+ *    inherit the public default.
+ *
+ * Accepted trade-off (documented, deliberate): public shop data may
+ * be up to 60 seconds stale — a merchant's price/stock/content edit
+ * can take up to a minute to appear on the storefront. There is NO
+ * on-demand revalidation (no revalidatePath/revalidateTag webhook
+ * from the API on merchant edits); that is out of scope for ED5.
+ */
+export type ShopCacheClass = "public" | "private";
+
+export const SHOP_PUBLIC_REVALIDATE_SECONDS = 60;
+
+async function serverGet<T>(path: string, cacheClass: ShopCacheClass = "public"): Promise<T | null> {
   try {
-    const res = await fetch(`${apiInternalBase()}${path}`, { cache: "no-store" });
+    const res = await fetch(
+      `${apiInternalBase()}${path}`,
+      cacheClass === "private"
+        ? { cache: "no-store" }
+        : { next: { revalidate: SHOP_PUBLIC_REVALIDATE_SECONDS } },
+    );
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -323,7 +357,8 @@ export const fetchShopHome = cache(
     if (sort) params.set("sort", sort);
     const idList = (Array.isArray(ids) ? ids : ids ? [ids] : []).filter(Boolean);
     if (idList.length) params.set("ids", idList.join(","));
-    return serverGet<ShopHome>(`/public/shop/${encodeURIComponent(orgSlug)}?${params.toString()}`);
+    // ED5: public — catalogue/home payload (incl. q/category/brand/sort/page/ids variants); identical for every visitor.
+    return serverGet<ShopHome>(`/public/shop/${encodeURIComponent(orgSlug)}?${params.toString()}`, "public");
   },
 );
 
@@ -337,35 +372,44 @@ export const fetchShopBrand = cache(
     const params = new URLSearchParams();
     params.set("page", page);
     params.set("pageSize", pageSize);
+    // ED5: public — published brand page + its active products.
     return serverGet<ShopBrandPage>(
       `/public/shop/${encodeURIComponent(orgSlug)}/brands/${encodeURIComponent(brandSlug)}?${params.toString()}`,
+      "public",
     );
   },
 );
 
 export const fetchShopPage = cache(
   async (orgSlug: string, pageSlug: string): Promise<ShopPageData | null> =>
+    // ED5: public — published content page only.
     serverGet<ShopPageData>(
       `/public/shop/${encodeURIComponent(orgSlug)}/pages/${encodeURIComponent(pageSlug)}`,
+      "public",
     ),
 );
 
 export const fetchShopBlog = cache(
   async (orgSlug: string): Promise<ShopBlogList | null> =>
-    serverGet<ShopBlogList>(`/public/shop/${encodeURIComponent(orgSlug)}/blog`),
+    // ED5: public — published blog index only.
+    serverGet<ShopBlogList>(`/public/shop/${encodeURIComponent(orgSlug)}/blog`, "public"),
 );
 
 export const fetchShopBlogPost = cache(
   async (orgSlug: string, postSlug: string): Promise<ShopBlogPost | null> =>
+    // ED5: public — one published blog post (drafts answer 404).
     serverGet<ShopBlogPost>(
       `/public/shop/${encodeURIComponent(orgSlug)}/blog/${encodeURIComponent(postSlug)}`,
+      "public",
     ),
 );
 
 export const fetchProductDetail = cache(
   async (orgSlug: string, productSlug: string): Promise<ShopProductDetail | null> =>
+    // ED5: public — product detail + related; no per-visitor fields (recently-viewed is client-side).
     serverGet<ShopProductDetail>(
       `/public/shop/${encodeURIComponent(orgSlug)}/products/${encodeURIComponent(productSlug)}`,
+      "public",
     ),
 );
 
@@ -411,8 +455,10 @@ export async function fetchProductReviewsSummary(
   orgSlug: string,
   productSlug: string,
 ): Promise<{ average: number | null; count: number } | null> {
+  // ED5: public — aggregate reviews summary (average + count) only; no individual reviewer identity is consumed here.
   const data = await serverGet<{ summary?: { average: number | null; count: number } }>(
     `/public/shop/${encodeURIComponent(orgSlug)}/products/${encodeURIComponent(productSlug)}/reviews`,
+    "public",
   );
   return data?.summary ?? null;
 }

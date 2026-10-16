@@ -1,6 +1,7 @@
 import React from "react";
 import type { ShopPageBlock } from "@/lib/storefront-server";
 import { shopT } from "@/lib/shop-i18n";
+import { MediaImage } from "@/components/MediaImage";
 import { ContactForm } from "./p/[pageSlug]/ContactForm";
 import { PageFaq } from "./p/[pageSlug]/PageFaq";
 
@@ -47,8 +48,7 @@ export function PageBlockView({ block, orgSlug, locale }: { block: ShopPageBlock
     case "image": {
       const url = strOrNull(d.url);
       return url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={str(d.alt)} className="w-full rounded-2xl border border-slate-200 object-cover" />
+        <MediaImage src={url} alt={str(d.alt)} width={1280} height={720} aspectRatio="16/9" sizes="(max-width: 768px) 100vw, 768px" className="w-full rounded-2xl border border-slate-200 object-cover" />
       ) : null;
     }
     case "faq": {

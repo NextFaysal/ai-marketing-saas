@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ED6 (EB2) — font loading discipline.
+   font-display: Fontsource's shipped CSS already declares
+   `font-display: swap` on every @font-face (verified in
+   node_modules/@fontsource/hind-siliguri/{400,500,600,700}.css and
+   @fontsource-variable/inter/index.css), so no override is needed.
+   All four Hind Siliguri weights stay imported in the root layout:
+   font-medium (500) ×907, font-semibold (600) ×2,489 and
+   font-bold (700) ×1,258 utility uses across the app (grep,
+   2026-10-16) — every weight is genuinely exercised.
+   Metric-matched local fallback: while Hind Siliguri downloads,
+   Bengali text renders in a local font adjusted to Hind Siliguri's
+   own metrics so the swap does not shift layout. The numbers are
+   measured from the shipped font files with fonttools (NOT
+   invented): Hind Siliguri 400 — unitsPerEm 1000, hhea
+   ascent 1116 / descent −501 / lineGap 0, x-height 505.
+   size-adjust is the x-height ratio against Liberation Sans
+   (Arial-metric-compatible): (505/1000) / (1082/2048) = 95.6%. */
+@font-face {
+  font-family: "Hind Siliguri Fallback";
+  src: local("Arial"), local("Noto Sans Bengali"), local("Liberation Sans");
+  size-adjust: 95.6%;
+  ascent-override: 111.6%;
+  descent-override: 50.1%;
+  line-gap-override: 0%;
+}
+
 :root {
   --brand-from: #6366f1;
   --brand-to: #8b5cf6;
@@ -22,7 +48,270 @@
   --radius-card: 1rem;
   --shadow-card-v2: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
   --shadow-pop: 0 12px 40px -12px rgba(15, 23, 42, 0.25);
+
+  /* ---------- Design Tokens v3 (EB1 / ED1, additive) ----------
+     The full token set (docs/design-tokens-v3.md). Every default
+     below equals the value the hard-coded utilities computed to
+     before this layer existed, so un-migrated pages render
+     identically. --brand is the single brand token: it follows
+     --brand-from (which the M59 shell overrides per org); the shop
+     layout sets --brand directly to the org's primaryColor. Because
+     every token is a CSS variable, EB7's dark mode only needs to
+     re-declare this block under a dark scope — no class changes. */
+  --brand: var(--brand-from);
+  --brand-strong: var(--brand-to);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f9;
+  --border: rgba(203, 213, 225, 0.9);
+  --border-strong: #cbd5e1;
+  --ink-inverse: #ffffff;
+  --success: #059669;
+  --success-bright: #10b981;
+  --success-soft: #ecfdf5;
+  --warning: #d97706;
+  --warning-bright: #f59e0b;
+  --warning-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --info: #0284c7;
+  --info-soft: #f0f9ff;
+  /* Type scale (sizes the current classes already compute to). */
+  --text-display: 2rem;
+  --text-display-lh: 1.15;
+  --text-page-title: 26px;
+  --text-page-title-lh: 1.25;
+  --text-section: 15px;
+  --text-section-lh: 1.4;
+  --text-body: 14px;
+  --text-body-lh: 1.55;
+  --text-small: 13px;
+  --text-small-lh: 1.5;
+  --text-micro: 11px;
+  --text-micro-lh: 1.4;
+  /* Spacing rhythm (the 4px grid the current paddings/margins use). */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  /* Radius scale (mirrors the rounded-* steps in use today). */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-full: 9999px;
+  /* Shadow scale: defaults are the tailwind.config literals, which
+     the config now reads back from these variables (single source). */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px -4px rgba(15, 23, 42, 0.08);
+  --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 32px -8px rgba(15, 23, 42, 0.16);
+  --shadow-glow: 0 8px 24px -8px rgba(99, 102, 241, 0.55);
+  --shadow-drawer: 0 0 60px rgba(2, 6, 23, 0.45);
+  --shadow-success: 0 8px 24px -8px rgba(16, 185, 129, 0.55);
+  --shadow-warning: 0 8px 24px -8px rgba(245, 158, 11, 0.55);
+  /* Motion durations (match the transition durations in use). */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 350ms;
 }
+
+/* ---------- Dark mode (ED17 / EB7) ----------
+   Two scopes, one value set (kept in sync by the pin spec in
+   lib/theme.test.ts, which enumerates DARK_TOKEN_LIST in BOTH
+   blocks):
+
+   1. Dashboard: the `.dark` class on the dashboard root element
+      (.dashboard-root, set by lib/theme.ts per the user's
+      light/dark/system preference). Token-driven surfaces (the
+      @repo/ui kit, the globals component classes, the var-backed
+      Tailwind utilities) flip from these re-declarations alone.
+   2. Shop v2: a visitor-OS media query scoped to the v2 shop root
+      ([data-shop-theme="v2"]) — no merchant setting, no class.
+      Legacy shop themes use literal classes that never read these
+      variables, so they are untouched by design.
+
+   The brand seam is NOT re-declared: --brand / --brand-from /
+   --brand-to keep whatever the white-label shell or the shop
+   layout set. --brand-soft / --brand-soft-strong ARE re-declared
+   because their light definitions color-mix the brand colour
+   toward WHITE, which would read as a pastel wash on dark
+   surfaces; the dark versions mix toward the dark surface.
+   --brand-ring (transparent mix) and the coloured glow shadows
+   are mode-agnostic and stay.
+
+   Contrast (WCAG ratios computed from these exact hex values,
+   recorded in docs/design-eb7-acceptance.md): on --surface
+   #0f172a — ink-strong 16.3:1, ink-body 12.0:1, ink-muted 7.0:1,
+   ink-faint 5.8:1, success 7.0:1, warning 10.7:1, danger 6.5:1,
+   info 8.3:1 — every text-bearing token clears 4.5:1 on the
+   surface, raised and muted steps too. */
+.dashboard-root.dark {
+  color-scheme: dark;
+  --surface: #0f172a;
+  --surface-muted: #17233d;
+  --surface-raised: #1e293b;
+  --surface-sunken: #0a0f1e;
+  --border-soft: rgba(148, 163, 184, 0.16);
+  --border: rgba(148, 163, 184, 0.28);
+  --border-strong: #475569;
+  --ink-strong: #f1f5f9;
+  --ink-body: #cbd5e1;
+  --ink-muted: #94a3b8;
+  --ink-faint: #8494ab;
+  --brand-soft: color-mix(in srgb, var(--brand-from) 16%, #0f172a);
+  --brand-soft-strong: color-mix(in srgb, var(--brand-from) 28%, #0f172a);
+  --success: #10b981;
+  --success-bright: #34d399;
+  --success-soft: rgba(16, 185, 129, 0.14);
+  --warning: #fbbf24;
+  --warning-bright: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(239, 68, 68, 0.15);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.14);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  --shadow-card-v2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 12px 40px -12px rgba(0, 0, 0, 0.65);
+  --shadow-drawer: 0 0 60px rgba(0, 0, 0, 0.65);
+  /* The root element itself: its markup carries the light literal
+     bg-[#f8fafc] / text-slate-900; the token values are the dark
+     page ground + default text. */
+  background-color: #0a0f1e;
+  color: var(--ink-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-shop-theme="v2"] {
+    color-scheme: dark;
+    --surface: #0f172a;
+    --surface-muted: #17233d;
+    --surface-raised: #1e293b;
+    --surface-sunken: #0a0f1e;
+    --border-soft: rgba(148, 163, 184, 0.16);
+    --border: rgba(148, 163, 184, 0.28);
+    --border-strong: #475569;
+    --ink-strong: #f1f5f9;
+    --ink-body: #cbd5e1;
+    --ink-muted: #94a3b8;
+    --ink-faint: #8494ab;
+    --brand-soft: color-mix(in srgb, var(--brand-from) 16%, #0f172a);
+    --brand-soft-strong: color-mix(in srgb, var(--brand-from) 28%, #0f172a);
+    --success: #10b981;
+    --success-bright: #34d399;
+    --success-soft: rgba(16, 185, 129, 0.14);
+    --warning: #fbbf24;
+    --warning-bright: #f59e0b;
+    --warning-soft: rgba(245, 158, 11, 0.14);
+    --danger: #f87171;
+    --danger-soft: rgba(239, 68, 68, 0.15);
+    --info: #38bdf8;
+    --info-soft: rgba(56, 189, 248, 0.14);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+    --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    --shadow-card-v2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+    --shadow-pop: 0 12px 40px -12px rgba(0, 0, 0, 0.65);
+    --shadow-drawer: 0 0 60px rgba(0, 0, 0, 0.65);
+  }
+}
+
+/* The light body gradient would peek around the dashboard during
+   overscroll; the page ground goes dark with the root. :has()
+   degrades gracefully (no match = light chrome, as today). */
+body:has(.dashboard-root.dark) {
+  background: #0a0f1e;
+}
+
+/* ---------- Dark override layer (ED17) — dashboard subtree only ----------
+   Token-driven surfaces flip via the variables above. The long
+   tail of dashboard pages still hand-rolls literal Tailwind
+   classes (bg-white ×722, text-slate-500 ×2016, … in
+   app/dashboard); this layer maps the HIGHEST-FREQUENCY literal
+   patterns onto the tokens, scoped strictly to descendants of
+   the dashboard root in dark mode. It is deliberately NOT a
+   per-file sweep: patterns not listed here keep their literal
+   colours in dark mode and are inventoried as stragglers in
+   docs/design-eb7-acceptance.md. These rules are unlayered, so
+   they win over the Tailwind utility layer without !important;
+   every selector is prefixed by .dashboard-root.dark, so light
+   mode and all non-dashboard surfaces are byte-unaffected.
+   Light-mode text steps map by ROLE, with the scale inverted:
+   slate-900/800 (strongest text) → --ink-strong, 700/600 →
+   --ink-body, 500 → --ink-muted, 400 → --ink-faint. slate-300 and
+   lighter are NOT mapped — the sidebar and other always-dark
+   chrome already use them as light-on-dark text. */
+.dashboard-root.dark .bg-white { background-color: var(--surface); }
+.dashboard-root.dark .bg-white\/80 { background-color: color-mix(in srgb, var(--surface) 80%, transparent); }
+.dashboard-root.dark .bg-white\/95 { background-color: color-mix(in srgb, var(--surface) 95%, transparent); }
+.dashboard-root.dark .bg-slate-50 { background-color: var(--surface-muted); }
+.dashboard-root.dark .bg-slate-50\/80 { background-color: color-mix(in srgb, var(--surface-muted) 80%, transparent); }
+.dashboard-root.dark .bg-slate-100 { background-color: var(--surface-raised); }
+.dashboard-root.dark .bg-slate-200 { background-color: var(--surface-raised); }
+.dashboard-root.dark .text-slate-900 { color: var(--ink-strong); }
+.dashboard-root.dark .text-slate-800 { color: var(--ink-strong); }
+.dashboard-root.dark .text-slate-700 { color: var(--ink-body); }
+.dashboard-root.dark .text-slate-600 { color: var(--ink-body); }
+.dashboard-root.dark .text-slate-500 { color: var(--ink-muted); }
+.dashboard-root.dark .text-slate-400 { color: var(--ink-faint); }
+.dashboard-root.dark .border-slate-100 { border-color: var(--border-soft); }
+.dashboard-root.dark .border-slate-200 { border-color: var(--border-soft); }
+.dashboard-root.dark .border-slate-200\/80 { border-color: rgba(148, 163, 184, 0.13); }
+.dashboard-root.dark .border-slate-200\/90 { border-color: rgba(148, 163, 184, 0.14); }
+.dashboard-root.dark .border-slate-300 { border-color: var(--border); }
+.dashboard-root.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-soft); }
+.dashboard-root.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-soft); }
+.dashboard-root.dark .ring-slate-100 { --tw-ring-color: var(--border-soft); }
+.dashboard-root.dark .ring-slate-200 { --tw-ring-color: var(--border); }
+.dashboard-root.dark .ring-slate-300 { --tw-ring-color: var(--border-strong); }
+.dashboard-root.dark .hover\:bg-slate-50:hover { background-color: var(--surface-muted); }
+.dashboard-root.dark .hover\:bg-slate-100:hover { background-color: var(--surface-raised); }
+.dashboard-root.dark .hover\:text-slate-800:hover { color: var(--ink-strong); }
+.dashboard-root.dark .hover\:text-slate-900:hover { color: var(--ink-strong); }
+.dashboard-root.dark .placeholder\:text-slate-400::placeholder { color: var(--ink-faint); }
+.dashboard-root.dark .placeholder\:text-slate-500::placeholder { color: var(--ink-faint); }
+
+/* Globals component classes whose literals the token layer cannot
+   reach (they were compiled from @apply literal utilities). */
+.dashboard-root.dark .input {
+  background-color: var(--surface);
+  color: var(--ink-strong);
+  border-color: var(--border);
+}
+.dashboard-root.dark .input::placeholder { color: var(--ink-faint); }
+.dashboard-root.dark .btn-secondary {
+  background-color: var(--surface);
+  color: var(--ink-body);
+}
+.dashboard-root.dark .btn-secondary:hover { background-color: var(--surface-muted); }
+.dashboard-root.dark .btn-dark { background-color: var(--surface-raised); }
+.dashboard-root.dark .btn-dark:hover { background-color: var(--border-strong); }
+/* The semantic gradient buttons keep their LIGHT gradient stops in
+   dark mode: white label text measures 3.8:1 / 3.2:1 on them
+   (identical to light mode's own values), while the flipped
+   --success/--warning tokens (chosen for text-on-surface contrast)
+   would drop the labels below 2.6:1. The tokens still drive
+   text-success / bg-success-soft and friends. */
+.dashboard-root.dark .btn-success { background-image: linear-gradient(135deg, #059669, #10b981); }
+.dashboard-root.dark .btn-warning { background-image: linear-gradient(135deg, #d97706, #f59e0b); }
+.dashboard-root.dark .table-wrap thead th {
+  background-color: color-mix(in srgb, var(--surface-muted) 80%, transparent);
+  border-color: var(--border-soft);
+  color: var(--ink-muted);
+}
+.dashboard-root.dark .table-wrap tbody td { border-color: var(--border-soft); }
+.dashboard-root.dark thead th { color: var(--ink-muted); }
+.dashboard-root.dark .skeleton { background-color: rgba(148, 163, 184, 0.18); }
+.dashboard-root.dark .skeleton::after {
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.08) 50%, transparent 80%);
+}
+/* Badge tints: the -50/-700/-200 literal triples become translucent
+   semantic washes with light text (same hue roles, dark values). */
+.dashboard-root.dark .badge-brand { background-color: var(--brand-soft); color: color-mix(in srgb, var(--brand-from) 55%, white); --tw-ring-color: var(--brand-ring); }
+.dashboard-root.dark .badge-green { background-color: var(--success-soft); color: var(--success-bright); --tw-ring-color: rgba(16, 185, 129, 0.35); }
+.dashboard-root.dark .badge-amber { background-color: var(--warning-soft); color: var(--warning); --tw-ring-color: rgba(245, 158, 11, 0.35); }
+.dashboard-root.dark .badge-red { background-color: var(--danger-soft); color: var(--danger); --tw-ring-color: rgba(239, 68, 68, 0.35); }
+.dashboard-root.dark .badge-slate { background-color: var(--surface-raised); color: var(--ink-muted); --tw-ring-color: var(--border); }
 
 @layer base {
   html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; -webkit-tap-highlight-color: transparent; }
@@ -34,7 +323,7 @@
     color: #0f172a;
     /* UX1 Q1: Latin renders in Inter Variable; Bengali glyphs (absent
        from Inter) fall through per-glyph to Hind Siliguri. */
-    font-family: "Inter Variable", Inter, "Hind Siliguri", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: "Inter Variable", Inter, "Hind Siliguri", "Hind Siliguri Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
   }
   ::selection { background: rgba(99,102,241,0.25); }
@@ -54,9 +343,56 @@
 }
 
 @layer components {
-  /* Premium surface used across every dashboard page */
+  /* EB6/ED16: skip link — visually hidden until focused, then a
+     visible pill at the top-left. Must be the first focusable
+     element wherever it is rendered (dashboard + shop layouts).
+     Token-driven: surface / ink-strong / brand-ring / shadow-pop. */
+  .skip-link {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .skip-link:focus,
+  .skip-link:focus-visible {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 10px 16px;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--ink-strong);
+    font-size: var(--text-body);
+    font-weight: 700;
+    text-decoration: none;
+    box-shadow: var(--shadow-pop);
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 2px;
+  }
+
+  /* Premium surface used across every dashboard page.
+     ED1: re-expressed on the token layer — border-soft = slate-200/80,
+     surface = white, radius-lg = rounded-2xl, shadow-card is the
+     tailwind utility now backed by --shadow-card. Identical values. */
   .card {
-    @apply rounded-2xl border border-slate-200/80 bg-white shadow-card;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
   }
   .card-hover { @apply transition duration-200 hover:shadow-card-hover hover:-translate-y-px; }
 
@@ -66,7 +402,9 @@
     background-image: linear-gradient(135deg, var(--brand-from), var(--brand-to));
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300/90 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition duration-150 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition duration-150 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    /* ED1: border colour from the token layer (--border = slate-300/90). */
+    border-color: var(--border);
   }
   .btn-dark {
     @apply inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
@@ -74,13 +412,40 @@
   .btn-sm { @apply px-3 py-1.5 text-[13px] rounded-lg; }
   .btn-success {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
-    background-image: linear-gradient(135deg, #059669, #10b981);
-    box-shadow: 0 8px 24px -8px rgba(16,185,129,0.55);
+    /* ED1: gradient stops + shadow from the semantic tokens
+       (--success #059669 → --success-bright #10b981). */
+    background-image: linear-gradient(135deg, var(--success), var(--success-bright));
+    box-shadow: var(--shadow-success);
   }
   .btn-warning {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
-    background-image: linear-gradient(135deg, #d97706, #f59e0b);
-    box-shadow: 0 8px 24px -8px rgba(245,158,11,0.55);
+    /* ED1: --warning #d97706 → --warning-bright #f59e0b. */
+    background-image: linear-gradient(135deg, var(--warning), var(--warning-bright));
+    box-shadow: var(--shadow-warning);
+  }
+
+  /* Shop primary CTA (ED1). Solid brand colour from the token layer:
+     --brand defaults to var(--brand-from); the shop layout overrides
+     --brand with the org's primaryColor, falling back to #4f46e5 —
+     the exact indigo-600 the shop CTAs hard-coded before — so an
+     unbranded shop renders identically and a branded shop's buy /
+     cart / checkout buttons follow its colour. Pair with
+     .btn-brand-shadow on the hero CTAs that carried
+     shadow-lg shadow-indigo-600/30. Hover darkens via brightness:
+     the token-path equivalent of indigo-600 → indigo-700 that works
+     for ANY org colour (see docs/design-tokens-v3.md). */
+  .btn-brand {
+    background-color: var(--brand);
+    color: var(--ink-inverse);
+    transition: filter var(--motion-base) ease, transform var(--motion-fast) ease;
+  }
+  .btn-brand:hover { filter: brightness(0.92); }
+  .btn-brand:active { transform: scale(0.99); }
+  .btn-brand:disabled { opacity: 0.5; pointer-events: none; }
+  .btn-brand-shadow {
+    box-shadow:
+      0 10px 15px -3px color-mix(in srgb, var(--brand) 30%, transparent),
+      0 4px 6px -4px color-mix(in srgb, var(--brand) 30%, transparent);
   }
 
   /* Premium form control (pages assign this via their inputCls) */
@@ -98,11 +463,38 @@
   .badge-red { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-50 text-red-700 ring-1 ring-inset ring-red-200; }
   .badge-slate { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200; }
 
-  .page-title { @apply text-[26px] leading-tight font-bold tracking-tight text-slate-900; }
-  .page-sub { @apply text-sm text-slate-500; }
-  .section-title { @apply text-[15px] font-semibold tracking-tight text-slate-900; }
+  /* ED1: type tokens — 26px/1.25 = text-[26px] leading-tight,
+     ink-strong = slate-900, tracking-tight = -0.025em. */
+  .page-title {
+    font-size: var(--text-page-title);
+    line-height: var(--text-page-title-lh);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--ink-strong);
+  }
+  /* text-sm = 14px with a 1.25rem line-height; ink-muted = slate-500. */
+  .page-sub {
+    font-size: var(--text-body);
+    line-height: 1.25rem;
+    color: var(--ink-muted);
+  }
+  /* Line-height intentionally undeclared (inherited today, as before);
+     --text-section-lh is the design target EB5 normalises to. */
+  .section-title {
+    font-size: var(--text-section);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--ink-strong);
+  }
 
-  .table-wrap { @apply overflow-x-auto rounded-2xl border border-slate-200/80 bg-white shadow-card; }
+  /* ED1: same token re-expression as .card (identical values). */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
   .table-wrap table { @apply w-full text-sm; }
   .table-wrap thead th { @apply bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 px-4 py-3 border-b border-slate-200/80 whitespace-nowrap; }
   .table-wrap tbody td { @apply px-4 py-3 border-b border-slate-100 align-top; }
@@ -143,7 +535,7 @@
   .stat-icon-sky { background-image: linear-gradient(135deg, #0284c7, #38bdf8); }
   .stat-label { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500; }
   .stat-value { @apply mt-1 text-[26px] font-bold leading-none tracking-tight text-slate-900; }
-  .stat-hint { @apply mt-2 text-xs text-slate-400; }
+  .stat-hint { @apply mt-2 text-xs text-slate-500; }
 
   /* Quick-action tile inside the hero (real links, ≥44px targets). */
   .quick-action { @apply flex min-h-[44px] items-center gap-2.5 rounded-2xl bg-white/10 px-3.5 py-2.5 text-sm font-semibold text-white ring-1 ring-inset ring-white/20 backdrop-blur-sm transition duration-150 hover:bg-white/20 active:scale-[0.98]; }
@@ -274,6 +666,20 @@
      for reduced-motion users with no extra code. */
   .fade-rise { animation: fade-rise 0.35s ease both; }
 
+  /* ED11 (EB4): token-timed rise entrance (transform + opacity
+     only — no layout shift, runs once per mount). Applied to the
+     shop home wrapper, the PDP container and the dashboard page
+     container. Duration = --motion-slow (350ms, the fade-rise
+     duration); the prefers-reduced-motion block below collapses
+     it like every other animation. */
+  .animate-rise-in { animation: rise-in var(--motion-slow) ease both; }
+
+  /* ED11 (EB4): cart-badge bump — a one-shot scale pulse replayed
+     (via a changing React key) when the cart count INCREASES.
+     Reduced-motion users never see it: the global block below
+     collapses all animation durations to 0.01ms. */
+  .badge-bump { animation: badge-bump var(--motion-slow) ease; }
+
   /* Thread canvas tint: a whisper of the org's brand colour under
      the white incoming bubbles (color-mix over the v2 thread-scroll
      radial accent). */
@@ -311,7 +717,7 @@
   .manage-nav-btn:hover { background: var(--brand-soft); }
   .setting-row { @apply flex flex-col gap-1.5 rounded-2xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-200/50 sm:flex-row sm:items-center sm:justify-between sm:gap-4; }
   .setting-row-label { @apply text-sm font-medium text-slate-700 sm:max-w-[46%]; }
-  .setting-row-help { @apply mt-0.5 block text-[11px] font-normal leading-snug text-slate-400; }
+  .setting-row-help { @apply mt-0.5 block text-[11px] font-normal leading-snug text-slate-500; }
   .setting-row-control { @apply block w-full shrink-0 sm:w-56; }
 
   /* Context panel lower half v2 (assign/tags/notes/order form). */
@@ -488,6 +894,10 @@
 }
 
 @keyframes fade-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes badge-bump { 0% { transform: scale(1); } 30% { transform: scale(1.35); } 100% { transform: scale(1); } }
 
 @keyframes inbox-pulse { 0% { transform: scale(0.7); opacity: 1; } 100% { transform: scale(1.25); opacity: 0; } }
 

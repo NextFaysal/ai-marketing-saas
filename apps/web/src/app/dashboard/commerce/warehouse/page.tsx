@@ -8,6 +8,7 @@ import {
   buildReceiveLines, countScopeLabel, parseDistrictInput,
   transferLineVariance, transferStatusCls, transferStatusLabel,
 } from "@/lib/warehouse-ab3";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC21 + EC22 riders — Warehouses/bins, bin assignments, stock counts, rider board.
 
@@ -408,7 +409,19 @@ export default function WarehousePage() {
   }
 
   const tabBtn = (key: typeof tab, label: string) => (
-    <button type="button" key={key} onClick={() => setTab(key)} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === key ? "bg-slate-900 text-white" : "border bg-white"}`}>{label}</button>
+    <button type="button" key={key} onClick={() => setTab(key)} className={`inline-flex min-h-[44px] items-center rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === key ? "bg-slate-900 text-white" : "border bg-white"}`}>{label}</button>
+  );
+
+  // EB6: row actions shared verbatim between each desktop table and
+  // its ResponsiveTable mobile card — same handlers, same order.
+  const renderAssignActions = (a: Assignment) => (
+    <div className="flex flex-wrap gap-2">
+      <Link href={`/dashboard/commerce/warehouse/labels?warehouseId=${a.warehouseId}&binId=${a.binLocationId}`} className="inline-flex min-h-[44px] items-center text-xs font-semibold text-indigo-700">🏷️ লেবেল প্রিন্ট</Link>
+      <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => removeAssignment(a)}>মুছুন</button>
+    </div>
+  );
+  const renderCountSave = (l: CountLine) => (
+    countDetail && countDetail.status !== "closed" ? <button type="button" className="btn-secondary btn-sm inline-flex min-h-[44px] items-center" disabled={busy !== ""} onClick={() => saveLine(l)}>সংরক্ষণ</button> : null
   );
   const boardByRider = new Map<string, DeliveryAssignment[]>();
   for (const a of board) { const arr = boardByRider.get(a.riderName ?? a.riderId) ?? []; arr.push(a); boardByRider.set(a.riderName ?? a.riderId, arr); }
@@ -433,15 +446,15 @@ export default function WarehousePage() {
       {tab === "warehouses" ? (
         <div className="space-y-4">
           <form onSubmit={saveWarehouse} className="card grid gap-2 p-5 sm:grid-cols-3">
-            <input className="input" placeholder="গুদামের নাম *" value={whForm.name} onChange={(e) => setWhForm({ ...whForm, name: e.target.value })} required />
-            <input className="input sm:col-span-2" placeholder="ঠিকানা" value={whForm.address} onChange={(e) => setWhForm({ ...whForm, address: e.target.value })} />
+            <input aria-label="গুদামের নাম" className="input" placeholder="গুদামের নাম *" value={whForm.name} onChange={(e) => setWhForm({ ...whForm, name: e.target.value })} required />
+            <input aria-label="গুদামের ঠিকানা" className="input sm:col-span-2" placeholder="ঠিকানা" value={whForm.address} onChange={(e) => setWhForm({ ...whForm, address: e.target.value })} />
             <label className="block text-sm">অগ্রাধিকার (priority)
               <input className="input mt-1" type="number" min={0} step={1} value={whForm.priority} onChange={(e) => setWhForm({ ...whForm, priority: e.target.value })} />
-              <span className="mt-1 block text-xs text-slate-400">ছোট সংখ্যা = আগে থেকে পাঠানো হবে</span>
+              <span className="mt-1 block text-xs text-slate-500">ছোট সংখ্যা = আগে থেকে পাঠানো হবে</span>
             </label>
             <label className="block text-sm sm:col-span-2">সার্ভিস জেলা
               <input className="input mt-1" placeholder="কমা দিয়ে জেলার নাম (যেমন: Dhaka, Khulna)" value={whForm.districtsText} onChange={(e) => setWhForm({ ...whForm, districtsText: e.target.value })} />
-              <span className="mt-1 block text-xs text-slate-400">এই জেলাগুলোর অর্ডার প্রথমে এই গুদাম থেকে বরাদ্দ পাবে। ভুল নাম দিলে সার্ভারের বার্তা দেখানো হবে।</span>
+              <span className="mt-1 block text-xs text-slate-500">এই জেলাগুলোর অর্ডার প্রথমে এই গুদাম থেকে বরাদ্দ পাবে। ভুল নাম দিলে সার্ভারের বার্তা দেখানো হবে।</span>
             </label>
             <div className="flex gap-2">
               <button className="btn-primary" disabled={busy !== ""}>{busy === "wh" ? "হচ্ছে…" : editingWh ? "আপডেট করুন" : "গুদাম যোগ করুন"}</button>
@@ -463,9 +476,9 @@ export default function WarehousePage() {
                       {(w.serviceDistricts ?? []).length > 0 ? <> · সার্ভিস জেলা: {(w.serviceDistricts ?? []).map((d) => <span key={d} className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700">{d}</span>)}</> : null}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {!w.isDefault && w.active ? <button type="button" className="text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchWarehouse(w, { isDefault: true }, "ডিফল্ট গুদাম বদলেছে।")}>ডিফল্ট করুন</button> : null}
-                      <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingWh(w); setWhForm({ name: w.name, address: w.address ?? "", priority: String(w.priority ?? 0), districtsText: (w.serviceDistricts ?? []).join(", ") }); }}>সম্পাদনা</button>
-                      {w.active ? <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteWarehouse(w)}>নিষ্ক্রিয় করুন</button> : null}
+                      {!w.isDefault && w.active ? <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => patchWarehouse(w, { isDefault: true }, "ডিফল্ট গুদাম বদলেছে।")}>ডিফল্ট করুন</button> : null}
+                      <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700" onClick={() => { setEditingWh(w); setWhForm({ name: w.name, address: w.address ?? "", priority: String(w.priority ?? 0), districtsText: (w.serviceDistricts ?? []).join(", ") }); }}>সম্পাদনা</button>
+                      {w.active ? <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteWarehouse(w)}>নিষ্ক্রিয় করুন</button> : null}
                     </div>
                   </li>
                 ))}
@@ -475,8 +488,8 @@ export default function WarehousePage() {
             <div className="card p-5">
               <div className="font-semibold">বিন — {warehouses.find((w) => w.id === selectedWh)?.name ?? "গুদাম বেছে নিন"}</div>
               <form onSubmit={createBin} className="mt-3 grid gap-2 sm:grid-cols-3">
-                <input className="input" placeholder="বিন কোড (যেমন A-01) *" value={binForm.code} onChange={(e) => setBinForm({ ...binForm, code: e.target.value })} required />
-                <input className="input" placeholder="নোট" value={binForm.note} onChange={(e) => setBinForm({ ...binForm, note: e.target.value })} />
+                <input aria-label="বিন কোড" className="input" placeholder="বিন কোড (যেমন A-01) *" value={binForm.code} onChange={(e) => setBinForm({ ...binForm, code: e.target.value })} required />
+                <input aria-label="বিনের নোট" className="input" placeholder="নোট" value={binForm.note} onChange={(e) => setBinForm({ ...binForm, note: e.target.value })} />
                 <button className="btn-primary" disabled={busy !== "" || !selectedWh}>বিন যোগ করুন</button>
               </form>
               <ul className="mt-3 space-y-1.5">
@@ -484,7 +497,7 @@ export default function WarehousePage() {
                   <li key={b.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
                     <span className="font-mono font-semibold">{b.code}</span>
                     <span className="text-xs text-slate-500">{b.note ?? ""}</span>
-                    <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteBin(b)}>মুছুন</button>
+                    <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteBin(b)}>মুছুন</button>
                   </li>
                 ))}
                 {bins.length === 0 ? <li className="text-sm text-slate-500">এই গুদামে কোনো বিন নেই।</li> : null}
@@ -508,44 +521,58 @@ export default function WarehousePage() {
               ) : null}
             </div>
             <form onSubmit={saveAssignment} className="grid gap-2 sm:grid-cols-4">
-              <select className="input" value={assignForm.productId} onChange={(e) => void onAssignProduct(e.target.value)} required>
+              <select aria-label="পণ্য বেছে নিন" className="input" value={assignForm.productId} onChange={(e) => void onAssignProduct(e.target.value)} required>
                 <option value="">পণ্য বেছে নিন</option>
                 {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
               </select>
-              <select className="input" value={assignForm.variantId} onChange={(e) => setAssignForm({ ...assignForm, variantId: e.target.value })}>
+              <select aria-label="ভ্যারিয়েন্ট বেছে নিন" className="input" value={assignForm.variantId} onChange={(e) => setAssignForm({ ...assignForm, variantId: e.target.value })}>
                 <option value="">মূল পণ্য</option>
                 {assignVariants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
-              <select className="input" value={assignForm.binLocationId} onChange={(e) => setAssignForm({ ...assignForm, binLocationId: e.target.value })} required>
+              <select aria-label="বিন বেছে নিন" className="input" value={assignForm.binLocationId} onChange={(e) => setAssignForm({ ...assignForm, binLocationId: e.target.value })} required>
                 <option value="">বিন বেছে নিন</option>
                 {assignBins.map((b) => <option key={b.id} value={b.id}>{b.code}</option>)}
               </select>
               <button className="btn-primary" disabled={busy !== ""}>{busy === "assign" ? "হচ্ছে…" : "বরাদ্দ করুন"}</button>
             </form>
-            <p className="text-xs text-slate-400">একই পণ্য আবার বরাদ্দ করলে সেটি আগের বিন থেকে নতুন বিনে সরে যায় (MOVE)।</p>
+            <p className="text-xs text-slate-500">একই পণ্য আবার বরাদ্দ করলে সেটি আগের বিন থেকে নতুন বিনে সরে যায় (MOVE)।</p>
           </div>
           <div className="card p-5">
             {assignments.length === 0 ? <p className="text-sm text-slate-500">এই গুদামে কোনো বরাদ্দ নেই।</p> : (
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-2">লেবেল</th><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">বিন</th><th className="py-2 pr-3">গুদাম</th><th className="py-2">অ্যাকশন</th></tr></thead>
                 <tbody>{assignments.map((a) => (
                   <tr key={a.id} className="border-b last:border-0">
-                    <td className="py-2 pr-2"><input type="checkbox" checked={checkedProducts.has(a.productId)} onChange={(e) => setCheckedProducts((prev) => { const n = new Set(prev); if (e.target.checked) n.add(a.productId); else n.delete(a.productId); return n; })} /></td>
-                    <td className="py-2 pr-3 font-medium">{a.productName ?? a.productId}{a.variantName ? <span className="block text-xs text-slate-400">{a.variantName}</span> : null}</td>
+                    <td className="py-2 pr-2"><input type="checkbox" aria-label={`${a.productName ?? a.productId} লেবেলের জন্য বেছে নিন`} checked={checkedProducts.has(a.productId)} onChange={(e) => setCheckedProducts((prev) => { const n = new Set(prev); if (e.target.checked) n.add(a.productId); else n.delete(a.productId); return n; })} /></td>
+                    <td className="py-2 pr-3 font-medium">{a.productName ?? a.productId}{a.variantName ? <span className="block text-xs text-slate-500">{a.variantName}</span> : null}</td>
                     <td className="py-2 pr-3 font-mono">{a.binCode ?? a.binLocationId}</td>
                     <td className="py-2 pr-3">{a.warehouseName ?? ""}</td>
-                    <td className="py-2"><div className="flex flex-wrap gap-2">
-                      <Link href={`/dashboard/commerce/warehouse/labels?warehouseId=${a.warehouseId}&binId=${a.binLocationId}`} className="text-xs font-semibold text-indigo-700">🏷️ লেবেল প্রিন্ট</Link>
-                      <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => removeAssignment(a)}>মুছুন</button>
-                    </div></td>
+                    <td className="py-2">{renderAssignActions(a)}</td>
                   </tr>))}
                 </tbody></table></div>
+                }
+                cards={assignments.map((a) => (
+                  <div key={a.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <label className="flex min-h-[44px] items-center gap-2 font-medium">
+                      <input type="checkbox" aria-label={`${a.productName ?? a.productId} লেবেলের জন্য বেছে নিন`} checked={checkedProducts.has(a.productId)} onChange={(e) => setCheckedProducts((prev) => { const n = new Set(prev); if (e.target.checked) n.add(a.productId); else n.delete(a.productId); return n; })} />
+                      {a.productName ?? a.productId}{a.variantName ? <span className="block text-xs font-normal text-slate-500">{a.variantName}</span> : null}
+                    </label>
+                    <dl className="mt-1 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বিন</dt><dd className="text-right font-mono">{a.binCode ?? a.binLocationId}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গুদাম</dt><dd className="text-right">{a.warehouseName ?? ""}</dd></div>
+                    </dl>
+                    <div className="mt-2">{renderAssignActions(a)}</div>
+                  </div>
+                ))}
+              />
             )}
             {assignBins.length > 0 ? (
               <div className="mt-4 flex flex-wrap gap-2 border-t pt-3">
                 <span className="text-sm font-medium">বিন অনুযায়ী লেবেল:</span>
                 {assignBins.map((b) => (
-                  <Link key={b.id} href={`/dashboard/commerce/warehouse/labels?warehouseId=${assignWh}&binId=${b.id}`} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">🏷️ {b.code}</Link>
+                  <Link key={b.id} href={`/dashboard/commerce/warehouse/labels?warehouseId=${assignWh}&binId=${b.id}`} className="inline-flex min-h-[44px] items-center rounded-lg border bg-white px-2 py-1 text-xs font-semibold">🏷️ {b.code}</Link>
                 ))}
               </div>
             ) : null}
@@ -568,7 +595,7 @@ export default function WarehousePage() {
               </select>
             </label>
             <button className="btn-primary" disabled={busy !== "" || !countForm.warehouseId}>নতুন গণনা শুরু করুন</button>
-            <p className="w-full text-xs text-slate-400">বিন বেছে নিলে এটি হবে <b>বিন অনুযায়ী গণনা</b> (সিস্টেমের সংখ্যা = ঐ বিনের স্টক); বিন না বাছলে <b>গুদাম অনুযায়ী গণনা</b> (সিস্টেমের সংখ্যা = মোট স্টক)।</p>
+            <p className="w-full text-xs text-slate-500">বিন বেছে নিলে এটি হবে <b>বিন অনুযায়ী গণনা</b> (সিস্টেমের সংখ্যা = ঐ বিনের স্টক); বিন না বাছলে <b>গুদাম অনুযায়ী গণনা</b> (সিস্টেমের সংখ্যা = মোট স্টক)।</p>
           </form>
           <div className="card p-5">
             <div className="font-semibold">গণনা সেশনসমূহ</div>
@@ -576,7 +603,7 @@ export default function WarehousePage() {
               {sessions.map((s) => (
                 <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span>{warehouses.find((w) => w.id === s.warehouseId)?.name ?? s.warehouseId} · <span className="font-medium">{s.status}</span> · <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-semibold text-slate-600">{countScopeLabel(s.scope, s.binLocationId)}</span>{s.totals ? ` · লাইন ${s.totals.lineCount}, গণনা ${s.totals.countedCount}` : s.lineCount != null ? ` · লাইন ${s.lineCount}, গণনা ${s.countedCount ?? 0}` : ""}</span>
-                  <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => openSession(s.id)}>খুলুন</button>
+                  <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700" onClick={() => openSession(s.id)}>খুলুন</button>
                 </li>
               ))}
               {sessions.length === 0 ? <li className="text-sm text-slate-500">কোনো সেশন নেই।</li> : null}
@@ -589,17 +616,34 @@ export default function WarehousePage() {
                 <button type="button" className="btn-ghost btn-sm" onClick={() => setCountDetail(null)}>বন্ধ করুন</button>
               </div>
               {countDetail.totals ? <p className="text-sm text-slate-600">মোট লাইন {countDetail.totals.lineCount} · গণনা হয়েছে {countDetail.totals.countedCount} · বাদ {countDetail.totals.skippedCount} · মোট পার্থক্য {countDetail.totals.totalVariance}</p> : null}
+              <ResponsiveTable
+                table={
               <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">সিস্টেমে</th><th className="py-2 pr-3">গণনা করা</th><th className="py-2 pr-3">পার্থক্য</th><th className="py-2">সংরক্ষণ</th></tr></thead>
                 <tbody>{(countDetail.lines ?? []).map((l) => (
                   <tr key={l.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3 font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs text-slate-400">{l.variantName}</span> : null}</td>
+                    <td className="py-2 pr-3 font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs text-slate-500">{l.variantName}</span> : null}</td>
                     <td className="py-2 pr-3">{l.systemQty}</td>
-                    <td className="py-2 pr-3"><input className="input w-24" type="number" min={0} value={counted[l.id] ?? ""} onChange={(e) => setCounted({ ...counted, [l.id]: e.target.value })} disabled={countDetail.status === "closed"} /></td>
+                    <td className="py-2 pr-3"><input aria-label="গণনা করা পরিমাণ" className="input w-24" type="number" min={0} value={counted[l.id] ?? ""} onChange={(e) => setCounted({ ...counted, [l.id]: e.target.value })} disabled={countDetail.status === "closed"} /></td>
                     <td className="py-2 pr-3">{l.variance == null ? "—" : <span className={l.variance === 0 ? "text-green-700" : "font-semibold text-red-600"}>{l.variance > 0 ? `+${l.variance}` : l.variance}</span>}</td>
-                    <td className="py-2">{countDetail.status !== "closed" ? <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => saveLine(l)}>সংরক্ষণ</button> : null}</td>
+                    <td className="py-2">{renderCountSave(l)}</td>
                   </tr>))}
                 </tbody></table></div>
+                }
+                cards={(countDetail.lines ?? []).map((l) => (
+                  <div key={l.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                    <div className="font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs font-normal text-slate-500">{l.variantName}</span> : null}</div>
+                    <dl className="mt-2 space-y-1.5">
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সিস্টেমে</dt><dd className="text-right">{l.systemQty}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পার্থক্য</dt><dd className="text-right">{l.variance == null ? "—" : <span className={l.variance === 0 ? "text-green-700" : "font-semibold text-red-600"}>{l.variance > 0 ? `+${l.variance}` : l.variance}</span>}</dd></div>
+                    </dl>
+                    <label className="mt-2 block text-xs font-semibold text-slate-500">গণনা করা
+                      <input aria-label="গণনা করা পরিমাণ" className="input mt-1 w-24" type="number" min={0} value={counted[l.id] ?? ""} onChange={(e) => setCounted({ ...counted, [l.id]: e.target.value })} disabled={countDetail.status === "closed"} />
+                    </label>
+                    {renderCountSave(l) ? <div className="mt-2">{renderCountSave(l)}</div> : null}
+                  </div>
+                ))}
+              />
               {closeResult ? (
                 <div className="rounded-lg bg-slate-50 p-3 text-sm">
                   <p className="font-semibold">বন্ধের ফলাফল</p>
@@ -625,12 +669,15 @@ export default function WarehousePage() {
             {balances === null ? <p className="mt-2 text-sm text-slate-400">লোড হচ্ছে…</p> : balances.length === 0 ? (
               <p className="mt-2 text-sm text-slate-500">এখনো কোনো ব্যালেন্স নেই। স্টক নড়াচড়া হলেই (অর্ডার, সমন্বয়, স্থানান্তর) এখানে ব্যালেন্স দেখা যাবে; AB3-র আগের স্টক ডিফল্ট বিনে দেখানো হয়।</p>
             ) : (
-              <div className="mt-3 overflow-x-auto"><table className="w-full text-sm">
+              <ResponsiveTable
+                className="mt-3"
+                table={
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">গুদাম</th><th className="py-2 pr-3">বিন</th><th className="py-2 pr-3">হাতে আছে</th><th className="py-2">রিজার্ভ</th></tr></thead>
                 <tbody>
                   {balances.map((b, i) => (
                     <tr key={`${b.productId}-${b.variantId ?? ""}-${b.binId ?? ""}-${i}`} className="border-b last:border-0">
-                      <td className="py-2 pr-3 font-medium">{b.productName ?? b.productId}{b.variantName ? <span className="block text-xs text-slate-400">{b.variantName}</span> : null}{b.sku ? <span className="block text-xs text-slate-400">{b.sku}</span> : null}
+                      <td className="py-2 pr-3 font-medium">{b.productName ?? b.productId}{b.variantName ? <span className="block text-xs text-slate-500">{b.variantName}</span> : null}{b.sku ? <span className="block text-xs text-slate-500">{b.sku}</span> : null}
                         {!b.seeded ? <span className="mt-0.5 inline-block rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-500">বণ্টন হয়নি</span> : null}
                       </td>
                       <td className="py-2 pr-3">{b.warehouseName ?? "—"}</td>
@@ -643,8 +690,33 @@ export default function WarehousePage() {
                     <tr className="font-semibold"><td className="py-2 pr-3">মোট</td><td className="py-2 pr-3" /><td className="py-2 pr-3" /><td className="py-2 pr-3">{balanceTotals.totalOnHand}</td><td className="py-2">{balanceTotals.totalReserved}</td></tr>
                   ) : null}
                 </tbody></table></div>
+                }
+                cards={(<>
+                  {balances.map((b, i) => (
+                    <div key={`${b.productId}-${b.variantId ?? ""}-${b.binId ?? ""}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                      <div className="font-medium">{b.productName ?? b.productId}{b.variantName ? <span className="block text-xs font-normal text-slate-500">{b.variantName}</span> : null}{b.sku ? <span className="block text-xs font-normal text-slate-500">{b.sku}</span> : null}
+                        {!b.seeded ? <span className="mt-0.5 inline-block rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-500">বণ্টন হয়নি</span> : null}
+                      </div>
+                      <dl className="mt-2 space-y-1.5">
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গুদাম</dt><dd className="text-right">{b.warehouseName ?? "—"}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বিন</dt><dd className="text-right font-mono">{b.binCode ?? "—"}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">হাতে আছে</dt><dd className="text-right font-semibold">{b.onHand}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">রিজার্ভ</dt><dd className="text-right">{b.reserved}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                  {balanceTotals ? (
+                    <div className="rounded-xl border bg-slate-50 p-3 text-sm font-semibold shadow-sm">
+                      <dl className="space-y-1.5">
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট হাতে আছে</dt><dd className="text-right">{balanceTotals.totalOnHand}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট রিজার্ভ</dt><dd className="text-right">{balanceTotals.totalReserved}</dd></div>
+                      </dl>
+                    </div>
+                  ) : null}
+                </>)}
+              />
             )}
-            <p className="mt-2 text-xs text-slate-400">“বণ্টন হয়নি” মানে এই স্টক এখনো কোনো বিনে ভাগ হয়নি — মোট হিসাব থেকে দেখানো হচ্ছে; প্রথম স্টক-নড়াচড়াতেই এটি ডিফল্ট বিনে বসে যাবে।</p>
+            <p className="mt-2 text-xs text-slate-500">“বণ্টন হয়নি” মানে এই স্টক এখনো কোনো বিনে ভাগ হয়নি — মোট হিসাব থেকে দেখানো হচ্ছে; প্রথম স্টক-নড়াচড়াতেই এটি ডিফল্ট বিনে বসে যাবে।</p>
           </div>
 
           <div className="card p-5">
@@ -655,12 +727,15 @@ export default function WarehousePage() {
             {locationRows === null ? <p className="mt-2 text-sm text-slate-400">লোড হচ্ছে…</p> : locationRows.length === 0 ? (
               <p className="mt-2 text-sm text-slate-500">কোনো অবস্থানে স্টক নেই।</p>
             ) : (
-              <div className="mt-3 overflow-x-auto"><table className="w-full text-sm">
+              <ResponsiveTable
+                className="mt-3"
+                table={
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">গুদাম</th><th className="py-2 pr-3">হাতে আছে</th><th className="py-2 pr-3">রিজার্ভ</th><th className="py-2">পথে বেরিয়েছে</th></tr></thead>
                 <tbody>
                   {locationRows.map((r, i) => (
                     <tr key={`${r.productId}-${r.variantId ?? ""}-${r.warehouseId ?? ""}-${i}`} className="border-b last:border-0">
-                      <td className="py-2 pr-3 font-medium">{r.productName ?? r.productId}{r.variantName ? <span className="block text-xs text-slate-400">{r.variantName}</span> : null}</td>
+                      <td className="py-2 pr-3 font-medium">{r.productName ?? r.productId}{r.variantName ? <span className="block text-xs text-slate-500">{r.variantName}</span> : null}</td>
                       <td className="py-2 pr-3">{r.warehouseName ?? "—"}</td>
                       <td className="py-2 pr-3 font-semibold">{r.onHand}</td>
                       <td className="py-2 pr-3">{r.reserved}</td>
@@ -671,6 +746,30 @@ export default function WarehousePage() {
                     <tr className="font-semibold"><td className="py-2 pr-3">মোট</td><td className="py-2 pr-3" /><td className="py-2 pr-3">{locationTotals.totalOnHand}</td><td className="py-2 pr-3">{locationTotals.totalReserved}</td><td className="py-2">{locationTotals.totalInTransit}</td></tr>
                   ) : null}
                 </tbody></table></div>
+                }
+                cards={(<>
+                  {locationRows.map((r, i) => (
+                    <div key={`${r.productId}-${r.variantId ?? ""}-${r.warehouseId ?? ""}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                      <div className="font-medium">{r.productName ?? r.productId}{r.variantName ? <span className="block text-xs font-normal text-slate-500">{r.variantName}</span> : null}</div>
+                      <dl className="mt-2 space-y-1.5">
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গুদাম</dt><dd className="text-right">{r.warehouseName ?? "—"}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">হাতে আছে</dt><dd className="text-right font-semibold">{r.onHand}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">রিজার্ভ</dt><dd className="text-right">{r.reserved}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পথে বেরিয়েছে</dt><dd className="text-right">{r.inTransitOut}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                  {locationTotals ? (
+                    <div className="rounded-xl border bg-slate-50 p-3 text-sm font-semibold shadow-sm">
+                      <dl className="space-y-1.5">
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট হাতে আছে</dt><dd className="text-right">{locationTotals.totalOnHand}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট রিজার্ভ</dt><dd className="text-right">{locationTotals.totalReserved}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট পথে বেরিয়েছে</dt><dd className="text-right">{locationTotals.totalInTransit}</dd></div>
+                      </dl>
+                    </div>
+                  ) : null}
+                </>)}
+              />
             )}
           </div>
         </div>
@@ -708,22 +807,22 @@ export default function WarehousePage() {
             <div className="space-y-2">
               {transferForm.lines.map((line, idx) => (
                 <div key={idx} className="grid gap-2 sm:grid-cols-4">
-                  <select className="input" value={line.productId} onChange={(e) => void onTransferProduct(idx, e.target.value)} required>
+                  <select aria-label="পণ্য বেছে নিন" className="input" value={line.productId} onChange={(e) => void onTransferProduct(idx, e.target.value)} required>
                     <option value="">পণ্য বেছে নিন</option>
                     {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
                   </select>
-                  <select className="input" value={line.variantId} onChange={(e) => setTransferForm((f) => { const lines = f.lines.slice(); lines[idx] = { ...lines[idx], variantId: e.target.value }; return { ...f, lines }; })}>
+                  <select aria-label="ভ্যারিয়েন্ট বেছে নিন" className="input" value={line.variantId} onChange={(e) => setTransferForm((f) => { const lines = f.lines.slice(); lines[idx] = { ...lines[idx], variantId: e.target.value }; return { ...f, lines }; })}>
                     <option value="">মূল পণ্য</option>
                     {(lineVariants[idx] ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
-                  <input className="input" type="number" min={1} step={1} placeholder="পরিমাণ" value={line.qty} onChange={(e) => setTransferForm((f) => { const lines = f.lines.slice(); lines[idx] = { ...lines[idx], qty: e.target.value }; return { ...f, lines }; })} required />
+                  <input aria-label="পরিমাণ" className="input" type="number" min={1} step={1} placeholder="পরিমাণ" value={line.qty} onChange={(e) => setTransferForm((f) => { const lines = f.lines.slice(); lines[idx] = { ...lines[idx], qty: e.target.value }; return { ...f, lines }; })} required />
                   <button type="button" className="btn-secondary" disabled={transferForm.lines.length <= 1} onClick={() => setTransferForm((f) => ({ ...f, lines: f.lines.filter((_, i) => i !== idx) }))}>লাইন সরান</button>
                 </div>
               ))}
-              <button type="button" className="text-xs font-semibold text-indigo-700" onClick={() => setTransferForm((f) => ({ ...f, lines: [...f.lines, { productId: "", variantId: "", qty: "1" }] }))}>+ আরেকটি লাইন যোগ করুন</button>
+              <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-indigo-700" onClick={() => setTransferForm((f) => ({ ...f, lines: [...f.lines, { productId: "", variantId: "", qty: "1" }] }))}>+ আরেকটি লাইন যোগ করুন</button>
             </div>
             <button className="btn-primary" disabled={busy !== ""}>{busy === "tr-create" ? "হচ্ছে…" : "খসড়া তৈরি করুন"}</button>
-            <p className="text-xs text-slate-400">খসড়ায় কোনো স্টক সরে না — “প্রেরণ করুন” চাপলেই উৎস বিন থেকে স্টক পথে বেরোয়।</p>
+            <p className="text-xs text-slate-500">খসড়ায় কোনো স্টক সরে না — “প্রেরণ করুন” চাপলেই উৎস বিন থেকে স্টক পথে বেরোয়।</p>
           </form>
 
           <div className="card p-5">
@@ -743,36 +842,57 @@ export default function WarehousePage() {
                       {t.note ? ` · ${t.note}` : ""}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" className="text-xs font-semibold text-blue-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => void openTransfer(t.id)}>{busy === `tr-open-${t.id}` ? "লোড হচ্ছে…" : "বিস্তারিত"}</button>
+                      <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => void openTransfer(t.id)}>{busy === `tr-open-${t.id}` ? "লোড হচ্ছে…" : "বিস্তারিত"}</button>
                       {t.status === "draft" ? <>
-                        <button type="button" className="text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "dispatch")}>{busy === `tr-dispatch-${t.id}` ? "হচ্ছে…" : "প্রেরণ করুন"}</button>
-                        <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "cancel")}>বাতিল</button>
+                        <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-indigo-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "dispatch")}>{busy === `tr-dispatch-${t.id}` ? "হচ্ছে…" : "প্রেরণ করুন"}</button>
+                        <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "cancel")}>বাতিল</button>
                       </> : null}
-                      {t.status === "in_transit" ? <button type="button" className="text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "cancel")}>বাতিল</button> : null}
+                      {t.status === "in_transit" ? <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => void transferAction(t, "cancel")}>বাতিল</button> : null}
                     </div>
                     {transferDetail?.id === t.id ? (
                       <div className="mt-3 space-y-2 border-t pt-3">
+                        <ResponsiveTable
+                          table={
                         <div className="overflow-x-auto"><table className="w-full text-sm">
                           <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3">পণ্য</th><th className="py-2 pr-3">পাঠানো</th><th className="py-2 pr-3">গ্রহণ</th><th className="py-2">পার্থক্য</th></tr></thead>
                           <tbody>{(transferDetail.lines ?? []).map((l) => {
                             const variance = transferLineVariance(l);
                             return (
                               <tr key={l.id} className="border-b last:border-0">
-                                <td className="py-2 pr-3 font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs text-slate-400">{l.variantName}</span> : null}</td>
+                                <td className="py-2 pr-3 font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs text-slate-500">{l.variantName}</span> : null}</td>
                                 <td className="py-2 pr-3">{l.qtySent}</td>
                                 <td className="py-2 pr-3">
                                   {transferDetail.status === "in_transit" ? (
-                                    <input className="input w-24" type="number" min={0} step={1} value={receiveInputs[l.id] ?? String(l.qtySent)} onChange={(e) => setReceiveInputs({ ...receiveInputs, [l.id]: e.target.value })} />
+                                    <input aria-label="গ্রহণ করা পরিমাণ" className="input w-24" type="number" min={0} step={1} value={receiveInputs[l.id] ?? String(l.qtySent)} onChange={(e) => setReceiveInputs({ ...receiveInputs, [l.id]: e.target.value })} />
                                   ) : l.qtyReceived ?? "—"}
                                 </td>
                                 <td className="py-2">{transferDetail.status === "received_with_variance" || transferDetail.status === "received" ? (variance > 0 ? <span className="font-semibold text-orange-700">−{variance}</span> : "—") : "—"}</td>
                               </tr>
                             );
                           })}</tbody></table></div>
+                          }
+                          cards={(transferDetail.lines ?? []).map((l) => {
+                            const variance = transferLineVariance(l);
+                            return (
+                              <div key={l.id} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
+                                <div className="font-medium">{l.productName ?? l.productId}{l.variantName ? <span className="block text-xs font-normal text-slate-500">{l.variantName}</span> : null}</div>
+                                <dl className="mt-2 space-y-1.5">
+                                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পাঠানো</dt><dd className="text-right">{l.qtySent}</dd></div>
+                                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পার্থক্য</dt><dd className="text-right">{transferDetail.status === "received_with_variance" || transferDetail.status === "received" ? (variance > 0 ? <span className="font-semibold text-orange-700">−{variance}</span> : "—") : "—"}</dd></div>
+                                </dl>
+                                <label className="mt-2 block text-xs font-semibold text-slate-500">গ্রহণ
+                                  {transferDetail.status === "in_transit" ? (
+                                    <input aria-label="গ্রহণ করা পরিমাণ" className="input mt-1 w-24" type="number" min={0} step={1} value={receiveInputs[l.id] ?? String(l.qtySent)} onChange={(e) => setReceiveInputs({ ...receiveInputs, [l.id]: e.target.value })} />
+                                  ) : <span className="mt-1 block text-sm font-normal text-slate-900">{l.qtyReceived ?? "—"}</span>}
+                                </label>
+                              </div>
+                            );
+                          })}
+                        />
                         {transferDetail.status === "in_transit" ? (
                           <div className="flex flex-wrap items-center gap-2">
                             <button type="button" className="btn-primary btn-sm" disabled={busy !== ""} onClick={() => void receiveTransfer(transferDetail)}>{busy === `tr-receive-${transferDetail.id}` ? "হচ্ছে…" : "গ্রহণ করুন"}</button>
-                            <span className="text-xs text-slate-400">ঘর খালি রাখলে/না বদলালে পুরো পাঠানো পরিমাণই গ্রহণ ধরা হবে। কম পেলে পার্থক্য রেকর্ড হবে — স্টক ফেরত যাবে না।</span>
+                            <span className="text-xs text-slate-500">ঘর খালি রাখলে/না বদলালে পুরো পাঠানো পরিমাণই গ্রহণ ধরা হবে। কম পেলে পার্থক্য রেকর্ড হবে — স্টক ফেরত যাবে না।</span>
                           </div>
                         ) : null}
                         {transferDetail.status === "received_with_variance" ? <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs text-orange-700">কিছু পণ্য কম এসেছে — উপরে পার্থক্য দেখানো হয়েছে। হারানো পরিমাণ কোনো বিনে ফেরত যায়নি।</p> : null}
@@ -789,8 +909,8 @@ export default function WarehousePage() {
       {tab === "riders" ? (
         <div className="space-y-4">
           <form onSubmit={saveRider} className="card grid gap-2 p-5 sm:grid-cols-3">
-            <input className="input" placeholder="রাইডারের নাম *" value={riderForm.name} onChange={(e) => setRiderForm({ ...riderForm, name: e.target.value })} required />
-            <input className="input" placeholder="ফোন" value={riderForm.phone} onChange={(e) => setRiderForm({ ...riderForm, phone: e.target.value })} />
+            <input aria-label="রাইডারের নাম" className="input" placeholder="রাইডারের নাম *" value={riderForm.name} onChange={(e) => setRiderForm({ ...riderForm, name: e.target.value })} required />
+            <input aria-label="রাইডারের ফোন" className="input" placeholder="ফোন" value={riderForm.phone} onChange={(e) => setRiderForm({ ...riderForm, phone: e.target.value })} />
             <div className="flex gap-2">
               <button className="btn-primary" disabled={busy !== ""}>{editingRider ? "আপডেট করুন" : "রাইডার যোগ করুন"}</button>
               {editingRider ? <button type="button" className="btn-secondary" onClick={() => { setEditingRider(null); setRiderForm({ name: "", phone: "" }); }}>বাতিল</button> : null}
@@ -803,8 +923,8 @@ export default function WarehousePage() {
                 <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span className="font-medium">{r.name} <span className="text-slate-500">{r.phone ?? ""}</span> <span className={`ml-1 rounded px-2 py-0.5 text-xs font-semibold ${r.active ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-600"}`}>{r.active ? "সক্রিয়" : "নিষ্ক্রিয়"}</span></span>
                   <span className="flex gap-2">
-                    <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => { setEditingRider(r); setRiderForm({ name: r.name, phone: r.phone ?? "" }); }}>সম্পাদনা</button>
-                    <button type="button" className="text-xs font-semibold text-slate-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleRider(r)}>{r.active ? "নিষ্ক্রিয় করুন" : "সক্রিয় করুন"}</button>
+                    <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-700" onClick={() => { setEditingRider(r); setRiderForm({ name: r.name, phone: r.phone ?? "" }); }}>সম্পাদনা</button>
+                    <button type="button" className="inline-flex min-h-[44px] items-center text-xs font-semibold text-slate-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleRider(r)}>{r.active ? "নিষ্ক্রিয় করুন" : "সক্রিয় করুন"}</button>
                   </span>
                 </li>
               ))}
@@ -827,10 +947,10 @@ export default function WarehousePage() {
                             <span className="mt-1 block text-xs text-slate-500">{a.orderAddress ?? ""} · মোট {a.orderTotalMinor ? formatMinorTaka(a.orderTotalMinor) : "—"}</span>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {a.status === "assigned" ? <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "picked_up")}>তোলা হয়েছে</button> : null}
+                            {a.status === "assigned" ? <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "picked_up")}>তোলা হয়েছে</button> : null}
                             {a.status === "picked_up" ? <>
-                              <button type="button" className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "delivered")}>ডেলিভারি সম্পন্ন</button>
-                              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "returned")}>ফেরত</button>
+                              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "delivered")}>ডেলিভারি সম্পন্ন</button>
+                              <button type="button" className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => transition(a, "returned")}>ফেরত</button>
                             </> : null}
                           </div>
                         </div>

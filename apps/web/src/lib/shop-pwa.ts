@@ -50,6 +50,14 @@ export interface ShopManifest {
 
 export const SHOP_PWA_FALLBACK_COLOR = "#4f46e5";
 
+/**
+ * ED10 (EB4): manifest background = the v2 surface token
+ * default (--surface: #ffffff in globals.css), so the install
+ * splash matches the shop's own surface instead of inventing a
+ * second colour. The theme_color stays the shop's brand.
+ */
+export const SHOP_MANIFEST_BACKGROUND_COLOR = "#ffffff";
+
 export function isWhiteLabel(home: ShopPwaHome | null | undefined): boolean {
   return (home?.organization as { whiteLabel?: unknown } | null | undefined)?.whiteLabel === true;
 }
@@ -66,6 +74,15 @@ export function buildShopManifest(home: ShopPwaHome, orgSlug: string): ShopManif
   const name = shopDisplayName(home);
   const logoUrl = home?.organization?.logoUrl || null;
   const themeColor = home?.organization?.primaryColor || SHOP_PWA_FALLBACK_COLOR;
+  // ED10 (EB4) maskable honesty: a "maskable" purpose is only
+  // declared for an icon that is KNOWN to be safe-padded. That
+  // is exactly one asset — the platform's generated
+  // icon-maskable-512.png, which the platform manifest itself
+  // declares maskable. A merchant logo (arbitrary image,
+  // padding unverifiable) and the generated initial SVG
+  // (full-bleed rounded rect — the letter could clip under a
+  // mask) therefore get NO maskable entry; claiming one would
+  // crop real shop icons on adaptive-icon launchers.
   const icons: ShopManifestIcon[] = logoUrl
     ? [{ src: logoUrl, sizes: "any", purpose: "any" }]
     : isWhiteLabel(home)
@@ -73,6 +90,7 @@ export function buildShopManifest(home: ShopPwaHome, orgSlug: string): ShopManif
       : [
           { src: "/icons/icon-192.png", sizes: "192x192", purpose: "any", type: "image/png" },
           { src: "/icons/icon-512.png", sizes: "512x512", purpose: "any", type: "image/png" },
+          { src: "/icons/icon-maskable-512.png", sizes: "512x512", purpose: "maskable", type: "image/png" },
         ];
   return {
     name,
@@ -80,7 +98,7 @@ export function buildShopManifest(home: ShopPwaHome, orgSlug: string): ShopManif
     start_url: `/shop/${orgSlug}`,
     scope: `/shop/${orgSlug}/`,
     display: "standalone",
-    background_color: "#ffffff",
+    background_color: SHOP_MANIFEST_BACKGROUND_COLOR,
     theme_color: themeColor,
     icons,
   };

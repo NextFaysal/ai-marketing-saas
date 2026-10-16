@@ -1,8 +1,24 @@
 /**
  * GC — shop theme tokens keyed by settings.themeId.
  * "classic" MUST equal the pre-theme classes exactly.
+ *
+ * ED1 (Design Tokens v3) note: these three themes' outputs are
+ * literal Tailwind class strings — a compatibility contract, pinned
+ * byte-for-byte by lib/shop-theme.test.ts. They deliberately do NOT
+ * route through the CSS-variable token layer: their strings contain
+ * no variable seam, and re-expressing them would change the class
+ * output every existing shop renders with. The token layer reaches
+ * the shop through the surfaces that DO have a seam — the per-org
+ * --brand variable set by the shop layout, which drives .btn-brand
+ * (the primary CTAs) and the v2 tokens (--surface/--ink-*) — while
+ * theme layout strings stay verbatim. EB3's Shop v2 theme ("v2",
+ * added in ED7) IS the first theme authored natively on tokens:
+ * its class strings are built on the EB1 CSS variables
+ * (--surface / --border-soft / --shadow-card / --radius-* / ink
+ * tokens) via Tailwind arbitrary values. The three legacy themes
+ * (classic / bold / minimal) remain literal pinned strings.
  */
-export type ShopThemeId = "classic" | "bold" | "minimal";
+export type ShopThemeId = "classic" | "bold" | "minimal" | "v2";
 
 export interface ShopTheme {
   headerDark: boolean;
@@ -12,6 +28,12 @@ export interface ShopTheme {
   featuredGridClass: string;
   cardClass: string;
   cardImageWrapClass: string;
+  // ED7: optional v2 surfaces (ED8 consumes them). The legacy
+  // themes OMIT these keys entirely — consumers must fall back to
+  // their current rendering when a field is undefined.
+  cardBodyClass?: string;
+  cardPriceClass?: string;
+  sectionTitleClass?: string;
 }
 
 export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
@@ -42,14 +64,73 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-none border-0 shadow-none",
     cardImageWrapClass: "",
   },
+  // ED7: token-native v2 — every colour / radius / shadow below
+  // resolves through the EB1 CSS variables, so the shop follows
+  // the token layer (and a future dark palette) instead of literal
+  // slate/indigo values. Grid rhythm matches classic (2 → 3 → 4).
+  v2: {
+    headerDark: false,
+    heroClass: "rounded-[var(--radius-xl)] bg-[var(--surface)] p-8 text-center shadow-[var(--shadow-card)] border border-[var(--border-soft)]",
+    heroTitleClass: "text-3xl font-black text-[var(--ink-strong)] sm:text-4xl",
+    gridClass: "grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4",
+    featuredGridClass: "grid grid-cols-2 gap-4 md:grid-cols-4",
+    cardClass: "rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)]",
+    cardImageWrapClass: "",
+    cardBodyClass: "space-y-1.5 p-4 text-[var(--ink-body)]",
+    cardPriceClass: "text-base font-extrabold text-[var(--brand)]",
+    sectionTitleClass: "text-xl font-black text-[var(--ink-strong)]",
+  },
 };
 
 export function themeOf(id: unknown): ShopTheme {
-  if (id === "bold" || id === "minimal" || id === "classic") return SHOP_THEMES[id];
+  if (id === "bold" || id === "minimal" || id === "classic" || id === "v2") return SHOP_THEMES[id];
   return SHOP_THEMES.classic;
 }
 
 export function themeIdOf(id: unknown): ShopThemeId {
-  if (id === "bold" || id === "minimal" || id === "classic") return id;
+  if (id === "bold" || id === "minimal" || id === "classic" || id === "v2") return id;
   return "classic";
+}
+
+/** ED7: true only for the token-native v2 theme. */
+export function isV2Theme(id: unknown): boolean {
+  return id === "v2";
+}
+
+/**
+ * ED8: v2 detection from a RESOLVED tokens object. ShopTheme
+ * carries no id, so consumers that receive tokens (ProductCard)
+ * detect v2 by the presence of the v2-only optional fields ED7
+ * added — the legacy themes omit them entirely (pinned by
+ * shop-theme.test.ts). This is THE chosen detection approach for
+ * token consumers; do not invent id-string checks there.
+ */
+export function isV2Tokens(theme: ShopTheme): boolean {
+  return theme.cardPriceClass !== undefined;
+}
+
+/**
+ * ED7: the theme a request actually renders with. A preview id
+ * wins ONLY when it is itself a valid theme id; anything else
+ * (missing, unknown, non-string) falls back to the stored id's
+ * own resolution (which itself falls back to classic).
+ */
+export function effectiveThemeId(storedId: unknown, previewId: unknown): ShopThemeId {
+  if (previewId === "bold" || previewId === "minimal" || previewId === "classic" || previewId === "v2") {
+    return previewId;
+  }
+  return themeIdOf(storedId);
+}
+
+/** Request header the middleware sets for a ?themePreview=v2 view. */
+export const SHOP_THEME_PREVIEW_HEADER = "x-shop-theme-preview";
+
+/**
+ * ED7: read the theme-preview id from a Headers-like object (any
+ * { get(name) } — so this stays unit-testable without next/headers).
+ * Returns the raw header value, or null when absent; validity is
+ * effectiveThemeId's job, not this reader's.
+ */
+export function previewThemeIdFromHeaders(h: { get(name: string): string | null }): string | null {
+  return h.get(SHOP_THEME_PREVIEW_HEADER);
 }

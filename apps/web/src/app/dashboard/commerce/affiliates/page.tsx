@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, takaToMinorString } from "@/lib/storefront-money";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC32 — অ্যাফিলিয়েট প্রোগ্রাম: পার্টনার তালিকা, কমিশন
 // এন্ট্রি, ব্যালেন্স আর পেআউট রেকর্ড। পেআউট এখানে শুধু রেকর্ড
@@ -341,6 +342,35 @@ export default function AffiliatesPage() {
     } finally { setBusy(""); }
   }
 
+  // ED15/ED16 (EB6): row controls shared verbatim by the desktop
+  // tables and the ResponsiveTable mobile cards — same handlers.
+  const renderCopyLink = (p: Partner) => (
+    <button type="button" onClick={() => void copyLink(p)} className="mt-1 inline-flex min-h-[44px] items-center rounded-md border bg-white px-2 py-1 text-xs font-semibold text-indigo-700">
+      🔗 লিংক কপি
+    </button>
+  );
+  const renderPartnerActions = (p: Partner) => (
+    <div className="flex flex-wrap gap-1">
+      <button type="button" onClick={() => setSelectedId(p.id)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">বিস্তারিত</button>
+      <button type="button" onClick={() => startEdit(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold">সম্পাদনা</button>
+      <button type="button" onClick={() => void toggleStatus(p)} disabled={busy === `status-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-50">
+        {p.status === "active" ? "স্থগিত করুন" : "সক্রিয় করুন"}
+      </button>
+    </div>
+  );
+  const renderEntryAction = (en: Entry) => (
+    en.status === "pending" ? (
+      <button
+        type="button"
+        onClick={() => void approveEntry(en)}
+        disabled={busy === `approve-${en.id}`}
+        className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-emerald-600 px-2 py-1 text-xs font-bold text-white disabled:opacity-50"
+      >
+        অনুমোদন
+      </button>
+    ) : null
+  );
+
   const inputCls = "w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
 
   return (
@@ -424,8 +454,10 @@ export default function AffiliatesPage() {
       </section>
 
       {/* Partners table */}
-      <section className="overflow-x-auto rounded-2xl border bg-white">
-        <table className="w-full text-left text-sm">
+      <ResponsiveTable
+        table={
+          <section className="rounded-2xl border bg-white">
+            <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b bg-slate-50 text-xs text-slate-600">
               <th className="p-3">পার্টনার</th>
@@ -452,9 +484,7 @@ export default function AffiliatesPage() {
                 </td>
                 <td className="p-3">
                   <div className="font-mono text-xs font-bold">{p.code}</div>
-                  <button type="button" onClick={() => void copyLink(p)} className="mt-1 rounded-md border bg-white px-2 py-1 text-xs font-semibold text-indigo-700">
-                    🔗 লিংক কপি
-                  </button>
+                  {renderCopyLink(p)}
                 </td>
                 <td className="p-3">{p.commissionPercent}%</td>
                 <td className="p-3">
@@ -467,19 +497,62 @@ export default function AffiliatesPage() {
                 <td className="p-3">{formatMinorTaka(p.aggregates?.entries.paid.commissionMinor ?? "0")}</td>
                 <td className="p-3 font-semibold">{formatMinorTaka(outstandingOf(p))}</td>
                 <td className="p-3">
-                  <div className="flex flex-wrap gap-1">
-                    <button type="button" onClick={() => setSelectedId(p.id)} className="rounded-md border bg-white px-2 py-1 text-xs font-semibold">বিস্তারিত</button>
-                    <button type="button" onClick={() => startEdit(p)} className="rounded-md border bg-white px-2 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void toggleStatus(p)} disabled={busy === `status-${p.id}`} className="rounded-md border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-50">
-                      {p.status === "active" ? "স্থগিত করুন" : "সক্রিয় করুন"}
-                    </button>
-                  </div>
+                  {renderPartnerActions(p)}
                 </td>
               </tr>
             ))}
-          </tbody>
-        </table>
-      </section>
+            </tbody>
+            </table>
+          </section>
+        }
+        cards={loading ? (
+          <p className="rounded-2xl border bg-white p-4 text-slate-500">লোড হচ্ছে…</p>
+        ) : partners.length === 0 ? (
+          <p className="rounded-2xl border bg-white p-4 text-slate-500">এখনো কোনো পার্টনার নেই — উপরের ফর্ম থেকে প্রথম পার্টনার যোগ করুন।</p>
+        ) : partners.map((p) => (
+          <div key={p.id} className={`rounded-2xl border bg-white p-3 ${selectedId === p.id ? "bg-indigo-50/50" : ""}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="font-semibold text-slate-900">{p.name}</div>
+                <div className="text-xs text-slate-500">{p.phone}</div>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[p.status] ?? "bg-slate-200 text-slate-600"}`}>
+                {STATUS_LABEL[p.status] ?? p.status}
+              </span>
+            </div>
+            <dl className="mt-2 space-y-1.5 text-sm">
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কোড ও শেয়ার লিংক</dt>
+                <dd>
+                  <div className="font-mono text-xs font-bold">{p.code}</div>
+                  {renderCopyLink(p)}
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">কমিশন</dt>
+                <dd>{p.commissionPercent}%</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">অপেক্ষমাণ</dt>
+                <dd>{formatMinorTaka(p.aggregates?.entries.pending.commissionMinor ?? "0")}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">অনুমোদিত</dt>
+                <dd>{formatMinorTaka(p.aggregates?.entries.approved.commissionMinor ?? "0")}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধিত</dt>
+                <dd>{formatMinorTaka(p.aggregates?.entries.paid.commissionMinor ?? "0")}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">বকেয়া (অনুমোদিত)</dt>
+                <dd className="font-semibold">{formatMinorTaka(outstandingOf(p))}</dd>
+              </div>
+            </dl>
+            <div className="mt-2">{renderPartnerActions(p)}</div>
+          </div>
+        ))}
+      />
 
       {/* Selected partner detail */}
       {selectedId ? (
@@ -580,8 +653,11 @@ export default function AffiliatesPage() {
                     <option value="voided">বাতিল</option>
                   </select>
                 </div>
-                <div className="mt-2 overflow-x-auto rounded-xl border">
-                  <table className="w-full text-left text-sm">
+                <ResponsiveTable
+                  className="mt-2"
+                  table={
+                    <div className="rounded-xl border">
+                      <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="border-b bg-slate-50 text-xs text-slate-600">
                         <th className="p-3">অর্ডার</th>
@@ -614,22 +690,53 @@ export default function AffiliatesPage() {
                             {en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}
                           </td>
                           <td className="p-3">
-                            {en.status === "pending" ? (
-                              <button
-                                type="button"
-                                onClick={() => void approveEntry(en)}
-                                disabled={busy === `approve-${en.id}`}
-                                className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-bold text-white disabled:opacity-50"
-                              >
-                                অনুমোদন
-                              </button>
-                            ) : null}
+                            {renderEntryAction(en)}
                           </td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </tbody>
+                      </table>
+                    </div>
+                  }
+                  cards={entries.length === 0 ? (
+                    <p className="rounded-xl border p-4 text-slate-500">কোনো এন্ট্রি নেই।</p>
+                  ) : entries.map((en) => (
+                    <div key={en.id} className="rounded-xl border p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-mono text-xs">{en.orderNumber ?? en.orderId}</span>
+                        <span className="font-semibold">{formatMinorTaka(en.commissionMinor)}</span>
+                      </div>
+                      <dl className="mt-2 space-y-1.5 text-sm">
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">বেস</dt>
+                          <dd>{formatMinorTaka(en.baseMinor)}</dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">হার</dt>
+                          <dd>{en.percentSnapshot}%</dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">অবস্থা</dt>
+                          <dd>
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_CLS[en.status] ?? "bg-slate-200 text-slate-600"}`}>
+                              {STATUS_LABEL[en.status] ?? en.status}
+                            </span>
+                            {en.status === "voided" && en.voidReason ? (
+                              <span className="ml-1 text-xs text-slate-500">({en.voidReason})</span>
+                            ) : null}
+                          </dd>
+                        </div>
+                        <div className="flex gap-2">
+                          <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                          <dd className="text-slate-500">
+                            {en.createdAt ? new Date(en.createdAt).toLocaleDateString("bn-BD") : ""}
+                          </dd>
+                        </div>
+                      </dl>
+                      {renderEntryAction(en) ? <div className="mt-2">{renderEntryAction(en)}</div> : null}
+                    </div>
+                  ))}
+                />
               </div>
             </div>
           )}

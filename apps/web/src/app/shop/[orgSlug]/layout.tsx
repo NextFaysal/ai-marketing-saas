@@ -7,15 +7,21 @@ import { customJsAllowedOnHost, primaryHostsFromEnv } from "@/lib/shop-custom-co
 import { isWhiteLabel } from "@/lib/shop-pwa";
 import { trackingFromSettings } from "@/lib/shop-tracking";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
+import { SkipLink } from "@repo/ui";
 import { TrackingTags } from "./TrackingTags";
-import { themeIdOf } from "@/lib/shop-theme";
+import { RouteProgress } from "@/components/route-progress";
+import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
-import { ShopPopup } from "./ShopPopup";
+import { ShopBottomNav } from "./ShopBottomNav";
 import { ShopContactButtons } from "./ShopContactButtons";
+import { ShopContactLift } from "./ShopContactLift";
 import { AttributionCapture } from "./AttributionCapture";
 import { ShopPushPrompt } from "./ShopPushPrompt";
 import { ShopInstallBar } from "./ShopInstallBar";
-import { ShopSocialProof } from "./ShopSocialProof";
+// ED6: ShopPopup + ShopSocialProof load via this client wrapper's
+// next/dynamic (ssr:false) — both render nothing until their
+// client-side triggers fire, so their chunks leave the first load.
+import { ShopPopupDeferred, ShopSocialProofDeferred } from "./ShopDeferredOverlays";
 
 export async function generateMetadata({
   params,
@@ -79,9 +85,17 @@ export default async function ShopLayout({
   const customJs = typeof settingsAny.customJs === "string" && settingsAny.customJs.trim()
     ? settingsAny.customJs
     : null;
+  // ED7: ONE headers() call for this layout, reused by the
+  // custom-JS host check below and the theme preview. Honest
+  // cost: reading headers() opts this layout into per-request
+  // rendering on every shop request (it can no longer be fully
+  // static) — EB2's fetch-level revalidate:60 caching lives in
+  // lib/storefront-server's fetch options and is unaffected.
+  const hdrs = await headers();
+  const previewId = previewThemeIdFromHeaders(hdrs);
+  const effThemeId = effectiveThemeId(home.settings.themeId, previewId);
   let renderCustomJs = false;
   if (customJs && settingsAny.customJsEnabled === true) {
-    const hdrs = await headers();
     const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
     renderCustomJs = customJsAllowedOnHost(host, primaryHostsFromEnv());
   }
@@ -93,7 +107,25 @@ export default async function ShopLayout({
   const supportPhone = home.settings.supportPhone?.trim() || null;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    // ED1 (Tokens v3): the shop brand seam. --brand is set on the
+    // shop root so every token-driven surface below (the .btn-brand
+    // primary CTAs: PDP buy, QuickView, cart checkout, checkout
+    // submit) follows the org's primaryColor. The fallback IS
+    // today's hard-coded CTA colour (#4f46e5 = indigo-600), so an
+    // unbranded shop renders byte-identically. Before ED1 the seam
+    // reached only the announcement bar, header logo tile and a few
+    // accents — never a buy/checkout button.
+    <div
+      lang={locale}
+      className="min-h-screen bg-slate-50"
+      data-shop-theme={effThemeId}
+      style={{ "--brand": accent } as React.CSSProperties}
+    >
+      {/* EB6/ED16: skip link — first focusable element in the shop. */}
+      <SkipLink href="#shop-main">{t.common.skipToContent}</SkipLink>
+      {/* ED11 (EB4): route progress bar — inside the shop root
+          so its gradient reads the org's --brand. */}
+      <RouteProgress />
       <TrackingTags tracking={trackingFromSettings(home.settings)} />
       {/* AB8 (AX23): merchant custom CSS — after the tracking /
           theme inputs, before the header, so it can restyle the
@@ -106,7 +138,7 @@ export default async function ShopLayout({
         primaryColor={home.organization.primaryColor}
         locale={locale}
         pages={home.pages?.menu ?? []}
-        themeId={themeIdOf(home.settings.themeId)}
+        themeId={effThemeId}
         blog={home.pages?.blog ?? false}
       />
       {home.settings.announcementText ? (
@@ -114,54 +146,68 @@ export default async function ShopLayout({
           <p className="mx-auto max-w-6xl px-4 py-2">{home.settings.announcementText}</p>
         </div>
       ) : null}
-      <main>{children}</main>
+      <main id="shop-main" tabIndex={-1}>{children}</main>
       {/* AB7 (AX19): first-touch utm/click capture into tp_sess. */}
       <AttributionCapture />
-      <ShopPopup orgSlug={orgSlug} locale={locale} />
+      {/* ED6: popup deferred (renders nothing until its trigger). */}
+      <ShopPopupDeferred orgSlug={orgSlug} locale={locale} />
       {/* AB7 (AX16): push prompt (shop-scoped worker) + AX17 social proof. */}
       <ShopPushPrompt orgSlug={orgSlug} />
       {/* AB8 (AX22): per-shop install bar (rides the stashed
           beforeinstallprompt; iOS gets manual instructions). */}
       <ShopInstallBar orgSlug={orgSlug} />
-      <ShopSocialProof orgSlug={orgSlug} themeId={themeIdOf(home.settings.themeId)} />
-      <ShopContactButtons
-        whatsappNumber={home.settings.whatsappNumber ?? null}
-        messengerUrl={home.settings.messengerUrl ?? null}
-        whatsappLabel={t.pages.whatsappLabel}
-        messengerLabel={t.pages.messengerLabel}
-      />
-      <footer className="mt-14 border-t border-slate-200 bg-white">
+      {/* ED6: social proof deferred (renders nothing until its feed loads). */}
+      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={effThemeId} />
+      {/* ED9: contact buttons ride the bottom-lift wrapper (see
+          ShopContactLift) so they clear the v2 bottom nav / a
+          page buy bar; at lift 0 rendering is pixel-identical. */}
+      <ShopContactLift>
+        <ShopContactButtons
+          whatsappNumber={home.settings.whatsappNumber ?? null}
+          messengerUrl={home.settings.messengerUrl ?? null}
+          whatsappLabel={t.pages.whatsappLabel}
+          messengerLabel={t.pages.messengerLabel}
+        />
+      </ShopContactLift>
+      {/* ED7: v2 footer — SAME content blocks, token classes only.
+          Legacy themes keep the exact original class strings. */}
+      <footer className={effThemeId === "v2" ? "mt-14 border-t border-[var(--border-soft)] bg-[var(--surface)]" : "mt-14 border-t border-slate-200 bg-white"}>
         <div className="mx-auto max-w-6xl space-y-2 px-4 py-8 text-center sm:px-6">
-          <p className="text-sm font-bold text-slate-800">{shopName}</p>
+          <p className={effThemeId === "v2" ? "text-sm font-bold text-[var(--ink-strong)]" : "text-sm font-bold text-slate-800"}>{shopName}</p>
           {(home.pages?.footer ?? []).length > 0 ? (
             <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pb-2">
               {(home.pages?.footer ?? []).map((p) => (
-                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className="text-xs font-semibold text-slate-600 hover:text-indigo-700">
+                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className={effThemeId === "v2" ? "text-xs font-semibold text-[var(--ink-body)] hover:text-[var(--brand-strong)]" : "text-xs font-semibold text-slate-600 hover:text-indigo-700"}>
                   {p.title}
                 </Link>
               ))}
             </nav>
           ) : null}
           {home.businessProfile.codAvailable ? (
-            <p className="text-xs text-slate-500">{t.common.codAvailable}</p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.codAvailable}</p>
           ) : null}
-          {paymentNote ? <p className="text-xs text-slate-500">{paymentNote}</p> : null}
+          {paymentNote ? <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{paymentNote}</p> : null}
           {home.businessProfile.bkashNumber ? (
-            <p className="text-xs text-slate-500">{t.common.bkash}: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.bkash}: <span className="font-mono font-semibold">{home.businessProfile.bkashNumber}</span></p>
           ) : null}
           {home.businessProfile.nagadNumber ? (
-            <p className="text-xs text-slate-500">{t.common.nagad}: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.nagad}: <span className="font-mono font-semibold">{home.businessProfile.nagadNumber}</span></p>
           ) : null}
           {supportPhone ? (
-            <p className="text-xs text-slate-500">{t.common.supportPhoneLabel}: <span className="font-mono font-semibold">{supportPhone}</span></p>
+            <p className={effThemeId === "v2" ? "text-xs text-[var(--ink-muted)]" : "text-xs text-slate-500"}>{t.common.supportPhoneLabel}: <span className="font-mono font-semibold">{supportPhone}</span></p>
           ) : null}
           {returnPolicyText ? (
-            <p className="mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-slate-500">
-              <span className="font-semibold text-slate-600">{t.common.returnPolicyLabel}: </span>{returnPolicyText}
+            <p className={effThemeId === "v2" ? "mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-[var(--ink-muted)]" : "mx-auto max-w-xl whitespace-pre-line text-xs leading-relaxed text-slate-500"}>
+              <span className={effThemeId === "v2" ? "font-semibold text-[var(--ink-body)]" : "font-semibold text-slate-600"}>{t.common.returnPolicyLabel}: </span>{returnPolicyText}
             </p>
           ) : null}
         </div>
       </footer>
+      {/* ED7: v2-only mobile bottom nav (fixed) + an in-flow spacer
+          so page content / the footer are never covered by it.
+          Legacy themes get NO extra node here. */}
+      {effThemeId === "v2" ? <ShopBottomNav orgSlug={orgSlug} locale={locale} /> : null}
+      {effThemeId === "v2" ? <div className="h-16 lg:hidden" aria-hidden="true" /> : null}
       {/* AB8 (AX23): merchant custom JS — the very last node of
           the layout, and only when enabled + host-allowed. */}
       {renderCustomJs && customJs ? (

@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { EmptyState } from "@repo/ui";
+import { EmptyState, ResponsiveTable } from "@repo/ui";
+import { useConfirm, useToast } from "@repo/ui/client";
 import {
   CustomFieldsEditor, buildCustomFieldsPayload, customFieldsToRaw, fetchCustomFieldDefs,
   type CustomFieldDef,
@@ -61,6 +62,8 @@ const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 export default function CustomersPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [stores, setStores] = useState<{ id: string; name: string; platform?: string; syncMode?: string }[]>([]);
   const [q, setQ] = useState("");
@@ -76,7 +79,6 @@ export default function CustomersPage() {
   const [segTagInput, setSegTagInput] = useState("");
   const [editingSegmentId, setEditingSegmentId] = useState("");
   const [segError, setSegError] = useState("");
-  const [segNotice, setSegNotice] = useState("");
   const [segBusy, setSegBusy] = useState("");
   // GB6 (GC15): detail CRM editor state (tags / VIP / notes / block).
   const [crmTags, setCrmTags] = useState<string[]>([]);
@@ -87,7 +89,6 @@ export default function CustomersPage() {
   const [crmBlocked, setCrmBlocked] = useState(false);
   const [crmBlockedReason, setCrmBlockedReason] = useState("");
   const [crmError, setCrmError] = useState("");
-  const [crmNotice, setCrmNotice] = useState("");
   const [khata, setKhata] = useState<CustomerKhata | null>(null);
   const [khataError, setKhataError] = useState("");
   // AB5 (AX7): খাতা overdue-only filter (?overdue=1).
@@ -99,7 +100,6 @@ export default function CustomersPage() {
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState("");
   const [groupError, setGroupError] = useState("");
-  const [groupNotice, setGroupNotice] = useState("");
   const [groupBusy, setGroupBusy] = useState("");
   const [plGroupId, setPlGroupId] = useState("");
   const [plItems, setPlItems] = useState<PriceListItemRow[]>([]);
@@ -122,10 +122,8 @@ export default function CustomersPage() {
   const [adjustNote, setAdjustNote] = useState("");
   const [adjustBusy, setAdjustBusy] = useState(false);
   const [adjustError, setAdjustError] = useState("");
-  const [adjustNotice, setAdjustNotice] = useState("");
   const [creditTaka, setCreditTaka] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
-  const [creditNotice, setCreditNotice] = useState("");
   const [creditError, setCreditError] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   // CX12b: the open customer's reviews for the 360 view.
@@ -137,7 +135,6 @@ export default function CustomersPage() {
   const [editWholesale, setEditWholesale] = useState(false);
   const [editCf, setEditCf] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
   // CP6: GDPR erasure report for the last erased customer.
@@ -169,18 +166,18 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const { payload, errors } = buildSegmentPayload(segName, segDraft);
     if (!payload) { setSegError(errors.join(" ")); return; }
-    setSegBusy("save"); setSegError(""); setSegNotice("");
+    setSegBusy("save"); setSegError("");
     try {
       if (editingSegmentId) {
         await apiFetch(`/organizations/${orgId}/customers/segments/${editingSegmentId}`, {
           method: "PATCH", body: JSON.stringify(payload),
         });
-        setSegNotice("সেগমেন্ট হালনাগাদ হয়েছে।");
+        toast({ title: "সেগমেন্ট হালনাগাদ হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/customers/segments`, {
           method: "POST", body: JSON.stringify(payload),
         });
-        setSegNotice("সেগমেন্ট তৈরি হয়েছে।");
+        toast({ title: "সেগমেন্ট তৈরি হয়েছে।", tone: "success" });
       }
       setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegTagInput(""); setEditingSegmentId("");
       await loadSegments();
@@ -191,18 +188,18 @@ export default function CustomersPage() {
   function editSegment(s: CrmSegment) {
     setEditingSegmentId(s.id); setSegName(s.name);
     setSegDraft(segmentCriteriaToDraft(s.criteria)); setSegTagInput("");
-    setSegError(""); setSegNotice("");
+    setSegError("");
   }
 
   async function deleteSegment(s: CrmSegment) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!confirm(`“${s.name}” সেগমেন্টটি মুছে ফেলবেন? গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`)) return;
-    setSegBusy(`del-${s.id}`); setSegError(""); setSegNotice("");
+    if (!(await confirm({ title: `“${s.name}” সেগমেন্টটি মুছে ফেলবেন?`, body: `গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setSegBusy(`del-${s.id}`); setSegError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/segments/${s.id}`, { method: "DELETE" });
       if (segmentId === s.id) setSegmentId("");
       if (editingSegmentId === s.id) { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); }
-      setSegNotice("সেগমেন্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "সেগমেন্ট মুছে ফেলা হয়েছে।", tone: "success" });
       await loadSegments();
     } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট মোছা ব্যর্থ"); }
     finally { setSegBusy(""); }
@@ -223,7 +220,7 @@ export default function CustomersPage() {
     const tagError = validateTags(crmTags);
     if (tagError) { setCrmError(tagError); return; }
     if (crmBlockedReason.length > 300) { setCrmError("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে।"); return; }
-    setBusy("crm"); setCrmError(""); setCrmNotice("");
+    setBusy("crm"); setCrmError("");
     try {
       const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
         method: "PATCH",
@@ -241,7 +238,7 @@ export default function CustomersPage() {
       setCrmVip(!!out.customer.isVip);
       setCrmBlocked(!!out.customer.isBlocked);
       setCrmBlockedReason(out.customer.blockedReason ?? "");
-      setCrmNotice("CRM তথ্য সেভ হয়েছে।");
+      toast({ title: "CRM তথ্য সেভ হয়েছে।", tone: "success" });
       await load();
       await loadSegments();
     } catch (e) { setCrmError(e instanceof Error ? e.message : "CRM সেভ ব্যর্থ"); }
@@ -290,18 +287,18 @@ export default function CustomersPage() {
   async function saveGroup() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!groupName.trim()) { setGroupError("গ্রুপের নাম দিন।"); return; }
-    setGroupBusy("save"); setGroupError(""); setGroupNotice("");
+    setGroupBusy("save"); setGroupError("");
     try {
       if (editingGroupId) {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${editingGroupId}`, {
           method: "PATCH", body: JSON.stringify({ name: groupName.trim() }),
         });
-        setGroupNotice("গ্রুপের নাম বদলানো হয়েছে।");
+        toast({ title: "গ্রুপের নাম বদলানো হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups`, {
           method: "POST", body: JSON.stringify({ name: groupName.trim() }),
         });
-        setGroupNotice("গ্রুপ তৈরি হয়েছে।");
+        toast({ title: "গ্রুপ তৈরি হয়েছে।", tone: "success" });
       }
       setGroupName(""); setEditingGroupId("");
       await loadGroups();
@@ -311,13 +308,13 @@ export default function CustomersPage() {
 
   async function deleteGroup(g: CustomerGroup) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!confirm(`“${g.name}” গ্রুপটি মুছে ফেলবেন? এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`)) return;
-    setGroupBusy(`del-${g.id}`); setGroupError(""); setGroupNotice("");
+    if (!(await confirm({ title: `“${g.name}” গ্রুপটি মুছে ফেলবেন?`, body: `এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setGroupBusy(`del-${g.id}`); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${g.id}`, { method: "DELETE" });
       if (plGroupId === g.id) { setPlGroupId(""); setPlItems([]); }
       if (editingGroupId === g.id) { setEditingGroupId(""); setGroupName(""); }
-      setGroupNotice("গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।");
+      toast({ title: "গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।", tone: "success" });
       await loadGroups();
     } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ মোছা ব্যর্থ"); }
     finally { setGroupBusy(""); }
@@ -347,7 +344,7 @@ export default function CustomersPage() {
     if (!plProductId) { setGroupError("আইটেম যোগ করতে পণ্য বেছে নিন।"); return; }
     const priceMinor = takaToMinor(plPriceTaka.trim());
     if (priceMinor === null) { setGroupError("দাম টাকায় ঠিকভাবে লিখুন (যেমন: 450 বা 450.50)।"); return; }
-    setGroupBusy("pl-add"); setGroupError(""); setGroupNotice("");
+    setGroupBusy("pl-add"); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items`, {
         method: "POST",
@@ -412,13 +409,13 @@ export default function CustomersPage() {
     const delta = Number(adjustDelta);
     if (!Number.isInteger(delta) || delta === 0) { setAdjustError("পয়েন্টের পরিমাণ শূন্য নয় এমন পূর্ণ সংখ্যা দিন (যোগ করতে ধনাত্মক, কাটতে ঋণাত্মক)।"); return; }
     if (!adjustNote.trim()) { setAdjustError("সমন্বয়ের নোট দেওয়া বাধ্যতামূলক।"); return; }
-    setAdjustBusy(true); setAdjustError(""); setAdjustNotice("");
+    setAdjustBusy(true); setAdjustError("");
     try {
       const out = await apiFetch<{ balance: number }>(`/organizations/${orgId}/commerce/loyalty/customers/${detail.customer.id}/adjust`, {
         method: "POST",
         body: JSON.stringify({ deltaPoints: delta, note: adjustNote.trim() }),
       });
-      setAdjustNotice(`সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`);
+      toast({ title: `সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`, tone: "success" });
       setAdjustDelta(""); setAdjustNote("");
       await loadLoyalty(detail.customer.id);
     } catch (e) { setAdjustError(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ"); }
@@ -437,12 +434,12 @@ export default function CustomersPage() {
       if (m === null) { setCreditError("ক্রেডিট সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।"); return; }
       creditLimitMinor = m;
     }
-    setCreditBusy(true); setCreditError(""); setCreditNotice("");
+    setCreditBusy(true); setCreditError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}`, {
         method: "PATCH", body: JSON.stringify({ creditLimitMinor }),
       });
-      setCreditNotice(creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।");
+      toast({ title: creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।", tone: "success" });
       await loadKhata(detail.customer.id);
       await load();
     } catch (e) { setCreditError(e instanceof Error ? e.message : "ক্রেডিট সীমা সংরক্ষণ ব্যর্থ"); }
@@ -460,10 +457,10 @@ export default function CustomersPage() {
   // reason, which is surfaced verbatim.
   async function pushToStore(storeId: string) {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    setBusy(`push-${storeId}`); setError(""); setNotice("");
+    setBusy(`push-${storeId}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}/push-to-store/${storeId}`, { method: "POST" });
-      setNotice("Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।");
+      toast({ title: "Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।", tone: "success" });
     } catch (e) { setError(e instanceof Error ? e.message : "Push ব্যর্থ"); }
     finally { setBusy(""); }
   }
@@ -485,9 +482,9 @@ export default function CustomersPage() {
 
   async function open(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setKhata(null); setKhataError(""); setCreditNotice(""); setCreditError("");
+    setKhata(null); setKhataError(""); setCreditError("");
     void loadKhata(id);
-    setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError(""); setAdjustNotice("");
+    setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError("");
     void loadLoyalty(id);
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
@@ -511,7 +508,7 @@ export default function CustomersPage() {
       setCrmVip(!!d.customer.isVip);
       setCrmBlocked(!!d.customer.isBlocked);
       setCrmBlockedReason(d.customer.blockedReason ?? "");
-      setCrmError(""); setCrmNotice("");
+      setCrmError("");
     }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -520,7 +517,7 @@ export default function CustomersPage() {
   // fields via PATCH /customers/:id (audited server-side).
   async function saveEdit() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    setBusy("edit"); setError(""); setNotice("");
+    setBusy("edit"); setError("");
     try {
       const customFields = buildCustomFieldsPayload(custDefs, editCf, detail.customer.customFields);
       const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
@@ -537,7 +534,7 @@ export default function CustomersPage() {
       });
       setDetail(out);
       setEditCf(customFieldsToRaw(custDefs, out.customer.customFields));
-      setNotice("কাস্টমারের তথ্য সেভ হয়েছে।");
+      toast({ title: "কাস্টমারের তথ্য সেভ হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
     finally { setBusy(""); }
@@ -547,14 +544,14 @@ export default function CustomersPage() {
   // financial records stay; the confirm dialog says so plainly.
   async function doErase() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    if (!confirm("এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে। নিশ্চিত তো?")) return;
-    setBusy("erase"); setError(""); setNotice(""); setEraseReport(null);
+    if (!(await confirm({ title: "ব্যক্তিগত তথ্য স্থায়ীভাবে মুছে ফেলবেন?", body: "এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে।", danger: true, confirmLabel: "স্থায়ীভাবে মুছে ফেলুন" }))) return;
+    setBusy("erase"); setError(""); setEraseReport(null);
     try {
       const report = await apiFetch<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number }>(
         `/organizations/${orgId}/customers/${detail.customer.id}/erase`, { method: "POST" },
       );
       setEraseReport(report);
-      setNotice("কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।");
+      toast({ title: "কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।", tone: "success" });
       await load();
       await open(report.customerId);
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -563,14 +560,14 @@ export default function CustomersPage() {
 
   async function doMerge() {
     const orgId = getOrganizationId(); if (!orgId || !detail || !mergeTarget) return;
-    if (!confirm("এই কাস্টমার রেকর্ডটি নির্বাচিত রেকর্ডে মার্জ হবে। অর্ডার ও কথোপকথন সরে যাবে; মূল রেকর্ডটি লুকানো থাকবে (মুছে যাবে না)। নিশ্চিত তো?")) return;
-    setBusy("merge"); setNotice("");
+    if (!(await confirm({ title: "কাস্টমার রেকর্ড মার্জ করবেন?", body: "এই কাস্টমার রেকর্ডটি নির্বাচিত রেকর্ডে মার্জ হবে। অর্ডার ও কথোপকথন সরে যাবে; মূল রেকর্ডটি লুকানো থাকবে (মুছে যাবে না)।", confirmLabel: "মার্জ করুন" }))) return;
+    setBusy("merge");
     try {
       const merged = await apiFetch<Detail>(`/organizations/${orgId}/customers/merge`, {
         method: "POST", body: JSON.stringify({ sourceId: detail.customer.id, targetId: mergeTarget }),
       });
       setDetail(merged);
-      setNotice("মার্জ সম্পন্ন হয়েছে।");
+      toast({ title: "মার্জ সম্পন্ন হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Merge ব্যর্থ"); }
     finally { setBusy(""); }
@@ -625,7 +622,7 @@ export default function CustomersPage() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" aria-label="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
               শুধু বকেয়া আছে
@@ -640,7 +637,7 @@ export default function CustomersPage() {
                 {CUSTOMER_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
-            <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+            <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" aria-label="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
             <label className="flex items-center gap-2 text-sm">সেগমেন্ট
               <select className="input w-56" value={segmentId} onChange={(e) => setSegmentId(e.target.value)}>
                 <option value="">সব সেগমেন্ট</option>
@@ -661,7 +658,7 @@ export default function CustomersPage() {
                 <span className="font-medium">{c.name || "নাম নেই"}</span>
                 <span className="text-sm font-semibold">{money(c.totalSpentMinor)}</span>
               </div>
-              <div className="mt-0.5 text-xs text-slate-400">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
+              <div className="mt-0.5 text-xs text-slate-500">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
               {/* GB6 (GC15): sold-bucket figures — sold orders,
                   lifetime value and AOV ("—" when no sold order). */}
               <div className="mt-0.5 text-xs text-slate-500">
@@ -677,11 +674,11 @@ export default function CustomersPage() {
               ) : null}
               {/* ON7: বকেয়া (open due) on the list row — "—" when nothing is due. */}
               <div className="mt-0.5 text-xs">
-                <span className="text-slate-400">বকেয়া: </span>
+                <span className="text-slate-500">বকেয়া: </span>
                 {(() => { let due = 0n; try { due = BigInt(c.dueMinor ?? "0"); } catch { due = 0n; } return due > 0n
                   ? <span className="font-bold text-red-600">{money(c.dueMinor)}</span>
-                  : <span className="text-slate-400">—</span>; })()}
-                {c.creditLimitMinor ? <span className="ml-2 text-slate-400">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
+                  : <span className="text-slate-500">—</span>; })()}
+                {c.creditLimitMinor ? <span className="ml-2 text-slate-500">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
               </div>
             </button>
           ))}
@@ -694,11 +691,11 @@ export default function CustomersPage() {
                   <div>
                     <h2 className="text-lg font-bold">{detail.customer.name || "নাম নেই"}</h2>
                     <p className="text-sm text-slate-500">{detail.customer.phone ?? "—"} · {detail.customer.email ?? "—"}</p>
-                    <p className="text-xs text-slate-400">সূত্র: {detail.customer.source} · যোগ দিয়েছেন {new Date(detail.customer.createdAt).toLocaleDateString()}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
+                    <p className="text-xs text-slate-500">সূত্র: {detail.customer.source} · যোগ দিয়েছেন {new Date(detail.customer.createdAt).toLocaleDateString()}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
                   </div>
                   <div className="text-right">
                     <div className="text-xl font-black">{money(detail.lifetime.totalSpentMinor, detail.lifetime.currency)}</div>
-                    <div className="text-xs text-slate-400">মোট কেনাকাটা (বাতিল ছাড়া) · {detail.lifetime.orderCount}টি অর্ডার</div>
+                    <div className="text-xs text-slate-500">মোট কেনাকাটা (বাতিল ছাড়া) · {detail.lifetime.orderCount}টি অর্ডার</div>
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
@@ -748,7 +745,7 @@ export default function CustomersPage() {
                       <option value="">কোনো গ্রুপ নয়</option>
                       {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
-                    <span className="mt-1 block text-xs font-normal text-slate-400">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
+                    <span className="mt-1 block text-xs font-normal text-slate-500">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
                   </label>
                   <label className="block text-sm">ক্রেডিট শর্ত (বকেয়ার মেয়াদ)
                     <select className="input mt-1" value={editCreditTerms} onChange={(e) => setEditCreditTerms(e.target.value)}>
@@ -761,7 +758,7 @@ export default function CustomersPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>
-                  <span className="text-xs text-slate-400">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
+                  <span className="text-xs text-slate-500">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
                 </div>
               </div>
               {/* GB6 (GC15): CRM — tags / VIP / staff notes / block. */}
@@ -773,21 +770,20 @@ export default function CustomersPage() {
                   </div>
                 ) : null}
                 {crmError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{crmError}</p> : null}
-                {crmNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{crmNotice}</p> : null}
                 <div>
                   <div className="mb-1 text-sm font-medium">ট্যাগ (সর্বোচ্চ ১০টি, প্রতিটি ১–৩০ অক্ষর)</div>
                   <div className="flex flex-wrap gap-1.5">
                     {crmTags.map((t) => (
                       <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                         #{t}
-                        <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                        <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
                           onClick={() => setCrmTags(crmTags.filter((x) => x !== t))}>×</button>
                       </span>
                     ))}
-                    {crmTags.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ নেই</span> : null}
+                    {crmTags.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ নেই</span> : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" value={crmTagInput}
+                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" aria-label="নতুন ট্যাগ লিখুন" value={crmTagInput}
                       onChange={(e) => setCrmTagInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCrmTag(); } }} />
                     <button type="button" className="btn-secondary btn-sm" onClick={addCrmTag}>ট্যাগ যোগ করুন</button>
@@ -827,7 +823,7 @@ export default function CustomersPage() {
                   <div key={si.storeId} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
                     <span><span className="font-medium">{si.storeName ?? "স্টোর"}</span> <span className="badge-slate ml-1">{si.platform ?? ""}</span>
                       <span className="ml-2 text-slate-500">ID: {si.externalId}</span>
-                      {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-400">{si.emailSnapshot}</span> : null}
+                      {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-500">{si.emailSnapshot}</span> : null}
                     </span>
                   </div>
                 ))}
@@ -836,7 +832,7 @@ export default function CustomersPage() {
                     const mode = s.syncMode ?? "mirror";
                     const has = (detail.storeIdentities ?? []).some((si) => si.storeId === s.id);
                     return (
-                      <button key={s.id} className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      <button key={s.id} className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                         disabled={busy !== "" || mode === "mirror"}
                         title={mode === "mirror" ? "Mirror মোডে push হয় না — Sync Center থেকে মোড বদলান" : undefined}
                         onClick={() => pushToStore(s.id)}>
@@ -845,7 +841,7 @@ export default function CustomersPage() {
                       </button>
                     );
                   })}
-                  {stores.length === 0 ? <span className="text-xs text-slate-400">কোনো স্টোর সংযুক্ত নেই</span> : null}
+                  {stores.length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোর সংযুক্ত নেই</span> : null}
                 </div>
               </div>
               {detail.risk ? (
@@ -868,13 +864,15 @@ export default function CustomersPage() {
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="text-3xl font-bold text-emerald-700">{detail.courierRecord.successRatePct}%</span>
                         <span className="text-sm font-medium text-slate-600">ডেলিভারি সফলতার হার</span>
-                        <span className="text-xs text-slate-400">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
+                        <span className="text-xs text-slate-500">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
                       </div>
                       <p className="text-sm text-slate-600">রিটার্ন {detail.courierRecord.returned}টি · বাতিল/ব্যর্থ {detail.courierRecord.cancelledOrFailed}টি · রিফান্ড {detail.courierRecord.refunded}টি · মোট শিপমেন্ট {detail.courierRecord.totalShipments}টি{detail.courierRecord.lastDeliveryAt ? ` · সর্বশেষ ডেলিভারি: ${new Date(detail.courierRecord.lastDeliveryAt).toLocaleDateString("bn-BD")}` : ""}</p>
                       {detail.courierRecord.perCourier.length > 0 ? (
-                        <table className="w-full text-sm">
+                        <ResponsiveTable
+                          table={
+                            <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b text-left text-xs text-slate-400"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
+                            <tr className="border-b text-left text-xs text-slate-500"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
                           </thead>
                           <tbody>
                             {detail.courierRecord.perCourier.map((p) => (
@@ -886,7 +884,27 @@ export default function CustomersPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                            </table>
+                          }
+                          cards={detail.courierRecord.perCourier.map((p) => (
+                            <div key={p.provider} className="rounded-lg border p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-medium">{p.provider}</span>
+                                <span className="font-semibold">{p.successRatePct != null ? `${p.successRatePct}%` : "—"}</span>
+                              </div>
+                              <dl className="mt-2 space-y-1.5 text-sm">
+                                <div className="flex gap-2">
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">সিদ্ধান্ত হয়েছে</dt>
+                                  <dd>{p.decided}টি</dd>
+                                </div>
+                                <div className="flex gap-2">
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ডেলিভারি</dt>
+                                  <dd>{p.delivered}টি</dd>
+                                </div>
+                              </dl>
+                            </div>
+                          ))}
+                        />
                       ) : null}
                     </>
                   )}
@@ -900,7 +918,7 @@ export default function CustomersPage() {
                       <span className="text-amber-500">{"★★★★★".slice(0, r.rating ?? 0)}{"☆☆☆☆☆".slice(0, 5 - (r.rating ?? 0))}</span>
                       <span className="ml-2 font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</span>
                       {r.comment ? <span className="ml-2 text-slate-700">“{r.comment}”</span> : null}
-                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-400">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
+                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-500">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
                     </div>
                   ))}
                 </div>
@@ -936,7 +954,7 @@ export default function CustomersPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
                         <div className="text-2xl font-black text-red-600">{money(khata.totalDueMinor)}</div>
-                        <div className="text-xs text-slate-400">মোট বকেয়া</div>
+                        <div className="text-xs text-slate-500">মোট বকেয়া</div>
                       </div>
                       {isOverLimit(khata) ? (
                         <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white">⚠️ ক্রেডিট সীমা ছাড়িয়ে গেছে</span>
@@ -963,17 +981,18 @@ export default function CustomersPage() {
                           <button type="button" className="btn-primary btn-sm" disabled={creditBusy} onClick={() => void saveCreditLimit()}>
                             {creditBusy ? "সংরক্ষণ হচ্ছে…" : "সীমা সংরক্ষণ করুন"}
                           </button>
-                          <span className="text-xs text-slate-400">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
+                          <span className="text-xs text-slate-500">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
                         </span>
                       </label>
                       {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
-                      {creditNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{creditNotice}</p> : null}
                     </div>
                     {khata.orders.length === 0 ? (
                       <p className="text-sm text-slate-400">{khataOverdueOnly ? "মেয়াদোত্তীর্ণ কোনো বকেয়া অর্ডার নেই।" : "এই কাস্টমারের কোনো অর্ডার খাতায় নেই।"}</p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
+                      <ResponsiveTable
+                        table={
+                          <div>
+                            <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
                               <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
@@ -1002,9 +1021,46 @@ export default function CustomersPage() {
                                 </td>
                               </tr>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </tbody>
+                            </table>
+                          </div>
+                        }
+                        cards={khata.orders.map((o) => (
+                          <div key={o.id} className="rounded-lg border p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-medium">#{o.number ?? o.id.slice(0, 8)}</span>
+                              <span>
+                                <span className="badge-slate">{o.status}</span>
+                                {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">মেয়াদ উত্তীর্ণ</span> : null}
+                              </span>
+                            </div>
+                            <dl className="mt-2 space-y-1.5 text-sm">
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                                <dd>{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">মোট</dt>
+                                <dd>{money(o.totalMinor)}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধিত</dt>
+                                <dd>{money(o.paidMinor)}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">বকেয়া</dt>
+                                <dd>{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
+                                  ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
+                                  : <span className="text-slate-500">—</span>; })()}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধের শেষ তারিখ</dt>
+                                <dd>{o.creditDueDate ? new Date(o.creditDueDate).toLocaleDateString("bn-BD") : "—"}</dd>
+                              </div>
+                            </dl>
+                          </div>
+                        ))}
+                      />
                     )}
                     {khata.ordersTruncated ? (
                       <p className="text-xs text-amber-700">আরও অর্ডার আছে — খাতায় শুধু সাম্প্রতিকগুলো দেখানো হচ্ছে; মোট বকেয়া সব অর্ডার মিলিয়েই হিসাব করা।</p>
@@ -1026,7 +1082,7 @@ export default function CustomersPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
                         <div className={`text-2xl font-black ${loyalty.balance < 0 ? "text-red-600" : ""}`}>{loyalty.balance} পয়েন্ট</div>
-                        <div className="text-xs text-slate-400">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
+                        <div className="text-xs text-slate-500">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
                       </div>
                       {!loyalty.enabled ? (
                         <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">লয়্যালটি প্রোগ্রাম বর্তমানে বন্ধ</span>
@@ -1038,8 +1094,10 @@ export default function CustomersPage() {
                     {loyalty.entries.length === 0 ? (
                       <p className="text-sm text-slate-400">এখনো কোনো পয়েন্টের লেনদেন নেই।</p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
+                      <ResponsiveTable
+                        table={
+                          <div>
+                            <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
                               <th className="py-1.5 pr-2 font-semibold">ধরন</th>
@@ -1055,7 +1113,7 @@ export default function CustomersPage() {
                                 <td className="py-1.5 pr-2">
                                   <span className="font-medium">{loyaltyEntryLabel(en)}</span>
                                   {loyaltyEntryNote(en) ? <span className="block text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
-                                  {en.expiresAt ? <span className="block text-xs text-slate-400">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
+                                  {en.expiresAt ? <span className="block text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
                                 </td>
                                 <td className={`py-1.5 pr-2 font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</td>
                                 <td className="py-1.5 pr-2">{en.balanceAfter}</td>
@@ -1063,9 +1121,35 @@ export default function CustomersPage() {
                                 <td className="py-1.5 text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</td>
                               </tr>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </tbody>
+                            </table>
+                          </div>
+                        }
+                        cards={loyalty.entries.map((en) => (
+                          <div key={en.id} className="rounded-lg border p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+                              <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</span>
+                            </div>
+                            {loyaltyEntryNote(en) ? <div className="mt-0.5 text-xs text-slate-500">{loyaltyEntryNote(en)}</div> : null}
+                            {en.expiresAt ? <div className="mt-0.5 text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</div> : null}
+                            <dl className="mt-2 space-y-1.5 text-sm">
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ব্যালেন্স (পরে)</dt>
+                                <dd>{en.balanceAfter}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                                <dd>{en.orderNumber ? `#${en.orderNumber}` : en.orderId ? `#${en.orderId.slice(0, 8)}` : "—"}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                                <dd className="text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</dd>
+                              </div>
+                            </dl>
+                          </div>
+                        ))}
+                      />
                     )}
                     {(loyalty.referralRewards?.coupons ?? []).length > 0 ? (
                       <div className="space-y-1 border-t pt-3">
@@ -1074,8 +1158,8 @@ export default function CustomersPage() {
                           <div key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
                             <span className="font-mono font-semibold">{c.code}</span>
                             <span>{c.kind === "percent" ? `${c.value}% ছাড়` : c.value}</span>
-                            {c.sourceOrderNumber ? <span className="text-xs text-slate-400">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
-                            {c.endsAt ? <span className="text-xs text-slate-400">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
+                            {c.sourceOrderNumber ? <span className="text-xs text-slate-500">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
+                            {c.endsAt ? <span className="text-xs text-slate-500">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
                             {!c.active ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">বাতিল/নিষ্ক্রিয়</span>
                               : c.usedCount > 0 ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">ব্যবহৃত ({c.usedCount}বার)</span>
                               : <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">সক্রিয়</span>}
@@ -1087,7 +1171,6 @@ export default function CustomersPage() {
                       <div className="text-sm font-semibold">পয়েন্ট সমন্বয় (স্টাফ)</div>
                       <p className="text-xs text-slate-500">ধনাত্মক সংখ্যা = পয়েন্ট যোগ, ঋণাত্মক = পয়েন্ট কাটা। নোট দেওয়া বাধ্যতামূলক — নোটটি লেজারে থেকে যাবে।</p>
                       {adjustError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{adjustError}</p> : null}
-                      {adjustNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{adjustNotice}</p> : null}
                       <div className="flex flex-wrap items-end gap-2">
                         <label className="block text-sm">পয়েন্ট (+/−)
                           <input className="input mt-1 w-36" type="number" step="1" value={adjustDelta} onChange={(e) => setAdjustDelta(e.target.value)} placeholder="যেমন: ৫০ বা −২০" />
@@ -1139,7 +1222,6 @@ export default function CustomersPage() {
         <h2 className="font-semibold">👥 কাস্টমার গ্রুপ (B2B) ও প্রাইস লিস্ট</h2>
         <p className="text-xs text-slate-500">পাইকারি/B2B ক্রেতাদের গ্রুপে ভাগ করুন। প্রতিটি গ্রুপের নিজস্ব প্রাইস লিস্ট থাকতে পারে — গ্রুপের সদস্যের চেকআউটে ক্যাটালগ দামের বদলে প্রাইস লিস্টের দামই প্রযোজ্য হবে। গ্রুপ মুছলে সদস্যরা গ্রুপছাড়া হয়ে যান, কাস্টমার মোছা হয় না।</p>
         {groupError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{groupError}</p> : null}
-        {groupNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{groupNotice}</p> : null}
         {groups.length === 0 ? <p className="text-sm text-slate-400">কোনো গ্রুপ নেই — নিচে প্রথমটি বানান।</p> : groups.map((g) => (
           <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
@@ -1151,7 +1233,7 @@ export default function CustomersPage() {
             </span>
             <span className="flex gap-2">
               <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(g.id); setBulkResult(""); void loadPriceList(g.id); }}>প্রাইস লিস্ট</button>
-              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); setGroupNotice(""); }}>নাম বদলান</button>
+              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); }}>নাম বদলান</button>
               <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => deleteGroup(g)}>মুছুন</button>
             </span>
           </div>
@@ -1177,8 +1259,10 @@ export default function CustomersPage() {
             {plLoading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : plItems.length === 0 ? (
               <p className="text-sm text-slate-400">এই লিস্টে এখনো কোনো আইটেম নেই — নিচে পণ্য যোগ করুন অথবা বাল্ক ছাড় চালান।</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+              <ResponsiveTable
+                table={
+                  <div>
+                    <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs text-slate-500">
                       <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
@@ -1194,13 +1278,32 @@ export default function CustomersPage() {
                         <td className="py-1.5 pr-2">{it.variantName ?? "সব ভ্যারিয়েন্ট"}</td>
                         <td className="py-1.5 pr-2 font-semibold">{money(it.priceMinor)}</td>
                         <td className="py-1.5 text-right">
-                          <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                          <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                    </tbody>
+                    </table>
+                  </div>
+                }
+                cards={plItems.map((it) => (
+                  <div key={it.id} className="rounded-lg border bg-white p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-medium">{it.productName ?? it.productId}</span>
+                      <span className="font-semibold">{money(it.priceMinor)}</span>
+                    </div>
+                    <dl className="mt-2 space-y-1.5 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ভ্যারিয়েন্ট</dt>
+                        <dd>{it.variantName ?? "সব ভ্যারিয়েন্ট"}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-2 text-right">
+                      <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                    </div>
+                  </div>
+                ))}
+              />
             )}
             <div className="flex flex-wrap items-end gap-2 border-t pt-3">
               <label className="block text-sm">পণ্য
@@ -1242,13 +1345,12 @@ export default function CustomersPage() {
         <h2 className="font-semibold">🧩 গ্রাহক সেগমেন্ট</h2>
         <p className="text-xs text-slate-500">শর্ত মিলিয়ে গ্রাহকদের দল বানান। সব শর্ত একসাথে মিলতে হবে; কোনো শর্ত না দিলে সব গ্রাহকই এই সেগমেন্টে পড়বে। সদস্য সংখ্যা প্রতিবার লাইভ হিসাব হয়। শুধু Owner/Admin সেগমেন্ট তৈরি/বদল/মুছতে পারেন।</p>
         {segError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{segError}</p> : null}
-        {segNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{segNotice}</p> : null}
         {segments.length === 0 ? <p className="text-sm text-slate-400">কোনো সেগমেন্ট নেই — নিচে প্রথমটি বানান।</p> : segments.map((s) => (
           <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
               <span className="font-medium">{s.name}</span>
               <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{s.memberCount} জন সদস্য</span>
-              <span className="block text-xs text-slate-400">{segmentCriteriaSummary(s.criteria)}</span>
+              <span className="block text-xs text-slate-500">{segmentCriteriaSummary(s.criteria)}</span>
             </span>
             <span className="flex gap-2">
               <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>তালিকায় দেখুন</button>
@@ -1268,14 +1370,14 @@ export default function CustomersPage() {
               {segDraft.tagsAny.map((t) => (
                 <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                   #{t}
-                  <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                  <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
                     onClick={() => setSegDraft({ ...segDraft, tagsAny: segDraft.tagsAny.filter((x) => x !== t) })}>×</button>
                 </span>
               ))}
-              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ শর্ত নেই</span> : null}
+              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ শর্ত নেই</span> : null}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <input className="input w-56" placeholder="ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
+              <input className="input w-56" placeholder="ট্যাগ লিখুন" aria-label="সেগমেন্টের ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSegTag(); } }} />
               <button type="button" className="btn-secondary btn-sm" onClick={addSegTag}>যোগ করুন</button>
             </div>

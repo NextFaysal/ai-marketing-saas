@@ -3,7 +3,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
-import { MediaImage } from "@/components/media-image";
+import { useConfirm } from "@repo/ui/client";
+import { MediaImage } from "@/components/MediaImage";
 
 // EC3/EC4 (Batch B2): product channel / gallery / bundle / category dialogs.
 // All error messages are the API's verbatim message (apiFetch throws
@@ -231,6 +232,7 @@ export function EcChannelsDialog({ product, onClose }: { product: EcProductRef; 
 /* ---------------- Gallery (EC3) ---------------- */
 
 export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; onClose: () => void }) {
+  const confirmDialog = useConfirm();
   const [images, setImages] = useState<EcProductImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -309,7 +311,11 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
 
   async function deleteImage(img: EcProductImage) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই ছবিটি মুছে ফেলবেন?")) return;
+    if (!(await confirmDialog({
+      title: "এই ছবিটি মুছে ফেলবেন?",
+      confirmLabel: "মুছে ফেলুন",
+      danger: true,
+    }))) return;
     setBusy(true); setMsg("");
     try {
       await apiFetch(`/organizations/${orgId}/products/${product.id}/images/${img.id}`, { method: "DELETE" });

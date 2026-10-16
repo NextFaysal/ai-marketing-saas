@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { fetchShopBlog } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { themeOf } from "@/lib/shop-theme";
+import { MediaImage } from "@/components/MediaImage";
 
 type Params = Promise<{ orgSlug: string }>;
 
@@ -48,8 +49,7 @@ export default async function ShopBlogIndexPage({ params }: { params: Params }) 
               className={`block overflow-hidden bg-white transition hover:shadow-md ${theme.cardClass}`}
             >
               {post.coverImageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={post.coverImageUrl} alt={post.title} className="aspect-video w-full object-cover" />
+                <MediaImage src={post.coverImageUrl} alt={post.title} width={960} height={540} sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 384px" className="aspect-video w-full object-cover" />
               ) : (
                 <div className="flex aspect-video w-full items-center justify-center bg-indigo-50 text-5xl">📝</div>
               )}

@@ -1,4 +1,6 @@
 import type { LabelScanResultView, LabelMatchView } from "@/lib/cx8";
+import type { OrderAllocation } from "../on2-detail";
+import type { RiskReason } from "@/lib/orders-on4";
 
 export interface OrderItem {
   id: string;
@@ -281,3 +283,83 @@ export function transitionAllowed(from: string, to: string): boolean {
   if (!allowed) return true;
   return allowed.includes(to);
 }
+
+// EB5 ED13: panel contracts for the orders decomposition — exact
+// copies of the shapes page.tsx defines locally for its action /
+// split / merge / fraud / notification panels (the page keeps its
+// own local copies; these are the extracted components' contracts).
+export interface PanelOrderItem {
+  id: string; name: string; quantity: number; totalMinor: string;
+  priceMinor?: string; productId?: string | null; sku?: string | null;
+  isGift?: boolean; bundleId?: string | null; bundleName?: string | null;
+}
+
+export interface PanelOrder {
+  id: string; externalNumber?: string | null; status: string; isCod: boolean;
+  paymentMethod?: string | null; totalMinor: string; refundedMinor?: string; internalNote?: string | null; placedAt?: string | null;
+  deliverySlot?: { id?: string; label: string; startTime?: string; endTime?: string; date: string } | null;
+  deliveryMethod?: string;
+  pickupPoint?: { id: string; name: string; address: string; district: string; phone: string | null; feeMinor: string } | null;
+  paymentVerifications?: PaymentVerificationRow[];
+  advancePaidMinor?: string;
+  amountDueMinor?: string;
+  shippingMinor?: string;
+  promotionDiscountMinor?: string;
+  referralDiscountMinor?: string;
+  referralCode?: string | null;
+  promotionsApplied?: { promotionId: string; name: string; type: string; amountMinor: string }[] | null;
+  wholesaleBreakdown?: { productId: string; minQty: number; priceMinor: string }[] | null;
+  giftWrapMinor?: string;
+  giftMessage?: string | null;
+  giftPromotionId?: string | null;
+  giftSkipped?: boolean;
+  source?: string | null; externalId?: string | null; storeId?: string | null;
+  storeDraftId?: string | null; storeInvoiceUrl?: string | null;
+  customer?: { firstName?: string | null; lastName?: string | null; phone?: string | null; email?: string | null } | null;
+  items?: PanelOrderItem[];
+  allocations?: OrderAllocation[];
+  risk?: { band: string; score: number | null } | null;
+  tags?: string[] | null; assigneeId?: string | null;
+  codConfirmationStatus?: string | null;
+  conversationId?: string | null; codConversationId?: string | null;
+  riskScore?: number | null;
+  riskBand?: "low" | "medium" | "high" | null;
+  riskReasons?: RiskReason[] | null;
+  riskAssessedAt?: string | null;
+  reviewHold?: boolean;
+  reviewHoldReason?: string | null;
+  reviewHeldAt?: string | null;
+  codCallAttempts?: number;
+  codLastCallAt?: string | null;
+  codLastCallOutcome?: "confirmed" | "rejected" | "unreachable" | "callback_requested" | null;
+  checkoutFields?: Record<string, string | boolean> | null;
+  checkoutFieldDefs?: { key: string; label: string }[] | null;
+  deposit?: { dueMinor: string; paidMinor: string; outstandingMinor: string } | null;
+  deviceHashPrefix?: string | null;
+}
+
+export interface ProductPick { id: string; name: string; sku?: string | null; priceMinor: string }
+export interface ProductVariantPick { id: string; name: string; priceMinor?: string | null }
+
+export interface FraudSettings {
+  enabled: boolean; autoHoldEnabled: boolean; autoHoldBand: string;
+  highValueMinor: string; burstCount: number; burstWindowHours: number;
+  openOrderPolicy: string; openOrderWindowHours: number;
+  waitingPeriodMinutes: number; maxOrdersPerPhonePerDay: number;
+  captchaEnabled: boolean; captchaOnCheckout: boolean; captchaOnOtp: boolean;
+  turnstileSiteKey: string | null; turnstileSecretSet: boolean;
+}
+export interface BlockedPhoneRow { id: string; phone: string; phoneKey: string; reason: string | null; createdAt: string }
+export interface IdentifierRow { id: string; kind: string; value: string; reason: string | null; createdAt: string }
+export interface FraudAttemptRow { id: string; channel: string; kind: string; identifierSummary: string; ruleId: string | null; createdAt: string }
+export interface FraudRuleRow {
+  id: string; name: string; enabled: boolean;
+  conditions: Record<string, unknown>; action: string; tagValue: string | null;
+  hitCount: number; createdAt: string;
+}
+
+export interface NotifEventConfig {
+  enabled: boolean; channels: string[];
+  templates: { sms: string | null; whatsapp: string | null; email: string | null };
+}
+export type NotifConfig = Record<string, NotifEventConfig>;
