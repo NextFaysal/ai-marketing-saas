@@ -140,6 +140,7 @@ const THEME_OPTIONS = [
   { id: "classic", label: "ক্লাসিক", desc: "চেনা, ভারসাম্যপূর্ণ দোকানের লুক" },
   { id: "bold", label: "বোল্ড", desc: "বড় হিরো, গাঢ় রঙ, নজরকাড়া অফার" },
   { id: "minimal", label: "মিনিমাল", desc: "হালকা, পরিষ্কার, পণ্যে ফোকাস" },
+  { id: "v2", label: "নতুন ডিজাইন v2", desc: "আধুনিক ডিজাইন — মোবাইল অ্যাপের মতো নেভিগেশন, ব্র্যান্ড রঙে সব বোতাম" },
 ] as const;
 
 /** GC1: pure-div mini shop mock used as a theme preview (no images). */
@@ -162,6 +163,12 @@ function ThemePreview({ theme }: { theme: string }) {
       header: "h-3 border-b border-slate-200 bg-white",
       hero: "mx-3 mt-2 h-7 bg-slate-50",
       tile: "h-7 border border-slate-200 bg-white",
+    },
+    v2: {
+      wrap: "rounded-xl border border-slate-200 bg-white shadow-sm",
+      header: "h-3 rounded-t-xl bg-indigo-600",
+      hero: "mx-2 mt-2 h-9 rounded-xl bg-indigo-100",
+      tile: "h-7 rounded-xl bg-slate-200",
     },
   };
   const s = styles[theme] ?? styles.classic;
@@ -1019,7 +1026,7 @@ export default function StorefrontStaffPage() {
         <div className="space-y-3 border-t pt-4">
           <div className="font-semibold">থিম ও ফেভিকন</div>
           <p className="text-xs text-slate-500">দোকানের চেহারা বেছে নিন — প্রিভিউগুলো শুধু ধারণা দেওয়ার জন্য (CSS মক)। নিচের &ldquo;সেটিংস সংরক্ষণ করুন&rdquo; বাটনেই থিম ও ফেভিকন সেভ হবে।</p>
-          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="দোকানের থিম">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" role="radiogroup" aria-label="দোকানের থিম">
             {THEME_OPTIONS.map((t) => {
               const selected = themeId === t.id;
               return (
@@ -1037,6 +1044,18 @@ export default function StorefrontStaffPage() {
               );
             })}
           </div>
+          {orgSlug ? (
+            <p className="text-xs">
+              <a
+                href={`${typeof window !== "undefined" ? window.location.origin : ""}${shopPath}?themePreview=v2`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-indigo-700 underline"
+              >
+                নতুন ডিজাইন v2 লাইভ প্রিভিউ (সেভ না করেই দেখুন)
+              </a>
+            </p>
+          ) : null}
           <label className="block text-sm">ফেভিকন URL (ব্রাউজার ট্যাবের ছোট আইকন)
             <div className="mt-1 flex items-center gap-3">
               <input className="input flex-1" value={faviconUrl} onChange={(e) => setFaviconUrl(e.target.value)} placeholder="https://…/favicon.png" />
