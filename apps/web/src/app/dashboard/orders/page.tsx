@@ -1,5 +1,7 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
@@ -246,11 +248,20 @@ function transitionAllowed(from: string, to: string): boolean {
   return allowed.includes(to);
 }
 
-export default function OrdersPage() {
+function OrdersPageInner() {
+  // ED12 (EB5): URL-driven list state — queue / status / committed
+  // search are read from the query string on mount (see the mirror
+  // effect near patchFilters). Absent params = today's defaults.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlQueue = searchParams.get("queue") ?? "";
+  const urlStatus = searchParams.get("status") ?? "";
+  const urlSearch = searchParams.get("search") ?? "";
   const [items, setItems] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(urlStatus);
   const [codOnly, setCodOnly] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [error, setError] = useState("");
@@ -429,8 +440,10 @@ export default function OrdersPage() {
   // ---- ON1: Command Center state ----
   // One filter object drives the list query, the saved-view
   // payload and the reset button (see lib/orders-on1).
-  const [filters, setFilters] = useState<OrderFilters>(EMPTY_ORDER_FILTERS);
-  const [searchDraft, setSearchDraft] = useState("");
+  const [filters, setFilters] = useState<OrderFilters>(() => ({
+    ...EMPTY_ORDER_FILTERS, queue: urlQueue, status: urlStatus, search: urlSearch,
+  }));
+  const [searchDraft, setSearchDraft] = useState(urlSearch);
   const [queues, setQueues] = useState<QueueRow[]>([]);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [members, setMembers] = useState<MemberRow[]>([]);
@@ -1372,6 +1385,23 @@ export default function OrdersPage() {
     }, 350);
     return () => clearTimeout(t);
   }, [searchDraft]);
+
+  // ED12 (EB5): mirror queue / status / committed search back into
+  // the URL (replace, scroll preserved; params at their default
+  // values are omitted, so the bare URL stays bare). Saved views
+  // flow through applyFiltersObject -> these same states, so
+  // applying a view updates the URL through this same path.
+  // Pagination is deliberately NOT in the URL: the list has no
+  // page state — buildOrderListParams always requests pageSize 50.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (filters.queue) next.set("queue", filters.queue);
+    if (status) next.set("status", status);
+    if (filters.search) next.set("search", filters.search);
+    const qs = next.toString();
+    if (qs === searchParams.toString()) return;
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [filters.queue, filters.search, status, pathname, router, searchParams]);
 
   const loadQueues = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -2626,7 +2656,8 @@ export default function OrdersPage() {
                 {(o.conversationId ?? o.codConversationId) ? <a href="/dashboard/inbox" title="কথোপকথন খুলুন (ইনবক্স)" aria-label="কথোপকথন">💬</a> : null}
                 {o.isCod && (o.codConversationId ?? o.conversationId) && o.codConfirmationStatus === "awaiting" ? <a href="/dashboard/inbox" title="COD কনফার্ম অপেক্ষমাণ" aria-label="COD কনফার্ম অপেক্ষমাণ">⏳</a> : null}
                 {sh ? <button type="button" title="লেবেল প্রিন্ট" aria-label="লেবেল প্রিন্ট" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/shipments/${sh.id}/label.pdf`, `label-${sh.trackingCode ?? sh.id}.pdf`); }}>🏷️</button> : null}
-                <button type="button" className="ml-auto text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>⚙️ অ্যাকশন</button>
+                <Link href={`/dashboard/orders/${o.id}`} className="ml-auto text-sm font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
+                <button type="button" className="text-sm font-semibold text-brand-600" onClick={() => { openActions(o); setTimeout(() => document.getElementById("orders-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>⚙️ অ্যাকশন</button>
               </div>
             </div>
           ); })}
@@ -2642,7 +2673,7 @@ export default function OrdersPage() {
               {items.map((o) => (
                 <tr key={o.id} className="border-t">
                   <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(o.id)} disabled={!selected.includes(o.id) && selected.length >= 50} onChange={(e) => toggleSelect(o.id, e.target.checked)} /></td>
-                  <td className="px-4 py-3 font-medium">#{o.externalNumber ?? o.id.slice(0, 8)}<button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
+                  <td className="px-4 py-3 font-medium"><Link href={`/dashboard/orders/${o.id}`} className="hover:underline" title="সম্পূর্ণ বিবরণ">#{o.externalNumber ?? o.id.slice(0, 8)}</Link><button className="block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => { const orgId = getOrganizationId(); if (orgId) void downloadPdf(`/organizations/${orgId}/courier/orders/${o.id}/invoice.pdf`, `invoice-${o.externalNumber ?? o.id}.pdf`); }}>🧾 ইনভয়েস PDF</button>
                     {o.deliverySlot ? <span className="mt-1 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">🕐 {o.deliverySlot.label} · {o.deliverySlot.date}</span> : null}
                     {o.deliveryMethod === "pickup" && o.pickupPoint ? <span className="mt-1 ml-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">📍 পিকআপ: {o.pickupPoint.name}</span> : null}
                   </td>
@@ -2663,6 +2694,7 @@ export default function OrdersPage() {
                     ) : null}
                     {o.reviewHold ? <span className="mt-1 inline-block rounded bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white" title={o.reviewHoldReason ?? undefined}>⛔ আটকানো</span> : null}
                     <button className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline" onClick={() => openActions(o)}>⚙️ অ্যাকশন</button>
+                    <Link href={`/dashboard/orders/${o.id}`} className="mt-1 block text-[11px] font-semibold text-brand-600 hover:underline">বিস্তারিত →</Link>
                   </td>
                   <td className="px-4 py-3">{(o.tags ?? []).length > 0 ? (
                     <span className="flex flex-wrap gap-1">{(o.tags ?? []).map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{t}</span>)}</span>
@@ -2899,6 +2931,7 @@ export default function OrdersPage() {
                     <div className="flex items-center justify-between">
                       <h3 className="font-semibold">⚙️ অর্ডার অ্যাকশন — #{o.externalNumber ?? o.id.slice(0, 8)}</h3>
                       <span className="flex items-center gap-2">
+                        <Link href={`/dashboard/orders/${o.id}`} className="text-xs font-semibold text-brand-600 hover:underline">সম্পূর্ণ বিবরণ →</Link>
                         {/* ON3: surgery toggle — offered only for
                             pending / on-hold / processing orders
                             the server could accept; store-source
@@ -4069,5 +4102,16 @@ export default function OrdersPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ED12 (EB5): useSearchParams (URL-driven list state above) needs a
+// Suspense boundary in Next 15 — same wrapper pattern as
+// dashboard/commerce/print and dashboard/commerce/warehouse/labels.
+export default function OrdersPage() {
+  return (
+    <Suspense fallback={<p className="p-6 text-sm text-slate-500">লোড হচ্ছে…</p>}>
+      <OrdersPageInner />
+    </Suspense>
   );
 }
