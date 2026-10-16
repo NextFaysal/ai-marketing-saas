@@ -416,6 +416,9 @@ export function effectiveLinkedinAppConfig(): (LinkedinAppConfig & { source: "ad
 export function effectiveGoogleOAuthConfig(): (GoogleOAuthConfig & { source: "admin" }) | null {
   if (snapshot.googleOAuth?.clientId && snapshot.googleOAuth.clientSecret) {
     return { ...snapshot.googleOAuth, source: "admin" };
+  }
+  return null;
+}
 /** SN7: the operator's Threads app — same resolution as LinkedIn. */
 export function effectiveThreadsAppConfig(): (ThreadsAppConfig & { source: "admin" | "env" }) | null {
   if (snapshot.threadsApp?.clientId && snapshot.threadsApp.clientSecret) {
