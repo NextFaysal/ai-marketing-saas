@@ -1,7 +1,8 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
@@ -10,6 +11,8 @@ import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
+import { setBuyBarActive } from "@/lib/shop-bottom-chrome";
+import type { ShopTheme } from "@/lib/shop-theme";
 
 // ED6 (EB2) — deferred chunks. ExpressCheckout renders null until
 // its session check (an effect) resolves, so its SSR output is
@@ -26,8 +29,28 @@ const ProductLightbox = dynamic(
   { ssr: false, loading: () => null },
 );
 
-export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
+export function ProductDetailClient({
+  orgSlug,
+  product,
+  locale = "bn",
+  isV2 = false,
+}: {
+  orgSlug: string;
+  product: ShopProduct;
+  locale?: ShopLocale | string;
+  /** ED8: v2 tokens, passed by the server page ONLY when the
+   * effective theme is v2. Legacy rendering passes neither prop. */
+  theme?: ShopTheme;
+  isV2?: boolean;
+}) {
   const t = shopT(locale);
+  const router = useRouter();
+  // ED8: sticky buy bar visibility — an IntersectionObserver on
+  // the main buy block (buyRef) shows the bar once that block has
+  // scrolled out of view. Documented fallback: where IO is
+  // unavailable, the bar is simply always visible on mobile.
+  const buyRef = useRef<HTMLDivElement | null>(null);
+  const [barVisible, setBarVisible] = useState(false);
   const images = useMemo(() => {
     const list: string[] = [];
     for (const src of product.images ?? []) if (src && !list.includes(src)) list.push(src);
@@ -50,6 +73,33 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [added, setAdded] = useState(false);
+
+  // ED8: buy-bar visibility via IntersectionObserver on the main
+  // buy block. Fallback (no IO in the environment): always visible.
+  useEffect(() => {
+    if (!isV2) return;
+    const el = buyRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setBarVisible(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setBarVisible(!entry.isIntersecting);
+      },
+      { threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isV2]);
+
+  // ED8: while the buy bar is actually shown, it owns the phone's
+  // bottom edge — the v2 bottom nav yields (shop-bottom-chrome).
+  useEffect(() => {
+    if (!isV2) return;
+    setBuyBarActive(barVisible);
+    return () => setBuyBarActive(false);
+  }, [isV2, barVisible]);
 
   // AB2 (AX3): gift-card purchase state — the chosen face value
   // (a preset chip, or a custom taka amount when allowed) plus
@@ -91,7 +141,11 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
   const outOfStock = !product.isGiftCard && stockState === "out_of_stock" && !product.preorder;
   const badge = product.isGiftCard ? null : stockBadge(stockState, locale);
 
-  async function addToCart() {
+  // ED8: returns whether the line was actually added, so the
+  // sticky buy bar's buy-now can reuse this EXACT handler and
+  // navigate to checkout only on success. Existing callers ignore
+  // the return value — behaviour is unchanged for them.
+  async function addToCart(): Promise<boolean> {
     setBusy(true);
     setError("");
     setAdded(false);
@@ -112,16 +166,16 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         const amount = gcAmountMinor();
         if (amount == null) {
           setGcHint("গিফট কার্ডের পরিমাণটি সঠিকভাবে লিখুন।");
-          return;
+          return false;
         }
         if (gcCustom.trim() && gcConfig?.allowCustomAmount) {
           if (gcConfig.minAmountMinor != null && amount < gcConfig.minAmountMinor) {
             setGcHint(`সর্বনিম্ন পরিমাণ ${priceText(String(gcConfig.minAmountMinor))} — এর কমে কার্ড কেনা যাবে না।`);
-            return;
+            return false;
           }
           if (gcConfig.maxAmountMinor != null && amount > gcConfig.maxAmountMinor) {
             setGcHint(`সর্বোচ্চ পরিমাণ ${priceText(String(gcConfig.maxAmountMinor))} — এর বেশি কার্ড কেনা যাবে না।`);
-            return;
+            return false;
           }
         }
         gcFields = {
@@ -147,14 +201,48 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         ...gcFields,
       });
       setAdded(true);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : t.product.addToCartError);
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
-  return (
+  // ED8: buy-now for the sticky bar — there is no separate buy-now
+  // flow on this page today (the main buy button IS addToCart, and
+  // the post-add state offers the checkout link), so buy-now =
+  // the existing addToCart handler + navigation to the existing
+  // checkout route, only when the add actually succeeded.
+  async function buyNow() {
+    const ok = await addToCart();
+    if (ok) router.push(`/shop/${orgSlug}/checkout`);
+  }
+
+  // ED8: the main buy block, extracted verbatim so the v2 branch
+  // can wrap it in the IntersectionObserver sentinel div while the
+  // legacy branch renders it exactly as before (no extra node).
+  const buyBlock = added ? (
+    <div className="space-y-2 rounded-xl bg-emerald-50 p-3 text-center">
+      <p className="text-sm font-bold text-emerald-800">{t.product.added}</p>
+      <div className="flex justify-center gap-2">
+        <Link href={`/shop/${orgSlug}/cart`} className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-slate-700 border">{t.product.viewCart}</Link>
+        <Link href={`/shop/${orgSlug}/checkout`} className="btn-brand rounded-lg px-4 py-2 text-xs font-bold">{t.product.checkoutNow}</Link>
+      </div>
+    </div>
+  ) : (
+    <button
+      type="button"
+      onClick={addToCart}
+      disabled={busy || outOfStock}
+      className="btn-brand btn-brand-shadow w-full rounded-2xl py-3.5 text-sm font-extrabold disabled:opacity-50"
+    >
+      {outOfStock ? t.product.outOfStockOrder : busy ? t.product.adding : t.product.addToCart}
+    </button>
+  );
+
+  const mainContent = (
     <div className="grid gap-6 md:grid-cols-2">
       {/* Gallery — GC: video slide 0 + image zoom + lightbox */}
       <div className="space-y-3">
@@ -250,14 +338,15 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         ) : null}
       </div>
 
-      {/* Buy panel */}
-      <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      {/* Buy panel — ED8: v2 gets the token-native info-panel
+          surface + large brand price; legacy classes unchanged. */}
+      <div className={isV2 ? "space-y-4 rounded-[var(--radius-xl)] border border-[var(--border-soft)] bg-[var(--surface)] p-6 shadow-[var(--shadow-card)]" : "space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"}>
         <div>
-          <h1 className="text-2xl font-black text-slate-900">{product.name}</h1>
+          <h1 className={isV2 ? "text-2xl font-black text-[var(--ink-strong)]" : "text-2xl font-black text-slate-900"}>{product.name}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-2xl font-extrabold text-indigo-700">{priceText(unitMinor)}</span>
+            <span className={isV2 ? "text-3xl font-extrabold text-[var(--brand)]" : "text-2xl font-extrabold text-indigo-700"}>{priceText(unitMinor)}</span>
             {product.compareAtMinor && !variant ? (
-              <span className="text-sm text-slate-400 line-through">{priceText(product.compareAtMinor)}</span>
+              <span className={isV2 ? "text-sm text-[var(--ink-faint)] line-through" : "text-sm text-slate-400 line-through"}>{priceText(product.compareAtMinor)}</span>
             ) : null}
             {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
             {badge ? <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
@@ -416,24 +505,7 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
 
         {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{error}</p> : null}
 
-        {added ? (
-          <div className="space-y-2 rounded-xl bg-emerald-50 p-3 text-center">
-            <p className="text-sm font-bold text-emerald-800">{t.product.added}</p>
-            <div className="flex justify-center gap-2">
-              <Link href={`/shop/${orgSlug}/cart`} className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-slate-700 border">{t.product.viewCart}</Link>
-              <Link href={`/shop/${orgSlug}/checkout`} className="btn-brand rounded-lg px-4 py-2 text-xs font-bold">{t.product.checkoutNow}</Link>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={addToCart}
-            disabled={busy || outOfStock}
-            className="btn-brand btn-brand-shadow w-full rounded-2xl py-3.5 text-sm font-extrabold disabled:opacity-50"
-          >
-            {outOfStock ? t.product.outOfStockOrder : busy ? t.product.adding : t.product.addToCart}
-          </button>
-        )}
+        {isV2 ? <div ref={buyRef}>{buyBlock}</div> : buyBlock}
         {/* AB4 (AX5c): express checkout for logged-in shoppers —
             ensures a cart for THIS product/variant/quantity first,
             mirroring the add-to-cart merge above. Gift-card lines
@@ -473,5 +545,59 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         ) : null}
       </div>
     </div>
+  );
+
+  if (!isV2) return mainContent;
+
+  // ED8: sticky buy bar (v2, mobile only). Price is variant-aware
+  // via the same unitMinor computation as the panel; for gift-card
+  // products it shows the currently selected face value
+  // (gcAmountMinor — the same state addToCart validates), falling
+  // back to unitMinor while a custom amount is not yet usable.
+  // Both buttons reuse the existing handlers (addToCart / buyNow);
+  // out-of-stock disables them exactly like the main button.
+  const gcBarMinor = product.isGiftCard ? gcAmountMinor() : null;
+  const barPriceMinor = gcBarMinor != null ? String(gcBarMinor) : unitMinor;
+  const buyBar = barVisible ? (
+    <div
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)] lg:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        {product.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <MediaImage src={product.imageUrl} alt="" width={88} height={88} className="h-11 w-11 shrink-0 rounded-[var(--radius-md)] object-cover" />
+        ) : (
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--brand-soft)] text-lg">📦</div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-1 text-xs font-bold text-[var(--ink-strong)]">{product.name}</p>
+          <p className="text-sm font-extrabold text-[var(--brand)]">{priceText(barPriceMinor)}</p>
+        </div>
+        <button
+          type="button"
+          onClick={addToCart}
+          disabled={busy || outOfStock}
+          className="btn-brand min-h-11 shrink-0 rounded-[var(--radius-md)] px-2.5 py-2.5 text-[11px] font-extrabold disabled:opacity-50"
+        >
+          {outOfStock ? t.product.outOfStock : busy ? t.product.adding : t.product.addToCart}
+        </button>
+        <button
+          type="button"
+          onClick={buyNow}
+          disabled={busy || outOfStock}
+          className="btn-brand min-h-11 shrink-0 rounded-[var(--radius-md)] px-2.5 py-2.5 text-[11px] font-extrabold disabled:opacity-50"
+        >
+          {t.product.buyNow}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {mainContent}
+      {buyBar}
+    </>
   );
 }
