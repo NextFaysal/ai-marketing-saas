@@ -7,6 +7,16 @@ import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { buildProductJsonLd, canonicalShopUrl, jsonLdScript } from "@/lib/storefront-seo";
 import { sitemapUrlBase } from "@/lib/storefront-sitemap";
 import { ProductCard } from "../../ProductCard";
+import { FashionProductCard } from "../../FashionTheme";
+import { ElectronicsProductCard, ElectronicsSpecTable } from "../../ElectronicsTheme";
+import { GroceryProductCard } from "../../GroceryTheme";
+import { BeautyProductCard } from "../../BeautyTheme";
+import { FurnitureProductCard } from "../../FurnitureTheme";
+import { BooksProductCard } from "../../BooksTheme";
+import { KidsProductCard } from "../../KidsTheme";
+import { AutomotiveProductCard } from "../../AutomotiveTheme";
+import { SportsProductCard } from "../../SportsTheme";
+import { JewelryProductCard } from "../../JewelryTheme";
 import { FlashCountdown } from "../../FlashCountdown";
 import { ProductDetailClient } from "./ProductDetailClient";
 import { ReviewInsightBox } from "./ReviewInsightBox";
@@ -40,13 +50,15 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function ProductPage({ params }: { params: Params }) {
   const { orgSlug, productSlug } = await params;
-  const detail = await fetchProductDetail(orgSlug, productSlug);
+  const [detail, home] = await Promise.all([
+    fetchProductDetail(orgSlug, productSlug),
+    fetchShopHome(orgSlug).catch(() => null),
+  ]);
   if (!detail) notFound();
   const { product, related } = detail;
-  // GB7 (GC18): server clock for the flash countdown (cached fetch).
-  const homeForFlash = product.flashSale ? await fetchShopHome(orgSlug).catch(() => null) : null;
-  const flashServerNow = homeForFlash?.flashSales?.serverNow ?? null;
-  const locale = shopLocaleOf(detail.settings?.locale);
+  const themeId = home?.settings.themeId;
+  const flashServerNow = home?.flashSales?.serverNow ?? null;
+  const locale = shopLocaleOf(detail.settings?.locale ?? home?.settings.locale);
   const t = shopT(locale);
   // EC27: the EC15 unified reviews summary feeds the JSON-LD
   // aggregateRating — only when it really has reviews.
@@ -98,7 +110,27 @@ export default async function ProductPage({ params }: { params: Params }) {
         </div>
       ) : null}
 
-      <ProductDetailClient orgSlug={orgSlug} product={product} locale={locale} />
+      <ProductDetailClient
+        orgSlug={orgSlug}
+        product={product}
+        locale={locale}
+        isFashion={themeId === "fashion"}
+        isElectronics={themeId === "electronics"}
+        isGrocery={themeId === "grocery"}
+        isBeauty={themeId === "beauty"}
+        isFurniture={themeId === "furniture"}
+        isBooks={themeId === "books"}
+        isKids={themeId === "kids"}
+        isAutomotive={themeId === "automotive"}
+        isSports={themeId === "sports"}
+        isJewelry={themeId === "jewelry"}
+        relatedProducts={related}
+      />
+
+      {/* Electronics Technical Specification Matrix */}
+      {themeId === "electronics" ? (
+        <ElectronicsSpecTable />
+      ) : null}
 
       {/* EC27: bought-together from real sold orders — the section
           is absent entirely when nothing clears the threshold. */}
@@ -106,9 +138,31 @@ export default async function ProductPage({ params }: { params: Params }) {
         <section className="space-y-4">
           <h2 className="text-xl font-black text-slate-900">{t.product.boughtTogether}</h2>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {boughtTogether.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
-            ))}
+            {boughtTogether.map((p) =>
+              themeId === "fashion" ? (
+                <FashionProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "electronics" ? (
+                <ElectronicsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "grocery" ? (
+                <GroceryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "beauty" ? (
+                <BeautyProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "furniture" ? (
+                <FurnitureProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "books" ? (
+                <BooksProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "kids" ? (
+                <KidsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "automotive" ? (
+                <AutomotiveProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "sports" ? (
+                <SportsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "jewelry" ? (
+                <JewelryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : (
+                <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ),
+            )}
           </div>
         </section>
       ) : null}
@@ -130,9 +184,31 @@ export default async function ProductPage({ params }: { params: Params }) {
         <section className="space-y-4">
           <h2 className="text-xl font-black text-slate-900">{t.product.related}</h2>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {related.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
-            ))}
+            {related.map((p) =>
+              themeId === "fashion" ? (
+                <FashionProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "electronics" ? (
+                <ElectronicsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "grocery" ? (
+                <GroceryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "beauty" ? (
+                <BeautyProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "furniture" ? (
+                <FurnitureProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "books" ? (
+                <BooksProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "kids" ? (
+                <KidsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "automotive" ? (
+                <AutomotiveProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "sports" ? (
+                <SportsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : themeId === "jewelry" ? (
+                <JewelryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : (
+                <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ),
+            )}
           </div>
         </section>
       ) : null}

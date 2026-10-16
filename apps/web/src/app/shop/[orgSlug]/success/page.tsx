@@ -448,6 +448,25 @@ function SuccessInner() {
           </div>
         ) : null}
 
+        {/* Bangladeshi Fashion & Apparel Assurance */}
+        <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4 text-left">
+          <p className="text-xs font-bold text-stone-900">🛍️ পোশাক ও সাইজ সম্পর্কিত সেবা:</p>
+          <ul className="mt-2 space-y-1.5 text-[11px] text-stone-600">
+            <li className="flex items-center gap-1.5">
+              <span className="text-emerald-600 font-bold">✓</span>
+              <span><strong>সাইজ এক্সচেঞ্জ:</strong> সাইজ না মিললে পার্সেল পাওয়ার ৭ দিনের মধ্যে সহজে সাইজ পরিবর্তন সুবিধা।</span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span className="text-emerald-600 font-bold">✓</span>
+              <span><strong>দ্রুত ডেলিভারি:</strong> ঢাকা সিটিতে ২৪-৪৮ ঘণ্টা এবং সারাদেশে ২-৩ কার্যদিবসের মধ্যে ডেলিভারি।</span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span className="text-emerald-600 font-bold">✓</span>
+              <span><strong>গ্রাহক সেবা:</strong> যেকোনো প্রয়োজনে বা সাইজ পরিবর্তনে ইনবক্স অথবা সাপোর্টে যোগাযোগ করুন।</span>
+            </li>
+          </ul>
+        </div>
+
         {orderNumber && trackingEnabled ? (
           <Link href={`/track/${orgSlug}`} className="block w-full rounded-xl bg-indigo-600 py-3 text-xs font-semibold text-white hover:bg-indigo-700">
             📦 {t.success.trackOrder}

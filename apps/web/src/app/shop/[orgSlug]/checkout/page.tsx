@@ -996,10 +996,21 @@ export default function ShopCheckoutPage() {
               </div>
             ) : null}
 
-            <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-indigo-600 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 disabled:opacity-50">
+            <button type="submit" disabled={submitting} className="w-full rounded-2xl bg-neutral-900 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-neutral-900/20 hover:bg-neutral-800 transition disabled:opacity-50">
               {submitting ? t.checkout.placingOrder : t.checkout.placeOrder}
             </button>
-            <Link href={`/shop/${orgSlug}/cart`} className="block text-center text-xs font-bold text-indigo-700 hover:underline">{t.checkout.backToCart}</Link>
+            <Link href={`/shop/${orgSlug}/cart`} className="block text-center text-xs font-bold text-stone-600 hover:text-neutral-900 hover:underline">{t.checkout.backToCart}</Link>
+
+            {/* Safe Shopping Guarantee (Fashion & Electronics) */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3 space-y-1.5 text-[11px] text-slate-700">
+              <div className="flex items-center gap-2 font-bold text-slate-900">
+                <span>🛡️</span>
+                <span>নিরাপদ ও ১০০% আসল পণ্যের নিশ্চয়তা</span>
+              </div>
+              <p className="text-[10px] leading-relaxed text-slate-500">
+                অফিশিয়াল ব্র্যান্ড ওয়ারেন্টি • দ্রুত এক্সপ্রেস ডেলিভারি • ত্রুটিযুক্ত পণ্যে ৭ দিনের সহজ রিপ্লেসমেন্ট/এক্সচেঞ্জ • পার্সেল হাতে পেয়ে চেক করে ক্যাশ অন ডেলিভারিতে পরিশোধের সুবিধা।
+              </p>
+            </div>
 
             {shop?.settings?.returnPolicyText?.trim() ? (
               <div className="border-t pt-3">

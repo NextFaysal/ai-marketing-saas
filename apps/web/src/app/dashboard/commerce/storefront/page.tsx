@@ -137,9 +137,26 @@ interface VerifyTokenOut { domain: string; recordHost: string; recordType: strin
 interface RoutingOut { routingActive: boolean; checkedUrl: string | null; status?: number; evidence?: string; reason?: string }
 
 const THEME_OPTIONS = [
-  { id: "classic", label: "ক্লাসিক", desc: "চেনা, ভারসাম্যপূর্ণ দোকানের লুক" },
-  { id: "bold", label: "বোল্ড", desc: "বড় হিরো, গাঢ় রঙ, নজরকাড়া অফার" },
-  { id: "minimal", label: "মিনিমাল", desc: "হালকা, পরিষ্কার, পণ্যে ফোকাস" },
+  { id: "fashion", label: "👗 ফ্যাশন ও ক্লদিং (Aarong / Yellow)", desc: "৩:৪ পোর্ট্রেট কার্ড, সাইজ সিলেক্টর ও সাইজ চার্ট গাইড" },
+  { id: "electronics", label: "⚡ ইলেকট্রনিক্স ও গ্যাজেটস (Star Tech / Ryans)", desc: "টেক স্পেকস টেবিল, ব্র্যান্ড ওয়ারেন্টি, EMI ক্যালকুলেটর ও গ্যাজেট কম্পেয়ার" },
+  { id: "grocery", label: "🛒 গ্রোসারি ও অর্গানিক ফুডস (Chaldal / Khaas Food)", desc: "১ ঘণ্টার এক্সপ্রেস ডেলিভারি, ওজন/কেজি সিলেক্টর ও ইনস্ট্যান্ট কোয়ান্টিটি কাউন্টার" },
+  { id: "beauty", label: "💄 হেলথ, বিউটি ও কসমেটিক্স (Shajgoj / Banglashoppers)", desc: "১০০% অরিজিনাল সনদ, স্কিন টাইপ ম্যাচিং, রুটিন কম্বো ও শেড পিকার" },
+  { id: "furniture", label: "🛋️ হোম ডেকর ও ফার্নিচার (HATIL / ISHO / Otobi)", desc: "১০ বছরের ওয়ারেন্টি, সেগুন/ওক ফিনিশ সিলেক্টর ও রুম সেট বান্ডেল" },
+  { id: "books", label: "📚 বই, প্রকাশনী ও স্টেশনারি (Rokomari / Batighar)", desc: "একটু পড়ে দেখুন প্রিভিউয়ার, লেখক/প্রকাশনী ফিল্টার, বাইন্ডিং সিলেক্টর ও বইমেলা কালেকশন" },
+  { id: "kids", label: "🧸 বেবি কেয়ার, টয়স ও কিডস ফ্যাশন (Hopscotch / Babyshop BD)", desc: "বয়স ভিত্তিক সাইজ সিলেক্টর, ১০০% নন-টক্সিক ও BPA-Free গ্যারান্টি, নিউবর্ন গিফট হ্যাম্পার" },
+  { id: "automotive", label: "🏍️ অটোমোটিভ, বাইক ও মোটর পার্টস (BikeBD / Motorparts BD)", desc: "বাইক মডেল ফিটমেন্ট চেকার, ইঞ্জিন অয়েল ভিসকোসিটি সিলেক্টর ও সার্ভিসিং কম্বো" },
+  { id: "sports", label: "🏋️‍♂️ স্পোর্টস, ফিটনেস ও জিম ইকুইপমেন্ট (Decathlon / Sports World)", desc: "ডাম্বেল/ওজন সিলেক্টর, হোম জিম অ্যাসেম্বলি ও টেকনিশিয়ান রিকোয়েস্ট, অরিজিনাল অ্যাথলেটিক গিয়ার" },
+  { id: "jewelry", label: "💎 জুয়েলারি, ডায়মন্ড ও লাক্সারি ওয়াচেস (Apan Jewellers / Diamond World)", desc: "২২ ক্যারেট হলমার্ক গোল্ড সনদ, ডায়মন্ড ৪সি সার্টিফিকেট, রিং সাইজ গাইড ও ব্রাইডাল সেট" },
+  { id: "classic", label: "১. ক্লাসিক", desc: "চেনা, ভারসাম্যপূর্ণ ও স্ট্যান্ডার্ড শপ লুক" },
+  { id: "bold", label: "২. বোল্ড", desc: "বড় হিরো, গাঢ় রঙ ও নজরকাড়া অফার" },
+  { id: "minimal", label: "৩. মিনিমাল", desc: "হালকা, পরিষ্কার, পণ্যে সরাসরি ফোকাস" },
+  { id: "luxury", label: "৪. লাক্সারি গোল্ড", desc: "অভিজাত ডার্ক ও গোল্ডেন ভাইব — গয়না ও ঘড়ি" },
+  { id: "organic", label: "৫. অর্গানিক নেচার", desc: "প্রাকৃতিক সবুজ ও মাটির টান — অর্গানিক ফুড" },
+  { id: "vibrant", label: "৬. ভাইব্রেন্ট পপ", desc: "উজ্জ্বল রঙের ছোঁয়া — ট্রেন্ডি গিফট ও ফ্যাশন" },
+  { id: "modern", label: "৭. মডার্ন টেক", desc: "হাই-টেক ফিনিশ — গ্যাজেট ও ইলেকট্রনিক্স" },
+  { id: "pastel", label: "৮. প্যাস্টেল সফট", desc: "নরম মিষ্টি রং — স্কিনকেয়ার ও কসমেটিকস" },
+  { id: "nordic", label: "৯. নর্ডিক ওয়ার্ম", desc: "স্ক্যান্ডিনেভিয়ান কাঠ — হোম ডেকর ও লাইফস্টাইল" },
+  { id: "midnight", label: "১০. মিডনাইট নিয়ন", desc: "ট্রু ডার্ক মোড ও নিয়ন — স্ট্রিটওয়্যার ও ইউথ" },
 ] as const;
 
 /** GC1: pure-div mini shop mock used as a theme preview (no images). */
@@ -162,6 +179,108 @@ function ThemePreview({ theme }: { theme: string }) {
       header: "h-3 border-b border-slate-200 bg-white",
       hero: "mx-3 mt-2 h-7 bg-slate-50",
       tile: "h-7 border border-slate-200 bg-white",
+    },
+    luxury: {
+      wrap: "rounded-lg border border-amber-500/40 bg-zinc-950",
+      header: "h-3 bg-gradient-to-r from-amber-600 to-yellow-500",
+      hero: "mx-2 mt-2 h-9 rounded-md bg-zinc-900 border border-amber-500/30",
+      tile: "h-7 rounded-md bg-zinc-800 border border-amber-500/20",
+    },
+    organic: {
+      wrap: "rounded-xl border border-emerald-200 bg-[#f7f8f5]",
+      header: "h-3 bg-emerald-800",
+      hero: "mx-2 mt-2 h-9 rounded-lg bg-emerald-100",
+      tile: "h-7 rounded-lg bg-emerald-50 border border-emerald-200",
+    },
+    vibrant: {
+      wrap: "rounded-xl border-2 border-violet-200 bg-white",
+      header: "h-3 bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-500",
+      hero: "mx-2 mt-2 h-9 rounded-xl bg-gradient-to-r from-violet-100 to-pink-100",
+      tile: "h-7 rounded-xl bg-violet-50 border border-violet-200",
+    },
+    modern: {
+      wrap: "rounded-lg border border-slate-700 bg-slate-950",
+      header: "h-3 bg-indigo-600",
+      hero: "mx-2 mt-2 h-9 rounded-md bg-slate-900 border border-indigo-500/40",
+      tile: "h-7 rounded-md bg-slate-800 border border-slate-700",
+    },
+    pastel: {
+      wrap: "rounded-lg border border-rose-200 bg-rose-50/40",
+      header: "h-3 bg-rose-300",
+      hero: "mx-2 mt-2 h-9 rounded-lg bg-pink-100",
+      tile: "h-7 rounded-lg bg-white border border-rose-100",
+    },
+    nordic: {
+      wrap: "rounded-md border border-stone-300 bg-[#fbf9f5]",
+      header: "h-3 bg-stone-700",
+      hero: "mx-2 mt-2 h-9 rounded bg-[#ede5d8]",
+      tile: "h-7 rounded bg-white border border-stone-200",
+    },
+    midnight: {
+      wrap: "rounded-lg border border-cyan-500/40 bg-[#090d16]",
+      header: "h-3 bg-[#0d1424] border-b border-cyan-500/30",
+      hero: "mx-2 mt-2 h-9 rounded-md bg-[#0f172a] border border-cyan-500/40",
+      tile: "h-7 rounded-md bg-[#0f172a] border border-cyan-900",
+    },
+    fashion: {
+      wrap: "rounded-xl border border-stone-300 bg-[#faf9f6]",
+      header: "h-3 bg-neutral-900",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-stone-900 to-neutral-800",
+      tile: "h-9 rounded-lg bg-white border border-stone-200 shadow-xs",
+    },
+    electronics: {
+      wrap: "rounded-xl border border-indigo-500/40 bg-[#f4f6f9]",
+      header: "h-3 bg-slate-950 border-b border-indigo-500/30",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-slate-950 to-indigo-950 border border-indigo-500/30",
+      tile: "h-9 rounded-lg bg-white border border-slate-200 shadow-xs",
+    },
+    grocery: {
+      wrap: "rounded-xl border border-emerald-300 bg-[#f8faf8]",
+      header: "h-3 bg-emerald-700",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-emerald-800 to-teal-700",
+      tile: "h-9 rounded-lg bg-white border border-emerald-100 shadow-xs",
+    },
+    beauty: {
+      wrap: "rounded-xl border border-pink-300 bg-[#fffafb]",
+      header: "h-3 bg-gradient-to-r from-rose-900 to-pink-800",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-rose-950 via-pink-900 to-rose-900",
+      tile: "h-9 rounded-lg bg-white border border-pink-100 shadow-xs",
+    },
+    furniture: {
+      wrap: "rounded-xl border border-amber-600/40 bg-[#fcfbf9]",
+      header: "h-3 bg-stone-900",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-stone-950 via-amber-950 to-stone-900 border border-amber-600/30",
+      tile: "h-9 rounded-lg bg-white border border-stone-200 shadow-xs",
+    },
+    books: {
+      wrap: "rounded-xl border border-amber-900/40 bg-[#fdfcf7]",
+      header: "h-3 bg-[#3d1810]",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-amber-950 via-[#3d1810] to-stone-900 border border-amber-500/20",
+      tile: "h-9 rounded-lg bg-white border border-amber-200/60 shadow-xs",
+    },
+    kids: {
+      wrap: "rounded-xl border border-sky-300 bg-[#f9fcff]",
+      header: "h-3 bg-sky-500",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-sky-400 via-teal-400 to-amber-300 border border-sky-300/40",
+      tile: "h-9 rounded-lg bg-white border border-sky-100 shadow-xs",
+    },
+    automotive: {
+      wrap: "rounded-xl border border-red-600/40 bg-[#121316]",
+      header: "h-3 bg-red-600",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-zinc-950 via-neutral-900 to-red-950 border border-red-600/30",
+      tile: "h-9 rounded-lg bg-zinc-900 border border-zinc-800 shadow-xs",
+    },
+    sports: {
+      wrap: "rounded-xl border border-sky-400/40 bg-[#f8fafc]",
+      header: "h-3 bg-sky-700",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-sky-950 via-slate-900 to-cyan-900 border border-sky-500/20",
+      tile: "h-9 rounded-lg bg-white border border-slate-200 shadow-xs",
+    },
+    jewelry: {
+      wrap: "rounded-xl border border-amber-500/40 bg-[#1c1917]",
+      header: "h-3 bg-amber-600",
+      hero: "mx-2 mt-2 h-10 rounded-lg bg-gradient-to-r from-stone-950 via-[#1a1614] to-amber-950 border border-amber-500/30",
+      tile: "h-9 rounded-lg bg-[#292524] border border-amber-900/40 shadow-xs",
     },
   };
   const s = styles[theme] ?? styles.classic;
@@ -1019,7 +1138,7 @@ export default function StorefrontStaffPage() {
         <div className="space-y-3 border-t pt-4">
           <div className="font-semibold">থিম ও ফেভিকন</div>
           <p className="text-xs text-slate-500">দোকানের চেহারা বেছে নিন — প্রিভিউগুলো শুধু ধারণা দেওয়ার জন্য (CSS মক)। নিচের &ldquo;সেটিংস সংরক্ষণ করুন&rdquo; বাটনেই থিম ও ফেভিকন সেভ হবে।</p>
-          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="দোকানের থিম">
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5" role="radiogroup" aria-label="দোকানের থিম">
             {THEME_OPTIONS.map((t) => {
               const selected = themeId === t.id;
               return (

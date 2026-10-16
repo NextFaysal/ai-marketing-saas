@@ -291,19 +291,48 @@ export default function CartPage() {
         </button>
       </div>
 
-      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Free Shipping Progress bar */}
+        {previewMinor > 0n && (
+          <div className="rounded-xl bg-amber-50/80 p-3 text-xs text-amber-900 border border-amber-200/60">
+            {previewMinor >= 200000n ? (
+              <p className="font-bold text-emerald-700">🎉 অভিনন্দন! আপনি সারাদেশে ফ্রি ডেলিভারি পাচ্ছেন!</p>
+            ) : (
+              <p className="font-medium">
+                🚚 আর মাত্র <b>{formatMinor(200000n - previewMinor)}</b> টাকার কেনাকাটা করলেই <b>ফ্রি ডেলিভারি</b>!
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex justify-between text-sm">
           <span className="font-semibold text-slate-600">{t.cart.subtotalPreview}</span>
           <span className="font-extrabold text-slate-900">{formatMinor(previewMinor)}</span>
         </div>
         <p className="text-[11px] text-slate-400">{t.cart.previewNote}</p>
-        <Link href={`/shop/${orgSlug}/checkout`} className="block rounded-2xl bg-indigo-600 py-3.5 text-center text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700">
-          {t.cart.goCheckout}
+        <Link href={`/shop/${orgSlug}/checkout`} className="block rounded-2xl bg-neutral-900 py-3.5 text-center text-sm font-extrabold text-white shadow-lg shadow-neutral-900/20 hover:bg-neutral-800 transition">
+          {t.cart.goCheckout} →
         </Link>
         {/* AB4 (AX5c): express checkout — renders only for a
             logged-in shopper with a live shop session. */}
         <ExpressCheckout orgSlug={orgSlug} ensureCart={() => ensureCartToken(orgSlug)} />
-        <Link href={`/shop/${orgSlug}`} className="block text-center text-xs font-bold text-indigo-700 hover:underline">{t.cart.continueShopping}</Link>
+        <Link href={`/shop/${orgSlug}`} className="block text-center text-xs font-bold text-stone-600 hover:text-neutral-900 hover:underline">{t.cart.continueShopping}</Link>
+
+        {/* Fashion Trust Assurances */}
+        <div className="border-t border-stone-100 pt-3 space-y-2 text-[11px] text-stone-600">
+          <div className="flex items-center gap-2">
+            <span>🚚</span>
+            <span>ঢাকার ভিতর ২৪-৪৮ ঘণ্টা এক্সপ্রেস ডেলিভারি</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span>🔄</span>
+            <span>৭ দিনের সহজ সাইজ ও কালার এক্সচেঞ্জ গ্যারান্টি</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span>💵</span>
+            <span>ক্যাশ অন ডেলিভারি (পণ্য দেখে মূল্য পরিশোধ)</span>
+          </div>
+        </div>
       </div>
 
       {/* AB6 (AX14): cross-sell for the products in this cart. */}

@@ -59,9 +59,9 @@ export function ProductCard({
         <QuickViewButton orgSlug={orgSlug} product={product} locale={locale} />
       </div>
       <div className="space-y-1.5 p-4">
-        <h3 className="line-clamp-2 text-sm font-bold text-slate-900">{product.name}</h3>
-        {product.category ? <p className="text-[11px] text-slate-400">{product.category}</p> : null}
-        {product.brand ? <p className="text-[11px] text-slate-400">{t.brand.brandLabel}: {product.brand.name}</p> : null}
+        <h3 className={`line-clamp-2 text-sm font-bold ${tokens.headerDark ? "text-slate-100" : "text-slate-900"}`}>{product.name}</h3>
+        {product.category ? <p className={`text-[11px] ${tokens.headerDark ? "text-slate-400" : "text-slate-500"}`}>{product.category}</p> : null}
+        {product.brand ? <p className={`text-[11px] ${tokens.headerDark ? "text-slate-400" : "text-slate-500"}`}>{t.brand.brandLabel}: {product.brand.name}</p> : null}
         {product.flashSale ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">⚡ {t.home.flashSale} −{product.flashSale.percentOff}%</span>
@@ -71,7 +71,7 @@ export function ProductCard({
           </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-base font-extrabold text-indigo-700">{priceText(product.priceMinor)}</span>
+          <span className={`text-base font-extrabold ${tokens.headerDark ? "text-indigo-400" : "text-indigo-700"}`}>{priceText(product.priceMinor)}</span>
           {product.compareAtMinor ? (
             <span className="text-xs text-slate-400 line-through">{priceText(product.compareAtMinor)}</span>
           ) : null}
@@ -81,7 +81,7 @@ export function ProductCard({
       </div>
     </>
   );
-  const cls = `block overflow-hidden bg-white transition hover:shadow-md ${tokens.cardClass}`;
+  const cls = `block overflow-hidden ${tokens.cardClass.includes("bg-") ? "" : "bg-white"} transition hover:shadow-md ${tokens.cardClass}`;
   // EC25: heart overlays the card; WishlistHeart stops propagation
   // so tapping it never navigates the card Link.
   const heart = (

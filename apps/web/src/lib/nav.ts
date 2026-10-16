@@ -19,6 +19,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Stores & Integrations", href: "/dashboard/integrations", icon: "🔌", ready: true },
   { label: "কানেক্ট সেন্টার", href: "/dashboard/connections", icon: "🔗", ready: true },
   { label: "Orders", href: "/dashboard/orders", icon: "📦", ready: true },
+  { label: "ফ্রড ও ফেক অর্ডার শিল্ড", href: "/dashboard/fraud", icon: "🛡️", ready: true },
   { label: "POS / কাউন্টার বিক্রি", href: "/dashboard/pos", icon: "🧾", ready: true },
   { label: "Advertising Accounts", href: "/dashboard/ad-accounts", icon: "🎯", ready: true },
   { label: "Campaigns", href: "/dashboard/campaigns", icon: "🚀", ready: true },

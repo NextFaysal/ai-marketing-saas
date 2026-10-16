@@ -309,7 +309,30 @@ export class UpdateStorefrontSettingsDto {
   @IsOptional() @IsInt() @Min(1) @Max(365) affiliateAttributionDays?: number;
   // GB1 (GC1/GC4): theme + favicon + direct contact channels.
   // URL/phone shape is service-validated (Bengali errors).
-  @IsOptional() @IsIn(["classic", "bold", "minimal"]) themeId?: string;
+  @IsOptional()
+  @IsIn([
+    "classic",
+    "bold",
+    "minimal",
+    "luxury",
+    "organic",
+    "vibrant",
+    "modern",
+    "pastel",
+    "nordic",
+    "midnight",
+    "fashion",
+    "electronics",
+    "grocery",
+    "beauty",
+    "furniture",
+    "books",
+    "kids",
+    "automotive",
+    "sports",
+    "jewelry",
+  ])
+  themeId?: string;
   @IsOptional() @IsString() @MaxLength(1000) faviconUrl?: string | null;
   @IsOptional() @IsString() @MaxLength(30) whatsappNumber?: string | null;
   @IsOptional() @IsString() @MaxLength(1000) messengerUrl?: string | null;

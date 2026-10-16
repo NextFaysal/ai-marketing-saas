@@ -13,6 +13,16 @@ import { AffiliateRefCapture } from "./AffiliateRefCapture";
 import { BundleCard } from "./BundleCard";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
 import { SortSelect } from "./SortSelect";
+import { FashionProductCard, FashionThemeHome } from "./FashionTheme";
+import { ElectronicsProductCard, ElectronicsThemeHome } from "./ElectronicsTheme";
+import { GroceryProductCard, GroceryThemeHome } from "./GroceryTheme";
+import { BeautyProductCard, BeautyThemeHome } from "./BeautyTheme";
+import { FurnitureProductCard, FurnitureThemeHome } from "./FurnitureTheme";
+import { BooksProductCard, BooksThemeHome } from "./BooksTheme";
+import { KidsProductCard, KidsThemeHome } from "./KidsTheme";
+import { AutomotiveProductCard, AutomotiveThemeHome } from "./AutomotiveTheme";
+import { SportsProductCard, SportsThemeHome } from "./SportsTheme";
+import { JewelryProductCard, JewelryThemeHome } from "./JewelryTheme";
 
 type Params = Promise<{ orgSlug: string }>;
 type Search = Promise<{ q?: string; category?: string; page?: string; sort?: string; brand?: string }>;
@@ -68,6 +78,280 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
   const t = shopT(locale);
   const theme = themeOf(settings.themeId);
 
+  if (settings.themeId === "fashion" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <FashionThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          q={q}
+          category={category}
+          brand={brand}
+          page={page}
+          sort={sort}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "electronics" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <ElectronicsThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "grocery" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <GroceryThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "beauty" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <BeautyThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "furniture" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <FurnitureThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "books" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <BooksThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "kids" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <KidsThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "automotive" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <AutomotiveThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "sports" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <SportsThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
+  if (settings.themeId === "jewelry" && !filtering) {
+    return (
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLdScript(
+              buildShopJsonLd({
+                base: sitemapUrlBase(),
+                orgSlug,
+                shopName: settings.shopName,
+                description: settings.metaDescription,
+                logoUrl: home.organization.logoUrl,
+              }),
+            ),
+          }}
+        />
+        <AffiliateRefCapture orgSlug={orgSlug} />
+        <JewelryThemeHome
+          orgSlug={orgSlug}
+          home={home}
+          locale={locale}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
       {/* EC27: Organization + WebSite JSON-LD from real shop data. */}
@@ -90,7 +374,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* Hero */}
       <section className={theme.heroClass}>
         <h1 className={theme.heroTitleClass}>{settings.shopName}</h1>
-        {settings.metaDescription ? <p className={`mx-auto mt-2 max-w-xl text-sm ${settings.themeId === "bold" ? "text-slate-300" : "text-slate-500"}`}>{settings.metaDescription}</p> : null}
+        {settings.metaDescription ? <p className={`mx-auto mt-2 max-w-xl text-sm ${theme.headerDark ? "text-slate-300" : "text-slate-500"}`}>{settings.metaDescription}</p> : null}
         {settings.showSearch ? (
           <form method="get" action={`/shop/${orgSlug}`} className="mx-auto mt-5 flex max-w-md gap-2">
             {category ? <input type="hidden" name="category" value={category} /> : null}
@@ -100,7 +384,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
               name="q"
               defaultValue={q}
               placeholder={t.home.searchPlaceholder}
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-indigo-600 focus:outline-none"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none"
             />
             <button type="submit" className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: accent }}>
               {t.home.searchButton}
@@ -166,7 +450,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* EC29: bundles strip */}
       {(home.bundles ?? []).length > 0 && !filtering ? (
         <section className="space-y-4">
-          <h2 className="text-xl font-black text-slate-900">{t.home.bundlesHeading}</h2>
+          <h2 className={`text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>{t.home.bundlesHeading}</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {(home.bundles ?? []).map((b) => (
               <BundleCard key={b.id} orgSlug={orgSlug} bundle={b} locale={locale} />
@@ -195,7 +479,7 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* Featured */}
       {settings.showFeatured && featuredProducts.length > 0 && !filtering ? (
         <section className="space-y-4">
-          <h2 className="text-xl font-black text-slate-900">{t.home.featured}</h2>
+          <h2 className={`text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>{t.home.featured}</h2>
           <div className={theme.featuredGridClass}>
             {featuredProducts.map((p) => (
               <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
@@ -210,9 +494,9 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
       {/* Product grid */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-black text-slate-900">
+          <h2 className={`text-xl font-black ${theme.headerDark ? "text-slate-100" : "text-slate-900"}`}>
             {filtering ? t.home.searchResults : t.home.allProducts}
-            <span className="ml-2 text-sm font-semibold text-slate-400">({pagination.total}{t.home.itemsSuffix})</span>
+            <span className={`ml-2 text-sm font-semibold ${theme.headerDark ? "text-slate-400" : "text-slate-400"}`}>({pagination.total}{t.home.itemsSuffix})</span>
           </h2>
           <SortSelect orgSlug={orgSlug} locale={locale} value={sort} q={q} category={category} brand={brand} />
         </div>
@@ -230,9 +514,31 @@ export default async function ShopHomePage({ params, searchParams }: { params: P
           </div>
         ) : (
           <div className={theme.gridClass}>
-            {products.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
-            ))}
+            {products.map((p) =>
+              settings.themeId === "fashion" ? (
+                <FashionProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} flashServerNow={home.flashSales?.serverNow} />
+              ) : settings.themeId === "electronics" ? (
+                <ElectronicsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "grocery" ? (
+                <GroceryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "beauty" ? (
+                <BeautyProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "furniture" ? (
+                <FurnitureProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "books" ? (
+                <BooksProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "kids" ? (
+                <KidsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "automotive" ? (
+                <AutomotiveProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "sports" ? (
+                <SportsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : settings.themeId === "jewelry" ? (
+                <JewelryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : (
+                <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} flashServerNow={home.flashSales?.serverNow} />
+              ),
+            )}
           </div>
         )}
 

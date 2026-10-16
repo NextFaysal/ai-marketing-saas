@@ -10,6 +10,7 @@ import {
   getShopSession,
 } from "@/lib/storefront-account";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { themeOf } from "@/lib/shop-theme";
 
 export function ShopHeader({
   orgSlug,
@@ -35,7 +36,7 @@ export function ShopHeader({
 }) {
   const t = shopT(locale);
   const accent = primaryColor || "#4f46e5";
-  const dark = (theme ?? themeId) === "bold";
+  const dark = themeOf(theme ?? themeId).headerDark;
   const menuPages = pages ?? [];
   const [count, setCount] = useState(0);
   const [wishCount, setWishCount] = useState(0);

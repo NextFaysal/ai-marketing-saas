@@ -6,6 +6,16 @@ import { fetchShopBrand, fetchShopHome } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { themeOf } from "@/lib/shop-theme";
 import { ProductCard } from "../../ProductCard";
+import { FashionProductCard } from "../../FashionTheme";
+import { ElectronicsProductCard } from "../../ElectronicsTheme";
+import { GroceryProductCard } from "../../GroceryTheme";
+import { BeautyProductCard } from "../../BeautyTheme";
+import { FurnitureProductCard } from "../../FurnitureTheme";
+import { BooksProductCard } from "../../BooksTheme";
+import { KidsProductCard } from "../../KidsTheme";
+import { AutomotiveProductCard } from "../../AutomotiveTheme";
+import { SportsProductCard } from "../../SportsTheme";
+import { JewelryProductCard } from "../../JewelryTheme";
 
 type Params = Promise<{ orgSlug: string; brandSlug: string }>;
 type Search = Promise<{ page?: string }>;
@@ -85,9 +95,31 @@ export default async function ShopBrandPage({ params, searchParams }: { params: 
           </div>
         ) : (
           <div className={theme.gridClass}>
-            {products.map((p) => (
-              <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} />
-            ))}
+            {products.map((p) =>
+              home?.settings.themeId === "fashion" ? (
+                <FashionProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "electronics" ? (
+                <ElectronicsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "grocery" ? (
+                <GroceryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "beauty" ? (
+                <BeautyProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "furniture" ? (
+                <FurnitureProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "books" ? (
+                <BooksProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "kids" ? (
+                <KidsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "automotive" ? (
+                <AutomotiveProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "sports" ? (
+                <SportsProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : home?.settings.themeId === "jewelry" ? (
+                <JewelryProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} />
+              ) : (
+                <ProductCard key={p.id} orgSlug={orgSlug} product={p} locale={locale} theme={theme} />
+              ),
+            )}
           </div>
         )}
 

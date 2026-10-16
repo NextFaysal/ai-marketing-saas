@@ -10,8 +10,107 @@ import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
+import {
+  FashionSizeGuideModal,
+  FashionFitAssistantModal,
+  FashionRestockAlertModal,
+  FashionModelStats,
+  FashionFabricCareGuide,
+  FashionCompleteTheLook,
+} from "../../FashionTheme";
+import {
+  ElectronicsEmiCalculatorModal,
+  ElectronicsWarrantyBox,
+  ElectronicsBranchStock,
+  ElectronicsAccessoriesCombo,
+  ElectronicsCompareModal,
+  ElectronicsWarrantyLookupModal,
+  ElectronicsCompatibilityChecker,
+} from "../../ElectronicsTheme";
+import {
+  GroceryWeightSelector,
+  GroceryMonthlyBazarBundle,
+  GroceryPurityCertModal,
+  GroceryNutritionFacts,
+  GroceryDeliverySlotPicker,
+} from "../../GroceryTheme";
+import {
+  BeautyShadeSelector,
+  BeautyRoutineBundle,
+  BeautyIngredientsGuide,
+  BeautyAuthenticityModal,
+  BeautySkinQuizModal,
+} from "../../BeautyTheme";
+import {
+  FurnitureFinishSelector,
+  FurnitureDimensionSpecs,
+  FurnitureRoomSetBundle,
+  FurnitureWarrantyModal,
+  FurnitureRoomVisualizerModal,
+} from "../../FurnitureTheme";
+import {
+  BooksLookInsideModal,
+  BooksBindingSelector,
+  BooksDetailSpecs,
+  BooksAuthorBox,
+  BooksReadingBundle,
+} from "../../BooksTheme";
+import {
+  KidsAgeSelector,
+  KidsSafetySpecs,
+  KidsSafetyModal,
+  KidsGiftHamperBundle,
+} from "../../KidsTheme";
+import {
+  AutomotiveFitmentModal,
+  AutomotiveViscositySelector,
+  AutomotivePartSpecs,
+  AutomotiveTuneupBundle,
+} from "../../AutomotiveTheme";
+import {
+  SportsAssemblyModal,
+  SportsWeightSelector,
+  SportsEquipmentSpecs,
+  SportsWorkoutBundle,
+} from "../../SportsTheme";
+import {
+  JewelryKaratSelector,
+  JewelryCertificateModal,
+  JewelryRingSizeModal,
+  JewelryBridalBundle,
+} from "../../JewelryTheme";
 
-export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
+export function ProductDetailClient({
+  orgSlug,
+  product,
+  locale = "bn",
+  isFashion = false,
+  isElectronics = false,
+  isGrocery = false,
+  isBeauty = false,
+  isFurniture = false,
+  isBooks = false,
+  isKids = false,
+  isAutomotive = false,
+  isSports = false,
+  isJewelry = false,
+  relatedProducts = [],
+}: {
+  orgSlug: string;
+  product: ShopProduct;
+  locale?: ShopLocale | string;
+  isFashion?: boolean;
+  isElectronics?: boolean;
+  isGrocery?: boolean;
+  isBeauty?: boolean;
+  isFurniture?: boolean;
+  isBooks?: boolean;
+  isKids?: boolean;
+  isAutomotive?: boolean;
+  isSports?: boolean;
+  isJewelry?: boolean;
+  relatedProducts?: ShopProduct[];
+}) {
   const t = shopT(locale);
   const images = useMemo(() => {
     const list: string[] = [];
@@ -35,6 +134,33 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [added, setAdded] = useState(false);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
+  const [fitModalOpen, setFitModalOpen] = useState(false);
+  const [restockOpen, setRestockOpen] = useState(false);
+  const [restockSize, setRestockSize] = useState("");
+  const [emiModalOpen, setEmiModalOpen] = useState(false);
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
+  const [warrantyLookupOpen, setWarrantyLookupOpen] = useState(false);
+  const [purityCertOpen, setPurityCertOpen] = useState(false);
+  const [selectedWeight, setSelectedWeight] = useState("১ কেজি");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [skinQuizOpen, setSkinQuizOpen] = useState(false);
+  const [selectedShade, setSelectedShade] = useState("Fair Ivory 110");
+  const [furnitureWarrantyOpen, setFurnitureWarrantyOpen] = useState(false);
+  const [visualizerOpen, setVisualizerOpen] = useState(false);
+  const [selectedFinish, setSelectedFinish] = useState("সেগুন কাঠ ফিনিশ (Solid Teak)");
+  const [lookInsideModalOpen, setLookInsideModalOpen] = useState(false);
+  const [selectedBinding, setSelectedBinding] = useState("হার্ডকভার বাঁধাই");
+  const [kidsSafetyModalOpen, setKidsSafetyModalOpen] = useState(false);
+  const [selectedAgeGroup, setSelectedAgeGroup] = useState("০ – ৬ মাস (নবজাতক)");
+  const [fitmentModalOpen, setFitmentModalOpen] = useState(false);
+  const [selectedViscosity, setSelectedViscosity] = useState("10W-40 (Full Synthetic)");
+  const [assemblyModalOpen, setAssemblyModalOpen] = useState(false);
+  const [selectedGymWeight, setSelectedGymWeight] = useState("১০ কেজি (জোড়া)");
+  const [certModalOpen, setCertModalOpen] = useState(false);
+  const [ringSizeModalOpen, setRingSizeModalOpen] = useState(false);
+  const [selectedKarat, setSelectedKarat] = useState("২২ ক্যারেট হলুদ সোনা");
+  const [selectedRingSize, setSelectedRingSize] = useState("US 7 (17.3 mm)");
 
   // AB2 (AX3): gift-card purchase state — the chosen face value
   // (a preset chip, or a custom taka amount when allowed) plus
@@ -257,6 +383,132 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
             ) : null}
             {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
             {badge ? <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
+            {isElectronics || Number(unitMinor) >= 500000 ? (
+              <button
+                type="button"
+                onClick={() => setEmiModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-xs"
+              >
+                <span>💳 ০% ইএমআই কিস্তি ক্যালকুলেটর</span>
+              </button>
+            ) : null}
+            {isElectronics ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCompareModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                >
+                  <span>⚖️ গ্যাজেট তুলনা</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWarrantyLookupOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-xs"
+                >
+                  <span>🔍 ওয়ারেন্টি চেক</span>
+                </button>
+              </>
+            ) : null}
+            {isGrocery ? (
+              <button
+                type="button"
+                onClick={() => setPurityCertOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-xs"
+              >
+                <span>🌿 ১০০% অর্গানিক ল্যাব টেস্ট সনদ</span>
+              </button>
+            ) : null}
+            {isBeauty ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setAuthModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-pink-50 px-3 py-1 text-xs font-bold text-rose-900 hover:bg-pink-100 transition shadow-xs"
+                >
+                  <span>🔒 ১০০% অরিজিনাল অথেন্টিসিটি সনদ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSkinQuizOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-white px-3 py-1 text-xs font-bold text-rose-800 hover:bg-pink-50 transition shadow-xs"
+                >
+                  <span>🪄 স্কিন কনসার্ন ম্যাচিং</span>
+                </button>
+              </>
+            ) : null}
+            {isFurniture ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setFurnitureWarrantyOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 transition shadow-xs"
+                >
+                  <span>🛡️ ১০ বছর কাঠামোগত ওয়ারেন্টি</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisualizerOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-bold text-amber-800 hover:bg-amber-50 transition shadow-xs"
+                >
+                  <span>📐 ৩ডি রুম ভিজ্যুয়ালাইজার</span>
+                </button>
+              </>
+            ) : null}
+            {isBooks ? (
+              <button
+                type="button"
+                onClick={() => setLookInsideModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-100/80 px-3.5 py-1 text-xs font-extrabold text-amber-950 hover:bg-amber-200 transition shadow-xs"
+              >
+                <span>📖 একটু পড়ে দেখুন (ফ্রি প্রিভিউ)</span>
+              </button>
+            ) : null}
+            {isKids ? (
+              <button
+                type="button"
+                onClick={() => setKidsSafetyModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-3.5 py-1 text-xs font-bold text-sky-900 hover:bg-sky-100 transition shadow-xs"
+              >
+                <span>🍼 ১০০% নন-টক্সিক ও সুরক্ষা সনদ</span>
+              </button>
+            ) : null}
+            {isAutomotive ? (
+              <button
+                type="button"
+                onClick={() => setFitmentModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-zinc-900 px-3.5 py-1 text-xs font-bold text-red-400 hover:bg-zinc-800 transition shadow-xs font-mono"
+              >
+                <span>🏍️ বাইক মডেল ফিটমেন্ট চেকার</span>
+              </button>
+            ) : null}
+            {isSports ? (
+              <button
+                type="button"
+                onClick={() => setAssemblyModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-sky-400 bg-sky-50 px-3.5 py-1 text-xs font-bold text-sky-900 hover:bg-sky-100 transition shadow-xs"
+              >
+                <span>🛠️ ফ্রি হোম অ্যাসেম্বলি ও টেকনিশিয়ান</span>
+              </button>
+            ) : null}
+            {isJewelry ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCertModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-50 px-3.5 py-1 text-xs font-bold text-amber-950 hover:bg-amber-100 transition shadow-xs"
+                >
+                  <span>⚜️ হলমার্ক ও ডায়মন্ড সনদ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRingSizeModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-stone-900 px-3.5 py-1 text-xs font-bold text-amber-300 hover:bg-stone-800 transition shadow-xs"
+                >
+                  <span>💍 রিং সাইজ গাইড</span>
+                </button>
+              </>
+            ) : null}
             {product.preorder ? (
               <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">
                 প্রি-অর্ডার{product.preorder.releaseDate ? ` · ${new Date(product.preorder.releaseDate).toLocaleDateString("bn-BD")}` : ""}
@@ -353,29 +605,169 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
           </div>
         ) : null}
 
+        {/* Beauty Shade Swatch Selector */}
+        {isBeauty && !product.isGiftCard ? (
+          <BeautyShadeSelector
+            selectedShade={selectedShade}
+            onSelectShade={(s) => setSelectedShade(s)}
+          />
+        ) : null}
+
+        {/* Grocery Weight / Pack Size Selector */}
+        {isGrocery && !product.isGiftCard ? (
+          <GroceryWeightSelector
+            selectedWeight={selectedWeight}
+            onSelectWeight={(w) => setSelectedWeight(w)}
+          />
+        ) : null}
+
+        {/* Furniture Wood Finish Selector */}
+        {isFurniture && !product.isGiftCard ? (
+          <FurnitureFinishSelector
+            selectedFinish={selectedFinish}
+            onSelectFinish={(f) => setSelectedFinish(f)}
+          />
+        ) : null}
+
+        {/* Books Binding & Edition Selector */}
+        {isBooks && !product.isGiftCard ? (
+          <BooksBindingSelector
+            selectedBinding={selectedBinding}
+            onSelectBinding={(b) => setSelectedBinding(b)}
+          />
+        ) : null}
+
+        {/* Kids Age Group Selector */}
+        {isKids && !product.isGiftCard ? (
+          <KidsAgeSelector
+            selectedAge={selectedAgeGroup}
+            onSelectAge={(a) => setSelectedAgeGroup(a)}
+          />
+        ) : null}
+
+        {/* Automotive Engine Oil Grade & Viscosity Selector */}
+        {isAutomotive && !product.isGiftCard ? (
+          <AutomotiveViscositySelector
+            selectedGrade={selectedViscosity}
+            onSelectGrade={(g) => setSelectedViscosity(g)}
+          />
+        ) : null}
+
+        {/* Sports Weight & Capacity Selector */}
+        {isSports && !product.isGiftCard ? (
+          <SportsWeightSelector
+            selectedWeight={selectedGymWeight}
+            onChangeWeight={(w) => setSelectedGymWeight(w)}
+          />
+        ) : null}
+
+        {/* Jewelry Karat & Metal Selector */}
+        {isJewelry && !product.isGiftCard ? (
+          <div className="space-y-3">
+            <JewelryKaratSelector
+              selectedKarat={selectedKarat}
+              onChangeKarat={(k) => setSelectedKarat(k)}
+            />
+            <div className="flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-xs">
+              <span className="font-bold text-stone-800">নির্বাচিত রিং/চুড়ি সাইজ:</span>
+              <button
+                type="button"
+                onClick={() => setRingSizeModalOpen(true)}
+                className="font-bold text-amber-800 underline hover:text-amber-950"
+              >
+                {selectedRingSize} (পরিবর্তন)
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {product.variants.length > 0 && !product.isGiftCard ? (
-          <div>
-            <label className="mb-1.5 block text-xs font-bold text-slate-700" htmlFor="variant">{t.product.variantLabel}</label>
-            <select
-              id="variant"
-              value={variantId}
-              onChange={(e) => setVariantId(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 p-2.5 text-sm focus:border-indigo-600 focus:outline-none"
-            >
-              <option value="">{t.product.defaultVariant}</option>
-              {product.variants.map((v) => (
-                <option key={v.id} value={v.id} disabled={v.stockState === "out_of_stock"}>
-                  {v.name}
-                  {v.priceMinor ? ` — ${priceText(v.priceMinor)}` : ""}
-                  {v.stockState === "out_of_stock" ? ` (${t.product.outOfStock})` : v.stockState === "low" ? ` (${t.product.lowStock})` : ""}
-                </option>
-              ))}
-            </select>
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="text-xs font-bold text-slate-800" htmlFor="variant">
+                {isGrocery
+                  ? "প্যাকেজিং ধরন বেছে নিন:"
+                  : isBeauty
+                    ? "সাইজ বা ভলিউম (মিলি) বেছে নিন:"
+                    : "সাইজ / ভ্যারিয়েন্ট বেছে নিন:"}
+              </label>
+              {isFashion ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFitModalOpen(true)}
+                    className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-100 transition shadow-xs"
+                  >
+                    ✨ সাইজ ফাইন্ডার (Find My Fit)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSizeGuideOpen(true)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+                  >
+                    📏 সাইজ চার্ট
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {/* Interactive Fashion Size Pills */}
+            <div className="flex flex-wrap gap-2">
+              {product.variants.map((v) => {
+                const isSelected = variantId === v.id;
+                const isOut = v.stockState === "out_of_stock";
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => {
+                      if (isOut) {
+                        setRestockSize(v.name);
+                        setRestockOpen(true);
+                      } else {
+                        setVariantId(isSelected ? "" : v.id);
+                      }
+                    }}
+                    title={isOut ? "স্টক শেষ — রিস্টক অ্যালার্ট পেতে ক্লিক করুন" : v.name}
+                    className={`rounded-xl border px-3.5 py-2 text-xs font-bold transition ${
+                      isSelected
+                        ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
+                        : isOut
+                        ? "border-dashed border-rose-300 bg-rose-50/50 text-rose-400 line-through hover:border-rose-400 hover:text-rose-600"
+                        : "border-slate-200 bg-white text-slate-800 hover:border-neutral-900"
+                    }`}
+                  >
+                    {v.name}
+                    {v.priceMinor && v.priceMinor !== product.priceMinor ? ` (${priceText(v.priceMinor)})` : ""}
+                    {isOut ? <span className="ml-1 text-[9px] no-underline font-normal">🔔</span> : null}
+                  </button>
+                );
+              })}
+            </div>
             {variant ? (
               <p className="mt-1 text-[11px] text-slate-500">
                 {t.product.selected} <b>{variant.name}</b> — {priceText(variant.priceMinor ?? product.priceMinor)}
               </p>
             ) : null}
+          </div>
+        ) : !product.isGiftCard ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-stone-50 p-3 text-xs">
+            <span className="text-stone-600">সাইজ নির্ধারণে সহায়তা প্রয়োজন?</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFitModalOpen(true)}
+                className="font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-md hover:bg-amber-200"
+              >
+                ✨ সাইজ ফাইন্ডার
+              </button>
+              <button
+                type="button"
+                onClick={() => setSizeGuideOpen(true)}
+                className="font-bold text-indigo-600 hover:text-indigo-800 underline"
+              >
+                📏 সাইজ চার্ট
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -458,6 +850,198 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
         ) : null}
         <p className="text-center text-[11px] text-slate-400">{t.product.priceNote}</p>
 
+        {/* Bangladeshi Fashion Delivery & Return Assurance Box */}
+        {isFashion ? (
+          <div className="mt-4 space-y-2.5 rounded-2xl border border-stone-200 bg-stone-50/80 p-4 text-xs text-stone-700">
+            <div className="flex items-center gap-2.5 font-bold text-stone-900">
+              <span>🚚</span>
+              <span>ঢাকার ভিতর ২৪-৪৮ ঘণ্টা এক্সপ্রেস হোম ডেলিভারি, ঢাকার বাইরে ২-৩ দিন</span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span>🔄</span>
+              <span>৭ দিনের সহজ সাইজ বা কালার এক্সচেঞ্জ গ্যারান্টি</span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span>💵</span>
+              <span>ক্যাশ অন ডেলিভারি (COD) ও বিকাশ পেমেন্ট সুবিধা</span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span>🧵</span>
+              <span>১০০% প্রিমিয়াম কোয়ালিটি ও অরিজিনাল ফেব্রিক ফিনিশ</span>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Grocery 1-Hour Slot Picker & Nutrition Facts */}
+        {isGrocery && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <GroceryDeliverySlotPicker />
+            <GroceryNutritionFacts />
+          </div>
+        ) : null}
+
+        {/* Beauty Active Ingredients & Usage Guide */}
+        {isBeauty && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <BeautyIngredientsGuide />
+          </div>
+        ) : null}
+
+        {/* Furniture Dimensions & Free Assembly Assurance */}
+        {isFurniture && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-xs text-amber-900 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-950">
+                <span>🛋️</span>
+                <span>সম্পূর্ণ ফ্রি হোম ফিটিং এবং এক্সপার্ট অ্যাসেম্বলি সার্ভিস অন্তর্ভুক্ত</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🚚</span>
+                <span>সারাদেশে নিরাপদ ডোরস্টেপ ফার্নিচার ডেলিভারি ভ্যান</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🪵</span>
+                <span>১০০% সিজনড সলিড কাঠ ও ইকো-ফ্রেন্ডলি ল্যাকার পলিশ</span>
+              </div>
+            </div>
+            <FurnitureDimensionSpecs />
+          </div>
+        ) : null}
+
+        {/* Books Assurance, Author Info & Specifications */}
+        {isBooks && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-amber-900/10 bg-[#fbf9f4] p-4 text-xs text-amber-950 space-y-2">
+              <div className="flex items-center gap-2 font-bold">
+                <span>📖</span>
+                <span>১০০% আসল প্রকাশনীর মূল সংস্করণ ও নির্ভুল বাঁধাই গ্যারান্টি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🚚</span>
+                <span>সারা দেশে ক্যাশ অন ডেলিভারি ও দ্রুত হোম ডেলিভারি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🔖</span>
+                <span>প্রতিটি বইয়ের সাথে আকর্ষণীয় এক্সক্লুসিভ বুকমার্ক ফ্রি</span>
+              </div>
+            </div>
+            <BooksAuthorBox authorName={product.brand?.name ?? "হুমায়ূন আহমেদ"} />
+            <BooksDetailSpecs />
+          </div>
+        ) : null}
+
+        {/* Kids Safety Assurance & Pediatric Specifications */}
+        {isKids && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-3xl border border-sky-100 bg-[#f7fbff] p-4 text-xs text-slate-800 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-sky-900">
+                <span>🍼</span>
+                <span>১০০% BPA-Free ও ফুড-গ্রেড সিলিকন / অর্গানিক সুতি উপাদান</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🧸</span>
+                <span>চোকিং-হ্যাজার্ড টেস্টেড — কোনো ধারালো কোণা বা আলগা পার্টস নেই</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🚚</span>
+                <span>সারাদেশে হোম ডেলিভারি ও সাইজ না মিললে সহজ রিটার্ন</span>
+              </div>
+            </div>
+            <KidsSafetySpecs />
+          </div>
+        ) : null}
+
+        {/* Automotive Assurance & OEM Specs */}
+        {isAutomotive && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-zinc-800 bg-[#16181d] p-4 text-xs text-zinc-300 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <span>⚙️</span>
+                <span>১০০% জেনুইন পার্টস ও স্ক্র্যাচ কিউআর সিকিউরিটি কোড</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🏍️</span>
+                <span>মডেল অনুযায়ী সরাসরি ফিটমেন্ট গ্যারান্টি (১০০% নো-মডিফিকেশন)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🚚</span>
+                <span>সারা দেশে ৪৮ ঘণ্টায় সুপারফাস্ট কুরিয়ার পার্সেল ডেলিভারি</span>
+              </div>
+            </div>
+            <AutomotivePartSpecs />
+          </div>
+        ) : null}
+
+        {/* Sports Assurance & Equipment Specs */}
+        {isSports && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-xs text-sky-950 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-sky-900">
+                <span>🏆</span>
+                <span>১০০% অরিজিনাল অ্যাথলেটিক গিয়ার ও ডিরেক্ট ব্র্যান্ড ওয়ারেন্টি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🛠️</span>
+                <span>ফ্রি হোম জিম সেটআপ ও সার্টিফাইড টেকনিশিয়ান ইন্সটলেশন সার্ভিস</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🚚</span>
+                <span>হেভি ফ্রেইট ইকুইপমেন্ট ডেলিভারি ও সেফটি ইন্সপেকশন ট্রায়াল</span>
+              </div>
+            </div>
+            <SportsEquipmentSpecs />
+          </div>
+        ) : null}
+
+        {/* Jewelry Hallmark & Authenticity Assurance */}
+        {isJewelry && !product.isGiftCard ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-amber-500/30 bg-stone-950 p-4 text-xs text-amber-100 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-300">
+                <span>⚜️</span>
+                <span>১০০% বিএসটিআই হলমার্ক সার্টিফাইড ও ক্যাডমিয়াম মুক্ত খাঁটি সোনা</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>💎</span>
+                <span>আইজিআই/জিআইএ সনদপ্রাপ্ত আসল ডায়মন্ড ও লেজার ইনস্ক্রিপশন কোড</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🔄</span>
+                <span>১০০% এক্সচেঞ্জ ভ্যালু ও আজীবন বাইব্যাক ক্যাশ গ্যারান্টি</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>🛡️</span>
+                <span>সারাদেশে বিশেষায়িত আর্মার্ড কুরিয়ারে ফুল-ইন্সুরড ডেলিভারি</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Fashion Model Stats Card */}
+        {isFashion && !product.isGiftCard ? (
+          <FashionModelStats />
+        ) : null}
+
+        {/* Fashion Fabric & Wash Care Guide */}
+        {isFashion && !product.isGiftCard ? (
+          <FashionFabricCareGuide />
+        ) : null}
+
+        {/* Electronics Official Warranty Box */}
+        {isElectronics && !product.isGiftCard ? (
+          <ElectronicsWarrantyBox />
+        ) : null}
+
+        {/* Electronics Device Compatibility Checker */}
+        {isElectronics && !product.isGiftCard ? (
+          <ElectronicsCompatibilityChecker />
+        ) : null}
+
+        {/* Electronics Branch & Showroom Stock */}
+        {isElectronics && !product.isGiftCard ? (
+          <ElectronicsBranchStock productName={product.name} />
+        ) : null}
+
         {/* EC28: back-in-stock alert — only while actually out of stock. */}
         {outOfStock ? (
           <StockAlertForm
@@ -468,6 +1052,227 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
           />
         ) : null}
       </div>
+
+      {/* Complete The Look Outfit Bundle Builder (Fashion) */}
+      {isFashion && relatedProducts.length > 0 && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <FashionCompleteTheLook
+            orgSlug={orgSlug}
+            mainProduct={product}
+            relatedProducts={relatedProducts}
+          />
+        </div>
+      ) : null}
+
+      {/* Essentials Protection & Charger Combo Pack (Electronics) */}
+      {isElectronics && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <ElectronicsAccessoriesCombo
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Monthly Family Bazar Bundle (Grocery) */}
+      {isGrocery && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <GroceryMonthlyBazarBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete 3-Step Skincare Routine Bundle (Beauty) */}
+      {isBeauty && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <BeautyRoutineBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete Room Set Decor Bundle (Furniture) */}
+      {isFurniture && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <FurnitureRoomSetBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete 3-Book Reading Bundle (Books) */}
+      {isBooks && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <BooksReadingBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete Newborn / Toddler Gift Hamper Bundle (Kids) */}
+      {isKids && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <KidsGiftHamperBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete Periodic Bike Service & Tune-Up Bundle (Automotive) */}
+      {isAutomotive && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <AutomotiveTuneupBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete Workout & Strength Combo Bundle (Sports) */}
+      {isSports && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <SportsWorkoutBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Complete Royal Bridal Jewelry Suite (Jewelry) */}
+      {isJewelry && !product.isGiftCard ? (
+        <div className="lg:col-span-2 mt-6">
+          <JewelryBridalBundle
+            orgSlug={orgSlug}
+            mainProduct={product}
+          />
+        </div>
+      ) : null}
+
+      {/* Sizing Modal */}
+      <FashionSizeGuideModal open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} />
+
+      {/* Find My Fit AI Assistant Modal */}
+      <FashionFitAssistantModal
+        open={fitModalOpen}
+        onClose={() => setFitModalOpen(false)}
+        availableSizes={product.variants.map((v) => v.name)}
+        onApplySize={(recSize) => {
+          const matched = product.variants.find((v) => {
+            const vName = v.name.toUpperCase();
+            const rName = recSize.toUpperCase();
+            return vName.includes(rName) || rName.includes(vName);
+          });
+          if (matched) setVariantId(matched.id);
+        }}
+      />
+
+      {/* Restock Notification Alert Modal */}
+      <FashionRestockAlertModal
+        open={restockOpen}
+        onClose={() => setRestockOpen(false)}
+        productName={product.name}
+        sizeName={restockSize}
+      />
+
+      {/* Electronics EMI Calculator Modal */}
+      <ElectronicsEmiCalculatorModal
+        open={emiModalOpen}
+        onClose={() => setEmiModalOpen(false)}
+        productPriceMinor={unitMinor}
+        productName={product.name}
+      />
+
+      {/* Electronics Gadget Compare Modal */}
+      <ElectronicsCompareModal
+        open={compareModalOpen}
+        onClose={() => setCompareModalOpen(false)}
+        productA={product}
+        productB={relatedProducts[0] ?? null}
+        orgSlug={orgSlug}
+      />
+
+      {/* Electronics Online Warranty Lookup Modal */}
+      <ElectronicsWarrantyLookupModal
+        open={warrantyLookupOpen}
+        onClose={() => setWarrantyLookupOpen(false)}
+      />
+
+      {/* Grocery Purity Lab Test Certificate Modal */}
+      <GroceryPurityCertModal
+        open={purityCertOpen}
+        onClose={() => setPurityCertOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Beauty Authenticity & Skin Quiz Modals */}
+      <BeautyAuthenticityModal
+        open={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        productName={product.name}
+      />
+      <BeautySkinQuizModal
+        open={skinQuizOpen}
+        onClose={() => setSkinQuizOpen(false)}
+      />
+
+      {/* Furniture Warranty & Room Visualizer Modals */}
+      <FurnitureWarrantyModal
+        open={furnitureWarrantyOpen}
+        onClose={() => setFurnitureWarrantyOpen(false)}
+        productName={product.name}
+      />
+      <FurnitureRoomVisualizerModal
+        open={visualizerOpen}
+        onClose={() => setVisualizerOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Books Look Inside Reader Modal */}
+      <BooksLookInsideModal
+        open={lookInsideModalOpen}
+        onClose={() => setLookInsideModalOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Kids Safety & Pediatric Certificate Modal */}
+      <KidsSafetyModal
+        open={kidsSafetyModalOpen}
+        onClose={() => setKidsSafetyModalOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Automotive Fitment Checker Modal */}
+      <AutomotiveFitmentModal
+        open={fitmentModalOpen}
+        onClose={() => setFitmentModalOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Sports Home Gym Assembly Modal */}
+      <SportsAssemblyModal
+        open={assemblyModalOpen}
+        onClose={() => setAssemblyModalOpen(false)}
+        productName={product.name}
+      />
+
+      {/* Jewelry Certificate & Ring Size Modals */}
+      <JewelryCertificateModal
+        open={certModalOpen}
+        onClose={() => setCertModalOpen(false)}
+        productName={product.name}
+      />
+      <JewelryRingSizeModal
+        open={ringSizeModalOpen}
+        onClose={() => setRingSizeModalOpen(false)}
+        productName={product.name}
+        onSelectSize={(s) => setSelectedRingSize(s)}
+      />
     </div>
   );
 }

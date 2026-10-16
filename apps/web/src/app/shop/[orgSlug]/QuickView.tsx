@@ -5,6 +5,7 @@ import type { ShopProduct } from "@/lib/storefront-server";
 import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "./ProductCard";
+import { FashionSizeGuideModal, FashionFitAssistantModal } from "./FashionTheme";
 
 export function QuickViewButton({
   orgSlug,
@@ -50,6 +51,8 @@ export function QuickView({
   onClose: () => void;
 }) {
   const t = shopT(locale);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
+  const [fitModalOpen, setFitModalOpen] = useState(false);
   const images = useMemo(() => {
     const list: string[] = [];
     for (const src of product.images ?? []) if (src && !list.includes(src)) list.push(src);
@@ -163,24 +166,63 @@ export function QuickView({
             </div>
             {product.description ? <p className="line-clamp-4 whitespace-pre-line text-sm text-slate-600">{product.description}</p> : null}
             {product.variants.length > 0 ? (
-              <div>
-                <label className="mb-1.5 block text-xs font-bold text-slate-700">{t.product.variantLabel}</label>
-                <select
-                  value={variantId}
-                  onChange={(e) => setVariantId(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 p-2.5 text-sm focus:border-indigo-600 focus:outline-none"
-                >
-                  <option value="">{t.product.defaultVariant}</option>
-                  {product.variants.map((v) => (
-                    <option key={v.id} value={v.id} disabled={v.stockState === "out_of_stock"}>
-                      {v.name}
-                      {v.priceMinor ? ` — ${priceText(v.priceMinor)}` : ""}
-                      {v.stockState === "out_of_stock" ? ` (${t.product.outOfStock})` : ""}
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <label className="text-xs font-bold text-slate-700">{t.product.variantLabel}</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFitModalOpen(true)}
+                      className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 hover:bg-amber-100"
+                    >
+                      ✨ সাইজ ফাইন্ডার
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSizeGuideOpen(true)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+                    >
+                      📏 সাইজ গাইড
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {product.variants.map((v) => {
+                    const isSelected = variantId === v.id;
+                    const isOut = v.stockState === "out_of_stock";
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        disabled={isOut}
+                        onClick={() => setVariantId(isSelected ? "" : v.id)}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                          isSelected
+                            ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
+                            : isOut
+                            ? "border-slate-200 bg-slate-50 text-slate-300 line-through cursor-not-allowed"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-neutral-900"
+                        }`}
+                      >
+                        {v.name}
+                        {v.priceMinor && v.priceMinor !== product.priceMinor ? ` (${priceText(v.priceMinor)})` : ""}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-2 text-xs">
+                <span className="text-stone-600">সাইজ নির্ধারণে সহায়তা প্রয়োজন?</span>
+                <button
+                  type="button"
+                  onClick={() => setSizeGuideOpen(true)}
+                  className="font-bold text-indigo-600 hover:text-indigo-800 underline"
+                >
+                  📏 সাইজ চার্ট দেখুন
+                </button>
+              </div>
+            )}
             <div className="flex items-center justify-between border-y py-3">
               <span className="text-xs font-bold text-slate-700">{t.product.quantity}</span>
               <div className="flex items-center overflow-hidden rounded-lg border">
@@ -213,9 +255,31 @@ export function QuickView({
                 {t.product.fullDetails} →
               </Link>
             ) : null}
+
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px] font-medium text-stone-500">
+              <span>🚚 দ্রুততম ডেলিভারি</span>
+              <span>·</span>
+              <span>🛡️ অফিশিয়াল গ্যারান্টি</span>
+              <span>·</span>
+              <span>🔄 ৭ দিনের সহজ পরিবর্তন</span>
+            </div>
           </div>
         </div>
       </div>
+      <FashionSizeGuideModal open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} />
+      <FashionFitAssistantModal
+        open={fitModalOpen}
+        onClose={() => setFitModalOpen(false)}
+        availableSizes={product.variants.map((v) => v.name)}
+        onApplySize={(recSize) => {
+          const matched = product.variants.find((v) => {
+            const vName = v.name.toUpperCase();
+            const rName = recSize.toUpperCase();
+            return vName.includes(rName) || rName.includes(vName);
+          });
+          if (matched) setVariantId(matched.id);
+        }}
+      />
     </div>
   );
 }

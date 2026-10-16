@@ -8,7 +8,7 @@ import { isWhiteLabel } from "@/lib/shop-pwa";
 import { trackingFromSettings } from "@/lib/shop-tracking";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { TrackingTags } from "./TrackingTags";
-import { themeIdOf } from "@/lib/shop-theme";
+import { themeIdOf, themeOf } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
 import { ShopPopup } from "./ShopPopup";
 import { ShopContactButtons } from "./ShopContactButtons";
@@ -92,8 +92,10 @@ export default async function ShopLayout({
   const returnPolicyText = home.settings.returnPolicyText?.trim() || null;
   const supportPhone = home.settings.supportPhone?.trim() || null;
 
+  const theme = themeOf(home.settings.themeId);
+
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className={`min-h-screen ${theme.pageBgClass ?? "bg-slate-50"}`}>
       <TrackingTags tracking={trackingFromSettings(home.settings)} />
       {/* AB8 (AX23): merchant custom CSS — after the tracking /
           theme inputs, before the header, so it can restyle the
@@ -130,13 +132,13 @@ export default async function ShopLayout({
         whatsappLabel={t.pages.whatsappLabel}
         messengerLabel={t.pages.messengerLabel}
       />
-      <footer className="mt-14 border-t border-slate-200 bg-white">
+      <footer className={`mt-14 border-t ${theme.headerDark ? "border-slate-800 bg-slate-900/90 text-slate-300" : "border-slate-200 bg-white"}`}>
         <div className="mx-auto max-w-6xl space-y-2 px-4 py-8 text-center sm:px-6">
-          <p className="text-sm font-bold text-slate-800">{shopName}</p>
+          <p className={`text-sm font-bold ${theme.headerDark ? "text-slate-100" : "text-slate-800"}`}>{shopName}</p>
           {(home.pages?.footer ?? []).length > 0 ? (
             <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pb-2">
               {(home.pages?.footer ?? []).map((p) => (
-                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className="text-xs font-semibold text-slate-600 hover:text-indigo-700">
+                <Link key={p.slug} href={`/shop/${orgSlug}/p/${p.slug}`} className={`text-xs font-semibold hover:text-indigo-500 ${theme.headerDark ? "text-slate-400" : "text-slate-600"}`}>
                   {p.title}
                 </Link>
               ))}
