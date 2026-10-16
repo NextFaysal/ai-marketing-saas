@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS, COMMERCE_NAV_ITEMS, COMMERCE_NAV_SECTIONS } from "@/lib/nav";
 import { NAV_ICONS, type NavIconName } from "@/lib/icons";
+import { SkipLink } from "@repo/ui";
 import { ToastProvider, ConfirmProvider, PromptProvider } from "@repo/ui/client";
 import {
   CalendarDays, Clock, Eye, FlaskConical, LogOut, Mail, Megaphone, Menu,
@@ -340,8 +341,9 @@ function PracticeBanner() {
  * Milestone 60: inbox-first mobile bottom navigation. Small
  * screens only (lg:hidden) — the desktop sidebar layout is
  * untouched. "আরও" reuses the existing drawer (full nav), so this
- * bar stays at four thumb-reachable targets. The bar is fixed, so
- * the layout adds a matching spacer under <main> on mobile.
+ * bar stays at five thumb-reachable targets plus the menu button
+ * (EB6: POS added after অর্ডার). The bar is fixed, so the layout
+ * adds a matching spacer under <main> on mobile.
  */
 function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () => void }) {
   // If user is inside an active chat thread or conversation detail, keep bar tidy
@@ -349,6 +351,7 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
     { label: "হোম", href: "/dashboard", icon: "overview" },
     { label: "ইনবক্স", href: "/dashboard/inbox", icon: "inbox" },
     { label: "অর্ডার", href: "/dashboard/orders", icon: "orders" },
+    { label: "POS", href: "/dashboard/pos", icon: "pos" },
     { label: "ক্যাম্পেইন", href: "/dashboard/campaigns", icon: "campaigns" },
   ];
   return (
@@ -357,7 +360,7 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="মোবাইল নেভিগেশন"
     >
-      <div className="grid grid-cols-5 h-[58px]">
+      <div className="grid grid-cols-6 h-[58px]">
         {items.map((item) => {
           const active = item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
           const ItemIcon = NAV_ICONS[item.icon];
@@ -556,6 +559,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => { setDrawer(false); setUserMenuOpen(false); }, [pathname]);
 
+  // EB6/ED16: Escape closes the mobile drawer (only while open).
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawer(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawer]);
+
   if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
@@ -666,7 +677,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+    {/* EB6/ED16: lang="bn" on this subtree root — the dashboard UI is
+        Bengali-first. The document <html> lang stays "en": a per-route
+        html lang would need headers() in the root layout, forcing
+        dynamic rendering app-wide and breaking the shop's ISR.
+        Subtree lang attributes are what screen readers apply to
+        content, so this div is the correct place to declare it. */}
+    <div lang="bn" className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+      {/* EB6/ED16: skip link — first focusable element in the layout. */}
+      <SkipLink href="#main-content">মূল কন্টেন্টে যান</SkipLink>
       {/* ED11 (EB4): route progress bar (soft-nav feedback). */}
       <RouteProgress />
       {/* Desktop sidebar */}
@@ -824,7 +843,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             is now the token-timed .animate-rise-in (same 350ms /
             6px rise the tailwind animate-rise produced; one
             animation, not two). */}
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-8 animate-rise-in">
+        <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1440px] flex-1 px-3.5 py-4 sm:px-6 sm:py-6 lg:px-8 animate-rise-in">
           {children}
         </main>
 
