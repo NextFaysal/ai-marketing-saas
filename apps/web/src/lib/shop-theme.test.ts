@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHOP_THEMES, effectiveThemeId, isV2Theme, themeIdOf, themeOf } from "./shop-theme";
+import { SHOP_THEMES, effectiveThemeId, isV2Theme, previewThemeIdFromHeaders, themeIdOf, themeOf } from "./shop-theme";
 
 describe("shop theme", () => {
   it("classic equals the pre-theme classes exactly", () => {
@@ -86,5 +86,15 @@ describe("shop theme", () => {
     expect(effectiveThemeId("classic", 42)).toBe("classic");
     expect(effectiveThemeId(undefined, null)).toBe("classic");
     expect(effectiveThemeId("nope", "nope")).toBe("classic");
+  });
+
+  it("previewThemeIdFromHeaders reads the preview header (ED7)", () => {
+    const withPreview = { get: (n: string) => (n === "x-shop-theme-preview" ? "v2" : null) };
+    const without = { get: (_n: string) => null };
+    expect(previewThemeIdFromHeaders(withPreview)).toBe("v2");
+    expect(previewThemeIdFromHeaders(without)).toBe(null);
+    // Raw value passes through; validity is effectiveThemeId's job.
+    expect(effectiveThemeId("classic", previewThemeIdFromHeaders(withPreview))).toBe("v2");
+    expect(effectiveThemeId("bold", previewThemeIdFromHeaders(without))).toBe("bold");
   });
 });

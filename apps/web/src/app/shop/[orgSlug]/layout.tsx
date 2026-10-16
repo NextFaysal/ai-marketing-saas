@@ -8,7 +8,7 @@ import { isWhiteLabel } from "@/lib/shop-pwa";
 import { trackingFromSettings } from "@/lib/shop-tracking";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { TrackingTags } from "./TrackingTags";
-import { themeIdOf } from "@/lib/shop-theme";
+import { effectiveThemeId, previewThemeIdFromHeaders } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
 import { ShopContactButtons } from "./ShopContactButtons";
 import { AttributionCapture } from "./AttributionCapture";
@@ -81,9 +81,17 @@ export default async function ShopLayout({
   const customJs = typeof settingsAny.customJs === "string" && settingsAny.customJs.trim()
     ? settingsAny.customJs
     : null;
+  // ED7: ONE headers() call for this layout, reused by the
+  // custom-JS host check below and the theme preview. Honest
+  // cost: reading headers() opts this layout into per-request
+  // rendering on every shop request (it can no longer be fully
+  // static) — EB2's fetch-level revalidate:60 caching lives in
+  // lib/storefront-server's fetch options and is unaffected.
+  const hdrs = await headers();
+  const previewId = previewThemeIdFromHeaders(hdrs);
+  const effThemeId = effectiveThemeId(home.settings.themeId, previewId);
   let renderCustomJs = false;
   if (customJs && settingsAny.customJsEnabled === true) {
-    const hdrs = await headers();
     const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
     renderCustomJs = customJsAllowedOnHost(host, primaryHostsFromEnv());
   }
@@ -119,7 +127,7 @@ export default async function ShopLayout({
         primaryColor={home.organization.primaryColor}
         locale={locale}
         pages={home.pages?.menu ?? []}
-        themeId={themeIdOf(home.settings.themeId)}
+        themeId={effThemeId}
         blog={home.pages?.blog ?? false}
       />
       {home.settings.announcementText ? (
@@ -138,7 +146,7 @@ export default async function ShopLayout({
           beforeinstallprompt; iOS gets manual instructions). */}
       <ShopInstallBar orgSlug={orgSlug} />
       {/* ED6: social proof deferred (renders nothing until its feed loads). */}
-      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={themeIdOf(home.settings.themeId)} />
+      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={effThemeId} />
       <ShopContactButtons
         whatsappNumber={home.settings.whatsappNumber ?? null}
         messengerUrl={home.settings.messengerUrl ?? null}

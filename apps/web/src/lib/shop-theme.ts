@@ -109,3 +109,16 @@ export function effectiveThemeId(storedId: unknown, previewId: unknown): ShopThe
   }
   return themeIdOf(storedId);
 }
+
+/** Request header the middleware sets for a ?themePreview=v2 view. */
+export const SHOP_THEME_PREVIEW_HEADER = "x-shop-theme-preview";
+
+/**
+ * ED7: read the theme-preview id from a Headers-like object (any
+ * { get(name) } — so this stays unit-testable without next/headers).
+ * Returns the raw header value, or null when absent; validity is
+ * effectiveThemeId's job, not this reader's.
+ */
+export function previewThemeIdFromHeaders(h: { get(name: string): string | null }): string | null {
+  return h.get(SHOP_THEME_PREVIEW_HEADER);
+}
