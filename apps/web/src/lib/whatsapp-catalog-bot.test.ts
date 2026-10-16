@@ -6,6 +6,7 @@ import {
   formatWhatsAppProductSnippet,
   parseCustomerOrderDetails,
   generateWhatsAppOrderSummaryReceipt,
+  generateWhatsAppProductOrderUrl,
 } from "./whatsapp-catalog-bot";
 
 describe("WhatsApp Conversational Catalog & Order Bot Engine", () => {
@@ -88,4 +89,25 @@ describe("WhatsApp Conversational Catalog & Order Bot Engine", () => {
     expect(receipt).toContain("৳2,100");
     expect(receipt).toContain("ক্যাশ অন ডেলিভারি");
   });
+
+  it("generates 1-click WhatsApp order URL with product info and Bangladeshi order prompt", () => {
+    const url = generateWhatsAppProductOrderUrl({
+      phone: "01712345678",
+      productName: "সিল্ক শাড়ি",
+      priceMinor: 250000,
+      variantName: "লাল / XL",
+      productUrl: "https://mybdshop.com/shop/products/silk-saree",
+    });
+
+    expect(url).toContain("https://wa.me/8801712345678?text=");
+    // Decode URI to inspect Bengali message text content
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain("🛍️ প্রোডাক্ট: সিল্ক শাড়ি");
+    expect(decoded).toContain("🏷️ ভ্যারিয়েন্ট/সাইজ: লাল / XL");
+    expect(decoded).toContain("🔗 লিঙ্ক: https://mybdshop.com/shop/products/silk-saree");
+    expect(decoded).toContain("ডেলিভারির জন্য আমার তথ্য:");
+    expect(decoded).toContain("১. নাম:");
+    expect(decoded).toContain("২. মোবাইল নম্বর:");
+  });
 });
+

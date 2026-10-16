@@ -49,26 +49,56 @@ export default function WhatsAppBotPage() {
   const [rawCustomerMsg, setRawCustomerMsg] = useState(
     "ভাই আমার নাম তানভীর আহমেদ, মোবাইল: 01712345678, ঠিকানা: বাড়ি ১০, রোড ৪, সেক্টর ৭, উত্তরা, ঢাকা। ১টা পাঠায় দিয়েন।"
   );
+  const [parserProductId, setParserProductId] = useState<string>("");
+  const [creatingOrder, setCreatingOrder] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState<any>(null);
+  const [orderError, setOrderError] = useState("");
+
+  // Settings Save State
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState("");
+  const [saveErrorMsg, setSaveErrorMsg] = useState("");
 
   // Phone Simulator State
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const [simInput, setSimInput] = useState("");
   const [orderCount, setOrderCount] = useState(1);
 
-  // Load products
+  // Load products and shop settings
   const loadProducts = useCallback(async () => {
     const orgId = getOrganizationId();
     if (!orgId) return;
     setLoading(true);
     try {
-      const res = await apiFetch<{ items: ProductRow[] }>(
-        `/organizations/${orgId}/products?pageSize=50`
-      ).catch(() => ({ items: [] as ProductRow[] }));
+      const [res, sf] = await Promise.all([
+        apiFetch<{ items: ProductRow[] }>(
+          `/organizations/${orgId}/products?pageSize=50`
+        ).catch(() => ({ items: [] as ProductRow[] })),
+        apiFetch<{ setting?: { whatsappNumber?: string | null } }>(
+          `/organizations/${orgId}/storefront`
+        ).catch(() => null),
+      ]);
       const items = res.items || [];
       setProducts(items);
       if (items.length > 0) {
         setSelectedProductId(items[0].id);
+        setParserProductId(items[0].id);
         setCustomCtwaText(`আমি '${items[0].name}' সম্পর্কে জানতে চাই ও অর্ডার করতে চাই।`);
+      }
+
+      // Restore saved bot config or phone number
+      try {
+        const cached = localStorage.getItem(`wa_bot_config_${orgId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setConfig((prev) => ({ ...prev, ...parsed }));
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+
+      if (sf?.setting?.whatsappNumber) {
+        setConfig((prev) => ({ ...prev, businessPhone: sf.setting?.whatsappNumber || prev.businessPhone }));
       }
     } catch {
       // fallback
@@ -80,6 +110,80 @@ export default function WhatsAppBotPage() {
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
+
+  // Save Settings handler
+  async function handleSaveSettings() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setSavingSettings(true);
+    setSaveSuccessMsg("");
+    setSaveErrorMsg("");
+    try {
+      await apiFetch(`/organizations/${orgId}/storefront/settings`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          whatsappNumber: config.businessPhone.trim() || null,
+        }),
+      });
+      try {
+        localStorage.setItem(`wa_bot_config_${orgId}`, JSON.stringify(config));
+      } catch {
+        // ignore
+      }
+      setSaveSuccessMsg("✅ WhatsApp বট কনফিগারেশন ও নম্বর সফলভাবে সংরক্ষিত হয়েছে!");
+      setTimeout(() => setSaveSuccessMsg(""), 4000);
+    } catch (err) {
+      setSaveErrorMsg(err instanceof Error ? err.message : "সেটিংস সংরক্ষণ ব্যর্থ হয়েছে।");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  // Real Order Creation handler from Parsed Chat
+  async function handleCreateRealOrder(parsed: { customerName?: string | null; phone?: string | null; address?: string | null }) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    if (!parsed.phone) {
+      setOrderError("গ্রাহকের ১১ ডিজিটের মোবাইল নম্বর পাওয়া যায়নি। অনুগ্রহ করে কাঁচা মেসেজে সঠিক ফোন নম্বর অন্তর্ভুক্ত করুন।");
+      return;
+    }
+
+    const targetProduct = products.find((p) => p.id === (parserProductId || selectedProductId)) || products[0];
+    if (!targetProduct) {
+      setOrderError("অর্ডার করার জন্য কোনো প্রোডাক্ট নির্বাচন করা নেই।");
+      return;
+    }
+
+    setCreatingOrder(true);
+    setOrderError("");
+    setOrderSuccess(null);
+    try {
+      const res = await apiFetch<any>(`/organizations/${orgId}/orders`, {
+        method: "POST",
+        body: JSON.stringify({
+          customerPhone: parsed.phone,
+          customerName: parsed.customerName || "WhatsApp Customer",
+          address: parsed.address || undefined,
+          externalRef: `WA-${Date.now().toString(36).toUpperCase()}`,
+          isCod: true,
+          currency: "BDT",
+          items: [
+            {
+              name: targetProduct.name,
+              quantity: 1,
+              unitPriceMinor: Number(targetProduct.priceMinor) || 0,
+              sku: targetProduct.slug || undefined,
+            },
+          ],
+        }),
+      });
+      setOrderSuccess(res);
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : "অর্ডার তৈরিতে ত্রুটি দেখা দিয়েছে।");
+    } finally {
+      setCreatingOrder(false);
+    }
+  }
 
   // Initialize Simulator Chat
   useEffect(() => {
@@ -355,6 +459,29 @@ export default function WhatsAppBotPage() {
                     গ্রাহক প্রোডাক্ট পছন্দ করার পর বট এই তথ্যগুলো চাইবে।
                   </p>
                 </div>
+
+                {/* Save Bot Settings CTA Button */}
+                <div className="pt-2 border-t border-slate-200 space-y-2">
+                  {saveSuccessMsg ? (
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-300 p-2.5 text-xs font-bold text-emerald-800">
+                      {saveSuccessMsg}
+                    </div>
+                  ) : null}
+                  {saveErrorMsg ? (
+                    <div className="rounded-xl bg-rose-50 border border-rose-300 p-2.5 text-xs font-bold text-rose-800">
+                      {saveErrorMsg}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={handleSaveSettings}
+                    disabled={savingSettings}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-2.5 text-xs font-bold text-white shadow-md hover:bg-black transition disabled:opacity-50"
+                  >
+                    {savingSettings ? "সংরক্ষণ হচ্ছে..." : "💾 বট সেটিংস ও নম্বর সংরক্ষণ করুন"}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -564,13 +691,67 @@ export default function WhatsAppBotPage() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleSimulatorSend(rawCustomerMsg)}
-                    className="w-full mt-2 rounded-lg bg-emerald-700 p-2 text-xs font-bold text-white hover:bg-emerald-800 transition"
-                  >
-                    চ্যাট সিমুলেটরে এই মেসেজ দিয়ে অর্ডার নিশ্চিত করুন ➔
-                  </button>
+                  {/* Product Picker for Real Order */}
+                  <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      অর্ডারের প্রোডাক্ট নির্বাচন করুন:
+                    </label>
+                    <select
+                      value={parserProductId}
+                      onChange={(e) => setParserProductId(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 p-2 text-xs bg-white text-slate-800"
+                    >
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({formatMinorTaka(p.priceMinor)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {orderSuccess ? (
+                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900 space-y-1.5">
+                      <div className="font-bold flex items-center gap-1.5 text-emerald-800">
+                        <span>🎉</span>
+                        <span>রিয়েল অর্ডার সফলভাবে তৈরি হয়েছে!</span>
+                      </div>
+                      <p>
+                        অর্ডার ট্র্যাকিং রেফারেন্স:{" "}
+                        <strong className="font-mono">{orderSuccess.orderNumber || orderSuccess.id?.slice(0, 8)}</strong>
+                      </p>
+                      <Link
+                        href="/dashboard/orders"
+                        className="inline-block mt-1 font-bold text-emerald-700 underline hover:text-emerald-900"
+                      >
+                        ড্যাশবোর্ড অর্ডার লিস্টে দেখুন ↗
+                      </Link>
+                    </div>
+                  ) : null}
+
+                  {orderError ? (
+                    <div className="rounded-xl border border-rose-300 bg-rose-50 p-2.5 text-xs font-bold text-rose-800">
+                      {orderError}
+                    </div>
+                  ) : null}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateRealOrder(parsedPreview)}
+                      disabled={creatingOrder}
+                      className="rounded-xl bg-emerald-600 p-2.5 text-xs font-extrabold text-white hover:bg-emerald-700 shadow-md transition disabled:opacity-50 text-center"
+                    >
+                      {creatingOrder ? "অর্ডার তৈরি হচ্ছে..." : "🛍️ ১-ক্লিকে আসল অর্ডার তৈরি করুন"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSimulatorSend(rawCustomerMsg)}
+                      className="rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition text-center"
+                    >
+                      চ্যাট সিমুলেটরে টেস্ট ➔
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

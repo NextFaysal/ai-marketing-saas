@@ -205,3 +205,31 @@ export function generateWhatsAppOrderSummaryReceipt(order: {
     "আমাদের সাথে কেনাকাটা করার জন্য ধন্যবাদ! ❤️",
   ].join("\n");
 }
+
+/** Generate a 1-click WhatsApp order URL for a specific product */
+export function generateWhatsAppProductOrderUrl(opts: {
+  phone: string;
+  productName: string;
+  priceMinor: number | string;
+  variantName?: string | null;
+  productUrl?: string | null;
+}): string {
+  const price = Math.round((Number(opts.priceMinor) || 0) / 100);
+  const priceFmt = `৳${price.toLocaleString("bn-BD")}`;
+  const lines = [
+    "আসসালামু আলাইকুম,",
+    "আমি এই প্রোডাক্টটি ক্যাশ অন ডেলিভারিতে অর্ডার করতে চাই:",
+    "",
+    `🛍️ প্রোডাক্ট: ${opts.productName}`,
+    opts.variantName ? `🏷️ ভ্যারিয়েন্ট/সাইজ: ${opts.variantName}` : "",
+    `💰 মূল্য: ${priceFmt}`,
+    opts.productUrl ? `🔗 লিঙ্ক: ${opts.productUrl}` : "",
+    "",
+    "ডেলিভারির জন্য আমার তথ্য:",
+    "১. নাম:",
+    "২. মোবাইল নম্বর:",
+    "৩. সম্পূর্ণ ঠিকানা (জেলা, থানা ও এলাকা):",
+  ];
+  const text = lines.filter(Boolean).join("\n");
+  return generateWhatsAppClickToChatUrl(opts.phone, text);
+}

@@ -114,6 +114,7 @@ export default async function ProductPage({ params }: { params: Params }) {
         orgSlug={orgSlug}
         product={product}
         locale={locale}
+        whatsappNumber={home?.settings.whatsappNumber ?? null}
         isFashion={themeId === "fashion"}
         isElectronics={themeId === "electronics"}
         isGrocery={themeId === "grocery"}
