@@ -41,6 +41,11 @@ const bnDict = {
   popup: {
     close: "বন্ধ করুন",
   },
+  offline: {
+    title: "ইন্টারনেট সংযোগ নেই",
+    text: "আপনি এখন অফলাইনে আছেন। আগে দেখা পেজগুলো হয়তো ক্যাশ থেকে খুলবে — সংযোগ ফিরে এলে আবার চেষ্টা করুন।",
+    retry: "আবার চেষ্টা করুন",
+  },
   chrome: {
     search: "খুঁজুন",
     menu: "মেনু",
@@ -437,6 +442,11 @@ const enDict: ShopDict = {
   },
   popup: {
     close: "Close",
+  },
+  offline: {
+    title: "No internet connection",
+    text: "You are offline right now. Pages you visited before may still open from cache — reconnect and try again.",
+    retry: "Try again",
   },
   chrome: {
     search: "Search",
