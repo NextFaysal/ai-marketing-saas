@@ -84,7 +84,7 @@ describe("CC3/CC4 app-source helpers", () => {
 
 describe("CC8/CC9 status labels", () => {
   const llmView = { provider: "openai", model: null, status: "verified", isEnabled: true, lastVerifiedAt: null, lastError: null, verificationNote: "verified_with_provider" };
-  const gwView = { provider: "bkash", identifier: "ak", sandbox: false, status: "verified", isEnabled: true, lastVerifiedAt: null, lastError: null, verificationNote: "verified_with_gateway" };
+  const gwView = { provider: "bkash", identifier: "ak", sandbox: false, status: "verified", isEnabled: true, lastVerifiedAt: null, lastError: null, verificationNote: "verified_with_gateway", feeBps: null, feeFixedMinor: null };
 
   it("llm label says verified only for a verified row", () => {
     expect(llmConfigStatusLabel(llmView)).toContain("যাচাইকৃত");

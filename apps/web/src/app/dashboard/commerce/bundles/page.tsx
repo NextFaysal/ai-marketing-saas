@@ -28,15 +28,34 @@ interface Bundle {
   savingsMinor?: string | null;
   sortOrder: number;
   active: boolean;
+  // The staff serialize carries the fixed items as `items`
+  // ({ productId, variantSku, qty }) — `components` is kept
+  // only as a legacy fallback name.
+  items?: { productId: string; variantSku?: string | null; qty: number }[];
   components: BundleComponent[];
+  // AB5 (AX8): mix-and-match slots with their CURRENT pools.
+  slots?: BundleSlot[];
   createdAt?: string;
 }
+interface BundleSlotOption { productId: string; name: string | null; imageUrl: string | null; regularUnitMinor: string }
+interface BundleSlot {
+  id: string | null; label: string; chooseQty: number;
+  sourceType: "category" | "products";
+  sourceRef: { categoryId?: string; productIds?: string[] } | null;
+  options: BundleSlotOption[];
+}
 interface ProductOpt { id: string; name: string }
+interface CategoryOpt { id: string; name: string }
 interface ComponentRow { productId: string; variantSku: string; qty: string }
+interface SlotRow { label: string; chooseQty: string; sourceType: "category" | "products"; categoryId: string; productIds: string[] }
 
 export default function BundlesPage() {
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
+  const [categories, setCategories] = useState<CategoryOpt[]>([]);
+  // AB5 (AX8): slot rows of the form (the form manages the
+  // bundle's FULL slot set — saving replaces them wholesale).
+  const [slotRows, setSlotRows] = useState<SlotRow[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -58,12 +77,14 @@ export default function BundlesPage() {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [list, p] = await Promise.all([
+      const [list, p, cats] = await Promise.all([
         apiFetch<{ items: Bundle[] }>(`/organizations/${orgId}/commerce/bundles`),
         apiFetch<{ items: ProductOpt[] }>(`/organizations/${orgId}/products?pageSize=100`).catch(() => ({ items: [] as ProductOpt[] })),
+        apiFetch<CategoryOpt[]>(`/organizations/${orgId}/products/categories`).catch(() => [] as CategoryOpt[]),
       ]);
       setBundles(list.items ?? []);
       setProducts(p.items ?? []);
+      setCategories(Array.isArray(cats) ? cats : []);
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
     finally { setLoading(false); }
@@ -77,6 +98,7 @@ export default function BundlesPage() {
       { productId: "", variantSku: "", qty: "1" },
       { productId: "", variantSku: "", qty: "1" },
     ]);
+    setSlotRows([]);
   }
 
   function startEdit(b: Bundle) {
@@ -88,13 +110,22 @@ export default function BundlesPage() {
     setBundlePrice(minorToTakaString(b.bundlePriceMinor));
     setSortOrder(String(b.sortOrder ?? 0));
     setActive(b.active);
-    if (b.components?.length) {
-      setRows(b.components.map((c) => ({
+    const fixed = b.items?.length ? b.items : b.components;
+    if (fixed?.length) {
+      setRows(fixed.map((c) => ({
         productId: c.productId,
         variantSku: c.variantSku ?? "",
         qty: String(c.qty ?? 1),
       })));
     }
+    // AB5 (AX8): initialize the slots editor from the serialized slots.
+    setSlotRows((b.slots ?? []).map((s) => ({
+      label: s.label,
+      chooseQty: String(s.chooseQty ?? 1),
+      sourceType: s.sourceType,
+      categoryId: s.sourceRef?.categoryId ?? "",
+      productIds: s.sourceRef?.productIds ?? [],
+    })));
   }
 
   async function save() {
@@ -115,6 +146,25 @@ export default function BundlesPage() {
       setError("বান্ডলের দাম টাকায় সঠিক সংখ্যা দিন (যেমন: 999 অথবা 999.50)।");
       return;
     }
+    // AB5 (AX8): slots — the form manages the full set, so the
+    // array is ALWAYS sent (the API replaces wholesale when the
+    // field is present; [] clears all slots).
+    const slots: { label: string; chooseQty: number; sourceType: "category" | "products"; sourceRef: { categoryId: string } | { productIds: string[] } }[] = [];
+    for (const s of slotRows) {
+      const label = s.label.trim();
+      if (!label) { setError("প্রতিটি স্লটের লেবেল দিন।"); return; }
+      const chooseQty = parseInt(s.chooseQty || "0", 10);
+      if (!Number.isInteger(chooseQty) || chooseQty < 1 || chooseQty > 20) {
+        setError(`"${label}" স্লটে বেছে নেওয়ার সংখ্যা ১–২০ হতে হবে।`); return;
+      }
+      if (s.sourceType === "category") {
+        if (!s.categoryId) { setError(`"${label}" স্লটের জন্য ক্যাটাগরি বেছে নিন।`); return; }
+        slots.push({ label, chooseQty, sourceType: "category", sourceRef: { categoryId: s.categoryId } });
+      } else {
+        if (s.productIds.length === 0) { setError(`"${label}" স্লটে কমপক্ষে একটি পণ্য বেছে নিন।`); return; }
+        slots.push({ label, chooseQty, sourceType: "products", sourceRef: { productIds: s.productIds } });
+      }
+    }
     setBusy("save"); setError(""); setNotice("");
     const body = {
       name: name.trim(),
@@ -123,7 +173,9 @@ export default function BundlesPage() {
       bundlePriceMinor,
       sortOrder: parseInt(sortOrder || "0", 10) || 0,
       active,
-      components,
+      // The API's BundleDto field is `items` (fixed components).
+      items: components,
+      slots,
     };
     try {
       if (editingId) {
@@ -238,6 +290,73 @@ export default function BundlesPage() {
           <p className="text-xs text-slate-400">ভ্যারিয়েন্ট SKU দিলে বান্ডলটি ওই নির্দিষ্ট ভ্যারিয়েন্টই বিক্রি করবে; খালি রাখলে পণ্যের ডিফল্ট/মূল এন্ট্রি।</p>
         </div>
 
+        {/* AB5 (AX8): mix-and-match slots — the buyer picks
+            chooseQty products from each slot's pool; the bundle
+            price does not change with the picks. */}
+        <div className="space-y-3 border-t pt-4">
+          <div className="font-semibold">🎛️ স্লট (Mix-and-Match) — ক্রেতা নিজে বেছে নেবেন ({slotRows.length}টি স্লট, সর্বোচ্চ ৬টি)</div>
+          <p className="text-xs text-slate-400">স্লট থাকলে ক্রেতাকে প্রতিটি স্লট থেকে ঠিক নির্দিষ্ট সংখ্যক পণ্য বেছে নিতে হবে — বান্ডলের দাম পিক অনুযায়ী বদলায় না। স্লট না রাখলে বান্ডলটি আগের মতোই শুধু নির্দিষ্ট পণ্যে বিক্রি হবে।</p>
+          {slotRows.map((s, i) => (
+            <div key={i} className="space-y-2 rounded-xl bg-slate-50 p-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="block flex-1 text-sm">স্লটের লেবেল
+                  <input className="input mt-1" value={s.label} placeholder="যেমন: একটি পানীয় বেছে নিন"
+                    onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, label: e.target.value }; setSlotRows(n); }} />
+                </label>
+                <label className="block text-sm">কয়টি বেছে নেবেন
+                  <input className="input mt-1 w-28" type="number" min="1" max="20" value={s.chooseQty}
+                    onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, chooseQty: e.target.value }; setSlotRows(n); }} />
+                </label>
+                <label className="block text-sm">পণ্যের উৎস
+                  <select className="input mt-1 w-44" value={s.sourceType}
+                    onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, sourceType: e.target.value as SlotRow["sourceType"] }; setSlotRows(n); }}>
+                    <option value="category">ক্যাটাগরি</option>
+                    <option value="products">নির্দিষ্ট পণ্য</option>
+                  </select>
+                </label>
+                <button type="button" className="rounded-lg border px-3 py-2 text-xs font-semibold text-rose-600"
+                  onClick={() => setSlotRows(slotRows.filter((_, x) => x !== i))}>স্লট মুছুন</button>
+              </div>
+              {s.sourceType === "category" ? (
+                <label className="block text-sm">ক্যাটাগরি
+                  <select className="input mt-1 w-72" value={s.categoryId}
+                    onChange={(e) => { const n = [...slotRows]; n[i] = { ...s, categoryId: e.target.value }; setSlotRows(n); }}>
+                    <option value="">— ক্যাটাগরি বেছে নিন —</option>
+                    {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <span className="mt-1 block text-xs font-normal text-slate-400">ওই ক্যাটাগরির সব সক্রিয় পণ্যই ক্রেতার পছন্দের তালিকায় থাকবে।</span>
+                </label>
+              ) : (
+                <div>
+                  <div className="mb-1 text-sm">পণ্য বেছে নিন ({s.productIds.length}টি নির্বাচিত)</div>
+                  <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
+                    {products.map((p) => {
+                      const on = s.productIds.includes(p.id);
+                      return (
+                        <button key={p.id} type="button"
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "border bg-white text-slate-600"}`}
+                          onClick={() => {
+                            const n = [...slotRows];
+                            n[i] = { ...s, productIds: on ? s.productIds.filter((x) => x !== p.id) : [...s.productIds, p.id] };
+                            setSlotRows(n);
+                          }}>
+                          {on ? "✓ " : ""}{p.name}
+                        </button>
+                      );
+                    })}
+                    {products.length === 0 ? <span className="text-xs text-slate-400">কোনো পণ্য লোড হয়নি</span> : null}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+            disabled={slotRows.length >= 6}
+            onClick={() => setSlotRows([...slotRows, { label: "", chooseQty: "1", sourceType: "category", categoryId: "", productIds: [] }])}>
+            + স্লট যোগ করুন
+          </button>
+        </div>
+
         <div className="flex gap-2">
           <button className="btn-primary" disabled={busy !== "" || !name.trim() || !bundlePrice.trim()} onClick={save}>
             {busy === "save" ? "সেভ হচ্ছে…" : editingId ? "আপডেট করুন" : "তৈরি করুন"}
@@ -266,8 +385,13 @@ export default function BundlesPage() {
                   <tr key={b.id} className="border-b last:border-0 align-top">
                     <td className="py-2 font-semibold">{b.name}</td>
                     <td className="py-2 text-xs text-slate-600">
-                      {(b.components ?? []).map((c, i) => (
-                        <div key={i}>{c.name ?? productName(c.productId)}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}</div>
+                      {(b.items ?? b.components ?? []).map((c, i) => (
+                        <div key={i}>{(c as BundleComponent).name ?? productName(c.productId)}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}</div>
+                      ))}
+                      {(b.slots ?? []).map((s) => (
+                        <div key={s.id ?? s.label} className="mt-0.5 rounded bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700">
+                          🎛️ {s.label}: {s.chooseQty}টি বেছে নেবেন · পুলে {(s.options ?? []).length}টি পণ্য
+                        </div>
                       ))}
                     </td>
                     <td className="py-2 font-semibold">{formatMinorTaka(b.bundlePriceMinor)}</td>

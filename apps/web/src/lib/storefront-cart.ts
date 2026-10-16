@@ -8,6 +8,7 @@
  * by the server from current product rows.
  */
 import { API_URL } from "@/lib/api";
+import type { CheckoutAttribution } from "@/lib/shop-tracking";
 
 export const CART_UPDATED_EVENT = "storefront-cart-updated";
 
@@ -20,6 +21,10 @@ export interface CartItem {
   imageUrl: string | null;
   quantity: number;
   includeBump: boolean;
+  // AB2 (AX3): gift-card face value + recipient chosen for this
+  // line (null on ordinary lines).
+  giftCardAmountMinor?: string | null;
+  giftCardRecipient?: { name?: string; email?: string; phone?: string; message?: string } | null;
   bump: { title: string; priceMinor: string } | null;
   unitPriceMinor: string;
   lineTotalMinor: string;
@@ -30,6 +35,9 @@ export interface CartBundleComponent {
   name: string;
   variantSku: string | null;
   qty: number;
+  // AB5 (AX8): the slot label this component was picked through
+  // (null on fixed components).
+  viaSlot?: string | null;
 }
 
 export interface CartBundleItem {
@@ -41,6 +49,8 @@ export interface CartBundleItem {
   bundlePriceMinor: string;
   lineTotalMinor: string;
   components: CartBundleComponent[];
+  // AB5 (AX8): the stored normalized picks (null on slotless lines).
+  picks?: { slotId: string; productId: string }[] | null;
 }
 
 export interface Cart {
@@ -114,6 +124,23 @@ export interface Quote {
   shippingRateRuleId?: string | null;
   zoneFreeShippingApplied?: boolean;
   freeShippingZoneId?: string | null;
+  // GB3 (GC8): server COD rules for THIS quote's total.
+  codRules?: {
+    maxOrderMinor: string | null;
+    advanceAboveMinor: string | null;
+    unavailableForTotal: boolean;
+    advanceRequiredForTotal: boolean;
+  };
+  // AB1: loyalty redemption priced into this quote (null when
+  // the program is off or no customer was resolved). The object
+  // only appears when the quote request asked for points.
+  loyalty?: { balance: number; pointsApplied: number; discountMinor: string } | null;
+  // AB2: gift-card redemption priced into this quote (last4 +
+  // balances only — never the full code).
+  giftCard?: { codeLast4: string; balanceMinor: string; discountMinor: string } | null;
+  // AB4 (AX5): deposit quote — per-kind amounts (paisa strings;
+  // null = deposit not applicable to that payment kind).
+  deposit?: { note: string; amounts: { cod: string | null; online: string | null; manual: string | null } } | null;
 }
 
 export interface CheckoutResult {
@@ -149,6 +176,14 @@ export interface CheckoutResult {
   // EC30: delivery method + chosen pickup point for the success screen.
   deliveryMethod?: string;
   pickupPoint?: PickupPoint | null;
+  // AB1: loyalty points actually spent on this order.
+  loyaltyDiscountMinor?: string;
+  loyaltyPointsUsed?: number;
+  // AB2: gift-card discount actually applied to this order.
+  giftCardDiscountMinor?: string;
+  giftCardCodeLast4?: string | null;
+  // AB4 (AX5): deposit due on this order (null when none).
+  deposit?: { amountMinor: string; kind: string; note: string; dueAfterMinor: string } | null;
 }
 
 export function cartTokenKey(orgSlug: string): string {
@@ -246,7 +281,16 @@ export async function ensureCartToken(orgSlug: string): Promise<string> {
 
 export async function patchCartLine(
   orgSlug: string,
-  body: { productId: string; variantId?: string | null; quantity: number; includeBump?: boolean },
+  body: {
+    productId: string; variantId?: string | null; quantity: number; includeBump?: boolean;
+    // AB2 (AX3): gift-card face value (minor, as a string) + the
+    // flat recipient fields the cart PATCH DTO accepts.
+    giftCardAmountMinor?: string;
+    giftCardRecipientName?: string;
+    giftCardRecipientEmail?: string;
+    giftCardRecipientPhone?: string;
+    giftCardRecipientMessage?: string;
+  },
 ): Promise<Cart> {
   const token = await ensureCartToken(orgSlug);
   const out = await publicFetch<{ cart: Cart }>(
@@ -258,10 +302,12 @@ export async function patchCartLine(
   return out.cart;
 }
 
-/** EC29: set a bundle line's absolute quantity (0 removes the line). */
+/** EC29: set a bundle line's absolute quantity (0 removes the line).
+ * AB5 (AX8): a slotted bundle's picks ([{ slotId, productId }])
+ * ride along — the server requires every slot satisfied exactly. */
 export async function patchBundleLine(
   orgSlug: string,
-  body: { bundleId: string; quantity: number },
+  body: { bundleId: string; quantity: number; picks?: { slotId: string; productId: string }[] },
 ): Promise<Cart> {
   const token = await ensureCartToken(orgSlug);
   const out = await publicFetch<{ cart: Cart }>(
@@ -288,7 +334,7 @@ export async function setCartContact(
 
 export async function requestQuote(
   orgSlug: string,
-  body: { cartToken: string; district: string; couponCode?: string; referralCode?: string; buyerPhone?: string; giftWrap?: boolean; deliveryMethod?: string; pickupPointId?: string },
+  body: { cartToken: string; district: string; couponCode?: string; referralCode?: string; buyerPhone?: string; giftWrap?: boolean; deliveryMethod?: string; pickupPointId?: string; loyaltyPoints?: number; giftCardCode?: string },
 ): Promise<Quote> {
   return publicFetch<Quote>(`${shopPath(orgSlug)}/quote`, {
     method: "POST",
@@ -306,9 +352,17 @@ export async function placeCheckout(
     district: string;
     couponCode?: string;
     referralCode?: string;
+    // AB1: loyalty points to redeem (server re-prices + clamps).
+    loyaltyPoints?: number;
+    // AB2: gift-card code to redeem (server resolves + prices it).
+    giftCardCode?: string;
     // EC32: affiliate partner code (attribution only, no discount).
     affiliateCode?: string;
     paymentMethod?: "cod" | "bkash" | "nagad";
+    // GC10: online gateway selection (own/platform). When
+    // present the server places a non-COD online order and the
+    // response's paymentClaimStatus is "online_pending".
+    onlinePayment?: { provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay"; source: "own" | "platform" };
     note?: string;
     advanceNote?: string;
     deliverySlotId?: string;
@@ -319,6 +373,17 @@ export async function placeCheckout(
     // EC30: delivery method + chosen pickup point.
     deliveryMethod?: string;
     pickupPointId?: string;
+    // GB3 (GC8): terms consent + idempotency + Turnstile token.
+    termsAccepted?: boolean;
+    idempotencyKey?: string;
+    captchaToken?: string;
+    // AB4 (AX5): answers to the org's custom checkout fields.
+    fieldAnswers?: Record<string, string | boolean>;
+    // AB7 (AX19): first-touch attribution (omitted when empty).
+    attribution?: CheckoutAttribution;
+    // AB8 (AX27): client device hash — a weak fraud signal
+    // (lib/device-hash); omitted entirely when unavailable.
+    deviceHash?: string;
   },
 ): Promise<CheckoutResult> {
   // EC25: a logged-in shopper's session links the order to their

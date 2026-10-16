@@ -100,6 +100,20 @@ export class CampaignsController {
   @Get("whatsapp-destinations")
   whatsappDestinations(@Param("organizationId") orgId: string) { return this.campaigns.whatsappDestinations(orgId); }
 
+  // Design+UX DX2: the hub "এই সপ্তাহে" strip aggregate
+  // (one segment, declared before ":planId"; read-only —
+  // see CampaignsService.weekSummary for why it exists).
+  @Get("week-summary")
+  weekSummary(@Param("organizationId") orgId: string) { return this.campaigns.weekSummary(orgId); }
+
+  // DX3 🚩 mini-fix: the org-level CN6 source catalogue
+  // (one segment — declared before ":planId"). The CN16
+  // funnel wizard reads the same real source counts the
+  // plan-scoped Audience Studio shows, before any plan
+  // exists. Read-only; same guards as the studio route.
+  @Get("audience-sources")
+  audienceSources(@Param("organizationId") orgId: string) { return this.campaigns.audienceSourceCatalog(orgId); }
+
   @Get(":planId")
   get(@Param("organizationId") orgId: string, @Param("planId") id: string) { return this.campaigns.getPlan(orgId, id); }
 

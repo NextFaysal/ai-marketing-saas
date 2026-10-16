@@ -5,7 +5,16 @@ import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 
 interface Billing {
-  subscription: { plan: string; status: string; currentPeriodEnd: string | null; pendingPlan: string | null; billingCycle: string; priceMinor: string; currency: string } | null;
+  subscription: { plan: string; status: string; currentPeriodEnd: string | null; pendingPlan: string | null; billingCycle: string; priceMinor: string; currency: string; pausedAt?: string | null } | null;
+  // GC22 (GB9): pause state + plan resource usage vs limits.
+  paused?: boolean;
+  pastDueGraceEndsAt?: string | null;
+  resourceUsage?: {
+    products: { used: number; limit: number | null };
+    ordersThisMonth: { used: number; limit: number | null };
+    storage: { usedBytes: string; assetCount: number; limitMb: number | null };
+    apiToday: { used: number; limit: number | null };
+  };
   creditMinor: string;
   gateways: { sslcommerz: boolean; bkash: boolean };
   autoRenew: { status: string; payerReference: string; lastChargeAt: string | null; lastError: string | null } | null;
@@ -50,6 +59,31 @@ function UsageMeter({ label, used, limit, detail }: { label: string; used: numbe
   );
 }
 
+/** GC22: one plan-resource metric — used vs limit, with
+ * "সীমা নেই" when the plan carries no limit for it. */
+function ResourceMeter({ label, used, limit, detail }: { label: string; used: number; limit: number | null; detail?: string }) {
+  const pct = limit !== null && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
+  const tone = pct === null ? "" : pct >= 100 ? "meter-fill-danger" : pct >= 80 ? "meter-fill-warn" : "meter-fill-ok";
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="text-sm font-medium text-slate-700">{label}</div>
+        <div className="text-sm text-slate-500">
+          <b className="text-base text-slate-900">{used.toLocaleString("bn-BD")}</b>
+          {limit === null ? " · সীমা নেই" : ` / ${limit.toLocaleString("bn-BD")}`}
+          {pct !== null ? <span className="ml-1.5 text-xs text-slate-400">({pct}%)</span> : null}
+        </div>
+      </div>
+      {pct !== null ? (
+        <div className="meter mt-2" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+          <div className={`meter-fill ${tone}`} style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+      {detail ? <p className="mt-1.5 text-xs text-slate-400">{detail}</p> : null}
+    </div>
+  );
+}
+
 function statusBadge(status: string): string {
   if (status === "ACTIVE") return "badge-green";
   if (status === "PAST_DUE") return "badge-red";
@@ -65,6 +99,7 @@ export default function BillingPage() {
   const [busy, setBusy] = useState("");
   const [gatewayReturn, setGatewayReturn] = useState("");
   const [autoRenewReturn, setAutoRenewReturn] = useState("");
+  const [myRole, setMyRole] = useState("");
 
   useEffect(() => {
     try { const q = new URLSearchParams(window.location.search); setGatewayReturn(q.get("payment") ?? ""); setAutoRenewReturn(q.get("autorenew") ?? ""); } catch { /* ignore */ }
@@ -81,6 +116,52 @@ export default function BillingPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // GC22: pause/resume is OWNER-only — the buttons render only
+  // for the owner (the API enforces the same rule server-side).
+  useEffect(() => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    apiFetch<{ id: string; myRole: string }[]>(`/organizations`)
+      .then((orgs) => {
+        const mine = (orgs ?? []).find((o) => o.id === orgId);
+        if (mine) setMyRole(mine.myRole);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function setPaused(pause: boolean) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const ok = window.confirm(pause
+      ? "সাবস্ক্রিপশন Pause করলে নতুন পণ্য, অর্ডার ও মিডিয়া আপলোড বন্ধ হয়ে যাবে। নিশ্চিত তো?"
+      : "সাবস্ক্রিপশন আবার চালু করবেন? পণ্য, অর্ডার ও আপলোড আবার চালু হয়ে যাবে।");
+    if (!ok) return;
+    setBusy(pause ? "pause" : "resume"); setError(""); setNotice("");
+    try {
+      await apiFetch(`/organizations/${orgId}/billing/${pause ? "pause" : "resume"}`, { method: "POST", body: "{}" });
+      setNotice(pause ? "⏸️ সাবস্ক্রিপশন Pause করা হয়েছে — Resume না করা পর্যন্ত নতুন পণ্য/অর্ডার/আপলোড বন্ধ থাকবে।" : "▶️ সাবস্ক্রিপশন আবার চালু হয়েছে।");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "করা যায়নি");
+    } finally { setBusy(""); }
+  }
+
+  async function downloadInvoicePdf(paymentId: string) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    const token = localStorage.getItem("accessToken");
+    const res = await fetch(`${API_URL}/organizations/${orgId}/billing/payments/${paymentId}/invoice.pdf`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { setError("Invoice PDF ডাউনলোড করা যায়নি"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `invoice-${paymentId}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
 
   async function requestPlan(tier: string) {
     const orgId = getOrganizationId();
@@ -256,6 +337,19 @@ export default function BillingPage() {
       {autoRenewReturn === "active" ? <div className="alert alert-green"><span>✅</span><span>bKash Auto-Renew চালু হয়েছে — মেয়াদ শেষের আগে স্বয়ংক্রিয়ভাবে নবায়ন হবে।</span></div> : null}
       {autoRenewReturn === "failed" ? <div className="alert alert-red"><span>❌</span><span>Auto-Renew সম্মতি সম্পূর্ণ হয়নি — আবার চেষ্টা করুন। কোনো চার্জ হয়নি।</span></div> : null}
 
+      {data.paused ? (
+        <div className="alert alert-red">
+          <span>⏸️</span>
+          <span>সাবস্ক্রিপশন <strong>Paused</strong> আছে{sub?.pausedAt ? <> ({new Date(sub.pausedAt).toLocaleDateString("bn-BD")} থেকে)</> : null} — নতুন পণ্য, অর্ডার ও মিডিয়া আপলোড বন্ধ আছে।{myRole === "OWNER" ? " আবার চালু করতে নিচের Resume বোতাম চাপুন।" : ""}</span>
+        </div>
+      ) : null}
+      {sub?.status === "PAST_DUE" && data.pastDueGraceEndsAt ? (
+        <div className="alert alert-amber">
+          <span>⏳</span>
+          <span>পেমেন্ট বকেয়া আছে — গ্রেস পিরিয়ড চলছে, শেষ হবে <strong>{new Date(data.pastDueGraceEndsAt).toLocaleDateString("bn-BD")}</strong>। এর মধ্যে পরিশোধ না করলে নতুন পণ্য/অর্ডার/আপলোড বন্ধ হয়ে যাবে।</span>
+        </div>
+      ) : null}
+
       {/* Current plan hero */}
       <section className="hero-panel p-5 sm:p-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -298,6 +392,37 @@ export default function BillingPage() {
           </div>
         </div>
       </section>
+
+      {/* GC22: plan resource usage + pause/resume */}
+      {data.resourceUsage ? (
+        <section className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="section-title">প্ল্যান রিসোর্স ব্যবহার</h2>
+            {myRole === "OWNER" && sub ? (
+              data.paused ? (
+                <button className="btn-primary min-h-[40px]" disabled={busy === "resume"} onClick={() => setPaused(false)}>
+                  {busy === "resume" ? "চালু হচ্ছে…" : "▶️ Resume করুন"}
+                </button>
+              ) : (
+                <button className="btn-secondary min-h-[40px]" disabled={busy === "pause"} onClick={() => setPaused(true)}>
+                  {busy === "pause" ? "Pause হচ্ছে…" : "⏸️ Pause করুন"}
+                </button>
+              )
+            ) : null}
+          </div>
+          <div className="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-2">
+            <ResourceMeter label="পণ্য" used={data.resourceUsage.products.used} limit={data.resourceUsage.products.limit} detail="Archive করা পণ্য সীমায় ধরা হয় না।" />
+            <ResourceMeter label="এই মাসের অর্ডার" used={data.resourceUsage.ordersThisMonth.used} limit={data.resourceUsage.ordersThisMonth.limit} detail="প্রতি ক্যালেন্ডার মাসে (ঢাকা সময়) তৈরি অর্ডার।" />
+            <ResourceMeter
+              label="স্টোরেজ (MB)"
+              used={Math.round((Number(data.resourceUsage.storage.usedBytes) / (1024 * 1024)) * 10) / 10}
+              limit={data.resourceUsage.storage.limitMb}
+              detail={`মিডিয়া লাইব্রেরিতে রেকর্ডকৃত আপলোড থেকে হিসাব — ${data.resourceUsage.storage.assetCount.toLocaleString("bn-BD")}টি ফাইল।`}
+            />
+            <ResourceMeter label="আজকের API ব্যবহার" used={data.resourceUsage.apiToday.used} limit={data.resourceUsage.apiToday.limit} detail="Public API (/v1) আজকের কল সংখ্যা।" />
+          </div>
+        </section>
+      ) : null}
 
       {data.nextInvoice ? (
         <section className="card p-5">
@@ -483,7 +608,7 @@ export default function BillingPage() {
                       <td><span className="badge-slate">{p.method}</span></td>
                       <td className="max-w-[220px] truncate" title={p.reference ?? undefined}>{p.reference ?? "—"}</td>
                       <td className="whitespace-nowrap">{p.periodEnd ? new Date(p.periodEnd).toLocaleDateString("bn-BD") : "—"}</td>
-                      <td className="text-right"><button className="btn-secondary btn-sm min-h-[40px]" onClick={() => openInvoice(p.id)}>🧾 Invoice</button></td>
+                      <td className="text-right"><span className="inline-flex gap-1.5"><button className="btn-secondary btn-sm min-h-[40px]" onClick={() => openInvoice(p.id)}>🧾 Invoice</button><button className="btn-secondary btn-sm min-h-[40px]" onClick={() => downloadInvoicePdf(p.id)}>📄 PDF</button></span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -504,7 +629,10 @@ export default function BillingPage() {
                     <div className="flex justify-between gap-3"><dt className="text-slate-400">রেফারেন্স</dt><dd className="min-w-0 truncate font-medium" title={p.reference ?? undefined}>{p.reference ?? "—"}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400">মেয়াদ শেষ</dt><dd className="font-medium">{p.periodEnd ? new Date(p.periodEnd).toLocaleDateString("bn-BD") : "—"}</dd></div>
                   </dl>
-                  <button className="btn-secondary mt-3 min-h-[44px] w-full" onClick={() => openInvoice(p.id)}>🧾 Invoice দেখুন</button>
+                  <div className="mt-3 flex gap-2">
+                    <button className="btn-secondary min-h-[44px] flex-1" onClick={() => openInvoice(p.id)}>🧾 Invoice দেখুন</button>
+                    <button className="btn-secondary min-h-[44px] flex-1" onClick={() => downloadInvoicePdf(p.id)}>📄 PDF ডাউনলোড</button>
+                  </div>
                 </div>
               ))}
             </div>

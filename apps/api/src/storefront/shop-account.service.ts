@@ -11,6 +11,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SmsProvider, normalizeBdPhone } from "../messaging/sms.provider";
 import { tenantSmsFromRow } from "../messaging/sender-config";
 import { phoneKeyLoose } from "../commerce/promotions";
+import { CheckoutGuardService } from "../fraud/checkout-guard.service";
+import { PromotionsService } from "../commerce/promotions.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
 import { hashShopSecret } from "./shop-auth.util";
 import { stockStateOf } from "./storefront.service";
 import type {
@@ -47,6 +50,16 @@ export class ShopAccountService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly sms?: SmsProvider,
+    // GB3 (GC9): OTP gate (blocked identifiers + CAPTCHA on the
+    // otp surface). LAST param + Optional; absent keeps OTP
+    // exactly as before GB3.
+    @Optional() private readonly guard?: CheckoutGuardService,
+    // AB1 (AX1/AX2): the customer's own loyalty + referral
+    // surface. LAST params + Optional; absent answers the
+    // loyalty surface with an honest disabled shape (the module
+    // always provides them in the real runtime).
+    @Optional() private readonly promotions?: PromotionsService,
+    @Optional() private readonly loyalty?: LoyaltyService,
   ) {}
 
   private t(name: string): any {
@@ -195,8 +208,23 @@ export class ShopAccountService {
     }
   }
 
-  async requestOtp(orgSlug: string, phoneRaw: string) {
+  async requestOtp(
+    orgSlug: string,
+    phoneRaw: string,
+    ctx?: { captchaToken?: string | null; ip?: string | null },
+  ) {
     const { org, setting } = await this.requireShop(orgSlug);
+    // GB3 (GC9): the OTP gate runs right after org resolution,
+    // before any code is generated or sent — the guard throws
+    // the generic OTP refusal + writes the attempt log itself.
+    if (this.guard) {
+      await this.guard.evaluateGate(org.id, "otp", {
+        phone: phoneRaw,
+        ip: ctx?.ip ?? null,
+        captchaToken: ctx?.captchaToken ?? null,
+        surface: "otp",
+      });
+    }
     const phoneKey = phoneKeyLoose(phoneRaw);
     if (phoneKey.length < 11) {
       throw new BadRequestException("সঠিক মোবাইল নম্বর দিন");
@@ -414,6 +442,35 @@ export class ShopAccountService {
       customer: this.serializeCustomer(customer),
       defaultAddress: def ? this.serializeAddress(def) : null,
     };
+  }
+
+  /**
+   * AB1 (AX1/AX2) — the signed-in customer's own loyalty surface:
+   * balance + value, ledger history, the rewards they earned as
+   * a referrer, and their referral code ("আপনার রেফারেল"). When
+   * the loyalty service is unavailable (unit harnesses), answer
+   * with the honest disabled shape rather than failing.
+   */
+  async loyaltyView(orgSlug: string, token: string | null | undefined) {
+    const { org, customer } = await this.requireSessionCustomer(orgSlug, token);
+    const referralCode = this.promotions?.ensureCustomerReferralCode
+      ? await this.promotions
+          .ensureCustomerReferralCode(org.id, customer.id)
+          .catch(() => customer.referralCode ?? null)
+      : (customer.referralCode ?? null);
+    if (!this.loyalty) {
+      return {
+        enabled: false,
+        balance: 0,
+        balanceValueMinor: 0,
+        redeemValueMinorPerPoint: 0,
+        entries: [],
+        referralRewards: { coupons: [] },
+        referralCode,
+      };
+    }
+    const view = await this.loyalty.accountLoyalty(org.id, customer);
+    return { ...view, referralCode };
   }
 
   async updateProfile(orgSlug: string, token: string | null | undefined, dto: UpdateProfileDto) {

@@ -1,0 +1,102 @@
+b1d6df761bfb8dd1ea75c48a454addfb
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IdempotencyService = void 0;
+const common_1 = require("@nestjs/common");
+const prisma_service_1 = require("../prisma/prisma.service");
+/**
+ * GB3 (GC8): checkout idempotency — one row per (org, key)
+ * presented at a public checkout surface. The first successful
+ * placement stores its response; a retry with the same key
+ * replays that response instead of placing a duplicate order.
+ *
+ * Discipline: idempotency must NEVER fail a placed order. Every
+ * read degrades to "no replay" and every write failure returns
+ * the caller's own response (on a unique-violation the stored
+ * winner's response wins, because that is the placement that
+ * actually happened first).
+ */
+let IdempotencyService = class IdempotencyService {
+    prisma;
+    constructor(prisma) {
+        this.prisma = prisma;
+    }
+    table() {
+        return this.prisma?.idempotencyRecord;
+    }
+    async load(orgId, key) {
+        const table = this.table();
+        if (!table)
+            return null;
+        if (typeof table.findFirst === "function") {
+            return (await table.findFirst({ where: { organizationId: orgId, key } }).catch(() => null)) ?? null;
+        }
+        if (typeof table.findUnique === "function") {
+            return ((await table
+                .findUnique({ where: { organizationId_key: { organizationId: orgId, key } } })
+                .catch(() => null)) ?? null);
+        }
+        return null;
+    }
+    /** Stored responseJson for (org, key), or null — any error → null. */
+    async findReplay(orgId, key) {
+        try {
+            if (!orgId || !key)
+                return null;
+            const row = await this.load(orgId, key);
+            return row?.responseJson ?? null;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Record a placement and return the response the caller
+     * should return: the passed response on success; on a
+     * unique-violation (a concurrent request won the race) the
+     * EXISTING row's stored response; on any other error the
+     * passed response (the order was placed — idempotency
+     * bookkeeping must not fail it).
+     */
+    async record(orgId, key, scope, orderId, response) {
+        try {
+            const table = this.table();
+            if (!table?.create)
+                return response;
+            await table.create({
+                data: { organizationId: orgId, key, scope, orderId: orderId ?? null, responseJson: response },
+            });
+            return response;
+        }
+        catch (e) {
+            const code = e?.code ?? "";
+            const message = e instanceof Error ? e.message : String(e ?? "");
+            if (code === "P2002" || /unique/i.test(message)) {
+                try {
+                    const existing = await this.load(orgId, key);
+                    if (existing?.responseJson != null)
+                        return existing.responseJson;
+                }
+                catch {
+                    /* fall through to the caller's response */
+                }
+            }
+            return response;
+        }
+    }
+};
+exports.IdempotencyService = IdempotencyService;
+exports.IdempotencyService = IdempotencyService = __decorate([
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+], IdempotencyService);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ZyYXVkL2lkZW1wb3RlbmN5LnNlcnZpY2UudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQTRDO0FBQzVDLDZEQUF5RDtBQUV6RDs7Ozs7Ozs7Ozs7R0FXRztBQUVJLElBQU0sa0JBQWtCLEdBQXhCLE1BQU0sa0JBQWtCO0lBQ0E7SUFBN0IsWUFBNkIsTUFBcUI7UUFBckIsV0FBTSxHQUFOLE1BQU0sQ0FBZTtJQUFHLENBQUM7SUFFOUMsS0FBSztRQUNYLE9BQVEsSUFBSSxDQUFDLE1BQWMsRUFBRSxpQkFBaUIsQ0FBQztJQUNqRCxDQUFDO0lBRU8sS0FBSyxDQUFDLElBQUksQ0FBQyxLQUFhLEVBQUUsR0FBVztRQUMzQyxNQUFNLEtBQUssR0FBRyxJQUFJLENBQUMsS0FBSyxFQUFFLENBQUM7UUFDM0IsSUFBSSxDQUFDLEtBQUs7WUFBRSxPQUFPLElBQUksQ0FBQztRQUN4QixJQUFJLE9BQU8sS0FBSyxDQUFDLFNBQVMsS0FBSyxVQUFVLEVBQUUsQ0FBQztZQUMxQyxPQUFPLENBQUMsTUFBTSxLQUFLLENBQUMsU0FBUyxDQUFDLEVBQUUsS0FBSyxFQUFFLEVBQUUsY0FBYyxFQUFFLEtBQUssRUFBRSxHQUFHLEVBQUUsRUFBRSxDQUFDLENBQUMsS0FBSyxDQUFDLEdBQUcsRUFBRSxDQUFDLElBQUksQ0FBQyxDQUFDLElBQUksSUFBSSxDQUFDO1FBQ3RHLENBQUM7UUFDRCxJQUFJLE9BQU8sS0FBSyxDQUFDLFVBQVUsS0FBSyxVQUFVLEVBQUUsQ0FBQztZQUMzQyxPQUFPLENBQ0wsQ0FBQyxNQUFNLEtBQUs7aUJBQ1QsVUFBVSxDQUFDLEVBQUUsS0FBSyxFQUFFLEVBQUUsa0JBQWtCLEVBQUUsRUFBRSxjQUFjLEVBQUUsS0FBSyxFQUFFLEdBQUcsRUFBRSxFQUFFLEVBQUUsQ0FBQztpQkFDN0UsS0FBSyxDQUFDLEdBQUcsRUFBRSxDQUFDLElBQUksQ0FBQyxDQUFDLElBQUksSUFBSSxDQUM5QixDQUFDO1FBQ0osQ0FBQztRQUNELE9BQU8sSUFBSSxDQUFDO0lBQ2QsQ0FBQztJQUVELHNFQUFzRTtJQUN0RSxLQUFLLENBQUMsVUFBVSxDQUFDLEtBQWEsRUFBRSxHQUFXO1FBQ3pDLElBQUksQ0FBQztZQUNILElBQUksQ0FBQyxLQUFLLElBQUksQ0FBQyxHQUFHO2dCQUFFLE9BQU8sSUFBSSxDQUFDO1lBQ2hDLE1BQU0sR0FBRyxHQUFHLE1BQU0sSUFBSSxDQUFDLElBQUksQ0FBQyxLQUFLLEVBQUUsR0FBRyxDQUFDLENBQUM7WUFDeEMsT0FBTyxHQUFHLEVBQUUsWUFBWSxJQUFJLElBQUksQ0FBQztRQUNuQyxDQUFDO1FBQUMsTUFBTSxDQUFDO1lBQ1AsT0FBTyxJQUFJLENBQUM7UUFDZCxDQUFDO0lBQ0gsQ0FBQztJQUVEOzs7Ozs7O09BT0c7SUFDSCxLQUFLLENBQUMsTUFBTSxDQUNWLEtBQWEsRUFDYixHQUFXLEVBQ1gsS0FBYSxFQUNiLE9BQXNCLEVBQ3RCLFFBQWE7UUFFYixJQUFJLENBQUM7WUFDSCxNQUFNLEtBQUssR0FBRyxJQUFJLENBQUMsS0FBSyxFQUFFLENBQUM7WUFDM0IsSUFBSSxDQUFDLEtBQUssRUFBRSxNQUFNO2dCQUFFLE9BQU8sUUFBUSxDQUFDO1lBQ3BDLE1BQU0sS0FBSyxDQUFDLE1BQU0sQ0FBQztnQkFDakIsSUFBSSxFQUFFLEVBQUUsY0FBYyxFQUFFLEtBQUssRUFBRSxHQUFHLEVBQUUsS0FBSyxFQUFFLE9BQU8sRUFBRSxPQUFPLElBQUksSUFBSSxFQUFFLFlBQVksRUFBRSxRQUFRLEVBQUU7YUFDOUYsQ0FBQyxDQUFDO1lBQ0gsT0FBTyxRQUFRLENBQUM7UUFDbEIsQ0FBQztRQUFDLE9BQU8sQ0FBTSxFQUFFLENBQUM7WUFDaEIsTUFBTSxJQUFJLEdBQUcsQ0FBQyxFQUFFLElBQUksSUFBSSxFQUFFLENBQUM7WUFDM0IsTUFBTSxPQUFPLEdBQUcsQ0FBQyxZQUFZLEtBQUssQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLE9BQU8sQ0FBQyxDQUFDLENBQUMsTUFBTSxDQUFDLENBQUMsSUFBSSxFQUFFLENBQUMsQ0FBQztZQUNqRSxJQUFJLElBQUksS0FBSyxPQUFPLElBQUksU0FBUyxDQUFDLElBQUksQ0FBQyxPQUFPLENBQUMsRUFBRSxDQUFDO2dCQUNoRCxJQUFJLENBQUM7b0JBQ0gsTUFBTSxRQUFRLEdBQUcsTUFBTSxJQUFJLENBQUMsSUFBSSxDQUFDLEtBQUssRUFBRSxHQUFHLENBQUMsQ0FBQztvQkFDN0MsSUFBSSxRQUFRLEVBQUUsWUFBWSxJQUFJLElBQUk7d0JBQUUsT0FBTyxRQUFRLENBQUMsWUFBWSxDQUFDO2dCQUNuRSxDQUFDO2dCQUFDLE1BQU0sQ0FBQztvQkFDUCwyQ0FBMkM7Z0JBQzdDLENBQUM7WUFDSCxDQUFDO1lBQ0QsT0FBTyxRQUFRLENBQUM7UUFDbEIsQ0FBQztJQUNILENBQUM7Q0FDRixDQUFBO0FBdEVZLGdEQUFrQjs2QkFBbEIsa0JBQWtCO0lBRDlCLElBQUEsbUJBQVUsR0FBRTtxQ0FFMEIsOEJBQWE7R0FEdkMsa0JBQWtCLENBc0U5QiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvZnJhdWQvaWRlbXBvdGVuY3kuc2VydmljZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJbmplY3RhYmxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBQcmlzbWFTZXJ2aWNlIH0gZnJvbSBcIi4uL3ByaXNtYS9wcmlzbWEuc2VydmljZVwiO1xuXG4vKipcbiAqIEdCMyAoR0M4KTogY2hlY2tvdXQgaWRlbXBvdGVuY3kg4oCUIG9uZSByb3cgcGVyIChvcmcsIGtleSlcbiAqIHByZXNlbnRlZCBhdCBhIHB1YmxpYyBjaGVja291dCBzdXJmYWNlLiBUaGUgZmlyc3Qgc3VjY2Vzc2Z1bFxuICogcGxhY2VtZW50IHN0b3JlcyBpdHMgcmVzcG9uc2U7IGEgcmV0cnkgd2l0aCB0aGUgc2FtZSBrZXlcbiAqIHJlcGxheXMgdGhhdCByZXNwb25zZSBpbnN0ZWFkIG9mIHBsYWNpbmcgYSBkdXBsaWNhdGUgb3JkZXIuXG4gKlxuICogRGlzY2lwbGluZTogaWRlbXBvdGVuY3kgbXVzdCBORVZFUiBmYWlsIGEgcGxhY2VkIG9yZGVyLiBFdmVyeVxuICogcmVhZCBkZWdyYWRlcyB0byBcIm5vIHJlcGxheVwiIGFuZCBldmVyeSB3cml0ZSBmYWlsdXJlIHJldHVybnNcbiAqIHRoZSBjYWxsZXIncyBvd24gcmVzcG9uc2UgKG9uIGEgdW5pcXVlLXZpb2xhdGlvbiB0aGUgc3RvcmVkXG4gKiB3aW5uZXIncyByZXNwb25zZSB3aW5zLCBiZWNhdXNlIHRoYXQgaXMgdGhlIHBsYWNlbWVudCB0aGF0XG4gKiBhY3R1YWxseSBoYXBwZW5lZCBmaXJzdCkuXG4gKi9cbkBJbmplY3RhYmxlKClcbmV4cG9ydCBjbGFzcyBJZGVtcG90ZW5jeVNlcnZpY2Uge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IHByaXNtYTogUHJpc21hU2VydmljZSkge31cblxuICBwcml2YXRlIHRhYmxlKCk6IGFueSB7XG4gICAgcmV0dXJuICh0aGlzLnByaXNtYSBhcyBhbnkpPy5pZGVtcG90ZW5jeVJlY29yZDtcbiAgfVxuXG4gIHByaXZhdGUgYXN5bmMgbG9hZChvcmdJZDogc3RyaW5nLCBrZXk6IHN0cmluZyk6IFByb21pc2U8YW55IHwgbnVsbD4ge1xuICAgIGNvbnN0IHRhYmxlID0gdGhpcy50YWJsZSgpO1xuICAgIGlmICghdGFibGUpIHJldHVybiBudWxsO1xuICAgIGlmICh0eXBlb2YgdGFibGUuZmluZEZpcnN0ID09PSBcImZ1bmN0aW9uXCIpIHtcbiAgICAgIHJldHVybiAoYXdhaXQgdGFibGUuZmluZEZpcnN0KHsgd2hlcmU6IHsgb3JnYW5pemF0aW9uSWQ6IG9yZ0lkLCBrZXkgfSB9KS5jYXRjaCgoKSA9PiBudWxsKSkgPz8gbnVsbDtcbiAgICB9XG4gICAgaWYgKHR5cGVvZiB0YWJsZS5maW5kVW5pcXVlID09PSBcImZ1bmN0aW9uXCIpIHtcbiAgICAgIHJldHVybiAoXG4gICAgICAgIChhd2FpdCB0YWJsZVxuICAgICAgICAgIC5maW5kVW5pcXVlKHsgd2hlcmU6IHsgb3JnYW5pemF0aW9uSWRfa2V5OiB7IG9yZ2FuaXphdGlvbklkOiBvcmdJZCwga2V5IH0gfSB9KVxuICAgICAgICAgIC5jYXRjaCgoKSA9PiBudWxsKSkgPz8gbnVsbFxuICAgICAgKTtcbiAgICB9XG4gICAgcmV0dXJuIG51bGw7XG4gIH1cblxuICAvKiogU3RvcmVkIHJlc3BvbnNlSnNvbiBmb3IgKG9yZywga2V5KSwgb3IgbnVsbCDigJQgYW55IGVycm9yIOKGkiBudWxsLiAqL1xuICBhc3luYyBmaW5kUmVwbGF5KG9yZ0lkOiBzdHJpbmcsIGtleTogc3RyaW5nKTogUHJvbWlzZTxhbnkgfCBudWxsPiB7XG4gICAgdHJ5IHtcbiAgICAgIGlmICghb3JnSWQgfHwgIWtleSkgcmV0dXJuIG51bGw7XG4gICAgICBjb25zdCByb3cgPSBhd2FpdCB0aGlzLmxvYWQob3JnSWQsIGtleSk7XG4gICAgICByZXR1cm4gcm93Py5yZXNwb25zZUpzb24gPz8gbnVsbDtcbiAgICB9IGNhdGNoIHtcbiAgICAgIHJldHVybiBudWxsO1xuICAgIH1cbiAgfVxuXG4gIC8qKlxuICAgKiBSZWNvcmQgYSBwbGFjZW1lbnQgYW5kIHJldHVybiB0aGUgcmVzcG9uc2UgdGhlIGNhbGxlclxuICAgKiBzaG91bGQgcmV0dXJuOiB0aGUgcGFzc2VkIHJlc3BvbnNlIG9uIHN1Y2Nlc3M7IG9uIGFcbiAgICogdW5pcXVlLXZpb2xhdGlvbiAoYSBjb25jdXJyZW50IHJlcXVlc3Qgd29uIHRoZSByYWNlKSB0aGVcbiAgICogRVhJU1RJTkcgcm93J3Mgc3RvcmVkIHJlc3BvbnNlOyBvbiBhbnkgb3RoZXIgZXJyb3IgdGhlXG4gICAqIHBhc3NlZCByZXNwb25zZSAodGhlIG9yZGVyIHdhcyBwbGFjZWQg4oCUIGlkZW1wb3RlbmN5XG4gICAqIGJvb2trZWVwaW5nIG11c3Qgbm90IGZhaWwgaXQpLlxuICAgKi9cbiAgYXN5bmMgcmVjb3JkKFxuICAgIG9yZ0lkOiBzdHJpbmcsXG4gICAga2V5OiBzdHJpbmcsXG4gICAgc2NvcGU6IHN0cmluZyxcbiAgICBvcmRlcklkOiBzdHJpbmcgfCBudWxsLFxuICAgIHJlc3BvbnNlOiBhbnksXG4gICk6IFByb21pc2U8YW55PiB7XG4gICAgdHJ5IHtcbiAgICAgIGNvbnN0IHRhYmxlID0gdGhpcy50YWJsZSgpO1xuICAgICAgaWYgKCF0YWJsZT8uY3JlYXRlKSByZXR1cm4gcmVzcG9uc2U7XG4gICAgICBhd2FpdCB0YWJsZS5jcmVhdGUoe1xuICAgICAgICBkYXRhOiB7IG9yZ2FuaXphdGlvbklkOiBvcmdJZCwga2V5LCBzY29wZSwgb3JkZXJJZDogb3JkZXJJZCA/PyBudWxsLCByZXNwb25zZUpzb246IHJlc3BvbnNlIH0sXG4gICAgICB9KTtcbiAgICAgIHJldHVybiByZXNwb25zZTtcbiAgICB9IGNhdGNoIChlOiBhbnkpIHtcbiAgICAgIGNvbnN0IGNvZGUgPSBlPy5jb2RlID8/IFwiXCI7XG4gICAgICBjb25zdCBtZXNzYWdlID0gZSBpbnN0YW5jZW9mIEVycm9yID8gZS5tZXNzYWdlIDogU3RyaW5nKGUgPz8gXCJcIik7XG4gICAgICBpZiAoY29kZSA9PT0gXCJQMjAwMlwiIHx8IC91bmlxdWUvaS50ZXN0KG1lc3NhZ2UpKSB7XG4gICAgICAgIHRyeSB7XG4gICAgICAgICAgY29uc3QgZXhpc3RpbmcgPSBhd2FpdCB0aGlzLmxvYWQob3JnSWQsIGtleSk7XG4gICAgICAgICAgaWYgKGV4aXN0aW5nPy5yZXNwb25zZUpzb24gIT0gbnVsbCkgcmV0dXJuIGV4aXN0aW5nLnJlc3BvbnNlSnNvbjtcbiAgICAgICAgfSBjYXRjaCB7XG4gICAgICAgICAgLyogZmFsbCB0aHJvdWdoIHRvIHRoZSBjYWxsZXIncyByZXNwb25zZSAqL1xuICAgICAgICB9XG4gICAgICB9XG4gICAgICByZXR1cm4gcmVzcG9uc2U7XG4gICAgfVxuICB9XG59XG4iXSwidmVyc2lvbiI6M30=

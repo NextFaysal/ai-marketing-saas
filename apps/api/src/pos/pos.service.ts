@@ -6,10 +6,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { OrdersService } from "../orders/orders.service";
-import { PromotionsService } from "../commerce/promotions.service";
+import { PromotionsService, type LoyaltyRedeemInput } from "../commerce/promotions.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
+import { GiftCardsService } from "../commerce/gift-cards.service";
+import { PriceListsService, pickGroupPrice } from "../commerce/price-lists.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import type { PromotionLine } from "../commerce/promotions";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+import { IdempotencyService } from "../fraud/idempotency.service";
 import type { CreatePosSaleDto } from "./pos.dto";
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -78,6 +82,22 @@ export class PosService {
     private readonly promotions: PromotionsService,
     @Optional() private readonly discounts?: DiscountsService,
     @Optional() private readonly audit?: AuditService,
+    // AB1 (AX1): loyalty snapshot + placement-time points spend.
+    // LAST param + Optional, same discipline; absent keeps POS
+    // exactly as before AB1.
+    @Optional() private readonly loyalty?: LoyaltyService,
+    // AB2 (AX3): gift-card redemption resolution + placement-time
+    // balance spend. LAST param + Optional, same discipline;
+    // absent keeps POS exactly as before AB2.
+    @Optional() private readonly giftCards?: GiftCardsService,
+    // AB4 (AX6): GB3 idempotency replay for retried sales (incl.
+    // offline-sync posts). LAST param + Optional, same
+    // discipline; absent keeps POS exactly as before AB4.
+    @Optional() private readonly idempotency?: IdempotencyService,
+    // AB5 (AX7): B2B group price lists as a PRICE SOURCE.
+    // LAST param + Optional, same discipline; absent keeps POS
+    // exactly as before AB5.
+    @Optional() private readonly priceLists?: PriceListsService,
   ) {}
 
   private t(name: string): any {
@@ -218,7 +238,23 @@ export class PosService {
     }
   }
 
-  async createSale(organizationId: string, actorId: string, dto: CreatePosSaleDto) {
+  async createSale(
+    organizationId: string,
+    actorId: string,
+    dto: CreatePosSaleDto,
+    opts?: { forceStock?: boolean },
+  ) {
+    // AB4 (AX6): GB3 idempotency — a retry presenting a key that
+    // already placed a sale replays the stored response as-is.
+    // Keys are namespaced `pos:` because IdempotencyRecord's
+    // unique is (org, key) ACROSS scopes.
+    const idemKey = dto?.idempotencyKey && this.idempotency
+      ? `pos:${dto.idempotencyKey}`
+      : null;
+    if (idemKey) {
+      const replay = await this.idempotency!.findReplay(organizationId, idemKey).catch(() => null);
+      if (replay != null) return replay;
+    }
     if (!Array.isArray(dto?.items) || dto.items.length === 0) {
       throw new BadRequestException("কমপক্ষে একটি পণ্য যোগ করুন");
     }
@@ -264,7 +300,12 @@ export class PosService {
         });
         if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
       }
-      if (!product.preorderEnabled) {
+      // AB4 (AX6): opts.forceStock skips ONLY this per-line
+      // quantity refusal (offline-sync repost with merchant
+      // approval). Prices, the evaluator and the placement-time
+      // stock DECREMENT are untouched — the overdraw is the
+      // merchant's sanctioned choice, like a backorder.
+      if (!product.preorderEnabled && !opts?.forceStock) {
         const stock = variant ? variant.stockQuantity : product.stockQuantity;
         if (stock !== null && stock !== undefined && line.quantity > Number(stock)) {
           throw new BadRequestException(
@@ -293,10 +334,90 @@ export class PosService {
       unitPriceMinor: l.unitPriceMinor,
       compareAtMinor: l.product.compareAtMinor ?? null,
     }));
+    // GB7: with a phone, resolve the customer + prior count ONCE.
+    // Walk-ins (no phone) share no verified identity — customerId
+    // and priorOrderCount stay null, so customer-conditioned
+    // coupons refuse (staff can add the customer's phone).
+    let posCustomerId: string | null = null;
+    let posPriorOrderCount: number | null = null;
+    if (phone) {
+      // Guards keep lightweight promotions stubs (older harnesses) working.
+      posCustomerId =
+        typeof (this.promotions as any).customerIdForPhone === "function"
+          ? await this.promotions.customerIdForPhone(organizationId, phone)
+          : null;
+      posPriorOrderCount =
+        typeof (this.promotions as any).priorOrderCountFor === "function"
+          ? await this.promotions.priorOrderCountFor(organizationId, posCustomerId)
+          : null;
+    }
+    // AB5 (AX7) PRICE SOURCE precedence: gift-card lines keep
+    // face value → an explicit price-list price REPLACES the
+    // catalog/variant price AND beats wholesale-tier math
+    // (negotiated price is more specific than a quantity tier;
+    // POS has no tier, the rule is stated for parity) → catalog
+    // price otherwise. Applied BEFORE the evaluator runs, by
+    // rewriting the resolved lines + their promo lines in place
+    // (same order in both arrays). Walk-ins have no verified
+    // identity, so no group prices — same basis as GB7 above.
+    // Failure-isolated: no map ⇒ prices stay exactly as today.
+    const priceListBreakdown: Array<{ productId: string; variantId: string | null; priceMinor: string }> = [];
+    if (this.priceLists && posCustomerId) {
+      const map = await this.priceLists
+        .priceMapForCustomer(organizationId, posCustomerId)
+        .catch(() => null);
+      if (map) {
+        for (let i = 0; i < resolved.length; i++) {
+          const l = resolved[i];
+          if ((l.product as any).isGiftCard) continue;
+          const listPrice = pickGroupPrice(map, l.product.id, l.variant?.id ?? null);
+          if (listPrice != null) {
+            l.unitPriceMinor = listPrice;
+            if (promoLines[i]) promoLines[i].unitPriceMinor = listPrice;
+            priceListBreakdown.push({
+              productId: l.product.id,
+              variantId: l.variant?.id ?? null,
+              priceMinor: listPrice.toString(),
+            });
+          }
+        }
+      }
+    }
+    // AB1 (AX1): loyalty snapshot for the phone-identified
+    // customer (walk-ins share no verified identity, so no
+    // snapshot and no redemption — same basis as GB7 above).
+    let loyaltyInput: LoyaltyRedeemInput | null = null;
+    if (this.loyalty && dto.loyaltyPoints != null && dto.loyaltyPoints > 0 && posCustomerId) {
+      const snap = await this.loyalty
+        .checkoutSnapshot(organizationId, posCustomerId)
+        .catch(() => null);
+      if (snap) loyaltyInput = { pointsToRedeem: dto.loyaltyPoints, ...snap };
+    }
+    // AB2 (AX3): gift-card redemption snapshot. A presented code
+    // that cannot be redeemed REFUSES the sale here (the Bengali
+    // BadRequest from resolveForCheckout propagates — before
+    // placement, like an invalid coupon). Gift-card PRODUCT
+    // sales need no intent code here: POS items already carry
+    // productId, so the reconciler's fallback records them.
+    let giftCardInput: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null = null;
+    if (dto.giftCardCode?.trim()) {
+      if (!this.giftCards) {
+        throw new BadRequestException("গিফট কার্ড সুবিধা এই দোকানে নেই");
+      }
+      const cartHasGiftCardProduct = resolved.some((l) => !!l.product.isGiftCard);
+      const snap = await this.giftCards.resolveForCheckout(organizationId, dto.giftCardCode, {
+        cartHasGiftCardProduct,
+      });
+      giftCardInput = { giftCardId: snap.giftCardId, balanceMinor: snap.balanceMinor, codeLast4: snap.codeLast4 };
+    }
     const ev = await this.promotions.evaluateCheckout(organizationId, {
       lines: promoLines,
       couponCode: dto.couponCode?.trim() ? dto.couponCode.trim() : null,
       buyerPhone: phone,
+      customerId: posCustomerId,
+      priorOrderCount: posPriorOrderCount,
+      loyalty: loyaltyInput,
+      giftCard: giftCardInput,
     });
     // EC23 total: subtotal − all discounts + tax ADDED (delivery 0).
     const subtotal = ev.subtotalMinor;
@@ -348,11 +469,43 @@ export class PosService {
     // breakdown) — failure-isolated inside stampOrder. Gift
     // fields stay untouched (giftOutcome unset — see class doc).
     await this.promotions.stampOrder(organizationId, "pos", externalId, ev);
+    // AB5 (AX7): stamp the group price-list snapshot onto the
+    // placed order (failure-isolated — the sale already stands).
+    if (priceListBreakdown.length > 0) {
+      try {
+        await this.t("order").update({
+          where: { id: order.id },
+          data: { priceListBreakdown },
+        });
+      } catch (e) {
+        this.logger.warn(`POS price list stamp failed for order ${order.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     // Coupon redemption AFTER placement, failure-isolated like
     // every other checkout path.
     if (ev.appliedDiscountId && this.discounts) {
       await this.discounts.redeem(organizationId, ev.appliedDiscountId).catch((e) => {
         this.logger.warn(`POS coupon redeem failed for discount ${ev.appliedDiscountId}: ${e instanceof Error ? e.message : String(e)}`);
+      });
+    }
+
+    // AB1 (AX1): spend the redeemed points now that the order
+    // exists (failure-isolated inside LoyaltyService).
+    if ((ev.loyaltyPointsApplied ?? 0) > 0 && this.loyalty) {
+      await this.loyalty.postPlacementRedeem(organizationId, {
+        orderId: order.id,
+        customerId: order.customerId ?? null,
+        points: ev.loyaltyPointsApplied ?? 0,
+      });
+    }
+
+    // AB2 (AX3): spend the redeemed gift-card balance now that
+    // the order exists (failure-isolated inside GiftCardsService).
+    if ((ev.giftCardDiscountMinor ?? 0n) > 0n && this.giftCards) {
+      await this.giftCards.postPlacementRedeem(organizationId, {
+        orderId: order.id,
+        giftCardId: ev.giftCardId!,
+        amountMinor: ev.giftCardDiscountMinor!,
       });
     }
 
@@ -388,14 +541,17 @@ export class PosService {
     await this.audit?.log({
       organizationId, userId: actorId, action: "pos.sale_created",
       entityType: "Order", entityId: order.id,
-      metadata: { orderId: order.id, totalMinor: total.toString(), mode },
+      metadata: {
+        orderId: order.id, totalMinor: total.toString(), mode,
+        ...(opts?.forceStock ? { forced: true } : {}),
+      },
     }).catch(() => undefined);
 
     const full: any = await this.orders.getOne(organizationId, order.id);
     const org = await this.t("organization").findFirst({ where: { id: organizationId } }).catch(() => null);
     const paidMinor = full?.advancePaidMinor ?? (mode === "paid" ? total.toString() : "0");
     const dueMinor = full?.amountDueMinor ?? (mode === "paid" ? "0" : total.toString());
-    return {
+    const result = {
       ...full,
       receipt: {
         shopName: org?.brandName || org?.name || null,
@@ -408,6 +564,21 @@ export class PosService {
         })),
         subtotalMinor: subtotal.toString(),
         discountMinor: discount.toString(),
+        // AB1 (AX1): the loyalty slice of the discount + the
+        // points it spent (0 when no redemption happened).
+        loyaltyDiscountMinor: (ev.loyaltyDiscountMinor ?? 0n).toString(),
+        loyaltyPointsUsed: ev.loyaltyPointsApplied ?? 0,
+        // AB2 (AX3): the gift-card slice of the discount, only
+        // when a card was applied (last4 + amount only, never
+        // the full code).
+        ...(giftCardInput
+          ? {
+              giftCard: {
+                codeLast4: giftCardInput.codeLast4,
+                discountMinor: (ev.giftCardDiscountMinor ?? 0n).toString(),
+              },
+            }
+          : {}),
         taxMinor: ev.taxMinor.toString(),
         taxAddedMinor: ev.taxAddedMinor.toString(),
         totalMinor: total.toString(),
@@ -417,6 +588,13 @@ export class PosService {
         paymentMethod: mode === "paid" ? method : null,
       },
     };
+    // AB4 (AX6): store the response under the namespaced key —
+    // record() returns the response the caller should return
+    // (a concurrent winner's stored response wins the race).
+    if (idemKey) {
+      return this.idempotency!.record(organizationId, idemKey, "pos", order.id, result);
+    }
+    return result;
   }
 
   // ---------- today's sales ----------

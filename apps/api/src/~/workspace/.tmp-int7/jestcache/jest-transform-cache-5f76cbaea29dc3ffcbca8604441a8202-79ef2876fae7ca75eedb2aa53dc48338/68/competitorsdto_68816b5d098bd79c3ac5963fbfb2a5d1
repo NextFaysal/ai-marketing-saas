@@ -1,0 +1,312 @@
+15c3d54a85f06ecebc65f475b70780cd
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimulateRuleTriggerDto = exports.SaveDynamicRulesDto = exports.TestAlertChannelDto = exports.ConfigureAlertSettingsDto = exports.DeconstructVideoScriptDto = exports.MineReviewsDto = exports.GenerateSeoGapDto = exports.SyncMultiPlatformDto = exports.GenerateCounterAdDto = exports.GenerateInsightsDto = exports.AddObservationDto = exports.SyncAdsDto = exports.UpdateCompetitorDto = exports.CreateCompetitorDto = void 0;
+const class_validator_1 = require("class-validator");
+class CreateCompetitorDto {
+    name;
+    facebookPageId;
+    facebookPageUrl;
+    websiteUrl;
+    notes;
+}
+exports.CreateCompetitorDto = CreateCompetitorDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateCompetitorDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCompetitorDto.prototype, "facebookPageId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCompetitorDto.prototype, "facebookPageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCompetitorDto.prototype, "websiteUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], CreateCompetitorDto.prototype, "notes", void 0);
+class UpdateCompetitorDto {
+    name;
+    facebookPageId;
+    facebookPageUrl;
+    websiteUrl;
+    notes;
+}
+exports.UpdateCompetitorDto = UpdateCompetitorDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCompetitorDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCompetitorDto.prototype, "facebookPageId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCompetitorDto.prototype, "facebookPageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCompetitorDto.prototype, "websiteUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateCompetitorDto.prototype, "notes", void 0);
+class SyncAdsDto {
+    countries;
+    activeOnly;
+}
+exports.SyncAdsDto = SyncAdsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Array)
+], SyncAdsDto.prototype, "countries", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], SyncAdsDto.prototype, "activeOnly", void 0);
+class AddObservationDto {
+    productName;
+    price;
+    currency;
+    sourceUrl;
+}
+exports.AddObservationDto = AddObservationDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], AddObservationDto.prototype, "productName", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddObservationDto.prototype, "price", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddObservationDto.prototype, "currency", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AddObservationDto.prototype, "sourceUrl", void 0);
+class GenerateInsightsDto {
+    competitorId;
+}
+exports.GenerateInsightsDto = GenerateInsightsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateInsightsDto.prototype, "competitorId", void 0);
+class GenerateCounterAdDto {
+    competitorAdId;
+    ownProductId;
+    tone;
+}
+exports.GenerateCounterAdDto = GenerateCounterAdDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateCounterAdDto.prototype, "competitorAdId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateCounterAdDto.prototype, "ownProductId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateCounterAdDto.prototype, "tone", void 0);
+class SyncMultiPlatformDto {
+    platforms;
+    countries;
+    activeOnly;
+}
+exports.SyncMultiPlatformDto = SyncMultiPlatformDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Array)
+], SyncMultiPlatformDto.prototype, "platforms", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Array)
+], SyncMultiPlatformDto.prototype, "countries", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], SyncMultiPlatformDto.prototype, "activeOnly", void 0);
+class GenerateSeoGapDto {
+    ownProductId;
+}
+exports.GenerateSeoGapDto = GenerateSeoGapDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateSeoGapDto.prototype, "ownProductId", void 0);
+class MineReviewsDto {
+    reviewsText;
+}
+exports.MineReviewsDto = MineReviewsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20000),
+    __metadata("design:type", String)
+], MineReviewsDto.prototype, "reviewsText", void 0);
+class DeconstructVideoScriptDto {
+    competitorAdId;
+    ownProductId;
+    videoStyle;
+}
+exports.DeconstructVideoScriptDto = DeconstructVideoScriptDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], DeconstructVideoScriptDto.prototype, "competitorAdId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], DeconstructVideoScriptDto.prototype, "ownProductId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], DeconstructVideoScriptDto.prototype, "videoStyle", void 0);
+class ConfigureAlertSettingsDto {
+    telegramEnabled;
+    telegramBotToken;
+    telegramChatId;
+    whatsappEnabled;
+    whatsappWebhookUrl;
+    notifyOnPriceDrop;
+    notifyOnStockOut;
+    notifyOnWinningAd;
+}
+exports.ConfigureAlertSettingsDto = ConfigureAlertSettingsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ConfigureAlertSettingsDto.prototype, "telegramEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConfigureAlertSettingsDto.prototype, "telegramBotToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConfigureAlertSettingsDto.prototype, "telegramChatId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ConfigureAlertSettingsDto.prototype, "whatsappEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConfigureAlertSettingsDto.prototype, "whatsappWebhookUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ConfigureAlertSettingsDto.prototype, "notifyOnPriceDrop", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ConfigureAlertSettingsDto.prototype, "notifyOnStockOut", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ConfigureAlertSettingsDto.prototype, "notifyOnWinningAd", void 0);
+class TestAlertChannelDto {
+    channel;
+    telegramBotToken;
+    telegramChatId;
+    whatsappWebhookUrl;
+}
+exports.TestAlertChannelDto = TestAlertChannelDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TestAlertChannelDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TestAlertChannelDto.prototype, "telegramBotToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TestAlertChannelDto.prototype, "telegramChatId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TestAlertChannelDto.prototype, "whatsappWebhookUrl", void 0);
+class SaveDynamicRulesDto {
+    rules;
+}
+exports.SaveDynamicRulesDto = SaveDynamicRulesDto;
+class SimulateRuleTriggerDto {
+    triggerType;
+    competitorName;
+    productName;
+    percentageChange;
+}
+exports.SimulateRuleTriggerDto = SimulateRuleTriggerDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SimulateRuleTriggerDto.prototype, "triggerType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SimulateRuleTriggerDto.prototype, "competitorName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SimulateRuleTriggerDto.prototype, "productName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], SimulateRuleTriggerDto.prototype, "percentageChange", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvbXBldGl0b3JzL2NvbXBldGl0b3JzLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBNkU7QUFFN0UsTUFBYSxtQkFBbUI7SUFDRixJQUFJLENBQVU7SUFDaEIsY0FBYyxDQUFVO0lBQ3hCLGVBQWUsQ0FBVTtJQUN6QixVQUFVLENBQVU7SUFDSCxLQUFLLENBQVU7Q0FDM0Q7QUFORCxrREFNQztBQUw2QjtJQUEzQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOztpREFBZTtBQUNoQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJEQUF5QjtBQUN4QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzREQUEwQjtBQUN6QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O3VEQUFxQjtBQUNIO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7O2tEQUFnQjtBQUU1RCxNQUFhLG1CQUFtQjtJQUNKLElBQUksQ0FBVTtJQUNkLGNBQWMsQ0FBVTtJQUN4QixlQUFlLENBQVU7SUFDekIsVUFBVSxDQUFVO0lBQ3BCLEtBQUssQ0FBVTtDQUMxQztBQU5ELGtEQU1DO0FBTDJCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7aURBQWU7QUFDZDtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJEQUF5QjtBQUN4QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzREQUEwQjtBQUN6QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdB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LElBQUEsMEJBQVEsR0FBRTs7MkRBQXNCO0FBQ2pDO0lBQWIsSUFBQSw0QkFBVSxHQUFFOztnRUFBMkIiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvbXBldGl0b3JzL2NvbXBldGl0b3JzLmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJc0Jvb2xlYW4sIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXhMZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5cbmV4cG9ydCBjbGFzcyBDcmVhdGVDb21wZXRpdG9yRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIG5hbWUhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZmFjZWJvb2tQYWdlSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZmFjZWJvb2tQYWdlVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHdlYnNpdGVVcmw/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBub3Rlcz86IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBVcGRhdGVDb21wZXRpdG9yRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBuYW1lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGZhY2Vib29rUGFnZUlkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGZhY2Vib29rUGFnZVVybD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB3ZWJzaXRlVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIG5vdGVzPzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIFN5bmNBZHNEdG8ge1xuICBASXNPcHRpb25hbCgpIGNvdW50cmllcz86IHN0cmluZ1tdO1xuICBASXNPcHRpb25hbCgpIGFjdGl2ZU9ubHk/OiBib29sZWFuO1xufVxuZXhwb3J0IGNsYXNzIEFkZE9ic2VydmF0aW9uRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIHByb2R1Y3ROYW1lITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBwcmljZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjdXJyZW5jeT86IHN0cmluZztcbiAgQElzU3RyaW5nKCkgc291cmNlVXJsITogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIEdlbmVyYXRlSW5zaWdodHNEdG8geyBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGNvbXBldGl0b3JJZD86IHN0cmluZzsgfVxuZXhwb3J0IGNsYXNzIEdlbmVyYXRlQ291bnRlckFkRHRvIHtcbiAgQElzU3RyaW5nKCkgY29tcGV0aXRvckFkSWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgb3duUHJvZHVjdElkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHRvbmU/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgU3luY011bHRpUGxhdGZvcm1EdG8ge1xuICBASXNPcHRpb25hbCgpIHBsYXRmb3Jtcz86IChcImZhY2Vib29rXCIgfCBcImdvb2dsZVwiIHwgXCJ0aWt0b2tcIiB8IFwiYmluZ1wiKVtdO1xuICBASXNPcHRpb25hbCgpIGNvdW50cmllcz86IHN0cmluZ1tdO1xuICBASXNPcHRpb25hbCgpIGFjdGl2ZU9ubHk/OiBib29sZWFuO1xufVxuZXhwb3J0IGNsYXNzIEdlbmVyYXRlU2VvR2FwRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBvd25Qcm9kdWN0SWQ/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgTWluZVJldmlld3NEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwMDApIHJldmlld3NUZXh0Pzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIERlY29uc3RydWN0VmlkZW9TY3JpcHREdG8ge1xuICBASXNTdHJpbmcoKSBjb21wZXRpdG9yQWRJZCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBvd25Qcm9kdWN0SWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdmlkZW9TdHlsZT86IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIENvbmZpZ3VyZUFsZXJ0U2V0dGluZ3NEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSB0ZWxlZ3JhbUVuYWJsZWQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHRlbGVncmFtQm90VG9rZW4/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdGVsZWdyYW1DaGF0SWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHdoYXRzYXBwRW5hYmxlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgd2hhdHNhcHBXZWJob29rVXJsPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBub3RpZnlPblByaWNlRHJvcD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIG5vdGlmeU9uU3RvY2tPdXQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBub3RpZnlPbldpbm5pbmdBZD86IGJvb2xlYW47XG59XG5cbmV4cG9ydCBjbGFzcyBUZXN0QWxlcnRDaGFubmVsRHRvIHtcbiAgQElzU3RyaW5nKCkgY2hhbm5lbCE6IFwidGVsZWdyYW1cIiB8IFwid2hhdHNhcHBcIjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB0ZWxlZ3JhbUJvdFRva2VuPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHRlbGVncmFtQ2hhdElkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHdoYXRzYXBwV2ViaG9va1VybD86IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIFNhdmVEeW5hbWljUnVsZXNEdG8ge1xuICBydWxlcyE6IGFueVtdO1xufVxuXG5leHBvcnQgY2xhc3MgU2ltdWxhdGVSdWxlVHJpZ2dlckR0byB7XG4gIEBJc1N0cmluZygpIHRyaWdnZXJUeXBlITogXCJDT01QRVRJVE9SX1NUT0NLX09VVFwiIHwgXCJDT01QRVRJVE9SX1BSSUNFX0RST1BcIiB8IFwiQ09NUEVUSVRPUl9QUklDRV9JTkNSRUFTRVwiIHwgXCJDT01QRVRJVE9SX05FV19XSU5OSU5HX0FEXCI7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgY29tcGV0aXRvck5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgcHJvZHVjdE5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgcGVyY2VudGFnZUNoYW5nZT86IG51bWJlcjtcbn1cblxuXG5cblxuXG5cbiJdLCJ2ZXJzaW9uIjozfQ==

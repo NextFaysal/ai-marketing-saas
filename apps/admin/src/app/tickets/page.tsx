@@ -50,7 +50,11 @@ interface Ticket {
   csatRating?: number | null;
   csatFeedback?: string | null;
   customer360?: Customer360;
+  firstRespondedAt?: string | null;
+  slaBreached?: boolean;
+  slaHours?: number;
 }
+
 
 interface Admin {
   id: string;
@@ -99,9 +103,13 @@ const CATEGORY_LABEL: Record<string, string> = {
   technical: "⚙️ Technical",
   campaigns: "📢 Campaigns",
   integration: "🔌 Integration",
+  account: "👤 Account",
+  feature: "✨ Feature",
+  other: "📁 Other",
 };
 
 const FILTERS = ["", "open", "pending", "in_progress", "resolved", "closed"] as const;
+const CATEGORY_FILTERS = ["", "general", "billing", "technical", "campaigns", "integration", "account", "feature", "other"] as const;
 
 export default function TicketsPage() {
   const [activeTab, setActiveTab] = useState<"queue" | "analytics">("queue");
@@ -109,6 +117,7 @@ export default function TicketsPage() {
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [filter, setFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [slaOnly, setSlaOnly] = useState(false);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [cannedList, setCannedList] = useState<CannedResponse[]>([]);
 
@@ -173,6 +182,7 @@ export default function TicketsPage() {
       const q = new URLSearchParams();
       if (filter) q.set("status", filter);
       if (categoryFilter) q.set("category", categoryFilter);
+      if (slaOnly) q.set("sla", "breached");
       const url = `/admin/tickets${q.toString() ? `?${q.toString()}` : ""}`;
       setTickets(await apiFetch<Ticket[]>(url));
       setLoadError("");
@@ -181,7 +191,7 @@ export default function TicketsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, categoryFilter]);
+  }, [filter, categoryFilter, slaOnly]);
 
   const loadMetrics = useCallback(async () => {
     setMetricsLoading(true);
@@ -437,7 +447,6 @@ export default function TicketsPage() {
           📊 পারফরম্যান্স ও অ্যানালিটিক্স
         </button>
       </div>
-
       {activeTab === "analytics" ? (
         /* Support Analytics Dashboard */
         <div className="space-y-4 animate-fade-in">
@@ -490,7 +499,6 @@ export default function TicketsPage() {
                   </span>
                 </div>
               </div>
-
               {/* Status & Category Distributions */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="acard">

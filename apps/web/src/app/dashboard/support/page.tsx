@@ -76,9 +76,12 @@ const PRIORITY_TEXT: Record<string, string> = {
 const CATEGORY_TEXT: Record<string, string> = {
   general: "💬 সাধারণ",
   billing: "💳 বিলিং ও পেমেন্ট",
-  technical: "⚙️ কারিগরি ত্রুটি",
+  technical: "⚙️ কারিগরি সমস্যা",
   campaigns: "📢 বিজ্ঞাপন ক্যাম্পেইন",
   integration: "🔌 ইন্টিগ্রেশন ও পিক্সেল",
+  account: "👤 অ্যাকাউন্ট",
+  feature: "✨ ফিচার অনুরোধ",
+  other: "📁 অন্যান্য",
 };
 
 const STATUS_BANNER: Record<string, { tone: string; text: string }> = {
@@ -131,8 +134,6 @@ export default function SupportPage() {
   const [category, setCategory] = useState("general");
   const [priority, setPriority] = useState("normal");
   const [createAttachments, setCreateAttachments] = useState<TicketAttachment[]>([]);
-
-  // Reply states
   const [reply, setReply] = useState("");
   const [replyAttachments, setReplyAttachments] = useState<TicketAttachment[]>([]);
 

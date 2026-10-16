@@ -1,9 +1,13 @@
 import React from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
+import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { FlashCountdown } from "./FlashCountdown";
 import { WishlistHeart } from "./WishlistHeart";
+import { themeOf, type ShopTheme } from "@/lib/shop-theme";
+import { QuickViewButton } from "./QuickView";
 
 export function priceText(minor: string): string {
   try {
@@ -27,30 +31,57 @@ export function stockBadge(state: string, locale: ShopLocale | string = "bn"): {
   }
 }
 
-export function ProductCard({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
+export function ProductCard({
+  orgSlug,
+  product,
+  locale = "bn",
+  theme,
+  flashServerNow,
+}: {
+  orgSlug: string;
+  product: ShopProduct;
+  locale?: ShopLocale | string;
+  theme?: ShopTheme | string;
+  flashServerNow?: string | null;
+}) {
+  const tokens: ShopTheme = theme && typeof theme === "object" ? theme : themeOf(theme);
   const badge = stockBadge(product.stockState, locale);
+  const t = shopT(locale);
   const inner = (
     <>
-      {product.imageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={product.imageUrl} alt={product.name} className="aspect-square w-full object-cover" />
-      ) : (
-        <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-5xl">📦</div>
-      )}
+      <div className={`relative ${tokens.cardImageWrapClass}`}>
+        {product.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <MediaImage src={product.imageUrl} alt={product.name} width={640} height={640} sizes="(max-width: 768px) 50vw, 320px" className="aspect-square w-full object-cover" />
+        ) : (
+          <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-5xl">📦</div>
+        )}
+        <QuickViewButton orgSlug={orgSlug} product={product} locale={locale} />
+      </div>
       <div className="space-y-1.5 p-4">
         <h3 className="line-clamp-2 text-sm font-bold text-slate-900">{product.name}</h3>
         {product.category ? <p className="text-[11px] text-slate-400">{product.category}</p> : null}
+        {product.brand ? <p className="text-[11px] text-slate-400">{t.brand.brandLabel}: {product.brand.name}</p> : null}
+        {product.flashSale ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">⚡ {t.home.flashSale} −{product.flashSale.percentOff}%</span>
+            <span className="text-[11px] text-rose-700">
+              <FlashCountdown endsAt={product.flashSale.endsAt} serverNow={flashServerNow} locale={locale} compact />
+            </span>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-base font-extrabold text-indigo-700">{priceText(product.priceMinor)}</span>
           {product.compareAtMinor ? (
             <span className="text-xs text-slate-400 line-through">{priceText(product.compareAtMinor)}</span>
           ) : null}
           {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span> : null}
+          {product.freeShipping ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">{t.brand.freeDeliveryBadge}</span> : null}
         </div>
       </div>
     </>
   );
-  const cls = "block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md";
+  const cls = `block overflow-hidden bg-white transition hover:shadow-md ${tokens.cardClass}`;
   // EC25: heart overlays the card; WishlistHeart stops propagation
   // so tapping it never navigates the card Link.
   const heart = (

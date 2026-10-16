@@ -11,7 +11,7 @@ export class CreateTicketDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(["general", "billing", "technical", "campaigns", "integration"])
+  @IsIn(["general", "billing", "technical", "campaigns", "integration", "account", "feature", "other"])
   category?: string;
 
   @IsOptional()

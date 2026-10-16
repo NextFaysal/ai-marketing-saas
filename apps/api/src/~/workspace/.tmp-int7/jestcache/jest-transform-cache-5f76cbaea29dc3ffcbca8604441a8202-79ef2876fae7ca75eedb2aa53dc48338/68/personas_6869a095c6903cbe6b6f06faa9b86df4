@@ -1,0 +1,60 @@
+1c2c7b1c272a96a8868e2ece0e8f1dc0
+"use strict";
+/**
+ * AP7 specialist personas. A persona is a named assistant mode on
+ * a conversation: it (a) adds a focus paragraph to the system
+ * prompt (steering only — the grounded rules always win) and
+ * (b) SCOPES which tool modules may execute, enforced server-side
+ * in ChatService next to the RBAC gate. Personas never widen
+ * access: they only narrow the general tool universe.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PERSONA_IDS = exports.PERSONAS = void 0;
+exports.personaById = personaById;
+exports.personaAllowsModule = personaAllowsModule;
+exports.PERSONAS = [
+    {
+        id: "general",
+        labelBn: "সাধারণ সহকারী",
+        labelEn: "General Assistant",
+        modules: null,
+        focus: "",
+        startersBn: [],
+    },
+    {
+        id: "ads_analyst",
+        labelBn: "Ads Analyst",
+        labelEn: "Ads Analyst",
+        modules: ["ads", "analytics", "competitors", "catalog"],
+        focus: "Persona focus: you are acting as an advertising analyst. Prioritise campaign and ad-set performance, attribution, competitor ads and the catalogue facts behind them. When a question needs data outside advertising (inbox, team, CRM), say plainly that this persona does not cover it and suggest switching to the General Assistant.",
+        startersBn: ["সেরা ক্যাম্পেইন কোনটি?", "কোন বিজ্ঞাপনে CPA সবচেয়ে কম?", "প্রতিযোগীরা কী বিজ্ঞাপন চালাচ্ছে?"],
+    },
+    {
+        id: "inbox_coach",
+        labelBn: "Inbox Coach",
+        labelEn: "Inbox Coach",
+        modules: ["inbox", "crm", "customers", "knowledge", "orders"],
+        focus: "Persona focus: you are acting as an inbox and customer-care coach. Prioritise inbox performance, unanswered questions, leads, customer history and business knowledge. When a question needs advertising or finance data, say plainly that this persona does not cover it and suggest switching to the General Assistant.",
+        startersBn: ["কোন প্রশ্নের উত্তর বাকি আছে?", "লিড পাইপলাইন কেমন?", "ইনবক্সের অবস্থা কেমন?"],
+    },
+    {
+        id: "finance_analyst",
+        labelBn: "Finance Analyst",
+        labelEn: "Finance Analyst",
+        modules: ["analytics", "billing", "courier", "orders", "catalog"],
+        focus: "Persona focus: you are acting as a finance analyst. Prioritise revenue, profit, forecasts, AI usage, courier COD and order economics. Label every estimate with its method; never present a forecast as a fact. When a question needs advertising or inbox detail, say plainly that this persona does not cover it and suggest switching to the General Assistant.",
+        startersBn: ["আগামী ১৪ দিনের বিক্রির পূর্বাভাস দাও", "এই মাসে লাভ কেমন?", "COD কত সংগ্রহ হয়েছে?"],
+    },
+];
+exports.PERSONA_IDS = exports.PERSONAS.map((p) => p.id);
+function personaById(id) {
+    return exports.PERSONAS.find((p) => p.id === id) ?? exports.PERSONAS[0];
+}
+/** Is this tool module inside the persona's scope? */
+function personaAllowsModule(personaId, module) {
+    const def = personaById(personaId);
+    if (!def.modules)
+        return true;
+    return def.modules.includes(module);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FpL3BlcnNvbmFzLnRzIiwibWFwcGluZ3MiOiI7QUFBQTs7Ozs7OztHQU9HOzs7QUFvREgsa0NBRUM7QUFHRCxrREFJQztBQWpEWSxRQUFBLFFBQVEsR0FBMEI7SUFDN0M7UUFDRSxFQUFFLEVBQUUsU0FBUztRQUNiLE9BQU8sRUFBRSxlQUFlO1FBQ3hCLE9BQU8sRUFBRSxtQkFBbUI7UUFDNUIsT0FBTyxFQUFFLElBQUk7UUFDYixLQUFLLEVBQUUsRUFBRTtRQUNULFVBQVUsRUFBRSxFQUFFO0tBQ2Y7SUFDRDtRQUNFLEVBQUUsRUFBRSxhQUFhO1FBQ2pCLE9BQU8sRUFBRSxhQUFhO1FBQ3RCLE9BQU8sRUFBRSxhQUFhO1FBQ3RCLE9BQU8sRUFBRSxDQUFDLEtBQUssRUFBRSxXQUFXLEVBQUUsYUFBYSxFQUFFLFNBQVMsQ0FBQztRQUN2RCxLQUFLLEVBQ0gsMFVBQTBVO1FBQzVVLFVBQVUsRUFBRSxDQUFDLHdCQUF3QixFQUFFLCtCQUErQixFQUFFLG1DQUFtQyxDQUFDO0tBQzdHO0lBQ0Q7UUFDRSxFQUFFLEVBQUUsYUFBYTtRQUNqQixPQUFPLEVBQUUsYUFBYTtRQUN0QixPQUFPLEVBQUUsYUFBYTtRQUN0QixPQUFPLEVBQUUsQ0FBQyxPQUFPLEVBQUUsS0FBSyxFQUFFLFdBQVcsRUFBRSxXQUFXLEVBQUUsUUFBUSxDQUFDO1FBQzdELEtBQUssRUFDSCwyVEFBMlQ7UUFDN1QsVUFBVSxFQUFFLENBQUMsOEJBQThCLEVBQUUsb0JBQW9CLEVBQUUsdUJBQXVCLENBQUM7S0FDNUY7SUFDRDtRQUNFLEVBQUUsRUFBRSxpQkFBaUI7UUFDckIsT0FBTyxFQUFFLGlCQUFpQjtRQUMxQixPQUFPLEVBQUUsaUJBQWlCO1FBQzFCLE9BQU8sRUFBRSxDQUFDLFdBQVcsRUFBRSxTQUFTLEVBQUUsU0FBUyxFQUFFLFFBQVEsRUFBRSxTQUFTLENBQUM7UUFDakUsS0FBSyxFQUNILG9XQUFvVztRQUN0VyxVQUFVLEVBQUUsQ0FBQyxzQ0FBc0MsRUFBRSxtQkFBbUIsRUFBRSx1QkFBdUIsQ0FBQztLQUNuRztDQUNPLENBQUM7QUFFRSxRQUFBLFdBQVcsR0FBRyxnQkFBUSxDQUFDLEdBQUcsQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLEVBQUUsQ0FBc0IsQ0FBQztBQUUxRSxTQUFnQixXQUFXLENBQUMsRUFBNkI7SUFDdkQsT0FBTyxnQkFBUSxDQUFDLElBQUksQ0FBQyxDQUFDLENBQUMsRUFBRSxFQUFFLENBQUMsQ0FBQyxDQUFDLEVBQUUsS0FBSyxFQUFFLENBQUMsSUFBSSxnQkFBUSxDQUFDLENBQUMsQ0FBQyxDQUFDO0FBQzFELENBQUM7QUFFRCxzREFBc0Q7QUFDdEQsU0FBZ0IsbUJBQW1CLENBQUMsU0FBb0MsRUFBRSxNQUFjO0lBQ3RGLE1BQU0sR0FBRyxHQUFHLFdBQVcsQ0FBQyxTQUFTLENBQUMsQ0FBQztJQUNuQyxJQUFJLENBQUMsR0FBRyxDQUFDLE9BQU87UUFBRSxPQUFPLElBQUksQ0FBQztJQUM5QixPQUFPLEdBQUcsQ0FBQyxPQUFPLENBQUMsUUFBUSxDQUFDLE1BQU0sQ0FBQyxDQUFDO0FBQ3RDLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FpL3BlcnNvbmFzLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogQVA3IHNwZWNpYWxpc3QgcGVyc29uYXMuIEEgcGVyc29uYSBpcyBhIG5hbWVkIGFzc2lzdGFudCBtb2RlIG9uXG4gKiBhIGNvbnZlcnNhdGlvbjogaXQgKGEpIGFkZHMgYSBmb2N1cyBwYXJhZ3JhcGggdG8gdGhlIHN5c3RlbVxuICogcHJvbXB0IChzdGVlcmluZyBvbmx5IOKAlCB0aGUgZ3JvdW5kZWQgcnVsZXMgYWx3YXlzIHdpbikgYW5kXG4gKiAoYikgU0NPUEVTIHdoaWNoIHRvb2wgbW9kdWxlcyBtYXkgZXhlY3V0ZSwgZW5mb3JjZWQgc2VydmVyLXNpZGVcbiAqIGluIENoYXRTZXJ2aWNlIG5leHQgdG8gdGhlIFJCQUMgZ2F0ZS4gUGVyc29uYXMgbmV2ZXIgd2lkZW5cbiAqIGFjY2VzczogdGhleSBvbmx5IG5hcnJvdyB0aGUgZ2VuZXJhbCB0b29sIHVuaXZlcnNlLlxuICovXG5cbmV4cG9ydCBpbnRlcmZhY2UgUGVyc29uYURlZiB7XG4gIGlkOiBzdHJpbmc7XG4gIGxhYmVsQm46IHN0cmluZztcbiAgbGFiZWxFbjogc3RyaW5nO1xuICAvKiogVG9vbCBtb2R1bGVzIGluIHNjb3BlOyBudWxsID0gZXZlcnkgbW9kdWxlICh0aGUgZ2VuZXJhbCBhc3Npc3RhbnQpLiAqL1xuICBtb2R1bGVzOiByZWFkb25seSBzdHJpbmdbXSB8IG51bGw7XG4gIGZvY3VzOiBzdHJpbmc7XG4gIHN0YXJ0ZXJzQm46IHN0cmluZ1tdO1xufVxuXG5leHBvcnQgY29uc3QgUEVSU09OQVM6IHJlYWRvbmx5IFBlcnNvbmFEZWZbXSA9IFtcbiAge1xuICAgIGlkOiBcImdlbmVyYWxcIixcbiAgICBsYWJlbEJuOiBcIuCmuOCmvuCmp+CmvuCmsOCmoyDgprjgprngppXgpr7gprDgp4BcIixcbiAgICBsYWJlbEVuOiBcIkdlbmVyYWwgQXNzaXN0YW50XCIsXG4gICAgbW9kdWxlczogbnVsbCxcbiAgICBmb2N1czogXCJcIixcbiAgICBzdGFydGVyc0JuOiBbXSxcbiAgfSxcbiAge1xuICAgIGlkOiBcImFkc19hbmFseXN0XCIsXG4gICAgbGFiZWxCbjogXCJBZHMgQW5hbHlzdFwiLFxuICAgIGxhYmVsRW46IFwiQWRzIEFuYWx5c3RcIixcbiAgICBtb2R1bGVzOiBbXCJhZHNcIiwgXCJhbmFseXRpY3NcIiwgXCJjb21wZXRpdG9yc1wiLCBcImNhdGFsb2dcIl0sXG4gICAgZm9jdXM6XG4gICAgICBcIlBlcnNvbmEgZm9jdXM6IHlvdSBhcmUgYWN0aW5nIGFzIGFuIGFkdmVydGlzaW5nIGFuYWx5c3QuIFByaW9yaXRpc2UgY2FtcGFpZ24gYW5kIGFkLXNldCBwZXJmb3JtYW5jZSwgYXR0cmlidXRpb24sIGNvbXBldGl0b3IgYWRzIGFuZCB0aGUgY2F0YWxvZ3VlIGZhY3RzIGJlaGluZCB0aGVtLiBXaGVuIGEgcXVlc3Rpb24gbmVlZHMgZGF0YSBvdXRzaWRlIGFkdmVydGlzaW5nIChpbmJveCwgdGVhbSwgQ1JNKSwgc2F5IHBsYWlubHkgdGhhdCB0aGlzIHBlcnNvbmEgZG9lcyBub3QgY292ZXIgaXQgYW5kIHN1Z2dlc3Qgc3dpdGNoaW5nIHRvIHRoZSBHZW5lcmFsIEFzc2lzdGFudC5cIixcbiAgICBzdGFydGVyc0JuOiBbXCLgprjgp4fgprDgpr4g4KaV4KeN4Kav4Ka+4Kau4KeN4Kaq4KeH4KaH4KaoIOCmleCni+CmqOCmn+Cmvz9cIiwgXCLgppXgp4vgpqgg4Kas4Ka/4Kac4KeN4Kae4Ka+4Kaq4Kao4KeHIENQQSDgprjgpqzgpprgp4fgpq/gprzgp4cg4KaV4KauP1wiLCBcIuCmquCnjeCmsOCmpOCmv+Cmr+Cni+Cml+CngOCmsOCmviDgppXgp4Ag4Kas4Ka/4Kac4KeN4Kae4Ka+4Kaq4KaoIOCmmuCmvuCmsuCmvuCmmuCnjeCmm+Cnhz9cIl0sXG4gIH0sXG4gIHtcbiAgICBpZDogXCJpbmJveF9jb2FjaFwiLFxuICAgIGxhYmVsQm46IFwiSW5ib3ggQ29hY2hcIixcbiAgICBsYWJlbEVuOiBcIkluYm94IENvYWNoXCIsXG4gICAgbW9kdWxlczogW1wiaW5ib3hcIiwgXCJjcm1cIiwgXCJjdXN0b21lcnNcIiwgXCJrbm93bGVkZ2VcIiwgXCJvcmRlcnNcIl0sXG4gICAgZm9jdXM6XG4gICAgICBcIlBlcnNvbmEgZm9jdXM6IHlvdSBhcmUgYWN0aW5nIGFzIGFuIGluYm94IGFuZCBjdXN0b21lci1jYXJlIGNvYWNoLiBQcmlvcml0aXNlIGluYm94IHBlcmZvcm1hbmNlLCB1bmFuc3dlcmVkIHF1ZXN0aW9ucywgbGVhZHMsIGN1c3RvbWVyIGhpc3RvcnkgYW5kIGJ1c2luZXNzIGtub3dsZWRnZS4gV2hlbiBhIHF1ZXN0aW9uIG5lZWRzIGFkdmVydGlzaW5nIG9yIGZpbmFuY2UgZGF0YSwgc2F5IHBsYWlubHkgdGhhdCB0aGlzIHBlcnNvbmEgZG9lcyBub3QgY292ZXIgaXQgYW5kIHN1Z2dlc3Qgc3dpdGNoaW5nIHRvIHRoZSBHZW5lcmFsIEFzc2lzdGFudC5cIixcbiAgICBzdGFydGVyc0JuOiBbXCLgppXgp4vgpqgg4Kaq4KeN4Kaw4Ka24KeN4Kao4KeH4KawIOCmieCmpOCnjeCmpOCmsCDgpqzgpr7gppXgpr8g4KaG4Kab4KeHP1wiLCBcIuCmsuCmv+CmoSDgpqrgpr7gpofgpqrgprLgpr7gpofgpqgg4KaV4KeH4Kau4KaoP1wiLCBcIuCmh+CmqOCmrOCmleCnjeCmuOCnh+CmsCDgpoXgpqzgprjgp43gpqXgpr4g4KaV4KeH4Kau4KaoP1wiXSxcbiAgfSxcbiAge1xuICAgIGlkOiBcImZpbmFuY2VfYW5hbHlzdFwiLFxuICAgIGxhYmVsQm46IFwiRmluYW5jZSBBbmFseXN0XCIsXG4gICAgbGFiZWxFbjogXCJGaW5hbmNlIEFuYWx5c3RcIixcbiAgICBtb2R1bGVzOiBbXCJhbmFseXRpY3NcIiwgXCJiaWxsaW5nXCIsIFwiY291cmllclwiLCBcIm9yZGVyc1wiLCBcImNhdGFsb2dcIl0sXG4gICAgZm9jdXM6XG4gICAgICBcIlBlcnNvbmEgZm9jdXM6IHlvdSBhcmUgYWN0aW5nIGFzIGEgZmluYW5jZSBhbmFseXN0LiBQcmlvcml0aXNlIHJldmVudWUsIHByb2ZpdCwgZm9yZWNhc3RzLCBBSSB1c2FnZSwgY291cmllciBDT0QgYW5kIG9yZGVyIGVjb25vbWljcy4gTGFiZWwgZXZlcnkgZXN0aW1hdGUgd2l0aCBpdHMgbWV0aG9kOyBuZXZlciBwcmVzZW50IGEgZm9yZWNhc3QgYXMgYSBmYWN0LiBXaGVuIGEgcXVlc3Rpb24gbmVlZHMgYWR2ZXJ0aXNpbmcgb3IgaW5ib3ggZGV0YWlsLCBzYXkgcGxhaW5seSB0aGF0IHRoaXMgcGVyc29uYSBkb2VzIG5vdCBjb3ZlciBpdCBhbmQgc3VnZ2VzdCBzd2l0Y2hpbmcgdG8gdGhlIEdlbmVyYWwgQXNzaXN0YW50LlwiLFxuICAgIHN0YXJ0ZXJzQm46IFtcIuCmhuCml+CmvuCmruCngCDgp6fgp6og4Kam4Ka/4Kao4KeH4KawIOCmrOCmv+CmleCnjeCmsOCmv+CmsCDgpqrgp4LgprDgp43gpqzgpr7gpq3gpr7gprgg4Kam4Ka+4KaTXCIsIFwi4KaP4KaHIOCmruCmvuCmuOCnhyDgprLgpr7gpq0g4KaV4KeH4Kau4KaoP1wiLCBcIkNPRCDgppXgpqQg4Ka44KaC4KaX4KeN4Kaw4Ka5IOCmueCmr+CmvOCnh+Cmm+Cnhz9cIl0sXG4gIH0sXG5dIGFzIGNvbnN0O1xuXG5leHBvcnQgY29uc3QgUEVSU09OQV9JRFMgPSBQRVJTT05BUy5tYXAoKHApID0+IHAuaWQpIGFzIHJlYWRvbmx5IHN0cmluZ1tdO1xuXG5leHBvcnQgZnVuY3Rpb24gcGVyc29uYUJ5SWQoaWQ6IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQpOiBQZXJzb25hRGVmIHtcbiAgcmV0dXJuIFBFUlNPTkFTLmZpbmQoKHApID0+IHAuaWQgPT09IGlkKSA/PyBQRVJTT05BU1swXTtcbn1cblxuLyoqIElzIHRoaXMgdG9vbCBtb2R1bGUgaW5zaWRlIHRoZSBwZXJzb25hJ3Mgc2NvcGU/ICovXG5leHBvcnQgZnVuY3Rpb24gcGVyc29uYUFsbG93c01vZHVsZShwZXJzb25hSWQ6IHN0cmluZyB8IG51bGwgfCB1bmRlZmluZWQsIG1vZHVsZTogc3RyaW5nKTogYm9vbGVhbiB7XG4gIGNvbnN0IGRlZiA9IHBlcnNvbmFCeUlkKHBlcnNvbmFJZCk7XG4gIGlmICghZGVmLm1vZHVsZXMpIHJldHVybiB0cnVlO1xuICByZXR1cm4gZGVmLm1vZHVsZXMuaW5jbHVkZXMobW9kdWxlKTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

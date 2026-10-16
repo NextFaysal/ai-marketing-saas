@@ -1,6 +1,10 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { StorefrontService } from "./storefront.service";
 
+// AB5 (AX9): the reveal mints signed download tokens (JWT_SECRET
+// is the token secret source, mirroring admin-token.ts).
+process.env.JWT_SECRET = process.env.JWT_SECRET ?? "ec24-test-secret";
+
 /** EC24b — digital products: reveal gate, cap, and URL secrecy. */
 function matchWhere(row: any, where: any): boolean {
   for (const [k, v] of Object.entries(where ?? {})) {
@@ -103,8 +107,17 @@ describe("EC24b digital access reveal", () => {
     seed(prisma, { status: "processing", limit: null });
     prisma.fulfillment.rows.push({ id: "f-1", orderId: "o-1", status: "delivered", createdAt: new Date() });
     const svc = new StorefrontService(prisma);
-    const out = await svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" });
-    expect(out.links).toEqual([{ productName: "ইবুক", url: "https://files.example.com/ebook.pdf" }]);
+    const out: any = await svc.digitalAccess("shop-one", { phone: PHONE, orderNumber: "ORD-1" });
+    // AB5 (AX9): the reveal now returns a signed downloadPath,
+    // never the raw merchant URL.
+    expect(out.links).toHaveLength(1);
+    expect(out.links[0].productName).toBe("ইবুক");
+    expect(out.links[0].itemId).toBe("i-1");
+    expect(out.links[0].downloadPath).toContain(
+      "public/shop/shop-one/orders/o-1/digital-download?token=",
+    );
+    expect(out.links[0].expiresAt).toBeTruthy();
+    expect(JSON.stringify(out)).not.toContain("files.example.com");
   });
 
   it("after completion: links returned, count increments, cap (limit 1) refuses the 2nd reveal", async () => {

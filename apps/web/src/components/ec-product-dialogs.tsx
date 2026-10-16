@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
+import { MediaImage } from "@/components/media-image";
 
 // EC3/EC4 (Batch B2): product channel / gallery / bundle / category dialogs.
 // All error messages are the API's verbatim message (apiFetch throws
@@ -236,6 +237,9 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
   const [busy, setBusy] = useState(false);
   const [newUrl, setNewUrl] = useState("");
   const [newAlt, setNewAlt] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const loadImages = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -263,6 +267,44 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
       await loadImages();
     } catch (e) { setMsg(e instanceof Error ? e.message : "ছবি যোগ ব্যর্থ হয়েছে"); }
     finally { setBusy(false); }
+  }
+
+  // RM4: real file upload — presign → direct PUT to R2 → complete.
+  // Per-file failures are reported by file name (Bengali); the
+  // URL-add path below is untouched.
+  async function uploadFiles(fileList: FileList | File[]) {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+    const MAX = 10 * 1024 * 1024; // = API PRODUCT_IMAGE_UPLOAD_MAX_BYTES
+    const TYPES = ["image/png", "image/jpeg", "image/webp"];
+    setUploading(true); setMsg("");
+    const problems: string[] = [];
+    let okCount = 0;
+    for (const file of files) {
+      try {
+        if (!TYPES.includes(file.type)) throw new Error("শুধু PNG, JPEG বা WebP ছবি আপলোড করা যায়।");
+        if (file.size > MAX) throw new Error("ছবিটি ১০ MB-এর বেশি বড়।");
+        const pre = await apiFetch<{ uploadUrl: string; key: string }>(
+          `/organizations/${orgId}/products/${product.id}/images/presign`,
+          { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type, sizeBytes: file.size }) },
+        );
+        const putRes = await fetch(pre.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+        if (!putRes.ok) throw new Error(`আপলোড সার্ভার ছবিটি নেয়নি (HTTP ${putRes.status})।`);
+        await apiFetch(`/organizations/${orgId}/products/${product.id}/images/complete`, {
+          method: "POST", body: JSON.stringify({ key: pre.key, contentType: file.type, sizeBytes: file.size }),
+        });
+        okCount += 1;
+      } catch (e) {
+        problems.push(`${file.name}: ${e instanceof Error ? e.message : "আপলোড ব্যর্থ হয়েছে"}`);
+      }
+    }
+    setUploading(false);
+    if (okCount > 0) await loadImages();
+    setMsg([
+      ...(okCount > 0 ? [`${okCount}টি ছবি আপলোড হয়েছে।`] : []),
+      ...problems,
+    ].join("\n"));
   }
 
   async function deleteImage(img: EcProductImage) {
@@ -303,7 +345,7 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
         <ul className="space-y-2">
           {images.map((img, idx) => (
             <li key={img.id} className="flex items-center gap-3 rounded-lg border p-2">
-              <img src={img.url} alt={img.altText ?? ""} className="h-12 w-12 rounded-lg object-cover border" />
+              <MediaImage src={img.url} alt={img.altText ?? ""} width={96} height={96} className="h-12 w-12 rounded-lg object-cover border" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs text-slate-600" title={img.url}>{img.url}</div>
                 <div className="text-[11px] text-slate-400">ক্রম: {img.position}{idx === 0 ? " · কভার" : ""}{img.altText ? ` · Alt: ${img.altText}` : ""}</div>
@@ -315,12 +357,32 @@ export function EcGalleryDialog({ product, onClose }: { product: EcProductRef; o
           ))}
         </ul>
       )}
+      <div
+        className={`rounded-lg border-2 border-dashed p-4 text-center text-sm ${dragOver ? "border-sky-500 bg-sky-50" : "border-slate-300"}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); void uploadFiles(e.dataTransfer.files); }}
+      >
+        <p className="text-slate-600">ছবির ফাইল এখানে টেনে ছাড়ুন, অথবা</p>
+        <button type="button" className="btn-primary mt-2 disabled:opacity-50" disabled={uploading || busy} onClick={() => fileInputRef.current?.click()}>
+          {uploading ? "আপলোড হচ্ছে…" : "ফাইল থেকে ছবি বেছে নিন"}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          className="hidden"
+          onChange={(e) => { void uploadFiles(e.target.files ?? []); e.target.value = ""; }}
+        />
+        <p className="mt-1 text-[11px] text-slate-400">PNG / JPEG / WebP · প্রতিটি সর্বোচ্চ ১০ MB · সরাসরি নিরাপদ স্টোরেজে আপলোড হয়</p>
+      </div>
       <form onSubmit={addImage} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] border-t pt-3">
         <input className="rounded-lg border px-3 py-2 text-sm" type="url" required placeholder="ছবির URL (https://…)" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
         <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Alt টেক্সট (ঐচ্ছিক)" value={newAlt} onChange={(e) => setNewAlt(e.target.value)} />
         <button className="btn-primary disabled:opacity-50" disabled={busy}>ছবি যোগ করুন</button>
       </form>
-      {msg ? <p className="text-sm text-slate-600">{msg}</p> : null}
+      {msg ? <p className="whitespace-pre-line text-sm text-slate-600">{msg}</p> : null}
     </Overlay>
   );
 }

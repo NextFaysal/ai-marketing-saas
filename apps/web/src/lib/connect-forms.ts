@@ -37,11 +37,13 @@ export function buildShopifyConnectBody(mode: ShopifyAuthMode, legacy: ShopifyLe
     : { storeId: legacy.storeId, accessToken: legacy.accessToken, apiSecret: legacy.apiSecret };
 }
 
-export type CourierProvider = "steadfast" | "pathao" | "redx";
+export type CourierProvider = "steadfast" | "pathao" | "redx" | "ecourier";
 
 export interface SteadfastForm { apiKey: string; secretKey: string }
 export interface PathaoForm { clientId: string; clientSecret: string; username: string; password: string; sandbox: boolean }
 export interface RedxForm { accessToken: string; baseUrl: string }
+/** GB5: eCourier's self-serve API credentials (API Key + Secret + User ID). */
+export interface EcourierForm { apiKey: string; apiSecret: string; userId: string; baseUrl: string }
 
 export const PATHAO_SANDBOX_BASE = "https://courier-api-sandbox.pathao.com";
 
@@ -50,7 +52,7 @@ export const PATHAO_SANDBOX_BASE = "https://courier-api-sandbox.pathao.com";
  * CourierService.providerOf accepts it identically. Pathao's
  * sandbox checkbox maps to the sandbox base URL; RedX's optional
  * base URL is omitted when blank. */
-export function buildCourierConnectBody(provider: CourierProvider, forms: { steadfast: SteadfastForm; pathao: PathaoForm; redx: RedxForm }) {
+export function buildCourierConnectBody(provider: CourierProvider, forms: { steadfast: SteadfastForm; pathao: PathaoForm; redx: RedxForm; ecourier?: EcourierForm }) {
   if (provider === "steadfast") {
     return { provider, apiKey: forms.steadfast.apiKey, secretKey: forms.steadfast.secretKey };
   }
@@ -60,6 +62,13 @@ export function buildCourierConnectBody(provider: CourierProvider, forms: { stea
       clientId: forms.pathao.clientId, clientSecret: forms.pathao.clientSecret,
       username: forms.pathao.username, password: forms.pathao.password,
       baseUrl: forms.pathao.sandbox ? PATHAO_SANDBOX_BASE : undefined,
+    };
+  }
+  if (provider === "ecourier") {
+    return {
+      provider,
+      apiKey: forms.ecourier?.apiKey, apiSecret: forms.ecourier?.apiSecret,
+      userId: forms.ecourier?.userId, baseUrl: forms.ecourier?.baseUrl || undefined,
     };
   }
   return { provider, accessToken: forms.redx.accessToken, baseUrl: forms.redx.baseUrl || undefined };
@@ -179,7 +188,7 @@ export function buildLlmConfigBody(form: LlmConfigForm) {
 
 // ---------- CC9: the tenant's OWN payment gateways ----------
 
-export type GatewayProviderId = "sslcommerz" | "bkash" | "nagad";
+export type GatewayProviderId = "sslcommerz" | "bkash" | "nagad" | "shurjopay" | "aamarpay";
 
 export interface GatewayForm {
   storeId: string;
@@ -190,7 +199,59 @@ export interface GatewayForm {
   appSecret: string;
   merchantId: string;
   privateKey: string;
+  prefix: string;
+  signatureKey: string;
   sandbox: boolean;
+  /** GC12: gateway fee inputs as DISPLAYED (percent string /
+   * taka string), prefilled from the gateway view. Optional so
+   * legacy callers that never render fee inputs send NO fee keys
+   * at all (the API then leaves stored fees untouched). */
+  feePercent?: string;
+  feeFixedTaka?: string;
+}
+
+// ---------- GC12: gateway fee conversions ----------
+
+/** bps → percent input string (250 → "2.5", 200 → "2") — the
+ * accounting page's bpsToPercent style. */
+export function feeBpsToPercentInput(bps: number | null | undefined): string {
+  if (bps == null) return "";
+  return String(bps / 100);
+}
+
+/** minor string → taka input string (150 → "1.5", 155 → "1.55",
+ * 100 → "1"), integer math only. Bad input → "". */
+export function feeMinorToTakaInput(minor: string | null | undefined): string {
+  if (minor == null || minor === "") return "";
+  try {
+    const v = BigInt(minor);
+    const whole = v / 100n;
+    const frac = v % 100n;
+    if (frac === 0n) return whole.toString();
+    return `${whole.toString()}.${frac.toString().padStart(2, "0").replace(/0+$/, "")}`;
+  } catch { return ""; }
+}
+
+/** Percent input → bps. Empty input is a legitimate "no rate"
+ * (bps: null — the caller sends an explicit clear ONLY in the
+ * always-send panel flow; see buildGatewayBody). */
+export function parseFeePercentToBps(input: string): { ok: true; bps: number | null } | { ok: false } {
+  const raw = (input ?? "").trim();
+  if (!raw) return { ok: true, bps: null };
+  const pct = Number(raw);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return { ok: false };
+  return { ok: true, bps: Math.round(pct * 100) };
+}
+
+/** Taka input → minor string, exact string math (≤2 decimals).
+ * Empty input → minor: null (same "no fixed fee" meaning). */
+export function parseFeeTakaToMinor(input: string): { ok: true; minor: string | null } | { ok: false } {
+  const raw = (input ?? "").trim();
+  if (!raw) return { ok: true, minor: null };
+  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return { ok: false };
+  const [whole, frac = ""] = raw.split(".");
+  const minor = BigInt(whole) * 100n + BigInt((frac + "00").slice(0, 2));
+  return { ok: true, minor: minor.toString() };
 }
 
 export interface PayoutForm {
@@ -224,13 +285,44 @@ export function buildPayoutBody(form: PayoutForm) {
 
 /** CC9 shape for PUT connections/payment-gateways/:provider —
  * only the provider's own field subset is sent; nothing of the
- * other providers leaks into a request. */
+ * other providers leaks into a request.
+ *
+ * GC12 fee keys: the API applies KEY-PRESENCE semantics (present
+ * key — even null — sets/clears; absent key leaves the stored
+ * fee untouched). The gateway panel ALWAYS renders the fee
+ * inputs prefilled from the stored view, so when either fee
+ * field is defined this builder ALWAYS sends both keys with the
+ * currently displayed values: an untouched re-save re-sends the
+ * stored values (nothing can be wiped), and an input the
+ * merchant deliberately cleared sends an explicit null (a real
+ * clear). Callers that never define the fee fields (legacy
+ * shapes) send no fee keys at all. The panel validates both
+ * inputs before saving, so an unparseable value never reaches
+ * this builder from the UI; the null fallback here is only a
+ * defensive default. */
 export function buildGatewayBody(provider: GatewayProviderId, form: GatewayForm) {
+  let body: Record<string, unknown>;
   if (provider === "sslcommerz") {
-    return { storeId: form.storeId, storePass: form.storePass, sandbox: form.sandbox };
+    body = { storeId: form.storeId, storePass: form.storePass, sandbox: form.sandbox };
+  } else if (provider === "bkash") {
+    body = { username: form.username, password: form.password, appKey: form.appKey, appSecret: form.appSecret, sandbox: form.sandbox };
+  } else if (provider === "shurjopay") {
+    // Store ID is optional for ShurjoPay — omitted when blank
+    // (the API then falls back to the prefix at checkout).
+    body = {
+      username: form.username, password: form.password, prefix: form.prefix,
+      storeId: form.storeId.trim() || undefined, sandbox: form.sandbox,
+    };
+  } else if (provider === "aamarpay") {
+    body = { storeId: form.storeId, signatureKey: form.signatureKey, sandbox: form.sandbox };
+  } else {
+    body = { merchantId: form.merchantId, privateKey: form.privateKey };
   }
-  if (provider === "bkash") {
-    return { username: form.username, password: form.password, appKey: form.appKey, appSecret: form.appSecret, sandbox: form.sandbox };
+  if (form.feePercent !== undefined || form.feeFixedTaka !== undefined) {
+    const bps = parseFeePercentToBps(form.feePercent ?? "");
+    const fixed = parseFeeTakaToMinor(form.feeFixedTaka ?? "");
+    body.feeBps = bps.ok ? bps.bps : null;
+    body.feeFixedMinor = fixed.ok ? fixed.minor : null;
   }
-  return { merchantId: form.merchantId, privateKey: form.privateKey };
+  return body;
 }

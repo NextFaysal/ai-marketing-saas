@@ -1,0 +1,736 @@
+6c9be355fbbf1c297876dd799b94a62c
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OnlinePaymentSelectionDto = exports.DismissAssistantFindingDto = exports.GoogleSelectDto = exports.CreatePaymentLinkDto = exports.PutPayoutScheduleDto = exports.UpdatePayoutDestinationDto = exports.CreatePayoutDestinationDto = exports.CreateSettlementImportDto = exports.InitiateRefundDto = exports.CreatePayoutRequestDto = exports.SnoozeTargetDto = exports.PutAlertPreferencesDto = exports.SetPlatformEnabledDto = exports.PublicInitiatePaymentDto = exports.InitiateOrderPaymentDto = exports.SetAutoHealDto = exports.SetGatewayEnabledDto = exports.TestInitiatePaymentDto = exports.SetMemberDeniedConnectionsDto = exports.SetSyncIntervalDto = exports.SetSyncPausedDto = exports.AccountMetaDto = exports.PutPaymentGatewayDto = exports.PutLlmConfigDto = exports.PutAppConfigDto = void 0;
+const class_validator_1 = require("class-validator");
+/**
+ * CC3 — save a tenant's OWN app (Meta app / TikTok app). Both
+ * fields are required: a partial credential can never verify, so
+ * accepting one would only store a broken config.
+ */
+class PutAppConfigDto {
+    appId;
+    appSecret;
+}
+exports.PutAppConfigDto = PutAppConfigDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutAppConfigDto.prototype, "appId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutAppConfigDto.prototype, "appSecret", void 0);
+/**
+ * CC8 — save the tenant's OWN LLM key. Provider must be a real
+ * provider (the dev adapter is not a key a tenant can bring);
+ * both provider and key are required — the row is written only
+ * after a real completion verifies the pair.
+ */
+class PutLlmConfigDto {
+    provider;
+    apiKey;
+    model;
+}
+exports.PutLlmConfigDto = PutLlmConfigDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["openai", "anthropic", "gemini"]),
+    __metadata("design:type", String)
+], PutLlmConfigDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutLlmConfigDto.prototype, "apiKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutLlmConfigDto.prototype, "model", void 0);
+/**
+ * CC9 — save the tenant's OWN payment gateway. All fields are
+ * optional at the DTO level because each provider needs a
+ * different subset; the service enforces the per-provider
+ * required set and refuses before saving anything.
+ */
+class PutPaymentGatewayDto {
+    // sslcommerz
+    storeId;
+    storePass;
+    // bkash
+    username;
+    password;
+    appKey;
+    appSecret;
+    // nagad
+    merchantId;
+    privateKey;
+    // shurjopay (GC11) — username/password above are shared with
+    // bkash; prefix is ShurjoPay's own field, storeId optional.
+    prefix;
+    // aamarpay (GC11) — storeId above is shared with sslcommerz.
+    signatureKey;
+    sandbox;
+    // GC12: the merchant's OWN gateway-contract fee numbers —
+    // plain columns on the gateway row, NOT part of the sealed
+    // creds. Key-presence semantics in the service: key present
+    // (including explicit null) = set/clear the column; key
+    // absent = column untouched, so a creds-only re-save never
+    // wipes fees. feeFixedMinor crosses as a decimal string of
+    // minor units (BigInt-safe), validated in the service.
+    feeBps;
+    feeFixedMinor;
+    // CC19: which credential set this save targets. Only an
+    // EXPLICIT "sandbox" creates/targets the sandbox set; absent
+    // means the live (primary) set, where the legacy sandbox
+    // checkbox keeps its CC9 meaning inside the credentials.
+    environment;
+}
+exports.PutPaymentGatewayDto = PutPaymentGatewayDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "storeId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "storePass", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "username", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "password", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "appKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "appSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "merchantId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(10000),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "privateKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "prefix", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "signatureKey", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PutPaymentGatewayDto.prototype, "sandbox", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(10000),
+    __metadata("design:type", Object)
+], PutPaymentGatewayDto.prototype, "feeBps", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", Object)
+], PutPaymentGatewayDto.prototype, "feeFixedMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["live", "sandbox"]),
+    __metadata("design:type", String)
+], PutPaymentGatewayDto.prototype, "environment", void 0);
+/**
+ * CC17 — set an account's tenant-chosen label and/or free-text
+ * group. Both optional (partial updates); null clears. Length is
+ * enforced again in the service (AD6 discipline: trim, ≤60).
+ */
+class AccountMetaDto {
+    label;
+    groupName;
+}
+exports.AccountMetaDto = AccountMetaDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], AccountMetaDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], AccountMetaDto.prototype, "groupName", void 0);
+/** CC18 — pause/resume one Integration's syncs. */
+class SetSyncPausedDto {
+    syncPaused;
+}
+exports.SetSyncPausedDto = SetSyncPausedDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetSyncPausedDto.prototype, "syncPaused", void 0);
+/** CC30 — set/clear one Integration's SCHEDULED-sync cadence
+ * (minutes between scheduled syncs of the same kind). null
+ * clears back to "no cadence". The range is enforced again in
+ * the service: 5 minutes (below that a cadence is meaningless
+ * against the job templates) to 10080 (one week). */
+class SetSyncIntervalDto {
+    syncIntervalMinutes;
+}
+exports.SetSyncIntervalDto = SetSyncIntervalDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(5),
+    (0, class_validator_1.Max)(10080),
+    __metadata("design:type", Object)
+], SetSyncIntervalDto.prototype, "syncIntervalMinutes", void 0);
+/** CC17 — replace a member's denied-connection list wholesale
+ * (the matrix UI sends the full set; the service validates every
+ * id against real account rows of the org). */
+class SetMemberDeniedConnectionsDto {
+    deniedConnectionIds;
+}
+exports.SetMemberDeniedConnectionsDto = SetMemberDeniedConnectionsDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], SetMemberDeniedConnectionsDto.prototype, "deniedConnectionIds", void 0);
+/** CC19 — initiate a clearly-labelled sandbox TEST payment
+ * against the org's sandbox credential set. */
+class TestInitiatePaymentDto {
+    amountMinor;
+}
+exports.TestInitiatePaymentDto = TestInitiatePaymentDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(100),
+    (0, class_validator_1.Max)(100000),
+    __metadata("design:type", Number)
+], TestInitiatePaymentDto.prototype, "amountMinor", void 0);
+class SetGatewayEnabledDto {
+    isEnabled;
+    /** CC23: TOTP step-up code — required when DISABLING and
+     * the acting user has TOTP enabled (M35). */
+    totpCode;
+}
+exports.SetGatewayEnabledDto = SetGatewayEnabledDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetGatewayEnabledDto.prototype, "isEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(10),
+    __metadata("design:type", String)
+], SetGatewayEnabledDto.prototype, "totpCode", void 0);
+/** CC21 — the tenant's auto-healing opt-out for one
+ * connection (detection/alerts are unaffected). */
+class SetAutoHealDto {
+    autoHealEnabled;
+}
+exports.SetAutoHealDto = SetAutoHealDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetAutoHealDto.prototype, "autoHealEnabled", void 0);
+class InitiateOrderPaymentDto {
+    orderId;
+    customerName;
+    customerPhone;
+    customerEmail;
+}
+exports.InitiateOrderPaymentDto = InitiateOrderPaymentDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], InitiateOrderPaymentDto.prototype, "orderId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], InitiateOrderPaymentDto.prototype, "customerName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], InitiateOrderPaymentDto.prototype, "customerPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], InitiateOrderPaymentDto.prototype, "customerEmail", void 0);
+/** Public storefront pay-initiation: order id + the order's
+ * human number (the tracking-lookup discipline). */
+class PublicInitiatePaymentDto {
+    orderId;
+    orderNumber;
+    provider;
+    /** CC10: "platform" pays through the platform gateway (wallet
+     * credit); omitted/"own" is the CC9 tenant-gateway path. */
+    source;
+    /** AB4 (AX5a): which slice this initiation collects —
+     * "deposit" prices from the org's deposit config, "balance"
+     * collects the remaining amount; omitted/"full" is legacy. */
+    purpose;
+}
+exports.PublicInitiatePaymentDto = PublicInitiatePaymentDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], PublicInitiatePaymentDto.prototype, "orderId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], PublicInitiatePaymentDto.prototype, "orderNumber", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["sslcommerz", "bkash", "shurjopay", "aamarpay"]),
+    __metadata("design:type", String)
+], PublicInitiatePaymentDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["own", "platform"]),
+    __metadata("design:type", String)
+], PublicInitiatePaymentDto.prototype, "source", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["full", "deposit", "balance"]),
+    __metadata("design:type", String)
+], PublicInitiatePaymentDto.prototype, "purpose", void 0);
+/** CC10 — toggle the tenant's platform-payment enablement for
+ * one provider. */
+class SetPlatformEnabledDto {
+    isEnabled;
+}
+exports.SetPlatformEnabledDto = SetPlatformEnabledDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SetPlatformEnabledDto.prototype, "isEnabled", void 0);
+/** CC12 — per-org connection-alert preferences. categories
+ * null/absent = every category alerts; doctorEnabled opts the
+ * sweep into live Doctor runs on its conservative cadence. */
+class PutAlertPreferencesDto {
+    emailEnabled;
+    categories;
+    doctorEnabled;
+    doctorIntervalHours;
+}
+exports.PutAlertPreferencesDto = PutAlertPreferencesDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PutAlertPreferencesDto.prototype, "emailEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Object)
+], PutAlertPreferencesDto.prototype, "categories", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PutAlertPreferencesDto.prototype, "doctorEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(168),
+    __metadata("design:type", Number)
+], PutAlertPreferencesDto.prototype, "doctorIntervalHours", void 0);
+/** CC12 — snooze one target's alerts for N hours (0 = clear the
+ * snooze). While snoozed the sweep neither updates the target's
+ * alert state nor notifies. */
+class SnoozeTargetDto {
+    hours;
+}
+exports.SnoozeTargetDto = SnoozeTargetDto;
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(24 * 30),
+    __metadata("design:type", Number)
+], SnoozeTargetDto.prototype, "hours", void 0);
+/** CC10 — request a wallet payout. amountMinor is a decimal
+ * string of minor units (validated server-side as an integer);
+ * destination carries the tenant's payout details (bKash number
+ * or bank account fields), validated per method server-side. */
+class CreatePayoutRequestDto {
+    amountMinor;
+    method;
+    destination;
+    /** CC26: pay out to a SAVED PayoutDestination instead of
+     * free-form details — the service snapshots the destination's
+     * method + details onto the request. When set, method and
+     * destination above are ignored. */
+    destinationId;
+    /** CC23: TOTP step-up code — required when the acting user
+     * has TOTP enabled (M35); absent enrolment proceeds with a
+     * stepUpUnavailable note in the response. */
+    totpCode;
+}
+exports.CreatePayoutRequestDto = CreatePayoutRequestDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], CreatePayoutRequestDto.prototype, "amountMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["bkash", "bank"]),
+    __metadata("design:type", String)
+], CreatePayoutRequestDto.prototype, "method", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], CreatePayoutRequestDto.prototype, "destination", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], CreatePayoutRequestDto.prototype, "destinationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(10),
+    __metadata("design:type", String)
+], CreatePayoutRequestDto.prototype, "totpCode", void 0);
+/** CC24 — initiate a gateway refund against one verified
+ * payment. amountMinor omitted = the full remaining refundable
+ * amount; the service enforces the cumulative cap. */
+class InitiateRefundDto {
+    amountMinor;
+    reason;
+}
+exports.InitiateRefundDto = InitiateRefundDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], InitiateRefundDto.prototype, "amountMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], InitiateRefundDto.prototype, "reason", void 0);
+/** CC25 — import a gateway settlement CSV for reconciliation.
+ * v1 carries the file as CSV TEXT in the body (no multipart):
+ * capped at ~2MB, which is far beyond a monthly settlement
+ * export. periodFrom/periodTo are optional ISO dates bounding
+ * the missing-in-report comparison set. */
+class CreateSettlementImportDto {
+    provider;
+    source;
+    periodLabel;
+    periodFrom;
+    periodTo;
+    fileName;
+    csv;
+}
+exports.CreateSettlementImportDto = CreateSettlementImportDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["sslcommerz", "bkash"]),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["own", "platform"]),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "source", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "periodLabel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "periodFrom", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "periodTo", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "fileName", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(2_000_000),
+    __metadata("design:type", String)
+], CreateSettlementImportDto.prototype, "csv", void 0);
+/** CC26 — save a payout destination. Details are validated per
+ * method in the service (bKash number / bank account fields). */
+class CreatePayoutDestinationDto {
+    label;
+    method;
+    details;
+    isDefault;
+}
+exports.CreatePayoutDestinationDto = CreatePayoutDestinationDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreatePayoutDestinationDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["bkash", "bank"]),
+    __metadata("design:type", String)
+], CreatePayoutDestinationDto.prototype, "method", void 0);
+__decorate([
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], CreatePayoutDestinationDto.prototype, "details", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreatePayoutDestinationDto.prototype, "isDefault", void 0);
+class UpdatePayoutDestinationDto {
+    label;
+    details;
+    isDefault;
+}
+exports.UpdatePayoutDestinationDto = UpdatePayoutDestinationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], UpdatePayoutDestinationDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], UpdatePayoutDestinationDto.prototype, "details", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdatePayoutDestinationDto.prototype, "isDefault", void 0);
+/** CC26 — the automatic payout-request schedule. thresholdMinor
+ * is a decimal string of minor units; dayOfWeek (0=Sunday) for
+ * weekly, dayOfMonth (1..28) for monthly — Asia/Dhaka days. */
+class PutPayoutScheduleDto {
+    enabled;
+    cadence;
+    dayOfWeek;
+    dayOfMonth;
+    thresholdMinor;
+    destinationId;
+}
+exports.PutPayoutScheduleDto = PutPayoutScheduleDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], PutPayoutScheduleDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["weekly", "monthly"]),
+    __metadata("design:type", String)
+], PutPayoutScheduleDto.prototype, "cadence", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(6),
+    __metadata("design:type", Number)
+], PutPayoutScheduleDto.prototype, "dayOfWeek", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(28),
+    __metadata("design:type", Number)
+], PutPayoutScheduleDto.prototype, "dayOfMonth", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], PutPayoutScheduleDto.prototype, "thresholdMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", Object)
+], PutPayoutScheduleDto.prototype, "destinationId", void 0);
+/** CC26 — create a shareable payment link for one order. The
+ * plaintext token is returned exactly once; expiry is bounded
+ * to 1 hour .. 30 days by the service. */
+class CreatePaymentLinkDto {
+    orderId;
+    provider;
+    source;
+    expiresInHours;
+}
+exports.CreatePaymentLinkDto = CreatePaymentLinkDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], CreatePaymentLinkDto.prototype, "orderId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["sslcommerz", "bkash"]),
+    __metadata("design:type", String)
+], CreatePaymentLinkDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["own", "platform"]),
+    __metadata("design:type", String)
+], CreatePaymentLinkDto.prototype, "source", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(24 * 30),
+    __metadata("design:type", Number)
+], CreatePaymentLinkDto.prototype, "expiresInHours", void 0);
+/** CC20 — complete a Google-pack account pick: the single-use
+ * pick state + the option id FROM the offered list (the server
+ * re-checks membership — an invented id is refused). */
+class GoogleSelectDto {
+    state;
+    optionId;
+}
+exports.GoogleSelectDto = GoogleSelectDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    __metadata("design:type", String)
+], GoogleSelectDto.prototype, "state", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    __metadata("design:type", String)
+], GoogleSelectDto.prototype, "optionId", void 0);
+/** CC20 — dismiss one Smart Setup Assistant finding for the
+ * calling user. The key must be one the assistant can actually
+ * produce (the service re-checks against its rule table). */
+class DismissAssistantFindingDto {
+    findingKey;
+}
+exports.DismissAssistantFindingDto = DismissAssistantFindingDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], DismissAssistantFindingDto.prototype, "findingKey", void 0);
+/**
+ * GC10 — an online-payment selection on a public checkout DTO:
+ * pay through a real gateway (the tenant's OWN, CC9, or the
+ * PLATFORM's, CC10) instead of COD / a manual advance claim.
+ * The pair is always re-validated server-side against
+ * TenantPaymentsService.publicPaymentOptions — the client value
+ * alone never enables a payment path.
+ */
+class OnlinePaymentSelectionDto {
+    // GC11: the OWN path also accepts shurjopay/aamarpay. The
+    // source pair is still re-validated against
+    // publicPaymentOptions, which never offers the new providers
+    // on the platform path — a platform+shurjopay/aamarpay pair
+    // is refused there, not here.
+    provider;
+    source;
+}
+exports.OnlinePaymentSelectionDto = OnlinePaymentSelectionDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["sslcommerz", "bkash", "shurjopay", "aamarpay"]),
+    __metadata("design:type", String)
+], OnlinePaymentSelectionDto.prototype, "provider", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(["own", "platform"]),
+    __metadata("design:type", String)
+], OnlinePaymentSelectionDto.prototype, "source", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2Nvbm5lY3Rpb25zL2Nvbm5lY3Rpb25zLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBa0k7QUFFbEk7Ozs7R0FJRztBQUNILE1BQWEsZUFBZTtJQUNnQixLQUFLLENBQVU7SUFDZixTQUFTLENBQVU7Q0FDOUQ7QUFIRCwwQ0FHQztBQUYyQztJQUF6QyxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7OENBQWdCO0FBQ2Y7SUFBekMsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O2tEQUFvQjtBQUcvRDs7Ozs7R0FLRztBQUNILE1BQWEsZUFBZTtJQUMyQixRQUFRLENBQVU7SUFDN0IsTUFBTSxDQUFVO0lBQ2hCLEtBQUssQ0FBVTtDQUMxRDtBQUpELDBDQUlDO0FBSHNEO0lBQXBELElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsc0JBQUksRUFBQyxDQUFDLFFBQVEsRUFBRSxXQUFXLEVBQUUsUUFBUSxDQUFDLENBQUM7O2lEQUFtQjtBQUM3QjtJQUF6QyxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7K0NBQWlCO0FBQ2hCO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzhDQUFnQjtBQUczRDs7Ozs7R0FLRztBQUNILE1BQWEsb0JBQW9CO0lBQy9CLGFBQWE7SUFDNkIsT0FBTyxDQUFVO0lBQ2pCLFNBQVMsQ0FBVTtJQUM3RCxRQUFRO0lBQ2tDLFFBQVEsQ0FBVTtJQUNsQixRQUFRLENB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ZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvY29ubmVjdGlvbnMvY29ubmVjdGlvbnMuZHRvLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IElzQXJyYXksIElzQm9vbGVhbiwgSXNJbiwgSXNJbnQsIElzT2JqZWN0LCBJc09wdGlvbmFsLCBJc1N0cmluZywgTWF4LCBNYXhMZW5ndGgsIE1pbiwgTWluTGVuZ3RoIH0gZnJvbSBcImNsYXNzLXZhbGlkYXRvclwiO1xuXG4vKipcbiAqIENDMyDigJQgc2F2ZSBhIHRlbmFudCdzIE9XTiBhcHAgKE1ldGEgYXBwIC8gVGlrVG9rIGFwcCkuIEJvdGhcbiAqIGZpZWxkcyBhcmUgcmVxdWlyZWQ6IGEgcGFydGlhbCBjcmVkZW50aWFsIGNhbiBuZXZlciB2ZXJpZnksIHNvXG4gKiBhY2NlcHRpbmcgb25lIHdvdWxkIG9ubHkgc3RvcmUgYSBicm9rZW4gY29uZmlnLlxuICovXG5leHBvcnQgY2xhc3MgUHV0QXBwQ29uZmlnRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDIwMCkgYXBwSWQhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCg1MDApIGFwcFNlY3JldCE6IHN0cmluZztcbn1cblxuLyoqXG4gKiBDQzgg4oCUIHNhdmUgdGhlIHRlbmFudCdzIE9XTiBMTE0ga2V5LiBQcm92aWRlciBtdXN0IGJlIGEgcmVhbFxuICogcHJvdmlkZXIgKHRoZSBkZXYgYWRhcHRlciBpcyBub3QgYSBrZXkgYSB0ZW5hbnQgY2FuIGJyaW5nKTtcbiAqIGJvdGggcHJvdmlkZXIgYW5kIGtleSBhcmUgcmVxdWlyZWQg4oCUIHRoZSByb3cgaXMgd3JpdHRlbiBvbmx5XG4gKiBhZnRlciBhIHJlYWwgY29tcGxldGlvbiB2ZXJpZmllcyB0aGUgcGFpci5cbiAqL1xuZXhwb3J0IGNsYXNzIFB1dExsbUNvbmZpZ0R0byB7XG4gIEBJc1N0cmluZygpIEBJc0luKFtcIm9wZW5haVwiLCBcImFudGhyb3BpY1wiLCBcImdlbWluaVwiXSkgcHJvdmlkZXIhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCg1MDApIGFwaUtleSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgbW9kZWw/OiBzdHJpbmc7XG59XG5cbi8qKlxuICogQ0M5IOKAlCBzYXZlIHRoZSB0ZW5hbnQncyBPV04gcGF5bWVudCBnYXRld2F5LiBBbGwgZmllbGRzIGFyZVxuICogb3B0aW9uYWwgYXQgdGhlIERUTyBsZXZlbCBiZWNhdXNlIGVhY2ggcHJvdmlkZXIgbmVlZHMgYVxuICogZGlmZmVyZW50IHN1YnNldDsgdGhlIHNlcnZpY2UgZW5mb3JjZXMgdGhlIHBlci1wcm92aWRlclxuICogcmVxdWlyZWQgc2V0IGFuZCByZWZ1c2VzIGJlZm9yZSBzYXZpbmcgYW55dGhpbmcuXG4gKi9cbmV4cG9ydCBjbGFzcyBQdXRQYXltZW50R2F0ZXdheUR0byB7XG4gIC8vIHNzbGNvbW1lcnpcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgc3RvcmVJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgc3RvcmVQYXNzPzogc3RyaW5nO1xuICAvLyBia2FzaFxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSB1c2VybmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgcGFzc3dvcmQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIGFwcEtleT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgYXBwU2VjcmV0Pzogc3RyaW5nO1xuICAvLyBuYWdhZFxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBtZXJjaGFudElkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTAwMDApIHByaXZhdGVLZXk/OiBzdHJpbmc7XG4gIC8vIHNodXJqb3BheSAoR0MxMSkg4oCUIHVzZXJuYW1lL3Bhc3N3b3JkIGFib3ZlIGFyZSBzaGFyZWQgd2l0aFxuICAvLyBia2FzaDsgcHJlZml4IGlzIFNodXJqb1BheSdzIG93biBmaWVsZCwgc3RvcmVJZCBvcHRpb25hbC5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMCkgcHJlZml4Pzogc3RyaW5nO1xuICAvLyBhYW1hcnBheSAoR0MxMSkg4oCUIHN0b3JlSWQgYWJvdmUgaXMgc2hhcmVkIHdpdGggc3NsY29tbWVyei5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgc2lnbmF0dXJlS2V5Pzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBzYW5kYm94PzogYm9vbGVhbjtcbiAgLy8gR0MxMjogdGhlIG1lcmNoYW50J3MgT1dOIGdhdGV3YXktY29udHJhY3QgZmVlIG51bWJlcnMg4oCUXG4gIC8vIHBsYWluIGNvbHVtbnMgb24gdGhlIGdhdGV3YXkgcm93LCBOT1QgcGFydCBvZiB0aGUgc2VhbGVkXG4gIC8vIGNyZWRzLiBLZXktcHJlc2VuY2Ugc2VtYW50aWNzIGluIHRoZSBzZXJ2aWNlOiBrZXkgcHJlc2VudFxuICAvLyAoaW5jbHVkaW5nIGV4cGxpY2l0IG51bGwpID0gc2V0L2NsZWFyIHRoZSBjb2x1bW47IGtleVxuICAvLyBhYnNlbnQgPSBjb2x1bW4gdW50b3VjaGVkLCBzbyBhIGNyZWRzLW9ubHkgcmUtc2F2ZSBuZXZlclxuICAvLyB3aXBlcyBmZWVzLiBmZWVGaXhlZE1pbm9yIGNyb3NzZXMgYXMgYSBkZWNpbWFsIHN0cmluZyBvZlxuICAvLyBtaW5vciB1bml0cyAoQmlnSW50LXNhZmUpLCB2YWxpZGF0ZWQgaW4gdGhlIHNlcnZpY2UuXG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigwKSBATWF4KDEwMDAwKSBmZWVCcHM/OiBudW1iZXIgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzApIGZlZUZpeGVkTWlub3I/OiBzdHJpbmcgfCBudWxsO1xuICAvLyBDQzE5OiB3aGljaCBjcmVkZW50aWFsIHNldCB0aGlzIHNhdmUgdGFyZ2V0cy4gT25seSBhblxuICAvLyBFWFBMSUNJVCBcInNhbmRib3hcIiBjcmVhdGVzL3RhcmdldHMgdGhlIHNhbmRib3ggc2V0OyBhYnNlbnRcbiAgLy8gbWVhbnMgdGhlIGxpdmUgKHByaW1hcnkpIHNldCwgd2hlcmUgdGhlIGxlZ2FjeSBzYW5kYm94XG4gIC8vIGNoZWNrYm94IGtlZXBzIGl0cyBDQzkgbWVhbmluZyBpbnNpZGUgdGhlIGNyZWRlbnRpYWxzLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBJc0luKFtcImxpdmVcIiwgXCJzYW5kYm94XCJdKSBlbnZpcm9ubWVudD86IHN0cmluZztcbn1cblxuLyoqXG4gKiBDQzE3IOKAlCBzZXQgYW4gYWNjb3VudCdzIHRlbmFudC1jaG9zZW4gbGFiZWwgYW5kL29yIGZyZWUtdGV4dFxuICogZ3JvdXAuIEJvdGggb3B0aW9uYWwgKHBhcnRpYWwgdXBkYXRlcyk7IG51bGwgY2xlYXJzLiBMZW5ndGggaXNcbiAqIGVuZm9yY2VkIGFnYWluIGluIHRoZSBzZXJ2aWNlIChBRDYgZGlzY2lwbGluZTogdHJpbSwg4omkNjApLlxuICovXG5leHBvcnQgY2xhc3MgQWNjb3VudE1ldGFEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBsYWJlbD86IHN0cmluZyB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIGdyb3VwTmFtZT86IHN0cmluZyB8IG51bGw7XG59XG5cbi8qKiBDQzE4IOKAlCBwYXVzZS9yZXN1bWUgb25lIEludGVncmF0aW9uJ3Mgc3luY3MuICovXG5leHBvcnQgY2xhc3MgU2V0U3luY1BhdXNlZER0byB7XG4gIEBJc0Jvb2xlYW4oKSBzeW5jUGF1c2VkITogYm9vbGVhbjtcbn1cblxuLyoqIENDMzAg4oCUIHNldC9jbGVhciBvbmUgSW50ZWdyYXRpb24ncyBTQ0hFRFVMRUQtc3luYyBjYWRlbmNlXG4gKiAobWludXRlcyBiZXR3ZWVuIHNjaGVkdWxlZCBzeW5jcyBvZiB0aGUgc2FtZSBraW5kKS4gbnVsbFxuICogY2xlYXJzIGJhY2sgdG8gXCJubyBjYWRlbmNlXCIuIFRoZSByYW5nZSBpcyBlbmZvcmNlZCBhZ2FpbiBpblxuICogdGhlIHNlcnZpY2U6IDUgbWludXRlcyAoYmVsb3cgdGhhdCBhIGNhZGVuY2UgaXMgbWVhbmluZ2xlc3NcbiAqIGFnYWluc3QgdGhlIGpvYiB0ZW1wbGF0ZXMpIHRvIDEwMDgwIChvbmUgd2VlaykuICovXG5leHBvcnQgY2xhc3MgU2V0U3luY0ludGVydmFsRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDUpIEBNYXgoMTAwODApIHN5bmNJbnRlcnZhbE1pbnV0ZXMhOiBudW1iZXIgfCBudWxsO1xufVxuXG4vKiogQ0MxNyDigJQgcmVwbGFjZSBhIG1lbWJlcidzIGRlbmllZC1jb25uZWN0aW9uIGxpc3Qgd2hvbGVzYWxlXG4gKiAodGhlIG1hdHJpeCBVSSBzZW5kcyB0aGUgZnVsbCBzZXQ7IHRoZSBzZXJ2aWNlIHZhbGlkYXRlcyBldmVyeVxuICogaWQgYWdhaW5zdCByZWFsIGFjY291bnQgcm93cyBvZiB0aGUgb3JnKS4gKi9cbmV4cG9ydCBjbGFzcyBTZXRNZW1iZXJEZW5pZWRDb25uZWN0aW9uc0R0byB7XG4gIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBkZW5pZWRDb25uZWN0aW9uSWRzITogc3RyaW5nW107XG59XG5cbi8qKiBDQzE5IOKAlCBpbml0aWF0ZSBhIGNsZWFybHktbGFiZWxsZWQgc2FuZGJveCBURVNUIHBheW1lbnRcbiAqIGFnYWluc3QgdGhlIG9yZydzIHNhbmRib3ggY3JlZGVudGlhbCBzZXQuICovXG5leHBvcnQgY2xhc3MgVGVzdEluaXRpYXRlUGF5bWVudER0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxMDApIEBNYXgoMTAwMDAwKSBhbW91bnRNaW5vcj86IG51bWJlcjtcbn1cblxuZXhwb3J0IGNsYXNzIFNldEdhdGV3YXlFbmFibGVkRHRvIHtcbiAgQElzQm9vbGVhbigpIGlzRW5hYmxlZCE6IGJvb2xlYW47XG4gIC8qKiBDQzIzOiBUT1RQIHN0ZXAtdXAgY29kZSDigJQgcmVxdWlyZWQgd2hlbiBESVNBQkxJTkcgYW5kXG4gICAqIHRoZSBhY3RpbmcgdXNlciBoYXMgVE9UUCBlbmFibGVkIChNMzUpLiAqL1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTApIHRvdHBDb2RlPzogc3RyaW5nO1xufVxuXG4vKiogQ0MyMSDigJQgdGhlIHRlbmFudCdzIGF1dG8taGVhbGluZyBvcHQtb3V0IGZvciBvbmVcbiAqIGNvbm5lY3Rpb24gKGRldGVjdGlvbi9hbGVydHMgYXJlIHVuYWZmZWN0ZWQpLiAqL1xuZXhwb3J0IGNsYXNzIFNldEF1dG9IZWFsRHRvIHtcbiAgQElzQm9vbGVhbigpIGF1dG9IZWFsRW5hYmxlZCE6IGJvb2xlYW47XG59XG5cbmV4cG9ydCBjbGFzcyBJbml0aWF0ZU9yZGVyUGF5bWVudER0byB7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCgxMDApIG9yZGVySWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMDApIGN1c3RvbWVyTmFtZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDMwKSBjdXN0b21lclBob25lPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSBjdXN0b21lckVtYWlsPzogc3RyaW5nO1xufVxuXG4vKiogUHVibGljIHN0b3JlZnJvbnQgcGF5LWluaXRpYXRpb246IG9yZGVyIGlkICsgdGhlIG9yZGVyJ3NcbiAqIGh1bWFuIG51bWJlciAodGhlIHRyYWNraW5nLWxvb2t1cCBkaXNjaXBsaW5lKS4gKi9cbmV4cG9ydCBjbGFzcyBQdWJsaWNJbml0aWF0ZVBheW1lbnREdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoMTAwKSBvcmRlcklkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoNjApIG9yZGVyTnVtYmVyITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBASXNJbihbXCJzc2xjb21tZXJ6XCIsIFwiYmthc2hcIiwgXCJzaHVyam9wYXlcIiwgXCJhYW1hcnBheVwiXSkgcHJvdmlkZXIhOiBzdHJpbmc7XG4gIC8qKiBDQzEwOiBcInBsYXRmb3JtXCIgcGF5cyB0aHJvdWdoIHRoZSBwbGF0Zm9ybSBnYXRld2F5ICh3YWxsZXRcbiAgICogY3JlZGl0KTsgb21pdHRlZC9cIm93blwiIGlzIHRoZSBDQzkgdGVuYW50LWdhdGV3YXkgcGF0aC4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBASXNJbihbXCJvd25cIiwgXCJwbGF0Zm9ybVwiXSkgc291cmNlPzogc3RyaW5nO1xuICAvKiogQUI0IChBWDVhKTogd2hpY2ggc2xpY2UgdGhpcyBpbml0aWF0aW9uIGNvbGxlY3RzIOKAlFxuICAgKiBcImRlcG9zaXRcIiBwcmljZXMgZnJvbSB0aGUgb3JnJ3MgZGVwb3NpdCBjb25maWcsIFwiYmFsYW5jZVwiXG4gICAqIGNvbGxlY3RzIHRoZSByZW1haW5pbmcgYW1vdW50OyBvbWl0dGVkL1wiZnVsbFwiIGlzIGxlZ2FjeS4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBASXNJbihbXCJmdWxsXCIsIFwiZGVwb3NpdFwiLCBcImJhbGFuY2VcIl0pIHB1cnBvc2U/OiBzdHJpbmc7XG59XG5cbi8qKiBDQzEwIOKAlCB0b2dnbGUgdGhlIHRlbmFudCdzIHBsYXRmb3JtLXBheW1lbnQgZW5hYmxlbWVudCBmb3JcbiAqIG9uZSBwcm92aWRlci4gKi9cbmV4cG9ydCBjbGFzcyBTZXRQbGF0Zm9ybUVuYWJsZWREdG8ge1xuICBASXNCb29sZWFuKCkgaXNFbmFibGVkITogYm9vbGVhbjtcbn1cblxuLyoqIENDMTIg4oCUIHBlci1vcmcgY29ubmVjdGlvbi1hbGVydCBwcmVmZXJlbmNlcy4gY2F0ZWdvcmllc1xuICogbnVsbC9hYnNlbnQgPSBldmVyeSBjYXRlZ29yeSBhbGVydHM7IGRvY3RvckVuYWJsZWQgb3B0cyB0aGVcbiAqIHN3ZWVwIGludG8gbGl2ZSBEb2N0b3IgcnVucyBvbiBpdHMgY29uc2VydmF0aXZlIGNhZGVuY2UuICovXG5leHBvcnQgY2xhc3MgUHV0QWxlcnRQcmVmZXJlbmNlc0R0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGVtYWlsRW5hYmxlZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzQXJyYXkoKSBASXNTdHJpbmcoeyBlYWNoOiB0cnVlIH0pIGNhdGVnb3JpZXM/OiBzdHJpbmdbXSB8IG51bGw7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGRvY3RvckVuYWJsZWQ/OiBib29sZWFuO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMSkgQE1heCgxNjgpIGRvY3RvckludGVydmFsSG91cnM/OiBudW1iZXI7XG59XG5cbi8qKiBDQzEyIOKAlCBzbm9vemUgb25lIHRhcmdldCdzIGFsZXJ0cyBmb3IgTiBob3VycyAoMCA9IGNsZWFyIHRoZVxuICogc25vb3plKS4gV2hpbGUgc25vb3plZCB0aGUgc3dlZXAgbmVpdGhlciB1cGRhdGVzIHRoZSB0YXJnZXQnc1xuICogYWxlcnQgc3RhdGUgbm9yIG5vdGlmaWVzLiAqL1xuZXhwb3J0IGNsYXNzIFNub296ZVRhcmdldER0byB7XG4gIEBJc0ludCgpIEBNaW4oMCkgQE1heCgyNCAqIDMwKSBob3VycyE6IG51bWJlcjtcbn1cblxuLyoqIENDMTAg4oCUIHJlcXVlc3QgYSB3YWxsZXQgcGF5b3V0LiBhbW91bnRNaW5vciBpcyBhIGRlY2ltYWxcbiAqIHN0cmluZyBvZiBtaW5vciB1bml0cyAodmFsaWRhdGVkIHNlcnZlci1zaWRlIGFzIGFuIGludGVnZXIpO1xuICogZGVzdGluYXRpb24gY2FycmllcyB0aGUgdGVuYW50J3MgcGF5b3V0IGRldGFpbHMgKGJLYXNoIG51bWJlclxuICogb3IgYmFuayBhY2NvdW50IGZpZWxkcyksIHZhbGlkYXRlZCBwZXIgbWV0aG9kIHNlcnZlci1zaWRlLiAqL1xuZXhwb3J0IGNsYXNzIENyZWF0ZVBheW91dFJlcXVlc3REdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCgzMCkgYW1vdW50TWlub3I/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQElzSW4oW1wiYmthc2hcIiwgXCJiYW5rXCJdKSBtZXRob2Q/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzT2JqZWN0KCkgZGVzdGluYXRpb24/OiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjtcbiAgLyoqIENDMjY6IHBheSBvdXQgdG8gYSBTQVZFRCBQYXlvdXREZXN0aW5hdGlvbiBpbnN0ZWFkIG9mXG4gICAqIGZyZWUtZm9ybSBkZXRhaWxzIOKAlCB0aGUgc2VydmljZSBzbmFwc2hvdHMgdGhlIGRlc3RpbmF0aW9uJ3NcbiAgICogbWV0aG9kICsgZGV0YWlscyBvbnRvIHRoZSByZXF1ZXN0LiBXaGVuIHNldCwgbWV0aG9kIGFuZFxuICAgKiBkZXN0aW5hdGlvbiBhYm92ZSBhcmUgaWdub3JlZC4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMCkgZGVzdGluYXRpb25JZD86IHN0cmluZztcbiAgLyoqIENDMjM6IFRPVFAgc3RlcC11cCBjb2RlIOKAlCByZXF1aXJlZCB3aGVuIHRoZSBhY3RpbmcgdXNlclxuICAgKiBoYXMgVE9UUCBlbmFibGVkIChNMzUpOyBhYnNlbnQgZW5yb2xtZW50IHByb2NlZWRzIHdpdGggYVxuICAgKiBzdGVwVXBVbmF2YWlsYWJsZSBub3RlIGluIHRoZSByZXNwb25zZS4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwKSB0b3RwQ29kZT86IHN0cmluZztcbn1cblxuLyoqIENDMjQg4oCUIGluaXRpYXRlIGEgZ2F0ZXdheSByZWZ1bmQgYWdhaW5zdCBvbmUgdmVyaWZpZWRcbiAqIHBheW1lbnQuIGFtb3VudE1pbm9yIG9taXR0ZWQgPSB0aGUgZnVsbCByZW1haW5pbmcgcmVmdW5kYWJsZVxuICogYW1vdW50OyB0aGUgc2VydmljZSBlbmZvcmNlcyB0aGUgY3VtdWxhdGl2ZSBjYXAuICovXG5leHBvcnQgY2xhc3MgSW5pdGlhdGVSZWZ1bmREdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMzApIGFtb3VudE1pbm9yPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwKSByZWFzb24/OiBzdHJpbmc7XG59XG5cbi8qKiBDQzI1IOKAlCBpbXBvcnQgYSBnYXRld2F5IHNldHRsZW1lbnQgQ1NWIGZvciByZWNvbmNpbGlhdGlvbi5cbiAqIHYxIGNhcnJpZXMgdGhlIGZpbGUgYXMgQ1NWIFRFWFQgaW4gdGhlIGJvZHkgKG5vIG11bHRpcGFydCk6XG4gKiBjYXBwZWQgYXQgfjJNQiwgd2hpY2ggaXMgZmFyIGJleW9uZCBhIG1vbnRobHkgc2V0dGxlbWVudFxuICogZXhwb3J0LiBwZXJpb2RGcm9tL3BlcmlvZFRvIGFyZSBvcHRpb25hbCBJU08gZGF0ZXMgYm91bmRpbmdcbiAqIHRoZSBtaXNzaW5nLWluLXJlcG9ydCBjb21wYXJpc29uIHNldC4gKi9cbmV4cG9ydCBjbGFzcyBDcmVhdGVTZXR0bGVtZW50SW1wb3J0RHRvIHtcbiAgQElzU3RyaW5nKCkgQElzSW4oW1wic3NsY29tbWVyelwiLCBcImJrYXNoXCJdKSBwcm92aWRlciE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQElzSW4oW1wib3duXCIsIFwicGxhdGZvcm1cIl0pIHNvdXJjZSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDEyMCkgcGVyaW9kTGFiZWwhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MCkgcGVyaW9kRnJvbT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSBwZXJpb2RUbz86IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDIwMCkgZmlsZU5hbWUhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCgyXzAwMF8wMDApIGNzdiE6IHN0cmluZztcbn1cblxuLyoqIENDMjYg4oCUIHNhdmUgYSBwYXlvdXQgZGVzdGluYXRpb24uIERldGFpbHMgYXJlIHZhbGlkYXRlZCBwZXJcbiAqIG1ldGhvZCBpbiB0aGUgc2VydmljZSAoYkthc2ggbnVtYmVyIC8gYmFuayBhY2NvdW50IGZpZWxkcykuICovXG5leHBvcnQgY2xhc3MgQ3JlYXRlUGF5b3V0RGVzdGluYXRpb25EdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoMTIwKSBsYWJlbCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQElzSW4oW1wiYmthc2hcIiwgXCJiYW5rXCJdKSBtZXRob2QhOiBzdHJpbmc7XG4gIEBJc09iamVjdCgpIGRldGFpbHMhOiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgaXNEZWZhdWx0PzogYm9vbGVhbjtcbn1cblxuZXhwb3J0IGNsYXNzIFVwZGF0ZVBheW91dERlc3RpbmF0aW9uRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoMTIwKSBsYWJlbD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNPYmplY3QoKSBkZXRhaWxzPzogUmVjb3JkPHN0cmluZywgdW5rbm93bj47XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIGlzRGVmYXVsdD86IGJvb2xlYW47XG59XG5cbi8qKiBDQzI2IOKAlCB0aGUgYXV0b21hdGljIHBheW91dC1yZXF1ZXN0IHNjaGVkdWxlLiB0aHJlc2hvbGRNaW5vclxuICogaXMgYSBkZWNpbWFsIHN0cmluZyBvZiBtaW5vciB1bml0czsgZGF5T2ZXZWVrICgwPVN1bmRheSkgZm9yXG4gKiB3ZWVrbHksIGRheU9mTW9udGggKDEuLjI4KSBmb3IgbW9udGhseSDigJQgQXNpYS9EaGFrYSBkYXlzLiAqL1xuZXhwb3J0IGNsYXNzIFB1dFBheW91dFNjaGVkdWxlRHRvIHtcbiAgQElzQm9vbGVhbigpIGVuYWJsZWQhOiBib29sZWFuO1xuICBASXNTdHJpbmcoKSBASXNJbihbXCJ3ZWVrbHlcIiwgXCJtb250aGx5XCJdKSBjYWRlbmNlITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIEBNaW4oMCkgQE1heCg2KSBkYXlPZldlZWs/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDI4KSBkYXlPZk1vbnRoPzogbnVtYmVyO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoMzApIHRocmVzaG9sZE1pbm9yITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTAwKSBkZXN0aW5hdGlvbklkPzogc3RyaW5nIHwgbnVsbDtcbn1cblxuLyoqIENDMjYg4oCUIGNyZWF0ZSBhIHNoYXJlYWJsZSBwYXltZW50IGxpbmsgZm9yIG9uZSBvcmRlci4gVGhlXG4gKiBwbGFpbnRleHQgdG9rZW4gaXMgcmV0dXJuZWQgZXhhY3RseSBvbmNlOyBleHBpcnkgaXMgYm91bmRlZFxuICogdG8gMSBob3VyIC4uIDMwIGRheXMgYnkgdGhlIHNlcnZpY2UuICovXG5leHBvcnQgY2xhc3MgQ3JlYXRlUGF5bWVudExpbmtEdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoMTAwKSBvcmRlcklkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBASXNJbihbXCJzc2xjb21tZXJ6XCIsIFwiYmthc2hcIl0pIHByb3ZpZGVyITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBJc0luKFtcIm93blwiLCBcInBsYXRmb3JtXCJdKSBzb3VyY2U/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgQE1pbigxKSBATWF4KDI0ICogMzApIGV4cGlyZXNJbkhvdXJzPzogbnVtYmVyO1xufVxuXG4vKiogQ0MyMCDigJQgY29tcGxldGUgYSBHb29nbGUtcGFjayBhY2NvdW50IHBpY2s6IHRoZSBzaW5nbGUtdXNlXG4gKiBwaWNrIHN0YXRlICsgdGhlIG9wdGlvbiBpZCBGUk9NIHRoZSBvZmZlcmVkIGxpc3QgKHRoZSBzZXJ2ZXJcbiAqIHJlLWNoZWNrcyBtZW1iZXJzaGlwIOKAlCBhbiBpbnZlbnRlZCBpZCBpcyByZWZ1c2VkKS4gKi9cbmV4cG9ydCBjbGFzcyBHb29nbGVTZWxlY3REdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIHN0YXRlITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIG9wdGlvbklkITogc3RyaW5nO1xufVxuXG4vKiogQ0MyMCDigJQgZGlzbWlzcyBvbmUgU21hcnQgU2V0dXAgQXNzaXN0YW50IGZpbmRpbmcgZm9yIHRoZVxuICogY2FsbGluZyB1c2VyLiBUaGUga2V5IG11c3QgYmUgb25lIHRoZSBhc3Npc3RhbnQgY2FuIGFjdHVhbGx5XG4gKiBwcm9kdWNlICh0aGUgc2VydmljZSByZS1jaGVja3MgYWdhaW5zdCBpdHMgcnVsZSB0YWJsZSkuICovXG5leHBvcnQgY2xhc3MgRGlzbWlzc0Fzc2lzdGFudEZpbmRpbmdEdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDEpIEBNYXhMZW5ndGgoODApIGZpbmRpbmdLZXkhOiBzdHJpbmc7XG59XG5cbi8qKlxuICogR0MxMCDigJQgYW4gb25saW5lLXBheW1lbnQgc2VsZWN0aW9uIG9uIGEgcHVibGljIGNoZWNrb3V0IERUTzpcbiAqIHBheSB0aHJvdWdoIGEgcmVhbCBnYXRld2F5ICh0aGUgdGVuYW50J3MgT1dOLCBDQzksIG9yIHRoZVxuICogUExBVEZPUk0ncywgQ0MxMCkgaW5zdGVhZCBvZiBDT0QgLyBhIG1hbnVhbCBhZHZhbmNlIGNsYWltLlxuICogVGhlIHBhaXIgaXMgYWx3YXlzIHJlLXZhbGlkYXRlZCBzZXJ2ZXItc2lkZSBhZ2FpbnN0XG4gKiBUZW5hbnRQYXltZW50c1NlcnZpY2UucHVibGljUGF5bWVudE9wdGlvbnMg4oCUIHRoZSBjbGllbnQgdmFsdWVcbiAqIGFsb25lIG5ldmVyIGVuYWJsZXMgYSBwYXltZW50IHBhdGguXG4gKi9cbmV4cG9ydCBjbGFzcyBPbmxpbmVQYXltZW50U2VsZWN0aW9uRHRvIHtcbiAgLy8gR0MxMTogdGhlIE9XTiBwYXRoIGFsc28gYWNjZXB0cyBzaHVyam9wYXkvYWFtYXJwYXkuIFRoZVxuICAvLyBzb3VyY2UgcGFpciBpcyBzdGlsbCByZS12YWxpZGF0ZWQgYWdhaW5zdFxuICAvLyBwdWJsaWNQYXltZW50T3B0aW9ucywgd2hpY2ggbmV2ZXIgb2ZmZXJzIHRoZSBuZXcgcHJvdmlkZXJzXG4gIC8vIG9uIHRoZSBwbGF0Zm9ybSBwYXRoIOKAlCBhIHBsYXRmb3JtK3NodXJqb3BheS9hYW1hcnBheSBwYWlyXG4gIC8vIGlzIHJlZnVzZWQgdGhlcmUsIG5vdCBoZXJlLlxuICBASXNTdHJpbmcoKSBASXNJbihbXCJzc2xjb21tZXJ6XCIsIFwiYmthc2hcIiwgXCJzaHVyam9wYXlcIiwgXCJhYW1hcnBheVwiXSkgcHJvdmlkZXIhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBJc0luKFtcIm93blwiLCBcInBsYXRmb3JtXCJdKSBzb3VyY2UhOiBzdHJpbmc7XG59XG4iXSwidmVyc2lvbiI6M30=

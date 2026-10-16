@@ -1,0 +1,31 @@
+e9c7c0d988516ce98a18005c79039077
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.clientIpFromRequest = clientIpFromRequest;
+/**
+ * GB3 (GC9): the client IP as seen by the API, for the checkout
+ * gate's blocked-IP check and the fraud attempt log.
+ *
+ * Honest note: XFF is the edge-proxy signal in this deployment
+ * (Dokploy/Traefik terminates the public connection and forwards
+ * the original address in x-forwarded-for); it is spoofable if
+ * the API is exposed directly, bypassing the proxy. The attempt
+ * log records what was used — it is a signal, not proof.
+ */
+function clientIpFromRequest(req) {
+    try {
+        const headers = req?.headers ?? {};
+        const raw = headers["x-forwarded-for"] ?? headers["X-Forwarded-For"];
+        const headerValue = Array.isArray(raw) ? raw.join(",") : raw;
+        if (typeof headerValue === "string" && headerValue.trim()) {
+            const first = headerValue.split(",")[0]?.trim();
+            if (first)
+                return first;
+        }
+        return req?.ip ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ZyYXVkL2NsaWVudC1pcC50cyIsIm1hcHBpbmdzIjoiOztBQVVBLGtEQWFDO0FBdkJEOzs7Ozs7Ozs7R0FTRztBQUNILFNBQWdCLG1CQUFtQixDQUFDLEdBQVE7SUFDMUMsSUFBSSxDQUFDO1FBQ0gsTUFBTSxPQUFPLEdBQUcsR0FBRyxFQUFFLE9BQU8sSUFBSSxFQUFFLENBQUM7UUFDbkMsTUFBTSxHQUFHLEdBQUcsT0FBTyxDQUFDLGlCQUFpQixDQUFDLElBQUksT0FBTyxDQUFDLGlCQUFpQixDQUFDLENBQUM7UUFDckUsTUFBTSxXQUFXLEdBQUcsS0FBSyxDQUFDLE9BQU8sQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxDQUFDLElBQUksQ0FBQyxHQUFHLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxDQUFDO1FBQzdELElBQUksT0FBTyxXQUFXLEtBQUssUUFBUSxJQUFJLFdBQVcsQ0FBQyxJQUFJLEVBQUUsRUFBRSxDQUFDO1lBQzFELE1BQU0sS0FBSyxHQUFHLFdBQVcsQ0FBQyxLQUFLLENBQUMsR0FBRyxDQUFDLENBQUMsQ0FBQyxDQUFDLEVBQUUsSUFBSSxFQUFFLENBQUM7WUFDaEQsSUFBSSxLQUFLO2dCQUFFLE9BQU8sS0FBSyxDQUFDO1FBQzFCLENBQUM7UUFDRCxPQUFPLEdBQUcsRUFBRSxFQUFFLElBQUksSUFBSSxDQUFDO0lBQ3pCLENBQUM7SUFBQyxNQUFNLENBQUM7UUFDUCxPQUFPLElBQUksQ0FBQztJQUNkLENBQUM7QUFDSCxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9mcmF1ZC9jbGllbnQtaXAudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBHQjMgKEdDOSk6IHRoZSBjbGllbnQgSVAgYXMgc2VlbiBieSB0aGUgQVBJLCBmb3IgdGhlIGNoZWNrb3V0XG4gKiBnYXRlJ3MgYmxvY2tlZC1JUCBjaGVjayBhbmQgdGhlIGZyYXVkIGF0dGVtcHQgbG9nLlxuICpcbiAqIEhvbmVzdCBub3RlOiBYRkYgaXMgdGhlIGVkZ2UtcHJveHkgc2lnbmFsIGluIHRoaXMgZGVwbG95bWVudFxuICogKERva3Bsb3kvVHJhZWZpayB0ZXJtaW5hdGVzIHRoZSBwdWJsaWMgY29ubmVjdGlvbiBhbmQgZm9yd2FyZHNcbiAqIHRoZSBvcmlnaW5hbCBhZGRyZXNzIGluIHgtZm9yd2FyZGVkLWZvcik7IGl0IGlzIHNwb29mYWJsZSBpZlxuICogdGhlIEFQSSBpcyBleHBvc2VkIGRpcmVjdGx5LCBieXBhc3NpbmcgdGhlIHByb3h5LiBUaGUgYXR0ZW1wdFxuICogbG9nIHJlY29yZHMgd2hhdCB3YXMgdXNlZCDigJQgaXQgaXMgYSBzaWduYWwsIG5vdCBwcm9vZi5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGNsaWVudElwRnJvbVJlcXVlc3QocmVxOiBhbnkpOiBzdHJpbmcgfCBudWxsIHtcbiAgdHJ5IHtcbiAgICBjb25zdCBoZWFkZXJzID0gcmVxPy5oZWFkZXJzID8/IHt9O1xuICAgIGNvbnN0IHJhdyA9IGhlYWRlcnNbXCJ4LWZvcndhcmRlZC1mb3JcIl0gPz8gaGVhZGVyc1tcIlgtRm9yd2FyZGVkLUZvclwiXTtcbiAgICBjb25zdCBoZWFkZXJWYWx1ZSA9IEFycmF5LmlzQXJyYXkocmF3KSA/IHJhdy5qb2luKFwiLFwiKSA6IHJhdztcbiAgICBpZiAodHlwZW9mIGhlYWRlclZhbHVlID09PSBcInN0cmluZ1wiICYmIGhlYWRlclZhbHVlLnRyaW0oKSkge1xuICAgICAgY29uc3QgZmlyc3QgPSBoZWFkZXJWYWx1ZS5zcGxpdChcIixcIilbMF0/LnRyaW0oKTtcbiAgICAgIGlmIChmaXJzdCkgcmV0dXJuIGZpcnN0O1xuICAgIH1cbiAgICByZXR1cm4gcmVxPy5pcCA/PyBudWxsO1xuICB9IGNhdGNoIHtcbiAgICByZXR1cm4gbnVsbDtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

@@ -1,9 +1,9 @@
 "use client";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { buildGatewayBody, type GatewayForm, type GatewayProviderId } from "@/lib/connect-forms";
+import { buildGatewayBody, feeBpsToPercentInput, feeMinorToTakaInput, parseFeePercentToBps, parseFeeTakaToMinor, type GatewayForm, type GatewayProviderId } from "@/lib/connect-forms";
 import { formatWhen, gatewayStatusLabel, type TenantPaymentGatewayView } from "@/lib/connections";
 import { PlatformWalletPanel } from "./platform-wallet-panel";
 
@@ -12,8 +12,8 @@ import { PlatformWalletPanel } from "./platform-wallet-panel";
  *
  * টাকা সরাসরি আপনার নিজের merchant অ্যাকাউন্টে settle হয় —
  * প্ল্যাটফর্ম এই টাকা ধরে রাখে না। যাচাইয়ের সত্য প্রতিটি
- * কার্ডে স্পষ্ট: bKash-ই একমাত্র যেখানে আগাম আসল যাচাই হয়
- * (grant token); SSLCommerz/Nagad-এ তেমন সুযোগ নেই বলে সেগুলো
+ * কার্ডে স্পষ্ট: bKash (grant token) ও ShurjoPay-তে (get_token,
+ * GC11) আগাম আসল যাচাই হয়; SSLCommerz/Nagad/aamarPay-তে তেমন সুযোগ নেই বলে সেগুলো
  * সেভ হয় "কনফিগার করা" হিসেবে — প্রথম আসল লেনদেনই যাচাই, আর
  * পেমেন্ট "সফল" ধরা হয় শুধু গেটওয়ের সার্ভার-যাচাইয়ের পরেই।
  * Rocket-এর কোনো API গেটওয়ে নেই — এটি ম্যানুয়াল নম্বরের পথ।
@@ -34,11 +34,20 @@ const PROVIDER_META: { id: GatewayProviderId; icon: string; title: string; note:
     id: "nagad", icon: "🟠", title: "নগদ (Nagad, নিজের)",
     note: "Nagad Merchant ID ও Private Key দিন। এই সিস্টেমে Nagad-এর কোনো আগাম credential-যাচাই বা API চেকআউট সংযুক্ত নয় — কনফিগটি সেভ হবে \"কনফিগার করা\" হিসেবে, আর চেকআউট আপাতত ম্যানুয়াল Nagad নম্বরের পথেই চলবে।",
   },
+  {
+    id: "shurjopay", icon: "🟢", title: "ShurjoPay (নিজের)",
+    note: "আপনার ShurjoPay merchant-এর Username, Password ও Prefix দিন (Store ID থাকলে সেটিও)। সেভ করার আগে token দিয়ে যাচাই করা হয় — যাচাই ব্যর্থ হলে কিছুই সেভ হয় না এবং ShurjoPay-এর নিজের ত্রুটি দেখায়। পেমেন্ট সফল ধরা হবে শুধু সার্ভার-side verification-এ sp_code 1000 + সঠিক amount/currency মিললেই।",
+  },
+  {
+    id: "aamarpay", icon: "🔵", title: "aamarPay (নিজের)",
+    note: "আপনার aamarPay Store ID ও Signature Key দিন। SSLCommerz-এর মতো এখানে save-time যাচাই নেই — প্রথম আসল পেমেন্টেই যাচাই হবে, তাই এটি সেভ হবে \"configured\" লেবেলসহ। পেমেন্ট সফল ধরা হবে শুধু Search Transaction সার্ভার-যাচাইয়ে Successful + সঠিক amount/currency মিললেই।",
+  },
 ];
 
 const EMPTY_FORM: GatewayForm = {
   storeId: "", storePass: "", username: "", password: "", appKey: "", appSecret: "",
-  merchantId: "", privateKey: "", sandbox: true,
+  merchantId: "", privateKey: "", prefix: "", signatureKey: "", sandbox: true,
+  feePercent: "", feeFixedTaka: "",
 };
 
 const inputCls = "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400";
@@ -58,8 +67,28 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
   // পারে — Live (আসল পেমেন্টে শুধু এটাই ব্যবহৃত হয়) ও Sandbox
   // (শুধু পরীক্ষা; কখনো আসল অর্ডার paid করে না)।
   const [environment, setEnvironment] = useState<"live" | "sandbox">("live");
+  const [feeError, setFeeError] = useState("");
   const saving = busy === meta.id;
   const sandboxView = views.find((v) => (v.environment ?? "live") === "sandbox") ?? null;
+  // GC12: prefill the fee inputs from the stored gateway view
+  // whenever the stored fee values change (first load, or the
+  // reload after a save). Because the inputs always show the
+  // stored values, buildGatewayBody's always-send flow re-sends
+  // them on a creds-only re-save — fees can never be wiped by
+  // accident; only deliberately clearing an input clears a fee.
+  const liveView = views.find((v) => (v.environment ?? "live") === "live") ?? null;
+  const activeView = environment === "sandbox" ? sandboxView : liveView;
+  const feeKey = activeView ? `${activeView.provider}:${activeView.environment ?? "live"}:${activeView.feeBps}:${activeView.feeFixedMinor}` : "none";
+  const lastFeeKey = useRef("");
+  useEffect(() => {
+    if (lastFeeKey.current === feeKey) return;
+    lastFeeKey.current = feeKey;
+    setForm((f) => ({
+      ...f,
+      feePercent: feeBpsToPercentInput(activeView?.feeBps ?? null),
+      feeFixedTaka: feeMinorToTakaInput(activeView?.feeFixedMinor ?? null),
+    }));
+  }, [feeKey, activeView]);
   return (
     <div className="card space-y-3 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -81,7 +110,7 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
                 {!view.isEnabled ? "বন্ধ আছে" : gatewayStatusLabel(view)}
               </span>
             </div>
-            {view.identifier ? <div>{meta.id === "sslcommerz" ? "Store ID" : meta.id === "bkash" ? "App Key" : "Merchant ID"}: <span className="font-medium text-slate-700">{view.identifier}</span></div> : null}
+            {view.identifier ? <div>{meta.id === "sslcommerz" || meta.id === "aamarpay" ? "Store ID" : meta.id === "bkash" ? "App Key" : meta.id === "shurjopay" ? "Username" : "Merchant ID"}: <span className="font-medium text-slate-700">{view.identifier}</span></div> : null}
             {verifiedAt ? <div>সর্বশেষ যাচাই: {verifiedAt}</div> : null}
             {view.lastError ? <div className="rounded-lg bg-red-50 px-2 py-1 font-medium text-red-600">⚠️ {view.lastError}</div> : null}
             <div className="flex flex-wrap gap-1.5 pt-1">
@@ -108,7 +137,7 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
         </div>
       ) : null}
       <p className="text-xs leading-relaxed text-slate-500">{meta.note}</p>
-      <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); onSave(meta.id, { ...form, sandbox: environment === "sandbox" }, environment); setForm((f) => ({ ...f, storePass: "", password: "", appSecret: "", privateKey: "" })); }}>
+      <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); if (!parseFeePercentToBps(form.feePercent ?? "").ok) { setFeeError("ফি হার 0–100% এর মধ্যে হতে হবে"); return; } if (!parseFeeTakaToMinor(form.feeFixedTaka ?? "").ok) { setFeeError("ফিক্সড ফি সঠিক টাকার পরিমাণে দিন (সর্বোচ্চ ২ দশমিক)"); return; } setFeeError(""); onSave(meta.id, { ...form, sandbox: environment === "sandbox" }, environment); setForm((f) => ({ ...f, storePass: "", password: "", appSecret: "", privateKey: "", signatureKey: "" })); }}>
         {meta.id === "sslcommerz" ? (
           <>
             <label className="block text-sm">Store ID<input className={inputCls} value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} required autoComplete="off" /></label>
@@ -120,6 +149,18 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
             <label className="block text-sm">Password<input type="password" className={inputCls} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required autoComplete="new-password" /></label>
             <label className="block text-sm">App Key<input className={inputCls} value={form.appKey} onChange={(e) => setForm({ ...form, appKey: e.target.value })} required autoComplete="off" /></label>
             <label className="block text-sm">App Secret<input type="password" className={inputCls} value={form.appSecret} onChange={(e) => setForm({ ...form, appSecret: e.target.value })} required autoComplete="new-password" /></label>
+          </>
+        ) : meta.id === "shurjopay" ? (
+          <>
+            <label className="block text-sm">Username<input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required autoComplete="off" /></label>
+            <label className="block text-sm">Password<input type="password" className={inputCls} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required autoComplete="new-password" /></label>
+            <label className="block text-sm">Prefix<input className={inputCls} value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} required autoComplete="off" /></label>
+            <label className="block text-sm">Store ID (ঐচ্ছিক)<input className={inputCls} value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} autoComplete="off" /></label>
+          </>
+        ) : meta.id === "aamarpay" ? (
+          <>
+            <label className="block text-sm">Store ID<input className={inputCls} value={form.storeId} onChange={(e) => setForm({ ...form, storeId: e.target.value })} required autoComplete="off" /></label>
+            <label className="block text-sm">Signature Key<input type="password" className={inputCls} value={form.signatureKey} onChange={(e) => setForm({ ...form, signatureKey: e.target.value })} required autoComplete="new-password" /></label>
           </>
         ) : (
           <>
@@ -138,9 +179,24 @@ function GatewayCard({ meta, views, busy, testLink, onSave, onToggle, onDelete, 
             Sandbox সেট — শুধু পরীক্ষার জন্য; আসল অর্ডারে কখনো ব্যবহৃত হয় না
           </label>
         </fieldset>
+        {/* GC12: the merchant's own gateway-contract fee numbers.
+            These are NOT credentials — they are plain settings the
+            fee report uses; both empty = no fee rate configured. */}
+        <div className="space-y-2 rounded-lg bg-slate-50 px-3 py-2">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-sm">আপনার gateway-এর ফি হার (%)
+              <input className={inputCls} inputMode="decimal" placeholder="যেমন: 2.5" value={form.feePercent ?? ""} onChange={(e) => setForm({ ...form, feePercent: e.target.value })} autoComplete="off" />
+            </label>
+            <label className="block text-sm">ফিক্সড ফি (টাকা)
+              <input className={inputCls} inputMode="decimal" placeholder="যেমন: 5" value={form.feeFixedTaka ?? ""} onChange={(e) => setForm({ ...form, feeFixedTaka: e.target.value })} autoComplete="off" />
+            </label>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-500">ফি হার সেট না থাকলে ফি রিপোর্টে এই gateway-এর ফি দেখানো হবে না।</p>
+          {feeError ? <p className="rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-600">⚠️ {feeError}</p> : null}
+        </div>
         <div className="flex flex-wrap gap-2">
           <button type="submit" disabled={saving} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? "সেভ হচ্ছে..." : meta.id === "bkash" ? `যাচাই করে ${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন` : `${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন`}
+            {saving ? "সেভ হচ্ছে..." : meta.id === "bkash" || meta.id === "shurjopay" ? `যাচাই করে ${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন` : `${environment === "sandbox" ? "Sandbox" : "Live"} সেটে সেভ করুন`}
           </button>
         </div>
       </form>
@@ -180,6 +236,8 @@ export function PaymentGatewayPanel({ onChanged }: { onChanged?: () => void }) {
       });
       setNotice(provider === "bkash"
         ? `আপনার bKash ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি bKash-এর কাছে যাচাই হয়ে সেভ হয়েছে।`
+        : provider === "shurjopay"
+          ? `আপনার ShurjoPay ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি token দিয়ে যাচাই হয়ে সেভ হয়েছে — এখন অর্ডারে অনলাইন পেমেন্ট নেওয়া যাবে।`
         : `গেটওয়ের ${environment === "sandbox" ? "Sandbox" : "Live"} সেটটি সেভ হয়েছে (কনফিগার করা) — আগাম যাচাইয়ের সুযোগ এই গেটওয়েতে নেই, প্রথম আসল লেনদেনের সার্ভার-যাচাইয়েই নিশ্চিত হওয়া যাবে।`);
       setGateways((prev) => [...prev.filter((g) => !(g.provider === provider && (g.environment ?? "live") === environment)), saved]);
       await load(); onChanged?.();

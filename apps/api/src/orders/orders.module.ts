@@ -15,6 +15,9 @@ import { PackingScanController } from "./packing-scan.controller";
 import { PackingScanService } from "./packing-scan.service";
 import { ProductReviewsService } from "./product-reviews.service";
 import { ProductReviewsController, PublicProductReviewsController } from "./product-reviews.controller";
+import { ReviewInsightsService } from "./review-insights.service";
+import { ReviewInsightsController, PublicReviewInsightController } from "./review-insights.controller";
+import { LlmFactory } from "../ai/llm/llm.factory";
 import { OrderInsightsService } from "./order-insights.service";
 import { FraudModule } from "../fraud/fraud.module";
 import { FraudShieldService } from "./fraud-shield.service";
@@ -28,6 +31,8 @@ import { PrintCenterController } from "./print-center.controller";
 import { OrderTeamPerformanceService } from "./order-team-performance.service";
 import { OrderTeamPerformanceController } from "./order-team-performance.controller";
 import { StorefrontModule } from "../storefront/storefront.module";
+import { ConnectionsModule } from "../connections/connections.module";
+import { PaymentResendService } from "./payment-resend.service";
 
 // Milestone 65: manual orders enter via the integrations upsert.
 // Sales & Data S2: InventoryModule supplies the stock-restore
@@ -56,6 +61,10 @@ import { StorefrontModule } from "../storefront/storefront.module";
 // ON12: OrderTeamPerformanceController likewise precedes
 // OrdersController (literal "team-performance"); its service is
 // read-only over existing rows (no schema change).
-@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule, FraudModule, StorefrontModule], controllers: [PrintCenterController, OrderAnalyticsController, OrderTeamPerformanceController, OrdersController, OrderProfitController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController], providers: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, FraudShieldService, OrderSurgeryService, OrderProfitService, OrderAnalyticsService, PrintCenterService, OrderTeamPerformanceService], exports: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, FraudShieldService, OrderSurgeryService, OrderAnalyticsService, PrintCenterService] })
+// GC12: ConnectionsModule joins for TenantPaymentsService (the
+// payment-link resend's initiation + option validation). It
+// imports nothing, so there is no cycle; ShopAccountService for
+// the resend SMS already arrives via StorefrontModule.
+@Module({ imports: [IntegrationsModule, InventoryModule, MessagingModule, CommerceModule, FraudModule, StorefrontModule, ConnectionsModule], controllers: [PrintCenterController, OrderAnalyticsController, OrderTeamPerformanceController, OrdersController, OrderProfitController, ReviewsController, PublicReviewController, OrderChaseController, PackingScanController, ProductReviewsController, PublicProductReviewsController, ReviewInsightsController, PublicReviewInsightController], providers: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, LlmFactory, FraudShieldService, OrderSurgeryService, OrderProfitService, OrderAnalyticsService, PrintCenterService, OrderTeamPerformanceService, PaymentResendService], exports: [OrdersService, OrderInsightsService, RiskService, ReviewsService, OrderChaseService, PackingScanService, ProductReviewsService, ReviewInsightsService, FraudShieldService, OrderSurgeryService, OrderAnalyticsService, PrintCenterService, OrderProfitService] })
 export class OrdersModule {}
 

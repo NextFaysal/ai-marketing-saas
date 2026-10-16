@@ -142,4 +142,16 @@ export class PurchasingController {
   ) {
     return this.intelligence.updateSettings(orgId, user.userId, dto);
   }
+
+  /** GB2 (GC7): per-row on-hand / reserved / available. */
+  @Get("inventory/availability")
+  inventoryAvailability(@Param("organizationId") orgId: string) {
+    return this.intelligence.availability(orgId);
+  }
+
+  /** GB2 (GC7): damaged / lost / expired report. */
+  @Get("inventory/damage-report")
+  inventoryDamageReport(@Param("organizationId") orgId: string, @Query() q: { from?: string; to?: string }) {
+    return this.intelligence.damageReport(orgId, q.from, q.to);
+  }
 }

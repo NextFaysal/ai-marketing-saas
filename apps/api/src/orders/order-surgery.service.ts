@@ -222,12 +222,23 @@ export class OrderSurgeryService {
     let appliedCouponCode: string | null = null;
     let couponEvaluated = false;
 
+    // GB7: the edited order's customer + prior count, computed
+    // ONCE before the evaluation attempts and EXCLUDING the order
+    // being edited (its own coupon stamp must not count against it).
+    const surgeryCustomerId: string | null = orderLike.customer?.id ?? orderLike.customerId ?? null;
+    const surgeryPriorOrderCount =
+      typeof (this.promotions as any).priorOrderCountFor === "function"
+        ? await this.promotions.priorOrderCountFor(orgId, surgeryCustomerId, orderLike.id)
+        : null;
     const evalArgs = (couponCode: string | null) => ({
       lines: catalogLines,
       bumpMinor,
       couponCode,
       referralCode: orderLike.referralCode ?? null,
       buyerPhone: orderLike.customer?.phone ?? null,
+      customerId: orderLike.customer?.id ?? null,
+      priorOrderCount: surgeryPriorOrderCount,
+      excludeOrderId: orderLike.id,
     });
 
     if (effectiveCode) {
@@ -286,17 +297,28 @@ export class OrderSurgeryService {
           } else {
             // Weight semantics mirror cartWeightOf: unknown
             // (null) when ANY catalog product lacks weightGrams.
+            // GB2 (GC6): free-shipping lines leave the weight
+            // population (their weight neither adds nor makes
+            // the total unknown), and when EVERY chargeable line
+            // is free-shipping the resolver zeroes the charge.
             let weightGrams: number | null = 0;
+            let chargeableLines = 0;
+            let allFreeShipping = true;
             for (const l of lines) {
               if (l.isGift || l.productId == null) continue;
               const product = l.product ?? productById.get(l.productId);
-              if (!product || product.weightGrams == null) { weightGrams = null; break; }
+              if (!product) { weightGrams = null; allFreeShipping = false; break; }
+              chargeableLines++;
+              if ((product as any).freeShipping) continue;
+              allFreeShipping = false;
+              if (product.weightGrams == null) { weightGrams = null; break; }
               weightGrams = (weightGrams ?? 0) + Number(product.weightGrams) * l.quantity;
             }
             const discountedSubtotal = ev.subtotalMinor - (ev.promotionDiscountMinor + couponMinor + ev.referralDiscountMinor);
             const res = await this.storefront.resolveDeliveryCharge(orgId, zone, {
               weightGrams,
               discountedSubtotal,
+              allFreeShipping: chargeableLines > 0 && allFreeShipping,
             });
             shippingMinor = res.deliveryMinor;
             if (couponEvaluated && ev.couponFreeShipping) shippingMinor = 0n;

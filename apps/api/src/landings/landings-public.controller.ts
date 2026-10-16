@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req } from "@nestjs/common";
 import { LandingsService } from "./landings.service";
 import { Public } from "../common/decorators";
+import { clientIpFromRequest } from "../fraud/client-ip";
 import { LandingEventDto, LandingOrderDto } from "./landings.dto";
 
 /**
@@ -32,8 +33,8 @@ export class LandingsPublicController {
 
   @Public()
   @Post(":slug/order")
-  order(@Param("slug") slug: string, @Body() dto: LandingOrderDto) {
-    return this.landings.placeOrder(slug, dto);
+  order(@Param("slug") slug: string, @Body() dto: LandingOrderDto, @Req() req: any) {
+    return this.landings.placeOrder(slug, dto, { ip: clientIpFromRequest(req) });
   }
 
   @Public()

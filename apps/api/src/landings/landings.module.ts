@@ -11,6 +11,7 @@ import { InventoryModule } from "../inventory/inventory.module";
 import { AffiliatesModule } from "../affiliates/affiliates.module";
 import { PrismaService } from "../prisma/prisma.service";
 import { FraudModule } from "../fraud/fraud.module";
+import { ConnectionsModule } from "../connections/connections.module";
 
 const nodeRequire = createRequire(__filename);
 
@@ -32,7 +33,7 @@ const nodeRequire = createRequire(__filename);
  * null and LandingsService serves the honest empty reviews block.
  */
 @Module({
-  imports: [AuditModule, IntegrationsModule, CommerceModule, StorefrontModule, InventoryModule, AffiliatesModule, FraudModule],
+  imports: [AuditModule, IntegrationsModule, CommerceModule, StorefrontModule, InventoryModule, AffiliatesModule, FraudModule, ConnectionsModule],
   controllers: [LandingsStaffController, LandingsPublicController],
   providers: [
     LandingsService,

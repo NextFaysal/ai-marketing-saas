@@ -7,6 +7,11 @@ import { encryptJson, decryptJson } from "../integrations/crypto";
 import { SteadfastClient, SteadfastError } from "./steadfast.client";
 import { PathaoClient, PathaoError, pathaoClientTokens, PATHAO_PROD_BASE } from "./pathao.client";
 import { RedxClient, RedxError, REDX_DEFAULT_BASE } from "./redx.client";
+import { EcourierClient, EcourierError, ECOURIER_DEFAULT_BASE } from "./ecourier.client";
+import {
+  COURIER_PROVIDERS, COURIER_STATUSES, courierAdapter, createCourierClient,
+  type CourierBookingResult, type CourierClient, type CourierProviderKey,
+} from "./courier-client";
 import { InboxService } from "../inbox/inbox.service";
 import { EventsService } from "../common/events.service";
 import { SmsProvider, normalizeBdPhone as normalizeSmsPhone } from "../messaging/sms.provider";
@@ -14,14 +19,14 @@ import { EmailProvider } from "../messaging/email.provider";
 import { newTrackingToken, trackingLinkFor } from "./tracking-token";
 import { buildPdf, shippingLabelPage, invoicePage, challanPage, packingSlipPage } from "./pdf";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
-import { buildCourierPerformance } from "./courier-performance";
+import { buildCourierPerformance, classifyShipmentStatus } from "./courier-performance";
 import { CourierRulesService } from "./courier-rules.service";
 import { OrderNotificationService } from "../order-notifications/order-notifications.service";
 import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
-  if (e instanceof SteadfastError || e instanceof PathaoError || e instanceof RedxError) {
+  if (e instanceof SteadfastError || e instanceof PathaoError || e instanceof RedxError || e instanceof EcourierError) {
     return new BadRequestException(e.message);
   }
   return new BadGatewayException(`Courier API তে সংযোগ করা যাচ্ছে না: ${e instanceof Error ? e.message : "network error"}`);
@@ -40,8 +45,12 @@ export interface PrintTemplateOptions {
   invoiceNote?: string | null;
 }
 
-const PROVIDERS = ["steadfast", "pathao", "redx"] as const;
-type Provider = (typeof PROVIDERS)[number];
+// GB5 (GC13): the provider list + key type come from the
+// adapter registry (courier-client.ts) — the ONE place that
+// enumerates providers. The local aliases keep the rest of
+// this file (and its history) unchanged.
+const PROVIDERS = COURIER_PROVIDERS;
+type Provider = CourierProviderKey;
 
 /**
  * CC29 (Connect Center Next): the account key a courier
@@ -69,6 +78,7 @@ export function courierAccountKey(provider: Provider, creds: Record<string, any>
   const material =
     provider === "steadfast" ? String(creds.apiKey ?? "")
     : provider === "pathao" ? `${String(creds.clientId ?? "")}:${String(creds.username ?? "")}`
+    : provider === "ecourier" ? `${String(creds.userId ?? "")}:${String(creds.apiKey ?? "")}`
     : String(creds.accessToken ?? "");
   return `fp_${createHash("sha256").update(material).digest("hex").slice(0, 24)}`;
 }
@@ -96,13 +106,10 @@ const NOTIFY: Record<string, string> = {
   returned: "আপনার পার্সেলটি ফেরত পাঠানো হয়েছে। বিস্তারিত জানতে আমাদের মেসেজ করুন।",
 };
 
-/** Normalize a Bangladeshi phone to the 01XXXXXXXXX form couriers require. */
-export function normalizeBdPhone(raw: string): string {
-  const bengali = "০১২৩৪৫৬৭৮৯";
-  let digits = String(raw ?? "").replace(/[০-৯]/g, (d) => String(bengali.indexOf(d))).replace(/\D/g, "");
-  if (digits.startsWith("880") && digits.length === 13) digits = "0" + digits.slice(3);
-  return digits;
-}
+/** GB5: normalizeBdPhone moved to courier-client.ts (the
+ * adapters need it too); re-exported here so existing imports
+ * keep working unchanged. */
+export { normalizeBdPhone } from "./courier-client";
 
 @Injectable()
 export class CourierService {
@@ -208,28 +215,49 @@ export class CourierService {
   /** Build the provider client from one resolved account row. */
   private buildClient(provider: Provider, integration: any) {
     const creds = decryptJson<any>(integration.credential.encryptedData);
-    if (provider === "steadfast") return new SteadfastClient({ apiKey: creds.apiKey, secretKey: creds.secretKey });
-    if (provider === "redx") return new RedxClient({ baseUrl: creds.baseUrl || REDX_DEFAULT_BASE, accessToken: creds.accessToken });
-    const client = new PathaoClient({
-      baseUrl: creds.baseUrl || PATHAO_PROD_BASE,
-      clientId: creds.clientId, clientSecret: creds.clientSecret,
-      username: creds.username, password: creds.password,
-      accessToken: creds.accessToken, refreshToken: creds.refreshToken,
-      tokenIssuedAt: creds.tokenIssuedAt, expiresIn: creds.expiresIn,
+    return createCourierClient(provider, creds, {
+      // Persist refreshed tokens back into the encrypted credential.
+      onPathaoTokens: async (tokens) => {
+        const merged = { ...creds, ...tokens };
+        await (this.prisma as any).integrationCredential.update({
+          where: { integrationId: integration.id }, data: { encryptedData: encryptJson(merged) },
+        }).catch(() => undefined);
+      },
     });
-    // Persist refreshed tokens back into the encrypted credential.
-    client.onTokens = async (tokens) => {
-      const merged = { ...creds, ...tokens };
-      await (this.prisma as any).integrationCredential.update({
-        where: { integrationId: integration.id }, data: { encryptedData: encryptJson(merged) },
-      }).catch(() => undefined);
-    };
-    return client;
+  }
+
+  /** Build the CONCRETE provider client for an org, or throw a
+   * clear "not connected". GB5 (GC13): construction itself lives
+   * in the registry factory (createCourierClient, courier-client.ts);
+   * this resolves the org's Integration row — ONE account per
+   * provider in this tree, the same row every flow uses — and
+   * wires Pathao's token persistence. Provider-specific extras
+   * (stores, areas, charge calculators, verify calls) go through
+   * this; booking + status go through clientFor() (the adapter). */
+  private async rawClientFor(organizationId: string, provider: Provider) {
+    const integration = await this.integration(organizationId, provider);
+    if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
+      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+    }
+    const creds = decryptJson<any>(integration.credential.encryptedData);
+    return createCourierClient(provider, creds, {
+      // Persist refreshed tokens back into the encrypted credential.
+      onPathaoTokens: async (tokens) => {
+        const merged = { ...creds, ...tokens };
+        await (this.prisma as any).integrationCredential.update({
+          where: { integrationId: integration.id }, data: { encryptedData: encryptJson(merged) },
+        }).catch(() => undefined);
+      },
+    });
   }
 
   /**
    * Build the provider client for an org, or throw a clear "not
-   * connected". Default mode resolves the PRIMARY account and
+   * connected". Union (GB5 GC13 + CC29): the return is ALWAYS the
+   * provider-neutral adapter (book() / statusOf()) — the concrete
+   * client comes from buildClient (registry factory), wrapped by
+   * courierAdapter, for the primary account AND for a recorded /
+   * explicitly chosen account alike. Default mode resolves the PRIMARY account and
    * requires it CONNECTED (every pre-CC29 caller). CC29's
    * recorded-account mode (opts.integrationId, used by status
    * sync) builds from THAT row: the row + its credential are
@@ -242,7 +270,7 @@ export class CourierService {
     if (opts?.integrationId) {
       const specific = await this.integrationById(organizationId, provider, opts.integrationId);
       if (specific?.credential && (opts.recordedAccount || specific.status === "CONNECTED")) {
-        return this.buildClient(provider, specific);
+        return courierAdapter(provider, this.buildClient(provider, specific) as any);
       }
       if (specific && !opts.recordedAccount) {
         throw new BadRequestException(`${provider} অ্যাকাউন্টটি যুক্ত নেই (সংযোগ বিচ্ছিন্ন)। আবার Connect করুন অথবা অন্য অ্যাকাউন্ট বেছে নিন।`);
@@ -253,7 +281,7 @@ export class CourierService {
     if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
       throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
     }
-    return this.buildClient(provider, integration);
+    return courierAdapter(provider, this.buildClient(provider, integration) as any);
   }
 
   /**
@@ -394,12 +422,13 @@ export class CourierService {
     provider?: string; apiKey?: string; secretKey?: string;
     clientId?: string; clientSecret?: string; username?: string; password?: string;
     accessToken?: string; baseUrl?: string;
+    apiSecret?: string; userId?: string;
   }) {
     const provider = this.providerOf(dto.provider);
     try {
       if (provider === "steadfast") {
         if (!dto.apiKey?.trim() || !dto.secretKey?.trim()) throw new BadRequestException("apiKey and secretKey are required");
-        const client = new SteadfastClient({ apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() });
+        const client = createCourierClient("steadfast", { apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() }) as SteadfastClient;
         await client.getBalance();
         // CC29: keyed by the credential fingerprint (Steadfast's
         // balance response carries no account id — see
@@ -414,7 +443,7 @@ export class CourierService {
           clientId: dto.clientId!.trim(), clientSecret: dto.clientSecret!.trim(),
           username: dto.username!.trim(), password: dto.password!,
         };
-        const client = new PathaoClient(creds);
+        const client = createCourierClient("pathao", creds) as PathaoClient;
         const { stores } = await client.verify(); // real token issue + stores read
         // CC29: fingerprint over clientId + username — the issued
         // tokens rotate and must never fork the account row.
@@ -422,14 +451,37 @@ export class CourierService {
         await this.saveIntegration(organizationId, provider, { ...creds, ...pathaoClientTokens(client) }, key);
         await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, stores, externalAccountId: key } });
         return this.getConnection(organizationId, provider);
-      } else {
+      } else if (provider === "redx") {
         if (!dto.accessToken?.trim()) throw new BadRequestException("accessToken is required for RedX");
         const baseUrl = dto.baseUrl?.trim() || REDX_DEFAULT_BASE;
-        const client = new RedxClient({ baseUrl, accessToken: dto.accessToken.trim() });
+        const client = createCourierClient("redx", { baseUrl, accessToken: dto.accessToken.trim() }) as RedxClient;
         const { areas } = await client.verify(); // real areas list from RedX
         const key = courierAccountKey(provider, { accessToken: dto.accessToken.trim() });
         await this.saveIntegration(organizationId, provider, { baseUrl, accessToken: dto.accessToken.trim() }, key);
         await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, areas, externalAccountId: key } });
+        return this.getConnection(organizationId, provider);
+      } else if (provider === "ecourier") {
+        // GB5 (GC13): eCourier credentials are the API Key +
+        // API Secret + User ID eCourier issues for the merchant
+        // account (the API documents do not evidence a self-serve
+        // generation screen — the merchant gets them from
+        // eCourier). Verify-before-save = the documented
+        // assigned-package-list call: bad credentials fail there
+        // and nothing is saved.
+        if (!dto.apiKey?.trim() || !dto.apiSecret?.trim() || !dto.userId?.trim()) {
+          throw new BadRequestException("eCourier এর জন্য API Key, API Secret ও User ID তিনটিই দরকার");
+        }
+        const creds = {
+          baseUrl: dto.baseUrl?.trim() || ECOURIER_DEFAULT_BASE,
+          apiKey: dto.apiKey.trim(), apiSecret: dto.apiSecret.trim(), userId: dto.userId.trim(),
+        };
+        const client = createCourierClient("ecourier", creds) as EcourierClient;
+        const { packages } = await client.verify(); // real package-list read
+        // CC29 union: eCourier rows are keyed like every other
+        // provider's — fingerprint over userId + apiKey.
+        const key = courierAccountKey(provider, creds);
+        await this.saveIntegration(organizationId, provider, creds, key);
+        await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, packages } });
         return this.getConnection(organizationId, provider);
       }
     } catch (e) {
@@ -459,32 +511,85 @@ export class CourierService {
 
   // ---------- Provider lookups (booking form pickers) ----------
   async pathaoStores(organizationId: string) {
-    const client = await this.clientFor(organizationId, "pathao") as PathaoClient;
+    const client = await this.rawClientFor(organizationId, "pathao") as PathaoClient;
     return client.getStores().catch((e) => { throw courierError(e); });
   }
   async pathaoCities(organizationId: string) {
-    const client = await this.clientFor(organizationId, "pathao") as PathaoClient;
+    const client = await this.rawClientFor(organizationId, "pathao") as PathaoClient;
     return client.getCities().catch((e) => { throw courierError(e); });
   }
   async pathaoZones(organizationId: string, cityId: number) {
-    const client = await this.clientFor(organizationId, "pathao") as PathaoClient;
+    const client = await this.rawClientFor(organizationId, "pathao") as PathaoClient;
     return client.getZones(cityId).catch((e) => { throw courierError(e); });
   }
   async pathaoAreas(organizationId: string, zoneId: number) {
-    const client = await this.clientFor(organizationId, "pathao") as PathaoClient;
+    const client = await this.rawClientFor(organizationId, "pathao") as PathaoClient;
     return client.getAreas(zoneId).catch((e) => { throw courierError(e); });
   }
   async redxAreas(organizationId: string) {
-    const client = await this.clientFor(organizationId, "redx") as RedxClient;
+    const client = await this.rawClientFor(organizationId, "redx") as RedxClient;
     return client.getAreas().catch((e) => { throw courierError(e); });
   }
   async redxStores(organizationId: string) {
-    const client = await this.clientFor(organizationId, "redx") as RedxClient;
+    const client = await this.rawClientFor(organizationId, "redx") as RedxClient;
     return client.getPickupStores().catch((e) => { throw courierError(e); });
+  }
+  /** GB5: eCourier booking-form pickers — the documented
+   * city list, per-city thana list, and the merchant's ASSIGNED
+   * packages (the order call requires one of their codes).
+   * Names are what the order call takes, so the form works
+   * with names end to end. */
+  async ecourierCities(organizationId: string) {
+    const client = await this.rawClientFor(organizationId, "ecourier") as EcourierClient;
+    return client.getCities().catch((e) => { throw courierError(e); });
+  }
+  async ecourierThanas(organizationId: string, city: string) {
+    if (!city?.trim()) throw new BadRequestException("আগে শহর (City) বেছে নিন");
+    const client = await this.rawClientFor(organizationId, "ecourier") as EcourierClient;
+    return client.getThanas(city.trim()).catch((e) => { throw courierError(e); });
+  }
+  async ecourierPackages(organizationId: string) {
+    const client = await this.rawClientFor(organizationId, "ecourier") as EcourierClient;
+    return client.getPackages().catch((e) => { throw courierError(e); });
   }
 
   private serialize(shipment: any) {
-    return { ...shipment, codAmountMinor: String(shipment.codAmountMinor) };
+    return {
+      ...shipment,
+      codAmountMinor: String(shipment.codAmountMinor),
+      // GB5: chargeMinor is a BigInt column — stringify like the
+      // COD amount when present (null stays null).
+      ...(shipment.chargeMinor != null ? { chargeMinor: String(shipment.chargeMinor) } : {}),
+    };
+  }
+
+  /**
+   * GB5 (GC14): append one row to the shipment's event history.
+   * FULLY failure-isolated (the delegate may not even exist on a
+   * hand-built fake prisma): an event-write failure NEVER breaks
+   * booking, sync or a manual update. Message text is capped at
+   * 500 chars (provider error snippets / staff notes).
+   */
+  private async recordShipmentEvent(organizationId: string, shipment: { id: string }, event: {
+    kind: "status" | "error" | "note";
+    status?: string | null;
+    rawStatus?: string | null;
+    source: "api_sync" | "manual" | "booking" | "system";
+    actorId?: string | null;
+    message?: string | null;
+  }): Promise<void> {
+    try {
+      const delegate = (this.prisma as any).courierShipmentEvent;
+      if (!delegate?.create) return;
+      await delegate.create({
+        data: {
+          organizationId, shipmentId: shipment.id, kind: event.kind,
+          status: event.status ?? null, rawStatus: event.rawStatus ?? null,
+          source: event.source, actorId: event.actorId ?? null,
+          message: event.message ? String(event.message).slice(0, 500) : null,
+        },
+      });
+    } catch { /* failure-isolated by design */ }
   }
 
   /**
@@ -502,11 +607,20 @@ export class CourierService {
     redx?: { deliveryAreaId?: number; pickupAreaId?: number; parcelWeightKg?: number };
   }) {
     const provider = this.providerOf(dto.provider);
-    const client = await this.clientFor(organizationId, provider); // throws "যুক্ত নেই" when unconnected
+    const client = await this.rawClientFor(organizationId, provider); // throws "যুক্ত নেই" when unconnected
     if (provider === "steadfast") {
       return {
         provider, quotable: false, chargeMinor: null, currency: "BDT",
         reason: "বুকিংয়ের পরে চার্জ জানা যাবে — Steadfast বুকিংয়ের আগে ডেলিভারি চার্জ জানার কোনো API দেয় না, তাই আন্দাজি সংখ্যা দেখানো হয় না।",
+      };
+    }
+    if (provider === "ecourier") {
+      // GB5: eCourier's documented package list carries coverage,
+      // not a per-parcel price — no charge-calculation call is
+      // documented, so the honest state is quotable:false.
+      return {
+        provider, quotable: false, chargeMinor: null, currency: "BDT",
+        reason: "বুকিংয়ের পরে চার্জ জানা যাবে — eCourier বুকিংয়ের আগে ডেলিভারি চার্জ হিসাবের কোনো documented API দেয় না, তাই আন্দাজি সংখ্যা দেখানো হয় না।",
       };
     }
     const weightKg = dto.pathao?.itemWeightKg ?? dto.redx?.parcelWeightKg ?? dto.weightKg
@@ -588,6 +702,7 @@ export class CourierService {
     overrideReviewHold?: boolean;
     pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
     redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
+    ecourier?: { city?: string; thana?: string; area?: string; zip?: string; packageCode?: string; paymentMethod?: string };
   }) {
     // providerOf validates an explicit provider (and yields the
     // historical default, steadfast, when none is given).
@@ -668,78 +783,33 @@ export class CourierService {
     });
     const client = await this.clientFor(organizationId, provider, { integrationId: bookingAccount.id });
 
-    let consignmentId: string | null = null;
-    let trackingCode: string;
-    let status: string;
-    let deliveryFeeMajor: number | null = null;
-
+    // GB5 (GC13): the provider-specific payload build +
+    // validations live in the provider's adapter now — the
+    // service builds ONE provider-neutral request and reads ONE
+    // provider-neutral result. Behaviour is the adapters' exact
+    // move of the branches this replaced.
+    let booked: CourierBookingResult;
     try {
-      if (provider === "steadfast") {
-        const consignment = await (client as SteadfastClient).createOrder({
-          invoice, recipient_name: recipientName, recipient_phone: recipientPhone,
-          recipient_address: recipientAddress, cod_amount: codMajor, note: dto.note?.trim() || undefined,
-        });
-        consignmentId = String(consignment.consignment_id);
-        trackingCode = String(consignment.tracking_code);
-        status = String(consignment.status ?? "in_review");
-      } else if (provider === "pathao") {
-        const c = client as PathaoClient;
-        const phone = normalizeBdPhone(recipientPhone);
-        if (!/^01\d{9}$/.test(phone)) throw new BadRequestException("Pathao এর জন্য প্রাপকের ফোন 01 দিয়ে শুরু হওয়া ১১ ডিজিটের নম্বর হতে হবে");
-        let storeId = dto.pathao?.storeId;
-        if (!storeId) {
-          const stores = await c.getStores();
-          const first = stores.find((s: any) => s.is_active === 1 || s.is_active === true) ?? stores[0];
-          if (!first) throw new BadRequestException("Pathao অ্যাকাউন্টে কোনো স্টোর পাওয়া যায়নি — আগে Pathao Merchant Panel এ স্টোর তৈরি করুন");
-          storeId = Number(first.store_id);
-        }
-        const weight = dto.pathao?.itemWeightKg ?? 0.5;
-        if (!(weight >= 0.5 && weight <= 10)) throw new BadRequestException("Pathao তে ওজন ০.৫–১০ কেজির মধ্যে হতে হয়");
-        const description = dto.pathao?.itemDescription
+      booked = await client.book({
+        invoice, recipientName, recipientPhone, recipientAddress,
+        codAmountMajor: codMajor,
+        orderTotalMajor: Number(BigInt(order.totalMinor)) / 100,
+        itemCount: items.reduce((s: number, i: any) => s + (i.quantity ?? 1), 0) || 1,
+        itemDescription: dto.pathao?.itemDescription
           ?? items.map((i: any) => `${i.name} x${i.quantity}`).join(", ").slice(0, 200)
-          ?? "";
-        const booked = await c.createOrder({
-          store_id: storeId, merchant_order_id: invoice,
-          recipient_name: recipientName, recipient_phone: phone, recipient_address: recipientAddress,
-          recipient_city: dto.pathao?.cityId, recipient_zone: dto.pathao?.zoneId, recipient_area: dto.pathao?.areaId,
-          delivery_type: dto.pathao?.deliveryType ?? 48, item_type: dto.pathao?.itemType ?? 2,
-          item_quantity: items.reduce((s: number, i: any) => s + (i.quantity ?? 1), 0) || 1,
-          item_weight: weight, item_description: description || undefined,
-          special_instruction: dto.note?.trim() || undefined,
-          amount_to_collect: Math.round(codMajor),
-        });
-        consignmentId = booked.consignmentId;
-        trackingCode = booked.consignmentId;
-        status = booked.status;
-        deliveryFeeMajor = booked.deliveryFee;
-      } else {
-        const c = client as RedxClient;
-        if (!dto.redx?.deliveryAreaId || !dto.redx?.deliveryArea) {
-          throw new BadRequestException("RedX বুকিংয়ের জন্য ডেলিভারি এলাকা (Area) বেছে নিতে হবে");
-        }
-        const weightKg = dto.redx?.parcelWeightKg ?? 0.5;
-        if (!(weightKg > 0 && weightKg <= 30)) throw new BadRequestException("RedX তে ওজন ০–৩০ কেজির মধ্যে হতে হয়");
-        const booked = await c.createParcel({
-          customer_name: recipientName, customer_phone: normalizeBdPhone(recipientPhone),
-          delivery_area: dto.redx.deliveryArea, delivery_area_id: dto.redx.deliveryAreaId,
-          customer_address: recipientAddress, merchant_invoice_id: invoice,
-          cash_collection_amount: String(Math.round(codMajor)),
-          parcel_weight: Math.round(weightKg * 1000), // RedX expects grams
-          instruction: dto.note?.trim() || undefined,
-          value: Math.max(1, Math.round(Number(BigInt(order.totalMinor)) / 100)),
-          pickup_store_id: dto.redx?.pickupStoreId,
-          parcel_details_json: items.map((i: any) => ({
-            name: i.name, value: Math.round(Number(BigInt(i.totalMinor ?? 0)) / 100),
-          })),
-        });
-        consignmentId = booked.trackingId;
-        trackingCode = booked.trackingId;
-        status = booked.status;
-      }
+          ?? "",
+        items,
+        note: dto.note?.trim() || undefined,
+        pathao: dto.pathao, redx: dto.redx, ecourier: dto.ecourier,
+      });
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
       throw courierError(e);
     }
+    const consignmentId = booked.consignmentId;
+    const trackingCode = booked.trackingCode;
+    const status = booked.status;
+    const deliveryFeeMajor = booked.chargeMinor != null ? booked.chargeMinor / 100 : null;
 
     const shipment = await (this.prisma as any).courierShipment.create({
       data: {
@@ -749,11 +819,20 @@ export class CourierService {
         integrationId: bookingAccount.id,
         consignmentId, trackingCode, invoice, status,
         codAmountMinor: BigInt(Math.round(codMajor * 100)),
+        // GB5 (GC14): the booking-time charge the provider itself
+        // returned (Pathao's delivery_fee) — null for providers
+        // whose booking response carries none. Never estimated.
+        chargeMinor: booked.chargeMinor != null ? BigInt(booked.chargeMinor) : null,
         recipientName, recipientPhone, recipientAddress, lastCheckedAt: new Date(),
         // EC22: record WHICH rule chose this courier (null when
         // staff chose explicitly or no rule matched).
         ...(appliedRule ? { courierRuleId: appliedRule.ruleId } : {}),
       },
+    });
+    // GB5 (GC14): the shipment's event history starts here —
+    // the booking status is its first event.
+    await this.recordShipmentEvent(organizationId, shipment, {
+      kind: "status", status, rawStatus: booked.rawStatus, source: "booking",
     });
     if (appliedRule) {
       await this.audit.log({
@@ -806,6 +885,7 @@ export class CourierService {
     recipientName?: string; recipientPhone?: string; recipientAddress?: string; note?: string;
     pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
     redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
+    ecourier?: { city?: string; thana?: string; area?: string; zip?: string; packageCode?: string; paymentMethod?: string };
   }) {
     const provider = this.providerOf(dto.provider);
     const orderIds = [...new Set((dto.orderIds ?? []).filter(Boolean))];
@@ -830,7 +910,7 @@ export class CourierService {
           courierIntegrationId: dto.courierIntegrationId,
           recipientName: dto.recipientName, recipientPhone: dto.recipientPhone,
           recipientAddress: dto.recipientAddress ?? order.address ?? "",
-          note: dto.note, pathao: dto.pathao, redx: dto.redx,
+          note: dto.note, pathao: dto.pathao, redx: dto.redx, ecourier: dto.ecourier,
         });
         results.push({ orderId, ok: true, shipmentId: shipment.id, trackingCode: shipment.trackingCode, status: shipment.status });
       } catch (e) {
@@ -1124,26 +1204,76 @@ export class CourierService {
     const client = await this.clientFor(organizationId, provider, {
       integrationId: shipment.integrationId ?? null, recordedAccount: true,
     });
-    let status: string;
+    let fetched: { status: string; rawStatus: string | null };
     try {
-      if (provider === "steadfast") status = await (client as SteadfastClient).statusByTrackingCode(shipment.trackingCode);
-      else if (provider === "pathao") status = await (client as PathaoClient).orderStatus(shipment.consignmentId ?? shipment.trackingCode);
-      else status = await (client as RedxClient).parcelStatus(shipment.trackingCode);
-    } catch (e) { throw courierError(e); }
+      fetched = await client.statusOf({
+        consignmentId: shipment.consignmentId ?? null,
+        trackingCode: shipment.trackingCode ?? null,
+      });
+    } catch (e) {
+      // GB5 (GC14): a provider error during sync joins the
+      // shipment's event history (failure-isolated) before the
+      // error surfaces exactly as before.
+      await this.recordShipmentEvent(organizationId, shipment, {
+        kind: "error", source: "api_sync",
+        message: e instanceof Error ? e.message : "sync failed",
+      });
+      throw courierError(e);
+    }
+    return this.applyShipmentStatus(organizationId, shipment, fetched.status, {
+      source: "api_sync", rawStatus: fetched.rawStatus, touchCheckedAt: true,
+    });
+  }
+
+  /**
+   * GB5 (GC14): THE single place a shipment status is applied —
+   * the row update plus every side effect a transition carries:
+   * the GC14 event row (transitions only), the S1 return-restore
+   * hook, the A2 workflow event, the legacy customer card and the
+   * ON5 engine notifications. syncShipment (source api_sync) and
+   * the staff manual update (source manual) BOTH route through
+   * here, so a manual "delivered"/"returned" behaves exactly like
+   * a synced one. This body is syncShipment's original post-fetch
+   * code, extracted unchanged.
+   */
+  private async applyShipmentStatus(organizationId: string, shipment: any, status: string, opts: {
+    source: "api_sync" | "manual";
+    rawStatus?: string | null;
+    actorId?: string | null;
+    note?: string | null;
+    touchCheckedAt?: boolean;
+  }) {
+    const shipmentId = shipment.id;
     const changed = status !== shipment.status;
     // Automations A2: capture BEFORE the update — after it,
     // nothing may be trusted to still hold the old status.
     const previousStatus = shipment.status;
     const updated = await (this.prisma as any).courierShipment.update({
-      where: { id: shipmentId }, data: { status, lastCheckedAt: new Date() },
+      where: { id: shipmentId },
+      data: { status, ...(opts.touchCheckedAt ? { lastCheckedAt: new Date() } : {}) },
     });
+    // GB5 (GC14): the transition joins the shipment's event
+    // history — only on CHANGE (a poll that finds the same
+    // status writes nothing), with the provider's verbatim
+    // string preserved next to the mapped one. A staff note
+    // rides the same row; a note with no change is its own
+    // kind=note row (written by applyManualStatus).
+    if (changed) {
+      await this.recordShipmentEvent(organizationId, shipment, {
+        kind: "status", status, rawStatus: opts.rawStatus ?? null,
+        source: opts.source, actorId: opts.actorId ?? null,
+        message: opts.note ?? null,
+      });
+    }
     // S1: a courier-confirmed return restores the order's stock.
-    // This is the ONLY status-writing shipment update: syncAll
-    // funnels through syncShipment (the other courierShipment
-    // update, in notifyCustomer, writes only lastNotifiedStatus),
-    // so hooking here covers single + bulk sync exactly once.
-    // Restore itself is idempotent per order. Failure-isolated.
-    if (this.inventory && status === "returned" && shipment.status !== "returned") {
+    // Sync funnels through this applicator (single + bulk via
+    // syncShipment) and manual updates share it, so the hook
+    // fires exactly once per path. Restore itself is idempotent
+    // per order. Failure-isolated. (GB5: the comparison uses
+    // previousStatus — the pre-update capture — not
+    // shipment.status, which the update above may already have
+    // overwritten on the same object.)
+    if (this.inventory && status === "returned" && previousStatus !== "returned") {
       try {
         await this.inventory.applyOrderRestore(organizationId, shipment.orderId, "order_returned");
       } catch (e) { this.logger.warn(`inventory order_returned restore failed for order ${shipment.orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
@@ -1223,6 +1353,163 @@ export class CourierService {
       });
     }
     return this.serialize(updated);
+  }
+
+  /**
+   * GB5 (GC14): staff manual tracking update — for couriers
+   * whose API is down, and for the manual-courier case where
+   * staff ARE the integration. The status goes through the SAME
+   * applicator a provider sync uses (applyShipmentStatus), so
+   * order knock-ons, notifications and the return-restore hook
+   * behave identically; the event is stamped source=manual with
+   * the acting staff id, and the change is audited. The offered
+   * vocabulary is the internal one (COURIER_STATUSES) — staff
+   * pick a mapped status, never a provider string.
+   */
+  async applyManualStatus(organizationId: string, actorId: string, shipmentId: string, dto: {
+    status?: string; note?: string;
+  }) {
+    const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
+    if (!shipment) throw new NotFoundException("Shipment not found");
+    const status = String(dto.status ?? "").trim();
+    if (!(COURIER_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(
+        `স্ট্যাটাসটি চেনা যাচ্ছে না — যেকোনো একটি বেছে নিন: ${COURIER_STATUSES.join(", ")}`,
+      );
+    }
+    const note = dto.note?.trim() ? dto.note.trim().slice(0, 500) : null;
+    if (status === shipment.status) {
+      // No transition: nothing for the applicator to do. A note
+      // alone still joins the history as a kind=note row.
+      if (note) {
+        await this.recordShipmentEvent(organizationId, shipment, {
+          kind: "note", source: "manual", actorId, message: note,
+        });
+      }
+      return { ...this.serialize(shipment), changed: false };
+    }
+    const updated = await this.applyShipmentStatus(organizationId, shipment, status, {
+      source: "manual", actorId, note,
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "courier.shipment.manual_status",
+      entityType: "CourierShipment", entityId: shipment.id,
+      metadata: { from: shipment.status, to: status, note: note != null },
+    }).catch(() => undefined);
+    return { ...updated, changed: true };
+  }
+
+  /** GB5 (GC14): the shipment's event history for the staff
+   * shipment detail view (newest first, capped). */
+  async listShipmentEvents(organizationId: string, shipmentId: string) {
+    const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
+    if (!shipment) throw new NotFoundException("Shipment not found");
+    const delegate = (this.prisma as any).courierShipmentEvent;
+    const events = delegate?.findMany
+      ? await delegate.findMany({
+          where: { organizationId, shipmentId },
+          orderBy: { createdAt: "desc" }, take: 200,
+        }).catch(() => [])
+      : [];
+    return { shipment: this.serialize(shipment), events };
+  }
+
+  /**
+   * GB5 (GC14): the RTO report — per provider, over shipments
+   * BOOKED in the window (Dhaka days, ON7-style from/to):
+   * booked / delivered / returned (the standard classifier) and
+   * rtoRatePct = returned / booked. avgDaysToReturn is computed
+   * ONLY from the GC14 event log: shipments having BOTH a
+   * booking status event and a returned-family status event —
+   * the n is stated on the row (timingN); pre-GC14 shipments
+   * have no events and are excluded, never estimated.
+   */
+  async rtoReport(organizationId: string, range?: { from?: string; to?: string }) {
+    const now = new Date();
+    const dayStart = (d: Date) => dhakaDayStartUtc(d);
+    let end = new Date(dayStart(now).getTime() + 86400000); // tomorrow 00:00 Dhaka
+    let start = new Date(end.getTime() - 30 * 86400000); // default: last 30 Dhaka days incl. today
+    const parseDay = (v?: string) => {
+      if (!v) return null;
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+      if (!m) throw new BadRequestException("from/to must be YYYY-MM-DD");
+      return dayStart(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12)));
+    };
+    const fromDay = parseDay(range?.from);
+    const toDay = parseDay(range?.to);
+    if (fromDay) start = fromDay;
+    if (toDay) end = new Date(toDay.getTime() + 86400000);
+    if (end.getTime() <= start.getTime()) throw new BadRequestException("to must be on or after from");
+
+    const shipments = await (this.prisma as any).courierShipment.findMany({
+      where: { organizationId, createdAt: { gte: start, lt: end } },
+      select: { id: true, provider: true, status: true },
+      take: 20000,
+    });
+    // Return timing from the event log only (both events needed).
+    const timingByShipment = new Map<string, number>();
+    const delegate = (this.prisma as any).courierShipmentEvent;
+    if (delegate?.findMany && shipments.length > 0) {
+      const events = await delegate.findMany({
+        where: {
+          organizationId, kind: "status",
+          shipmentId: { in: shipments.map((s: any) => s.id) },
+        },
+        select: { shipmentId: true, status: true, source: true, createdAt: true },
+        orderBy: { createdAt: "asc" }, take: 100000,
+      }).catch(() => []);
+      const bookedAt = new Map<string, number>();
+      const returnedAt = new Map<string, number>();
+      for (const e of events as any[]) {
+        if (e.source === "booking" && !bookedAt.has(e.shipmentId)) {
+          bookedAt.set(e.shipmentId, new Date(e.createdAt).getTime());
+        }
+        if (e.status && classifyShipmentStatus(e.status) === "returned" && !returnedAt.has(e.shipmentId)) {
+          returnedAt.set(e.shipmentId, new Date(e.createdAt).getTime());
+        }
+      }
+      for (const [id, ret] of returnedAt) {
+        const booked = bookedAt.get(id);
+        if (booked != null && ret >= booked) {
+          timingByShipment.set(id, (ret - booked) / 86400000);
+        }
+      }
+    }
+    const byProvider = new Map<string, any>();
+    const blank = (provider: string) => ({
+      provider, booked: 0, delivered: 0, returned: 0,
+      rtoRatePct: null as number | null, avgDaysToReturn: null as number | null, timingN: 0,
+      _days: 0,
+    });
+    for (const s of shipments as any[]) {
+      const row = byProvider.get(s.provider) ?? blank(s.provider);
+      row.booked += 1;
+      const bucket = classifyShipmentStatus(s.status);
+      if (bucket === "delivered") row.delivered += 1;
+      if (bucket === "returned") row.returned += 1;
+      const days = timingByShipment.get(s.id);
+      if (days != null) { row.timingN += 1; row._days += days; }
+      byProvider.set(s.provider, row);
+    }
+    const finish = (row: any) => {
+      const { _days, ...rest } = row;
+      return {
+        ...rest,
+        rtoRatePct: row.booked > 0 ? Math.round((row.returned / row.booked) * 10000) / 100 : null,
+        avgDaysToReturn: row.timingN > 0 ? Math.round((_days / row.timingN) * 10) / 10 : null,
+      };
+    };
+    const providers = [...byProvider.values()].map(finish)
+      .sort((a, b) => b.booked - a.booked || a.provider.localeCompare(b.provider));
+    const totalsRow = blank("all");
+    for (const row of byProvider.values()) {
+      totalsRow.booked += row.booked; totalsRow.delivered += row.delivered;
+      totalsRow.returned += row.returned; totalsRow.timingN += row.timingN; totalsRow._days += row._days;
+    }
+    return {
+      range: { from: start.toISOString(), to: new Date(end.getTime() - 86400000).toISOString() },
+      providers, totals: finish(totalsRow),
+    };
   }
 
   async syncAll(organizationId: string) {

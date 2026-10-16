@@ -1,4 +1,5 @@
 import { platformSetting } from "./platform-settings";
+import { createAgentNotification } from "./agent-notify";
 
 /**
  * Referral program helpers (Milestone 41, Admin Phase A5).
@@ -206,22 +207,18 @@ export async function maybeRewardReferral(
   // ledger + notification + audit are the record.)
   const tk = (n: number) => `৳${(n / 100).toFixed(2)}`;
   if (reward > 0 && !isCampaign) {
-    await prisma.agentNotification?.create?.({
-      data: {
+    await createAgentNotification(prisma, {
         organizationId: targetOrg.id, userId: referral.referrerUserId, type: "referral",
         title: "🎁 রেফারেল রিওয়ার্ড পেয়েছেন!",
         body: `আপনার রেফারেলে একটি ব্যবসা প্রথম পেমেন্ট করেছে — ${tk(reward)} বিলিং ক্রেডিট যোগ হয়েছে।`
-      },
-    })?.catch?.(() => null);
+      })?.catch?.(() => null);
   }
   if (bonus > 0) {
-    await prisma.agentNotification?.create?.({
-      data: {
+    await createAgentNotification(prisma, {
         organizationId, userId: ownerMembership.userId, type: "referral",
         title: "👋 ওয়েলকাম ক্রেডিট পেয়েছেন!",
         body: `রেফারেল প্রোগ্রামে স্বাগতম — আপনার ওয়ার্কস্পেসে ${tk(bonus)} ওয়েলকাম ক্রেডিট যোগ হয়েছে।`
-      },
-    })?.catch?.(() => null);
+      })?.catch?.(() => null);
   }
   // Referral Advanced R4: milestone bonuses — when this
   // reward crosses a configured paid-referral threshold,
@@ -249,13 +246,11 @@ export async function maybeRewardReferral(
         action: "referral.milestone_bonus", entityType: "Referral", entityId: referral.id,
         metadata: { threshold: m.count, bonusMinor: m.bonusMinor, rewardedCount },
       }).catch(() => undefined);
-      await prisma.agentNotification?.create?.({
-        data: {
+      await createAgentNotification(prisma, {
           organizationId: targetOrg.id, userId: referral.referrerUserId, type: "referral",
           title: "🏆 মাইলস্টোন বোনাস!",
           body: `আপনি ${m.count}টি পেইড রেফারেল পূর্ণ করেছেন — বোনাস ${tk(m.bonusMinor)} ক্রেডিট যোগ হয়েছে।`
-        },
-      })?.catch?.(() => null);
+        })?.catch?.(() => null);
       milestonesAwarded.push(m);
     }
   }
@@ -318,13 +313,11 @@ export async function maybeClawbackReferral(
     },
   }).catch(() => undefined);
   if (referral.rewardedOrgId) {
-    await prisma.agentNotification?.create?.({
-      data: {
+    await createAgentNotification(prisma, {
         organizationId: referral.rewardedOrgId, userId: referral.referrerUserId, type: "referral",
         title: "↩️ রেফারেল রিওয়ার্ড ফেরত নেওয়া হয়েছে",
         body: "রেফার করা ব্যবসাটির প্রথম পেমেন্ট রিফান্ড হওয়ায় সংশ্লিষ্ট রিওয়ার্ড ক্রেডিট ফেরত নেওয়া হয়েছে।"
-      },
-    })?.catch?.(() => null);
+      })?.catch?.(() => null);
   }
   return { clawedBack: true, debitedMinor: debited.toString(), shortfallMinor: shortfall.toString() };
 }

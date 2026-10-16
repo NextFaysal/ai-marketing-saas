@@ -21,7 +21,17 @@ import { existsSync } from "node:fs";
 
 export const STATUSES = ["open", "pending", "in_progress", "resolved", "closed"] as const;
 export const PRIORITIES = ["normal", "high", "urgent"] as const;
-export const CATEGORIES = ["general", "billing", "technical", "campaigns", "integration"] as const;
+export const TICKET_CATEGORIES = [
+  "general",
+  "billing",
+  "technical",
+  "campaigns",
+  "integration",
+  "account",
+  "feature",
+  "other",
+] as const;
+export const CATEGORIES = TICKET_CATEGORIES;
 
 const DEFAULT_CANNED_RESPONSES = [
   {
@@ -55,6 +65,40 @@ const DEFAULT_CANNED_RESPONSES = [
     category: "general",
   },
 ];
+
+/**
+ * GC23 — first-response SLA (hours), configured by the platform
+ * via the SystemSetting "supportSlaHours" = { low, normal, high,
+ * urgent }; defaults below. Tickets today carry priority
+ * normal|high only — the map still covers all four keys and any
+ * unknown priority falls back to `normal`. Breach is COMPUTED ON
+ * READ (no stored state to drift): unresolved + no first admin
+ * response + past createdAt + slaHours.
+ */
+export const SUPPORT_SLA_DEFAULTS: Record<string, number> = { low: 72, normal: 24, high: 8, urgent: 4 };
+
+export async function loadSupportSlaHours(prisma: any): Promise<Record<string, number>> {
+  const out = { ...SUPPORT_SLA_DEFAULTS };
+  try {
+    const row = await prisma.systemSetting?.findUnique({ where: { key: "supportSlaHours" } });
+    const v = row?.value;
+    if (v && typeof v === "object") {
+      for (const key of Object.keys(SUPPORT_SLA_DEFAULTS)) {
+        const n = Number((v as any)[key]);
+        if (Number.isFinite(n) && n > 0) out[key] = n;
+      }
+    }
+  } catch { /* defaults apply — SLA display must never break the queue */ }
+  return out;
+}
+
+export function slaState(ticket: any, hours: Record<string, number>, now = new Date()) {
+  const h = hours[String(ticket?.priority ?? "normal")] ?? hours.normal ?? SUPPORT_SLA_DEFAULTS.normal;
+  const dueAt = new Date(new Date(ticket?.createdAt ?? now).getTime() + h * 3600_000);
+  const terminal = ticket?.status === "resolved" || ticket?.status === "closed";
+  const breached = !terminal && !ticket?.firstRespondedAt && now.getTime() > dueAt.getTime();
+  return { slaHours: h, slaDueAt: dueAt.toISOString(), slaBreached: breached };
+}
 
 @Injectable()
 export class SupportService {
@@ -264,7 +308,14 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
     if (body.length < 1) throw new BadRequestException("Message body is required");
 
     const priority = dto.priority === "urgent" ? "urgent" : dto.priority === "high" ? "high" : "normal";
-    const category = dto.category && (CATEGORIES as readonly string[]).includes(dto.category) ? dto.category : "general";
+    // GC23: category — default "other"; anything outside the
+    // vocabulary is a client error, never silently coerced.
+    const category = dto.category === undefined || dto.category === null || dto.category === ""
+      ? "other"
+      : String(dto.category);
+    if (!(TICKET_CATEGORIES as readonly string[]).includes(category)) {
+      throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+    }
 
     // Set SLA deadline based on priority:
     // urgent: 4 hours, high: 12 hours, normal: 24 hours
@@ -295,7 +346,8 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       },
     });
 
-    return this.getTicket(organizationId, ticket.id);
+    const created = await this.getTicket(organizationId, ticket.id);
+    return { ...created, slaDueAt };
   }
 
   async listTickets(organizationId: string) {
@@ -304,7 +356,8 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       orderBy: { lastMessageAt: "desc" },
       take: 100,
     });
-    return this.withCounts(rows);
+    const withCounts = await this.withCounts(rows);
+    return withCounts.map(({ slaDueAt, slaBreached, slaHours, ...rest }: any) => rest);
   }
 
   async getTicket(organizationId: string, ticketId: string) {
@@ -316,7 +369,8 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       where: { ticketId, isInternal: false },
       orderBy: { createdAt: "asc" },
     });
-    return { ...ticket, messages };
+    const { slaDueAt, slaBreached, slaHours, ...cleanTicket } = ticket;
+    return { ...cleanTicket, messages };
   }
 
   async replyAsTenant(organizationId: string, userId: string, ticketId: string, input: ReplyDto | string) {
@@ -398,7 +452,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   // ---------------- Admin side ----------------
 
-  async listTicketsAdmin(filter?: { status?: string; organizationId?: string; category?: string; priority?: string }) {
+  async listTicketsAdmin(filter?: { status?: string; organizationId?: string; category?: string; priority?: string; slaBreached?: boolean }) {
     const where: any = {};
     if (filter?.status) where.status = filter.status;
     if (filter?.organizationId) where.organizationId = filter.organizationId;
@@ -411,13 +465,15 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       take: 100,
     });
     const withCounts = await this.withCounts(rows);
-    const out: any[] = [];
+    // GC23: SLA state is computed on read and added to ADMIN
+    // payloads only — tenant payloads never carry SLA internals.
+    const hours = await loadSupportSlaHours(this.prisma as any);
+    const now = new Date();
+    let out: any[] = [];
     for (const t of withCounts) {
-      out.push({
-        ...t,
-        organizationName: await this.orgName(t.organizationId),
-      });
+      out.push({ ...t, ...slaState(t, hours, now), organizationName: await this.orgName(t.organizationId) });
     }
+    if (filter?.slaBreached) out = out.filter((t) => t.slaBreached);
     return out;
   }
 
@@ -441,7 +497,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       where: { organizationId: ticket.organizationId },
     }).catch(() => 1);
 
-    const integrationsCount = await (this.prisma as any).integration.count({
+    const integrationsCount = await (this.prisma as any).integration?.count({
       where: { organizationId: ticket.organizationId, status: "ACTIVE" },
     }).catch(() => 0);
 
@@ -455,9 +511,11 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       diagnostics: ticket.diagnostics ?? null,
     };
 
+    const hours = await loadSupportSlaHours(this.prisma as any);
     return {
       ...ticket,
       messages,
+      ...slaState(ticket, hours),
       organizationName: org?.name ?? null,
       creatorEmail: creator?.email ?? null,
       customer360,
@@ -487,10 +545,9 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
     const updateData: Record<string, unknown> = {
       lastMessageAt: new Date(),
       ...(ticket.status === "open" ? { status: "pending" } : {}),
+      ...(ticket.firstRespondedAt ? {} : { firstRespondedAt: new Date() }),
+      ...(ticket.firstRepliedAt ? {} : { firstRepliedAt: new Date() }),
     };
-    if (!ticket.firstRepliedAt) {
-      updateData.firstRepliedAt = new Date();
-    }
 
     await (this.prisma as any).supportTicket.update({
       where: { id: ticketId },
@@ -583,7 +640,6 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
     return message;
   }
-
   async updateAsAdmin(actor: any, ticketId: string, dto: AdminTicketUpdateDto, ip?: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) throw new NotFoundException("Ticket not found");
@@ -603,7 +659,11 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       }
       data.priority = dto.priority;
     }
+    // GC23: admins can recategorize a ticket.
     if (dto.category !== undefined) {
+      if (!(TICKET_CATEGORIES as readonly string[]).includes(dto.category)) {
+        throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+      }
       data.category = dto.category;
     }
     if (dto.tags !== undefined) {
@@ -612,7 +672,6 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
     if (dto.slaDueAt !== undefined) {
       data.slaDueAt = dto.slaDueAt ? new Date(dto.slaDueAt) : null;
     }
-
     const updated = await (this.prisma as any).supportTicket.update({ where: { id: ticketId }, data });
     await this.audit.log({
       organizationId: ticket.organizationId,

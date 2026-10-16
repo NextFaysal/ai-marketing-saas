@@ -15,11 +15,29 @@ interface Discount {
   minOrderMinor?: string | null; scopeType: string; scopeIds?: string[] | null;
   startsAt?: string | null; endsAt?: string | null;
   usageLimit?: number | null; usedCount: number; active: boolean; origin: string;
+  // GB7 (GC17): eligibility + exclusion fields.
+  firstOrderOnly?: boolean;
+  repeatCustomerOnly?: boolean;
+  perCustomerLimit?: number | null;
+  maxOrderMinor?: string | null;
+  excludedProductIds?: string[];
+  excludedCategoryIds?: string[];
+  sourceRef?: string | null;
   syncs?: DiscountSync[];
 }
 interface Store { id: string; name: string; platform?: string; syncMode?: string }
 interface ProductOpt { id: string; name: string }
 interface CategoryOpt { id: string; name: string }
+
+const ORIGIN_LABEL: Record<string, string> = {
+  manual: "ম্যানুয়াল",
+  woocommerce: "WooCommerce",
+  shopify: "Shopify",
+  abandoned_recovery: "পরিত্যক্ত কার্ট পুনরুদ্ধার",
+};
+
+const splitIds = (text: string): string[] =>
+  text.split(",").map((x) => x.trim()).filter(Boolean);
 
 const KIND_LABEL: Record<string, string> = {
   percent: "শতাংশ (%)",
@@ -62,6 +80,14 @@ export default function DiscountsPage() {
   const [endsAt, setEndsAt] = useState("");
   const [usageLimit, setUsageLimit] = useState("");
   const [targetStores, setTargetStores] = useState<string[]>([]);
+  // GB7 (GC17): eligibility + exclusions + origin filter
+  const [firstOrderOnly, setFirstOrderOnly] = useState(false);
+  const [repeatCustomerOnly, setRepeatCustomerOnly] = useState(false);
+  const [perCustomerLimit, setPerCustomerLimit] = useState("");
+  const [maxOrder, setMaxOrder] = useState("");
+  const [excludedProductIdsText, setExcludedProductIdsText] = useState("");
+  const [excludedCategoryIdsText, setExcludedCategoryIdsText] = useState("");
+  const [originFilter, setOriginFilter] = useState("");
 
   // campaign generator
   const [genPrefix, setGenPrefix] = useState("EID");
@@ -75,7 +101,7 @@ export default function DiscountsPage() {
     setLoading(true);
     try {
       const [d, s, p, c] = await Promise.all([
-        apiFetch<{ items: Discount[] }>(`/organizations/${orgId}/commerce/discounts`),
+        apiFetch<{ items: Discount[] }>(`/organizations/${orgId}/commerce/discounts${originFilter ? `?origin=${encodeURIComponent(originFilter)}` : ""}`),
         apiFetch<Store[]>(`/organizations/${orgId}/stores`).catch(() => [] as Store[]),
         apiFetch<{ items: ProductOpt[] }>(`/organizations/${orgId}/products?pageSize=100`).catch(() => ({ items: [] as ProductOpt[] })),
         apiFetch<CategoryOpt[]>(`/organizations/${orgId}/products/categories`).catch(() => [] as CategoryOpt[]),
@@ -87,12 +113,14 @@ export default function DiscountsPage() {
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
     finally { setLoading(false); }
-  }, []);
+  }, [originFilter]);
   useEffect(() => { load(); }, [load]);
 
   function resetForm() {
     setEditingId(null); setCode(""); setKind("percent"); setValue("10"); setMinOrder("");
     setScopeType("all"); setScopeIds([]); setStartsAt(""); setEndsAt(""); setUsageLimit(""); setTargetStores([]);
+    setFirstOrderOnly(false); setRepeatCustomerOnly(false); setPerCustomerLimit(""); setMaxOrder("");
+    setExcludedProductIdsText(""); setExcludedCategoryIdsText("");
   }
 
   function startEdit(d: Discount) {
@@ -101,6 +129,11 @@ export default function DiscountsPage() {
     setScopeType(d.scopeType); setScopeIds(Array.isArray(d.scopeIds) ? d.scopeIds : []);
     setStartsAt(d.startsAt ? d.startsAt.slice(0, 16) : ""); setEndsAt(d.endsAt ? d.endsAt.slice(0, 16) : "");
     setUsageLimit(d.usageLimit != null ? String(d.usageLimit) : ""); setTargetStores([]);
+    setFirstOrderOnly(!!d.firstOrderOnly); setRepeatCustomerOnly(!!d.repeatCustomerOnly);
+    setPerCustomerLimit(d.perCustomerLimit != null ? String(d.perCustomerLimit) : "");
+    setMaxOrder(d.maxOrderMinor ? String(Number(d.maxOrderMinor) / 100) : "");
+    setExcludedProductIdsText((d.excludedProductIds ?? []).join(", "));
+    setExcludedCategoryIdsText((d.excludedCategoryIds ?? []).join(", "));
   }
 
   async function save() {
@@ -114,6 +147,12 @@ export default function DiscountsPage() {
       startsAt: startsAt ? new Date(startsAt).toISOString() : null,
       endsAt: endsAt ? new Date(endsAt).toISOString() : null,
       usageLimit: usageLimit ? parseInt(usageLimit, 10) : null,
+      firstOrderOnly,
+      repeatCustomerOnly,
+      perCustomerLimit: perCustomerLimit ? parseInt(perCustomerLimit, 10) : null,
+      maxOrderMinor: maxOrder ? String(Math.round(parseFloat(maxOrder) * 100)) : null,
+      excludedProductIds: splitIds(excludedProductIdsText),
+      excludedCategoryIds: splitIds(excludedCategoryIdsText),
       storeIds: targetStores,
     };
     try {
@@ -221,6 +260,33 @@ export default function DiscountsPage() {
               <option value="categories">নির্দিষ্ট ক্যাটাগরিতে</option>
             </select>
           </label>
+          <label className="block text-sm">সর্বোচ্চ অর্ডার (টাকা, খালি = নেই)
+            <input className="input mt-1" type="number" value={maxOrder} onChange={(e) => setMaxOrder(e.target.value)} />
+          </label>
+          <label className="block text-sm">প্রতি কাস্টমারের সীমা (খালি = অসীম)
+            <input className="input mt-1" type="number" min="1" value={perCustomerLimit} onChange={(e) => setPerCustomerLimit(e.target.value)} />
+            <span className="mt-1 block text-xs font-normal text-slate-400">সীমাটি অর্ডারে সংরক্ষিত কুপন-কোড স্ট্যাম্প থেকে গণনা করা হয়</span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={firstOrderOnly} onChange={(e) => setFirstOrderOnly(e.target.checked)} />
+            শুধু প্রথম অর্ডারে (firstOrderOnly)
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={repeatCustomerOnly} onChange={(e) => setRepeatCustomerOnly(e.target.checked)} />
+            শুধু পুরনো কাস্টমারের জন্য (repeatCustomerOnly)
+          </label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-sm">বাদ যাবে এমন পণ্য (আইডি)
+            <input className="input mt-1" value={excludedProductIdsText} onChange={(e) => setExcludedProductIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
+            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে আলাদা করে পণ্যের আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+          </label>
+          <label className="block text-sm">বাদ যাবে এমন ক্যাটাগরি (আইডি)
+            <input className="input mt-1" value={excludedCategoryIdsText} onChange={(e) => setExcludedCategoryIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
+            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে আলাদা করে ক্যাটাগরির আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি ক্যাটাগরির পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+          </label>
         </div>
         {scopeType !== "all" ? (
           <div>
@@ -284,7 +350,18 @@ export default function DiscountsPage() {
 
       <div className="card p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">সব ডিসকাউন্ট ({discounts.length})</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="font-semibold">সব ডিসকাউন্ট ({discounts.length})</div>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">উৎস
+              <select className="input w-auto py-1 text-xs" value={originFilter} onChange={(e) => setOriginFilter(e.target.value)}>
+                <option value="">সব উৎস</option>
+                <option value="manual">ম্যানুয়াল</option>
+                <option value="woocommerce">WooCommerce</option>
+                <option value="shopify">Shopify</option>
+                <option value="abandoned_recovery">পরিত্যক্ত কার্ট পুনরুদ্ধার</option>
+              </select>
+            </label>
+          </div>
           <div className="flex flex-wrap gap-2">
             {stores.filter((s) => s.platform === "WOOCOMMERCE" || s.platform === "SHOPIFY").map((s) => (
               <button key={s.id} className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => pull(s.id)}>
@@ -312,7 +389,16 @@ export default function DiscountsPage() {
                     <td className="py-2">{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-400">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</td>
                     <td className="py-2 text-xs text-slate-500">{d.startsAt ? new Date(d.startsAt).toLocaleDateString("bn-BD") : "—"} → {d.endsAt ? new Date(d.endsAt).toLocaleDateString("bn-BD") : "অসীম"}</td>
                     <td className="py-2">{d.usedCount}{d.usageLimit != null ? ` / ${d.usageLimit}` : ""}</td>
-                    <td className="py-2 text-xs">{d.origin}</td>
+                    <td className="py-2 text-xs">
+                      <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${d.origin === "abandoned_recovery" ? "bg-amber-100 text-amber-800" : d.origin === "manual" ? "bg-slate-100 text-slate-600" : "bg-indigo-100 text-indigo-700"}`}>
+                        {ORIGIN_LABEL[d.origin] ?? d.origin}
+                      </span>
+                      {d.sourceRef ? <div className="mt-1 font-mono text-[10px] text-slate-400">{d.sourceRef}</div> : null}
+                      {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু প্রথম অর্ডারে</div> : null}
+                      {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু পুরনো কাস্টমারের</div> : null}
+                      {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">প্রতি কাস্টমার সর্বোচ্চ {d.perCustomerLimit}বার</div> : null}
+                      {d.maxOrderMinor ? <div className="mt-1 text-[11px] text-slate-500">সর্বোচ্চ অর্ডার {money(d.maxOrderMinor)}</div> : null}
+                    </td>
                     <td className="py-2"><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></td>
                     <td className="py-2">
                       <div className="flex gap-2">

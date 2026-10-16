@@ -1,8 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { WarehouseService } from "./warehouse.service";
+import { StockTransfersService } from "./stock-transfers.service";
+import { InventoryService } from "../inventory/inventory.service";
 import {
   CreateBinAssignmentDto, CreateBinDto, CreateStockCountDto,
-  CreateWarehouseDto, SetCountedQtyDto, UpdateBinDto, UpdateWarehouseDto,
+  CreateStockTransferDto, CreateWarehouseDto, ReallocateOrderDto,
+  ReceiveStockTransferDto, SetCountedQtyDto, UpdateBinDto, UpdateWarehouseDto,
 } from "./warehouse.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
@@ -11,12 +14,27 @@ import { RolesGuard } from "../common/roles.guard";
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;
 
 /** EC21 — Warehouse & Stock Ops (staff). Same guard stack and
- * full-subpath style as the Fulfillment controller. */
+ * full-subpath style as the Fulfillment controller.
+ * AB3 (AX4): stock balances / stock-by-location reads, warehouse
+ * stock transfers, and the staff order re-allocation endpoint
+ * join this controller (the warehouse module already injects
+ * InventoryService, so reallocate needs no new module edge). */
 @PermissionArea("orders")
 @Controller("organizations/:organizationId")
 @UseGuards(TenantGuard, RolesGuard)
 export class WarehouseController {
-  constructor(private readonly warehouse: WarehouseService) {}
+  constructor(
+    private readonly warehouse: WarehouseService,
+    // Optional so manual constructions in older specs keep
+    // working; WarehouseModule provides both.
+    @Optional() private readonly transfers?: StockTransfersService,
+    @Optional() private readonly inventory?: InventoryService,
+  ) {}
+
+  private requireTransfers(): StockTransfersService {
+    if (!this.transfers) throw new BadRequestException("ট্রান্সফার সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    return this.transfers;
+  }
 
   // ---- Warehouses ----
   @Get("commerce/warehouses")
@@ -109,5 +127,70 @@ export class WarehouseController {
   @Post("commerce/stock-counts/:sessionId/close") @Roles(...WRITE_ROLES)
   closeStockCount(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("sessionId") sessionId: string) {
     return this.warehouse.closeStockCount(orgId, user.userId, sessionId);
+  }
+
+  // ---- AB3: stock balances + stock-by-location ----
+
+  @Get("commerce/stock-balances")
+  listStockBalances(@Param("organizationId") orgId: string) {
+    return this.warehouse.listStockBalances(orgId);
+  }
+
+  @Get("commerce/stock-by-location")
+  stockByLocation(@Param("organizationId") orgId: string) {
+    return this.warehouse.stockByLocation(orgId);
+  }
+
+  @Get("commerce/stock-by-location.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", "attachment; filename=stock-by-location.csv")
+  stockByLocationCsv(@Param("organizationId") orgId: string) {
+    return this.warehouse.stockByLocationCsv(orgId);
+  }
+
+  // ---- AB3: warehouse stock transfers ----
+
+  @Post("commerce/stock-transfers") @Roles(...WRITE_ROLES)
+  createTransfer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateStockTransferDto) {
+    return this.requireTransfers().createTransfer(orgId, user.userId, dto);
+  }
+
+  @Get("commerce/stock-transfers")
+  listTransfers(@Param("organizationId") orgId: string) {
+    return this.requireTransfers().listTransfers(orgId);
+  }
+
+  @Get("commerce/stock-transfers/:transferId")
+  getTransfer(@Param("organizationId") orgId: string, @Param("transferId") transferId: string) {
+    return this.requireTransfers().getTransfer(orgId, transferId);
+  }
+
+  @Post("commerce/stock-transfers/:transferId/dispatch") @Roles(...WRITE_ROLES)
+  dispatchTransfer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("transferId") transferId: string) {
+    return this.requireTransfers().dispatchTransfer(orgId, user.userId, transferId);
+  }
+
+  @Post("commerce/stock-transfers/:transferId/receive") @Roles(...WRITE_ROLES)
+  receiveTransfer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("transferId") transferId: string, @Body() dto: ReceiveStockTransferDto) {
+    return this.requireTransfers().receiveTransfer(orgId, user.userId, transferId, dto);
+  }
+
+  @Post("commerce/stock-transfers/:transferId/cancel") @Roles(...WRITE_ROLES)
+  cancelTransfer(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("transferId") transferId: string) {
+    return this.requireTransfers().cancelTransfer(orgId, user.userId, transferId);
+  }
+
+  // ---- AB3: staff re-allocation (design §5.3) ----
+
+  @Post("commerce/orders/:orderId/reallocate") @Roles(...WRITE_ROLES)
+  async reallocateOrder(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") orderId: string, @Body() dto: ReallocateOrderDto) {
+    if (!this.inventory) throw new BadRequestException("ইনভেন্টরি সার্ভিস পাওয়া যাচ্ছে না");
+    const result: any = await this.inventory.reallocateOrderBins(orgId, orderId, dto.warehouseId, user.userId);
+    // Label the returned allocation rows like the order detail's
+    // allocations[] (warehouseName/binCode) for a consistent API.
+    if (result && Array.isArray(result.allocations)) {
+      result.allocations = await this.warehouse.labelAllocationRows(orgId, result.allocations);
+    }
+    return result;
   }
 }

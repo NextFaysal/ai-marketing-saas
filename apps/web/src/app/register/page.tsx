@@ -57,6 +57,9 @@ export default function RegisterPage() {
           <input className="input mt-1" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <p className="rounded-lg bg-indigo-50 px-3 py-2 text-[13px] leading-relaxed text-indigo-900">
+          ✉️ রেজিস্ট্রেশনের পর আপনার ইমেইলে একটি <b>যাচাইকরণ লিংক</b> পাঠানো হবে — লিংকে ক্লিক করে ইমেইল যাচাই করে নিন। লিংকটি ২৪ ঘণ্টা বৈধ থাকবে।
+        </p>
         <button className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50" disabled={loading}>
           {loading ? "অপেক্ষা করুন..." : "রেজিস্টার"}
         </button>

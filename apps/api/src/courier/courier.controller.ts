@@ -5,7 +5,7 @@ import { CourierRulesService } from "./courier-rules.service";
 import { CourierNdrService } from "./courier-ndr.service";
 import { CourierReconciliationService } from "./courier-reconciliation.service";
 import { CourierOptimizerService } from "./courier-optimizer.service";
-import { BookShipmentDto, BulkBookDto, ConnectCourierDto, QuoteCourierDto } from "./courier.dto";
+import { BookShipmentDto, BulkBookDto, ConnectCourierDto, ManualShipmentStatusDto, QuoteCourierDto } from "./courier.dto";
 import { RescheduleNdrDto, ResolveNdrDto, CustomerNdrActionDto } from "./courier-ndr.dto";
 import { UploadDisbursementDto, UpdateDisputeDto } from "./courier-reconciliation.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
@@ -111,6 +111,24 @@ export class CourierController {
     return this.courier.performance(orgId, days);
   }
 
+  /** GB5 (GC14): the RTO report — per provider booked/delivered/
+   * returned + rate + event-log-based average days to return. */
+  @Get("rto-report")
+  rtoReport(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.courier.rtoReport(orgId, { from, to });
+  }
+
+  /** GB5: eCourier booking-form pickers (documented city/thana
+   * lists + the merchant's assigned packages). */
+  @Get("ecourier/cities")
+  ecourierCities(@Param("organizationId") orgId: string) { return this.courier.ecourierCities(orgId); }
+  @Get("ecourier/thanas")
+  ecourierThanas(@Param("organizationId") orgId: string, @Query("city") city: string) {
+    return this.courier.ecourierThanas(orgId, city);
+  }
+  @Get("ecourier/packages")
+  ecourierPackages(@Param("organizationId") orgId: string) { return this.courier.ecourierPackages(orgId); }
+
   @Get("shipments")
   list(@Param("organizationId") orgId: string, @Query("orderId") orderId?: string) {
     return this.courier.listShipments(orgId, orderId);
@@ -165,6 +183,19 @@ export class CourierController {
   @Post("shipments/:shipmentId/sync") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
   sync(@Param("organizationId") orgId: string, @Param("shipmentId") id: string) {
     return this.courier.syncShipment(orgId, id);
+  }
+
+  /** GB5 (GC14): staff manual tracking update — same applicator
+   * as a provider sync, event stamped source=manual. */
+  @Post("shipments/:shipmentId/manual-status") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")
+  manualStatus(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("shipmentId") id: string, @Body() dto: ManualShipmentStatusDto) {
+    return this.courier.applyManualStatus(orgId, user.userId, id, dto);
+  }
+
+  /** GB5 (GC14): the shipment's event history (staff detail view). */
+  @Get("shipments/:shipmentId/events")
+  shipmentEvents(@Param("organizationId") orgId: string, @Param("shipmentId") id: string) {
+    return this.courier.listShipmentEvents(orgId, id);
   }
 
   @Post("sync-all") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT")

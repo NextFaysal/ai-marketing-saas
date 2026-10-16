@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { buildCourierConnectBody, type CourierProvider, type PathaoForm, type RedxForm, type SteadfastForm } from "@/lib/connect-forms";
+import { buildCourierConnectBody, type CourierProvider, type EcourierForm, type PathaoForm, type RedxForm, type SteadfastForm } from "@/lib/connect-forms";
+import type { ConnectionsOverview } from "@/lib/connections";
 
 /**
  * CC6 (Connect Center B3) — Courier connect panel for the
@@ -10,8 +11,10 @@ import { buildCourierConnectBody, type CourierProvider, type PathaoForm, type Re
  * endpoints (POST courier/connect — verify-before-save against
  * each provider's real API, exactly as the Orders page does;
  * DELETE courier/connection per provider). Steadfast / Pathao /
- * RedX coexist as separate Integration rows and are listed
- * separately here.
+ * RedX / eCourier (GB5) coexist as separate Integration rows and
+ * are listed separately here. Paperfly is NOT offered: GB5
+ * research found its API partner-gated with no published
+ * developer docs (docs/gb5-courier-research.md).
  *
  * CC29 — MULTIPLE accounts per provider: connections are keyed
  * by a credential fingerprint server-side, so connecting a
@@ -47,7 +50,7 @@ interface CourierAccountView {
 interface CourierConnection { provider: string; connected: boolean; status?: string; accounts?: CourierAccountView[] }
 
 const PROVIDER_TITLES: Record<CourierProvider, string> = {
-  steadfast: "Steadfast", pathao: "Pathao Courier", redx: "RedX",
+  steadfast: "Steadfast", pathao: "Pathao Courier", redx: "RedX", ecourier: "eCourier",
 };
 
 export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
@@ -55,6 +58,7 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
   const [steadfast, setSteadfast] = useState<SteadfastForm>({ apiKey: "", secretKey: "" });
   const [pathao, setPathao] = useState<PathaoForm>({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
   const [redx, setRedx] = useState<RedxForm>({ accessToken: "", baseUrl: "" });
+  const [ecourier, setEcourier] = useState<EcourierForm>({ apiKey: "", apiSecret: "", userId: "", baseUrl: "" });
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -84,16 +88,19 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/organizations/${orgId}/courier/connect`, {
         method: "POST",
-        body: JSON.stringify(buildCourierConnectBody(provider, { steadfast, pathao, redx })),
+        body: JSON.stringify(buildCourierConnectBody(provider, { steadfast, pathao, redx, ecourier })),
       });
       setNotice(provider === "steadfast"
         ? "Steadfast যুক্ত হয়েছে (আসল API দিয়ে Balance যাচাই করা)।"
         : provider === "pathao"
           ? "Pathao যুক্ত হয়েছে (আসল API দিয়ে Token ও Store যাচাই করা)।"
-          : "RedX যুক্ত হয়েছে (আসল API দিয়ে Area তালিকা যাচাই করা)।");
+          : provider === "ecourier"
+            ? "eCourier যুক্ত হয়েছে (আসল API দিয়ে Package তালিকা যাচাই করা)।"
+            : "RedX যুক্ত হয়েছে (আসল API দিয়ে Area তালিকা যাচাই করা)।");
       if (provider === "steadfast") setSteadfast({ apiKey: "", secretKey: "" });
       if (provider === "pathao") setPathao({ clientId: "", clientSecret: "", username: "", password: "", sandbox: false });
       if (provider === "redx") setRedx({ accessToken: "", baseUrl: "" });
+      if (provider === "ecourier") setEcourier({ apiKey: "", apiSecret: "", userId: "", baseUrl: "" });
       await reload();
     } catch (err) { setError(err instanceof Error ? err.message : "Connect ব্যর্থ"); }
     finally { setBusy(""); }
@@ -137,6 +144,9 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
       } else if (provider === "redx") {
         const areas = await apiFetch<unknown[]>(`/organizations/${orgId}/courier/redx/areas`);
         setTestResult((r) => ({ ...r, [provider]: `✅ RedX API সাড়া দিয়েছে — ${Array.isArray(areas) ? areas.length : 0}টি এরিয়া পাওয়া গেছে।` }));
+      } else if (provider === "ecourier") {
+        const cities = await apiFetch<unknown[]>(`/organizations/${orgId}/courier/ecourier/cities`);
+        setTestResult((r) => ({ ...r, [provider]: `✅ eCourier API সাড়া দিয়েছে — ${Array.isArray(cities) ? cities.length : 0}টি শহর পাওয়া গেছে।` }));
       }
     } catch (err) {
       setTestResult((r) => ({ ...r, [provider]: `❌ ${err instanceof Error ? err.message : "টেস্ট ব্যর্থ"}` }));
@@ -211,7 +221,7 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
     <div className="space-y-3">
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
         {providerCard("steadfast", (
           <>
             <input className={inputCls} placeholder="Steadfast API Key" value={steadfast.apiKey} onChange={(e) => setSteadfast({ ...steadfast, apiKey: e.target.value })} required />
@@ -233,6 +243,14 @@ export function CourierConnectPanel({ onChanged }: { onChanged?: () => void }) {
             <input className={inputCls} placeholder="Base URL (ঐচ্ছিক — Legacy অ্যাকাউন্টের জন্য)" value={redx.baseUrl} onChange={(e) => setRedx({ ...redx, baseUrl: e.target.value })} />
           </>
         ), "Token RedX Merchant Panel-এর API Settings থেকে পাবেন। যুক্ত করার আগে আসল API থেকে Delivery Area তালিকা এনে যাচাই করা হয়।")}
+        {providerCard("ecourier", (
+          <>
+            <input className={inputCls} placeholder="API Key" value={ecourier.apiKey} onChange={(e) => setEcourier({ ...ecourier, apiKey: e.target.value })} required />
+            <input className={inputCls} placeholder="API Secret" value={ecourier.apiSecret} onChange={(e) => setEcourier({ ...ecourier, apiSecret: e.target.value })} required />
+            <input className={inputCls} placeholder="User ID" value={ecourier.userId} onChange={(e) => setEcourier({ ...ecourier, userId: e.target.value })} required />
+            <input className={inputCls} placeholder="Base URL (ঐচ্ছিক — Partner অ্যাকাউন্টের জন্য)" value={ecourier.baseUrl} onChange={(e) => setEcourier({ ...ecourier, baseUrl: e.target.value })} />
+          </>
+        ), "তিনটি তথ্য eCourier আপনার মার্চেন্ট অ্যাকাউন্টের জন্য ইস্যু করে দেয় — তাদের কাছ থেকে সংগ্রহ করুন (ডকুমেন্টে নিজে-নিজে তৈরির পদ্ধতি বলা নেই)। যুক্ত করার আগে আসল API থেকে নির্ধারিত Package তালিকা এনে যাচাই করা হয়।")}
       </div>
     </div>
   );

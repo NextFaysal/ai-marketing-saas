@@ -1,0 +1,92 @@
+f540ef47e232ae894f7be68bb9abd4e7
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.VerifyPhoneOtpDto = exports.SetPhoneDto = exports.VerifyEmailDto = exports.LoginDto = exports.RegisterDto = void 0;
+const class_validator_1 = require("class-validator");
+class RegisterDto {
+    name;
+    email;
+    password;
+    /** Milestone 41: optional referral code from a /register?ref= link. */
+    referralCode;
+}
+exports.RegisterDto = RegisterDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(2),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], RegisterDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsEmail)(),
+    __metadata("design:type", String)
+], RegisterDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MaxLength)(128),
+    __metadata("design:type", String)
+], RegisterDto.prototype, "password", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(24),
+    __metadata("design:type", String)
+], RegisterDto.prototype, "referralCode", void 0);
+class LoginDto {
+    email;
+    password;
+}
+exports.LoginDto = LoginDto;
+__decorate([
+    (0, class_validator_1.IsEmail)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], LoginDto.prototype, "password", void 0);
+/** GC21 (GB9): email verification token from the emailed link. */
+class VerifyEmailDto {
+    token;
+}
+exports.VerifyEmailDto = VerifyEmailDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(16),
+    (0, class_validator_1.MaxLength)(256),
+    __metadata("design:type", String)
+], VerifyEmailDto.prototype, "token", void 0);
+/** GC21 (GB9): the account phone number (BD mobile; normalized
+ * in the service via the ON11 rules). */
+class SetPhoneDto {
+    phone;
+}
+exports.SetPhoneDto = SetPhoneDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(10),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], SetPhoneDto.prototype, "phone", void 0);
+/** GC21 (GB9): the 6-digit phone OTP. */
+class VerifyPhoneOtpDto {
+    code;
+}
+exports.VerifyPhoneOtpDto = VerifyPhoneOtpDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(4),
+    (0, class_validator_1.MaxLength)(8),
+    __metadata("design:type", String)
+], VerifyPhoneOtpDto.prototype, "code", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2F1dGgvYXV0aC5kdG8udHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7O0FBQUEscURBQXNGO0FBQ3RGLE1BQWEsV0FBVztJQUNvQixJQUFJLENBQVU7SUFDN0MsS0FBSyxDQUFVO0lBQ2dCLFFBQVEsQ0FBVTtJQUM1RCx1RUFBdUU7SUFDOUIsWUFBWSxDQUFVO0NBQ2hFO0FBTkQsa0NBTUM7QUFMMkM7SUFBekMsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3lDQUFlO0FBQzdDO0lBQVYsSUFBQSx5QkFBTyxHQUFFOzswQ0FBZ0I7QUFDZ0I7SUFBekMsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLENBQUMsQ0FBQztJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzZDQUFtQjtBQUVuQjtJQUF4QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOztpREFBdUI7QUFFakUsTUFBYSxRQUFRO0lBQ1IsS0FBSyxDQUFVO0lBQ2QsUUFBUSxDQUFVO0NBQy9CO0FBSEQsNEJBR0M7QUFGWTtJQUFWLElBQUEseUJBQU8sR0FBRTs7dUNBQWdCO0FBQ2Q7SUFBWCxJQUFBLDBCQUFRLEdBQUU7OzBDQUFtQjtBQUVoQyxrRUFBa0U7QUFDbEUsTUFBYSxjQUFjO0lBQ2tCLEtBQUssQ0FBVTtDQUMzRDtBQUZELHdDQUVDO0FBRDRDO0lBQTFDLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs2Q0FBZ0I7QUFFNUQ7eUNBQ3lDO0FBQ3pDLE1BQWEsV0FBVztJQUNvQixLQUFLLENBQVU7Q0FDMUQ7QUFGRCxrQ0FFQztBQUQyQztJQUF6QyxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7MENBQWdCO0FBRTNELHlDQUF5QztBQUN6QyxNQUFhLGlCQUFpQjtJQUNZLElBQUksQ0FBVTtDQUN2RDtBQUZELDhDQUVDO0FBRHlDO0lBQXZDLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDOzsrQ0FBZSIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvYXV0aC9hdXRoLmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJc0VtYWlsLCBJc09wdGlvbmFsLCBJc1N0cmluZywgTWF4TGVuZ3RoLCBNaW5MZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5leHBvcnQgY2xhc3MgUmVnaXN0ZXJEdG8ge1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDIpIEBNYXhMZW5ndGgoMTAwKSBuYW1lITogc3RyaW5nO1xuICBASXNFbWFpbCgpIGVtYWlsITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWluTGVuZ3RoKDgpIEBNYXhMZW5ndGgoMTI4KSBwYXNzd29yZCE6IHN0cmluZztcbiAgLyoqIE1pbGVzdG9uZSA0MTogb3B0aW9uYWwgcmVmZXJyYWwgY29kZSBmcm9tIGEgL3JlZ2lzdGVyP3JlZj0gbGluay4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDI0KSByZWZlcnJhbENvZGU/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgTG9naW5EdG8ge1xuICBASXNFbWFpbCgpIGVtYWlsITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBwYXNzd29yZCE6IHN0cmluZztcbn1cbi8qKiBHQzIxIChHQjkpOiBlbWFpbCB2ZXJpZmljYXRpb24gdG9rZW4gZnJvbSB0aGUgZW1haWxlZCBsaW5rLiAqL1xuZXhwb3J0IGNsYXNzIFZlcmlmeUVtYWlsRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxNikgQE1heExlbmd0aCgyNTYpIHRva2VuITogc3RyaW5nO1xufVxuLyoqIEdDMjEgKEdCOSk6IHRoZSBhY2NvdW50IHBob25lIG51bWJlciAoQkQgbW9iaWxlOyBub3JtYWxpemVkXG4gKiBpbiB0aGUgc2VydmljZSB2aWEgdGhlIE9OMTEgcnVsZXMpLiAqL1xuZXhwb3J0IGNsYXNzIFNldFBob25lRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxMCkgQE1heExlbmd0aCgyMCkgcGhvbmUhOiBzdHJpbmc7XG59XG4vKiogR0MyMSAoR0I5KTogdGhlIDYtZGlnaXQgcGhvbmUgT1RQLiAqL1xuZXhwb3J0IGNsYXNzIFZlcmlmeVBob25lT3RwRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCg0KSBATWF4TGVuZ3RoKDgpIGNvZGUhOiBzdHJpbmc7XG59XG4iXSwidmVyc2lvbiI6M30=

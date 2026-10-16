@@ -1,0 +1,40 @@
+f9decd6aa61c6d2bff3c60af1ddd05b8
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OrderNotificationsModule = void 0;
+const common_1 = require("@nestjs/common");
+const order_notifications_controller_1 = require("./order-notifications.controller");
+const order_notifications_service_1 = require("./order-notifications.service");
+const audit_module_1 = require("../audit/audit.module");
+const storefront_module_1 = require("../storefront/storefront.module");
+const messaging_module_1 = require("../messaging/messaging.module");
+const inbox_module_1 = require("../inbox/inbox.module");
+/**
+ * ON5 — Transactional Notification Engine.
+ * Imports: StorefrontModule (ShopAccountService.sendShopSms),
+ * MessagingModule (EmailProvider), InboxModule (InboxService.
+ * sendAutomatedMessage — the only WhatsApp-capable single-send
+ * path). AuditModule is @Global but listed for clarity.
+ * Cycle check: none of Storefront/Messaging/Inbox import this
+ * module; Courier/Fulfillment import THIS module (one-way).
+ * OrdersModule does NOT import it — OrdersService hooks are
+ * event subscriptions only.
+ */
+let OrderNotificationsModule = class OrderNotificationsModule {
+};
+exports.OrderNotificationsModule = OrderNotificationsModule;
+exports.OrderNotificationsModule = OrderNotificationsModule = __decorate([
+    (0, common_1.Module)({
+        imports: [audit_module_1.AuditModule, storefront_module_1.StorefrontModule, messaging_module_1.MessagingModule, inbox_module_1.InboxModule],
+        controllers: [order_notifications_controller_1.OrderNotificationsController],
+        providers: [order_notifications_service_1.OrderNotificationService],
+        exports: [order_notifications_service_1.OrderNotificationService],
+    })
+], OrderNotificationsModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVyLW5vdGlmaWNhdGlvbnMvb3JkZXItbm90aWZpY2F0aW9ucy5tb2R1bGUudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7O0FBQUEsMkNBQXdDO0FBQ3hDLHFGQUFnRjtBQUNoRiwrRUFBeUU7QUFDekUsd0RBQW9EO0FBQ3BELHVFQUFtRTtBQUNuRSxvRUFBZ0U7QUFDaEUsd0RBQW9EO0FBRXBEOzs7Ozs7Ozs7O0dBVUc7QUFPSSxJQUFNLHdCQUF3QixHQUE5QixNQUFNLHdCQUF3QjtDQUFHLENBQUE7QUFBM0IsNERBQXdCO21DQUF4Qix3QkFBd0I7SUFOcEMsSUFBQSxlQUFNLEVBQUM7UUFDTixPQUFPLEVBQUUsQ0FBQywwQkFBVyxFQUFFLG9DQUFnQixFQUFFLGtDQUFlLEVBQUUsMEJBQVcsQ0FBQztRQUN0RSxXQUFXLEVBQUUsQ0FBQyw2REFBNEIsQ0FBQztRQUMzQyxTQUFTLEVBQUUsQ0FBQyxzREFBd0IsQ0FBQztRQUNyQyxPQUFPLEVBQUUsQ0FBQyxzREFBd0IsQ0FBQztLQUNwQyxDQUFDO0dBQ1csd0JBQXdCLENBQUciLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVyLW5vdGlmaWNhdGlvbnMvb3JkZXItbm90aWZpY2F0aW9ucy5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBPcmRlck5vdGlmaWNhdGlvbnNDb250cm9sbGVyIH0gZnJvbSBcIi4vb3JkZXItbm90aWZpY2F0aW9ucy5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBPcmRlck5vdGlmaWNhdGlvblNlcnZpY2UgfSBmcm9tIFwiLi9vcmRlci1ub3RpZmljYXRpb25zLnNlcnZpY2VcIjtcbmltcG9ydCB7IEF1ZGl0TW9kdWxlIH0gZnJvbSBcIi4uL2F1ZGl0L2F1ZGl0Lm1vZHVsZVwiO1xuaW1wb3J0IHsgU3RvcmVmcm9udE1vZHVsZSB9IGZyb20gXCIuLi9zdG9yZWZyb250L3N0b3JlZnJvbnQubW9kdWxlXCI7XG5pbXBvcnQgeyBNZXNzYWdpbmdNb2R1bGUgfSBmcm9tIFwiLi4vbWVzc2FnaW5nL21lc3NhZ2luZy5tb2R1bGVcIjtcbmltcG9ydCB7IEluYm94TW9kdWxlIH0gZnJvbSBcIi4uL2luYm94L2luYm94Lm1vZHVsZVwiO1xuXG4vKipcbiAqIE9ONSDigJQgVHJhbnNhY3Rpb25hbCBOb3RpZmljYXRpb24gRW5naW5lLlxuICogSW1wb3J0czogU3RvcmVmcm9udE1vZHVsZSAoU2hvcEFjY291bnRTZXJ2aWNlLnNlbmRTaG9wU21zKSxcbiAqIE1lc3NhZ2luZ01vZHVsZSAoRW1haWxQcm92aWRlciksIEluYm94TW9kdWxlIChJbmJveFNlcnZpY2UuXG4gKiBzZW5kQXV0b21hdGVkTWVzc2FnZSDigJQgdGhlIG9ubHkgV2hhdHNBcHAtY2FwYWJsZSBzaW5nbGUtc2VuZFxuICogcGF0aCkuIEF1ZGl0TW9kdWxlIGlzIEBHbG9iYWwgYnV0IGxpc3RlZCBmb3IgY2xhcml0eS5cbiAqIEN5Y2xlIGNoZWNrOiBub25lIG9mIFN0b3JlZnJvbnQvTWVzc2FnaW5nL0luYm94IGltcG9ydCB0aGlzXG4gKiBtb2R1bGU7IENvdXJpZXIvRnVsZmlsbG1lbnQgaW1wb3J0IFRISVMgbW9kdWxlIChvbmUtd2F5KS5cbiAqIE9yZGVyc01vZHVsZSBkb2VzIE5PVCBpbXBvcnQgaXQg4oCUIE9yZGVyc1NlcnZpY2UgaG9va3MgYXJlXG4gKiBldmVudCBzdWJzY3JpcHRpb25zIG9ubHkuXG4gKi9cbkBNb2R1bGUoe1xuICBpbXBvcnRzOiBbQXVkaXRNb2R1bGUsIFN0b3JlZnJvbnRNb2R1bGUsIE1lc3NhZ2luZ01vZHVsZSwgSW5ib3hNb2R1bGVdLFxuICBjb250cm9sbGVyczogW09yZGVyTm90aWZpY2F0aW9uc0NvbnRyb2xsZXJdLFxuICBwcm92aWRlcnM6IFtPcmRlck5vdGlmaWNhdGlvblNlcnZpY2VdLFxuICBleHBvcnRzOiBbT3JkZXJOb3RpZmljYXRpb25TZXJ2aWNlXSxcbn0pXG5leHBvcnQgY2xhc3MgT3JkZXJOb3RpZmljYXRpb25zTW9kdWxlIHt9XG4iXSwidmVyc2lvbiI6M30=

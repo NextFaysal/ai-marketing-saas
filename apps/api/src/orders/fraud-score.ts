@@ -26,6 +26,10 @@ export interface FraudSignalInputs {
   nameMismatch: boolean;
   mismatchedName: string | null;
   blocked: boolean;
+  /** AB8 (AX27): DISTINCT customer phones seen on the same
+   * deviceHash in the last 24h (computed by the caller from
+   * the bounded order load; 0 when the order has no hash). */
+  deviceVelocity: number;
 }
 
 export interface FraudReason {
@@ -48,6 +52,7 @@ export const FRAUD_WEIGHTS = {
   historyOutcomes: 20,
   highValueNew: 20,
   nameMismatch: 15,
+  deviceVelocity: 15,
 } as const;
 
 export const BAD_OUTCOME_THRESHOLD = 2;
@@ -142,6 +147,16 @@ export function scoreFraud(input: FraudSignalInputs): FraudScore {
       key: "phone_name_mismatch",
       label: `এই ফোন নম্বরটি আগে অন্য নামে ("${input.mismatchedName ?? ""}") ব্যবহৃত হয়েছে`,
       points: FRAUD_WEIGHTS.nameMismatch,
+    });
+  }
+
+  // AB8 (AX27): device velocity — capped at 15 points so this
+  // signal ALONE can never lift an order out of the low band.
+  if (Number(input.deviceVelocity ?? 0) >= 3) {
+    reasons.push({
+      key: "device_velocity",
+      label: `একই ডিভাইস থেকে গত ২৪ ঘণ্টায় ${input.deviceVelocity}টি আলাদা নম্বরে অর্ডার এসেছে`,
+      points: FRAUD_WEIGHTS.deviceVelocity,
     });
   }
 

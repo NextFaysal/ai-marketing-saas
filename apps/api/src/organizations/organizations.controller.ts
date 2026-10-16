@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile, UseGuards } from "@nestjs/common";
-import { Request } from "express";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
+import { Request, Response } from "express";
 import { OrganizationsService } from "./organizations.service";
-import { CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UploadLogoDto } from "./organizations.dto";
+import { AssignCustomRoleDto, CreateCustomRoleDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateCustomRoleDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UpdateNotificationPreferencesDto, UploadLogoDto } from "./organizations.dto";
 import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -40,6 +40,23 @@ export class OrganizationsController {
   @UseGuards(TenantGuard, RolesGuard)
   @Roles("OWNER", "ADMIN")
   billing(@Param("organizationId") id: string) { return this.orgs.getBilling(id); }
+
+  // GC22 (GB9): subscription pause/resume — OWNER only.
+  @PermissionArea("billing")
+  @Post(":organizationId/billing/pause")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  pauseSubscription(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.pauseSubscription(id, user.userId, req.ip);
+  }
+
+  @PermissionArea("billing")
+  @Post(":organizationId/billing/resume")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER")
+  resumeSubscription(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.resumeSubscription(id, user.userId, req.ip);
+  }
 
   @PermissionArea("billing")
   @Post(":organizationId/billing/plan-request")
@@ -116,6 +133,90 @@ export class OrganizationsController {
     return this.orgs.updateMemberAccess(id, user.userId, userId, dto, req.ip);
   }
 
+  // GB6 (GC16): custom roles — named permission-area bundles,
+  // optionally materialized from a preset profile.
+  @Get(":organizationId/custom-roles")
+  @UseGuards(TenantGuard)
+  customRoles(@Param("organizationId") id: string) { return this.orgs.listCustomRoles(id); }
+
+  @PermissionArea("team")
+  @Post(":organizationId/custom-roles")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  createCustomRole(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: CreateCustomRoleDto, @Req() req: Request) {
+    return this.orgs.createCustomRole(id, user.userId, dto, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Patch(":organizationId/custom-roles/:roleId")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateCustomRole(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("roleId") roleId: string, @Body() dto: UpdateCustomRoleDto, @Req() req: Request) {
+    return this.orgs.updateCustomRole(id, user.userId, roleId, dto, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Delete(":organizationId/custom-roles/:roleId")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  deleteCustomRole(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("roleId") roleId: string, @Req() req: Request) {
+    return this.orgs.deleteCustomRole(id, user.userId, roleId, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Patch(":organizationId/members/:userId/custom-role")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  assignMemberCustomRole(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Body() dto: AssignCustomRoleDto, @Req() req: Request) {
+    return this.orgs.assignMemberCustomRole(id, user.userId, userId, dto, req.ip);
+  }
+
+  // GB6 (GC16): member login history + sessions (managers only).
+  @PermissionArea("team")
+  @Get(":organizationId/members/:userId/login-history")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  memberLoginHistory(@Param("organizationId") id: string, @Param("userId") userId: string) {
+    return this.orgs.getMemberLoginHistory(id, userId);
+  }
+
+  @PermissionArea("team")
+  @Get(":organizationId/members/:userId/sessions")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  memberSessions(@Param("organizationId") id: string, @Param("userId") userId: string) {
+    return this.orgs.getMemberSessions(id, userId);
+  }
+
+  @PermissionArea("team")
+  @Delete(":organizationId/members/:userId/sessions/:sessionId")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  revokeMemberSession(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Param("sessionId") sessionId: string, @Req() req: Request) {
+    return this.orgs.revokeMemberSession(id, user.userId, userId, sessionId, req.ip);
+  }
+
+  @PermissionArea("team")
+  @Post(":organizationId/members/:userId/sessions/revoke-all")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  revokeAllMemberSessions(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Param("userId") userId: string, @Req() req: Request) {
+    return this.orgs.revokeAllMemberSessions(id, user.userId, userId, req.ip);
+  }
+
+  // GB6 (GC16): the caller's own notification preferences.
+  @Get(":organizationId/my-notification-preferences")
+  @UseGuards(TenantGuard)
+  myNotificationPreferences(@CurrentUser() user: AuthUser, @Param("organizationId") id: string) {
+    return this.orgs.getMyNotificationPreferences(id, user.userId);
+  }
+
+  @Patch(":organizationId/my-notification-preferences")
+  @UseGuards(TenantGuard)
+  updateMyNotificationPreferences(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateNotificationPreferencesDto, @Req() req: Request) {
+    return this.orgs.updateMyNotificationPreferences(id, user.userId, dto, req.ip);
+  }
+
   // Milestone 69 (Team W1): member activity feed.
   @Get(":organizationId/members/activity-feed")
   @UseGuards(TenantGuard)
@@ -165,6 +266,19 @@ export class OrganizationsController {
     return this.orgs.updateBusinessProfile(id, user.userId, dto);
   }
 
+  // GC21 (GB9): merchant verification submit (OWNER/ADMIN) +
+  // recorded storage usage (any org staff member).
+  @Post(":organizationId/verification/submit")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  submitVerification(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Req() req: Request) {
+    return this.orgs.submitVerification(id, user.userId, req.ip);
+  }
+
+  @Get(":organizationId/storage-usage")
+  @UseGuards(TenantGuard)
+  storageUsage(@Param("organizationId") id: string) { return this.orgs.storageUsage(id); }
+
   // ---- Milestone 59: white-label branding ----
   @PermissionArea("settings")
   @Patch(":organizationId/branding")
@@ -198,7 +312,15 @@ export class PublicBrandingController {
 
   @Public()
   @Get(":organizationId/logo")
-  async logo(@Param("organizationId") id: string) {
+  async logo(@Param("organizationId") id: string, @Res({ passthrough: true }) res: Response) {
+    // RB4/RM5: CDN-era rows redirect to the stored absolute URL
+    // (one release of grace for anything still linking here);
+    // legacy rows stream bytes exactly as before.
+    const redirect = await this.orgs.logoRedirectUrl(id);
+    if (redirect) {
+      res.redirect(302, redirect);
+      return undefined;
+    }
     const logo = await this.orgs.publicLogo(id);
     if (!logo) throw new NotFoundException("No logo for this organization");
     return new StreamableFile(logo.bytes, { type: logo.contentType, disposition: "inline" });

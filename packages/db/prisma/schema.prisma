@@ -52,12 +52,45 @@ model User {
   updatedAt    DateTime     @updatedAt
   memberships  Membership[]
   auditLogs    AuditLog[]
+  // GB6 (GC16): login history + server-side session registry.
+  loginEvents  LoginEvent[]
+  sessions     UserSession[]
+  notificationPreferences NotificationPreference[]
   status              String    @default("ACTIVE") // ACTIVE | SUSPENDED | DELETED
   adminTier           String? // SUPER | SUPPORT | FINANCE (null = not an admin even if flag legacy)
   lastLoginAt         DateTime?
   tokenVersion        Int       @default(0)
   totpSecretEncrypted String?
   totpEnabled         Boolean   @default(false)
+  // GB9 (GC21): registration verification. Null = not verified.
+  // Existing users are grandfathered by the enforcement gate
+  // (it applies only to accounts created after enforcement was
+  // switched on); the columns simply record the truth.
+  emailVerifiedAt     DateTime?
+  phoneVerifiedAt     DateTime?
+  phone               String?
+  verificationTokens  VerificationToken[]
+  // AB8 (AX26): Google SSO state + handoff tokens (hashed at rest).
+  ssoLoginStates      SsoLoginState[]
+}
+
+/// GB9 (GC21): email verification tokens + phone OTP codes.
+/// tokenHash is always a SHA-256 hash — the raw token/code is
+/// never stored. kind "email" rows carry a random token (24h);
+/// kind "phone" rows carry a 6-digit OTP (5 min, attempt-capped,
+/// mirroring the EC25 shop-account OTP discipline).
+model VerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  kind      String // email | phone
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
 }
 
 model Organization {
@@ -76,6 +109,20 @@ model Organization {
   logoContentType String?
   primaryColor    String?
   customDomain    String?
+  // GB9 (GC21): merchant verification workflow —
+  // unverified | pending | verified | rejected. The admin's
+  // note is visible to the merchant (it explains a rejection).
+  verificationStatus      String    @default("unverified")
+  verificationNote        String?
+  verificationSubmittedAt DateTime?
+  // AB8 (AX24): white-label — when true, the org's customer-facing
+  // surfaces drop every platform mark that exists (shop favicon /
+  // PWA icon fallbacks become a neutral generated initial icon;
+  // org-scoped transactional email carries the org's own brand as
+  // the sender display name). Set by a platform admin; plan tiers
+  // carry numeric limits only, so there is no plan boolean to gate
+  // it on (documented in the AB8 acceptance).
+  whiteLabel              Boolean   @default(false)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   memberships    Membership[]
@@ -105,6 +152,18 @@ model Organization {
   storeListings  StoreListing[]
   syncOutbox     SyncOutbox[]
   syncConflicts  SyncConflict[]
+  // GB6: CRM segments (GC15) + per-org custom roles (GC16).
+  crmSegments    CrmSegment[]
+  customRoles    CustomRole[]
+  // GB9 (GC23): outgoing merchant webhooks + public API usage.
+  webhookSubscriptions WebhookSubscription[]
+  apiUsageDaily        ApiUsageDaily[]
+  // AB8 (AX21/AX24/AX25): merchant developer API keys, the
+  // white-label flag, self-serve data exports + backup preference.
+  merchantApiKeys      MerchantApiKey[]
+  dataExports          DataExport[]
+  backupPreference     OrgBackupPreference?
+  notificationPreferences NotificationPreference[]
   categories     Category[]
   productTags    ProductTag[]
   taxonomyMaps   StoreTaxonomyMap[]
@@ -125,6 +184,9 @@ model Organization {
   binLocations            BinLocation[]
   productBinAssignments   ProductBinAssignment[]
   stockCountSessions      StockCountSession[]
+  stockBalances           StockBalance[]
+  stockAllocations        StockAllocation[]
+  stockTransfers          StockTransfer[]
   courierRules            CourierRule[]
   riders                  Rider[]
   deliveryAssignments     DeliveryAssignment[]
@@ -132,7 +194,28 @@ model Organization {
   invoiceCounters         InvoiceCounter[]
   customerSubscriptions   CustomerSubscription[]
   abandonedStoreCheckouts AbandonedStoreCheckout[]
+  abandonedCouponSetting AbandonedCouponSetting?
+  loyaltySetting  LoyaltySetting?
+  referralRewardSetting ReferralRewardSetting?
+  loyaltyLedger   LoyaltyLedger[]
+  giftCardSetting GiftCardSetting?
+  giftCards       GiftCard[]
+  giftCardLedger  GiftCardLedger[]
+  giftCardIssuances GiftCardIssuance[]
   storefrontSetting StorefrontSetting?
+  shopPages         ShopPage[]
+  blogPosts         BlogPost[]
+  searchSynonyms    SearchSynonym[]
+  searchQueryLogs   SearchQueryLog[]
+  storePopup        StorePopup?
+  productReviewInsights ProductReviewInsight[]
+  shopPushSetting   ShopPushSetting?
+  webPushSubscriptions WebPushSubscription[]
+  webPushCampaigns  WebPushCampaign[]
+  socialProofSetting SocialProofSetting?
+  shopContactMessages ShopContactMessage[]
+  brands            Brand[]
+  stockReservations StockReservation[]
   shippingZones     ShippingZone[]
   shippingRateRules ShippingRateRule[]
   pickupPoints      PickupPoint[]
@@ -157,6 +240,7 @@ model Organization {
   mediaFolders   MediaFolder[]
   socialContentPlans SocialContentPlan[]
   mediaAssets    MediaAsset[]
+  storedFiles    StoredFile[]
   dailyAdMetrics DailyAdMetric[]
   dailyAggregates DailyMetricAggregate[]
   aiConversations AIConversation[]
@@ -230,6 +314,12 @@ model Membership {
   // targets too — the matrix lists them and the ads/campaigns
   // send-side paths enforce them (see B12 acceptance).
   deniedConnections Json?
+  // GB6 (GC16): per-org custom role assigned to this member.
+  // When set (and the member is not the OWNER), the role's
+  // areas govern @PermissionArea endpoints; the member's
+  // preset `role` keeps governing role-list-only endpoints.
+  customRoleId   String?
+  customRole     CustomRole?      @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -270,6 +360,24 @@ model BusinessProfile {
   deliveryDaysOutside Int?
   codAvailable        Boolean?
   minOrderMinor       BigInt?
+  // GB3 (GC8): COD trust rules — codMaxOrderMinor caps a COD
+  // order's total (null = no cap); codBlockedDistricts is a Json
+  // array of district names COD is refused for; a COD order
+  // above codAdvanceRequiredAboveMinor must collect an advance.
+  codMaxOrderMinor              BigInt?
+  codBlockedDistricts           Json?
+  codAdvanceRequiredAboveMinor  BigInt?
+  // AB4 (AX5a): REAL deposit/advance collection config. When
+  // depositMode is "percent" (depositPercent 1–90) or "fixed"
+  // (depositFixedMinor paisa), a checkout whose payment kind is
+  // covered by depositAppliesTo (cod | online | all) owes that
+  // amount before/at delivery; null mode = deposits OFF (the
+  // GB3 stamp-only advance rule above is untouched by this).
+  depositMode       String? // null (off) | percent | fixed
+  depositPercent    Int?
+  depositFixedMinor BigInt?
+  depositAppliesTo  String  @default("cod") // cod | online | all
+  depositNote       String?
   bkashNumber         String?
   nagadNumber         String?
   paymentNote         String?
@@ -289,6 +397,11 @@ model BusinessProfile {
   billingEmails       Json?
   billingAddress      String?
   billingBin          String?
+  // GB9 (GC21): merchant verification business facts —
+  // the trade licence number + the registered business
+  // address submitted for platform verification.
+  tradeLicenseNo      String?
+  businessAddress     String?
   // SaaS Multi-Tenant Merchant Growth Settings
   metaPixelId         String?      // Merchant's Facebook Pixel ID
   metaCapiToken       String?      // Merchant's Conversions API Token
@@ -312,6 +425,11 @@ model Subscription {
   // Billing Package B3: the cycle the current period was
   // bought on — drives renewal price + proration length.
   billingCycle     String             @default("monthly")
+  // GB9 (GC22): merchant/admin subscription pause. Paused <=>
+  // pausedAt is set; the status vocabulary is unchanged.
+  // While paused, commerce writes are refused (PlanLimit
+  // choke points) until resume clears the stamp.
+  pausedAt         DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -367,6 +485,21 @@ model Product {
   name           String
   slug           String?
   description    String?
+  // AB6 (AX13): optional English alternates for the shop's
+  // primary name/description. The primary fields are the shop's
+  // main language; the En fields render ONLY when the shop
+  // locale is "en" (fallback: the primary text). Both ride the
+  // AX11 search vector.
+  nameEn         String?
+  descriptionEn  String?
+  // AB6 (AX11): PostgreSQL full-text search vector over name /
+  // nameEn / description / descriptionEn / SKUs (product +
+  // variants) / category name / brand name, weighted A/B/C.
+  // Maintained ONLY by raw SQL (products/search-vector.ts) —
+  // never written through the Prisma client (Unsupported type).
+  // Config 'simple': honest Bengali+English token matching, no
+  // stemming claims.
+  searchVector   Unsupported("tsvector")?
   category       String?
   sku            String?
   status         ProductStatus @default(ACTIVE)
@@ -409,12 +542,40 @@ model Product {
   preorderEnabled     Boolean   @default(false)
   preorderReleaseDate DateTime?
   preorderLimit       Int?
+  // AB2 (AX3): gift-card product. A flagged product sells stored
+  // value, not stock: it is never out of stock, reserves nothing,
+  // and its lines bypass stock checks (mirroring the preorder
+  // bypass). giftCardConfig = { presetAmountsMinor: number[],
+  // allowCustomAmount: boolean, minAmountMinor?, maxAmountMinor? }
+  // — validated at save by commerce/gift-cards.ts; the chosen
+  // amount on a cart line IS the issued card's face value (the
+  // line's unit price). A gift-card product cannot itself be
+  // bought WITH a gift card (checkout refuses — value loops).
+  isGiftCard         Boolean  @default(false)
+  giftCardConfig     Json?
   // EC24b: digital product. digitalFileUrl is a MERCHANT-hosted
   // URL (no file hosting is built); it is revealed only on
   // order-bound surfaces after delivery, never on public pages.
   digital            Boolean  @default(false)
   digitalFileUrl     String?
   digitalAccessLimit Int?
+  // RB6/RM9: the SAME digital file hosted in the platform's OWN
+  // private R2 bucket (the presign/complete upload flow in
+  // ProductsService). Holds the storage KEY, never a URL — buyers
+  // receive a short-lived presigned GET at reveal time (storefront
+  // digitalAccess), so the object is never public. When set it
+  // takes precedence over the merchant-hosted digitalFileUrl,
+  // which stays as the merchant-hosted alternative.
+  digitalStorageKey  String?
+  // AB5 (AX9): what a delivered digital line hands the buyer —
+  // "file" (signed expiring download, the pre-AB5 behaviour and
+  // the default, so existing products are byte-identical),
+  // "license" (assigned license keys from the product's pool),
+  // or "both". Validated at product save.
+  digitalDeliveryType String  @default("file")
+  // AB5 (AX9): signed-download token lifetime in hours for this
+  // product; null = the platform default (72h).
+  digitalLinkExpiryHours Int?
   // EC24c: subscription plan (COD/manual renewal ONLY — no
   // payment gateway auto-charge exists or is implied).
   subscriptionEnabled         Boolean @default(false)
@@ -426,10 +587,29 @@ model Product {
   // Feature 6: Predictive Replenishment & Auto Re-order
   replenishmentDays         Int?      // Estimated consumption cycle in days (e.g. 30, 45, 60)
   replenishmentReminderText String?   // Personalized SMS/WhatsApp template or offer
+  // GB1 (GC4): optional product video (YouTube/Vimeo/mp4/webm URL
+  // + optional poster). Normalized server-side at public read;
+  // unrecognizable URLs serialize as no video.
+  videoUrl            String?
+  videoPosterUrl      String?
+  // GB2 (GC6): brand link (Brand delete nulls this — SetNull) and
+  // the per-product free-shipping flag. The flag's delivery
+  // semantics live in the ONE resolver (StorefrontService
+  // .resolveDeliveryCharge): free-shipping lines are excluded
+  // from the EC30 weight population, and a cart whose every
+  // product line is free-shipping pays no zone/rule charge.
+  brandId             String?
+  freeShipping        Boolean   @default(false)
+  // GB2 (GC7): out-of-stock staff-alert stamp. Set when the
+  // >0 → 0 alert fires for this row; cleared back to null by any
+  // stock write landing above zero (the re-arm). See
+  // InventoryService.maybeOutOfStockAlert.
+  lastOosNotifiedAt   DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   categoryRef    Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand          Brand?        @relation(fields: [brandId], references: [id], onDelete: SetNull)
   variants       ProductVariant[]
   costs          ProductCost[]
   listings       StoreListing[]
@@ -441,11 +621,15 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   binAssignments     ProductBinAssignment[]
   stockCountLines    StockCountLine[]
+  stockBalances      StockBalance[]
   customerSubscriptions CustomerSubscription[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, status])
   @@index([organizationId, category])
+  @@index([brandId])
+  // AB6 (AX11): GIN index backing the FTS shop search.
+  @@index([searchVector], type: Gin)
 }
 
 model ProductVariant {
@@ -456,6 +640,8 @@ model ProductVariant {
   priceMinor    BigInt?
   stockQuantity Int?
   attributes    Json?
+  // GB2 (GC7): out-of-stock alert stamp — see Product.lastOosNotifiedAt.
+  lastOosNotifiedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -499,6 +685,26 @@ model ProductImage {
 // EC3: structured product taxonomy (tree). Replaces free-text
 // categorisation for write-back; Product.category stays as the
 // legacy display string.
+// GB2 (GC6): merchant brand registry. Products link via
+// Product.brandId (SetNull on brand delete — the service also
+// nulls explicitly so the count lands in the delete audit).
+// slug is unique per org and powers the public shop brand page.
+model Brand {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  logoUrl        String?
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  products       Product[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
 model Category {
   id             String       @id @default(uuid())
   organizationId String
@@ -893,6 +1099,12 @@ model TenantPaymentGateway {
   encryptedData   String // sealed JSON credentials (shape per provider)
   status          String       @default("configured") // verified | configured
   isEnabled       Boolean      @default(true)
+  // GC12: the MERCHANT's own gateway-contract fee numbers (NOT
+  // part of the sealed creds — plain columns so fee reporting
+  // never has to decrypt). Both null = no fee rate configured;
+  // fee reporting then leaves fee/net null, never invented.
+  feeBps          Int?
+  feeFixedMinor   BigInt?
   lastVerifiedAt  DateTime?
   lastError       String?
   createdAt       DateTime     @default(now())
@@ -931,6 +1143,25 @@ model TenantPaymentTransaction {
   amountMinor     BigInt
   currency        String       @default("BDT")
   status          String       @default("initiated") // initiated | verified_paid | failed | cancelled
+  // AB4 (AX5a): what this attempt pays toward — "full" (the
+  // whole order total; every pre-AB4 row), "deposit" (the
+  // order's configured deposit slice) or "balance" (the
+  // remaining amount after earlier verified payments).
+  // Settlement is ALWAYS judged by Σ verified amounts vs the
+  // order total; purpose only labels intent + drives the
+  // deposit bookkeeping below.
+  purpose         String       @default("full") // full | deposit | balance
+  // AB4 (AX5a): exactly-once claim for the approved
+  // PaymentVerification row a verified DEPOSIT writes into the
+  // order's canonical paid sum (source "gateway_deposit"). Set
+  // via a conditional updateMany (the failureNotifiedAt idiom)
+  // before the row is created, so an IPN re-delivery can never
+  // double-count a deposit. Null for non-deposit transactions.
+  depositVerificationId String?
+  // GB9 (GC23): staff payment-failure alert dedupe stamp —
+  // set when the failure-conclusion alert has been claimed
+  // for this attempt (exactly one alert opportunity).
+  failureNotifiedAt DateTime?
   providerTxnId   String? // SSLCommerz tran_id (ours) | bKash paymentID
   valId           String? // SSLCommerz validation id, kept as evidence
   ipnPayload      Json? // the verified gateway payload (evidence)
@@ -945,6 +1176,16 @@ model TenantPaymentTransaction {
   // rejected IPN left no trace at all). Capped at the last 50
   // entries by the writer; never contains credential material.
   ipnEvents       Json?
+  // GC12: payment-ops bookkeeping — failureReason is written
+  // failure-isolated alongside a failed/cancelled recording
+  // (never breaks the payment path); feeMinor/netMinor are
+  // stamped ONLY at verified_paid (own path: from the gateway
+  // row's feeBps/feeFixedMinor when either is set; platform
+  // path: from the wallet credit's fee). Both stay null when
+  // no fee rate is known — never invented.
+  failureReason   String?
+  feeMinor        BigInt?
+  netMinor        BigInt?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1605,10 +1846,40 @@ model Customer {
   // ON7: staff-set credit limit for this customer (minor units);
   // null = no credit limit configured for this customer.
   creditLimitMinor BigInt?
+  // AB5 (AX7): B2B customer group (scalar id, like assigneeId —
+  // group deletion nulls members in the service). A group may
+  // carry ONE price list (PriceList.groupId unique); group list
+  // prices are a PRICE SOURCE at checkout line-build time.
+  groupId        String?
+  // AB5 (AX7): net terms in days (0 = no terms; UI vocabulary
+  // 0 | 7 | 14 | 30). At placement the one door stamps
+  // Order.creditDueDate = order date + terms when the customer
+  // carries terms > 0 — a SNAPSHOT: later term edits never
+  // rewrite an existing order's due date.
+  creditTermsDays Int         @default(0)
+  // GB6 (GC15): CRM record depth — staff-managed tags (Json
+  // string array, replaced wholesale on write), a STAFF-ONLY
+  // internal note (never serialized on any public/customer
+  // payload), a VIP flag, and a record-level block (enforced
+  // at the native checkouts via CheckoutGuardService when the
+  // order phone matches this customer, ON11-normalized).
+  tags           Json?
+  notes          String?
+  isVip          Boolean      @default(false)
+  isBlocked      Boolean      @default(false)
+  blockedReason  String?
+  // AB1 (AX1): cached loyalty-points balance — maintained ONLY
+  // by LoyaltyService.postEntry inside the same DB transaction
+  // as the LoyaltyLedger write it mirrors. The ledger is the
+  // truth; this column is its read cache. May go NEGATIVE after
+  // a refund clawback (documented): a negative balance blocks
+  // redemption until earned back.
+  loyaltyBalanceCache Int     @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   orders         Order[]
+  loyaltyLedger  LoyaltyLedger[]
   storeIdentities CustomerStoreIdentity[]
   subscriptions  CustomerSubscription[]
 
@@ -1813,6 +2084,25 @@ model Order {
   // Excluded from order lists / stats / analytics by default and
   // refused by courier booking; deleted by practice cleanup.
   isPractice      Boolean @default(false)
+  // GB3 (GC8): checkout trust stamps — termsConsentedAt /
+  // termsRef record the shopper's terms consent when the shop
+  // requires it; codAdvanceRequired marks that this COD order
+  // crossed the org's advance threshold at placement.
+  termsConsentedAt DateTime?
+  termsRef         String?
+  codAdvanceRequired Boolean @default(false)
+  // AB4 (AX5a): the deposit/advance amount (paisa) this order was
+  // placed owing BEFORE delivery — computed server-side from the
+  // org's deposit config at placement; null = no deposit applied.
+  // What has actually been PAID toward it is never stamped here:
+  // it derives from approved PaymentVerification rows (a verified
+  // gateway deposit writes one, source "gateway_deposit").
+  depositDueMinor BigInt?
+  // AB4 (AX5b): validated answers to the org's custom checkout
+  // fields (map key → string | boolean). Validated against the
+  // ACTIVE CheckoutFieldDefs for the placement surface at
+  // placement time; null = no fields answered / none defined.
+  checkoutFields Json?
   // ON1: staff tags (JSON array of strings, replace semantics via
   // OrdersService.setTags) + assignee (scalar user id, no FK —
   // same style as landingPageId; validated against ACTIVE org
@@ -1896,6 +2186,14 @@ model Order {
   promotionsApplied      Json?
   referralDiscountMinor  BigInt @default(0)
   referralCode           String?
+  // AB1 (AX2): the resolved referrer behind referralCode above,
+  // stamped by PromotionsService.stampOrder FROM the evaluation
+  // (the evaluator resolves the referrer even when the presented
+  // code grants the buyer no discount). Plain scalar, like
+  // assigneeId — no FK, so a later customer merge/delete never
+  // blocks an order write. LoyaltyService resolves the CURRENT
+  // referrer through this id first, falling back to the code.
+  referrerCustomerId     String?
   // EC32: affiliate attribution — stamped at checkout ONLY when
   // the org's affiliate program is enabled and the presented code
   // resolved to an ACTIVE AffiliatePartner (and the buyer is not
@@ -1919,6 +2217,36 @@ model Order {
   // EC24d: wholesale lines applied at checkout, snapshot:
   // [{ productId, minQty, priceMinor }] (priceMinor as string).
   wholesaleBreakdown Json?
+  // AB5 (AX7): customer-group price-list lines applied at
+  // checkout line-build, snapshot: [{ productId, variantId,
+  // priceMinor }] (priceMinor as string). Stamped by the pricing
+  // surfaces (shop quote / single / landing / POS) exactly like
+  // wholesaleBreakdown; null = no group price applied.
+  priceListBreakdown Json?
+  // AB5 (AX7): net-terms due date snapshot — order effective
+  // date (placedAt ?? createdAt) + the customer's creditTermsDays
+  // AT PLACEMENT, stamped once by the upsertOrder CREATE branch
+  // when terms > 0 and the order total is positive. Null = no
+  // terms applied (the khata view then never flags the order
+  // overdue on a terms basis; ON7 aging is unaffected).
+  creditDueDate   DateTime?
+  // AB7 (AX19): order-level attribution stamps — captured by the
+  // shop client from first-party tracking storage and presented
+  // in the native checkout DTOs; stamped once at placement.
+  // Null = untracked (POS / manual / external orders are never
+  // stamped). clickIdType vocabulary: fbclid | gclid | ttclid.
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmContent      String?
+  utmTerm         String?
+  clickIdType     String?
+  clickId         String?
+  // AB8 (AX27): first-party device hash presented at native
+  // checkout (SHA-256 hex of low-entropy-stable browser signals —
+  // a WEAK signal, see fraud-score). Null = not presented (POS /
+  // manual / external orders are never stamped).
+  deviceHash      String?
   // EC24c: renewal orders created by the subscription sweep
   // link back to their CustomerSubscription.
   subscriptionId  String?
@@ -1941,6 +2269,12 @@ model Order {
   splitFromId     String?
   mergedIntoId    String?
   couponCode      String?
+  // GB7 (GC17): what the evaluator actually applied at placement
+  // — [{promotionId?, couponCode?, kind, name, discountMinor}]
+  // stamped by PromotionsService.stampOrder FROM the evaluation
+  // result (never reconstructed later). Null on pre-GB7 orders;
+  // the promotions report reads only this column + couponCode.
+  appliedDiscounts Json?
   // EC29: gift wrap fee (a FEE like delivery — outside discounts
   // and outside the tax base) + the customer's gift message
   // (printed on the packing slip).
@@ -1967,6 +2301,7 @@ model Order {
   pickWaveOrders PickWaveOrder[]
   deliveryAttempts DeliveryAttempt[]
   voiceCalls     OrderVoiceCall[]
+  stockAllocations StockAllocation[]
 
   @@unique([organizationId, source, externalId])
   @@unique([organizationId, invoiceNumber])
@@ -2039,8 +2374,324 @@ model FraudShieldSetting {
   highValueMinor   BigInt   @default(500000)
   burstCount       Int      @default(3)
   burstWindowHours Int      @default(24)
+  // GB3 (GC9): checkout-gate policy + CAPTCHA (Cloudflare
+  // Turnstile). openOrderPolicy gates shoppers who already
+  // have an open order: off | warn | block (window =
+  // openOrderWindowHours). waitingPeriodMinutes is a per-phone
+  // cooldown between orders; maxOrdersPerPhonePerDay 0 = off.
+  // turnstileSecretEncrypted is SEALED (platform-config seal())
+  // and never returned by any API; the site key is public.
+  openOrderPolicy        String   @default("off") // off | warn | block
+  openOrderWindowHours   Int      @default(72)
+  waitingPeriodMinutes   Int      @default(0)
+  maxOrdersPerPhonePerDay Int     @default(0)
+  turnstileSiteKey       String?
+  turnstileSecretEncrypted String?
+  captchaEnabled         Boolean  @default(false)
+  captchaOnCheckout      Boolean  @default(true)
+  captchaOnOtp           Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+}
+
+// GB3 (GC8/GC9): checkout idempotency + fraud-hardening tables.
+// Scalar-id style (NO Organization relation), matching
+// FraudShieldSetting / BlockedPhone precedent: services resolve
+// rows org-first, and a missing table on a partial deployment
+// degrades to "no match" instead of breaking checkout. Org
+// cleanup for these rows is therefore service-level, not a DB
+// cascade — the deliberate trade-off of the scalar style.
+
+// GB3 (GC8): one row per (org, idempotency key) presented at a
+// public checkout surface (scope shop | single | landing);
+// orderId/responseJson record the first placement so a retry
+// replays it instead of duplicating the order.
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  scope          String // shop | single | landing
+  orderId        String?
+  responseJson   Json?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, key])
+  @@index([organizationId, createdAt])
+}
+
+// GB3 (GC9): staff-managed blocked identifiers (phone | email |
+// ip). value is the normalized display value; matchKey is the
+// comparison key (phone: last-10 digits; email: lowercased;
+// ip: the ip string). Enforced at the checkout gate.
+model BlockedIdentifier {
+  id             String   @id @default(uuid())
+  organizationId String
+  kind           String // phone | email | ip
+  value          String
+  matchKey       String
+  reason         String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, kind, matchKey])
+  @@index([organizationId, kind])
+}
+
+// AB4 (AX5b): a merchant-defined custom checkout field. Scalar-id
+// style (no Organization relation), like the GB3 tables above:
+// services resolve rows org-first. key is a merchant-chosen slug
+// unique per org; appliesTo scopes the field to one checkout
+// surface (shop | single | landing) or "all". Checkout DTOs
+// accept answers for the ACTIVE defs of their surface only; the
+// validated answers land on Order.checkoutFields.
+model CheckoutFieldDef {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  label          String
+  type           String // text | textarea | select | checkbox
+  options        Json? // string[] for type "select"
+  required       Boolean  @default(false)
+  appliesTo      String   @default("all") // shop | single | landing | all
+  sortOrder      Int      @default(0)
+  active         Boolean  @default(true)
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId, appliesTo, active])
+}
+
+// ---------- AB5 (AX7): B2B customer groups, price lists, quotes ----------
+
+// AB5 (AX7): a named B2B customer group. Customers join via
+// Customer.groupId (scalar; group deletion nulls members in the
+// service). A group carries at most ONE price list.
+model CustomerGroup {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  priceList      PriceList?
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// AB5 (AX7): the group's explicit price list — MATERIALIZED
+// prices only (a bulk %-off helper writes explicit rows; nothing
+// is computed at read time). Consulted at checkout line-build:
+// a matching row REPLACES the line's catalog/variant unit price
+// (an explicit list price also beats wholesale-tier math — a
+// negotiated price is more specific than a quantity tier).
+model PriceList {
+  id             String   @id @default(uuid())
+  organizationId String
+  groupId        String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  group          CustomerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  items          PriceListItem[]
+
+  @@index([organizationId])
+}
+
+model PriceListItem {
+  id          String    @id @default(uuid())
+  priceListId String
+  productId   String
+  // Null = the product-level price (applies to every variant);
+  // a variant-specific row beats the product-level row.
+  variantId   String?
+  priceMinor  BigInt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  priceList   PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@unique([priceListId, productId, variantId])
+  @@index([priceListId])
+  @@index([productId])
+}
+
+// AB5 (AX7): a staff-issued price QUOTE — an OFFER document, not
+// an order. Lines are SNAPSHOTS (name + unit price as offered);
+// totals on the quote are Σ lines + deliveryChargeMinor, with NO
+// tax/promotion evaluation. Conversion (staff-confirmed, on an
+// accepted quote) creates a REAL order through the manual-order
+// path carrying the snapshot prices — the conversion preview
+// shows the resulting order totals computed by that path BEFORE
+// staff confirm, so any difference is visible, never silent.
+// The public page is reached only via the unguessable token
+// (SHA-256 hash stored, like ShopOtpChallenge/GiftCard codes).
+model Quote {
+  id             String    @id @default(uuid())
+  organizationId String
+  number         String // QT-<seq>, org-scoped (QuoteCounter)
+  customerId     String?
+  walkinName     String?
+  walkinPhone    String?
+  status         String    @default("draft") // draft | sent | accepted | declined | expired | converted | cancelled
+  expiresAt      DateTime?
+  lines          Json // [{ productId, variantId?, name, variantName?, sku?, qty, unitPriceMinor (string) }]
+  deliveryChargeMinor BigInt @default(0)
+  note           String?
+  convertedOrderId String?
+  publicTokenHash String?  @unique
+  // Honesty of the LAST send attempt: sms | email | none
+  // (recorded, never claimed beyond what the helper returned).
+  sentVia        String?
+  sentAt         DateTime?
+  respondedAt    DateTime?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, customerId])
+}
+
+// AB5 (AX7): org-scoped quote number sequence — mirrors
+// InvoiceCounter: the unique row IS the lock, incremented
+// atomically inside a transaction.
+model QuoteCounter {
+  id             String @id @default(uuid())
+  organizationId String @unique
+  lastSeq        Int    @default(0)
+}
+
+// ---------- AB5 (AX9): license-key pools ----------
+
+// AB5 (AX9): one license key in a product's pool. The full key
+// exists ONLY as a SHA-256 hash (dedupe) + an AES-256-GCM sealed
+// copy (platform-config seal, like GiftCard codes) — staff
+// surfaces show keyLast4 only; the full key is revealed solely
+// to the entitled buyer on the order-bound digital surface.
+// Assignment is exactly-once per (assignedItemId, unitIndex) —
+// the unique pair is the claim, mirroring GiftCard issuance.
+model LicenseKey {
+  id             String    @id @default(uuid())
+  organizationId String
+  productId      String
+  keyHash        String
+  keySealed      String
+  keyLast4       String
+  status         String    @default("available") // available | assigned | revoked
+  assignedOrderId String?
+  assignedItemId String?
+  unitIndex      Int?
+  assignedAt     DateTime?
+  revokedAt      DateTime?
+  importBatch    String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([organizationId, productId, keyHash])
+  @@unique([assignedItemId, unitIndex])
+  @@index([organizationId, productId, status])
+  @@index([organizationId, assignedOrderId])
+}
+
+// AB4 (AX6b): the server-side ledger of ONE offline POS sale's
+// sync journey. The client outbox is the transport; this row is
+// the record staff act on. (organizationId, idempotencyKey) is
+// unique — the same key the POS sale itself replays under
+// (IdempotencyRecord, scope "pos"), so a retried sync can never
+// create a second order. payload keeps the original sale body so
+// a staff re-post needs nothing from the client. varianceMinor =
+// serverTotalMinor − localTotalMinor, recorded even when 0 — a
+// priced difference never hides.
+model PosOfflineSync {
+  id              String    @id @default(uuid())
+  organizationId  String
+  idempotencyKey  String
+  cashierId       String?
+  localReceiptNo  String?
+  localTotalMinor BigInt?
+  payload         Json
+  status          String    @default("pending") // pending | synced | conflict | rejected | discarded
+  reason          String?
+  serverOrderId   String?
+  serverTotalMinor BigInt?
+  varianceMinor   BigInt?
+  discardNote     String?
+  attempts        Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  syncedAt        DateTime?
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status, createdAt])
+}
+
+// GB3 (GC9): trusted identifiers — a trusted PHONE bypasses the
+// blocked/open-order/waiting/daily gate checks (never CAPTCHA).
+// Same shape as BlockedIdentifier.
+model TrustedIdentifier {
+  id             String   @id @default(uuid())
+  organizationId String
+  kind           String // phone | email | ip
+  value          String
+  matchKey       String
+  reason         String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, kind, matchKey])
+  @@index([organizationId, kind])
+}
+
+// GB3 (GC9): one row per checkout-gate refusal (staff-visible
+// attempt log). identifierSummary is ALWAYS a masked summary —
+// never a raw phone/email.
+model FraudAttemptLog {
+  id                String   @id @default(uuid())
+  organizationId    String
+  channel           String // shop | single | landing | otp
+  kind              String // blocked_identifier | open_order_policy | waiting_period | daily_limit | captcha | fraud_rule
+  identifierSummary String
+  ruleId            String?
+  createdAt         DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, kind])
+}
+
+// GB3 (GC9): a merchant's basic fraud rule. conditions is a
+// validated Json object (known keys only — see
+// FraudRulesService): minTotalMinor (digit string), isCod,
+// districtIn, phoneOpenOrdersGte, minRiskScore. action:
+// hold | tag | block_checkout (tag requires tagValue).
+model FraudRule {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  enabled        Boolean  @default(true)
+  conditions     Json
+  action         String // hold | tag | block_checkout
+  tagValue       String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// GB3 (GC9): one row per fraud-rule firing (checkout blocks
+// carry orderId null — the order was never placed).
+model FraudRuleHit {
+  id             String   @id @default(uuid())
+  organizationId String
+  ruleId         String
+  orderId        String?
+  action         String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, ruleId])
+  @@index([organizationId, orderId])
 }
 
 // ON5 (Transactional Notification Engine): per-org notification
@@ -2313,6 +2964,14 @@ model OrderItem {
   // placement (allocated totals sum exactly to the bundle price).
   bundleId    String?
   bundleName  String?
+  // AB5 (AX9): PER-ITEM digital access bookkeeping. The reveal
+  // mints signed download tokens per item; each validated
+  // download increments THIS counter and the item's own product
+  // digitalAccessLimit is enforced against it. The order-level
+  // Order.digitalAccessCount stays as the legacy read (still
+  // incremented by the reveal, as before AB5).
+  digitalAccessCount    Int       @default(0)
+  digitalLastAccessedAt DateTime?
   order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
@@ -4356,10 +5015,51 @@ model CourierShipment {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   deliveryAttempts   DeliveryAttempt[]
+  // GB5 (GC14): the delivery charge the provider itself returned
+  // at BOOKING time (Pathao's delivery_fee today). Null whenever
+  // the provider returned no charge — never estimated, never
+  // backfilled from quotes or settlement sheets (the EC26 sheet
+  // charge stays the stronger actual in ON7 profit, which falls
+  // back to this only when no sheet line exists).
+  chargeMinor        BigInt?
+  events             CourierShipmentEvent[]
 
   @@index([organizationId, orderId])
   @@index([organizationId, status])
   @@index([organizationId, integrationId])
+}
+
+// GB5 (GC14): the shipment's own event history — status
+// transitions, provider errors and staff notes/manual updates,
+// recorded from GC14 onward (NO backfill: a shipment booked
+// before GC14 has no events, and UIs say so). rawStatus keeps
+// the provider's verbatim status string next to the mapped
+// internal one, so an unmapped provider status is preserved,
+// never silently dropped. Written failure-isolated by
+// CourierService: a failed event write never breaks booking,
+// sync or a manual update.
+model CourierShipmentEvent {
+  id             String   @id @default(uuid())
+  organizationId String
+  shipmentId     String
+  // status | error | note
+  kind           String
+  // Internal-vocabulary status (kind = status rows only).
+  status         String?
+  // The provider's verbatim status string, when the event came
+  // from a provider (booking / api_sync).
+  rawStatus      String?
+  // api_sync | manual | booking | system
+  source         String
+  // Staff user id for source = manual rows; null otherwise.
+  actorId        String?
+  // Error message snippet (kind = error) or staff note text.
+  message        String?
+  createdAt      DateTime @default(now())
+  shipment       CourierShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, shipmentId, createdAt])
+  @@index([shipmentId, kind, createdAt])
 }
 
 // EC26: one courier COD settlement-sheet import. The merchant's
@@ -4380,6 +5080,9 @@ model ReconciliationImport {
   duplicateCount      Int      @default(0)
   status              String   @default("processed") // processed | failed
   createdBy           String?
+  // GB8 (GC20): stamped when the settlement-mismatch alert has
+  // fired for this import — exactly once per import batch.
+  mismatchAlertedAt   DateTime?
   createdAt           DateTime @default(now())
 
   @@index([organizationId, courierIntegrationId, createdAt])
@@ -4439,8 +5142,49 @@ model InventorySetting {
   id             String   @id @default(uuid())
   organizationId String   @unique
   leadTimeDays   Int      @default(14)
+  // GB2 (GC7): when true, the native online checkouts accept
+  // orders beyond available stock (placement decrements into
+  // negative exactly as the S1 ledger does today). Default
+  // false = checkout refuses beyond AVAILABLE stock.
+  allowBackorder Boolean  @default(false)
+  // GB2 (GC7): minutes a native shop cart's items stay reserved
+  // (StockReservation) after the cart's last item mutation.
+  // 0 = reservations OFF (the default; availability then equals
+  // on-hand everywhere, exactly as before GB2).
+  reserveMinutes Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+// GB2 (GC7): stock reserved by a native shop cart (StoreCart).
+// sessionRef = the StoreCart id. A reservation counts against
+// availability only while state = "active" AND expiresAt > now
+// (lazy expiry — reads never count an expired row, whether or
+// not its state was ever flipped). Cart conversion stamps
+// "consumed"; cart edits reconcile the set (changed/removed
+// lines are "released"). productId/variantId are plain ids like
+// StockMovement's (no FK): a reservation must never block a
+// product delete, and an orphan row can never match a live
+// product's availability query (ids are uuids, never reused).
+model StockReservation {
+  id             String       @id @default(uuid())
+  organizationId String
+  sessionRef     String
+  productId      String
+  variantId      String?
+  // AB3 (AX4): the bin this reservation holds against, resolved
+  // at reserve time (plain id like productId — no FK). Null on
+  // pre-AB3 rows; those keep counting org-globally as today.
+  binId          String?
+  quantity       Int
+  state          String       @default("active") // active | consumed | released
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, sessionRef, state])
+  @@index([organizationId, productId, variantId, state, expiresAt])
 }
 
 // CX12b: post-delivery review request + the collected review.
@@ -4809,11 +5553,18 @@ model AgentPresence {
 // reason: order_placed | order_cancelled | order_returned |
 // manual_adjustment | sync_correction. Negative balanceAfter is
 // recorded truthfully (oversell happens with COD commerce).
+// AB3 (AX4): binId attributes the delta to one bin (plain id,
+// no relation — null for pre-AB3 rows and for movements whose
+// flow has no bin attribution); balanceAfter keeps its GLOBAL
+// meaning. AB3 adds the reasons transfer_out | transfer_in |
+// reallocation_out | reallocation_in, chosen OUTSIDE every
+// pre-AB3 reason family (restore / netting / damage / velocity).
 model StockMovement {
   id             String   @id @default(uuid())
   organizationId String
   productId      String
   variantId      String?
+  binId          String?
   delta          Int
   balanceAfter   Int
   reason         String
@@ -4859,6 +5610,108 @@ model AgentNotification {
   createdAt      DateTime  @default(now())
 
   @@index([organizationId, userId, readAt])
+}
+
+// GB6 (GC16): per-staff in-app notification preferences. One
+// row per (user, organization); mutedCategories is a Json
+// array of category keys from common/agent-notify.ts. A muted
+// category means AgentNotification rows of that category are
+// NOT created for this user. In-app only — no other channel
+// is affected. Absence of a row = nothing muted.
+model NotificationPreference {
+  id               String       @id @default(uuid())
+  userId           String
+  organizationId   String
+  mutedCategories  Json         @default("[]")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+// GB6 (GC15): a saved CRM segment — criteria Json over the
+// customer record (vocabulary: tagsAny[], isVip, isRepeat,
+// minSpentMinor, district). Membership is COMPUTED live from
+// the criteria (never materialized); the list filter and the
+// member counter share one evaluator so they cannot drift.
+model CrmSegment {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  criteria       Json
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// GB6 (GC16): a per-org custom role — a named subset of the
+// REAL permission-area catalog (common/permission-catalog.ts).
+// Assigned via Membership.customRoleId. The member's preset
+// role remains the baseline for role-list-only endpoints;
+// the custom role's areas govern @PermissionArea endpoints.
+// presetKey is set when the role was materialized from one
+// of the built-in PRESET_ROLE_PROFILES (ORDER_MANAGER,
+// INVENTORY_MANAGER, FINANCE) and is immutable afterwards.
+model CustomRole {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  areas          Json
+  presetKey      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        Membership[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// GB6 (GC16): one row per login attempt (success + failure).
+// email is stored as attempted (failures for unknown emails
+// have userId null). Passwords and tokens are NEVER stored.
+model LoginEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  email     String
+  success   Boolean
+  // AB8 (AX26): how the login completed — password | google.
+  // Existing rows default to "password" (every pre-AB8 login was
+  // a password login; TOTP completions keep the ORIGINATING
+  // method via the challenge token's `via` claim).
+  method    String   @default("password")
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([email, createdAt])
+}
+
+// GB6 (GC16): server-side session registry for the stateless
+// JWT flow. A row is created at token issuance and its id is
+// carried as the token's `sid` claim; JwtAuthGuard rejects a
+// token whose session is revoked. Tokens minted before GB6
+// carry no sid and stay valid until natural expiry (legacy).
+model UserSession {
+  id         String    @id @default(uuid())
+  userId     String
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([userId, createdAt])
 }
 
 // Daily breakdown aggregates from the Meta insights API (age/gender,
@@ -4988,10 +5841,50 @@ model CatalogRecord {
   status           String   @default("connected")
   lastSyncAt       DateTime?
   lastSyncSummary  Json?
+  // AB5 (AX10): change-driven sync opt-in. Default FALSE — the
+  // manual push stays the behaviour until the merchant turns
+  // this on per catalog. Product writes enqueue CatalogSyncRecord
+  // rows ONLY for catalogs with autoSync on.
+  autoSync         Boolean  @default(false)
+  // AB5 (AX10): the Facebook Page / Instagram account the
+  // merchant says this catalog is linked to (staff-entered at
+  // register/create; displayed verbatim). Null = not recorded —
+  // the UI says so instead of inventing a lookup.
+  pageId           String?
+  pageName         String?
+  instagramId      String?
+  instagramName    String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([organizationId])
+}
+
+// AB5 (AX10): one queued change-driven catalog sync action.
+// Product writes (create/update/archive/variants) enqueue these
+// failure-isolated for every autoSync catalog of the org; the
+// catalog_sync_sweep job drains them through the same Meta batch
+// endpoint the manual push uses (CREATE/UPDATE/DELETE per
+// action). retailerId is snapshotted at enqueue time so a DELETE
+// still knows its external id after the product row is gone.
+// Pending rows for the same (catalog, product) collapse: the
+// latest action wins (a delete supersedes a pending update).
+model CatalogSyncRecord {
+  id             String    @id @default(uuid())
+  organizationId String
+  catalogId      String
+  productId      String
+  retailerId     String?
+  action         String // create | update | delete
+  status         String    @default("pending") // pending | done | failed
+  attempts       Int       @default(0)
+  lastError      String?
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, catalogId, status, createdAt])
+  @@index([organizationId, productId])
 }
 
 // A campaign published directly to Google Ads or TikTok (Phase I).
@@ -5334,6 +6227,7 @@ model SupportTicket {
   category       String    @default("general") // general | billing | technical | campaigns | integration
   status         String    @default("open") // open | pending | resolved | closed
   priority       String    @default("normal") // normal | high | urgent
+  firstRespondedAt DateTime?
   assignedToId   String?
   diagnostics    Json?     // { url, userAgent, plan, errorSnippet }
   tags           String[]  @default([])
@@ -5375,6 +6269,155 @@ model SupportCannedResponse {
   category  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// GB9 (GC23): outgoing merchant webhooks. A subscription points
+/// at an https URL and names a subset of the platform's real
+/// event vocabulary (mapped in the webhooks service). The
+/// signing secret is stored SEALED (platform-config seal()) and
+/// is shown to the merchant exactly once at creation/rotation.
+model WebhookSubscription {
+  id             String   @id @default(uuid())
+  organizationId String
+  url            String
+  events         Json // string[] of public event names
+  secretSealed   String
+  active         Boolean  @default(true)
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId, active])
+}
+
+/// GB9 (GC23): one delivery attempt chain for one event to one
+/// subscription. status: pending | delivered | failed. Retries
+/// follow 1m → 5m → 30m → 2h then failed (5 attempts max),
+/// driven by the webhook_delivery_sweep job. The payload is
+/// PII-minimal by construction (ids + summary fields only).
+model WebhookDelivery {
+  id             String    @id @default(uuid())
+  subscriptionId String
+  organizationId String
+  event          String
+  payload        Json
+  status         String    @default("pending") // pending | delivered | failed
+  attempts       Int       @default(0)
+  responseCode   Int?
+  error          String?
+  nextRetryAt    DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+  @@index([subscriptionId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+/// GB9 (GC22): per-org daily counter for the public API
+/// surface (public/shop + public/landing + tracking). The day
+/// is the Asia/Dhaka calendar day (yyyy-mm-dd). Incremented
+/// failure-isolated by the public-API interceptor; the plan's
+/// apiDailyLimit (when set) is enforced against it.
+model ApiUsageDaily {
+  id             String @id @default(uuid())
+  organizationId String
+  day            String
+  count          Int    @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, day])
+  @@index([organizationId, day])
+}
+
+/// AB8 (AX21): merchant developer API keys — org-scoped
+/// programmatic access to the versioned /v1/merchant surface
+/// (products/orders/customers). Generalizes the AssistantApiKey
+/// plumbing: only the SHA-256 hash of the token is stored; the
+/// plaintext (`qk_live_…`) is returned exactly once at creation.
+/// scopes is a validated subset of products:read |
+/// products:write | orders:read | customers:read. Org scoping is
+/// derived from the KEY, never from a client-supplied org id.
+model MerchantApiKey {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  keyPrefix      String // first 8 chars of the token, for display
+  keyHash        String    @unique
+  scopes         Json
+  status         String    @default("active") // active | revoked
+  lastUsedAt     DateTime?
+  createdById    String
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+/// AB8 (AX25): a self-serve org data export. The bundle file
+/// lives in the platform media/file store under `fileRef`; the
+/// row is the authorization + lifecycle record (a download is
+/// served only to staff of the owning org, and only while
+/// status = ready and not past expiresAt). kind: manual |
+/// backup (scheduled weekly backups share the pipeline).
+model DataExport {
+  id             String    @id @default(uuid())
+  organizationId String
+  requestedById  String?
+  kind           String    @default("manual") // manual | backup
+  status         String    @default("pending") // pending | ready | failed | expired
+  fileRef        String?
+  sizeBytes      Int?
+  error          String?
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, kind, status, createdAt])
+}
+
+/// AB8 (AX25): scheduled weekly backup preference — one row per
+/// org. lastBackupAt stamps the last SUCCESSFUL backup export
+/// (the sweep runs when enabled and the stamp is ≥ 7 days old
+/// or absent). Retention (newest 4 ready backups) is enforced
+/// by the sweep, not by this row.
+model OrgBackupPreference {
+  id             String    @id @default(uuid())
+  organizationId String    @unique
+  enabled        Boolean   @default(false)
+  lastBackupAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// AB8 (AX26): Google SSO login state. kind "state" rows guard
+/// the OAuth round-trip (10 min, single-use); kind "handoff"
+/// rows carry the VERIFIED identity from the API callback to
+/// the web login completion call (5 min, single-use, bound to
+/// the resolved user). tokenHash is always a SHA-256 hash —
+/// raw tokens travel only in redirect URLs / request bodies.
+model SsoLoginState {
+  id        String    @id @default(uuid())
+  kind      String // state | handoff
+  tokenHash String    @unique
+  userId    String?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, kind])
+  @@index([expiresAt])
 }
 
 /// Admin Polish AP2: server-side registry for view-as
@@ -6215,7 +7258,32 @@ model StoreDiscount {
   usageLimit     Int?
   usedCount      Int       @default(0)
   active         Boolean   @default(true)
-  origin         String    @default("manual") // manual | woocommerce | shopify
+  origin         String    @default("manual") // manual | woocommerce | shopify | abandoned_recovery (GB7)
+  // GB7 (GC17): customer-condition vocabulary. firstOrderOnly is
+  // valid only when the resolved customer has NO prior orders;
+  // repeatCustomerOnly only when they have >= 1 (identity = the
+  // resolved Customer record; the count is computed once per
+  // checkout by the caller and passed into the evaluator —
+  // see PromotionsService.evaluateCheckout).
+  firstOrderOnly     Boolean @default(false)
+  repeatCustomerOnly Boolean @default(false)
+  // GB7 (GC17): per-customer cap, counted from PLACED orders
+  // carrying this code's GB3 couponCode stamp for the same
+  // customer (stamp-based counting — pre-stamp history is
+  // uncountable per-customer; see the acceptance doc).
+  perCustomerLimit   Int?
+  // GB7 (GC17): refuse when the merchandise subtotal is ABOVE
+  // this (mirrors minOrderMinor's semantics in reverse).
+  maxOrderMinor      BigInt?
+  // GB7 (GC17): a cart containing ANY of these product/category
+  // ids refuses the coupon outright (v1: no line-level partial
+  // application). Ids validated against the org catalog at save.
+  excludedProductIds  Json?
+  excludedCategoryIds Json?
+  // GB7 (GC17): provenance link for system-issued coupons (the
+  // abandoned checkout / native cart id for origin
+  // "abandoned_recovery"; null for merchant-created coupons).
+  sourceRef           String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -6298,12 +7366,33 @@ model StorefrontSetting {
   returnPolicyText   String?
   deliveryPromiseText String?
   supportPhone       String?
+  // GB1 (GC1/GC4): storefront theme + favicon + direct contact
+  // channels shown on the shop. themeId is one of
+  // classic | bold | minimal (validated in the service/DTO).
+  themeId            String       @default("classic")
+  // GB3 (GC8): when requireTermsConsent is on, checkout refuses
+  // without a recorded terms consent (Order.termsConsentedAt /
+  // termsRef); termsUrl links the merchant's terms page.
+  requireTermsConsent Boolean     @default(false)
+  termsUrl           String?
+  faviconUrl         String?
+  whatsappNumber     String?
+  messengerUrl       String?
   // EC16: tenant referral-as-discount config. Percent null =
   // the referral discount is OFF (a presented code is recorded
   // on the order but grants nothing). Min subtotal (minor units)
   // is judged on the post-promotion merchandise subtotal.
   referralDiscountPercent Int?
   referralMinSubtotalMinor BigInt?
+  // GB7 (GC18): the MERCHANT's own tracking ids — never platform
+  // ids. Format-validated at save (G-… / GTM-… / AW-… / label /
+  // verification token); null = unset = the shop renders NOTHING
+  // for that tag.
+  ga4MeasurementId          String?
+  gtmContainerId            String?
+  googleAdsId               String?
+  googleAdsConversionLabel  String?
+  searchConsoleVerification String?
   // EC32: affiliate program config. Enabled=false = presented
   // codes are ignored entirely (no stamp, no commission).
   // affiliateDefaultPercent pre-fills new partners (a partner's
@@ -6328,9 +7417,377 @@ model StorefrontSetting {
   // set only after a real DNS lookup returns the exact token.
   domainVerifyToken  String?
   domainVerifiedAt   DateTime?
+  // AB8 (AX23): merchant's own custom CSS/JS for the SHOP only.
+  // Rendered by the shop layout (CSS in a <style data-custom> tag;
+  // JS only when customJsEnabled AND the request host passes the
+  // host rule derived from the cookie audit — see the AB8
+  // acceptance). Values are validated at save (length caps +
+  // closing-tag breakouts rejected); changes are audited with
+  // LENGTHS ONLY — code values never enter audit bodies.
+  customCss          String?
+  customJs           String?
+  customJsEnabled    Boolean      @default(false)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// GB7 (GC17): per-org abandoned-cart recovery coupon template.
+/// When enabled, a staff recovery send issues a REAL StoreDiscount
+/// row (origin "abandoned_recovery", sourceRef = the checkout /
+/// native cart id, perCustomerLimit 1, endsAt = now + expiryHours)
+/// and the generated code is composed into the recovery message.
+/// Default OFF — with it off, recovery sends are byte-identical
+/// to the pre-GB7 behaviour. kind mirrors StoreDiscount kinds
+/// (percent | fixed; free_shipping is not offered in v1).
+model AbandonedCouponSetting {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled        Boolean      @default(false)
+  kind           String       @default("percent")
+  value          Int          @default(0)
+  expiryHours    Int          @default(72)
+  minOrderMinor  BigInt?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// AB1 (AX1): per-org loyalty-points program configuration.
+// Ships DISABLED — when off, no earn, no redemption, no sweep
+// effect (every pre-AB1 behaviour is byte-identical). Points are
+// integers; their taka value exists ONLY at redemption time via
+// redeemValueMinorPerPoint (paisa per point).
+model LoyaltySetting {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled        Boolean      @default(false)
+  // Points earned per 1000 minor (৳10) of an order's earn basis
+  // (totalMinor − shippingMinor − giftWrapMinor, floored per
+  // 1000-minor step BEFORE the multiply).
+  earnPointsPer1000Minor Int    @default(1)
+  // Paisa one point is worth when redeemed at checkout.
+  redeemValueMinorPerPoint Int  @default(100)
+  // Minimum points a single redemption must reach (0 = no min).
+  minRedeemPoints        Int    @default(0)
+  // Optional cap: redemption may cover at most this % of the
+  // merchandise payable after all other discount lines.
+  maxRedeemSharePct      Int?
+  // Optional expiry for earn / referral_reward lots (days from
+  // the lot's creation). Null = points never expire.
+  pointsExpiryDays       Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// AB1 (AX2): what the REFERRER earns when a referred order
+// becomes sold (today the referrer earns nothing — the buyer
+// discount is EC16's, configured on StorefrontSetting). Ships
+// DISABLED. rewardType "points" posts into the loyalty ledger
+// (and therefore requires LoyaltySetting.enabled); "coupon"
+// issues a real single-use-per-customer StoreDiscount.
+model ReferralRewardSetting {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled        Boolean      @default(false)
+  rewardType     String       @default("points") // points | coupon
+  rewardPoints   Int?
+  couponPercent  Int? // 1..90 when rewardType = coupon
+  // The referred order's earn basis must reach this (null = any).
+  rewardMinOrderMinor BigInt?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// AB1 (AX1): THE loyalty truth. One row per points movement,
+// written ONLY by LoyaltyService (inside a DB transaction that
+// also maintains Customer.loyaltyBalanceCache). Positive lots
+// (earn / referral_reward / positive adjust) carry
+// remainingPoints for FIFO consumption + expiry; expiresAt is
+// set on earn / referral_reward lots when the org configures
+// pointsExpiryDays. Exactly-once for earn / referral_reward is
+// a partial unique index on (orderId) per reason, created by
+// raw SQL in the AB1 migration (Prisma cannot express partial
+// indexes) — the service checks first, the index is the
+// backstop.
+model LoyaltyLedger {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deltaPoints    Int // signed
+  reason         String // earn | redeem | expire | adjust | referral_reward
+  orderId        String? // plain scalar (orders outlive merges; no FK by design)
+  balanceAfter   Int
+  expiresAt      DateTime?
+  remainingPoints Int?
+  createdById    String? // staff actor for reason = adjust
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, customerId, createdAt])
+  @@index([organizationId, orderId])
+}
+
+// AB2 (AX3): per-org gift-card program configuration. Selling is
+// switched by the Product.isGiftCard flag; this row carries the
+// redemption kill-switch (default ON — redemption works out of
+// the box) and the default card expiry.
+model GiftCardSetting {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Kill-switch for REDEMPTION only (existing cards keep their
+  // balances; selling is controlled per product).
+  redemptionEnabled Boolean   @default(true)
+  // Days from issuance after which an unspent balance expires
+  // (the gift_card_expiry_sweep releases it as breakage). Null =
+  // issued cards never expire.
+  defaultExpiryDays Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// AB2 (AX3): a PURCHASE INTENT for gift-card value, recorded at
+// placement — one row per gift-card ORDER LINE (orderItemId is
+// the exactly-once claim). amountMinor is the line's unit price
+// (= the face value of EACH card); quantity N mints N cards.
+// The reconciler issues the cards only when the order reaches
+// the sold set — an unpaid/abandoned order never mints value.
+model GiftCardIssuance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId        String // plain scalar, like LoyaltyLedger.orderId
+  orderItemId    String       @unique
+  amountMinor    BigInt
+  quantity       Int          @default(1)
+  recipientName  String?
+  recipientEmail String?
+  recipientPhone String?
+  recipientMessage String?
+  // Set when every unit of this intent has been issued.
+  issuedAt       DateTime?
+  // Honest delivery evidence for the recipient send:
+  // "email" | "sms" | "none" (buyer reveal is a separate surface).
+  sentVia        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, orderId])
+}
+
+// AB2 (AX3): a stored-value gift card — a BEARER instrument.
+// The full code is NEVER stored in plaintext and never logged:
+// codeHash (SHA-256 of the canonical code) is the lookup key;
+// codeSealed (AES-256-GCM via integrations/crypto encryptJson)
+// is the only recoverable copy, unsealed solely on the entitled
+// buyer's delivery surface. Staff surfaces see prefix + last4
+// only. balanceCache is maintained ONLY by GiftCardService
+// inside the same transaction as the GiftCardLedger write.
+// status: active | depleted | expired | void.
+model GiftCard {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  codeHash       String
+  codeSealed     String
+  codePrefix     String       @default("QG")
+  codeLast4      String
+  initialAmountMinor BigInt
+  balanceCache   BigInt
+  currency       String       @default("BDT")
+  status         String       @default("active")
+  // Who bought it (when the purchase order resolved a customer)
+  // and who it was addressed to (free-text recipient fields from
+  // the purchase intent; a recipient is NOT an account holder).
+  buyerCustomerId String?
+  recipientName  String?
+  recipientEmail String?
+  recipientPhone String?
+  recipientMessage String?
+  // Provenance: the purchase order + line this card was minted
+  // from (null on staff manual issues). (issuedOrderItemId,
+  // unitIndex) is UNIQUE — the exactly-once issuance claim:
+  // quantity N on one line mints unitIndex 0..N-1, never twice.
+  issuedOrderId  String?
+  issuedOrderItemId String?
+  unitIndex      Int          @default(0)
+  source         String       @default("purchase") // purchase | manual
+  expiresAt      DateTime?
+  createdById    String? // staff actor for manual issues / corrections
+  note           String? // mandatory on manual issue / void / adjust
+  ledger         GiftCardLedger[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([issuedOrderItemId, unitIndex])
+  @@index([organizationId, codeHash])
+  @@index([organizationId, status])
+  @@index([organizationId, issuedOrderId])
+  @@index([organizationId, codeLast4])
+}
+
+// AB2 (AX3): THE gift-card truth. One row per balance movement,
+// written ONLY by GiftCardService.postEntry (inside a DB
+// transaction that also maintains GiftCard.balanceCache and the
+// card's status). kind: issue | redeem | restore | adjust |
+// void | expire. deltaMinor is the SIGNED balance movement.
+// Exactly-once for issue (per card) and redeem (per card+order)
+// is a partial unique index created by raw SQL in the AB2
+// migration — the service checks first, the index backstops.
+model GiftCardLedger {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  giftCardId     String
+  giftCard       GiftCard     @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+  kind           String
+  deltaMinor     BigInt // signed
+  balanceAfter   BigInt
+  orderId        String? // redeem / restore: the spending order; issue: the purchase order
+  createdById    String? // staff actor for manual issue / void / adjust
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, giftCardId, createdAt])
+  @@index([organizationId, orderId])
+  @@index([organizationId, kind, createdAt])
+}
+
+// GB1 (GC2): a merchant content page for the shop (about /
+// contact / policy pages + custom pages). blocks is a validated
+// Json block list (fixed block types only — see
+// storefront/shop-pages.ts; NO raw HTML anywhere). System pages
+// are seeded lazily per org (isSystem) and cannot be deleted.
+model ShopPage {
+  id             String       @id @default(uuid())
+  organizationId String
+  slug           String
+  title          String
+  blocks         Json
+  published      Boolean      @default(false)
+  showInFooter   Boolean      @default(false)
+  showInMenu     Boolean      @default(false)
+  sortOrder      Int          @default(0)
+  isSystem       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, published])
+}
+
+// AB6 (AX12): a shop blog post. Content is the GC1 ShopPage
+// block vocabulary (structured blocks ONLY — no raw HTML
+// anywhere), validated by storefront/shop-pages.ts
+// validateShopPageBlocks. status: draft | published; a draft is
+// never publicly visible (public reads filter published only and
+// a draft slug 404s). publishedAt stamps the latest transition
+// into published.
+model BlogPost {
+  id             String       @id @default(uuid())
+  organizationId String
+  slug           String
+  title          String
+  excerpt        String?
+  coverImageUrl  String?
+  blocks         Json
+  tags           Json         @default("[]")
+  status         String       @default("draft") // draft | published
+  publishedAt    DateTime?
+  seoTitle       String?
+  seoDescription String?
+  authorName     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status])
+}
+
+// AB6 (AX11): a merchant-authored search synonym. `term` is the
+// normalized (trimmed, lowercased) lookup term; `expansions` is a
+// JSON string array of alternative phrases OR-expanded into the
+// FTS query when the term matches the whole normalized query or
+// one of its whitespace tokens (rule: storefront/search-fts.ts).
+model SearchSynonym {
+  id             String       @id @default(uuid())
+  organizationId String
+  term           String
+  expansions     Json         @default("[]")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, term])
+  @@index([organizationId])
+}
+
+// AB6 (AX11): one row per public shop search (the shopHome q
+// path). Written failure-isolated — a logging failure never
+// breaks a search. resultsCount is the TRUE outcome (after the
+// substring fallback when FTS found nothing); viaFallback marks
+// rows the legacy substring scan answered (internal analytics
+// honesty, never exposed on the public payload).
+model SearchQueryLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  term           String
+  resultsCount   Int
+  viaFallback    Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// GB1 (GC3): the shop's single promotional popup config (one
+// row per org, lazy-upserted). Impressions/clicks are real
+// counters incremented only by the public popup-event route.
+model StorePopup {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  enabled        Boolean      @default(false)
+  title          String?
+  body           String?
+  imageUrl       String?
+  ctaText        String?
+  ctaUrl         String?
+  trigger        String       @default("delay_seconds") // delay_seconds | scroll_percent | exit_intent
+  delaySeconds   Int          @default(5)
+  scrollPercent  Int          @default(50)
+  frequencyDays  Int          @default(7)
+  startsAt       DateTime?
+  endsAt         DateTime?
+  showOn         String       @default("home") // home | all
+  impressions    Int          @default(0)
+  clicks         Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// GB1 (GC2): a contact-form message submitted from the shop.
+// deliveredVia records the honest delivery evidence:
+// agent_notification and/or email, or stored_only when neither
+// channel delivered.
+model ShopContactMessage {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  phone          String
+  message        String
+  deliveredVia   String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
 }
 
 // EC13: a single-product landing page bound to one canonical
@@ -6546,6 +8003,14 @@ model StoreCartItem {
   // amount is added once for this line at quote/checkout (mirrors
   // the single-product checkout's [Special Add-On] order line).
   includeBump Boolean         @default(false)
+  // AB2 (AX3): gift-card purchase intent on the line — the chosen
+  // face value (minor units; the line's unit price at quote) and
+  // the optional recipient { name?, email?, phone?, message? }.
+  // Both stay null on ordinary lines. At placement the shop
+  // checkout hands them to GiftCardService, which records a
+  // GiftCardIssuance per order line.
+  giftCardAmountMinor BigInt?
+  giftCardRecipient   Json?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   cart        StoreCart       @relation(fields: [cartId], references: [id], onDelete: Cascade)
@@ -6580,8 +8045,36 @@ model Bundle {
   sortOrder        Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  // AB5 (AX8): mix-and-match slots (pick N from a category or a
+  // product set). A bundle may carry fixed items, slots, or both.
+  slots            BundleSlot[]
 
   @@index([organizationId, active, sortOrder])
+}
+
+// AB5 (AX8): one choice slot of a mix-and-match bundle. The
+// merchant prices the BOX (Bundle.bundlePriceMinor) — picks never
+// change the bundle price; each pick contributes ONE component
+// unit to the EC29 allocation (weighted by its regular price,
+// exactly like a fixed item). sourceType "category" resolves its
+// pool from sourceRef { categoryId }; "products" from sourceRef
+// { productIds: string[] }. Picks are validated at cart write and
+// re-validated at quote/placement.
+model BundleSlot {
+  id             String   @id @default(uuid())
+  organizationId String
+  bundleId       String
+  label          String
+  chooseQty      Int      @default(1)
+  sourceType     String // category | products
+  sourceRef      Json
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  bundle         Bundle   @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, bundleId, sortOrder])
+  @@index([bundleId])
 }
 
 // EC29: a bundle line on a guest shop cart — kept apart from
@@ -6592,6 +8085,12 @@ model StoreCartBundle {
   cartId    String
   bundleId  String
   quantity  Int
+  // AB5 (AX8): the buyer's slot picks for THIS cart line:
+  // [{ slotId, productId, variantSku? }] — validated server-side
+  // at cart write AND re-validated at quote/placement (a pick
+  // that went inactive refuses). Null = no picks (fixed-only
+  // bundle, the pre-AB5 shape).
+  picks     Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -6669,6 +8168,11 @@ model PurchaseOrderItem {
 // org-global on Product/ProductVariant (the S1 model) — a
 // warehouse owns BIN LOCATIONS and stock-count sessions, it does
 // NOT split balances per warehouse in v1.
+// AB3 (AX4) supersedes the v1 note for balances: StockBalance
+// (below) splits the global counter per bin (Σ bins == global),
+// and Warehouse gains priority + serviceDistricts for the
+// allocation ordering (district match → priority ASC →
+// isDefault → createdAt; design §4.2).
 model Warehouse {
   id             String   @id @default(uuid())
   organizationId String
@@ -6676,12 +8180,19 @@ model Warehouse {
   address        String?
   isDefault      Boolean  @default(false)
   active         Boolean  @default(true)
+  // AB3 (AX4): allocation order — a LOWER priority number is
+  // served first. serviceDistricts is a Json array of BD
+  // district names (the ON11 / BD_DISTRICTS vocabulary) this
+  // warehouse serves first; null = no district preference.
+  priority       Int      @default(0)
+  serviceDistricts Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   bins           BinLocation[]
   assignments    ProductBinAssignment[]
   countSessions  StockCountSession[]
+  stockAllocations StockAllocation[]
 
   @@index([organizationId, active])
 }
@@ -6697,6 +8208,10 @@ model BinLocation {
   organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   warehouse      Warehouse            @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   assignments    ProductBinAssignment[]
+  stockBalances  StockBalance[]
+  stockAllocations StockAllocation[]
+  stockTransfersFrom StockTransfer[] @relation("StockTransferFromBin")
+  stockTransfersTo   StockTransfer[] @relation("StockTransferToBin")
 
   @@unique([warehouseId, code])
   @@index([organizationId, warehouseId])
@@ -6759,6 +8274,137 @@ model StockCountLine {
 
   @@unique([sessionId, productId, variantId])
   @@index([sessionId])
+}
+
+// ---------- AB3 (AX4): Multi-warehouse stock ----------
+// The per-location layer over the S1 org-global counters. The
+// consistency invariant (design §3): for every TRACKED row,
+// Σ StockBalance.onHand over all bins == the global counter
+// (Product.stockQuantity, or ProductVariant.stockQuantity for a
+// variant row). Untracked rows (counter null) never have balance
+// rows, and a variant row never falls back to the product row
+// (or vice versa) — the S1 no-fallback rule, per bin.
+
+// AB3 (AX4): the per-bin stock truth. One row per (product or
+// variant, bin): onHand is this bin's share of the global
+// counter, maintained by InventoryService inside the SAME
+// transaction as the global write. reserved is a maintained
+// counter — the Σ of this bin's active, unexpired
+// StockReservation rows — recomputed at every reservation
+// mutation; it is NOT part of the onHand invariant. variantId
+// is a plain scalar like StockMovement's (null = the
+// product-level row). Uniqueness per (organizationId,
+// productId, variantId, binId) is enforced by TWO PARTIAL
+// unique indexes in the AB3 migration SQL (one WHERE variantId
+// IS NOT NULL, one WHERE variantId IS NULL), because SQL
+// treats NULLs as distinct in a plain unique index — the AB1
+// partial-index precedent. Prisma declares NO @@unique here on
+// purpose (a plain one would be wrong); the service always
+// goes find-then-write inside a transaction.
+model StockBalance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId      String?
+  binId          String
+  bin            BinLocation  @relation(fields: [binId], references: [id], onDelete: Cascade)
+  onHand         Int
+  reserved       Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, productId, variantId])
+  @@index([binId])
+}
+
+// AB3 (AX4): the CURRENT claim state of an order's deduction —
+// which bins its already-deducted units are attributed to.
+// Written at placement alongside the balance + movement writes
+// (one deduction moment, design §5.1); settled when the order
+// is restored; MOVED (never duplicated) by ON3 split/merge
+// surgery and by staff re-allocation. Bundle-component
+// allocations carry orderItemId = null (components are not
+// order items). status: active | settled. productId /
+// variantId / orderItemId are plain scalars like
+// StockMovement's ids (no FK): a claim must survive catalog
+// edits exactly as its movements do.
+model StockAllocation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId        String
+  order          Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId    String?
+  productId      String
+  variantId      String?
+  binId          String
+  bin            BinLocation  @relation(fields: [binId], references: [id], onDelete: Cascade)
+  warehouseId    String
+  warehouse      Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  qty            Int
+  status         String       @default("active") // active | settled
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([orderId])
+  @@index([organizationId, productId])
+}
+
+// AB3 (AX4): a warehouse-to-warehouse transfer of stock
+// between two bins. Lifecycle: draft (no stock moves) →
+// in_transit (dispatch decremented the fromBin balance with a
+// "transfer_out" movement) → received | received_with_variance
+// (receive incremented the toBin balance with "transfer_in";
+// a short receive closes with variance) | cancelled (from
+// draft, or from in_transit before any receive — quantities
+// return to the fromBin). Transfers NEVER touch the global
+// Product counter: while in_transit, Σ balances + Σ
+// in-transit line qty == the global counter (design §6).
+model StockTransfer {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fromBinId      String
+  fromBin        BinLocation  @relation("StockTransferFromBin", fields: [fromBinId], references: [id], onDelete: Cascade)
+  toBinId        String
+  toBin          BinLocation  @relation("StockTransferToBin", fields: [toBinId], references: [id], onDelete: Cascade)
+  status         String       @default("draft") // draft | in_transit | received | received_with_variance | cancelled
+  createdById    String?
+  dispatchedAt   DateTime?
+  receivedAt     DateTime?
+  note           String?
+  lines          StockTransferLine[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, status])
+  @@index([fromBinId])
+  @@index([toBinId])
+}
+
+// AB3 (AX4): one product line of a StockTransfer. In-transit
+// quantities live ONLY on these lines — in neither bin's
+// balance — between dispatch and receive. qtyReceived is null
+// until a receive posts it (partial receives allowed,
+// qtyReceived ≤ qtySent). The variance (qtySent − qtyReceived)
+// is recorded here and stays visible forever: those units are
+// GONE (lost in transit), never silently returned to a bin.
+// productId / variantId are plain scalars, like the transfer's
+// other stock references.
+model StockTransferLine {
+  id          String        @id @default(uuid())
+  transferId  String
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  productId   String
+  variantId   String?
+  qtySent     Int
+  qtyReceived Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([transferId])
 }
 
 // ---------- EC22: Delivery ops ----------
@@ -6847,6 +8493,96 @@ model VoiceCallSetting {
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// RM3 (Cloudflare R2 Media Program): the central file registry —
+// ONE row for every object the platform stores, whichever surface
+// put it there (product, social, inbox, branding, creative, review,
+// digital, document). Older surfaces keep their own rows untouched
+// (MediaAsset, ChannelMessage.mediaStorageKey, Organization.logoUrl);
+// this table is the single source for storage accounting, lifecycle
+// (quarantine -> active -> trashed) and orphan/inventory sweeps.
+// Backfill of the older surfaces is RM10's job, not this model's.
+//
+// sizeBytes is BigInt on purpose: MediaAsset's Int caps a file at
+// ~2 GB, but the multipart path (RM2) exists precisely for objects
+// that can exceed that; a registry that overflows at 2 GB would
+// silently break for the largest files it is meant to track.
+// `key` is globally unique (keys embed the organization id by the
+// storage layer's naming convention), which makes re-registering
+// the same object an idempotent upsert instead of a duplicate row.
+model StoredFile {
+  id             String   @id @default(uuid())
+  organizationId String
+  bucket         String // R2 bucket name, or "local" in local-disk mode
+  key            String   @unique
+  visibility     String // public | private
+  surface        String // product | social | inbox | branding | creative | review | digital | document | other
+  contentType    String
+  sizeBytes      BigInt
+  width          Int?
+  height         Int?
+  sha256         String?
+  status         String   @default("active") // quarantine | active | trashed
+  createdById    String?
+  // The originating row on the owning surface, when there is one
+  // (e.g. "mediaAsset:<id>", "productImage:<id>"); null for objects
+  // registered without a surface row.
+  sourceRef      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, surface])
+}
+
+// GB8 (GC20): one staff-recorded business expense. category is a
+// FIXED vocabulary (rent | salary | marketing | packaging |
+// delivery | utilities | inventory_purchase | other) enforced by
+// the service DTO, Bengali labels live in the UI. amountMinor is
+// BigInt minor units (paisa). spentAt is stored as the Dhaka-
+// midnight instant of the merchant's chosen date. receiptUrl is
+// an optional validated http(s) URL — the file itself is never
+// hosted here.
+model Expense {
+  id             String   @id @default(uuid())
+  organizationId String
+  category       String
+  amountMinor    BigInt
+  spentAt        DateTime
+  note           String?
+  paymentMethod  String? // cash | bank | bkash | other
+  receiptUrl     String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, spentAt])
+  @@index([organizationId, category, spentAt])
+}
+
+// GB8 (GC19): one scheduled-report configuration. reportType is
+// one of discounts | refunds | payment_sales | category_sales |
+// shipping_cost | profit; cadence daily | weekly; format csv |
+// xlsx. recipients is a JSON array of validated email strings.
+// lastRunAt is stamped INSIDE a run before delivery is attempted
+// (exactly-once per period stance: a crash mid-run loses that
+// period's send rather than duplicating it).
+model ScheduledReport {
+  id             String   @id @default(uuid())
+  organizationId String
+  reportType     String
+  cadence        String // daily | weekly
+  format         String   @default("csv") // csv | xlsx
+  recipients     Json // string[] of email addresses
+  enabled        Boolean  @default(true)
+  lastRunAt      DateTime?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  runs           ScheduledReportRun[]
 
   @@index([organizationId, enabled])
 }
@@ -6875,4 +8611,158 @@ model OrderVoiceCall {
   @@index([organizationId, createdAt])
   @@index([organizationId, orderId])
   @@index([orderId, status])
+}
+
+// GB8 (GC19): one delivery attempt of a ScheduledReport. status
+// vocabulary: sent | failed_no_provider | failed_error. A run
+// counts as sent ONLY when at least one recipient's EmailProvider
+// send returned a message id. testRun marks "এখনই পাঠান" sends
+// (they never stamp the config's lastRunAt). detail carries the
+// per-recipient results + the attachment filename.
+model ScheduledReportRun {
+  id                String   @id @default(uuid())
+  scheduledReportId String
+  organizationId    String
+  periodLabel       String
+  status            String // sent | failed_no_provider | failed_error
+  testRun           Boolean  @default(false)
+  detail            Json?
+  createdAt         DateTime @default(now())
+  scheduledReport   ScheduledReport @relation(fields: [scheduledReportId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledReportId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// AB7 (AX15): AI review insight for one product — generated ONLY
+// on a staff trigger through the org's configured LLM, cached on
+// this row. summaryText is AI-generated text and is labelled as
+// such on every surface. sentimentJson = { positive, neutral,
+// negative, total } aggregate counts from the generation pass
+// (per-review sentiment is never stamped back). themesJson =
+// up to 5 short theme strings. reviewCountAtGeneration lets the
+// panel show how many reviews arrived since (staleness badge at
+// >= 10). modelLabel = the LLM model identifier when known.
+model ProductReviewInsight {
+  id                      String       @id @default(uuid())
+  organizationId          String
+  productId               String
+  summaryText             String
+  sentimentJson           Json
+  themesJson              Json
+  reviewCountAtGeneration Int
+  generatedAt             DateTime
+  generatedById           String?
+  modelLabel              String?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, productId])
+  @@index([organizationId])
+}
+
+// AB7 (AX16): per-org web-push configuration. The VAPID keypair
+// is generated ONCE when the merchant enables push; the private
+// key is stored SEALED (common/platform-config seal) and never
+// leaves the server. enabled defaults FALSE — no prompt, no
+// sends until the merchant turns it on.
+model ShopPushSetting {
+  id                   String       @id @default(uuid())
+  organizationId       String       @unique
+  vapidPublicKey       String?
+  vapidPrivateKeySealed String?
+  enabled              Boolean      @default(false)
+  promptDelaySec       Int          @default(20)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// AB7 (AX16): one browser push subscription captured on the
+// shop. endpoint is the push-service URL (unique per org);
+// p256dh/auth are the subscription's own encryption keys (not
+// secrets of the platform — they are required to send TO this
+// browser). status: active | gone (404/410 from the push
+// service marks gone; gone rows are never retried).
+model WebPushSubscription {
+  id             String       @id @default(uuid())
+  organizationId String
+  endpoint       String
+  p256dh         String
+  auth           String
+  customerId     String?
+  userAgent      String?
+  isTestDevice   Boolean      @default(false)
+  status         String       @default("active") // active | gone
+  createdAt      DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries     WebPushDelivery[]
+
+  @@unique([organizationId, endpoint])
+  @@index([organizationId, status])
+}
+
+// AB7 (AX16): one dashboard-composed push broadcast. Fan-out is
+// chunked: the send request attempts up to a bounded batch
+// inline; the remainder stays queued (queuedCount) for the
+// web_push_sweep job to drain. Counts are honest send outcomes
+// from the push service — no open/read tracking exists.
+model WebPushCampaign {
+  id             String       @id @default(uuid())
+  organizationId String
+  title          String
+  body           String
+  url            String?
+  createdById    String?
+  status         String       @default("queued") // queued | sending | done
+  queuedCount    Int          @default(0)
+  sentCount      Int          @default(0)
+  failedCount    Int          @default(0)
+  goneCount      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries     WebPushDelivery[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+// AB7 (AX16): one delivery attempt of a campaign to one
+// subscription. status: sent | failed | gone. statusCode is the
+// push service's HTTP response when one came back.
+model WebPushDelivery {
+  id             String   @id @default(uuid())
+  campaignId     String
+  subscriptionId String
+  status         String // sent | failed | gone
+  statusCode     Int?
+  error          String?
+  createdAt      DateTime @default(now())
+  campaign       WebPushCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subscription   WebPushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, subscriptionId])
+  @@index([campaignId, status])
+}
+
+// AB7 (AX17): social-proof popup configuration. The feed itself
+// is REAL recent orders only (never fabricated), anonymized to
+// first name + district + product + hours-ago bucket; amounts
+// are never shown.
+model SocialProofSetting {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  enabled        Boolean      @default(false)
+  lookbackHours  Int          @default(24)
+  intervalSec    Int          @default(25)
+  displaySec     Int          @default(6)
+  maxPerSession  Int          @default(5)
+  minTotalMinor  BigInt?
+  impressions    Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }

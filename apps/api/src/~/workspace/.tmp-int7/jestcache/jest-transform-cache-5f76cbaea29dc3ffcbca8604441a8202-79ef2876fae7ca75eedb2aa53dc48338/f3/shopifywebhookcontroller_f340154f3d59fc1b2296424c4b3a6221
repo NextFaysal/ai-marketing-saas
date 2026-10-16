@@ -1,0 +1,65 @@
+9d4873af7c2ca55de2129c455ecf1444
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ShopifyWebhookController = void 0;
+const common_1 = require("@nestjs/common");
+const shopify_service_1 = require("./shopify.service");
+const webhook_dispatch_1 = require("../../common/webhook-dispatch");
+/** Public Shopify webhook endpoint. Authenticity = HMAC-SHA256 (base64)
+ *  header checked against the app secret stored encrypted at connect. */
+let ShopifyWebhookController = class ShopifyWebhookController {
+    shopify;
+    constructor(shopify) {
+        this.shopify = shopify;
+    }
+    async receive(integrationId, hmac, topic, webhookId, req, res) {
+        const rawBody = req.rawBody?.toString("utf8") ?? JSON.stringify(req.body ?? {});
+        // Milestone 63: queue mode — see meta-webhook.controller.
+        if (await webhook_dispatch_1.webhookDispatcher.enqueue({
+            source: "shopify", integrationId, rawBody, headers: { hmac, topic, webhookId },
+        })) {
+            return res.status(common_1.HttpStatus.OK).json({ ok: true, queued: true });
+        }
+        try {
+            const result = await this.shopify.handleWebhook(integrationId, rawBody, hmac, topic, webhookId);
+            return res.status(common_1.HttpStatus.OK).json({ ok: true, ...result });
+        }
+        catch (e) {
+            const message = e instanceof Error ? e.message : "error";
+            if (message.includes("signature") || message.includes("not found")) {
+                return res.status(common_1.HttpStatus.FORBIDDEN).json({ ok: false, error: message });
+            }
+            return res.status(common_1.HttpStatus.OK).json({ ok: false, error: message });
+        }
+    }
+};
+exports.ShopifyWebhookController = ShopifyWebhookController;
+__decorate([
+    (0, common_1.Post)(":integrationId"),
+    __param(0, (0, common_1.Param)("integrationId")),
+    __param(1, (0, common_1.Headers)("x-shopify-hmac-sha256")),
+    __param(2, (0, common_1.Headers)("x-shopify-topic")),
+    __param(3, (0, common_1.Headers)("x-shopify-webhook-id")),
+    __param(4, (0, common_1.Req)()),
+    __param(5, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], ShopifyWebhookController.prototype, "receive", null);
+exports.ShopifyWebhookController = ShopifyWebhookController = __decorate([
+    (0, common_1.Controller)("webhooks/shopify"),
+    __metadata("design:paramtypes", [shopify_service_1.ShopifyService])
+], ShopifyWebhookController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ludGVncmF0aW9ucy9zaG9waWZ5L3Nob3BpZnktd2ViaG9vay5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUF3RjtBQUV4Rix1REFBbUQ7QUFDbkQsb0VBQWtFO0FBRWxFO3lFQUN5RTtBQUVsRSxJQUFNLHdCQUF3QixHQUE5QixNQUFNLHdCQUF3QjtJQUNOO0lBQTdCLFlBQTZCLE9BQXVCO1FBQXZCLFlBQU8sR0FBUCxPQUFPLENBQWdCO0lBQUcsQ0FBQztJQUdsRCxBQUFOLEtBQUssQ0FBQyxPQUFPLENBQ2EsYUFBcUIsRUFDWCxJQUF3QixFQUM5QixLQUF5QixFQUNwQixTQUE2QixFQUN2RCxHQUFZLEVBQ1osR0FBYTtRQUVwQixNQUFNLE9BQU8sR0FBSSxHQUFXLENBQUMsT0FBTyxFQUFFLFFBQVEsQ0FBQyxNQUFNLENBQUMsSUFBSSxJQUFJLENBQUMsU0FBUyxDQUFDLEdBQUcsQ0FBQyxJQUFJLElBQUksRUFBRSxDQUFDLENBQUM7UUFDekYsMERBQTBEO1FBQzFELElBQUksTUFBTSxvQ0FBaUIsQ0FBQyxPQUFPLENBQUM7WUFDbEMsTUFBTSxFQUFFLFNBQVMsRUFBRSxhQUFhLEVBQUUsT0FBTyxFQUFFLE9BQU8sRUFBRSxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsU0FBUyxFQUFFO1NBQy9FLENBQUMsRUFBRSxDQUFDO1lBQ0gsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsRUFBRSxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLElBQUksRUFBRSxNQUFNLEVBQUUsSUFBSSxFQUFFLENBQUMsQ0FBQztRQUNwRSxDQUFDO1FBQ0QsSUFBSSxDQUFDO1lBQ0gsTUFBTSxNQUFNLEdBQUcsTUFBTSxJQUFJLENBQUMsT0FBTyxDQUFDLGFBQWEsQ0FBQyxhQUFhLEVBQUUsT0FBTyxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsU0FBUyxDQUFDLENBQUM7WUFDaEcsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsRUFBRSxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLElBQUksRUFBRSxHQUFHLE1BQU0sRUFBRSxDQUFDLENBQUM7UUFDakUsQ0FBQztRQUFDLE9BQU8sQ0FBQyxFQUFFLENBQUM7WUFDWCxNQUFNLE9BQU8sR0FBRyxDQUFDLFlBQVksS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsT0FBTyxDQUFDLENBQUMsQ0FBQyxPQUFPLENBQUM7WUFDekQsSUFBSSxPQUFPLENBQUMsUUFBUSxDQUFDLFdBQVcsQ0FBQyxJQUFJLE9BQU8sQ0FBQyxRQUFRLENBQUMsV0FBVyxDQUFDLEVBQUUsQ0FBQztnQkFDbkUsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsU0FBUyxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsT0FBTyxFQUFFLENBQUMsQ0FBQztZQUM5RSxDQUFDO1lBQ0QsT0FBTyxHQUFHLENBQUMsTUFBTSxDQUFDLG1CQUFVLENBQUMsRUFBRSxDQUFDLENBQUMsSUFBSSxDQUFDLEVBQUUsRUFBRSxFQUFFLEtBQUssRUFBRSxLQUFLLEVBQUUsT0FBTyxFQUFFLENBQUMsQ0FBQztRQUN2RSxDQUFDO0lBQ0gsQ0FBQztDQUNGLENBQUE7QUE5QlksNERBQXdCO0FBSTdCO0lBREwsSUFBQSxhQUFJLEVBQUMsZ0JBQWdCLENBQUM7SUFFcEIsV0FBQSxJQUFBLGNBQUssRUFBQyxlQUFlLENBQUMsQ0FBQTtJQUN0QixXQUFBLElBQUEsZ0JBQU8sRUFBQyx1QkFBdUIsQ0FBQyxDQUFBO0lBQ2hDLFdBQUEsSUFBQSxnQkFBTyxFQUFDLGlCQUFpQixDQUFDLENBQUE7SUFDMUIsV0FBQSxJQUFBLGdCQUFPLEVBQUMsc0JBQXNCLENBQUMsQ0FBQTtJQUMvQixXQUFBLElBQUEsWUFBRyxHQUFFLENBQUE7SUFDTCxXQUFBLElBQUEsWUFBRyxHQUFFLENBQUE7Ozs7dURBbUJQO21DQTdCVSx3QkFBd0I7SUFEcEMsSUFBQSxtQkFBVSxFQUFDLGtCQUFrQixDQUFDO3FDQUVTLGdDQUFjO0dBRHpDLHdCQUF3QixDQThCcEMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ludGVncmF0aW9ucy9zaG9waWZ5L3Nob3BpZnktd2ViaG9vay5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IENvbnRyb2xsZXIsIEhlYWRlcnMsIFBhcmFtLCBQb3N0LCBSZXEsIFJlcywgSHR0cFN0YXR1cyB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUmVxdWVzdCwgUmVzcG9uc2UgfSBmcm9tIFwiZXhwcmVzc1wiO1xuaW1wb3J0IHsgU2hvcGlmeVNlcnZpY2UgfSBmcm9tIFwiLi9zaG9waWZ5LnNlcnZpY2VcIjtcbmltcG9ydCB7IHdlYmhvb2tEaXNwYXRjaGVyIH0gZnJvbSBcIi4uLy4uL2NvbW1vbi93ZWJob29rLWRpc3BhdGNoXCI7XG5cbi8qKiBQdWJsaWMgU2hvcGlmeSB3ZWJob29rIGVuZHBvaW50LiBBdXRoZW50aWNpdHkgPSBITUFDLVNIQTI1NiAoYmFzZTY0KVxuICogIGhlYWRlciBjaGVja2VkIGFnYWluc3QgdGhlIGFwcCBzZWNyZXQgc3RvcmVkIGVuY3J5cHRlZCBhdCBjb25uZWN0LiAqL1xuQENvbnRyb2xsZXIoXCJ3ZWJob29rcy9zaG9waWZ5XCIpXG5leHBvcnQgY2xhc3MgU2hvcGlmeVdlYmhvb2tDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBzaG9waWZ5OiBTaG9waWZ5U2VydmljZSkge31cblxuICBAUG9zdChcIjppbnRlZ3JhdGlvbklkXCIpXG4gIGFzeW5jIHJlY2VpdmUoXG4gICAgQFBhcmFtKFwiaW50ZWdyYXRpb25JZFwiKSBpbnRlZ3JhdGlvbklkOiBzdHJpbmcsXG4gICAgQEhlYWRlcnMoXCJ4LXNob3BpZnktaG1hYy1zaGEyNTZcIikgaG1hYzogc3RyaW5nIHwgdW5kZWZpbmVkLFxuICAgIEBIZWFkZXJzKFwieC1zaG9waWZ5LXRvcGljXCIpIHRvcGljOiBzdHJpbmcgfCB1bmRlZmluZWQsXG4gICAgQEhlYWRlcnMoXCJ4LXNob3BpZnktd2ViaG9vay1pZFwiKSB3ZWJob29rSWQ6IHN0cmluZyB8IHVuZGVmaW5lZCxcbiAgICBAUmVxKCkgcmVxOiBSZXF1ZXN0LFxuICAgIEBSZXMoKSByZXM6IFJlc3BvbnNlLFxuICApIHtcbiAgICBjb25zdCByYXdCb2R5ID0gKHJlcSBhcyBhbnkpLnJhd0JvZHk/LnRvU3RyaW5nKFwidXRmOFwiKSA/PyBKU09OLnN0cmluZ2lmeShyZXEuYm9keSA/PyB7fSk7XG4gICAgLy8gTWlsZXN0b25lIDYzOiBxdWV1ZSBtb2RlIOKAlCBzZWUgbWV0YS13ZWJob29rLmNvbnRyb2xsZXIuXG4gICAgaWYgKGF3YWl0IHdlYmhvb2tEaXNwYXRjaGVyLmVucXVldWUoe1xuICAgICAgc291cmNlOiBcInNob3BpZnlcIiwgaW50ZWdyYXRpb25JZCwgcmF3Qm9keSwgaGVhZGVyczogeyBobWFjLCB0b3BpYywgd2ViaG9va0lkIH0sXG4gICAgfSkpIHtcbiAgICAgIHJldHVybiByZXMuc3RhdHVzKEh0dHBTdGF0dXMuT0spLmpzb24oeyBvazogdHJ1ZSwgcXVldWVkOiB0cnVlIH0pO1xuICAgIH1cbiAgICB0cnkge1xuICAgICAgY29uc3QgcmVzdWx0ID0gYXdhaXQgdGhpcy5zaG9waWZ5LmhhbmRsZVdlYmhvb2soaW50ZWdyYXRpb25JZCwgcmF3Qm9keSwgaG1hYywgdG9waWMsIHdlYmhvb2tJZCk7XG4gICAgICByZXR1cm4gcmVzLnN0YXR1cyhIdHRwU3RhdHVzLk9LKS5qc29uKHsgb2s6IHRydWUsIC4uLnJlc3VsdCB9KTtcbiAgICB9IGNhdGNoIChlKSB7XG4gICAgICBjb25zdCBtZXNzYWdlID0gZSBpbnN0YW5jZW9mIEVycm9yID8gZS5tZXNzYWdlIDogXCJlcnJvclwiO1xuICAgICAgaWYgKG1lc3NhZ2UuaW5jbHVkZXMoXCJzaWduYXR1cmVcIikgfHwgbWVzc2FnZS5pbmNsdWRlcyhcIm5vdCBmb3VuZFwiKSkge1xuICAgICAgICByZXR1cm4gcmVzLnN0YXR1cyhIdHRwU3RhdHVzLkZPUkJJRERFTikuanNvbih7IG9rOiBmYWxzZSwgZXJyb3I6IG1lc3NhZ2UgfSk7XG4gICAgICB9XG4gICAgICByZXR1cm4gcmVzLnN0YXR1cyhIdHRwU3RhdHVzLk9LKS5qc29uKHsgb2s6IGZhbHNlLCBlcnJvcjogbWVzc2FnZSB9KTtcbiAgICB9XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { AppModule } from "./app.module";
+import { v1AliasMiddleware } from "./public-docs/v1-alias";
 
 async function bootstrap() {
   // rawBody is required to verify WooCommerce webhook HMAC signatures.
@@ -10,6 +11,10 @@ async function bootstrap() {
   // (<=1.5 MB of image bytes, ~2 MB encoded) — the 100 kb framework
   // default would reject it. 3 MB keeps the ceiling tight.
   (app as any).useBodyParser("json", { limit: "3mb" });
+  // GC23: the /v1 alias for the documented public API — rewrites
+  // ONLY /v1/public/shop/*, /v1/public/landing/* and /v1/tracking/*
+  // to their canonical unversioned routes before Nest routing.
+  app.use(v1AliasMiddleware);
   app.enableCors({ origin: process.env.WEB_URL ?? "http://localhost:3000", credentials: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   const port = Number(process.env.API_PORT ?? 4000);

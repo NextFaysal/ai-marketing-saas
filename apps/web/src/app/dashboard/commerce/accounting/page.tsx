@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { codBoardRows, coverageLabel, marginTone, type CodBoard, type ProfitReport } from "@/lib/orders-on7";
@@ -22,6 +23,16 @@ interface TaxSettings {
   legalName: string | null;
   tin: string | null;
   binVatNo: string | null;
+}
+
+/** GC12 — gateway fee report / settlement rows (Payment Ops API). */
+interface FeeReportRow {
+  provider: string; source: string; count: number; grossMinor: string;
+  withFeeCount: number; feeMinor: string | null; netMinor: string | null;
+}
+interface SettlementRow {
+  provider: string; day: string; count: number; grossMinor: string;
+  withFeeCount: number; feeMinor: string | null; netMinor: string | null;
 }
 
 type ExportType = "sales" | "tax" | "due" | "courier-collections";
@@ -76,6 +87,17 @@ export default function AccountingPage() {
   const [csvMsg, setCsvMsg] = useState("");
   const [csvError, setCsvError] = useState("");
 
+  // GC12: gateway fee report + expected settlements.
+  const [feeFrom, setFeeFrom] = useState(isoDaysAgo(29));
+  const [feeTo, setFeeTo] = useState(isoDaysAgo(0));
+  const [feeRows, setFeeRows] = useState<FeeReportRow[] | null>(null);
+  const [settlementRows, setSettlementRows] = useState<SettlementRow[] | null>(null);
+  const [feeBusy, setFeeBusy] = useState(false);
+  const [feeError, setFeeError] = useState("");
+  const [feeCsvBusy, setFeeCsvBusy] = useState(false);
+  const [feeCsvMsg, setFeeCsvMsg] = useState("");
+  const [feeCsvError, setFeeCsvError] = useState("");
+
   useEffect(() => {
     const orgId = getOrganizationId(); if (!orgId) return;
     apiFetch<CodBoard>(`/organizations/${orgId}/orders/reports/cod-board`)
@@ -96,6 +118,52 @@ export default function AccountingPage() {
     finally { setProfitBusy(false); }
   }, [profitFrom, profitTo]);
   useEffect(() => { void loadProfit(); }, [loadProfit]);
+
+  const loadFeeReport = useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    if (!feeFrom || !feeTo) { setFeeError("শুরু ও শেষের তারিখ দুটোই দিন"); return; }
+    setFeeBusy(true); setFeeError("");
+    try {
+      const qs = `from=${encodeURIComponent(feeFrom)}&to=${encodeURIComponent(feeTo)}`;
+      const [fee, settlements] = await Promise.all([
+        apiFetch<{ rows: FeeReportRow[] }>(`/organizations/${orgId}/connections/payment-fee-report?${qs}`),
+        apiFetch<{ rows: SettlementRow[] }>(`/organizations/${orgId}/connections/payment-settlements?${qs}`),
+      ]);
+      setFeeRows(fee.rows ?? []);
+      setSettlementRows(settlements.rows ?? []);
+    } catch (e) { setFeeError(e instanceof Error ? e.message : "ফি রিপোর্ট লোড ব্যর্থ"); }
+    finally { setFeeBusy(false); }
+  }, [feeFrom, feeTo]);
+  useEffect(() => { void loadFeeReport(); }, [loadFeeReport]);
+
+  /** GC12 fee-report CSV — same raw-fetch + blob pattern as the
+   * other exports on this page. */
+  async function downloadFeeCsv() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setFeeCsvError(""); setFeeCsvMsg("");
+    if (!feeFrom || !feeTo) { setFeeCsvError("শুরু ও শেষের তারিখ দুটোই দিন"); return; }
+    setFeeCsvBusy(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/organizations/${orgId}/connections/payment-fee-report.csv?from=${encodeURIComponent(feeFrom)}&to=${encodeURIComponent(feeTo)}`,
+        { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? `ডাউনলোড ব্যর্থ (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `payment-fee-report-${feeFrom}-${feeTo}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setFeeCsvMsg("✅ ফি রিপোর্ট (CSV) ডাউনলোড হয়েছে");
+    } catch (err) {
+      setFeeCsvError(err instanceof Error ? err.message : "ডাউনলোড ব্যর্থ হয়েছে");
+    } finally { setFeeCsvBusy(false); }
+  }
 
   /** Profit CSV — same raw-fetch + blob pattern as the
    * accounting exports above. */
@@ -214,6 +282,10 @@ export default function AccountingPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4">
       <h1 className="page-title">কর ও হিসাব (Tax & Accounting)</h1>
+      <div className="flex flex-wrap gap-2">
+        <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📑 সব রিপোর্ট</Link>
+        <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 ফাইন্যান্স ও লেজার</Link>
+      </div>
       {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
       {loadError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{loadError}</p> : null}
 
@@ -379,6 +451,28 @@ export default function AccountingPage() {
               </div>
             </div>
             <p className="text-xs text-slate-500">{coverageLabel(profitReport.totals.costCoveragePercent)} — খরচ-জানা আয়ের পরিমাণ {fmtM(profitReport.totals.costedRevenueMinor)}।</p>
+            {profitReport.finance ? (
+              <div className="space-y-2 rounded-xl border bg-slate-50 p-4">
+                <h3 className="font-semibold">আনুমানিক নিট লাভ</h3>
+                {profitReport.finance.estimatedNetMinor != null ? (
+                  <>
+                    <div className="text-2xl font-bold">{fmtM(profitReport.finance.estimatedNetMinor)}</div>
+                    <p className="text-xs text-slate-500">খরচ ও গেটওয়ে ফি বাদ দিয়ে; পণ্যের খরচ সম্পূর্ণ কভার হলেই এই হিসাব দেখানো হয়। এই সময়ের খরচ {fmtM(profitReport.finance.periodExpensesMinor)}, গেটওয়ে ফি {profitReport.finance.gatewayFeesMinor != null ? fmtM(profitReport.finance.gatewayFeesMinor) : "ফি হার সেট করা হয়নি"}।</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm">এই সময়ের খরচ: <span className="font-semibold">{fmtM(profitReport.finance.periodExpensesMinor)}</span></p>
+                    <p className="text-sm">গেটওয়ে ফি: <span className="font-semibold">{profitReport.finance.gatewayFeesMinor != null ? fmtM(profitReport.finance.gatewayFeesMinor) : "ফি হার সেট করা হয়নি"}</span></p>
+                    <p className="text-xs text-slate-500">আনুমানিক নিট লাভ দেখানো হচ্ছে না — কারণ:</p>
+                  </>
+                )}
+                {profitReport.finance.reasons.length > 0 ? (
+                  <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+                    {profitReport.finance.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
             {profitReport.perProductBasis ? <p className="text-xs text-slate-400">{profitReport.perProductBasis}</p> : null}
             {profitReport.truncated ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">তালিকাটি সীমিত — সব পণ্য দেখানো হয়নি; মোট হিসাব সব অর্ডার মিলিয়েই করা।</p>
@@ -417,6 +511,114 @@ export default function AccountingPage() {
             )}
           </div>
         ) : null}
+      </div>
+
+      {/* GC12: gateway fee report + expected settlements (own
+          gateways). Fee is shown ONLY where a fee rate was
+          actually configured — a null fee says so, never a
+          fabricated 0. Platform-path money settles through the
+          wallet, not this table. */}
+      <div className="card space-y-4 p-5">
+        <h2 className="font-semibold">💳 গেটওয়ে ফি ও সেটেলমেন্ট</h2>
+        <p className="text-xs text-slate-500">
+          যাচাইকৃত অনলাইন পেমেন্টে গেটওয়ের ফি কেটে নেট কত থাকল — প্রোভাইডার অনুযায়ী। ফি হার Connect Center-এ
+          নিজের গেটওয়ের ফর্মে সেট করা থাকে; সেট না থাকলে সেই গেটওয়ের ফি এখানে দেখানো হবে না।
+        </p>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div>
+            <label className={labelCls}>শুরুর তারিখ</label>
+            <input className={inputCls} type="date" value={feeFrom} onChange={(e) => setFeeFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>শেষের তারিখ</label>
+            <input className={inputCls} type="date" value={feeTo} onChange={(e) => setFeeTo(e.target.value)} />
+          </div>
+          <div className="flex items-end gap-2 md:col-span-2">
+            <button type="button" className="btn-primary" disabled={feeBusy} onClick={() => void loadFeeReport()}>
+              {feeBusy ? "লোড হচ্ছে…" : "রিপোর্ট দেখুন"}
+            </button>
+            <button type="button" className="btn-secondary" disabled={feeCsvBusy} onClick={() => void downloadFeeCsv()}>
+              {feeCsvBusy ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড"}
+            </button>
+          </div>
+        </div>
+        {feeCsvMsg ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{feeCsvMsg}</p> : null}
+        {feeCsvError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{feeCsvError}</p> : null}
+        {feeError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{feeError}</p> : null}
+        {feeBusy && !feeRows ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+        {feeRows ? (
+          feeRows.length === 0 ? (
+            <p className="text-sm text-slate-400">এই সময়ে কোনো যাচাইকৃত অনলাইন পেমেন্ট নেই।</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-slate-500">
+                    <th className="py-2 pr-2 font-semibold">প্রোভাইডার</th>
+                    <th className="py-2 pr-2 font-semibold">উৎস</th>
+                    <th className="py-2 pr-2 font-semibold">পেমেন্ট সংখ্যা</th>
+                    <th className="py-2 pr-2 font-semibold">মোট (গ্রস)</th>
+                    <th className="py-2 pr-2 font-semibold">ফি</th>
+                    <th className="py-2 font-semibold">নেট</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {feeRows.map((r) => (
+                    <tr key={`${r.provider}-${r.source}`} className="border-b last:border-0">
+                      <td className="py-2 pr-2 font-medium">{r.provider}</td>
+                      <td className="py-2 pr-2">{r.source === "platform" ? "প্ল্যাটফর্ম" : "নিজের"}</td>
+                      <td className="py-2 pr-2">{r.count}টি</td>
+                      <td className="py-2 pr-2">{fmtM(r.grossMinor)}</td>
+                      <td className="py-2 pr-2">{r.feeMinor != null ? fmtM(r.feeMinor) : <span className="font-semibold text-amber-700">ফি হার সেট করা হয়নি</span>}</td>
+                      <td className="py-2">{r.netMinor != null ? fmtM(r.netMinor) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : null}
+
+        <div className="space-y-2 border-t pt-4">
+          <h3 className="text-sm font-semibold">প্রত্যাশিত settlement (নিজের গেটওয়ে, দিন অনুযায়ী)</h3>
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">আপনাদের রেকর্ড অনুযায়ী প্রত্যাশিত settlement — gateway-এর নিজস্ব প্যানেলের সঙ্গে মিলিয়ে দেখুন</p>
+          {settlementRows ? (
+            settlementRows.length === 0 ? (
+              <p className="text-sm text-slate-400">এই সময়ে নিজের গেটওয়েতে কোনো settlement নেই।</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs text-slate-500">
+                      <th className="py-2 pr-2 font-semibold">দিন</th>
+                      <th className="py-2 pr-2 font-semibold">প্রোভাইডার</th>
+                      <th className="py-2 pr-2 font-semibold">পেমেন্ট সংখ্যা</th>
+                      <th className="py-2 pr-2 font-semibold">মোট (গ্রস)</th>
+                      <th className="py-2 pr-2 font-semibold">ফি</th>
+                      <th className="py-2 font-semibold">নেট</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {settlementRows.map((r) => (
+                      <tr key={`${r.day}-${r.provider}`} className="border-b last:border-0">
+                        <td className="py-2 pr-2 font-medium">{r.day}</td>
+                        <td className="py-2 pr-2">{r.provider}</td>
+                        <td className="py-2 pr-2">{r.count}টি</td>
+                        <td className="py-2 pr-2">{fmtM(r.grossMinor)}</td>
+                        <td className="py-2 pr-2">{r.feeMinor != null ? fmtM(r.feeMinor) : <span className="font-semibold text-amber-700">ফি হার সেট করা হয়নি</span>}</td>
+                        <td className="py-2">{r.netMinor != null ? fmtM(r.netMinor) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : null}
+          <p className="text-xs text-slate-500">
+            প্ল্যাটফর্ম গেটওয়ে দিয়ে নেওয়া পেমেন্টের settlement এই তালিকায় নয় — সেগুলোর হিসাব Wallet-এ জমা হয়;
+            বিবরণী দেখুন <Link href="/dashboard/connections" className="font-semibold text-indigo-600 hover:underline">Connect Center-এর Wallet অংশে</Link>।
+          </p>
+        </div>
       </div>
     </div>
   );

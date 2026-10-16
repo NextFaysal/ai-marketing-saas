@@ -7,6 +7,15 @@ import {
   notificationChannelLabel, notificationEventLabel, notificationStatusLabel,
 } from "@/lib/orders-on5";
 import { formatMinor } from "@repo/contracts";
+import {
+  formatPointsDelta, loyaltyEntryLabel, loyaltyEntryNote, type OrderLoyalty,
+} from "@/lib/loyalty";
+import {
+  allocationStatusLabel, groupAllocationsByItem, hasActiveAllocations,
+  type OrderAllocation,
+} from "@/lib/warehouse-ab3";
+
+export type { OrderAllocation };
 
 /** Org staff row from GET /organizations/:id/members — the same
  * endpoint + shape the inbox and team pages use. The assignee id
@@ -45,6 +54,246 @@ const money = (minor?: string | null) => {
   if (minor == null) return "—";
   try { return formatMinor(BigInt(minor)); } catch { return String(minor); }
 };
+
+/** GC12: one payment attempt as the Payment Ops API reports it. */
+interface PaymentAttemptRow {
+  id: string; orderId: string; orderNumber: string | null; provider: string; source: string;
+  amountMinor: string; currency: string; status: string; displayStatus: string;
+  failureReason: string | null; feeMinor: string | null; netMinor: string | null; createdAt: string;
+}
+
+const ATTEMPT_STATUS_LABEL: Record<string, string> = {
+  verified_paid: "যাচাইকৃত পেমেন্ট হয়েছে",
+  initiated: "শুরু হয়েছে",
+  expired: "মেয়াদোত্তীর্ণ (initiated)",
+  failed: "ব্যর্থ",
+  cancelled: "বাতিল",
+};
+
+/**
+ * GC12 — compact online-payment section for the order detail:
+ * the latest attempt's status/provider/amount/failureReason and
+ * the recovery resend button (defaulting provider/source from
+ * the latest attempt). FAILURE-ISOLATED by design: a failed or
+ * empty load hides the section entirely and never breaks the
+ * detail page.
+ */
+export function OnlinePaymentSection({ orderId }: { orderId: string }) {
+  const [items, setItems] = useState<PaymentAttemptRow[] | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendLink, setResendLink] = useState("");
+  const [resendNote, setResendNote] = useState("");
+  const [resendError, setResendError] = useState("");
+
+  const load = React.useCallback(async () => {
+    const orgId = getOrganizationId(); if (!orgId) { setHidden(true); return; }
+    try {
+      const res = await apiFetch<{ items: PaymentAttemptRow[] }>(`/organizations/${orgId}/connections/payment-attempts?orderId=${encodeURIComponent(orderId)}&pageSize=5`);
+      setItems(res.items ?? []);
+    } catch { setHidden(true); }
+  }, [orderId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (hidden || items === null || items.length === 0) return null;
+  const latest = items[0];
+  const paid = items.some((i) => i.status === "verified_paid");
+  const label = ATTEMPT_STATUS_LABEL[latest.displayStatus] ?? ATTEMPT_STATUS_LABEL[latest.status] ?? latest.status;
+
+  async function resend() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setResendBusy(true); setResendError(""); setResendNote(""); setResendLink("");
+    try {
+      const out = await apiFetch<{ link: string; sendNote: string }>(`/organizations/${orgId}/orders/${orderId}/payment-link-resend`, {
+        method: "POST",
+        body: JSON.stringify({ provider: latest.provider, source: latest.source }),
+      });
+      setResendLink(out.link);
+      setResendNote(out.sendNote);
+      await load();
+    } catch (e) {
+      setResendError(e instanceof Error ? e.message : "আবার পাঠানো যায়নি");
+    } finally { setResendBusy(false); }
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border bg-white p-3">
+      <h4 className="text-sm font-semibold">💳 অনলাইন পেমেন্ট</h4>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${latest.status === "verified_paid" ? "bg-green-100 text-green-700" : latest.status === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{label}</span>
+        <span>{latest.provider} · {latest.source === "platform" ? "প্ল্যাটফর্ম গেটওয়ে" : "নিজের গেটওয়ে"}</span>
+        <span className="font-semibold">{money(latest.amountMinor)}</span>
+        <span className="text-xs text-slate-400">{new Date(latest.createdAt).toLocaleString("bn-BD")}</span>
+      </div>
+      {latest.failureReason ? <p className="text-xs font-medium text-red-600">ব্যর্থতার কারণ: {latest.failureReason}</p> : null}
+      {!paid ? (
+        <div className="space-y-1.5">
+          <button type="button" disabled={resendBusy} onClick={() => void resend()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+            {resendBusy ? "পাঠানো হচ্ছে…" : "পেমেন্ট লিংক আবার পাঠান"}
+          </button>
+          {resendError ? <p className="text-xs font-medium text-red-600">{resendError}</p> : null}
+          {resendNote ? (
+            <div className="space-y-1 text-xs">
+              <p className="font-medium text-slate-600">{resendNote}</p>
+              {resendLink ? <a href={resendLink} target="_blank" rel="noreferrer" className="block truncate font-medium text-indigo-600 hover:underline">{resendLink}</a> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * AB1 — compact loyalty section for the order detail: what this
+ * order earned, redeemed, rewarded (referral) and had clawed
+ * back, plus its ledger entries. FAILURE-ISOLATED like the GC12
+ * payment section above, and renders NOTHING when the order has
+ * no loyalty activity (all totals 0 and no entries) — most
+ * orders have none, so the panel stays uncluttered.
+ */
+export function OrderLoyaltySection({ orderId }: { orderId: string }) {
+  const [data, setData] = useState<OrderLoyalty | null>(null);
+
+  useEffect(() => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    let alive = true;
+    setData(null);
+    apiFetch<OrderLoyalty>(`/organizations/${orgId}/commerce/loyalty/orders/${orderId}`)
+      .then((d) => { if (alive) setData(d); })
+      .catch(() => { if (alive) setData(null); });
+    return () => { alive = false; };
+  }, [orderId]);
+
+  if (!data) return null;
+  const t = data.totals;
+  const hasTotals = t.earned !== 0 || t.redeemed !== 0 || t.referralReward !== 0 || t.clawedBack !== 0;
+  if (!hasTotals && data.entries.length === 0) return null;
+
+  return (
+    <div className="space-y-2 rounded-xl border bg-white p-3">
+      <h4 className="text-sm font-semibold">⭐ লয়্যালটি পয়েন্ট — এই অর্ডারে</h4>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+        <span>অর্জন: <b className="text-emerald-700">{t.earned}</b></span>
+        <span>খরচ: <b className="text-red-600">{t.redeemed}</b></span>
+        <span>রেফারেল পুরস্কার: <b>{t.referralReward}</b></span>
+        <span>কর্তন (ক্লব্যাক): <b className="text-red-600">{t.clawedBack}</b></span>
+      </div>
+      {data.entries.length > 0 ? (
+        <ul className="space-y-1 border-t pt-2">
+          {data.entries.map((en) => (
+            <li key={en.id} className="flex flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+              <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)} পয়েন্ট</span>
+              <span className="text-xs text-slate-500">ব্যালেন্স (পরে): {en.balanceAfter}</span>
+              {loyaltyEntryNote(en) ? <span className="text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
+              <span className="ml-auto text-[11px] text-slate-400">{new Date(en.createdAt).toLocaleString("bn-BD")}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * AB3 (AX4) — this order's stock allocations: which warehouse /
+ * bin each item's already-deducted units are attributed to,
+ * grouped per item, plus the staff re-allocation action (move
+ * the active claims to another warehouse; no stock is deducted
+ * again — the API Bengali errors are shown as-is).
+ *
+ * NOTE on the reallocate response: POST .../reallocate returns
+ * { moved, allocations } where `allocations` are the RAW new
+ * allocation rows (no warehouseName/binCode labels, settled rows
+ * absent) — so after a successful move this section asks the
+ * parent to refetch the order detail instead of trusting the
+ * response rows for display.
+ */
+export function OrderAllocationsSection({ orderId, allocations, items, onRefresh }: {
+  orderId: string;
+  allocations?: OrderAllocation[] | null;
+  items?: { id: string; name: string }[] | null;
+  onRefresh: () => void | Promise<void>;
+}) {
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string; active: boolean }[]>([]);
+  const [targetWh, setTargetWh] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const active = hasActiveAllocations(allocations);
+
+  useEffect(() => {
+    if (!active) return;
+    const orgId = getOrganizationId(); if (!orgId) return;
+    let alive = true;
+    apiFetch<{ items: { id: string; name: string; active: boolean }[] }>(`/organizations/${orgId}/commerce/warehouses`)
+      .then((d) => { if (alive) setWarehouses((d.items ?? []).filter((w) => w.active)); })
+      .catch(() => { if (alive) setWarehouses([]); });
+    return () => { alive = false; };
+  }, [orderId, active]);
+
+  if (!allocations || allocations.length === 0) return null;
+  const groups = groupAllocationsByItem(allocations);
+  const itemName = (id: string | null) => (id ? items?.find((i) => i.id === id)?.name : null);
+
+  async function reallocate() {
+    const orgId = getOrganizationId(); if (!orgId || !targetWh) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const out = await apiFetch<{ moved: number }>(`/organizations/${orgId}/commerce/orders/${orderId}/reallocate`, {
+        method: "POST", body: JSON.stringify({ warehouseId: targetWh }),
+      });
+      setNotice(`অ্যালোকেশন সরানো হয়েছে — ${out.moved}টি ইউনিট নতুন গুদামে বরাদ্দ হয়েছে।`);
+      setTargetWh("");
+      await onRefresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "অ্যালোকেশন সরানো যায়নি"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border bg-white p-3">
+      <h4 className="text-sm font-semibold">📦 অ্যালোকেশন — কোন গুদাম/বিন থেকে স্টক ধরা হয়েছে</h4>
+      <div className="space-y-2">
+        {groups.map((g) => (
+          <div key={g.key} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <p className="font-medium">{g.orderItemId ? (itemName(g.orderItemId) ?? "আইটেম") : "বান্ডল উপাদান"} <span className="text-xs text-slate-400">· মোট ×{g.totalQty}</span></p>
+            <ul className="mt-1 space-y-1">
+              {g.allocations.map((a) => (
+                <li key={a.id} className={`flex flex-wrap items-center gap-x-2 text-xs ${a.status === "settled" ? "text-slate-400" : "text-slate-600"}`}>
+                  <span>{a.warehouseName ?? "গুদাম অজানা"}</span>
+                  <span className="font-mono">{a.binCode ?? "—"}</span>
+                  <span className="font-semibold">×{a.qty}</span>
+                  {a.status === "settled" ? <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-500">{allocationStatusLabel(a.status)}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {active ? (
+        <div className="space-y-1.5 border-t pt-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select className="input w-auto" value={targetWh} onChange={(e) => setTargetWh(e.target.value)} aria-label="লক্ষ্য গুদাম">
+              <option value="">গুদাম বেছে নিন</option>
+              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            <button type="button" className="btn-primary btn-sm" disabled={busy || !targetWh} onClick={() => void reallocate()}>
+              {busy ? "সরানো হচ্ছে…" : "অ্যালোকেশন সরান"}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">সক্রিয় অ্যালোকেশনগুলো বেছে নেওয়া গুদামে সরে যাবে — নতুন করে স্টক কাটা হবে না।</p>
+          {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p> : null}
+          {notice ? <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{notice}</p> : null}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-400">সব অ্যালোকেশন নিষ্পত্তি হয়ে গেছে — পুনঃবরাদ্দের কিছু নেই।</p>
+      )}
+    </div>
+  );
+}
 
 /**
  * ON2 (Orders Next): the detail-panel additions — unified
@@ -196,6 +445,12 @@ export function OrderDetailOn2({ orderId, orderLabel, assigneeId, tags, members,
 
   return (
     <div className="space-y-3">
+      {/* GC12: online payment summary + resend (hides itself on
+          any load failure — never breaks the detail page). */}
+      <OnlinePaymentSection orderId={orderId} />
+      {/* AB1: this order's loyalty totals + entries (renders
+          nothing when the order has no loyalty activity). */}
+      <OrderLoyaltySection orderId={orderId} />
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Customer 360 */}
         <div className="space-y-2 rounded-xl border bg-white p-3">

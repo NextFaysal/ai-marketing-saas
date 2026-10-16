@@ -10,6 +10,7 @@ import {
 } from "../common/platform-config";
 import { PLAN_TIERS, planPrices, planYearlyPrices, cycleDays } from "../common/platform-settings";
 import { maybeRewardReferral } from "../common/referral";
+import { buildPdf, saasInvoicePage, moneyText } from "../courier/pdf";
 
 /**
  * Milestone 36 + 39: subscription payments (SSLCommerz + bKash).
@@ -1010,6 +1011,23 @@ export class PaymentsService {
     return buildInvoiceHtml({ payment, orgName: org?.name ?? organizationId, buyer: { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null } });
   }
 
+  /** GC22 (GB9): the shared invoice data for one of the org's
+   * OWN payments — a foreign payment id 404s exactly like the
+   * HTML path. */
+  async invoiceDataForOrgPayment(organizationId: string, paymentId: string): Promise<SaasInvoiceData> {
+    const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id: paymentId } });
+    if (!payment || payment.organizationId !== organizationId) throw new NotFoundException("Payment not found");
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
+    const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
+    return saasInvoiceData(payment, org?.name ?? organizationId, { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null });
+  }
+
+  /** GC22: the SaaS invoice as a real PDF (courier toolkit),
+   * rendered from the same data as the HTML invoice. */
+  async invoicePdfForOrgPayment(organizationId: string, paymentId: string): Promise<Buffer> {
+    return buildSaasInvoicePdf(await this.invoiceDataForOrgPayment(organizationId, paymentId));
+  }
+
   /** Browser return mapping — informational only (SSLCommerz). */
   returnRedirect(body: Record<string, any>): string {
     const status = String(body?.status ?? "").toUpperCase();
@@ -1028,10 +1046,13 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?:
   const p = input.payment;
   const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
-  const gross = BigInt(p.amountMinor ?? 0);
-  const refunded = BigInt(p.refundedMinor ?? 0);
-  const invoiceNo = `INV-${String(p.id).slice(-8).toUpperCase()}`;
-  const date = new Date(p.createdAt).toISOString().slice(0, 10);
+  // GC22: invoice number/date/amounts come from the ONE shared
+  // data assembly (saasInvoiceData) the PDF rendering also uses.
+  const shared = saasInvoiceData(p, input.orgName, input.buyer);
+  const gross = shared.grossMinor;
+  const refunded = shared.refundedMinor;
+  const invoiceNo = shared.invoiceNo;
+  const date = shared.date;
   // AP4: the email rendering shares this builder + data with
   // the downloadable invoice (one data path, two renderings).
   // Email clients need inline styles and no print button.
@@ -1067,4 +1088,67 @@ export function buildInvoiceHtml(input: { payment: any; orgName: string; buyer?:
   <p class="muted" style="margin-top:24px">Generated from the platform's payment records. Amounts are shown exactly as recorded.</p>
   ${em ? `<p class="muted">প্রিন্টযোগ্য কপিটি Billing পেজের পেমেন্ট ইতিহাস থেকে যেকোনো সময় ডাউনলোড করা যাবে।</p>` : `<button class="noprint" onclick="window.print()">Print / Save as PDF</button>`}
 </body></html>`;
+}
+
+/** GC22 (GB9): the ONE structured data assembly behind every
+ * SaaS invoice rendering (HTML page, invoice email, PDF).
+ * buildInvoiceHtml reads its invoice number, date and amounts
+ * from here, and buildSaasInvoicePdf renders the same values —
+ * the two renderings can never disagree. */
+export interface SaasInvoiceData {
+  invoiceNo: string;
+  date: string;
+  orgName: string;
+  buyerAddress: string | null;
+  buyerBin: string | null;
+  method: string;
+  reference: string | null;
+  periodEnd: string | null;
+  note: string | null;
+  refundReason: string | null;
+  currency: string;
+  grossMinor: bigint;
+  refundedMinor: bigint;
+  netMinor: bigint;
+}
+
+export function saasInvoiceData(payment: any, orgName: string, buyer?: { address?: string | null; bin?: string | null }): SaasInvoiceData {
+  const gross = BigInt(payment.amountMinor ?? 0);
+  const refunded = BigInt(payment.refundedMinor ?? 0);
+  return {
+    invoiceNo: `INV-${String(payment.id).slice(-8).toUpperCase()}`,
+    date: new Date(payment.createdAt).toISOString().slice(0, 10),
+    orgName,
+    buyerAddress: buyer?.address ?? null,
+    buyerBin: buyer?.bin ?? null,
+    method: String(payment.method ?? ""),
+    reference: payment.reference ?? null,
+    periodEnd: payment.periodEnd ? new Date(payment.periodEnd).toISOString().slice(0, 10) : null,
+    note: payment.note ?? null,
+    refundReason: refunded > 0n ? (payment.refundReason ?? null) : null,
+    currency: payment.currency ?? "BDT",
+    grossMinor: gross,
+    refundedMinor: refunded,
+    netMinor: gross - refunded,
+  };
+}
+
+/** GC22: render SaasInvoiceData as a one-page A4 PDF via the
+ * courier PDF toolkit (buildPdf + saasInvoicePage). */
+export function buildSaasInvoicePdf(d: SaasInvoiceData): Buffer {
+  const metaLines: string[] = [];
+  if (d.buyerAddress) metaLines.push(d.buyerAddress);
+  if (d.buyerBin) metaLines.push(`BIN: ${d.buyerBin}`);
+  metaLines.push(`Method: ${d.method}${d.reference ? ` - Reference: ${d.reference}` : ""}`);
+  if (d.periodEnd) metaLines.push(`Service period ends: ${d.periodEnd}`);
+  if (d.note) metaLines.push(`Note: ${d.note}`);
+  if (d.refundReason) metaLines.push(`Refund reason: ${d.refundReason}`);
+  const items = [{ label: "Subscription payment", amountText: moneyText(d.grossMinor, d.currency) }];
+  if (d.refundedMinor > 0n) items.push({ label: "Refund", amountText: `- ${moneyText(d.refundedMinor, d.currency)}` });
+  const hasRefund = d.refundedMinor > 0n;
+  return buildPdf([saasInvoicePage({
+    orgName: d.orgName, invoiceNo: d.invoiceNo, date: d.date, metaLines, items,
+    totalLabel: hasRefund ? "Net paid" : "Total",
+    totalText: moneyText(hasRefund ? d.netMinor : d.grossMinor, d.currency),
+  })]);
 }

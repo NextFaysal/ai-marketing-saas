@@ -235,7 +235,7 @@ export function llmConfigStatusLabel(view: OrgLlmConfigView): string {
  * reports it (credentials never in this shape — only the
  * non-secret identifier). */
 export interface TenantPaymentGatewayView {
-  provider: string; // sslcommerz | bkash | nagad
+  provider: string; // sslcommerz | bkash | nagad | shurjopay | aamarpay
   identifier: string | null;
   sandbox: boolean;
   status: string; // verified | configured
@@ -243,6 +243,13 @@ export interface TenantPaymentGatewayView {
   lastVerifiedAt: string | null;
   lastError: string | null;
   verificationNote: string; // verified_with_gateway | no_pre_transaction_check
+  /** GC12: the merchant's own gateway-contract fee numbers
+   * (null = no fee rate configured; fee reports then show no
+   * fee for this gateway). */
+  feeBps: number | null;
+  feeFixedMinor: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   /** CC19: which credential set this row is — production flows
    * only ever use "live"; "sandbox" rows are for Doctor checks
    * and clearly-labelled test payments. */

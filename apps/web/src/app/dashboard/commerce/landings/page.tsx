@@ -4,6 +4,10 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import {
+  formatConversionRate, formatPValue, variantSignificance,
+  type VariantVsControl,
+} from "@/lib/ab7";
 
 // EC13 — staff landing-page builder. Consumes the staff routes in
 // apps/api/src/landings/landings.controller.ts:
@@ -35,7 +39,16 @@ interface ProductOpt { id: string; name: string }
 interface LandingStats {
   landingId: string; views: number; checkoutStarted: number; orders: number;
   revenueMinor: string; conversionPct: number | null;
-  variants: { variantId: string; name: string; views: number; orders: number; revenueMinor: string; conversionPct: number | null }[];
+  // AB7 (AX20): stats-level winner (display only — nothing here
+  // auto-switches traffic to the winner).
+  winnerId?: string | null;
+  variants: {
+    variantId: string; name: string; views: number; orders: number; revenueMinor: string;
+    conversionPct: number | null;
+    // AB7 (AX20): per-variant conversion rate + vs-control test.
+    conversionRate?: number | null;
+    vsControl?: VariantVsControl | null;
+  }[];
 }
 
 const SECTION_TYPES = ["hero", "description", "benefits", "gallery", "reviews", "faq", "offer", "trust"] as const;
@@ -88,6 +101,9 @@ export default function LandingsPage() {
   const [eStatus, setEStatus] = useState("draft");
   const [eUpsellId, setEUpsellId] = useState("");
   const [sections, setSections] = useState<Section[]>([]);
+  // GC5: section drag-reorder state (↑/↓ buttons stay as fallback).
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   // variant form
   const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
@@ -207,6 +223,19 @@ export default function LandingsPage() {
       const j = idx + dir;
       if (j < 0 || j >= next.length) return prev;
       [next[idx], next[j]] = [next[j], next[idx]];
+      return next.map((s, i) => ({ ...s, order: i }));
+    });
+  }
+  // GC5: drag reorder writes the same local sections state as moveSection,
+  // so the existing save (which re-stamps `order` by index) persists it
+  // unchanged — no API call or payload shape changes.
+  function reorderSection(from: number, to: number) {
+    if (from === to) return;
+    setSections((prev) => {
+      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
       return next.map((s, i) => ({ ...s, order: i }));
     });
   }
@@ -487,14 +516,24 @@ export default function LandingsPage() {
             </div>
 
             <div className="space-y-3 border-t pt-4">
-              <div className="font-semibold">সেকশনসমূহ (ক্রম অনুযায়ী পেজে দেখাবে)</div>
+              <div className="font-semibold">সেকশনসমূহ (ক্রম অনুযায়ী পেজে দেখাবে — ⠿ ধরে টেনে অথবা ↑/↓ দিয়ে সাজান)</div>
               {sections.map((s, idx) => (
-                <div key={`${s.type}-${idx}`} className={`rounded-xl border p-4 ${s.enabled ? "bg-white" : "bg-slate-50 opacity-70"}`}>
+                <div key={`${s.type}-${idx}`}
+                  draggable
+                  onDragStart={(e) => { setDragIdx(idx); e.dataTransfer.effectAllowed = "move"; }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dragOverIdx !== idx) setDragOverIdx(idx); }}
+                  onDragLeave={() => { if (dragOverIdx === idx) setDragOverIdx(null); }}
+                  onDrop={(e) => { e.preventDefault(); if (dragIdx !== null) reorderSection(dragIdx, idx); setDragIdx(null); setDragOverIdx(null); }}
+                  onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                  className={`rounded-xl border p-4 ${s.enabled ? "bg-white" : "bg-slate-50 opacity-70"} ${dragIdx === idx ? "opacity-50" : ""} ${dragOverIdx === idx && dragIdx !== null && dragIdx !== idx ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300" : ""}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="flex items-center gap-2 text-sm font-semibold">
-                      <input type="checkbox" checked={s.enabled} onChange={(e) => patchSection(idx, { enabled: e.target.checked })} />
-                      {SECTION_LABEL[s.type] ?? s.type}
-                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="cursor-grab select-none text-slate-400" title="টেনে সাজান" aria-label="টেনে সাজান">⠿</span>
+                      <label className="flex items-center gap-2 text-sm font-semibold">
+                        <input type="checkbox" checked={s.enabled} onChange={(e) => patchSection(idx, { enabled: e.target.checked })} />
+                        {SECTION_LABEL[s.type] ?? s.type}
+                      </label>
+                    </div>
                     <div className="flex gap-1.5">
                       <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === 0} onClick={() => moveSection(idx, -1)}>↑ উপরে</button>
                       <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === sections.length - 1} onClick={() => moveSection(idx, 1)}>↓ নিচে</button>
@@ -528,23 +567,57 @@ export default function LandingsPage() {
                       <thead>
                         <tr className="border-b text-left text-xs text-slate-400">
                           <th className="py-2 font-medium">ভ্যারিয়েন্ট</th><th className="py-2 font-medium">ভিউ</th>
-                          <th className="py-2 font-medium">অর্ডার</th><th className="py-2 font-medium">রেভিনিউ</th><th className="py-2 font-medium">কনভার্সন</th>
+                          <th className="py-2 font-medium">অর্ডার</th><th className="py-2 font-medium">রেভিনিউ</th>
+                          <th className="py-2 font-medium">কনভার্সন</th><th className="py-2 font-medium">কনভার্সন রেট</th>
+                          <th className="py-2 font-medium">কন্ট্রোলের সাথে তুলনা</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {stats.variants.map((v) => (
+                        {stats.variants.map((v) => {
+                          const sig = variantSignificance(v.vsControl);
+                          const isWinner = !!stats.winnerId && stats.winnerId === v.variantId;
+                          return (
                           <tr key={v.variantId} className="border-b last:border-0">
-                            <td className="py-2 font-medium">{v.name}</td>
+                            <td className="py-2 font-medium">
+                              {v.name}
+                              {isWinner ? (
+                                <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">🏆 বিজয়ী</span>
+                              ) : null}
+                            </td>
                             <td className="py-2">{v.views}</td>
                             <td className="py-2">{v.orders}</td>
                             <td className="py-2">{formatMinorTaka(v.revenueMinor)}</td>
                             <td className="py-2">{v.conversionPct != null ? `${v.conversionPct}%` : "—"}</td>
+                            <td className="py-2">{formatConversionRate(v.conversionRate)}</td>
+                            <td className="py-2">
+                              {sig.kind === "significant" ? (
+                                <span
+                                  className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700"
+                                  title={`p-value: ${formatPValue(v.vsControl?.pValue)}`}
+                                >
+                                  তাৎপর্যপূর্ণ (p = {formatPValue(v.vsControl?.pValue)})
+                                </span>
+                              ) : sig.kind === "insufficient" ? (
+                                <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">পর্যাপ্ত ডেটা নেই</span>
+                              ) : v.vsControl ? (
+                                <span className="text-xs text-slate-500" title={`p-value: ${formatPValue(v.vsControl.pValue)}`}>
+                                  তাৎপর্যপূর্ণ নয় (p = {formatPValue(v.vsControl.pValue)})
+                                </span>
+                              ) : "—"}
+                            </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 ) : <p className="text-xs text-slate-400">কোনো A/B ভ্যারিয়েন্ট নেই — সব ট্রাফিক ডিফল্ট রূপে যাচ্ছে।</p>}
+                {stats.variants.length > 0 ? (
+                  <p className="text-xs text-slate-400">
+                    "বিজয়ী" ও "তাৎপর্যপূর্ণ" চিহ্ন শুধু তথ্যের জন্য — কোনো ভ্যারিয়েন্টে ট্রাফিক এখান থেকে
+                    স্বয়ংক্রিয়ভাবে বদলায় না; ওজন বদলাতে চাইলে নিচের ভ্যারিয়েন্ট তালিকা থেকে নিজে করুন।
+                  </p>
+                ) : null}
               </>
             ) : <p className="text-sm text-slate-400">পরিসংখ্যান লোড হয়নি।</p>}
           </div>

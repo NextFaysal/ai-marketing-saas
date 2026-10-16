@@ -1,0 +1,56 @@
+8e42cba7f124eb68a0d1b93ebba311e9
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FraudModule = void 0;
+const common_1 = require("@nestjs/common");
+const blocked_phone_service_1 = require("./blocked-phone.service");
+const identifier_lists_service_1 = require("./identifier-lists.service");
+const fraud_attempt_log_service_1 = require("./fraud-attempt-log.service");
+const turnstile_service_1 = require("./turnstile.service");
+const checkout_guard_service_1 = require("./checkout-guard.service");
+const fraud_rules_service_1 = require("./fraud-rules.service");
+const idempotency_service_1 = require("./idempotency.service");
+/**
+ * ON4 — FraudModule imports NOTHING: PrismaService and
+ * AuditService are both @Global, so the blocklist service is
+ * available to Orders / Inbox / checkout modules without any
+ * import cycle.
+ *
+ * GB3 (GC9): the module stays a leaf on the same terms — the
+ * identifier lists, attempt log, Turnstile verifier, checkout
+ * guard and fraud-rules services depend only on the globals
+ * (plus pure helpers), so checkout modules can import this
+ * module without a cycle.
+ */
+let FraudModule = class FraudModule {
+};
+exports.FraudModule = FraudModule;
+exports.FraudModule = FraudModule = __decorate([
+    (0, common_1.Module)({
+        providers: [
+            blocked_phone_service_1.BlockedPhoneService,
+            identifier_lists_service_1.IdentifierListsService,
+            fraud_attempt_log_service_1.FraudAttemptLogService,
+            turnstile_service_1.TurnstileVerifier,
+            checkout_guard_service_1.CheckoutGuardService,
+            fraud_rules_service_1.FraudRulesService,
+            idempotency_service_1.IdempotencyService,
+        ],
+        exports: [
+            blocked_phone_service_1.BlockedPhoneService,
+            identifier_lists_service_1.IdentifierListsService,
+            fraud_attempt_log_service_1.FraudAttemptLogService,
+            turnstile_service_1.TurnstileVerifier,
+            checkout_guard_service_1.CheckoutGuardService,
+            fraud_rules_service_1.FraudRulesService,
+            idempotency_service_1.IdempotencyService,
+        ],
+    })
+], FraudModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ZyYXVkL2ZyYXVkLm1vZHVsZS50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7QUFBQSwyQ0FBd0M7QUFDeEMsbUVBQThEO0FBQzlELHlFQUFvRTtBQUNwRSwyRUFBcUU7QUFDckUsMkRBQXdEO0FBQ3hELHFFQUFnRTtBQUNoRSwrREFBMEQ7QUFDMUQsK0RBQTJEO0FBRTNEOzs7Ozs7Ozs7OztHQVdHO0FBcUJJLElBQU0sV0FBVyxHQUFqQixNQUFNLFdBQVc7Q0FBRyxDQUFBO0FBQWQsa0NBQVc7c0JBQVgsV0FBVztJQXBCdkIsSUFBQSxlQUFNLEVBQUM7UUFDTixTQUFTLEVBQUU7WUFDVCwyQ0FBbUI7WUFDbkIsaURBQXNCO1lBQ3RCLGtEQUFzQjtZQUN0QixxQ0FBaUI7WUFDakIsNkNBQW9CO1lBQ3BCLHVDQUFpQjtZQUNqQix3Q0FBa0I7U0FDbkI7UUFDRCxPQUFPLEVBQUU7WUFDUCwyQ0FBbUI7WUFDbkIsaURBQXNCO1lBQ3RCLGtEQUFzQjtZQUN0QixxQ0FBaUI7WUFDakIsNkNBQW9CO1lBQ3BCLHVDQUFpQjtZQUNqQix3Q0FBa0I7U0FDbkI7S0FDRixDQUFDO0dBQ1csV0FBVyxDQUFHIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9mcmF1ZC9mcmF1ZC5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBCbG9ja2VkUGhvbmVTZXJ2aWNlIH0gZnJvbSBcIi4vYmxvY2tlZC1waG9uZS5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBJZGVudGlmaWVyTGlzdHNTZXJ2aWNlIH0gZnJvbSBcIi4vaWRlbnRpZmllci1saXN0cy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBGcmF1ZEF0dGVtcHRMb2dTZXJ2aWNlIH0gZnJvbSBcIi4vZnJhdWQtYXR0ZW1wdC1sb2cuc2VydmljZVwiO1xuaW1wb3J0IHsgVHVybnN0aWxlVmVyaWZpZXIgfSBmcm9tIFwiLi90dXJuc3RpbGUuc2VydmljZVwiO1xuaW1wb3J0IHsgQ2hlY2tvdXRHdWFyZFNlcnZpY2UgfSBmcm9tIFwiLi9jaGVja291dC1ndWFyZC5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBGcmF1ZFJ1bGVzU2VydmljZSB9IGZyb20gXCIuL2ZyYXVkLXJ1bGVzLnNlcnZpY2VcIjtcbmltcG9ydCB7IElkZW1wb3RlbmN5U2VydmljZSB9IGZyb20gXCIuL2lkZW1wb3RlbmN5LnNlcnZpY2VcIjtcblxuLyoqXG4gKiBPTjQg4oCUIEZyYXVkTW9kdWxlIGltcG9ydHMgTk9USElORzogUHJpc21hU2VydmljZSBhbmRcbiAqIEF1ZGl0U2VydmljZSBhcmUgYm90aCBAR2xvYmFsLCBzbyB0aGUgYmxvY2tsaXN0IHNlcnZpY2UgaXNcbiAqIGF2YWlsYWJsZSB0byBPcmRlcnMgLyBJbmJveCAvIGNoZWNrb3V0IG1vZHVsZXMgd2l0aG91dCBhbnlcbiAqIGltcG9ydCBjeWNsZS5cbiAqXG4gKiBHQjMgKEdDOSk6IHRoZSBtb2R1bGUgc3RheXMgYSBsZWFmIG9uIHRoZSBzYW1lIHRlcm1zIOKAlCB0aGVcbiAqIGlkZW50aWZpZXIgbGlzdHMsIGF0dGVtcHQgbG9nLCBUdXJuc3RpbGUgdmVyaWZpZXIsIGNoZWNrb3V0XG4gKiBndWFyZCBhbmQgZnJhdWQtcnVsZXMgc2VydmljZXMgZGVwZW5kIG9ubHkgb24gdGhlIGdsb2JhbHNcbiAqIChwbHVzIHB1cmUgaGVscGVycyksIHNvIGNoZWNrb3V0IG1vZHVsZXMgY2FuIGltcG9ydCB0aGlzXG4gKiBtb2R1bGUgd2l0aG91dCBhIGN5Y2xlLlxuICovXG5ATW9kdWxlKHtcbiAgcHJvdmlkZXJzOiBbXG4gICAgQmxvY2tlZFBob25lU2VydmljZSxcbiAgICBJZGVudGlmaWVyTGlzdHNTZXJ2aWNlLFxuICAgIEZyYXVkQXR0ZW1wdExvZ1NlcnZpY2UsXG4gICAgVHVybnN0aWxlVmVyaWZpZXIsXG4gICAgQ2hlY2tvdXRHdWFyZFNlcnZpY2UsXG4gICAgRnJhdWRSdWxlc1NlcnZpY2UsXG4gICAgSWRlbXBvdGVuY3lTZXJ2aWNlLFxuICBdLFxuICBleHBvcnRzOiBbXG4gICAgQmxvY2tlZFBob25lU2VydmljZSxcbiAgICBJZGVudGlmaWVyTGlzdHNTZXJ2aWNlLFxuICAgIEZyYXVkQXR0ZW1wdExvZ1NlcnZpY2UsXG4gICAgVHVybnN0aWxlVmVyaWZpZXIsXG4gICAgQ2hlY2tvdXRHdWFyZFNlcnZpY2UsXG4gICAgRnJhdWRSdWxlc1NlcnZpY2UsXG4gICAgSWRlbXBvdGVuY3lTZXJ2aWNlLFxuICBdLFxufSlcbmV4cG9ydCBjbGFzcyBGcmF1ZE1vZHVsZSB7fVxuIl0sInZlcnNpb24iOjN9

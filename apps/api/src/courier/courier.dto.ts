@@ -1,7 +1,7 @@
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export class ConnectCourierDto {
-  @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx (default steadfast)
+  @IsOptional() @IsString() provider?: string; // steadfast | pathao | redx | ecourier (default steadfast)
   // Steadfast
   @IsOptional() @IsString() apiKey?: string;
   @IsOptional() @IsString() secretKey?: string;
@@ -13,6 +13,18 @@ export class ConnectCourierDto {
   // RedX (accessToken) + shared baseUrl override (sandbox / legacy)
   @IsOptional() @IsString() accessToken?: string;
   @IsOptional() @IsString() baseUrl?: string;
+  // eCourier (GB5): the merchant's self-serve API credentials —
+  // API Key + API Secret + User ID (apiKey above is reused as
+  // the eCourier API_KEY).
+  @IsOptional() @IsString() apiSecret?: string;
+  @IsOptional() @IsString() userId?: string;
+}
+
+/** GB5 (GC14): staff manual tracking update — the status is the
+ * INTERNAL vocabulary (validated again in the service). */
+export class ManualShipmentStatusDto {
+  @IsString() status!: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
 export class BookShipmentDto {
@@ -35,11 +47,16 @@ export class BookShipmentDto {
   @IsOptional() @IsObject() redx?: {
     deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number;
   };
+  // GB5: eCourier's order call requires city + thana + area
+  // + zip by name, an assigned package_code and a payment method.
+  @IsOptional() @IsObject() ecourier?: {
+    city?: string; thana?: string; area?: string; zip?: string; packageCode?: string; paymentMethod?: string;
+  };
 }
 
 /** Milestone 53: bulk booking — up to 50 orders through one provider. */
 export class BulkBookDto {
-  @IsOptional() @IsIn(["steadfast", "pathao", "redx"]) provider?: string;
+  @IsOptional() @IsIn(["steadfast", "pathao", "redx", "ecourier"]) provider?: string;
   // CC29: one explicit courier account for the whole batch.
   @IsOptional() @IsString() courierIntegrationId?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsString({ each: true }) orderIds!: string[];
@@ -49,6 +66,7 @@ export class BulkBookDto {
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsObject() pathao?: { storeId?: number; cityId?: number; zoneId?: number; areaId?: number; deliveryType?: number; itemType?: number; itemWeightKg?: number; itemDescription?: string };
   @IsOptional() @IsObject() redx?: { deliveryAreaId?: number; deliveryArea?: string; pickupStoreId?: number; parcelWeightKg?: number };
+  @IsOptional() @IsObject() ecourier?: { city?: string; thana?: string; area?: string; zip?: string; packageCode?: string; paymentMethod?: string };
 }
 
 /** Milestone 52: pre-booking delivery-charge quotation. */

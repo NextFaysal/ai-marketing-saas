@@ -1,0 +1,85 @@
+65c1b84e81cd1d4fd70655e9a821fa27
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ReviewInsightsController = exports.PublicReviewInsightController = void 0;
+const common_1 = require("@nestjs/common");
+const review_insights_service_1 = require("./review-insights.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const INSIGHT_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
+/** AX15 — public AI review insight for the PDP summary box. */
+let PublicReviewInsightController = class PublicReviewInsightController {
+    insights;
+    constructor(insights) {
+        this.insights = insights;
+    }
+    get(orgSlug, productSlug) {
+        return this.insights.getPublicBySlug(orgSlug, productSlug);
+    }
+};
+exports.PublicReviewInsightController = PublicReviewInsightController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)(":orgSlug/products/:productSlug/review-insight"),
+    __param(0, (0, common_1.Param)("orgSlug")),
+    __param(1, (0, common_1.Param)("productSlug")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], PublicReviewInsightController.prototype, "get", null);
+exports.PublicReviewInsightController = PublicReviewInsightController = __decorate([
+    (0, common_1.Controller)("public/shop"),
+    __metadata("design:paramtypes", [review_insights_service_1.ReviewInsightsService])
+], PublicReviewInsightController);
+/** AX15 — staff generate + read for one product's AI review insight. */
+let ReviewInsightsController = class ReviewInsightsController {
+    insights;
+    constructor(insights) {
+        this.insights = insights;
+    }
+    generate(user, orgId, productId) {
+        return this.insights.generate(orgId, productId, user?.userId);
+    }
+    get(orgId, productId) {
+        return this.insights.getForStaff(orgId, productId);
+    }
+};
+exports.ReviewInsightsController = ReviewInsightsController;
+__decorate([
+    (0, common_1.Post)("generate"),
+    (0, decorators_1.Roles)(...INSIGHT_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("productId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], ReviewInsightsController.prototype, "generate", null);
+__decorate([
+    (0, common_1.Get)(),
+    (0, decorators_1.Roles)(...INSIGHT_ROLES),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("productId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], ReviewInsightsController.prototype, "get", null);
+exports.ReviewInsightsController = ReviewInsightsController = __decorate([
+    (0, common_1.Controller)("organizations/:organizationId/products/:productId/review-insight"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [review_insights_service_1.ReviewInsightsService])
+], ReviewInsightsController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVycy9yZXZpZXctaW5zaWdodHMuY29udHJvbGxlci50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQ0FBeUU7QUFDekUsdUVBQWtFO0FBQ2xFLHFEQUE0RTtBQUM1RSx5REFBcUQ7QUFDckQsdURBQW1EO0FBRW5ELE1BQU0sYUFBYSxHQUFHLENBQUMsT0FBTyxFQUFFLE9BQU8sRUFBRSxtQkFBbUIsRUFBRSxlQUFlLENBQUMsQ0FBQztBQUUvRSwrREFBK0Q7QUFFeEQsSUFBTSw2QkFBNkIsR0FBbkMsTUFBTSw2QkFBNkI7SUFDWDtJQUE3QixZQUE2QixRQUErQjtRQUEvQixhQUFRLEdBQVIsUUFBUSxDQUF1QjtJQUFHLENBQUM7SUFJaEUsR0FBRyxDQUFtQixPQUFlLEVBQXdCLFdBQW1CO1FBQzlFLE9BQU8sSUFBSSxDQUFDLFFBQVEsQ0FBQyxlQUFlLENBQUMsT0FBTyxFQUFFLFdBQVcsQ0FBQyxDQUFDO0lBQzdELENBQUM7Q0FDRixDQUFBO0FBUlksc0VBQTZCO0FBS3hDO0lBRkMsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxZQUFHLEVBQUMsK0NBQStDLENBQUM7SUFDaEQsV0FBQSxJQUFBLGNBQUssRUFBQyxTQUFTLENBQUMsQ0FBQTtJQUFtQixXQUFBLElBQUEsY0FBSyxFQUFDLGFBQWEsQ0FBQyxDQUFBOzs7O3dEQUUzRDt3Q0FQVSw2QkFBNkI7SUFEekMsSUFBQSxtQkFBVSxFQUFDLGFBQWEsQ0FBQztxQ0FFZSwrQ0FBcUI7R0FEakQsNkJBQTZCLENBUXpDO0FBRUQsd0VBQXdFO0FBR2pFLElBQU0sd0JBQXdCLEdBQTlCLE1BQU0sd0JBQXdCO0lBQ047SUFBN0IsWUFBNkIsUUFBK0I7UUFBL0IsYUFBUSxHQUFSLFFBQVEsQ0FBdUI7SUFBRyxDQUFDO0lBSWhFLFFBQVEsQ0FDUyxJQUFjLEVBQ0osS0FBYSxFQUNsQixTQUFpQjtRQUVyQyxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLEtBQUssRUFBRSxTQUFTLEVBQUUsSUFBSSxFQUFFLE1BQU0sQ0FBQyxDQUFDO0lBQ2hFLENBQUM7SUFJRCxHQUFHLENBQ3dCLEtBQWEsRUFDbEIsU0FBaUI7UUFFckMsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLFdBQVcsQ0FBQyxLQUFLLEVBQUUsU0FBUyxDQUFDLENBQUM7SUFDckQsQ0FBQztDQUNGLENBQUE7QUFyQlksNERBQXdCO0FBS25DO0lBRkMsSUFBQSxhQUFJLEVBQUMsVUFBVSxDQUFDO0lBQ2hCLElBQUEsa0JBQUssRUFBQyxHQUFHLGFBQWEsQ0FBQztJQUVyQixXQUFBLElBQUEsd0JBQVcsR0FBRSxDQUFBO0lBQ2IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQ3ZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsV0FBVyxDQUFDLENBQUE7Ozs7d0RBR3BCO0FBSUQ7SUFGQyxJQUFBLFlBQUcsR0FBRTtJQUNMLElBQUEsa0JBQUssRUFBQyxHQUFHLGFBQWEsQ0FBQztJQUVyQixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFDdkIsV0FBQSxJQUFBLGNBQUssRUFBQyxXQUFXLENBQUMsQ0FBQTs7OzttREFHcEI7bUNBcEJVLHdCQUF3QjtJQUZwQyxJQUFBLG1CQUFVLEVBQUMsa0VBQWtFLENBQUM7SUFDOUUsSUFBQSxrQkFBUyxFQUFDLDBCQUFXLEVBQUUsd0JBQVUsQ0FBQztxQ0FFTSwrQ0FBcUI7R0FEakQsd0JBQXdCLENBcUJwQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvb3JkZXJzL3Jldmlldy1pbnNpZ2h0cy5jb250cm9sbGVyLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IENvbnRyb2xsZXIsIEdldCwgUGFyYW0sIFBvc3QsIFVzZUd1YXJkcyB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUmV2aWV3SW5zaWdodHNTZXJ2aWNlIH0gZnJvbSBcIi4vcmV2aWV3LWluc2lnaHRzLnNlcnZpY2VcIjtcbmltcG9ydCB7IEN1cnJlbnRVc2VyLCBBdXRoVXNlciwgUHVibGljLCBSb2xlcyB9IGZyb20gXCIuLi9jb21tb24vZGVjb3JhdG9yc1wiO1xuaW1wb3J0IHsgVGVuYW50R3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3RlbmFudC5ndWFyZFwiO1xuaW1wb3J0IHsgUm9sZXNHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vcm9sZXMuZ3VhcmRcIjtcblxuY29uc3QgSU5TSUdIVF9ST0xFUyA9IFtcIk9XTkVSXCIsIFwiQURNSU5cIiwgXCJNQVJLRVRJTkdfTUFOQUdFUlwiLCBcIlNVUFBPUlRfQUdFTlRcIl07XG5cbi8qKiBBWDE1IOKAlCBwdWJsaWMgQUkgcmV2aWV3IGluc2lnaHQgZm9yIHRoZSBQRFAgc3VtbWFyeSBib3guICovXG5AQ29udHJvbGxlcihcInB1YmxpYy9zaG9wXCIpXG5leHBvcnQgY2xhc3MgUHVibGljUmV2aWV3SW5zaWdodENvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IGluc2lnaHRzOiBSZXZpZXdJbnNpZ2h0c1NlcnZpY2UpIHt9XG5cbiAgQFB1YmxpYygpXG4gIEBHZXQoXCI6b3JnU2x1Zy9wcm9kdWN0cy86cHJvZHVjdFNsdWcvcmV2aWV3LWluc2lnaHRcIilcbiAgZ2V0KEBQYXJhbShcIm9yZ1NsdWdcIikgb3JnU2x1Zzogc3RyaW5nLCBAUGFyYW0oXCJwcm9kdWN0U2x1Z1wiKSBwcm9kdWN0U2x1Zzogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMuaW5zaWdodHMuZ2V0UHVibGljQnlTbHVnKG9yZ1NsdWcsIHByb2R1Y3RTbHVnKTtcbiAgfVxufVxuXG4vKiogQVgxNSDigJQgc3RhZmYgZ2VuZXJhdGUgKyByZWFkIGZvciBvbmUgcHJvZHVjdCdzIEFJIHJldmlldyBpbnNpZ2h0LiAqL1xuQENvbnRyb2xsZXIoXCJvcmdhbml6YXRpb25zLzpvcmdhbml6YXRpb25JZC9wcm9kdWN0cy86cHJvZHVjdElkL3Jldmlldy1pbnNpZ2h0XCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIFJldmlld0luc2lnaHRzQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgaW5zaWdodHM6IFJldmlld0luc2lnaHRzU2VydmljZSkge31cblxuICBAUG9zdChcImdlbmVyYXRlXCIpXG4gIEBSb2xlcyguLi5JTlNJR0hUX1JPTEVTKVxuICBnZW5lcmF0ZShcbiAgICBAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlcixcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcInByb2R1Y3RJZFwiKSBwcm9kdWN0SWQ6IHN0cmluZyxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMuaW5zaWdodHMuZ2VuZXJhdGUob3JnSWQsIHByb2R1Y3RJZCwgdXNlcj8udXNlcklkKTtcbiAgfVxuXG4gIEBHZXQoKVxuICBAUm9sZXMoLi4uSU5TSUdIVF9ST0xFUylcbiAgZ2V0KFxuICAgIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsXG4gICAgQFBhcmFtKFwicHJvZHVjdElkXCIpIHByb2R1Y3RJZDogc3RyaW5nLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5pbnNpZ2h0cy5nZXRGb3JTdGFmZihvcmdJZCwgcHJvZHVjdElkKTtcbiAgfVxufVxuIl0sInZlcnNpb24iOjN9

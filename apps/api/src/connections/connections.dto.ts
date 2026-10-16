@@ -40,7 +40,21 @@ export class PutPaymentGatewayDto {
   // nagad
   @IsOptional() @IsString() @MaxLength(200) merchantId?: string;
   @IsOptional() @IsString() @MaxLength(10000) privateKey?: string;
+  // shurjopay (GC11) — username/password above are shared with
+  // bkash; prefix is ShurjoPay's own field, storeId optional.
+  @IsOptional() @IsString() @MaxLength(100) prefix?: string;
+  // aamarpay (GC11) — storeId above is shared with sslcommerz.
+  @IsOptional() @IsString() @MaxLength(500) signatureKey?: string;
   @IsOptional() @IsBoolean() sandbox?: boolean;
+  // GC12: the merchant's OWN gateway-contract fee numbers —
+  // plain columns on the gateway row, NOT part of the sealed
+  // creds. Key-presence semantics in the service: key present
+  // (including explicit null) = set/clear the column; key
+  // absent = column untouched, so a creds-only re-save never
+  // wipes fees. feeFixedMinor crosses as a decimal string of
+  // minor units (BigInt-safe), validated in the service.
+  @IsOptional() @IsInt() @Min(0) @Max(10000) feeBps?: number | null;
+  @IsOptional() @IsString() @MaxLength(30) feeFixedMinor?: string | null;
   // CC19: which credential set this save targets. Only an
   // EXPLICIT "sandbox" creates/targets the sandbox set; absent
   // means the live (primary) set, where the legacy sandbox
@@ -110,10 +124,14 @@ export class InitiateOrderPaymentDto {
 export class PublicInitiatePaymentDto {
   @IsString() @MinLength(1) @MaxLength(100) orderId!: string;
   @IsString() @MinLength(1) @MaxLength(60) orderNumber!: string;
-  @IsString() @IsIn(["sslcommerz", "bkash"]) provider!: string;
+  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay"]) provider!: string;
   /** CC10: "platform" pays through the platform gateway (wallet
    * credit); omitted/"own" is the CC9 tenant-gateway path. */
   @IsOptional() @IsString() @IsIn(["own", "platform"]) source?: string;
+  /** AB4 (AX5a): which slice this initiation collects —
+   * "deposit" prices from the org's deposit config, "balance"
+   * collects the remaining amount; omitted/"full" is legacy. */
+  @IsOptional() @IsString() @IsIn(["full", "deposit", "balance"]) purpose?: string;
 }
 
 /** CC10 — toggle the tenant's platform-payment enablement for
@@ -231,4 +249,22 @@ export class GoogleSelectDto {
  * produce (the service re-checks against its rule table). */
 export class DismissAssistantFindingDto {
   @IsString() @MinLength(1) @MaxLength(80) findingKey!: string;
+}
+
+/**
+ * GC10 — an online-payment selection on a public checkout DTO:
+ * pay through a real gateway (the tenant's OWN, CC9, or the
+ * PLATFORM's, CC10) instead of COD / a manual advance claim.
+ * The pair is always re-validated server-side against
+ * TenantPaymentsService.publicPaymentOptions — the client value
+ * alone never enables a payment path.
+ */
+export class OnlinePaymentSelectionDto {
+  // GC11: the OWN path also accepts shurjopay/aamarpay. The
+  // source pair is still re-validated against
+  // publicPaymentOptions, which never offers the new providers
+  // on the platform path — a platform+shurjopay/aamarpay pair
+  // is refused there, not here.
+  @IsString() @IsIn(["sslcommerz", "bkash", "shurjopay", "aamarpay"]) provider!: string;
+  @IsString() @IsIn(["own", "platform"]) source!: string;
 }

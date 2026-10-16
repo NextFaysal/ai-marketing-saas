@@ -15,6 +15,7 @@ import { ConnectionUsageService } from "./connection-usage.service";
 import { ConnectionTimelineService } from "./connection-timeline.service";
 import { ProviderHealthService } from "./provider-health.service";
 import { AccountMetaDto, CreatePaymentLinkDto, CreatePayoutDestinationDto, CreatePayoutRequestDto, CreateSettlementImportDto, DismissAssistantFindingDto, GoogleSelectDto, InitiateOrderPaymentDto, InitiateRefundDto, PublicInitiatePaymentDto, PutAlertPreferencesDto, PutAppConfigDto, PutLlmConfigDto, PutPaymentGatewayDto, PutPayoutScheduleDto, SetAutoHealDto, SetGatewayEnabledDto, SetMemberDeniedConnectionsDto, SetPlatformEnabledDto, SetSyncIntervalDto, SetSyncPausedDto, SnoozeTargetDto, TestInitiatePaymentDto, UpdatePayoutDestinationDto } from "./connections.dto";
+import { PaymentOpsService } from "./payment-ops.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -45,6 +46,7 @@ export class ConnectionsController {
     private readonly assistant: SetupAssistantService,
     private readonly analytics: ConnectionAnalyticsService,
     private readonly usage: ConnectionUsageService,
+    private readonly paymentOps: PaymentOpsService,
   ) {}
 
   @Get("overview")
@@ -497,6 +499,35 @@ export class ConnectionsController {
     return this.providerHealth.repairWebhooks(orgId, user.userId, id);
   }
 
+  // GC12 — Payment Ops: staff reads over the payment-attempt
+  // records (TenantPaymentTransaction). Reads are open to area
+  // members, exactly like listGateways; there are no writes on
+  // this surface (the resend action lives on the Orders side).
+  @Get("payment-attempts")
+  listPaymentAttempts(@Param("organizationId") orgId: string, @Query() q: { status?: string; provider?: string; source?: string; orderId?: string; page?: string; pageSize?: string }) {
+    return this.paymentOps.listAttempts(orgId, q);
+  }
+
+  @Get("payment-attempts/:attemptId")
+  getPaymentAttempt(@Param("organizationId") orgId: string, @Param("attemptId") attemptId: string) {
+    return this.paymentOps.getAttempt(orgId, attemptId);
+  }
+
+  @Get("payment-fee-report")
+  paymentFeeReport(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.paymentOps.feeReport(orgId, from, to);
+  }
+
+  @Get("payment-fee-report.csv") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=payment-fee-report.csv")
+  paymentFeeReportCsv(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.paymentOps.feeReportCsv(orgId, from, to);
+  }
+
+  @Get("payment-settlements")
+  paymentSettlements(@Param("organizationId") orgId: string, @Query("from") from?: string, @Query("to") to?: string) {
+    return this.paymentOps.settlements(orgId, from, to);
+  }
+
   @Patch(":integrationId/default") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   setDefault(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("integrationId") id: string) {
     return this.connections.setDefault(orgId, user.userId, id);
@@ -523,7 +554,14 @@ export class TenantPaymentsPublicController {
 
   @Public() @Post("initiate/:orgSlug")
   initiate(@Param("orgSlug") orgSlug: string, @Body() dto: PublicInitiatePaymentDto) {
-    return this.tenantPayments.initiatePublicPayment(orgSlug, dto.orderId, dto.orderNumber, dto.provider, dto.source);
+    return this.tenantPayments.initiatePublicPayment(orgSlug, dto.orderId, dto.orderNumber, dto.provider, dto.source, dto.purpose);
+  }
+
+  /** GC10: polled by the shop success page — verified_paid is
+   * the only state that may render as paid. */
+  @Public() @Get("state/:orgSlug")
+  paymentState(@Param("orgSlug") orgSlug: string, @Query("orderId") orderId: string, @Query("orderNumber") orderNumber: string) {
+    return this.tenantPayments.publicPaymentState(orgSlug, orderId, orderNumber);
   }
 
   // CC19 — the buyer surface asks which online-payment options
@@ -554,6 +592,45 @@ export class TenantPaymentsPublicController {
   async bkashCallback(@Req() req: Request, @Res() res: Response) {
     const url = await this.tenantPayments.handleBkashCallback((req.query ?? {}) as Record<string, any>);
     return res.redirect(302, url);
+  }
+
+  // GC11 — ShurjoPay browser return (GET query or POST body).
+  // A trigger only: the service's server-side verification
+  // call decides whether anything is marked paid.
+  @Public() @Get("shurjopay/return")
+  async shurjoReturnGet(@Req() req: Request, @Res() res: Response) {
+    const url = await this.tenantPayments.handleShurjoReturn((req.query ?? {}) as Record<string, any>);
+    return res.redirect(302, url);
+  }
+
+  @Public() @Post("shurjopay/return")
+  async shurjoReturnPost(@Body() body: Record<string, any>, @Res() res: Response) {
+    return res.redirect(302, await this.tenantPayments.handleShurjoReturn(body ?? {}));
+  }
+
+  // GC11 — aamarPay success/fail/cancel POSTs (browser
+  // redirects; success is a trigger only — Search Transaction
+  // verification inside the service decides) and the IPN
+  // listener (JSON; same trigger-only discipline; the listener
+  // URL is registered manually with aamarPay support).
+  @Public() @Post("aamarpay/success")
+  async aamarSuccess(@Body() body: Record<string, any>, @Res() res: Response) {
+    return res.redirect(302, await this.tenantPayments.handleAamarResult("success", body ?? {}));
+  }
+
+  @Public() @Post("aamarpay/fail")
+  async aamarFail(@Body() body: Record<string, any>, @Res() res: Response) {
+    return res.redirect(302, await this.tenantPayments.handleAamarResult("fail", body ?? {}));
+  }
+
+  @Public() @Post("aamarpay/cancel")
+  async aamarCancel(@Body() body: Record<string, any>, @Res() res: Response) {
+    return res.redirect(302, await this.tenantPayments.handleAamarResult("cancel", body ?? {}));
+  }
+
+  @Public() @Post("aamarpay/ipn")
+  aamarIpn(@Body() body: Record<string, any>) {
+    return this.tenantPayments.handleAamarIpn(body ?? {});
   }
 }
 

@@ -82,11 +82,17 @@ export class InventoryIntelligenceService {
   }
 
   private serializeSettings(row: any, orgId: string) {
-    if (!row) return { organizationId: orgId, leadTimeDays: DEFAULT_LEAD_TIME_DAYS };
+    if (!row) {
+      // GB2 (GC7): the newer fields serialize with their schema
+      // defaults even when no settings row exists yet.
+      return { organizationId: orgId, leadTimeDays: DEFAULT_LEAD_TIME_DAYS, allowBackorder: false, reserveMinutes: 0 };
+    }
     return {
       id: row.id,
       organizationId: row.organizationId ?? orgId,
       leadTimeDays: row.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS,
+      allowBackorder: row.allowBackorder === true,
+      reserveMinutes: Math.max(0, Number(row.reserveMinutes ?? 0) || 0),
       createdAt: row.createdAt ?? null,
       updatedAt: row.updatedAt ?? null,
     };
@@ -105,27 +111,197 @@ export class InventoryIntelligenceService {
     return this.serializeSettings(row, orgId);
   }
 
-  async updateSettings(orgId: string, actorId: string, dto: { leadTimeDays?: unknown }) {
-    const leadTimeDays = (dto as any)?.leadTimeDays;
-    if (!Number.isInteger(leadTimeDays) || (leadTimeDays as number) < 1 || (leadTimeDays as number) > 180) {
-      throw new BadRequestException("লিড টাইম (leadTimeDays) অবশ্যই ১ থেকে ১৮০ দিনের মধ্যে পূর্ণসংখ্যা হতে হবে");
+  /** Partial update (GB2 widened): leadTimeDays keeps its
+   * original 1..180 validation WHENEVER THE KEY IS PRESENT
+   * (EC33 pins the Bengali message for 0 / 181 / fractional /
+   * non-integer / null / undefined values, and the audit
+   * metadata { leadTimeDays } for lead-time-only updates); the
+   * GB2 fields validate their own ranges when their keys are
+   * present. A patch with NO recognized key fails as the legacy
+   * lead-time validation error. Only provided fields change. */
+  async updateSettings(orgId: string, actorId: string, dto: { leadTimeDays?: unknown; allowBackorder?: unknown; reserveMinutes?: unknown }) {
+    const d: any = dto ?? {};
+    const hasLead = "leadTimeDays" in d;
+    const hasBackorder = "allowBackorder" in d;
+    const hasReserve = "reserveMinutes" in d;
+    const LEAD_MSG = "লিড টাইম (leadTimeDays) অবশ্যই ১ থেকে ১৮০ দিনের মধ্যে পূর্ণসংখ্যা হতে হবে";
+    if (!hasLead && !hasBackorder && !hasReserve) {
+      throw new BadRequestException(LEAD_MSG);
+    }
+    const data: Record<string, unknown> = {};
+    if (hasLead) {
+      const leadTimeDays = d.leadTimeDays;
+      if (!Number.isInteger(leadTimeDays) || (leadTimeDays as number) < 1 || (leadTimeDays as number) > 180) {
+        throw new BadRequestException(LEAD_MSG);
+      }
+      data.leadTimeDays = leadTimeDays;
+    }
+    if (hasBackorder) {
+      if (typeof d.allowBackorder !== "boolean") {
+        throw new BadRequestException("allowBackorder অবশ্যই true/false হতে হবে");
+      }
+      data.allowBackorder = d.allowBackorder;
+    }
+    if (hasReserve) {
+      const rm = d.reserveMinutes;
+      if (!Number.isInteger(rm) || (rm as number) < 0 || (rm as number) > 1440) {
+        throw new BadRequestException("রিজার্ভ সময় (reserveMinutes) অবশ্যই ০ থেকে ১৪৪০ মিনিটের মধ্যে পূর্ণসংখ্যা হতে হবে");
+      }
+      data.reserveMinutes = rm;
     }
     const table = this.settingsTable();
     const existing = table?.findFirst
       ? await table.findFirst({ where: { organizationId: orgId } }).catch(() => null)
       : null;
     const row = existing
-      ? await table.update({ where: { id: existing.id }, data: { leadTimeDays } })
-      : await table.create({ data: { organizationId: orgId, leadTimeDays } });
+      ? await table.update({ where: { id: existing.id }, data })
+      : await table.create({ data: { organizationId: orgId, leadTimeDays: DEFAULT_LEAD_TIME_DAYS, ...data } });
+    // Audit metadata: lead-time updates keep the EC33 shape
+    // ({ leadTimeDays }); GB2 field changes are named in
+    // `changed` (both appear on a mixed patch).
+    const gb2Changed = Object.keys(data).filter((k) => k !== "leadTimeDays");
+    const metadata: Record<string, unknown> = {};
+    if (data.leadTimeDays !== undefined) metadata.leadTimeDays = data.leadTimeDays;
+    if (gb2Changed.length > 0) metadata.changed = gb2Changed;
     await this.audit?.log({
       organizationId: orgId,
       userId: actorId,
       action: "inventory_settings.updated",
       entityType: "InventorySetting",
       entityId: row.id,
-      metadata: { leadTimeDays: row.leadTimeDays ?? leadTimeDays },
+      metadata,
     }).catch(() => undefined);
     return this.serializeSettings(row, orgId);
+  }
+
+  // ---------- GB2 (GC7): availability + damage report ----------
+
+  /**
+   * Per-tracked-row availability for the inventory UI:
+   * on-hand, reserved (active unexpired StockReservations) and
+   * available = on-hand − reserved, at the same row granularity
+   * as the velocity catalog (variant rows when the product has
+   * variants, otherwise the product row).
+   */
+  async availability(organizationId: string) {
+    const catalog = await this.loadCatalog(organizationId);
+    const totals = this.inventory
+      ? await this.inventory.activeReservationTotals(organizationId)
+      : new Map<string, number>();
+    const items = catalog.trackedRows.map((item) => {
+      const key = `${item.productId}::${item.variantId ?? ""}`;
+      const reserved = totals.get(key) ?? 0;
+      const onHand = item.currentStock;
+      return {
+        productId: item.productId,
+        productName: item.productName,
+        variantId: item.variantId,
+        variantName: item.variantName,
+        sku: item.sku,
+        onHand,
+        reserved,
+        available: onHand - reserved,
+      };
+    });
+    const settings = await this.getSettings(organizationId);
+    return { items, reserveMinutes: (settings as any).reserveMinutes ?? 0 };
+  }
+
+  /**
+   * Damaged / lost / expired report over an inclusive date
+   * range: StockMovement rows whose reason is one of the coded
+   * damage reasons. Totals count only stock-OUT movements
+   * (negative deltas — a positive "damaged" adjustment is a
+   * correction, not a loss); the row list keeps every
+   * damage-reason movement for honesty. Cost value uses the
+   * ON7 as-of rule (variant-specific cost beats product cost;
+   * latest effectiveFrom ≤ movement time, else earliest after);
+   * a movement with NO recorded cost is counted in
+   * uncostedMovements and contributes nothing — never an
+   * invented value.
+   */
+  async damageReport(organizationId: string, from?: string, to?: string) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate = to ? new Date(to) : new Date();
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException("তারিখ সঠিক নয়");
+    }
+    const movements: any[] = ((await (this.prisma as any).stockMovement
+      .findMany({
+        where: {
+          organizationId,
+          reason: { in: ["damaged", "lost", "expired"] },
+          createdAt: { gte: fromDate, lte: toDate },
+        },
+        orderBy: { createdAt: "asc" },
+        take: 2000,
+      })
+      .catch(() => [])) ?? []) as any[];
+    const productIds = [...new Set(movements.map((m: any) => String(m.productId)))];
+    const costRows: any[] = productIds.length
+      ? (((await (this.prisma as any).productCost
+          .findMany({ where: { productId: { in: productIds } } })
+          .catch(() => [])) ?? []) as any[])
+      : [];
+    const costAt = (productId: string, variantId: string | null, at: Date): bigint | null => {
+      const rows = costRows
+        .filter((c: any) => String(c.productId) === productId && (variantId ? c.variantId === variantId : !c.variantId))
+        .sort((a: any, b: any) => new Date(a.effectiveFrom).getTime() - new Date(b.effectiveFrom).getTime());
+      if (rows.length === 0) return null;
+      let chosen: any = null;
+      for (const r of rows) {
+        if (new Date(r.effectiveFrom).getTime() <= at.getTime()) chosen = r;
+      }
+      const pick = chosen ?? rows[0];
+      return pick ? BigInt(pick.costMinor) : null;
+    };
+    const names = new Map<string, { product: string; variant: string | null }>();
+    if (productIds.length) {
+      const products: any[] = ((await (this.prisma as any).product
+        .findMany({ where: { id: { in: productIds } }, include: { variants: true } })
+        .catch(() => [])) ?? []) as any[];
+      for (const p of products) {
+        names.set(`${p.id}::`, { product: p.name, variant: null });
+        for (const v of p.variants ?? []) names.set(`${p.id}::${v.id}`, { product: p.name, variant: v.name });
+      }
+    }
+    const rows = movements.map((m: any) => {
+      const delta = Number(m.delta) || 0;
+      const qty = Math.abs(delta);
+      const isOut = delta < 0;
+      const unitCost = isOut ? costAt(String(m.productId), m.variantId ?? null, new Date(m.createdAt)) : null;
+      const label = names.get(`${m.productId}::${m.variantId ?? ""}`) ?? { product: String(m.productId), variant: null };
+      return {
+        at: m.createdAt ? new Date(m.createdAt).toISOString() : null,
+        productId: String(m.productId),
+        productName: label.product,
+        variantId: m.variantId ?? null,
+        variantName: label.variant,
+        reason: String(m.reason),
+        quantity: isOut ? qty : 0,
+        delta,
+        costValueMinor: isOut && unitCost != null ? (unitCost * BigInt(qty)).toString() : null,
+      };
+    });
+    const totals = { damaged: 0, lost: 0, expired: 0, totalQuantity: 0, costValueMinor: "0", uncostedMovements: 0 };
+    let costSum = 0n;
+    for (const r of rows) {
+      if (r.delta >= 0) continue;
+      if (r.reason === "damaged") totals.damaged += r.quantity;
+      if (r.reason === "lost") totals.lost += r.quantity;
+      if (r.reason === "expired") totals.expired += r.quantity;
+      totals.totalQuantity += r.quantity;
+      if (r.costValueMinor != null) costSum += BigInt(r.costValueMinor);
+      else totals.uncostedMovements++;
+    }
+    totals.costValueMinor = costSum.toString();
+    return {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      rows,
+      totals,
+      truncated: movements.length >= 2000,
+    };
   }
 
   // ---------- Catalog (tracked rows) ----------
@@ -369,7 +545,8 @@ export class InventoryIntelligenceService {
     const events = await this.loadSaleEvents(orgId, variantsByProduct);
 
     const items = trackedRows.map((row) => {
-      const rowEvents = this.eventsForRow(events, row).filter((e) => {
+      const allRowEvents = this.eventsForRow(events, row);
+      const rowEvents = allRowEvents.filter((e) => {
         const t = e.date.getTime();
         return t >= startMs && t <= now.getTime();
       });
@@ -381,6 +558,126 @@ export class InventoryIntelligenceService {
         daysOfStockLeft = row.currentStock > 0 ? row.currentStock / dailyVelocity : 0;
         projectedStockoutDate = new Date(now.getTime() + daysOfStockLeft * DAY_MS).toISOString();
       }
+
+      // ---------- AB7 (AX20): forecasting v2 (additive) ----------
+      // Deterministic statistics over the SAME sold-order events
+      // and row identity as v1 — no ML, no learned model. The v1
+      // fields above are byte-identical in behaviour; everything
+      // below rides the same rows.
+      //
+      // Windows (all end at `now`, all by effective order date):
+      //   last 30d:  t ∈ [now−30d, now]     (matches v1's window)
+      //   prior 30d: t ∈ [now−60d, now−30d) (days 31–60; the 30d
+      //     boundary instant belongs to the last-30 window only)
+      //   last 90d:  t ∈ [now−90d, now]     (weekday profile)
+      // vel30 / velPrior are units/day over their 30d windows.
+      //
+      // trendGrowthPct = (vel30 − velPrior) / velPrior × 100,
+      //   rounded to 1 decimal; NULL when velPrior = 0 (never a
+      //   divide-by-zero dressed up as a number), even if both
+      //   windows are empty.
+      // trendFactor = velPrior > 0 ? clamp(vel30/velPrior, 0.5, 2)
+      //   : 1  (clamped so one spike/collapse cannot double or
+      //   halve the projection unboundedly).
+      //
+      // weekdayFactors[w] (w = JS getDay(), 0 = Sunday), from the
+      //   last 90d of daily sales:
+      //     raw[w] = (units on weekday w / occurrences of w in
+      //               the 90d window) / (total 90d units / 90)
+      //   then normalized by their mean so mean(factors) ≈ 1
+      //   (rounded to 4 decimals). Requires >= 21 DISTINCT days
+      //   with sales in the 90d window; below that the history is
+      //   too sparse to claim a weekly pattern → all factors 1.0
+      //   and demandBasis "velocity" (else "trend_seasonal").
+      //
+      // projectedDailyDemand = vel30 × trendFactor × (mean of
+      //   weekdayFactors over the NEXT 7 calendar days), rounded
+      //   to 3 decimals; 0 when vel30 = 0.
+      //
+      // Stockout v2: simulate day-by-day starting tomorrow; each
+      //   day d subtracts vel30 × trendFactor × factor[weekday(d)];
+      //   the first day whose cumulative demand >= currentStock
+      //   is the stockout. Capped at 365 days → beyond that both
+      //   v2 fields are null. currentStock <= 0 with vel30 > 0
+      //   mirrors v1's stocked-out rule (0 days, date = now);
+      //   vel30 = 0 → both null (no honest projection).
+      const nowMs = now.getTime();
+      const inWindow = (e: SaleEvent, fromMs: number, toMs: number, toInclusive: boolean) => {
+        const t = e.date.getTime();
+        return t >= fromMs && (toInclusive ? t <= toMs : t < toMs);
+      };
+      const unitsLast30 = allRowEvents
+        .filter((e) => inWindow(e, nowMs - 30 * DAY_MS, nowMs, true))
+        .reduce((sum, e) => sum + e.quantity, 0);
+      const unitsPrior30 = allRowEvents
+        .filter((e) => inWindow(e, nowMs - 60 * DAY_MS, nowMs - 30 * DAY_MS, false))
+        .reduce((sum, e) => sum + e.quantity, 0);
+      const vel30 = unitsLast30 / 30;
+      const velPrior = unitsPrior30 / 30;
+      const trendGrowthPct =
+        velPrior > 0 ? Math.round(((vel30 - velPrior) / velPrior) * 100 * 10) / 10 : null;
+      const trendFactor = velPrior > 0 ? Math.min(2, Math.max(0.5, vel30 / velPrior)) : 1;
+
+      // Daily buckets over the last 90 days (in memory from the
+      // one events scan — no per-row queries).
+      const start90Ms = nowMs - 90 * DAY_MS;
+      const unitsByWeekday = [0, 0, 0, 0, 0, 0, 0];
+      const weekdayOccurrences = [0, 0, 0, 0, 0, 0, 0];
+      for (let d = 0; d < 90; d++) {
+        weekdayOccurrences[new Date(start90Ms + d * DAY_MS).getDay()]++;
+      }
+      const distinctSalesDays = new Set<string>();
+      let units90 = 0;
+      for (const e of allRowEvents) {
+        const t = e.date.getTime();
+        if (t < start90Ms || t > nowMs) continue;
+        units90 += e.quantity;
+        unitsByWeekday[e.date.getDay()] += e.quantity;
+        distinctSalesDays.add(`${e.date.getFullYear()}-${e.date.getMonth()}-${e.date.getDate()}`);
+      }
+      const hasSeasonalHistory = distinctSalesDays.size >= 21 && units90 > 0;
+      let weekdayFactors: number[] = [1, 1, 1, 1, 1, 1, 1];
+      if (hasSeasonalHistory) {
+        const overallDaily = units90 / 90;
+        const raw = unitsByWeekday.map((u, w) =>
+          weekdayOccurrences[w] > 0 && overallDaily > 0 ? u / weekdayOccurrences[w] / overallDaily : 0,
+        );
+        const rawMean = raw.reduce((s, x) => s + x, 0) / 7;
+        if (rawMean > 0) {
+          weekdayFactors = raw.map((x) => Math.round((x / rawMean) * 10000) / 10000);
+        }
+      }
+      const demandBasis: "trend_seasonal" | "velocity" = hasSeasonalHistory ? "trend_seasonal" : "velocity";
+
+      let projectedDailyDemand = 0;
+      if (vel30 > 0) {
+        let next7FactorSum = 0;
+        for (let d = 1; d <= 7; d++) {
+          next7FactorSum += weekdayFactors[new Date(nowMs + d * DAY_MS).getDay()];
+        }
+        projectedDailyDemand = Math.round(vel30 * trendFactor * (next7FactorSum / 7) * 1000) / 1000;
+      }
+
+      let daysOfStockLeftV2: number | null = null;
+      let projectedStockoutDateV2: string | null = null;
+      if (vel30 > 0) {
+        if (row.currentStock <= 0) {
+          daysOfStockLeftV2 = 0;
+          projectedStockoutDateV2 = now.toISOString();
+        } else {
+          let cumulative = 0;
+          for (let d = 1; d <= 365; d++) {
+            const date = new Date(nowMs + d * DAY_MS);
+            cumulative += vel30 * trendFactor * weekdayFactors[date.getDay()];
+            if (cumulative >= row.currentStock) {
+              daysOfStockLeftV2 = d;
+              projectedStockoutDateV2 = date.toISOString();
+              break;
+            }
+          }
+        }
+      }
+
       return {
         productId: row.productId,
         productName: row.productName,
@@ -392,6 +689,12 @@ export class InventoryIntelligenceService {
         dailyVelocity,
         daysOfStockLeft,
         projectedStockoutDate,
+        trendGrowthPct,
+        weekdayFactors,
+        projectedDailyDemand,
+        projectedStockoutDateV2,
+        daysOfStockLeftV2,
+        demandBasis,
       };
     });
     return { windowDays, items, generatedAt: now.toISOString() };

@@ -1,0 +1,40 @@
+833d8401d9725273d4b51f8659c6156a
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PosModule = void 0;
+const common_1 = require("@nestjs/common");
+const pos_controller_1 = require("./pos.controller");
+const pos_service_1 = require("./pos.service");
+const pos_offline_service_1 = require("./pos-offline.service");
+const audit_module_1 = require("../audit/audit.module");
+const fraud_module_1 = require("../fraud/fraud.module");
+const integrations_module_1 = require("../integrations/integrations.module");
+const orders_module_1 = require("../orders/orders.module");
+const commerce_module_1 = require("../commerce/commerce.module");
+/**
+ * EC34 — POS quick-sale. Placement rides IntegrationsModule
+ * (upsertOrder: dedupe + customer + S1 stock hooks), completion
+ * rides OrdersModule (updateOrder transition + EC19-shaped
+ * getOne), pricing rides CommerceModule (the ONE
+ * PromotionsService.evaluateCheckout + DiscountsService.redeem).
+ * OrdersModule itself imports Integrations + Commerce — none of
+ * them imports this module, so the graph stays acyclic.
+ */
+let PosModule = class PosModule {
+};
+exports.PosModule = PosModule;
+exports.PosModule = PosModule = __decorate([
+    (0, common_1.Module)({
+        imports: [integrations_module_1.IntegrationsModule, orders_module_1.OrdersModule, commerce_module_1.CommerceModule, audit_module_1.AuditModule, fraud_module_1.FraudModule],
+        controllers: [pos_controller_1.PosController],
+        providers: [pos_service_1.PosService, pos_offline_service_1.PosOfflineService],
+        exports: [pos_service_1.PosService, pos_offline_service_1.PosOfflineService],
+    })
+], PosModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3Bvcy9wb3MubW9kdWxlLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7OztBQUFBLDJDQUF3QztBQUN4QyxxREFBaUQ7QUFDakQsK0NBQTJDO0FBQzNDLCtEQUEwRDtBQUMxRCx3REFBb0Q7QUFDcEQsd0RBQW9EO0FBQ3BELDZFQUF5RTtBQUN6RSwyREFBdUQ7QUFDdkQsaUVBQTZEO0FBRTdEOzs7Ozs7OztHQVFHO0FBT0ksSUFBTSxTQUFTLEdBQWYsTUFBTSxTQUFTO0NBQUcsQ0FBQTtBQUFaLDhCQUFTO29CQUFULFNBQVM7SUFOckIsSUFBQSxlQUFNLEVBQUM7UUFDTixPQUFPLEVBQUUsQ0FBQyx3Q0FBa0IsRUFBRSw0QkFBWSxFQUFFLGdDQUFjLEVBQUUsMEJBQVcsRUFBRSwwQkFBVyxDQUFDO1FBQ3JGLFdBQVcsRUFBRSxDQUFDLDhCQUFhLENBQUM7UUFDNUIsU0FBUyxFQUFFLENBQUMsd0JBQVUsRUFBRSx1Q0FBaUIsQ0FBQztRQUMxQyxPQUFPLEVBQUUsQ0FBQyx3QkFBVSxFQUFFLHVDQUFpQixDQUFDO0tBQ3pDLENBQUM7R0FDVyxTQUFTLENBQUciLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3Bvcy9wb3MubW9kdWxlLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IE1vZHVsZSB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgUG9zQ29udHJvbGxlciB9IGZyb20gXCIuL3Bvcy5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBQb3NTZXJ2aWNlIH0gZnJvbSBcIi4vcG9zLnNlcnZpY2VcIjtcbmltcG9ydCB7IFBvc09mZmxpbmVTZXJ2aWNlIH0gZnJvbSBcIi4vcG9zLW9mZmxpbmUuc2VydmljZVwiO1xuaW1wb3J0IHsgQXVkaXRNb2R1bGUgfSBmcm9tIFwiLi4vYXVkaXQvYXVkaXQubW9kdWxlXCI7XG5pbXBvcnQgeyBGcmF1ZE1vZHVsZSB9IGZyb20gXCIuLi9mcmF1ZC9mcmF1ZC5tb2R1bGVcIjtcbmltcG9ydCB7IEludGVncmF0aW9uc01vZHVsZSB9IGZyb20gXCIuLi9pbnRlZ3JhdGlvbnMvaW50ZWdyYXRpb25zLm1vZHVsZVwiO1xuaW1wb3J0IHsgT3JkZXJzTW9kdWxlIH0gZnJvbSBcIi4uL29yZGVycy9vcmRlcnMubW9kdWxlXCI7XG5pbXBvcnQgeyBDb21tZXJjZU1vZHVsZSB9IGZyb20gXCIuLi9jb21tZXJjZS9jb21tZXJjZS5tb2R1bGVcIjtcblxuLyoqXG4gKiBFQzM0IOKAlCBQT1MgcXVpY2stc2FsZS4gUGxhY2VtZW50IHJpZGVzIEludGVncmF0aW9uc01vZHVsZVxuICogKHVwc2VydE9yZGVyOiBkZWR1cGUgKyBjdXN0b21lciArIFMxIHN0b2NrIGhvb2tzKSwgY29tcGxldGlvblxuICogcmlkZXMgT3JkZXJzTW9kdWxlICh1cGRhdGVPcmRlciB0cmFuc2l0aW9uICsgRUMxOS1zaGFwZWRcbiAqIGdldE9uZSksIHByaWNpbmcgcmlkZXMgQ29tbWVyY2VNb2R1bGUgKHRoZSBPTkVcbiAqIFByb21vdGlvbnNTZXJ2aWNlLmV2YWx1YXRlQ2hlY2tvdXQgKyBEaXNjb3VudHNTZXJ2aWNlLnJlZGVlbSkuXG4gKiBPcmRlcnNNb2R1bGUgaXRzZWxmIGltcG9ydHMgSW50ZWdyYXRpb25zICsgQ29tbWVyY2Ug4oCUIG5vbmUgb2ZcbiAqIHRoZW0gaW1wb3J0cyB0aGlzIG1vZHVsZSwgc28gdGhlIGdyYXBoIHN0YXlzIGFjeWNsaWMuXG4gKi9cbkBNb2R1bGUoe1xuICBpbXBvcnRzOiBbSW50ZWdyYXRpb25zTW9kdWxlLCBPcmRlcnNNb2R1bGUsIENvbW1lcmNlTW9kdWxlLCBBdWRpdE1vZHVsZSwgRnJhdWRNb2R1bGVdLFxuICBjb250cm9sbGVyczogW1Bvc0NvbnRyb2xsZXJdLFxuICBwcm92aWRlcnM6IFtQb3NTZXJ2aWNlLCBQb3NPZmZsaW5lU2VydmljZV0sXG4gIGV4cG9ydHM6IFtQb3NTZXJ2aWNlLCBQb3NPZmZsaW5lU2VydmljZV0sXG59KVxuZXhwb3J0IGNsYXNzIFBvc01vZHVsZSB7fVxuIl0sInZlcnNpb24iOjN9

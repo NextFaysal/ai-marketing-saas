@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
+import { checkMediaUpload } from "../common/plan-limit-checks";
 import { AuditService } from "../audit/audit.service";
 import { encryptJson } from "../integrations/crypto";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
@@ -25,6 +27,8 @@ import {
 } from "./social.dto";
 import { validateForPlatform, videoOnlyViolation } from "./social-preflight";
 import { SocialLinkService } from "./social-link.service";
+import { PublicMediaService } from "../storage/public-media.service";
+import { storedAssetPublicUrl } from "../storage/media-url";
 import { clampSocialPostPageLimit, decodeSocialPostCursor, encodeSocialPostCursor, socialPostCursorWhere } from "./social-post-cursor";
 import { parseCsv } from "./social-csv";
 
@@ -154,6 +158,11 @@ export class SocialService {
     // LAST param + Optional so existing 2-arg spec constructions
     // keep working; SocialLinkService is a leaf (no cycle).
     @Optional() private readonly links?: SocialLinkService,
+    // RB4/RM5: public-bucket ensure + CDN URL resolution for
+    // public assets. LAST param + Optional — specs that construct
+    // this service positionally keep working, and without it the
+    // behaviour is exactly the pre-R2 token path.
+    @Optional() private readonly publicMedia?: PublicMediaService,
   ) {}
 
   // ---------- serializers (explicit fields only — no credential
@@ -174,7 +183,7 @@ export class SocialService {
     return {
       id: row.id, kind: row.kind, name: row.name, contentType: row.contentType,
       sizeBytes: row.sizeBytes, createdAt: row.createdAt,
-      publicUrl: row.publicToken ? `/public/media/${row.publicToken}` : null,
+      publicUrl: storedAssetPublicUrl(row),
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
       // SU3: library organization fields ride along on every
@@ -375,9 +384,7 @@ export class SocialService {
   ): Promise<void> {
     try {
       for (const userId of [...new Set(userIds)]) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId, userId, type, title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId, userId, type, title, body, conversationId: null }).catch(() => undefined);
       }
     } catch (e) {
       this.logger.warn(`social notification (${type}) failed: ${e instanceof Error ? e.message : "unknown"}`);
@@ -615,6 +622,10 @@ export class SocialService {
     if (!detected || !(SOCIAL_MEDIA_KINDS as readonly string[]).includes(detected.kind)) {
       throw new BadRequestException("শুধু ছবি বা ভিডিও আপলোড করা যাবে।");
     }
+    // GC22 (GB9): plan enforcement — tenant library uploads are
+    // refused when paused / past-due-past-grace, or when the
+    // file would push recorded storage over storageLimitMb.
+    await checkMediaUpload(this.prisma as any, organizationId, bytes.length);
     const assetId = randomUUID();
     const storageKey = `${organizationId}/social/${assetId}.${extForContentType(detected.contentType)}`;
     await MediaStore.fromEnv().put(storageKey, bytes, detected.contentType);
@@ -661,6 +672,10 @@ export class SocialService {
   }) {
     const imageCap = SOCIAL_MEDIA_MAX_BYTES;
     const videoCap = socialVideoMaxBytes();
+    // GC22: fail fast on a commerce block / already-full storage
+    // BEFORE streaming the body in; the exact byte check runs
+    // again post-stream with the real total.
+    await checkMediaUpload(this.prisma as any, organizationId, 0);
     const tempPath = join(tmpdir(), `social-upload-${randomUUID()}`);
     let total = 0;
     let head = Buffer.alloc(0);
@@ -722,6 +737,10 @@ export class SocialService {
       if (total === 0) {
         throw new BadRequestException("ফাঁকা ফাইল আপলোড করা যাবে না।");
       }
+      // GC22: exact storage check with the real byte total —
+      // refusal here leaves no asset row and no stored object
+      // (the temp file is removed by the finally below).
+      await checkMediaUpload(this.prisma as any, organizationId, total);
       const assetId = randomUUID();
       const storageKey = `${organizationId}/social/${assetId}.${extForContentType(detected.contentType)}`;
       const store = MediaStore.fromEnv();
@@ -785,7 +804,15 @@ export class SocialService {
    */
   async createPublicLink(organizationId: string, actorId: string, assetId: string) {
     const asset = await this.getAsset(organizationId, assetId);
-    if (asset.publicToken) return this.serializeAsset(asset);
+    if (asset.publicToken) {
+      // RB4/RM5: a token minted before R2 (or while storage was
+      // down) may point at bytes that are not in the public bucket
+      // yet — heal that here so the CDN URL the serializer now
+      // returns is real. Best-effort: a copy failure must not break
+      // link creation; publishing re-ensures via the same helper.
+      await this.ensureAssetPublicBytes(asset);
+      return this.serializeAsset(asset);
+    }
     const updated = await (this.prisma as any).mediaAsset.update({
       where: { id: asset.id }, data: { publicToken: randomBytes(32).toString("base64url") },
     });
@@ -793,7 +820,31 @@ export class SocialService {
       organizationId, userId: actorId, action: "social.media_public_link_created",
       entityType: "MediaAsset", entityId: asset.id, metadata: { assetId: asset.id },
     });
+    await this.ensureAssetPublicBytes(updated);
     return this.serializeAsset(updated);
+  }
+
+  /**
+   * RB4/RM5: ensure an asset's bytes exist in the public bucket
+   * (PublicMediaService copies them when missing) so the CDN URL
+   * can serve them. Never throws — the token route stays the
+   * fallback, and publish re-ensures. Absent service (older spec
+   * constructions) or local mode: nothing to do.
+   */
+  private async ensureAssetPublicBytes(asset: any): Promise<void> {
+    if (!this.publicMedia || !asset?.storageKey) return;
+    await this.publicMedia
+      .resolvePublicMediaUrl(
+        {
+          organizationId: asset.organizationId,
+          storageKey: asset.storageKey,
+          contentType: asset.contentType,
+          sizeBytes: asset.sizeBytes,
+          createdById: asset.createdById ?? null,
+        },
+        "social",
+      )
+      .catch(() => null);
   }
 
   async removePublicLink(organizationId: string, actorId: string, assetId: string) {

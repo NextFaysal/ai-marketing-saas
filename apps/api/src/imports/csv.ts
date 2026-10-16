@@ -13,6 +13,18 @@ export interface ParsedProductRow {
   category?: string;
   description?: string;
   imageUrl?: string;
+  // GB2 (GC6): optional export-round-trip columns. All undefined for
+  // files that do not carry the new columns (no behaviour change).
+  brand?: string;
+  // AB6 (AX13): English alternate name/description columns.
+  nameEn?: string;
+  descriptionEn?: string;
+  status?: string; // normalized UPPERCASE: DRAFT | ACTIVE | ARCHIVED
+  variantName?: string;
+  variantSku?: string;
+  variantPriceMinor?: bigint;
+  variantStockQuantity?: number;
+  variantCostMinor?: bigint;
 }
 
 export interface CsvRowError { row: number; message: string }
@@ -25,31 +37,53 @@ const HEADER_ALIASES: Record<string, string> = {
   currency: "currency", cost: "cost", unit_cost: "cost",
   stock: "stock", stock_quantity: "stock", quantity: "stock", inventory: "stock",
   category: "category", description: "description", image_url: "imageUrl", image: "imageUrl",
+  name_en: "nameEn", english_name: "nameEn", description_en: "descriptionEn", english_description: "descriptionEn",
+  brand: "brand", status: "status",
+  variant_name: "variantName", variant_sku: "variantSku",
+  variant_price: "variantPrice", variant_stock: "variantStock", variant_cost: "variantCost",
 };
+
+const PRODUCT_STATUSES = ["draft", "active", "archived"];
 
 function moneyOrThrow(value: string, field: string): bigint {
   try { return parseMoneyToMinor(value); } catch { throw new Error(`Invalid ${field}: "${value}"`); }
 }
 
+function cellToRecordString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return String(value).trim();
+}
+
 /**
- * Expected CSV columns (case-insensitive, spaces or underscores):
+ * GB2 (GC6): shared per-record product-row mapping/validation, used by
+ * both the CSV front-end (parseProductsCsv) and the Excel front-end
+ * (parseProductsXlsx). `records` are raw header-keyed records (header
+ * names as they appear after the front-end's header normalization:
+ * trimmed, lowercased, spaces -> underscores); cell values of any type
+ * are stringified (null/undefined -> "", numbers/booleans -> String(v),
+ * strings trimmed) before alias mapping — exactly the discipline the
+ * original CSV-only parser applied to papaparse string cells.
+ *
+ * Expected columns (case-insensitive, spaces or underscores):
  * name (required), price (required), sku, compare_at_price, currency,
- * cost, stock, category, description, image_url
+ * cost, stock, category, description, image_url, plus the optional
+ * GB2 columns brand, status, variant_name, variant_sku, variant_price,
+ * variant_stock, variant_cost, plus the AB6 name_en /
+ * description_en English-alternate columns.
  * Sample file: docs/examples/products-sample.csv
  */
-export function parseProductsCsv(csvText: string): ParseResult {
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true, skipEmptyLines: "greedy", transformHeader: (h) => h.trim().toLowerCase().replace(/\s+/g, "_"),
-  });
+export function parseProductRecords(records: Array<Record<string, unknown>>): ParseResult {
   const rows: ParsedProductRow[] = [];
   const errors: CsvRowError[] = [];
 
-  parsed.data.forEach((raw, idx) => {
+  records.forEach((raw, idx) => {
     const rowNumber = idx + 1;
     const rec: Record<string, string> = {};
-    for (const [key, value] of Object.entries(raw)) {
-      const canonical = HEADER_ALIASES[key];
-      if (canonical) rec[canonical] = typeof value === "string" ? value.trim() : "";
+    for (const [key, value] of Object.entries(raw ?? {})) {
+      const canonical = HEADER_ALIASES[key] ?? HEADER_ALIASES[key.trim().toLowerCase().replace(/\s+/g, "_")];
+      if (canonical) rec[canonical] = cellToRecordString(value);
     }
     try {
       if (!rec.name) throw new Error("Missing required column: name");
@@ -61,6 +95,36 @@ export function parseProductsCsv(csvText: string): ParseResult {
         const n = Number(rec.stock);
         if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid stock: "${rec.stock}"`);
         stockQuantity = n;
+      }
+      // GB2: status — normalized to the UPPERCASE product enum.
+      let status: string | undefined;
+      if (rec.status) {
+        const normalized = rec.status.toLowerCase();
+        if (!PRODUCT_STATUSES.includes(normalized)) {
+          throw new Error(`Invalid status: "${rec.status}" (use ${PRODUCT_STATUSES.join(", ")})`);
+        }
+        status = normalized.toUpperCase();
+      }
+      // GB2: variant columns — any variant_* value requires a name.
+      const hasVariantValue = Boolean(rec.variantName || rec.variantSku || rec.variantPrice || rec.variantStock || rec.variantCost);
+      if (hasVariantValue && !rec.variantName) {
+        throw new Error("variant_name is required when variant columns are used");
+      }
+      let variantPriceMinor: bigint | undefined;
+      if (rec.variantPrice) {
+        variantPriceMinor = moneyOrThrow(rec.variantPrice, "variant_price");
+        if (variantPriceMinor < 0n) throw new Error("variant_price cannot be negative");
+      }
+      let variantStockQuantity: number | undefined;
+      if (rec.variantStock) {
+        const n = Number(rec.variantStock);
+        if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid variant_stock: "${rec.variantStock}"`);
+        variantStockQuantity = n;
+      }
+      let variantCostMinor: bigint | undefined;
+      if (rec.variantCost) {
+        variantCostMinor = moneyOrThrow(rec.variantCost, "variant_cost");
+        if (variantCostMinor < 0n) throw new Error("variant_cost cannot be negative");
       }
       rows.push({
         rowNumber,
@@ -74,13 +138,29 @@ export function parseProductsCsv(csvText: string): ParseResult {
         category: rec.category || undefined,
         description: rec.description || undefined,
         imageUrl: rec.imageUrl || undefined,
+        brand: rec.brand || undefined,
+        nameEn: rec.nameEn || undefined,
+        descriptionEn: rec.descriptionEn || undefined,
+        status,
+        variantName: rec.variantName || undefined,
+        variantSku: rec.variantSku || undefined,
+        variantPriceMinor,
+        variantStockQuantity,
+        variantCostMinor,
       });
     } catch (e) {
       errors.push({ row: rowNumber, message: e instanceof Error ? e.message : "Invalid row" });
     }
   });
 
-  return { rows, errors, totalRows: parsed.data.length };
+  return { rows, errors, totalRows: records.length };
+}
+
+export function parseProductsCsv(csvText: string): ParseResult {
+  const parsed = Papa.parse<Record<string, string>>(csvText, {
+    header: true, skipEmptyLines: "greedy", transformHeader: (h) => h.trim().toLowerCase().replace(/\s+/g, "_"),
+  });
+  return parseProductRecords(parsed.data as Array<Record<string, unknown>>);
 }
 
 // ---------------- Shared CSV writing (exports) ----------------

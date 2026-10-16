@@ -1,6 +1,6 @@
 import { Type } from "class-transformer";
 import {
-  IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
+  IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
 } from "class-validator";
 
 /**
@@ -41,5 +41,42 @@ export class CreatePosSaleDto {
   @IsOptional() @IsString() @MaxLength(40) customerPhone?: string;
   @IsOptional() @IsString() @MaxLength(120) customerName?: string;
   @IsOptional() @IsString() @MaxLength(80) couponCode?: string;
+  /** AB1 (AX1): loyalty points staff redeem for the
+   * phone-identified customer. A walk-in without a phone has no
+   * verified identity and cannot redeem (same basis as GB7's
+   * customer-conditioned coupons). */
+  @IsOptional() @IsInt() @Min(0) @Max(1000000) loyaltyPoints?: number;
+  /** AB2 (AX3): a gift-card code to redeem against this sale.
+   * Resolved server-side by GiftCardsService.resolveForCheckout;
+   * any refusal fails the sale BEFORE placement (a gift card can
+   * never buy a gift-card product). */
+  @IsOptional() @IsString() @MaxLength(32) giftCardCode?: string;
+  /** AB4 (AX6): client-generated idempotency key. When present
+   * (and IdempotencyService is wired), a retry with the same key
+   * replays the FIRST sale's stored response instead of placing
+   * a duplicate order — the offline-sync path depends on this. */
+  @IsOptional() @IsString() @MaxLength(80) idempotencyKey?: string;
   @ValidateNested() @Type(() => PosPaymentDto) payment!: PosPaymentDto;
+}
+
+/** AB4 (AX6): one queued offline sale arriving for sync. The
+ * `sale` body is exactly a CreatePosSaleDto — it posts through
+ * PosService.createSale (the ONE door); localTotalMinor is the
+ * client's own computed total in paisa, kept for variance
+ * reporting only (server totals are truth). */
+export class OfflineSyncDto {
+  @IsString() @MaxLength(80) idempotencyKey!: string;
+  @IsOptional() @IsString() @MaxLength(80) localReceiptNo?: string;
+  @IsOptional() @IsInt() @Min(0) localTotalMinor?: number;
+  @ValidateNested() @Type(() => CreatePosSaleDto) sale!: CreatePosSaleDto;
+}
+
+export class RepostOfflineSyncDto {
+  /** force = post even when stock is now insufficient (the
+   * merchant-sanctioned overdraw — see PosService forceStock). */
+  @IsOptional() @IsBoolean() force?: boolean;
+}
+
+export class DiscardOfflineSyncDto {
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
 }

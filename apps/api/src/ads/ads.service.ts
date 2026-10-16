@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { isMemberConnectionDenied } from "../common/permission-catalog";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { CreateAdAccountDto, ManualMetricDto, ImportAdCsvDto, MetaConnectDto, MetaSyncDto } from "./ads.dto";
@@ -188,9 +189,7 @@ export class AdsService {
       const title = `Ad Account Sync ব্যর্থ: ${account.name} (${account.platform})`;
       const body = `“${account.name}” (${account.platform}) Ad Account-এর Sync ব্যর্থ হয়েছে। ত্রুটি: ${excerpt} Ad Accounts পেজ থেকে “পুনরায় কানেক্ট করুন” দিয়ে আবার কানেক্ট করে Sync চেষ্টা করুন — Token-এর মেয়াদ শেষ হয়ে গেলে নতুন Token লাগতে পারে।`;
       for (const userId of recipients) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId, userId, type: "ad_account_sync_failed", title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId, userId, type: "ad_account_sync_failed", title, body, conversationId: null }).catch(() => undefined);
       }
       await this.audit.log({
         organizationId, userId: undefined, action: "ad_account.sync_failed_notified",
@@ -437,9 +436,7 @@ export class AdsService {
       .filter((m) => ["OWNER", "ADMIN"].includes(m.role))
       .map((m) => m.userId as string))];
     for (const userId of recipients) {
-      await (this.prisma as any).agentNotification.create({
-        data: { organizationId, userId, type, title, body, conversationId: null },
-      }).catch(() => undefined);
+      await createAgentNotification(this.prisma as any, { organizationId, userId, type, title, body, conversationId: null }).catch(() => undefined);
     }
     return recipients.length;
   }

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ImportsService } from "./imports.service";
-import { ImportProductsCsvDto } from "./imports.dto";
+import { ImportProductsCsvDto, ImportProductsXlsxDto } from "./imports.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
@@ -14,6 +14,12 @@ export class ImportsController {
   @Post("products") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   importProducts(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportProductsCsvDto) {
     return this.imports.importProducts(orgId, user.userId, dto);
+  }
+
+  /** GB2 (GC6 §3): Excel (.xlsx) product import, base64 body. */
+  @Post("products/xlsx") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
+  importProductsXlsx(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportProductsXlsxDto) {
+    return this.imports.importProductsXlsx(orgId, user.userId, dto);
   }
 
   /** Milestone 65: bulk order import (one row = one order). */

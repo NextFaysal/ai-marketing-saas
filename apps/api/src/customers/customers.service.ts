@@ -3,8 +3,23 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { RiskService } from "../orders/risk.service";
 import { minorToMajor, toCsv } from "../imports/csv";
+import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { CustomFieldsService, renderCustomFieldValue } from "../crm/custom-fields.service";
 import { ErasureService } from "./erasure.service";
+import {
+  CrmSegmentsService, computeCustomerOrderStats, customerTagsOf, segmentFactsOf, segmentMatches,
+} from "./crm-segments.service";
+
+export interface CustomerListOptions {
+  hasDue?: boolean;
+  /** GB6 (GC15): all | first | repeat | vip | blocked. */
+  customerType?: string;
+  /** GB6 (GC15): exact stored-tag match. */
+  tag?: string;
+  /** GB6 (GC15): CrmSegment id — rows are filtered by the
+   * segment's criteria (shared evaluator). */
+  segmentId?: string;
+}
 
 const customerName = (c: any) => [c.firstName, c.lastName].filter(Boolean).join(" ") || c.name || null;
 
@@ -32,7 +47,15 @@ export class CustomersService {
     // for GDPR customers/redact). Optional + fallback so existing
     // positional spec constructions keep working.
     @Optional() private readonly erasure?: ErasureService,
+    // GB6 (GC15): segment storage + the SHARED criteria
+    // evaluator. Optional + local fallback so existing positional
+    // spec constructions keep working.
+    @Optional() private readonly segments?: CrmSegmentsService,
   ) {}
+
+  private segmentsSvc(): CrmSegmentsService {
+    return this.segments ?? new CrmSegmentsService(this.prisma as any, this.audit);
+  }
 
   /** CP6: GDPR deep erasure — see ErasureService for the exact
    *  erase-vs-keep contract. OWNER/ADMIN only at the route. */
@@ -41,7 +64,7 @@ export class CustomersService {
     return svc.eraseCustomer(organizationId, actorId, customerId);
   }
 
-  async list(organizationId: string, q?: string, options?: { hasDue?: boolean }) {
+  async list(organizationId: string, q?: string, options?: CustomerListOptions) {
     return this.rowsWithStats(organizationId, q, 100, options);
   }
 
@@ -139,8 +162,13 @@ export class CustomersService {
   }
 
   /** The list computation, shared verbatim by list() (first 100)
-   * and the C3 CSV export (the full fetched window of 500). */
-  private async rowsWithStats(organizationId: string, q: string | undefined, limit: number, options?: { hasDue?: boolean }) {
+   * and the C3 CSV export (the full fetched window of 500).
+   * GB6 (GC15): the per-customer order scan became the SHARED
+   * grouped computation in crm-segments.service.ts — orderCount /
+   * totalSpentMinor keep the labelled "orders excluding
+   * cancelled" meaning, and each row additionally carries the
+   * EC33 sold-bucket figures. Staff notes are NEVER listed. */
+  private async rowsWithStats(organizationId: string, q: string | undefined, limit: number, options?: CustomerListOptions) {
     const rows = await (this.prisma as any).customer.findMany({
       where: { organizationId, mergedIntoId: null }, orderBy: { createdAt: "desc" }, take: 500,
     });
@@ -153,11 +181,38 @@ export class CustomersService {
       const dueIds = await this.dueCustomerIds(organizationId);
       filtered = filtered.filter((c: any) => dueIds.has(String(c.id)));
     }
-    const page = filtered.slice(0, limit);
-    const withStats = await Promise.all(page.map(async (c: any) => {
-      const orders = await (this.prisma as any).order.findMany({
-        where: { organizationId, customerId: c.id, status: { not: "cancelled" } }, take: 200,
+    // GB6: row-field filters (in memory, same window discipline).
+    const type = String(options?.customerType ?? "all");
+    if (type === "vip") filtered = filtered.filter((c: any) => !!c.isVip);
+    if (type === "blocked") filtered = filtered.filter((c: any) => !!c.isBlocked);
+    const tagNeedle = options?.tag?.trim();
+    if (tagNeedle) filtered = filtered.filter((c: any) => customerTagsOf(c).includes(tagNeedle));
+    // GB6: filters that need derived stats (first/repeat,
+    // segment membership) compute stats for the WHOLE filtered
+    // window (≤500) BEFORE slicing; every other case keeps the
+    // cheap page-only stats path.
+    let stats: Map<string, import("./crm-segments.service").CustomerOrderStats> | null = null;
+    if (type === "first" || type === "repeat" || options?.segmentId) {
+      stats = await computeCustomerOrderStats(this.prisma as any, organizationId, filtered.map((c: any) => String(c.id)));
+    }
+    if (options?.segmentId) {
+      const segment = await this.segmentsSvc().findSegment(organizationId, options.segmentId);
+      filtered = filtered.filter((c: any) =>
+        segmentMatches(segment.criteria ?? {}, segmentFactsOf(c, stats?.get(String(c.id)))));
+    }
+    if (type === "first" || type === "repeat") {
+      filtered = filtered.filter((c: any) => {
+        const isRepeat = stats?.get(String(c.id))?.isRepeat ?? false;
+        // first = NOT repeat (soldOrderCount < 2, incl. zero).
+        return type === "repeat" ? isRepeat : !isRepeat;
       });
+    }
+    const page = filtered.slice(0, limit);
+    if (!stats) {
+      stats = await computeCustomerOrderStats(this.prisma as any, organizationId, page.map((c: any) => String(c.id)));
+    }
+    const withStats = page.map((c: any) => {
+      const s = stats!.get(String(c.id));
       return {
         id: c.id, name: customerName(c), firstName: c.firstName, lastName: c.lastName,
         phone: c.phone, email: c.email, source: c.source, createdAt: c.createdAt,
@@ -165,10 +220,20 @@ export class CustomersService {
         customFields: c.customFields ?? null,
         // EC24d: wholesale flag for the customers list/toggle.
         isWholesale: !!c.isWholesale,
-        orderCount: orders.length,
-        totalSpentMinor: String(orders.reduce((s: bigint, o: any) => s + BigInt(o.totalMinor), 0n)),
+        // GB6 (GC15): CRM depth on the row — tags/VIP/block are
+        // staff-facing list data; notes stay detail-only.
+        tags: customerTagsOf(c),
+        isVip: !!c.isVip,
+        isBlocked: !!c.isBlocked,
+        orderCount: s?.orderCount ?? 0,
+        totalSpentMinor: String(s?.totalSpentMinor ?? 0n),
+        // GB6: EC33 sold bucket (delivered-proven orders only).
+        soldOrderCount: s?.soldOrderCount ?? 0,
+        lifetimeValueMinor: String(s?.lifetimeValueMinor ?? 0n),
+        aovMinor: s?.aovMinor ?? null,
+        isRepeat: s?.isRepeat ?? false,
       };
-    }));
+    });
     // ON7 (additive): per-row due for the PAGE's customers (bulk,
     // two queries) + the credit limit, serialized as string|null.
     const dueByCustomer = await this.dueMinorByCustomer(organizationId, page.map((c: any) => String(c.id))).catch(() => new Map<string, bigint>());
@@ -176,6 +241,9 @@ export class CustomersService {
       ...row,
       dueMinor: String(dueByCustomer.get(String(row.id)) ?? 0n),
       creditLimitMinor: page[i]?.creditLimitMinor != null ? String(page[i].creditLimitMinor) : null,
+      // AB5 (AX7): B2B group + net terms on the list row.
+      groupId: page[i]?.groupId ?? null,
+      creditTermsDays: Number(page[i]?.creditTermsDays ?? 0) || 0,
     }));
   }
 
@@ -199,7 +267,7 @@ export class CustomersService {
       const defs = await this.customFields.activeDefs(organizationId, "customer");
       if (defs.length) {
         headers.push(...defs.map((d: any) => d.label));
-        body.forEach((row, i) => {
+        body.forEach((row: any[], i: number) => {
           const cf = (rows[i] as any).customFields ?? {};
           for (const d of defs as any[]) row.push(renderCustomFieldValue(cf[d.key]));
         });
@@ -225,6 +293,20 @@ export class CustomersService {
     isWholesale?: boolean;
     /** ON7: credit limit in minor units. String = set, null = clear. */
     creditLimitMinor?: string | null;
+    /** GB6 (GC15): staff tags — wholesale REPLACE (null clears). */
+    tags?: string[] | null;
+    /** GB6 (GC15): STAFF-ONLY internal note (null clears). */
+    notes?: string | null;
+    /** GB6 (GC15): VIP flag. */
+    isVip?: boolean;
+    /** GB6 (GC15): record-level block (checkout gate enforces). */
+    isBlocked?: boolean;
+    /** GB6 (GC15): staff-only block reason (null clears). */
+    blockedReason?: string | null;
+    /** AB5 (AX7): B2B customer group id (null clears). */
+    groupId?: string | null;
+    /** AB5 (AX7): net terms in days, 0..90. */
+    creditTermsDays?: number;
   }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
     if (!customer) throw new NotFoundException("Customer not found in this organization");
@@ -234,6 +316,30 @@ export class CustomersService {
     if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
     if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
     if (dto.isWholesale !== undefined) data.isWholesale = !!dto.isWholesale;
+    // AB5 (AX7): B2B group + net terms. groupId must name a
+    // group OF THIS ORG (null clears); creditTermsDays is any
+    // integer 0..90 (UI vocabulary 0|7|14|30).
+    if (dto.groupId !== undefined) {
+      if (dto.groupId === null || dto.groupId === "") {
+        data.groupId = null;
+      } else {
+        const groupTable = (this.prisma as any).customerGroup;
+        const group = groupTable?.findFirst
+          ? await groupTable.findFirst({ where: { id: String(dto.groupId), organizationId } }).catch(() => null)
+          : null;
+        if (!group) {
+          throw new BadRequestException("কাস্টমার গ্রুপটি পাওয়া যায়নি — এই সংস্থার একটি গ্রুপ বেছে নিন");
+        }
+        data.groupId = String(dto.groupId);
+      }
+    }
+    if (dto.creditTermsDays !== undefined) {
+      const terms = Number(dto.creditTermsDays);
+      if (!Number.isInteger(terms) || terms < 0 || terms > 90) {
+        throw new BadRequestException("ক্রেডিটের মেয়াদ ০–৯০ দিনের মধ্যে একটি পূর্ণসংখ্যা হতে হবে");
+      }
+      data.creditTermsDays = terms;
+    }
     if (dto.creditLimitMinor !== undefined) {
       if (dto.creditLimitMinor === null) {
         data.creditLimitMinor = null;
@@ -254,12 +360,80 @@ export class CustomersService {
         throw new BadRequestException("Custom fields are not available in this deployment");
       }
     }
+    // GB6 (GC15): CRM depth. Each change gets its OWN audit
+    // action, and the metadata NEVER carries content: tags log
+    // only the count, notes only the length, the block only the
+    // flag — never the note text or the block reason.
+    const gb6Audits: { action: string; metadata: Record<string, unknown> }[] = [];
+    if (dto.tags !== undefined) {
+      if (dto.tags === null) {
+        data.tags = [];
+        gb6Audits.push({ action: "customer.tags_updated", metadata: { count: 0 } });
+      } else {
+        // Wholesale REPLACE with the OrdersService.setTags
+        // discipline: array of at most 10 tags, each trimmed
+        // 1..30 chars, deduped; anything else is a 400.
+        if (!Array.isArray(dto.tags)) throw new BadRequestException("tags একটি তালিকা (array) হতে হবে");
+        if (dto.tags.length > 10) throw new BadRequestException("সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে");
+        const tags: string[] = [];
+        for (const raw of dto.tags) {
+          const tag = String(raw ?? "").trim();
+          if (tag.length < 1 || tag.length > 30) {
+            throw new BadRequestException("প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে");
+          }
+          if (!tags.includes(tag)) tags.push(tag);
+        }
+        data.tags = tags;
+        gb6Audits.push({ action: "customer.tags_updated", metadata: { count: tags.length } });
+      }
+    }
+    if (dto.notes !== undefined) {
+      if (dto.notes === null) {
+        data.notes = null;
+        gb6Audits.push({ action: "customer.notes_updated", metadata: { length: 0 } });
+      } else {
+        const notes = String(dto.notes);
+        if (notes.length > 10000) throw new BadRequestException("নোট সর্বোচ্চ ১০,০০০ অক্ষরের হতে হবে");
+        data.notes = notes;
+        gb6Audits.push({ action: "customer.notes_updated", metadata: { length: notes.length } });
+      }
+    }
+    if (dto.isVip !== undefined) {
+      data.isVip = !!dto.isVip;
+      gb6Audits.push({ action: "customer.vip_updated", metadata: { isVip: data.isVip } });
+    }
+    if (dto.isBlocked !== undefined) {
+      data.isBlocked = !!dto.isBlocked;
+      // Clearing the block also clears the (staff-only) reason.
+      if (!data.isBlocked) data.blockedReason = null;
+      gb6Audits.push({ action: "customer.block_updated", metadata: { isBlocked: data.isBlocked } });
+    }
+    if (dto.blockedReason !== undefined && data.isBlocked !== false) {
+      if (dto.blockedReason === null) {
+        data.blockedReason = null;
+      } else {
+        const reason = String(dto.blockedReason).trim();
+        if (reason.length > 300) throw new BadRequestException("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে");
+        data.blockedReason = reason || null;
+      }
+    }
     if (!Object.keys(data).length) return this.detail(organizationId, customerId);
     await (this.prisma as any).customer.update({ where: { id: customerId }, data });
-    await this.audit.log({
-      organizationId, userId: actorId, action: "customer.updated", entityType: "Customer", entityId: customerId,
-      metadata: { fields: Object.keys(data) },
-    });
+    // The classic "customer.updated" audit covers only the
+    // pre-GB6 fields; GB6 fields audit under their own actions.
+    const classicFields = Object.keys(data).filter((k) => !["tags", "notes", "isVip", "isBlocked", "blockedReason"].includes(k));
+    if (classicFields.length) {
+      await this.audit.log({
+        organizationId, userId: actorId, action: "customer.updated", entityType: "Customer", entityId: customerId,
+        metadata: { fields: classicFields },
+      });
+    }
+    for (const entry of gb6Audits) {
+      await this.audit.log({
+        organizationId, userId: actorId, action: entry.action, entityType: "Customer", entityId: customerId,
+        metadata: entry.metadata,
+      });
+    }
     return this.detail(organizationId, customerId);
   }
 
@@ -272,7 +446,7 @@ export class CustomersService {
    * credit — available may go negative; the true signed value is
    * returned, never floored).
    */
-  async getKhata(organizationId: string, customerId: string) {
+  async getKhata(organizationId: string, customerId: string, opts?: { overdueOnly?: boolean }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
     if (!customer) throw new NotFoundException("এই সংগঠনে কাস্টমার পাওয়া যায়নি।");
     const effective = (o: any) => new Date(o.placedAt ?? o.createdAt ?? 0).getTime();
@@ -303,10 +477,20 @@ export class CustomersService {
     const allIds = [...new Set([...page, ...openOrders].map((o: any) => String(o.id)))];
     const sums = await this.approvedSumsByOrder(organizationId, allIds);
 
-    const orders = page.map((o: any) => {
+    // AB5 (AX7): per-order credit due date + overdue flag. An
+    // order is overdue when it still has due > 0 AND its
+    // creditDueDate (the net-terms snapshot stamped at
+    // placement) is before the START of today, Asia/Dhaka —
+    // an order due today is not yet overdue.
+    const dhakaTodayStart = dhakaDayStartUtc(new Date());
+    const pageOrders = page.map((o: any) => {
       const total = bigOrZero(o.totalMinor ?? 0);
       const paidRaw = sums.get(String(o.id)) ?? 0n;
       const paid = paidRaw > total ? total : paidRaw;
+      const due = total - paid;
+      const creditDueDate = o.creditDueDate ? new Date(o.creditDueDate) : null;
+      const overdue =
+        due > 0n && creditDueDate != null && !Number.isNaN(creditDueDate.getTime()) && creditDueDate.getTime() < dhakaTodayStart.getTime();
       return {
         id: String(o.id),
         number: o.externalNumber ?? o.externalId ?? String(o.id),
@@ -314,9 +498,14 @@ export class CustomersService {
         status: o.status, source: o.source,
         totalMinor: String(total),
         paidMinor: String(paid),
-        dueMinor: String(total - paid),
+        dueMinor: String(due),
+        creditDueDate: creditDueDate && !Number.isNaN(creditDueDate.getTime()) ? creditDueDate.toISOString() : null,
+        overdue,
       };
     });
+    // AB5 (AX7): overdueOnly narrows the PAGE orders to the
+    // overdue ones; totals/aging below stay over ALL orders.
+    const orders = opts?.overdueOnly ? pageOrders.filter((o: any) => o.overdue) : pageOrders;
 
     let totalDue = 0n;
     const aging = { d0_7: 0n, d8_15: 0n, d16_30: 0n, d30plus: 0n };
@@ -335,6 +524,9 @@ export class CustomersService {
     const limit: bigint | null = customer.creditLimitMinor != null ? bigOrZero(customer.creditLimitMinor) : null;
     return {
       customerId: String(customer.id),
+      // AB5 (AX7): the customer's net terms (days) — existing
+      // fields below are unchanged.
+      creditTermsDays: Number(customer.creditTermsDays ?? 0) || 0,
       orders,
       ordersTruncated,
       duesTruncated,
@@ -400,8 +592,20 @@ export class CustomersService {
       storeIdentities,
       customer: {
         ...customer, name: customerName(customer),
+        // GB6 (GC15): CRM depth, explicit — tags normalized to
+        // an array; notes/blockedReason are staff-only and live
+        // ONLY on this staff detail payload.
+        tags: customerTagsOf(customer),
+        notes: customer.notes ?? null,
+        isVip: !!customer.isVip,
+        isBlocked: !!customer.isBlocked,
+        blockedReason: customer.blockedReason ?? null,
         // ON7: BigInt serialized as string|null (additive field).
         creditLimitMinor: customer.creditLimitMinor != null ? String(customer.creditLimitMinor) : null,
+        // AB5 (AX7): B2B group + net terms (also on the spread
+        // above; made explicit so older rows read as null / 0).
+        groupId: customer.groupId ?? null,
+        creditTermsDays: Number(customer.creditTermsDays ?? 0) || 0,
       },
       orders: orders.map((o: any) => ({
         ...o,

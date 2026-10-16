@@ -66,5 +66,11 @@ export class ReceivePurchaseOrderDto {
  * enforced by the service with a Bengali 400 (same discipline as
  * the tax settings DTO); the DTO only pins the integer type. */
 export class UpdateInventorySettingsDto {
-  @IsInt() leadTimeDays!: number;
+  // GB2 (GC7): partial — the settings row now also carries the
+  // backorder switch and the cart-reservation window; any subset
+  // may be sent (the service validates ranges + audits the
+  // changed field names only).
+  @IsOptional() @IsInt() leadTimeDays?: number;
+  @IsOptional() @IsBoolean() allowBackorder?: boolean;
+  @IsOptional() @IsInt() reserveMinutes?: number;
 }

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatAge, slaStageLabel } from "@/lib/orders-on5";
+import { summarizeAllocations, type AllocationLike } from "@/lib/warehouse-ab3";
 
 interface BoardLine { orderItemId: string; quantity: number; packed?: boolean; name: string }
 interface Fulfillment {
@@ -17,7 +18,12 @@ interface WaveRow {
   id: string; status: string; note?: string | null; createdAt: string; closedAt?: string | null;
   progress: { total: number; picked: number };
 }
-interface WaveOrderRow { id: string; orderId: string; orderNumber: string | null; status: string | null; pickedAt: string | null }
+interface WaveOrderRow {
+  id: string; orderId: string; orderNumber: string | null; status: string | null; pickedAt: string | null;
+  // AB3 (AX4): order-level allocation labels from getWave
+  // (active rows only) — shown as warehouse — bin ×qty chips.
+  allocations?: AllocationLike[];
+}
 interface WaveDetail extends WaveRow { orders: WaveOrderRow[] }
 interface SuggestionGroup { key: string; label: string; count: number; orderIds: string[] }
 interface EscalationRow {
@@ -72,6 +78,12 @@ export default function DispatchBoardPage() {
   const [fsError, setFsError] = useState("");
   const [fsNotice, setFsNotice] = useState("");
   const [fsBusy, setFsBusy] = useState(false);
+  // GB5 (GC14): RTO report state.
+  const [rto, setRto] = useState<any>(null);
+  const [rtoError, setRtoError] = useState("");
+  const [rtoFrom, setRtoFrom] = useState("");
+  const [rtoTo, setRtoTo] = useState("");
+  const [rtoBusy, setRtoBusy] = useState(false);
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -178,8 +190,22 @@ export default function DispatchBoardPage() {
     } catch (e) { setFsError(e instanceof Error ? e.message : "SLA সেটিংস লোড করা যায়নি"); }
   }, []);
 
-  useEffect(() => { void loadWaves(); void loadSuggestions(); void loadEscalations(); void loadFsSettings(); },
-    [loadWaves, loadSuggestions, loadEscalations, loadFsSettings]);
+  const loadRto = useCallback(async (from?: string, to?: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setRtoBusy(true); setRtoError("");
+    try {
+      const qs = new URLSearchParams();
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const q = qs.toString();
+      const data = await apiFetch<any>(`/organizations/${orgId}/courier/rto-report${q ? `?${q}` : ""}`);
+      setRto(data);
+    } catch (e) { setRtoError(e instanceof Error ? e.message : "RTO রিপোর্ট লোড করা যায়নি"); }
+    finally { setRtoBusy(false); }
+  }, []);
+
+  useEffect(() => { void loadWaves(); void loadSuggestions(); void loadEscalations(); void loadFsSettings(); void loadRto(); },
+    [loadWaves, loadSuggestions, loadEscalations, loadFsSettings, loadRto]);
 
   async function loadWaveDetail(waveId: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -438,6 +464,13 @@ export default function DispatchBoardPage() {
                                 <span className="font-medium">#{o.orderNumber ?? o.orderId.slice(0, 8)}</span>
                                 {o.status ? <span className="ml-2 text-xs text-slate-500">{o.status}</span> : null}
                                 {o.pickedAt ? <span className="ml-2 text-xs font-semibold text-green-700">পিক হয়েছে · {new Date(o.pickedAt).toLocaleString("bn-BD")}</span> : null}
+                                {summarizeAllocations(o.allocations).length > 0 ? (
+                                  <span className="mt-1 flex flex-wrap gap-1">
+                                    {summarizeAllocations(o.allocations).map((chip) => (
+                                      <span key={chip.key} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{chip.label} ×{chip.qty}</span>
+                                    ))}
+                                  </span>
+                                ) : null}
                               </span>
                               {w.status === "open" ? (
                                 <span className="flex gap-2">
@@ -565,6 +598,52 @@ export default function DispatchBoardPage() {
             )}
           </div>
         ) : null}
+
+        {/* GB5 (GC14): RTO report — per provider, booked-cohort. */}
+        <div className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">↩️ RTO রিপোর্ট — ফেরত আসা পার্সেল</h2>
+            <span className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">থেকে <input type="date" className="input w-auto" value={rtoFrom} onChange={(e) => setRtoFrom(e.target.value)} /></label>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">পর্যন্ত <input type="date" className="input w-auto" value={rtoTo} onChange={(e) => setRtoTo(e.target.value)} /></label>
+              <button type="button" className="btn-secondary btn-sm" disabled={rtoBusy} onClick={() => void loadRto(rtoFrom || undefined, rtoTo || undefined)}>{rtoBusy ? "লোড হচ্ছে..." : "দেখুন"}</button>
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            বুকিংয়ের তারিখ অনুযায়ী হিসাব (ডিফল্ট: শেষ ৩০ দিন)। RTO হার = ফেরত ÷ বুকিং। গড় ফেরত-সময় শুধু সেই পার্সেলগুলো থেকে হিসাব হয় যাদের বুকিং ও ফেরত — দুটো ঘটনাই GC14 ইভেন্ট লগে আছে (n দেখানো হয়েছে); আগের পার্সেলের সময় আন্দাজ করা হয় না।
+            যেসব ফেরত পার্সেলের কাজ বাকি, সেগুলো Orders পেজের &quot;RTO — ফেরত পার্সেল দেখা বাকি&quot; কিউতে পাবেন।
+          </p>
+          {rtoError ? <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{rtoError}</p> : null}
+          {rto ? (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-slate-500">
+                    <th className="py-2 pr-3">কুরিয়ার</th>
+                    <th className="py-2 pr-3">বুক হয়েছে</th>
+                    <th className="py-2 pr-3">ডেলিভারি হয়েছে</th>
+                    <th className="py-2 pr-3">ফেরত (RTO)</th>
+                    <th className="py-2 pr-3">RTO হার</th>
+                    <th className="py-2">গড় ফেরত-সময়</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...(rto.providers ?? []), ...(rto.totals ? [{ ...rto.totals, provider: "মোট" }] : [])].map((row: any) => (
+                    <tr key={row.provider} className={`border-b last:border-0 ${row.provider === "মোট" ? "font-semibold" : ""}`}>
+                      <td className="py-2 pr-3">{row.provider === "steadfast" ? "Steadfast" : row.provider === "pathao" ? "Pathao" : row.provider === "redx" ? "RedX" : row.provider === "ecourier" ? "eCourier" : row.provider}</td>
+                      <td className="py-2 pr-3">{row.booked}</td>
+                      <td className="py-2 pr-3">{row.delivered}</td>
+                      <td className="py-2 pr-3">{row.returned}</td>
+                      <td className="py-2 pr-3">{row.rtoRatePct != null ? `${row.rtoRatePct}%` : "—"}</td>
+                      <td className="py-2">{row.avgDaysToReturn != null ? `${row.avgDaysToReturn} দিন (n=${row.timingN})` : `— (n=${row.timingN ?? 0})`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(rto.providers ?? []).length === 0 ? <p className="mt-2 text-sm text-slate-500">এই সময়ে কোনো পার্সেল বুক হয়নি।</p> : null}
+            </div>
+          ) : rtoBusy ? <p className="mt-2 text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+        </div>
       </div>
     </div>
   );

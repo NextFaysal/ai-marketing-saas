@@ -1,5 +1,6 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { ToolsService } from "./tools.service";
 import { EmailProvider } from "../messaging/email.provider";
@@ -110,9 +111,7 @@ export class ProactiveService {
   }
 
   private async notify(orgId: string, userId: string, type: string, title: string, body: string) {
-    await this.p().agentNotification.create({
-      data: { organizationId: orgId, userId, type, title, body: body.slice(0, 1800), conversationId: null },
-    });
+    await createAgentNotification(this.p(), { organizationId: orgId, userId, type, title, body: body.slice(0, 1800), conversationId: null });
   }
 
   /**

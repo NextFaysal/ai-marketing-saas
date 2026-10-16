@@ -45,8 +45,12 @@ export async function computeIntakeWarnings(
     }
   }
 
-  // Same phone under a materially different customer name.
-  if (phone && input.name) {
+  // Phone-matched customer scan — loaded whenever a phone is
+  // present (GB6: the blocked-record check needs it even when
+  // no name was supplied), and reused by the duplicate-name
+  // check below.
+  let matchedCustomers: any[] = [];
+  if (phone) {
     try {
       const key = bdPhoneMatchKey(phone);
       if (key && prisma?.customer?.findMany) {
@@ -54,19 +58,31 @@ export async function computeIntakeWarnings(
           where: { organizationId: orgId },
           take: 5000,
         }).catch(() => [])) ?? []);
-        for (const c of customers) {
-          if (bdPhoneMatchKey(c.phone ?? null) !== key) continue;
-          const storedName = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
-          if (storedName && namesMateriallyDifferent(storedName, input.name)) {
-            warnings.push({
-              key: "duplicate_customer_phone",
-              label: `এই নম্বরে আগে অন্য নামে ("${storedName}") গ্রাহক আছেন`,
-            });
-            break;
-          }
-        }
+        matchedCustomers = customers.filter((c: any) => bdPhoneMatchKey(c.phone ?? null) === key);
       }
-    } catch { /* advisory only */ }
+    } catch { matchedCustomers = []; /* advisory only */ }
+  }
+
+  // GB6 (GC15): a staff-blocked customer record on this phone.
+  if (matchedCustomers.some((c: any) => c?.isBlocked === true)) {
+    warnings.push({
+      key: "customer_blocked",
+      label: "এই গ্রাহককে ব্লক করা হয়েছে — অর্ডার দেওয়ার আগে যাচাই করুন",
+    });
+  }
+
+  // Same phone under a materially different customer name.
+  if (phone && input.name) {
+    for (const c of matchedCustomers) {
+      const storedName = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
+      if (storedName && namesMateriallyDifferent(storedName, input.name)) {
+        warnings.push({
+          key: "duplicate_customer_phone",
+          label: `এই নম্বরে আগে অন্য নামে ("${storedName}") গ্রাহক আছেন`,
+        });
+        break;
+      }
+    }
   }
 
   const parsed = parseBdAddress(input.addressText ?? "");

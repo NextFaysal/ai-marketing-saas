@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { resolveImageProvider } from "../ai/images/image.factory";
+import { storedAssetPublicUrl } from "../storage/media-url";
 import { SocialImportService } from "./social-import.service";
 import { formatMinor } from "@repo/contracts";
 
@@ -146,7 +147,7 @@ export class SocialImageService {
     return {
       id: row.id, kind: row.kind, name: row.name, contentType: row.contentType,
       sizeBytes: row.sizeBytes, createdAt: row.createdAt,
-      publicUrl: row.publicToken ? `/public/media/${row.publicToken}` : null,
+      publicUrl: storedAssetPublicUrl(row),
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
     };

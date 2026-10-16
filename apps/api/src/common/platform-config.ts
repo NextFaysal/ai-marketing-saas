@@ -48,6 +48,13 @@ export interface GoogleAppConfig { clientId: string; clientSecret: string; redir
  * the config cannot declare away; the app carries no such flag
  * because approval is LinkedIn's to grant, not ours to assert. */
 export interface LinkedinAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
+/** AB8 (AX26): the OPERATOR's Google OAuth app for STAFF SSO
+ * ("Sign in with Google" on the login page). This is a SEPARATE
+ * app from `googleApp` (YouTube): different purpose, different
+ * redirect URI (`/auth/google/callback`), and an explicit
+ * `enabled` switch — credentials existing is never enough to
+ * turn staff SSO on. */
+export interface GoogleOAuthConfig { clientId: string; clientSecret: string; enabled: boolean }
 /** CC10: platform-payment wallet settings. `feeBps` is the
  * platform fee on PLATFORM-gateway payments, in basis points
  * (200 = 2%). It is read at the moment a verified payment is
@@ -75,13 +82,14 @@ export interface PlatformConfigSnapshot {
   tiktokApp: TiktokAppConfig | null;
   googleApp: GoogleAppConfig | null;
   linkedinApp: LinkedinAppConfig | null;
+  googleOAuth: GoogleOAuthConfig | null;
   wallet: WalletConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig", "googleOAuthConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, wallet: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, googleOAuth: null, wallet: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -90,8 +98,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp" | "googleOAuth"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null; googleOAuth?: GoogleOAuthConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, googleOAuth: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -120,13 +128,13 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw, googleOAuthRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
     readKey(prisma, "imageConfig"),
     readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
-    readKey(prisma, "walletConfig"), readKey(prisma, "linkedinAppConfig"),
+    readKey(prisma, "walletConfig"), readKey(prisma, "linkedinAppConfig"), readKey(prisma, "googleOAuthConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -196,7 +204,19 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         redirectUri: linkedinRaw.redirectUri ? String(linkedinRaw.redirectUri) : undefined,
       }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, wallet, loadedAt: Date.now() };
+  // AB8: the SSO config exists ONLY when a client id AND an
+  // unsealable secret are both stored — a half-config can never
+  // mint a broken authorize URL. `enabled` is carried exactly as
+  // stored (anything but literal true reads as false).
+  const googleOAuthSecret = unseal(googleOAuthRaw?.clientSecretEncrypted);
+  const googleOAuth: GoogleOAuthConfig | null = googleOAuthRaw?.clientId && googleOAuthSecret
+    ? {
+        clientId: String(googleOAuthRaw.clientId),
+        clientSecret: googleOAuthSecret,
+        enabled: googleOAuthRaw.enabled === true,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, googleOAuth, wallet, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -364,6 +384,22 @@ export function effectiveLinkedinAppConfig(): (LinkedinAppConfig & { source: "ad
       redirectUri: process.env.LINKEDIN_REDIRECT_URI || undefined,
       source: "env",
     };
+  }
+  return null;
+}
+
+/** AB8 (AX26): the operator's Google OAuth app for STAFF SSO —
+ * ADMIN SNAPSHOT ONLY, deliberately NO env fallback (unlike the
+ * YouTube googleApp above). Staff SSO decides who can sign in to
+ * the platform itself, so it must be an explicit operator act in
+ * the Admin Console: silently inheriting GOOGLE_CLIENT_ID /
+ * GOOGLE_CLIENT_SECRET from env (which belong to the YouTube
+ * app, with a different registered redirect URI) would turn SSO
+ * on by accident, with the wrong app. Null means SSO refuses
+ * honestly — it is never half-on. */
+export function effectiveGoogleOAuthConfig(): (GoogleOAuthConfig & { source: "admin" }) | null {
+  if (snapshot.googleOAuth?.clientId && snapshot.googleOAuth.clientSecret) {
+    return { ...snapshot.googleOAuth, source: "admin" };
   }
   return null;
 }

@@ -144,8 +144,15 @@ export class AdminSupportController {
     @Query("organizationId") organizationId?: string,
     @Query("category") category?: string,
     @Query("priority") priority?: string,
+    @Query("sla") sla?: string,
   ) {
-    return this.support.listTicketsAdmin({ status, organizationId, category, priority });
+    return this.support.listTicketsAdmin({
+      status,
+      organizationId,
+      category,
+      priority,
+      slaBreached: sla === "breached" ? true : undefined,
+    });
   }
 
   @Get("analytics/metrics")

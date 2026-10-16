@@ -40,7 +40,32 @@ export interface CheckoutEvaluation {
    * below-minimum — so the record is truthful). */
   referralCodeToRecord: string | null;
   referralDiscountMinor: bigint;
-  /** promotion + coupon + referral — what lands in Order.discountMinor. */
+  /** AB1 (AX2): the resolved referrer's Customer id behind
+   * referralCodeToRecord (set in BOTH the discount path and the
+   * code-only tracking path), stamped onto Order.referrerCustomerId
+   * by stampOrder so the referral-reward hook never has to
+   * re-resolve a code. Optional: pre-AB1 evaluations lack it. */
+  referrerCustomerIdToRecord?: string | null;
+  /** AB1 (AX1): the loyalty-points discount line — applied
+   * AFTER coupon + referral, BEFORE tax, and included in
+   * totalDiscountMinor exactly like its neighbours. The points
+   * themselves are spent by the CALLER at placement
+   * (LoyaltyService.postPlacementRedeem); the evaluator only
+   * prices them from the caller-supplied snapshot. Optional:
+   * evaluations built by pre-AB1 callers/specs lack both. */
+  loyaltyDiscountMinor?: bigint;
+  loyaltyPointsApplied?: number;
+  /** AB2 (AX3): the gift-card discount line — applied AFTER
+   * loyalty (step 3c), BEFORE tax, and included in
+   * totalDiscountMinor exactly like its neighbours. The card's
+   * balance itself is spent by the CALLER at placement
+   * (GiftCardService); the evaluator only prices it from the
+   * caller-supplied snapshot. Optional: evaluations built by
+   * pre-AB2 callers/specs lack all three. */
+  giftCardDiscountMinor?: bigint;
+  giftCardId?: string | null;
+  giftCardCodeLast4?: string | null;
+  /** promotion + coupon + referral + loyalty + gift card — what lands in Order.discountMinor. */
   totalDiscountMinor: bigint;
   /** EC23: VAT computed LAST (after promotions/coupon/referral) on
    * the post-discount merchandise bases. taxMinor is the VAT amount
@@ -67,6 +92,43 @@ export interface CheckoutEvaluation {
    * stock). Unset on preview/landing evaluations — stampOrder
    * only stamps gift fields when this is set. */
   giftOutcome?: "applied" | "skipped" | null;
+}
+
+/** GB7: named shape of evaluateCheckout's input argument. */
+export interface EvaluateCheckoutInput {
+  lines: PromotionLine[];
+  bumpMinor?: bigint;
+  couponCode?: string | null;
+  referralCode?: string | null;
+  buyerPhone?: string | null;
+  now?: Date;
+  customerId?: string | null;
+  priorOrderCount?: number | null;
+  excludeOrderId?: string | null;
+  /** AB1 (AX1): loyalty redemption request + the resolved
+   * customer's snapshot, supplied by the caller (the GB7
+   * priorOrderCount pattern — the evaluator itself reads no
+   * loyalty tables). Null/absent ⇒ no loyalty line, and the
+   * evaluation is byte-identical to the pre-AB1 result. */
+  loyalty?: LoyaltyRedeemInput | null;
+  /** AB2 (AX3): gift-card redemption snapshot, supplied by the
+   * caller (the GB7 / AB1 pattern — the evaluator itself reads
+   * no gift-card tables and never throws for gift-card reasons).
+   * Null/absent ⇒ no gift-card line, and the evaluation totals
+   * are identical to the pre-AB2 result. */
+  giftCard?: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null;
+}
+
+/** AB1 (AX1): everything evaluateCheckout needs to price a
+ * points redemption without touching the DB: the shopper's
+ * requested points plus the setting/balance snapshot the caller
+ * resolved for the identified customer. */
+export interface LoyaltyRedeemInput {
+  pointsToRedeem: number;
+  balance: number;
+  redeemValueMinorPerPoint: number;
+  minRedeemPoints: number;
+  maxRedeemSharePct: number | null;
 }
 
 const PROMOTION_TYPES = ["bogo", "tiered", "flash", "gift"] as const;
@@ -294,14 +356,7 @@ export class PromotionsService {
    */
   async evaluateCheckout(
     orgId: string,
-    input: {
-      lines: PromotionLine[];
-      bumpMinor?: bigint;
-      couponCode?: string | null;
-      referralCode?: string | null;
-      buyerPhone?: string | null;
-      now?: Date;
-    },
+    input: EvaluateCheckoutInput,
   ): Promise<CheckoutEvaluation> {
     const now = input.now ?? new Date();
     const bumpMinor = input.bumpMinor ?? 0n;
@@ -323,7 +378,9 @@ export class PromotionsService {
         orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
       }).catch(() => [])) ?? [];
     if (activePromotions.length > 0) {
-      const ev = evaluatePromotions(activePromotions, input.lines, now);
+      const ev = evaluatePromotions(activePromotions, input.lines, now, {
+        priorOrderCount: input.priorOrderCount,
+      });
       promotionDiscountMinor = ev.promotionDiscountMinor;
       promotionsApplied = ev.breakdown;
       discountedLineTotals = ev.lineTotalsMinor;
@@ -381,6 +438,9 @@ export class PromotionsService {
           categoryId: l.categoryId,
           totalMinor: discountedLineTotals[i],
         })),
+        priorOrderCount: input.priorOrderCount,
+        customerId: input.customerId,
+        excludeOrderId: input.excludeOrderId,
       });
       if (!v.valid) {
         throw new BadRequestException(
@@ -396,6 +456,9 @@ export class PromotionsService {
     // 3) Referral-as-discount (buyer side only). Never throws.
     let referral: CheckoutEvaluation["referral"] = null;
     let referralCodeToRecord: string | null = null;
+    // AB1 (AX2): the referrer's id rides along in BOTH paths so
+    // stampOrder can pin it on the order for the reward hook.
+    let referrerCustomerIdToRecord: string | null = null;
     const rawCode = normalizeReferralCode(input.referralCode);
     if (rawCode) {
       try {
@@ -404,15 +467,20 @@ export class PromotionsService {
           postPromotionSubtotal,
           couponDiscountMinor,
         });
-        if (referral) referralCodeToRecord = rawCode;
-        else {
+        if (referral) {
+          referralCodeToRecord = rawCode;
+          referrerCustomerIdToRecord = referral.referrerCustomerId;
+        } else {
           // Record the code when it at least resolves to a real
           // referrer (the tracking record), even if it granted
           // nothing this time.
           const referrer = await (this.prisma as any).customer.findFirst({
             where: { organizationId: orgId, referralCode: rawCode },
           });
-          if (referrer) referralCodeToRecord = rawCode;
+          if (referrer) {
+            referralCodeToRecord = rawCode;
+            referrerCustomerIdToRecord = String(referrer.id);
+          }
         }
       } catch (e) {
         this.logger.warn(
@@ -420,9 +488,86 @@ export class PromotionsService {
         );
         referral = null;
         referralCodeToRecord = null;
+        referrerCustomerIdToRecord = null;
       }
     }
     const referralDiscountMinor = referral?.discountMinor ?? 0n;
+
+    // 3b) AB1 (AX1): loyalty-points redemption — its own discount
+    // line AFTER coupon + referral, priced ONLY from the
+    // caller-supplied snapshot (never a DB read, never a throw).
+    // An over-request is CLAMPED, never an error: the applied
+    // points are reduced to what fits (balance, the merchandise
+    // payable after the other lines, and the optional share
+    // cap), and loyaltyPointsApplied reports exactly what will
+    // be spent at placement. Below the configured minimum the
+    // redemption simply does not happen.
+    let loyaltyDiscountMinor = 0n;
+    let loyaltyPointsApplied = 0;
+    const loy = input.loyalty ?? null;
+    if (
+      loy &&
+      Number.isInteger(loy.pointsToRedeem) &&
+      loy.pointsToRedeem > 0 &&
+      Number.isInteger(loy.redeemValueMinorPerPoint) &&
+      loy.redeemValueMinorPerPoint > 0
+    ) {
+      const payableAfterOthers =
+        postPromotionSubtotal - couponDiscountMinor - referralDiscountMinor;
+      if (payableAfterOthers > 0n) {
+        let candidate = Math.min(
+          loy.pointsToRedeem,
+          Math.max(0, Math.floor(loy.balance)),
+        );
+        if (loy.minRedeemPoints > 0 && candidate < loy.minRedeemPoints) {
+          candidate = 0;
+        }
+        if (candidate > 0) {
+          const shareCap =
+            loy.maxRedeemSharePct != null
+              ? (payableAfterOthers * BigInt(loy.maxRedeemSharePct)) / 100n
+              : null;
+          const discountCap =
+            shareCap != null && shareCap < payableAfterOthers
+              ? shareCap
+              : payableAfterOthers;
+          let pts = candidate;
+          if (BigInt(pts) * BigInt(loy.redeemValueMinorPerPoint) > discountCap) {
+            pts = Number(discountCap / BigInt(loy.redeemValueMinorPerPoint));
+          }
+          loyaltyPointsApplied = pts;
+          // The discount is ALWAYS points × value exactly, so
+          // the ledger spend and the priced discount can never
+          // drift apart by a rounding paisa.
+          loyaltyDiscountMinor = BigInt(pts) * BigInt(loy.redeemValueMinorPerPoint);
+        }
+      }
+    }
+
+    // 3c) AB2 (AX3): gift-card redemption — its own discount
+    // line AFTER loyalty, priced ONLY from the caller-supplied
+    // snapshot (never a DB read, never a throw). The applied
+    // amount is simply what the card can cover of what loyalty
+    // left: min(balance, payableAfterLoyalty), floored at 0.
+    // The id / last4 are echoed ONLY when value actually
+    // applied (mirroring how referral behaves).
+    let giftCardDiscountMinor = 0n;
+    let giftCardId: string | null = null;
+    let giftCardCodeLast4: string | null = null;
+    const gc = input.giftCard ?? null;
+    if (gc) {
+      const payableAfterLoyaltyRaw =
+        postPromotionSubtotal - couponDiscountMinor - referralDiscountMinor - loyaltyDiscountMinor;
+      const payableAfterLoyalty = payableAfterLoyaltyRaw > 0n ? payableAfterLoyaltyRaw : 0n;
+      const balance = gc.balanceMinor ?? 0n;
+      const applied =
+        balance <= 0n ? 0n : balance < payableAfterLoyalty ? balance : payableAfterLoyalty;
+      if (applied > 0n) {
+        giftCardDiscountMinor = applied;
+        giftCardId = gc.giftCardId ?? null;
+        giftCardCodeLast4 = gc.codeLast4 ?? null;
+      }
+    }
 
     // 4) EC23 tax — LAST, on post-discount merchandise bases.
     const tax = await this.computeCheckoutTax(orgId, {
@@ -432,6 +577,8 @@ export class PromotionsService {
       postPromotionSubtotal,
       couponDiscountMinor,
       referralDiscountMinor,
+      loyaltyDiscountMinor,
+      giftCardDiscountMinor,
     });
 
     return {
@@ -444,8 +591,19 @@ export class PromotionsService {
       appliedCouponCode,
       referral,
       referralCodeToRecord,
+      referrerCustomerIdToRecord,
       referralDiscountMinor,
-      totalDiscountMinor: promotionDiscountMinor + couponDiscountMinor + referralDiscountMinor,
+      loyaltyDiscountMinor,
+      loyaltyPointsApplied,
+      giftCardDiscountMinor,
+      giftCardId,
+      giftCardCodeLast4,
+      totalDiscountMinor:
+        promotionDiscountMinor +
+        couponDiscountMinor +
+        referralDiscountMinor +
+        loyaltyDiscountMinor +
+        giftCardDiscountMinor,
       taxMinor: tax.taxMinor,
       taxAddedMinor: tax.taxAddedMinor,
       taxBreakdown: tax.breakdown,
@@ -511,6 +669,11 @@ export class PromotionsService {
       postPromotionSubtotal: bigint;
       couponDiscountMinor: bigint;
       referralDiscountMinor: bigint;
+      /** AB1 + AB2: loyalty redemption and the gift-card line
+       * both shrink the taxable base proportionally, exactly
+       * like coupon + referral. */
+      loyaltyDiscountMinor: bigint;
+      giftCardDiscountMinor: bigint;
     },
   ): Promise<{ taxMinor: bigint; taxAddedMinor: bigint; breakdown: TaxBreakdownEntry[] }> {
     const zero = { taxMinor: 0n, taxAddedMinor: 0n, breakdown: [] as TaxBreakdownEntry[] };
@@ -541,7 +704,11 @@ export class PromotionsService {
       if (defaultVatBps == null && !anyProductRate) return zero;
 
       const merchandisePayable =
-        ctx.postPromotionSubtotal - ctx.couponDiscountMinor - ctx.referralDiscountMinor;
+        ctx.postPromotionSubtotal -
+        ctx.couponDiscountMinor -
+        ctx.referralDiscountMinor -
+        ctx.loyaltyDiscountMinor -
+        ctx.giftCardDiscountMinor;
       const payable = merchandisePayable > 0n ? merchandisePayable : 0n;
       const scale = (amount: bigint): bigint =>
         ctx.postPromotionSubtotal > 0n ? (amount * payable) / ctx.postPromotionSubtotal : 0n;
@@ -648,9 +815,60 @@ export class PromotionsService {
         ? await orderTable.findFirst({ where: { organizationId: orgId, source, externalId } })
         : null;
       if (!order) return;
+      // GB7: appliedDiscounts is built FROM this evaluation only
+      // (never reconstructed later) — entries with discount > 0.
+      const appliedDiscounts: any[] = [];
+      for (const p of ev.promotionsApplied ?? []) {
+        if (p.amountMinor != null && BigInt(p.amountMinor as any) > 0n) {
+          appliedDiscounts.push({
+            promotionId: p.promotionId,
+            kind: "promotion",
+            name: p.name,
+            discountMinor: String(p.amountMinor),
+          });
+        }
+      }
+      if (ev.appliedDiscountId != null && ev.couponDiscountMinor != null && ev.couponDiscountMinor > 0n) {
+        appliedDiscounts.push({
+          couponCode: ev.appliedCouponCode,
+          kind: "coupon",
+          name: ev.appliedCouponCode,
+          discountMinor: String(ev.couponDiscountMinor),
+        });
+      }
+      if (ev.referralDiscountMinor != null && ev.referralDiscountMinor > 0n) {
+        appliedDiscounts.push({
+          kind: "referral",
+          name: "রেফারেল ছাড়",
+          discountMinor: String(ev.referralDiscountMinor),
+        });
+      }
+      // AB1 (AX1): the loyalty line joins the same stamp — the
+      // applied POINTS ride along so Order 360 / reports can show
+      // what was spent without re-reading the ledger.
+      if (ev.loyaltyDiscountMinor != null && ev.loyaltyDiscountMinor > 0n) {
+        appliedDiscounts.push({
+          kind: "loyalty",
+          name: "লয়্যালটি পয়েন্ট ছাড়",
+          discountMinor: String(ev.loyaltyDiscountMinor),
+          points: ev.loyaltyPointsApplied ?? null,
+        });
+      }
+      // AB2 (AX3): the gift-card line joins the same stamp — the
+      // card's last4 rides along so Order 360 / reports can show
+      // which card paid without ever exposing the full code.
+      if (ev.giftCardDiscountMinor != null && ev.giftCardDiscountMinor > 0n) {
+        appliedDiscounts.push({
+          kind: "gift_card",
+          name: "গিফট কার্ড (••••" + (ev.giftCardCodeLast4 ?? "") + ")",
+          discountMinor: String(ev.giftCardDiscountMinor),
+          codeLast4: ev.giftCardCodeLast4 ?? null,
+        });
+      }
       await orderTable.update({
         where: { id: order.id },
         data: {
+          ...(appliedDiscounts.length > 0 ? { appliedDiscounts } : {}),
           promotionDiscountMinor: ev.promotionDiscountMinor,
           promotionsApplied:
             ev.promotionsApplied.length > 0
@@ -658,6 +876,14 @@ export class PromotionsService {
               : null,
           referralDiscountMinor: ev.referralDiscountMinor,
           referralCode: ev.referralCodeToRecord,
+          // AB1 (AX2): pin the resolved referrer ONLY when this
+          // evaluation resolved one (same discipline as
+          // couponCode below: an evaluation that carried no
+          // referral input must not erase a previously stamped
+          // referrer).
+          ...(ev.referrerCustomerIdToRecord
+            ? { referrerCustomerId: ev.referrerCustomerIdToRecord }
+            : {}),
           // ON3: stamp the coupon code ONLY when a coupon truly
           // applied in this evaluation (appliedDiscountId set) —
           // the value is then ev.appliedCouponCode. When no
@@ -695,6 +921,153 @@ export class PromotionsService {
       this.logger.warn(
         `EC16 order stamp failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
       );
+    }
+  }
+
+  /** GB7: promotions/coupon performance report, reading ONLY the
+   * Order.appliedDiscounts stamps written at placement. */
+  async promotionsReport(orgId: string, fromRaw?: string, toRaw?: string) {
+    const now = new Date();
+    let to = now;
+    let from = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+    if (fromRaw) {
+      const d = new Date(fromRaw);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException("শুরুর তারিখটি সঠিক নয়");
+      from = d;
+    }
+    if (toRaw) {
+      const d = new Date(toRaw);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException("শেষের তারিখটি সঠিক নয়");
+      to = d;
+    }
+    const orderTable = (this.prisma as any).order;
+    const fetched =
+      (orderTable?.findMany
+        ? await orderTable.findMany({
+            where: {
+              organizationId: orgId,
+              isPractice: false,
+              status: { notIn: [...NON_COUNTING_ORDER_STATUSES] },
+              placedAt: { gte: from, lte: to },
+              appliedDiscounts: { not: null },
+            },
+            orderBy: { placedAt: "desc" },
+            take: 5001,
+          })
+        : []) ?? [];
+    const truncated = fetched.length > 5000;
+    const orders = fetched.slice(0, 5000);
+    const couponMap = new Map<string, { code: string; redemptions: number; discountTotal: bigint; revenue: bigint; seenOrders: Set<string> }>();
+    const promoMap = new Map<string, { promotionId: string; name: string; applications: number; discountTotal: bigint }>();
+    for (const order of orders) {
+      const entries: any[] = Array.isArray(order.appliedDiscounts) ? order.appliedDiscounts : [];
+      const couponCodesInOrder = new Set<string>();
+      for (const entry of entries) {
+        let disc = 0n;
+        try { disc = BigInt(entry?.discountMinor ?? 0); } catch { disc = 0n; }
+        if (entry?.kind === "coupon" && entry.couponCode) {
+          const code = String(entry.couponCode);
+          let agg = couponMap.get(code);
+          if (!agg) {
+            agg = { code, redemptions: 0, discountTotal: 0n, revenue: 0n, seenOrders: new Set() };
+            couponMap.set(code, agg);
+          }
+          agg.discountTotal += disc;
+          if (!agg.seenOrders.has(String(order.id))) {
+            agg.seenOrders.add(String(order.id));
+            agg.redemptions += 1;
+            let total = 0n;
+            try { total = BigInt(order.totalMinor ?? 0); } catch { total = 0n; }
+            agg.revenue += total;
+          }
+          couponCodesInOrder.add(code);
+        } else if (entry?.kind === "promotion" && entry.promotionId) {
+          const pid = String(entry.promotionId);
+          let agg = promoMap.get(pid);
+          if (!agg) {
+            // Orders are newest-first, so the first name seen is the latest.
+            agg = { promotionId: pid, name: String(entry.name ?? ""), applications: 0, discountTotal: 0n };
+            promoMap.set(pid, agg);
+          }
+          agg.applications += 1;
+          agg.discountTotal += disc;
+        }
+      }
+    }
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      coupons: [...couponMap.values()].map((a) => ({
+        code: a.code,
+        redemptions: a.redemptions,
+        discountTotalMinor: a.discountTotal.toString(),
+        revenueMinor: a.revenue.toString(),
+      })),
+      promotions: [...promoMap.values()].map((a) => ({
+        promotionId: a.promotionId,
+        name: a.name,
+        applications: a.applications,
+        discountTotalMinor: a.discountTotal.toString(),
+      })),
+      coverage: {
+        ordersScanned: orders.length,
+        truncated,
+        note: "এই রিপোর্টে শুধু GB7 (appliedDiscounts স্ট্যাম্প) চালুর পর দেওয়া অর্ডার ধরা হয়েছে; আগের অর্ডারে এই তথ্য নেই।",
+      },
+    };
+  }
+
+  /** GB7: prior (counting) order count for a resolved customer.
+   * Failure-isolated: null when there is no customer or the count
+   * cannot be loaded (null = identity/history unverifiable). */
+  async priorOrderCountFor(
+    orgId: string,
+    customerId: string | null,
+    excludeOrderId?: string,
+  ): Promise<number | null> {
+    try {
+      if (!customerId) return null;
+      const orderTable = (this.prisma as any).order;
+      if (!orderTable?.count) return null;
+      const count = await orderTable.count({
+        where: {
+          organizationId: orgId,
+          customerId,
+          isPractice: false,
+          status: { notIn: [...NON_COUNTING_ORDER_STATUSES] },
+          ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+        },
+      });
+      return Number(count);
+    } catch (e) {
+      this.logger.warn(
+        `prior order count failed for org ${orgId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  /** GB7: resolve a Customer id by phone (loose BD key comparison,
+   * mirroring yourReferralCodeForPhone). Failure-isolated → null. */
+  async customerIdForPhone(orgId: string, phone: string | null | undefined): Promise<string | null> {
+    try {
+      if (!phone) return null;
+      const key = phoneKeyLoose(phone);
+      if (!key) return null;
+      const customers =
+        (await (this.prisma as any).customer
+          .findMany({
+            where: { organizationId: orgId, phone: { not: null } },
+            select: { id: true, phone: true },
+          })
+          .catch(() => [])) ?? [];
+      const mine = customers.find((c: any) => phoneKeyLoose(c.phone) === key) ?? null;
+      return mine ? String(mine.id) : null;
+    } catch (e) {
+      this.logger.warn(
+        `customer lookup by phone failed for org ${orgId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
     }
   }
 
@@ -766,12 +1139,22 @@ export class PromotionsService {
       });
     }
     if (lines.length === 0) throw new BadRequestException("প্রিভিউয়ের জন্য অন্তত একটি পণ্য দিন");
+    // GB7: resolve the preview buyer's identity/history when a
+    // phone was given, so customer-conditioned rules preview truly.
+    let previewCustomerId: string | null = null;
+    let previewPriorOrderCount: number | null = null;
+    if (dto.buyerPhone) {
+      previewCustomerId = await this.customerIdForPhone(orgId, dto.buyerPhone);
+      previewPriorOrderCount = await this.priorOrderCountFor(orgId, previewCustomerId);
+    }
     const ev = await this.evaluateCheckout(orgId, {
       lines,
       bumpMinor: 0n,
       couponCode: dto.couponCode ?? null,
       referralCode: dto.referralCode ?? null,
       buyerPhone: dto.buyerPhone ?? null,
+      customerId: previewCustomerId,
+      priorOrderCount: previewPriorOrderCount,
     });
     return {
       items: lines.map((l) => ({

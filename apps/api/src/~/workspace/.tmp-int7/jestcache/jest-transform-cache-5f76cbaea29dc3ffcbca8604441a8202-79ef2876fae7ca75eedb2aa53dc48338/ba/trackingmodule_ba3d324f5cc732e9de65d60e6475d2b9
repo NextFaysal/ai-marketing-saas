@@ -1,0 +1,29 @@
+2958dc31f61ce5a7da19784c2a81ab6b
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TrackingModule = void 0;
+const common_1 = require("@nestjs/common");
+const tracking_controller_1 = require("./tracking.controller");
+const tracking_service_1 = require("./tracking.service");
+const abandoned_carts_controller_1 = require("./abandoned-carts.controller");
+const abandoned_carts_service_1 = require("./abandoned-carts.service");
+const attribution_module_1 = require("../attribution/attribution.module");
+const messaging_module_1 = require("../messaging/messaging.module");
+let TrackingModule = class TrackingModule {
+};
+exports.TrackingModule = TrackingModule;
+exports.TrackingModule = TrackingModule = __decorate([
+    (0, common_1.Module)({
+        imports: [attribution_module_1.AttributionModule, messaging_module_1.MessagingModule],
+        controllers: [tracking_controller_1.TrackingController, abandoned_carts_controller_1.AbandonedCartsController],
+        providers: [tracking_service_1.TrackingService, abandoned_carts_service_1.AbandonedCartsService],
+        exports: [abandoned_carts_service_1.AbandonedCartsService],
+    })
+], TrackingModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3RyYWNraW5nL3RyYWNraW5nLm1vZHVsZS50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7QUFBQSwyQ0FBd0M7QUFDeEMsK0RBQTJEO0FBQzNELHlEQUFxRDtBQUNyRCw2RUFBd0U7QUFDeEUsdUVBQWtFO0FBQ2xFLDBFQUFzRTtBQUN0RSxvRUFBZ0U7QUFPekQsSUFBTSxjQUFjLEdBQXBCLE1BQU0sY0FBYztDQUFHLENBQUE7QUFBakIsd0NBQWM7eUJBQWQsY0FBYztJQU4xQixJQUFBLGVBQU0sRUFBQztRQUNOLE9BQU8sRUFBRSxDQUFDLHNDQUFpQixFQUFFLGtDQUFlLENBQUM7UUFDN0MsV0FBVyxFQUFFLENBQUMsd0NBQWtCLEVBQUUscURBQXdCLENBQUM7UUFDM0QsU0FBUyxFQUFFLENBQUMsa0NBQWUsRUFBRSwrQ0FBcUIsQ0FBQztRQUNuRCxPQUFPLEVBQUUsQ0FBQywrQ0FBcUIsQ0FBQztLQUNqQyxDQUFDO0dBQ1csY0FBYyxDQUFHIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy90cmFja2luZy90cmFja2luZy5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBUcmFja2luZ0NvbnRyb2xsZXIgfSBmcm9tIFwiLi90cmFja2luZy5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBUcmFja2luZ1NlcnZpY2UgfSBmcm9tIFwiLi90cmFja2luZy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBBYmFuZG9uZWRDYXJ0c0NvbnRyb2xsZXIgfSBmcm9tIFwiLi9hYmFuZG9uZWQtY2FydHMuY29udHJvbGxlclwiO1xuaW1wb3J0IHsgQWJhbmRvbmVkQ2FydHNTZXJ2aWNlIH0gZnJvbSBcIi4vYWJhbmRvbmVkLWNhcnRzLnNlcnZpY2VcIjtcbmltcG9ydCB7IEF0dHJpYnV0aW9uTW9kdWxlIH0gZnJvbSBcIi4uL2F0dHJpYnV0aW9uL2F0dHJpYnV0aW9uLm1vZHVsZVwiO1xuaW1wb3J0IHsgTWVzc2FnaW5nTW9kdWxlIH0gZnJvbSBcIi4uL21lc3NhZ2luZy9tZXNzYWdpbmcubW9kdWxlXCI7XG5ATW9kdWxlKHtcbiAgaW1wb3J0czogW0F0dHJpYnV0aW9uTW9kdWxlLCBNZXNzYWdpbmdNb2R1bGVdLFxuICBjb250cm9sbGVyczogW1RyYWNraW5nQ29udHJvbGxlciwgQWJhbmRvbmVkQ2FydHNDb250cm9sbGVyXSxcbiAgcHJvdmlkZXJzOiBbVHJhY2tpbmdTZXJ2aWNlLCBBYmFuZG9uZWRDYXJ0c1NlcnZpY2VdLFxuICBleHBvcnRzOiBbQWJhbmRvbmVkQ2FydHNTZXJ2aWNlXSxcbn0pXG5leHBvcnQgY2xhc3MgVHJhY2tpbmdNb2R1bGUge31cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { FulfillmentService } from "./fulfillment.service";
 import { OrdersService } from "../orders/orders.service";
@@ -240,9 +241,49 @@ export class FulfillmentExcellenceService {
         status: order?.status ?? null,
         pickedAt: r.pickedAt ?? null, pickedById: r.pickedById ?? null,
         createdAt: r.createdAt ?? null,
+        // AB3 (AX4): this order's stock allocations, as labels
+        // for the pick view. NOTE the placement: getWave's order
+        // entries carry NO per-line items today, so allocations
+        // ride at the ORDER level (each label carries its
+        // orderItemId + product/variant keys, so a line-level
+        // consumer can match by orderItemId, falling back to
+        // (productId, variantId) for component rows whose
+        // orderItemId is null). Additive only.
+        allocations: await this.allocationLabelsForOrder(organizationId, r.orderId),
       });
     }
     return { ...wave, progress: await this.waveProgress(waveId), orders };
+  }
+
+  /** AB3: allocation labels for one order — active rows only
+   * (settled claims no longer hold pickable stock), oldest
+   * first, failure-isolated like every read here (a missing
+   * pre-migration table reads as no allocations). */
+  private async allocationLabelsForOrder(organizationId: string, orderId: string): Promise<any[]> {
+    const rows = await this.safeFindMany("stockAllocation", { where: { organizationId, orderId, status: "active" } });
+    const sorted = [...rows].sort((a: any, b: any) =>
+      new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
+      || String(a.id ?? "").localeCompare(String(b.id ?? "")));
+    const out: any[] = [];
+    for (const row of sorted) {
+      const warehouse = row.warehouseId
+        ? await this.t("warehouse")?.findFirst({ where: { id: row.warehouseId, organizationId } }).catch(() => null)
+        : null;
+      const bin = row.binId
+        ? await this.t("binLocation")?.findFirst({ where: { id: row.binId, organizationId } }).catch(() => null)
+        : null;
+      out.push({
+        warehouseName: warehouse?.name ?? null,
+        binCode: bin?.code ?? null,
+        qty: row.qty,
+        orderItemId: row.orderItemId ?? null,
+        productId: row.productId,
+        variantId: row.variantId ?? null,
+        warehouseId: row.warehouseId,
+        binId: row.binId,
+      });
+    }
+    return out;
   }
 
   async pickWaveOrder(organizationId: string, actorId: string, waveId: string, orderId: string) {
@@ -479,14 +520,12 @@ export class FulfillmentExcellenceService {
       const orderNumber = order?.externalNumber ?? s.orderId;
       const days = s.updatedAt ? Math.max(0, Math.floor((now.getTime() - new Date(s.updatedAt).getTime()) / 86400_000)) : 0;
       for (const userId of recipients) {
-        const made = await this.t("agentNotification").create({
-          data: {
+        const made = await createAgentNotification(this.prisma as any, {
             organizationId, userId, type: "urgent",
             title: `পার্সেল আটকে আছে — অর্ডার ${orderNumber}`,
             body: `কুরিয়ার: ${s.provider ?? "—"} · ট্র্যাকিং: ${s.trackingCode ?? "—"} · ${days} দিন ধরে আটকে আছে (স্ট্যাটাস: ${s.status})`,
             conversationId: null,
-          },
-        }).catch(() => null);
+          }).catch(() => null);
         if (made) staffNotified++;
       }
       if (this.orderNotifications) {

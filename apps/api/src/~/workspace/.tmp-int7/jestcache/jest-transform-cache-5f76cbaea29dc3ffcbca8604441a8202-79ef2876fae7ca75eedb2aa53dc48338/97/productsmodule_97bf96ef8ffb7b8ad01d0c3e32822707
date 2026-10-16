@@ -1,0 +1,37 @@
+702279bea3c6a71241f26aa2035a2928
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ProductsModule = void 0;
+const common_1 = require("@nestjs/common");
+const products_controller_1 = require("./products.controller");
+const products_service_1 = require("./products.service");
+const product_image_mirror_service_1 = require("./product-image-mirror.service");
+const storage_module_1 = require("../storage/storage.module");
+const inventory_module_1 = require("../inventory/inventory.module");
+const integrations_module_1 = require("../integrations/integrations.module");
+const commerce_module_1 = require("../commerce/commerce.module");
+const affiliates_module_1 = require("../affiliates/affiliates.module");
+const fraud_module_1 = require("../fraud/fraud.module");
+const connections_module_1 = require("../connections/connections.module");
+const catalogs_module_1 = require("../catalogs/catalogs.module");
+let ProductsModule = class ProductsModule {
+};
+exports.ProductsModule = ProductsModule;
+exports.ProductsModule = ProductsModule = __decorate([
+    (0, common_1.Module)({
+        // Union: StorageModule (R2 media, ours) + ConnectionsModule /
+        // CatalogsModule (AB5/AX10 catalog auto-sync hook, theirs —
+        // CatalogsModule is a leaf, so no cycle).
+        imports: [inventory_module_1.InventoryModule, integrations_module_1.IntegrationsModule, commerce_module_1.CommerceModule, affiliates_module_1.AffiliatesModule, fraud_module_1.FraudModule, storage_module_1.StorageModule, connections_module_1.ConnectionsModule, catalogs_module_1.CatalogsModule],
+        controllers: [products_controller_1.ProductsController, products_controller_1.PublicCheckoutController],
+        providers: [products_service_1.ProductsService, product_image_mirror_service_1.ProductImageMirrorService],
+        exports: [products_service_1.ProductsService, product_image_mirror_service_1.ProductImageMirrorService],
+    })
+], ProductsModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3Byb2R1Y3RzL3Byb2R1Y3RzLm1vZHVsZS50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7QUFBQSwyQ0FBd0M7QUFDeEMsK0RBQXFGO0FBQ3JGLHlEQUFxRDtBQUNyRCxpRkFBMkU7QUFDM0UsOERBQTBEO0FBQzFELG9FQUFnRTtBQUNoRSw2RUFBeUU7QUFDekUsaUVBQTZEO0FBQzdELHVFQUFtRTtBQUNuRSx3REFBb0Q7QUFDcEQsMEVBQXNFO0FBQ3RFLGlFQUE2RDtBQVd0RCxJQUFNLGNBQWMsR0FBcEIsTUFBTSxjQUFjO0NBQUcsQ0FBQTtBQUFqQix3Q0FBYzt5QkFBZCxjQUFjO0lBVDFCLElBQUEsZUFBTSxFQUFDO1FBQ04sOERBQThEO1FBQzlELDREQUE0RDtRQUM1RCwwQ0FBMEM7UUFDMUMsT0FBTyxFQUFFLENBQUMsa0NBQWUsRUFBRSx3Q0FBa0IsRUFBRSxnQ0FBYyxFQUFFLG9DQUFnQixFQUFFLDBCQUFXLEVBQUUsOEJBQWEsRUFBRSxzQ0FBaUIsRUFBRSxnQ0FBYyxDQUFDO1FBQy9JLFdBQVcsRUFBRSxDQUFDLHdDQUFrQixFQUFFLDhDQUF3QixDQUFDO1FBQzNELFNBQVMsRUFBRSxDQUFDLGtDQUFlLEVBQUUsd0RBQXlCLENBQUM7UUFDdkQsT0FBTyxFQUFFLENBQUMsa0NBQWUsRUFBRSx3REFBeUIsQ0FBQztLQUN0RCxDQUFDO0dBQ1csY0FBYyxDQUFHIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9wcm9kdWN0cy9wcm9kdWN0cy5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBQcm9kdWN0c0NvbnRyb2xsZXIsIFB1YmxpY0NoZWNrb3V0Q29udHJvbGxlciB9IGZyb20gXCIuL3Byb2R1Y3RzLmNvbnRyb2xsZXJcIjtcbmltcG9ydCB7IFByb2R1Y3RzU2VydmljZSB9IGZyb20gXCIuL3Byb2R1Y3RzLnNlcnZpY2VcIjtcbmltcG9ydCB7IFByb2R1Y3RJbWFnZU1pcnJvclNlcnZpY2UgfSBmcm9tIFwiLi9wcm9kdWN0LWltYWdlLW1pcnJvci5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBTdG9yYWdlTW9kdWxlIH0gZnJvbSBcIi4uL3N0b3JhZ2Uvc3RvcmFnZS5tb2R1bGVcIjtcbmltcG9ydCB7IEludmVudG9yeU1vZHVsZSB9IGZyb20gXCIuLi9pbnZlbnRvcnkvaW52ZW50b3J5Lm1vZHVsZVwiO1xuaW1wb3J0IHsgSW50ZWdyYXRpb25zTW9kdWxlIH0gZnJvbSBcIi4uL2ludGVncmF0aW9ucy9pbnRlZ3JhdGlvbnMubW9kdWxlXCI7XG5pbXBvcnQgeyBDb21tZXJjZU1vZHVsZSB9IGZyb20gXCIuLi9jb21tZXJjZS9jb21tZXJjZS5tb2R1bGVcIjtcbmltcG9ydCB7IEFmZmlsaWF0ZXNNb2R1bGUgfSBmcm9tIFwiLi4vYWZmaWxpYXRlcy9hZmZpbGlhdGVzLm1vZHVsZVwiO1xuaW1wb3J0IHsgRnJhdWRNb2R1bGUgfSBmcm9tIFwiLi4vZnJhdWQvZnJhdWQubW9kdWxlXCI7XG5pbXBvcnQgeyBDb25uZWN0aW9uc01vZHVsZSB9IGZyb20gXCIuLi9jb25uZWN0aW9ucy9jb25uZWN0aW9ucy5tb2R1bGVcIjtcbmltcG9ydCB7IENhdGFsb2dzTW9kdWxlIH0gZnJvbSBcIi4uL2NhdGFsb2dzL2NhdGFsb2dzLm1vZHVsZVwiO1xuXG5ATW9kdWxlKHtcbiAgLy8gVW5pb246IFN0b3JhZ2VNb2R1bGUgKFIyIG1lZGlhLCBvdXJzKSArIENvbm5lY3Rpb25zTW9kdWxlIC9cbiAgLy8gQ2F0YWxvZ3NNb2R1bGUgKEFCNS9BWDEwIGNhdGFsb2cgYXV0by1zeW5jIGhvb2ssIHRoZWlycyDigJRcbiAgLy8gQ2F0YWxvZ3NNb2R1bGUgaXMgYSBsZWFmLCBzbyBubyBjeWNsZSkuXG4gIGltcG9ydHM6IFtJbnZlbnRvcnlNb2R1bGUsIEludGVncmF0aW9uc01vZHVsZSwgQ29tbWVyY2VNb2R1bGUsIEFmZmlsaWF0ZXNNb2R1bGUsIEZyYXVkTW9kdWxlLCBTdG9yYWdlTW9kdWxlLCBDb25uZWN0aW9uc01vZHVsZSwgQ2F0YWxvZ3NNb2R1bGVdLFxuICBjb250cm9sbGVyczogW1Byb2R1Y3RzQ29udHJvbGxlciwgUHVibGljQ2hlY2tvdXRDb250cm9sbGVyXSxcbiAgcHJvdmlkZXJzOiBbUHJvZHVjdHNTZXJ2aWNlLCBQcm9kdWN0SW1hZ2VNaXJyb3JTZXJ2aWNlXSxcbiAgZXhwb3J0czogW1Byb2R1Y3RzU2VydmljZSwgUHJvZHVjdEltYWdlTWlycm9yU2VydmljZV0sXG59KVxuZXhwb3J0IGNsYXNzIFByb2R1Y3RzTW9kdWxlIHt9XG4iXSwidmVyc2lvbiI6M30=

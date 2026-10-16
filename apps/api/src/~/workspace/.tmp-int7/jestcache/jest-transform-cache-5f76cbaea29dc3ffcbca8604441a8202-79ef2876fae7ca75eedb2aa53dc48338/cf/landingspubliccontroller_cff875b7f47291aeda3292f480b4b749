@@ -1,0 +1,99 @@
+a0ee3222560e5a39153dfc3e2b2b2b29
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LandingsPublicController = void 0;
+const common_1 = require("@nestjs/common");
+const landings_service_1 = require("./landings.service");
+const decorators_1 = require("../common/decorators");
+const client_ip_1 = require("../fraud/client-ip");
+const landings_dto_1 = require("./landings.dto");
+/**
+ * EC13 public landing API. All routes are @Public (landing
+ * visitors have no account); a landing answers only while it is
+ * `published` and its product is ACTIVE — everything else is 404.
+ */
+let LandingsPublicController = class LandingsPublicController {
+    landings;
+    constructor(landings) {
+        this.landings = landings;
+    }
+    get(slug, visitor) {
+        return this.landings.getPublicLanding(slug, visitor || undefined);
+    }
+    view(slug, dto) {
+        return this.landings.recordEvent(slug, "view", dto ?? {});
+    }
+    checkoutStarted(slug, dto) {
+        return this.landings.recordEvent(slug, "checkout_started", dto ?? {});
+    }
+    order(slug, dto, req) {
+        return this.landings.placeOrder(slug, dto, { ip: (0, client_ip_1.clientIpFromRequest)(req) });
+    }
+    upsell(slug, orderId) {
+        return this.landings.addUpsell(slug, orderId);
+    }
+};
+exports.LandingsPublicController = LandingsPublicController;
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Get)(":slug"),
+    __param(0, (0, common_1.Param)("slug")),
+    __param(1, (0, common_1.Query)("visitor")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsPublicController.prototype, "get", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":slug/view"),
+    __param(0, (0, common_1.Param)("slug")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, landings_dto_1.LandingEventDto]),
+    __metadata("design:returntype", void 0)
+], LandingsPublicController.prototype, "view", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":slug/checkout-started"),
+    __param(0, (0, common_1.Param)("slug")),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, landings_dto_1.LandingEventDto]),
+    __metadata("design:returntype", void 0)
+], LandingsPublicController.prototype, "checkoutStarted", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":slug/order"),
+    __param(0, (0, common_1.Param)("slug")),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, landings_dto_1.LandingOrderDto, Object]),
+    __metadata("design:returntype", void 0)
+], LandingsPublicController.prototype, "order", null);
+__decorate([
+    (0, decorators_1.Public)(),
+    (0, common_1.Post)(":slug/order/:orderId/upsell"),
+    __param(0, (0, common_1.Param)("slug")),
+    __param(1, (0, common_1.Param)("orderId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsPublicController.prototype, "upsell", null);
+exports.LandingsPublicController = LandingsPublicController = __decorate([
+    (0, common_1.Controller)("public/landing"),
+    __metadata("design:paramtypes", [landings_service_1.LandingsService])
+], LandingsPublicController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2xhbmRpbmdzL2xhbmRpbmdzLXB1YmxpYy5jb250cm9sbGVyLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7OztBQUFBLDJDQUFnRjtBQUNoRix5REFBcUQ7QUFDckQscURBQThDO0FBQzlDLGtEQUF5RDtBQUN6RCxpREFBa0U7QUFFbEU7Ozs7R0FJRztBQUVJLElBQU0sd0JBQXdCLEdBQTlCLE1BQU0sd0JBQXdCO0lBQ047SUFBN0IsWUFBNkIsUUFBeUI7UUFBekIsYUFBUSxHQUFSLFFBQVEsQ0FBaUI7SUFBRyxDQUFDO0lBSTFELEdBQUcsQ0FBZ0IsSUFBWSxFQUFvQixPQUFnQjtRQUNqRSxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsZ0JBQWdCLENBQUMsSUFBSSxFQUFFLE9BQU8sSUFBSSxTQUFTLENBQUMsQ0FBQztJQUNwRSxDQUFDO0lBSUQsSUFBSSxDQUFnQixJQUFZLEVBQVUsR0FBb0I7UUFDNUQsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLFdBQVcsQ0FBQyxJQUFJLEVBQUUsTUFBTSxFQUFFLEdBQUcsSUFBSSxFQUFFLENBQUMsQ0FBQztJQUM1RCxDQUFDO0lBSUQsZUFBZSxDQUFnQixJQUFZLEVBQVUsR0FBb0I7UUFDdkUsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLFdBQVcsQ0FBQyxJQUFJLEVBQUUsa0JBQWtCLEVBQUUsR0FBRyxJQUFJLEVBQUUsQ0FBQyxDQUFDO0lBQ3hFLENBQUM7SUFJRCxLQUFLLENBQWdCLElBQVksRUFBVSxHQUFvQixFQUFTLEdBQVE7UUFDOUUsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLFVBQVUsQ0FBQyxJQUFJLEVBQUUsR0FBRyxFQUFFLEVBQUUsRUFBRSxFQUFFLElBQUEsK0JBQW1CLEVBQUMsR0FBRyxDQUFDLEVBQUUsQ0FBQyxDQUFDO0lBQy9FLENBQUM7SUFJRCxNQUFNLENBQWdCLElBQVksRUFBb0IsT0FBZTtRQUNuRSxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsU0FBUyxDQUFDLElBQUksRUFBRSxPQUFPLENBQUMsQ0FBQztJQUNoRCxDQUFDO0NBQ0YsQ0FBQTtBQWhDWSw0REFBd0I7QUFLbkM7SUFGQyxJQUFBLG1CQUFNLEdBQUU7SUFDUixJQUFBLFlBQUcsRUFBQyxPQUFPLENBQUM7SUFDUixXQUFBLElBQUEsY0FBSyxFQUFDLE1BQU0sQ0FBQyxDQUFBO0lBQWdCLFdBQUEsSUFBQSxjQUFLLEVBQUMsU0FBUyxDQUFDLENBQUE7Ozs7bURBRWpEO0FBSUQ7SUFGQyxJQUFBLG1CQUFNLEdBQUU7SUFDUixJQUFBLGFBQUksRUFBQyxZQUFZLENBQUM7SUFDYixXQUFBLElBQUEsY0FBSyxFQUFDLE1BQU0sQ0FBQyxDQUFBO0lBQWdCLFdBQUEsSUFBQSxhQUFJLEdBQUUsQ0FBQTs7NkNBQU0sOEJBQWU7O29EQUU3RDtBQUlEO0lBRkMsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxhQUFJLEVBQUMsd0JBQXdCLENBQUM7SUFDZCxXQUFBLElBQUEsY0FBSyxFQUFDLE1BQU0sQ0FBQyxDQUFBO0lBQWdCLFdBQUEsSUFBQSxhQUFJLEdBQUUsQ0FBQTs7NkNBQU0sOEJBQWU7OytEQUV4RTtBQUlEO0lBRkMsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxhQUFJLEVBQUMsYUFBYSxDQUFDO0lBQ2IsV0FBQSxJQUFBLGNBQUssRUFBQyxNQUFNLENBQUMsQ0FBQTtJQUFnQixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7SUFBd0IsV0FBQSxJQUFBLFlBQUcsR0FBRSxDQUFBOzs2Q0FBdkIsOEJBQWU7O3FEQUU5RDtBQUlEO0lBRkMsSUFBQSxtQkFBTSxHQUFFO0lBQ1IsSUFBQSxhQUFJLEVBQUMsNkJBQTZCLENBQUM7SUFDNUIsV0FBQSxJQUFBLGNBQUssRUFBQyxNQUFNLENBQUMsQ0FBQTtJQUFnQixXQUFBLElBQUEsY0FBSyxFQUFDLFNBQVMsQ0FBQyxDQUFBOzs7O3NEQUVwRDttQ0EvQlUsd0JBQXdCO0lBRHBDLElBQUEsbUJBQVUsRUFBQyxnQkFBZ0IsQ0FBQztxQ0FFWSxrQ0FBZTtHQUQzQyx3QkFBd0IsQ0FnQ3BDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9sYW5kaW5ncy9sYW5kaW5ncy1wdWJsaWMuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBCb2R5LCBDb250cm9sbGVyLCBHZXQsIFBhcmFtLCBQb3N0LCBRdWVyeSwgUmVxIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBMYW5kaW5nc1NlcnZpY2UgfSBmcm9tIFwiLi9sYW5kaW5ncy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBQdWJsaWMgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IGNsaWVudElwRnJvbVJlcXVlc3QgfSBmcm9tIFwiLi4vZnJhdWQvY2xpZW50LWlwXCI7XG5pbXBvcnQgeyBMYW5kaW5nRXZlbnREdG8sIExhbmRpbmdPcmRlckR0byB9IGZyb20gXCIuL2xhbmRpbmdzLmR0b1wiO1xuXG4vKipcbiAqIEVDMTMgcHVibGljIGxhbmRpbmcgQVBJLiBBbGwgcm91dGVzIGFyZSBAUHVibGljIChsYW5kaW5nXG4gKiB2aXNpdG9ycyBoYXZlIG5vIGFjY291bnQpOyBhIGxhbmRpbmcgYW5zd2VycyBvbmx5IHdoaWxlIGl0IGlzXG4gKiBgcHVibGlzaGVkYCBhbmQgaXRzIHByb2R1Y3QgaXMgQUNUSVZFIOKAlCBldmVyeXRoaW5nIGVsc2UgaXMgNDA0LlxuICovXG5AQ29udHJvbGxlcihcInB1YmxpYy9sYW5kaW5nXCIpXG5leHBvcnQgY2xhc3MgTGFuZGluZ3NQdWJsaWNDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBsYW5kaW5nczogTGFuZGluZ3NTZXJ2aWNlKSB7fVxuXG4gIEBQdWJsaWMoKVxuICBAR2V0KFwiOnNsdWdcIilcbiAgZ2V0KEBQYXJhbShcInNsdWdcIikgc2x1Zzogc3RyaW5nLCBAUXVlcnkoXCJ2aXNpdG9yXCIpIHZpc2l0b3I/OiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5nZXRQdWJsaWNMYW5kaW5nKHNsdWcsIHZpc2l0b3IgfHwgdW5kZWZpbmVkKTtcbiAgfVxuXG4gIEBQdWJsaWMoKVxuICBAUG9zdChcIjpzbHVnL3ZpZXdcIilcbiAgdmlldyhAUGFyYW0oXCJzbHVnXCIpIHNsdWc6IHN0cmluZywgQEJvZHkoKSBkdG86IExhbmRpbmdFdmVudER0bykge1xuICAgIHJldHVybiB0aGlzLmxhbmRpbmdzLnJlY29yZEV2ZW50KHNsdWcsIFwidmlld1wiLCBkdG8gPz8ge30pO1xuICB9XG5cbiAgQFB1YmxpYygpXG4gIEBQb3N0KFwiOnNsdWcvY2hlY2tvdXQtc3RhcnRlZFwiKVxuICBjaGVja291dFN0YXJ0ZWQoQFBhcmFtKFwic2x1Z1wiKSBzbHVnOiBzdHJpbmcsIEBCb2R5KCkgZHRvOiBMYW5kaW5nRXZlbnREdG8pIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5yZWNvcmRFdmVudChzbHVnLCBcImNoZWNrb3V0X3N0YXJ0ZWRcIiwgZHRvID8/IHt9KTtcbiAgfVxuXG4gIEBQdWJsaWMoKVxuICBAUG9zdChcIjpzbHVnL29yZGVyXCIpXG4gIG9yZGVyKEBQYXJhbShcInNsdWdcIikgc2x1Zzogc3RyaW5nLCBAQm9keSgpIGR0bzogTGFuZGluZ09yZGVyRHRvLCBAUmVxKCkgcmVxOiBhbnkpIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5wbGFjZU9yZGVyKHNsdWcsIGR0bywgeyBpcDogY2xpZW50SXBGcm9tUmVxdWVzdChyZXEpIH0pO1xuICB9XG5cbiAgQFB1YmxpYygpXG4gIEBQb3N0KFwiOnNsdWcvb3JkZXIvOm9yZGVySWQvdXBzZWxsXCIpXG4gIHVwc2VsbChAUGFyYW0oXCJzbHVnXCIpIHNsdWc6IHN0cmluZywgQFBhcmFtKFwib3JkZXJJZFwiKSBvcmRlcklkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5hZGRVcHNlbGwoc2x1Zywgb3JkZXJJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

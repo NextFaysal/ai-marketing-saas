@@ -18,6 +18,7 @@ import { MessagingConnectPanel } from "@/components/connect/messaging-connect-pa
 import { SenderConnectPanel } from "@/components/connect/sender-connect-panel";
 import { LlmConfigPanel } from "@/components/connect/llm-config-panel";
 import { PaymentGatewayPanel } from "@/components/connect/payment-gateway-panel";
+import { PaymentAttemptsPanel } from "@/components/connect/payment-attempts-panel";
 import { MemberAccessPanel } from "@/components/connect/member-access-panel";
 import { PaymentHistoryPanel } from "@/components/connect/payment-history-panel";
 import { PaymentRefundsPanel } from "@/components/connect/payment-refunds-panel";
@@ -724,7 +725,7 @@ export default function ConnectionsPage() {
       <section id="cc-forms-courier" className="scroll-mt-24 space-y-3">
         <div>
           <h2 className="font-semibold text-slate-800">🚚 কুরিয়ার কানেক্ট করুন</h2>
-          <p className="mt-1 text-sm text-slate-500">Steadfast / Pathao / RedX — তিনটিই একসাথে যুক্ত থাকতে পারে। প্রতিটির যাচাই হয় তার আসল API দিয়ে; ডিফল্ট কুরিয়ারও এখান থেকেই বেছে নেওয়া যায়।</p>
+          <p className="mt-1 text-sm text-slate-500">Steadfast / Pathao / RedX / eCourier — সবগুলো একসাথে যুক্ত থাকতে পারে। প্রতিটির যাচাই হয় তার আসল API দিয়ে; ডিফল্ট কুরিয়ারও এখান থেকেই বেছে নেওয়া যায়।</p>
         </div>
         <CourierConnectPanel onChanged={() => void load()} />
       </section>
@@ -756,6 +757,14 @@ export default function ConnectionsPage() {
         <SettlementImportsPanel />
         <PayoutAutomationPanel />
         <PaymentLinksPanel />
+      </section>
+
+      <section className="scroll-mt-24 space-y-3">
+        <div>
+          <h2 className="font-semibold text-slate-800">🧾 পেমেন্ট চেষ্টা — সব অর্ডারের অনলাইন পেমেন্ট</h2>
+          <p className="mt-1 text-sm text-slate-500">প্রতিটি পেমেন্ট চেষ্টার আসল অবস্থা, ব্যর্থতার কারণ ও ফি/নেট এখানে দেখা যাবে। অপেক্ষমাণ অর্ডারের পেমেন্ট লিংক এখান থেকেই আবার পাঠানো যায় — পাঠানোর ফলাফল হুবহু API যা বলে তাই দেখানো হয়।</p>
+        </div>
+        <PaymentAttemptsPanel />
       </section>
     </div>
   );

@@ -1,0 +1,90 @@
+ab966b351897a16ee84465996783e3e4
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CustomerNdrActionDto = exports.ResolveNdrDto = exports.RescheduleNdrDto = exports.ContactNdrDto = void 0;
+const class_validator_1 = require("class-validator");
+class ContactNdrDto {
+    channel;
+    customMessage;
+}
+exports.ContactNdrDto = ContactNdrDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["whatsapp", "sms", "both"]),
+    __metadata("design:type", String)
+], ContactNdrDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ContactNdrDto.prototype, "customMessage", void 0);
+class RescheduleNdrDto {
+    rescheduleDate;
+    notes;
+    address;
+}
+exports.RescheduleNdrDto = RescheduleNdrDto;
+__decorate([
+    (0, class_validator_1.IsISO8601)(),
+    __metadata("design:type", String)
+], RescheduleNdrDto.prototype, "rescheduleDate", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RescheduleNdrDto.prototype, "notes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RescheduleNdrDto.prototype, "address", void 0);
+class ResolveNdrDto {
+    resolution;
+    notes;
+}
+exports.ResolveNdrDto = ResolveNdrDto;
+__decorate([
+    (0, class_validator_1.IsIn)(["RESOLVED", "RETURNED", "CANCELLED", "RESCHEDULED"]),
+    __metadata("design:type", String)
+], ResolveNdrDto.prototype, "resolution", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ResolveNdrDto.prototype, "notes", void 0);
+class CustomerNdrActionDto {
+    action;
+    newAddress;
+    note;
+    preferredDate;
+}
+exports.CustomerNdrActionDto = CustomerNdrActionDto;
+__decorate([
+    (0, class_validator_1.IsIn)(["CONFIRMED_TOMORROW", "CHANGE_ADDRESS", "CANCEL_ORDER"]),
+    __metadata("design:type", String)
+], CustomerNdrActionDto.prototype, "action", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CustomerNdrActionDto.prototype, "newAddress", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CustomerNdrActionDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsISO8601)(),
+    __metadata("design:type", String)
+], CustomerNdrActionDto.prototype, "preferredDate", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvdXJpZXIvY291cmllci1uZHIuZHRvLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7OztBQUFBLHFEQUF3RTtBQUV4RSxNQUFhLGFBQWE7SUFHeEIsT0FBTyxDQUErQjtJQUl0QyxhQUFhLENBQVU7Q0FDeEI7QUFSRCxzQ0FRQztBQUxDO0lBRkMsSUFBQSw0QkFBVSxHQUFFO0lBQ1osSUFBQSxzQkFBSSxFQUFDLENBQUMsVUFBVSxFQUFFLEtBQUssRUFBRSxNQUFNLENBQUMsQ0FBQzs7OENBQ0k7QUFJdEM7SUFGQyxJQUFBLDRCQUFVLEdBQUU7SUFDWixJQUFBLDBCQUFRLEdBQUU7O29EQUNZO0FBR3pCLE1BQWEsZ0JBQWdCO0lBRTNCLGNBQWMsQ0FBVTtJQUl4QixLQUFLLENBQVU7SUFJZixPQUFPLENBQVU7Q0FDbEI7QUFYRCw0Q0FXQztBQVRDO0lBREMsSUFBQSwyQkFBUyxHQUFFOzt3REFDWTtBQUl4QjtJQUZDLElBQUEsNEJBQVUsR0FBRTtJQUNaLElBQUEsMEJBQVEsR0FBRTs7K0NBQ0k7QUFJZjtJQUZDLElBQUEsNEJBQVUsR0FBRTtJQUNaLElBQUEsMEJBQVEsR0FBRTs7aURBQ007QUFHbkIsTUFBYSxhQUFhO0lBRXhCLFVBQVUsQ0FBeUQ7SUFJbkUsS0FBSyxDQUFVO0NBQ2hCO0FBUEQsc0NBT0M7QUFMQztJQURDLElBQUEsc0JBQUksRUFBQyxDQUFDLFVBQVUsRUFBRSxVQUFVLEVBQUUsV0FBVyxFQUFFLGFBQWEsQ0FBQyxDQUFDOztpREFDUTtBQUluRTtJQUZDLElBQUEsNEJBQVUsR0FBRTtJQUNaLElBQUEsMEJBQVEsR0FBRTs7NENBQ0k7QUFHakIsTUFBYSxvQkFBb0I7SUFFL0IsTUFBTSxDQUE0RDtJQUlsRSxVQUFVLENBQVU7SUFJcEIsSUFBSSxDQUFVO0lBSWQsYUFBYSxDQUFVO0NBQ3hCO0FBZkQsb0RBZUM7QUFiQztJQURDLElBQUEsc0JBQUksRUFBQyxDQUFDLG9CQUFvQixFQUFFLGdCQUFnQixFQUFFLGNBQWMsQ0FBQyxDQUFDOztvREFDRztBQUlsRTtJQUZDLElBQUEsNEJBQVUsR0FBRTtJQUNaLElBQUEsMEJBQVEsR0FBRTs7d0RBQ1M7QUFJcEI7SUFGQyxJQUFBLDRCQUFVLEdBQUU7SUFDWixJQUFBLDBCQUFRLEdBQUU7O2tEQUNHO0FBSWQ7SUFGQyxJQUFBLDRCQUFVLEdBQUU7SUFDWixJQUFBLDJCQUFTLEdBQUU7OzJEQUNXIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jb3VyaWVyL2NvdXJpZXItbmRyLmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBJc0luLCBJc0lTTzg2MDEsIElzT3B0aW9uYWwsIElzU3RyaW5nIH0gZnJvbSBcImNsYXNzLXZhbGlkYXRvclwiO1xuXG5leHBvcnQgY2xhc3MgQ29udGFjdE5kckR0byB7XG4gIEBJc09wdGlvbmFsKClcbiAgQElzSW4oW1wid2hhdHNhcHBcIiwgXCJzbXNcIiwgXCJib3RoXCJdKVxuICBjaGFubmVsPzogXCJ3aGF0c2FwcFwiIHwgXCJzbXNcIiB8IFwiYm90aFwiO1xuXG4gIEBJc09wdGlvbmFsKClcbiAgQElzU3RyaW5nKClcbiAgY3VzdG9tTWVzc2FnZT86IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIFJlc2NoZWR1bGVOZHJEdG8ge1xuICBASXNJU084NjAxKClcbiAgcmVzY2hlZHVsZURhdGUhOiBzdHJpbmc7XG5cbiAgQElzT3B0aW9uYWwoKVxuICBASXNTdHJpbmcoKVxuICBub3Rlcz86IHN0cmluZztcblxuICBASXNPcHRpb25hbCgpXG4gIEBJc1N0cmluZygpXG4gIGFkZHJlc3M/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBSZXNvbHZlTmRyRHRvIHtcbiAgQElzSW4oW1wiUkVTT0xWRURcIiwgXCJSRVRVUk5FRFwiLCBcIkNBTkNFTExFRFwiLCBcIlJFU0NIRURVTEVEXCJdKVxuICByZXNvbHV0aW9uITogXCJSRVNPTFZFRFwiIHwgXCJSRVRVUk5FRFwiIHwgXCJDQU5DRUxMRURcIiB8IFwiUkVTQ0hFRFVMRURcIjtcblxuICBASXNPcHRpb25hbCgpXG4gIEBJc1N0cmluZygpXG4gIG5vdGVzPzogc3RyaW5nO1xufVxuXG5leHBvcnQgY2xhc3MgQ3VzdG9tZXJOZHJBY3Rpb25EdG8ge1xuICBASXNJbihbXCJDT05GSVJNRURfVE9NT1JST1dcIiwgXCJDSEFOR0VfQUREUkVTU1wiLCBcIkNBTkNFTF9PUkRFUlwiXSlcbiAgYWN0aW9uITogXCJDT05GSVJNRURfVE9NT1JST1dcIiB8IFwiQ0hBTkdFX0FERFJFU1NcIiB8IFwiQ0FOQ0VMX09SREVSXCI7XG5cbiAgQElzT3B0aW9uYWwoKVxuICBASXNTdHJpbmcoKVxuICBuZXdBZGRyZXNzPzogc3RyaW5nO1xuXG4gIEBJc09wdGlvbmFsKClcbiAgQElzU3RyaW5nKClcbiAgbm90ZT86IHN0cmluZztcblxuICBASXNPcHRpb25hbCgpXG4gIEBJc0lTTzg2MDEoKVxuICBwcmVmZXJyZWREYXRlPzogc3RyaW5nO1xufVxuIl0sInZlcnNpb24iOjN9

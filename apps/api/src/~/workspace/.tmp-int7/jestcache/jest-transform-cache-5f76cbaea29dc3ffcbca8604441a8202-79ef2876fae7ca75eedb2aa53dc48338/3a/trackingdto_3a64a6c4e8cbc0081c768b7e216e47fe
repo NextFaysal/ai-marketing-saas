@@ -1,0 +1,176 @@
+e9c324943c94173a4289c8d0f024005a
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IngestDto = exports.TrackEventDto = exports.SessionDataDto = void 0;
+const class_transformer_1 = require("class-transformer");
+const class_validator_1 = require("class-validator");
+class SessionDataDto {
+    utmSource;
+    utmMedium;
+    utmCampaign;
+    utmContent;
+    utmTerm;
+    fbclid;
+    gclid;
+    ttclid;
+    landingPage;
+    referrer;
+}
+exports.SessionDataDto = SessionDataDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "utmSource", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "utmMedium", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "utmCampaign", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "utmContent", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "utmTerm", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "fbclid", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "gclid", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "ttclid", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "landingPage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SessionDataDto.prototype, "referrer", void 0);
+class TrackEventDto {
+    clientEventId;
+    anonymousId;
+    sessionKey;
+    type;
+    url;
+    referrer;
+    occurredAt; // ISO string from the browser
+    session;
+    properties;
+    orderExternalId;
+    value; // decimal string
+    currency;
+}
+exports.TrackEventDto = TrackEventDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "clientEventId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "anonymousId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "sessionKey", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(50),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "url", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "referrer", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "occurredAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => SessionDataDto),
+    __metadata("design:type", SessionDataDto)
+], TrackEventDto.prototype, "session", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], TrackEventDto.prototype, "properties", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(100),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "orderExternalId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "value", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(3),
+    __metadata("design:type", String)
+], TrackEventDto.prototype, "currency", void 0);
+class IngestDto {
+    key; // store tracking key (public identifier, not a secret)
+    events;
+}
+exports.IngestDto = IngestDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], IngestDto.prototype, "key", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ValidateNested)({ each: true }),
+    (0, class_transformer_1.Type)(() => TrackEventDto),
+    __metadata("design:type", Array)
+], IngestDto.prototype, "events", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3RyYWNraW5nL3RyYWNraW5nLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSx5REFBeUM7QUFDekMscURBQXFHO0FBRXJHLE1BQWEsY0FBYztJQUNDLFNBQVMsQ0FBVTtJQUNuQixTQUFTLENBQVU7SUFDbkIsV0FBVyxDQUFVO0lBQ3JCLFVBQVUsQ0FBVTtJQUNwQixPQUFPLENBQVU7SUFDakIsTUFBTSxDQUFVO0lBQ2hCLEtBQUssQ0FBVTtJQUNmLE1BQU0sQ0FBVTtJQUNDLFdBQVcsQ0FBVTtJQUNyQixRQUFRLENBQVU7Q0FDOUQ7QUFYRCx3Q0FXQztBQVYyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2lEQUFvQjtBQUNuQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2lEQUFvQjtBQUNuQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O21EQUFzQjtBQUNyQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2tEQUFxQjtBQUNwQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OytDQUFrQjtBQUNqQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzhDQUFpQjtBQUNoQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzZDQUFnQjtBQUNmO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7OENBQWlCO0FBQ0M7SUFBMUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLElBQUksQ0FBQzs7bURBQXNCO0FBQ3JCO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7O2dEQUFtQjtBQUcvRCxNQUFhLGFBQWE7SUFDSSxhQUFhLENBQVU7SUFDdkIsV0FBVyxDQUFVO0lBQ3JCLFVBQVUsQ0FBVTtJQUNyQixJQUFJLENBQVU7SUFDRSxHQUFHLENBQVU7SUFDYixRQUFRLENBQVU7SUFDbkMsVUFBVSxDQUFVLENBQUMsOEJBQThCO0lBQ2pCLE9BQU8sQ0FBa0I7SUFDM0QsVUFBVSxDQUEyQjtJQUNyQixlQUFlLENBQVU7SUFDekMsS0FBSyxDQUFVLENBQUMsaUJBQWlCO0lBQ25CLFFBQVEsQ0FBVTtDQUMzRDtBQWJELHNDQWFDO0FBWjZCO0lBQTNCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O29EQUF3QjtBQUN2QjtJQUEzQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOztrREFBc0I7QUFDckI7SUFBM0IsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7aURBQXFCO0FBQ3JCO0lBQTFCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7OzJDQUFlO0FBQ0U7SUFBMUMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLElBQUksQ0FBQzs7MENBQWM7QUFDYjtJQUExQyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsSUFBSSxDQUFDOzsrQ0FBbUI7QUFDbkM7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztpREFBcUI7QUFDYztJQUEzRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLGdDQUFjLEdBQUU7SUFBRSxJQUFBLHdCQUFJLEVBQUMsR0FBRyxFQUFFLENBQUMsY0FBYyxDQUFDOzhCQUFXLGNBQWM7OENBQUM7QUFDM0Q7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOztpREFBc0M7QUFDckI7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7c0RBQTBCO0FBQ3pDO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7NENBQWdCO0FBQ0Q7SUFBdkMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLENBQUMsQ0FBQzs7K0NBQW1CO0FBRzVELE1BQWEsU0FBUztJQUNSLEdBQUcsQ0FBVSxDQUFDLHVEQUF1RDtJQUNYLE1BQU0sQ0FBbUI7Q0FDaEc7QUFIRCw4QkFHQztBQUZhO0lBQVgsSUFBQSwwQkFBUSxHQUFFOztzQ0FBYztBQUM2QztJQUFyRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLGdDQUFjLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7SUFBRSxJQUFBLHdCQUFJLEVBQUMsR0FBRyxFQUFFLENBQUMsYUFBYSxDQUFDOzt5Q0FBMEIiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3RyYWNraW5nL3RyYWNraW5nLmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBUeXBlIH0gZnJvbSBcImNsYXNzLXRyYW5zZm9ybWVyXCI7XG5pbXBvcnQgeyBJc0FycmF5LCBJc09iamVjdCwgSXNPcHRpb25hbCwgSXNTdHJpbmcsIE1heExlbmd0aCwgVmFsaWRhdGVOZXN0ZWQgfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5cbmV4cG9ydCBjbGFzcyBTZXNzaW9uRGF0YUR0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdXRtU291cmNlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHV0bU1lZGl1bT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB1dG1DYW1wYWlnbj86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB1dG1Db250ZW50Pzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHV0bVRlcm0/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZmJjbGlkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGdjbGlkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHR0Y2xpZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMDApIGxhbmRpbmdQYWdlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwMCkgcmVmZXJyZXI/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBUcmFja0V2ZW50RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMDApIGNsaWVudEV2ZW50SWQhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTAwKSBhbm9ueW1vdXNJZCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMDApIHNlc3Npb25LZXkhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTApIHR5cGUhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSB1cmw/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSByZWZlcnJlcj86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBvY2N1cnJlZEF0Pzogc3RyaW5nOyAvLyBJU08gc3RyaW5nIGZyb20gdGhlIGJyb3dzZXJcbiAgQElzT3B0aW9uYWwoKSBAVmFsaWRhdGVOZXN0ZWQoKSBAVHlwZSgoKSA9PiBTZXNzaW9uRGF0YUR0bykgc2Vzc2lvbj86IFNlc3Npb25EYXRhRHRvO1xuICBASXNPcHRpb25hbCgpIEBJc09iamVjdCgpIHByb3BlcnRpZXM/OiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMCkgb3JkZXJFeHRlcm5hbElkPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHZhbHVlPzogc3RyaW5nOyAvLyBkZWNpbWFsIHN0cmluZ1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMykgY3VycmVuY3k/OiBzdHJpbmc7XG59XG5cbmV4cG9ydCBjbGFzcyBJbmdlc3REdG8ge1xuICBASXNTdHJpbmcoKSBrZXkhOiBzdHJpbmc7IC8vIHN0b3JlIHRyYWNraW5nIGtleSAocHVibGljIGlkZW50aWZpZXIsIG5vdCBhIHNlY3JldClcbiAgQElzQXJyYXkoKSBAVmFsaWRhdGVOZXN0ZWQoeyBlYWNoOiB0cnVlIH0pIEBUeXBlKCgpID0+IFRyYWNrRXZlbnREdG8pIGV2ZW50cyE6IFRyYWNrRXZlbnREdG9bXTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

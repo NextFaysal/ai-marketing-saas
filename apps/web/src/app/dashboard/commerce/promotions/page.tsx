@@ -20,6 +20,14 @@ interface Promotion {
   priority: number;
   createdAt: string;
 }
+// GB7 (GC17): promotions report payload.
+interface PromotionsReport {
+  from: string;
+  to: string;
+  coupons: { code: string; redemptions: number; discountTotalMinor: string; revenueMinor: string }[];
+  promotions: { promotionId: string; name: string; applications: number; discountTotalMinor: string }[];
+  coverage: { ordersScanned: number; truncated: boolean; note: string };
+}
 interface ProductOpt { id: string; name: string }
 interface CategoryOpt { id: string; name: string }
 interface TierRow { thresholdKind: "amount" | "qty"; threshold: string; percentOff: string }
@@ -91,6 +99,8 @@ export default function PromotionsPage() {
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [active, setActive] = useState(true);
+  // GB7 (GC17): shared config field — minimum prior orders.
+  const [minPriorOrders, setMinPriorOrders] = useState("");
 
   // BOGO config
   const [buyScope, setBuyScope] = useState<"product" | "category">("product");
@@ -125,6 +135,12 @@ export default function PromotionsPage() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewError, setPreviewError] = useState("");
 
+  // GB7 (GC17): report section (default range: last 30 days).
+  const [reportFrom, setReportFrom] = useState(() => new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10));
+  const [reportTo, setReportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [report, setReport] = useState<PromotionsReport | null>(null);
+  const [reportError, setReportError] = useState("");
+
   const load = useCallback(async () => {
     const orgId = getOrganizationId(); if (!orgId) { setLoading(false); return; }
     setLoading(true);
@@ -145,7 +161,7 @@ export default function PromotionsPage() {
 
   function resetForm() {
     setEditingId(null); setName(""); setType("bogo"); setPriority("0");
-    setStartsAt(""); setEndsAt(""); setActive(true);
+    setStartsAt(""); setEndsAt(""); setActive(true); setMinPriorOrders("");
     setBuyScope("product"); setBuyId(""); setBuyQty("1");
     setGetScope("product"); setGetId(""); setGetQty("1"); setGetDiscountPercent("100");
     setTierScope("subtotal"); setTierCategoryId("");
@@ -161,6 +177,7 @@ export default function PromotionsPage() {
     setStartsAt(p.startsAt ? p.startsAt.slice(0, 16) : "");
     setEndsAt(p.endsAt ? p.endsAt.slice(0, 16) : "");
     const cfg = p.config ?? {};
+    setMinPriorOrders(typeof cfg.minPriorOrders === "number" ? String(cfg.minPriorOrders) : "");
     if (p.type === "bogo") {
       if (str(cfg.buyCategoryId)) { setBuyScope("category"); setBuyId(str(cfg.buyCategoryId)); }
       else if (str(cfg.buyProductId)) { setBuyScope("product"); setBuyId(str(cfg.buyProductId)); }
@@ -242,10 +259,15 @@ export default function PromotionsPage() {
       return;
     }
     setBusy("save"); setError(""); setNotice("");
+    const priorOrders = minPriorOrders.trim() ? Math.max(0, parseInt(minPriorOrders, 10) || 0) : null;
     const body = {
       name: name.trim(),
       type,
-      config: buildConfig(),
+      config: {
+        ...buildConfig(),
+        // GB7: shared optional field — included only when set.
+        ...(priorOrders != null ? { minPriorOrders: priorOrders } : {}),
+      },
       startsAt: startsAt ? new Date(startsAt).toISOString() : null,
       endsAt: endsAt ? new Date(endsAt).toISOString() : null,
       active,
@@ -311,6 +333,19 @@ export default function PromotionsPage() {
     finally { setBusy(""); }
   }
 
+  async function runReport() {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    setBusy("report"); setReportError(""); setReport(null);
+    try {
+      const qs = new URLSearchParams();
+      if (reportFrom) qs.set("from", reportFrom);
+      if (reportTo) qs.set("to", reportTo);
+      const out = await apiFetch<PromotionsReport>(`/organizations/${orgId}/commerce/promotions/report?${qs.toString()}`);
+      setReport(out);
+    } catch (e) { setReportError(e instanceof Error ? e.message : "রিপোর্ট ব্যর্থ"); }
+    finally { setBusy(""); }
+  }
+
   const toggleIn = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
 
   return (
@@ -350,6 +385,10 @@ export default function PromotionsPage() {
           </label>
           <label className="flex items-end gap-2 pb-2 text-sm">
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> সক্রিয়
+          </label>
+          <label className="block text-sm">কমপক্ষে আগের অর্ডার (খালি = শর্ত নেই)
+            <input className="input mt-1" type="number" min="0" value={minPriorOrders} onChange={(e) => setMinPriorOrders(e.target.value)} placeholder="যেমন: ১" />
+            <span className="mt-1 block text-xs font-normal text-slate-400">সব ধরনের প্রমোশনেই প্রযোজ্য — ক্রেতার আগের অর্ডার অন্তত এই সংখ্যক হলেই প্রমোশনটি কাজ করবে।</span>
           </label>
         </div>
 
@@ -522,7 +561,11 @@ export default function PromotionsPage() {
               <tbody>
                 {promotions.map((p) => (
                   <tr key={p.id} className="border-b last:border-0 align-top">
-                    <td className="py-2 font-semibold">{p.name}</td>
+                    <td className="py-2 font-semibold">{p.name}
+                      {typeof p.config?.minPriorOrders === "number" ? (
+                        <div className="text-[11px] font-normal text-slate-500">কমপক্ষে {p.config.minPriorOrders}টি আগের অর্ডার</div>
+                      ) : null}
+                    </td>
                     <td className="py-2"><span className="rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{TYPE_LABEL[p.type] ?? p.type}</span></td>
                     <td className="py-2">{p.priority}</td>
                     <td className="py-2 text-xs text-slate-500">{p.startsAt ? new Date(p.startsAt).toLocaleString("bn-BD") : "—"} → {p.endsAt ? new Date(p.endsAt).toLocaleString("bn-BD") : "অসীম"}</td>
@@ -619,6 +662,90 @@ export default function PromotionsPage() {
             <div className="flex justify-between border-t pt-2"><span className="font-semibold">মোট ছাড়:</span><span className="font-semibold text-emerald-700">− {money(preview.totalDiscountMinor)}</span></div>
             <div className="flex justify-between text-base font-black"><span>পণ্যের মোট (ছাড়ের পর):</span><span className="text-indigo-700">{money(preview.merchandiseTotalMinor)}</span></div>
             <p className="text-xs text-slate-400">ডেলিভারি চার্জ এই প্রিভিউতে নেই — চেকআউটে জোন অনুযায়ী যোগ হয়। মুদ্রা: {preview.currency}</p>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <div className="font-semibold">📊 প্রমোশন রিপোর্ট</div>
+          <p className="text-xs text-slate-500">সময়সীমা বেছে রিপোর্ট দেখুন — কোন কুপন কতবার ব্যবহৃত হয়েছে এবং প্রতিটি অটোমেটিক প্রমোশন কত ছাড় দিয়েছে।</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block text-sm">শুরু (from)
+            <input className="input mt-1" type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} />
+          </label>
+          <label className="block text-sm">শেষ (to)
+            <input className="input mt-1" type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} />
+          </label>
+          <button className="btn-primary" disabled={busy !== ""} onClick={runReport}>
+            {busy === "report" ? "রিপোর্ট আসছে…" : "রিপোর্ট দেখুন"}
+          </button>
+        </div>
+        {reportError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{reportError}</p> : null}
+        {report ? (
+          <div className="space-y-5">
+            <p className="text-xs text-slate-500">{report.coverage.note}</p>
+            {report.coverage.truncated ? (
+              <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                ⚠️ এই রিপোর্ট আংশিক — স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি (সীমায় পৌঁছানোয় সব অর্ডার গণনা হয়নি)।
+              </p>
+            ) : (
+              <p className="text-xs text-slate-400">স্ক্যান করা অর্ডার: {report.coverage.ordersScanned}টি</p>
+            )}
+            <div>
+              <div className="mb-2 text-sm font-semibold">কুপন</div>
+              {report.coupons.length === 0 ? (
+                <p className="text-sm text-slate-500">এই সময়ে কোনো কুপন রিডেমশন হয়নি।</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-slate-400">
+                        <th className="py-2 font-medium">কোড</th><th className="py-2 font-medium">রিডেমশন</th>
+                        <th className="py-2 font-medium">মোট ছাড়</th><th className="py-2 font-medium">আয়</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.coupons.map((c) => (
+                        <tr key={c.code} className="border-b last:border-0">
+                          <td className="py-2 font-mono font-semibold">{c.code}</td>
+                          <td className="py-2">{c.redemptions}</td>
+                          <td className="py-2 text-emerald-700">− {money(c.discountTotalMinor)}</td>
+                          <td className="py-2 font-semibold">{money(c.revenueMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold">অটোমেটিক প্রমোশন</div>
+              {report.promotions.length === 0 ? (
+                <p className="text-sm text-slate-500">এই সময়ে কোনো অটোমেটিক প্রমোশন প্রয়োগ হয়নি।</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-slate-400">
+                        <th className="py-2 font-medium">নাম</th><th className="py-2 font-medium">প্রয়োগ</th>
+                        <th className="py-2 font-medium">মোট ছাড়</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.promotions.map((pr) => (
+                        <tr key={pr.promotionId} className="border-b last:border-0">
+                          <td className="py-2 font-semibold">{pr.name}</td>
+                          <td className="py-2">{pr.applications}</td>
+                          <td className="py-2 text-emerald-700">− {money(pr.discountTotalMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
       </div>

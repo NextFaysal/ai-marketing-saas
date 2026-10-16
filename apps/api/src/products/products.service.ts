@@ -4,14 +4,36 @@ import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { CreateProductDto, UpdateProductDto, CreateVariantDto, UpdateVariantDto, SetCostDto, BulkEditDto, CreateCategoryDto, UpdateCategoryDto } from "./products.dto";
 import { CatalogPushService } from "../commerce/catalog-push.service";
+import { CatalogsService } from "../catalogs/catalogs.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { DISCOUNT_REASON_MESSAGES } from "../commerce/discounts";
-import { PromotionsService, type CheckoutEvaluation } from "../commerce/promotions.service";
+import { PromotionsService, type CheckoutEvaluation, type LoyaltyRedeemInput } from "../commerce/promotions.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
+import { GiftCardsService } from "../commerce/gift-cards.service";
+import { PriceListsService, pickGroupPrice } from "../commerce/price-lists.service";
+import { GIFT_CARD_CONFIG_MESSAGES, validateGiftCardConfig } from "../commerce/gift-cards";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
+import { CheckoutGuardService } from "../fraud/checkout-guard.service";
+import { normalizeDeviceHash } from "../fraud/identifier-utils";
+import { IdempotencyService } from "../fraud/idempotency.service";
+import { evaluateCodRules } from "../fraud/cod-rules";
+import { depositFor } from "../fraud/deposit";
+import { validateFieldAnswers } from "../storefront/checkout-fields";
+import { buildCheckoutTrust, termsRefFor } from "../fraud/checkout-trust";
+import { parseBdAddress } from "../orders/bd-address";
+import { bdPhoneMatchKey } from "../orders/phone-utils";
 import type { PromotionLine } from "../commerce/promotions";
 import { computeStockDiverged, pendingOutboxKeys } from "../commerce/stock-divergence";
 import { assertEc24Conditionals, assertPreorderLimit, preorderInfo, validateWholesaleTiers } from "../commerce/ec24";
+import { isValidProductVideoUrl } from "./product-video";
+import { refreshBrandSearchVectors, refreshCategorySearchVectors, refreshProductSearchVector } from "./search-vector";
+import { displayProductDescription, displayProductName } from "./product-display";
+// GB2 (GC6): the export writes the importer's own column shape —
+// the CSV writer + money formatter live with the import pipeline.
+import { minorToMajor, toCsv } from "../imports/csv";
+import { checkProductCreate, isOrderLimitBlocked, OrderLimitBlockedError, SHOPPER_ORDER_BLOCK_MESSAGE,} from "../common/plan-limit-checks";
+import { normalizeAttribution } from "../common/attribution.dto";
 
 /**
  * EC24: normalize the product-model expansion fields for a
@@ -45,6 +67,17 @@ export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, 
     else if (!Number.isInteger(dto.digitalAccessLimit) || dto.digitalAccessLimit < 1) throw new BadRequestException("ডিজিটাল অ্যাক্সেস সীমা কমপক্ষে ১ হতে হবে");
     else out.digitalAccessLimit = dto.digitalAccessLimit;
   }
+  // AB5 (AX9): digital delivery type + signed-link lifetime.
+  if (!partial || has("digitalDeliveryType")) {
+    if (dto.digitalDeliveryType === null || dto.digitalDeliveryType === undefined) out.digitalDeliveryType = "file";
+    else if (!["file", "license", "both"].includes(dto.digitalDeliveryType)) throw new BadRequestException("ডিজিটাল ডেলিভারির ধরন file, license অথবা both হতে হবে");
+    else out.digitalDeliveryType = dto.digitalDeliveryType;
+  }
+  if (!partial || has("digitalLinkExpiryHours")) {
+    if (dto.digitalLinkExpiryHours === null || dto.digitalLinkExpiryHours === undefined) out.digitalLinkExpiryHours = null;
+    else if (!Number.isInteger(dto.digitalLinkExpiryHours) || dto.digitalLinkExpiryHours < 1 || dto.digitalLinkExpiryHours > 720) throw new BadRequestException("ডিজিটাল লিংকের মেয়াদ ১–৭২০ ঘণ্টার মধ্যে হতে হবে");
+    else out.digitalLinkExpiryHours = dto.digitalLinkExpiryHours;
+  }
   if (!partial || has("subscriptionEnabled")) out.subscriptionEnabled = !!dto.subscriptionEnabled;
   if (!partial || has("subscriptionIntervalDays")) {
     if (dto.subscriptionIntervalDays === null || dto.subscriptionIntervalDays === undefined) out.subscriptionIntervalDays = null;
@@ -57,6 +90,38 @@ export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, 
     else out.subscriptionDiscountPercent = dto.subscriptionDiscountPercent;
   }
   if (!partial || has("wholesaleTiers")) out.wholesaleTiers = validateWholesaleTiers(dto.wholesaleTiers);
+  // GB1 (GC4): product video — validated through the ONE shared
+  // normalizer (YouTube/Vimeo/mp4/webm, http/https only).
+  if (!partial || has("videoUrl")) {
+    const raw = dto.videoUrl === null || dto.videoUrl === undefined ? null : String(dto.videoUrl).trim() || null;
+    if (raw !== null && !isValidProductVideoUrl(raw)) {
+      throw new BadRequestException("ভিডিও URL সঠিক নয় — YouTube, Vimeo অথবা সরাসরি mp4/webm লিংক দিন");
+    }
+    out.videoUrl = raw;
+  }
+  if (!partial || has("videoPosterUrl")) {
+    out.videoPosterUrl = dto.videoPosterUrl === null || dto.videoPosterUrl === undefined ? null : String(dto.videoPosterUrl).trim() || null;
+  }
+  // AB2 (AX3): gift-card flag + face-value config. The config is
+  // validated + NORMALIZED through the ONE validator in
+  // commerce/gift-cards (invalid ⇒ Bengali 400 via its message
+  // map); an explicit null clears it. Setting isGiftCard back to
+  // false KEEPS the stored config — it is harmless (no checkout
+  // path reads the config unless isGiftCard is true) and avoids
+  // destroying a merchant's preset setup on a toggle-off.
+  if (!partial || has("isGiftCard")) out.isGiftCard = !!dto.isGiftCard;
+  if (!partial || has("giftCardConfig")) {
+    if (dto.giftCardConfig === null || dto.giftCardConfig === undefined) {
+      out.giftCardConfig = null;
+    } else {
+      try {
+        out.giftCardConfig = validateGiftCardConfig(dto.giftCardConfig);
+      } catch (e) {
+        const key = e instanceof Error ? e.message : "";
+        throw new BadRequestException(GIFT_CARD_CONFIG_MESSAGES[key] ?? "গিফট কার্ড কনফিগ সঠিক নয়");
+      }
+    }
+  }
   return out;
 }
 import { parseMoneyToMinor } from "@repo/contracts";
@@ -64,6 +129,27 @@ import { computeMargin } from "./pricing";
 import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+
+/** RM4: direct product-image upload limits. 10 MB matches the
+ * mirror's fetch cap; the type list is what the presign step
+ * accepts — the complete step then proves the real bytes against
+ * it by magic-byte sniff, so this list is a gate, not a trust. */
+export const PRODUCT_IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+export const PRODUCT_IMAGE_UPLOAD_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+/** RB6/RM9: digital product file upload (private bucket). A
+ * digital file can be almost anything a buyer downloads — ebook,
+ * archive, audio, software — so there is NO content-type list and
+ * NO magic-byte sniff; the gates are the size cap and an
+ * executable-extension blocklist (a hosted .exe/.sh/.html served
+ * back under our domain would be a malware/phishing vector). */
+export const DIGITAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
+/** At or below this size complete() reads the bytes back and
+ * records a real sha256 in the registry; above it the registry
+ * row honestly carries sha256 = null (HEAD size is still
+ * verified) instead of buffering a 100 MB file in API memory. */
+export const DIGITAL_FILE_SHA_MAX_BYTES = 10 * 1024 * 1024;
+export const DIGITAL_FILE_BLOCKED_EXTENSIONS = ["exe", "bat", "sh", "js", "html"] as const;
 
 /** EC23: a tax rate is basis points — integer 0..10000 or null. */
 export function validateTaxRateBps(v: unknown): number | null {
@@ -84,6 +170,10 @@ export function toPublicProduct(p: any, currentCostMinor?: bigint | null) {
   const margin = computeMargin(BigInt(p.priceMinor), currentCostMinor ?? null);
   return {
     ...p,
+    // AB2 (AX3): gift-card flag + config ride the staff shape
+    // explicitly (rows predating AB2 read as a plain product).
+    isGiftCard: !!p.isGiftCard,
+    giftCardConfig: p.giftCardConfig ?? null,
     priceMinor: p.priceMinor?.toString(),
     compareAtMinor: p.compareAtMinor?.toString() ?? null,
     currentCostMinor: currentCostMinor != null ? currentCostMinor.toString() : null,
@@ -130,7 +220,13 @@ function slugify(text: string): string {
 import { IntegrationsService } from "../integrations/integrations.service";
 import { EventsService } from "../common/events.service";
 import { PublicCheckoutOrderDto } from "./products.dto";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { StorageService } from "../storage/storage.service";
+import { StorageRegistryService } from "../storage/storage-registry.service";
+import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
+import { detectMediaKind } from "../inbox/media-sniff";
+import { ProductImageMirrorService } from "./product-image-mirror.service";
+import { TenantPaymentsService } from "../connections/tenant-payments.service";
 
 @Injectable()
 export class ProductsService {
@@ -169,12 +265,78 @@ export class ProductsService {
     // events param). Nest injects by type, so production wiring
     // is unaffected.
     @Optional() private readonly blockedPhones?: BlockedPhoneService,
-    // EC32: affiliate attribution stamp. INT6 union: moved AFTER
-    // blockedPhones (slot 10) — no EC spec passes affiliates
-    // positionally (the INT5 note above still holds), and the
-    // SU5 events slot (8) is preserved; the stamp never throws.
+    // GB3 (GC8/GC9): checkout gate + idempotency replay. LAST
+    // params + Optional, same discipline; absent keeps checkout
+    // exactly as before GB3.
+    @Optional() private readonly checkoutGuard?: CheckoutGuardService,
+    @Optional() private readonly idempotency?: IdempotencyService,
+    // GC10: online-payment options for the public payload +
+    // marker validation at placement. LAST param + Optional,
+    // same discipline; absent offers no online options.
+    @Optional() private readonly tenantPayments?: TenantPaymentsService,
+    // AB1 (AX1): loyalty snapshot + placement-time points spend.
+    // LAST param + Optional, same discipline; absent keeps the
+    // checkout exactly as before AB1.
+    @Optional() private readonly loyalty?: LoyaltyService,
+    // AB2 (AX3): gift-card redemption resolution + placement-time
+    // balance spend. LAST param + Optional, same discipline;
+    // absent keeps the checkout exactly as before AB2.
+    @Optional() private readonly giftCards?: GiftCardsService,
+    // AB5 (AX7): B2B group price lists as a checkout PRICE
+    // SOURCE. LAST param + Optional, same discipline; absent
+    // keeps the checkout exactly as before AB5.
+    @Optional() private readonly priceLists?: PriceListsService,
+    // AB5 (AX10): Meta catalog auto-sync enqueue. LAST param +
+    // Optional, same discipline; absent keeps product writes
+    // exactly as before AX10. Wiring choice: ProductsModule
+    // imports CatalogsModule directly — CatalogsModule is a
+    // leaf (global Prisma/Audit only, imports nothing), so the
+    // graph stays acyclic and no event-bus indirection is
+    // needed; this mirrors the EC3 CatalogPushService hook.
+    @Optional() private readonly catalogSync?: CatalogsService,
+    // EC32: affiliate attribution stamp. INT7 union: slot 17 —
+    // the GC-line deep slots (10–16) keep their positions because
+    // GB3/AB5/AB8 specs pin them; no spec passes affiliates
+    // positionally, and the SU5 events slot (8) is preserved;
+    // the stamp never throws.
     @Optional() private readonly affiliates?: AffiliatesService,
+    // RM4 (INT7 union: slots 18–20): the R2 storage layer for direct product
+    // image uploads + the external-URL mirror. LAST params +
+    // Optional, same discipline as every slot above — positional
+    // spec constructions without them keep working and the upload
+    // endpoints refuse honestly when storage is not wired.
+    @Optional() private readonly storage?: StorageService,
+    @Optional() private readonly storageRegistry?: StorageRegistryService,
+    @Optional() private readonly imageMirror?: ProductImageMirrorService,
   ) {}
+
+  /** GC10: failure-isolated payment options for payloads. */
+  private async paymentOptionsFor(orgId: string) {
+    if (!this.tenantPayments?.publicPaymentOptions) return { online: [] as any[] };
+    return this.tenantPayments.publicPaymentOptions(orgId).catch(() => ({ online: [] as any[] }));
+  }
+
+  /** GC10: validate an online selection (400 when not really
+   * offered); null when not selected. */
+  private async resolveOnlineSelection(orgId: string, dto: PublicCheckoutOrderDto) {
+    if (!dto.onlinePayment) return null;
+    if (!this.tenantPayments?.assertPublicPaymentOption) {
+      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+    }
+    return this.tenantPayments.assertPublicPaymentOption(orgId, dto.onlinePayment);
+  }
+
+  /** AB4 (AX5b): the org's ACTIVE custom checkout-field defs,
+   * failure-isolated (a missing table reads as no defs). */
+  private async loadCheckoutFieldDefs(orgId: string): Promise<any[]> {
+    try {
+      const table = (this.prisma as any).checkoutFieldDef;
+      if (!table?.findMany) return [];
+      return (await table.findMany({ where: { organizationId: orgId, active: true } }).catch(() => [])) ?? [];
+    } catch {
+      return [];
+    }
+  }
 
   // ---------- EC3 shared helpers ----------
 
@@ -188,6 +350,40 @@ export class ProductsService {
     } catch (e) {
       this.logger.warn(
         `catalog push hook (${label}) failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /** AB5 (AX10): failure-isolated Meta catalog auto-sync hook —
+   *  the same posture as pushHook: enqueuing a CatalogSyncRecord
+   *  must never fail the merchant's product write (the write
+   *  already succeeded and is audited; noteProductChanged itself
+   *  also swallows its own errors — this is belt and braces). */
+  private async catalogSyncHook(
+    action: "create" | "update" | "delete",
+    organizationId: string,
+    productId: string,
+  ): Promise<void> {
+    if (!this.catalogSync) return;
+    try {
+      await this.catalogSync.noteProductChanged(organizationId, productId, action);
+    } catch (e) {
+      this.logger.warn(
+        `catalog sync hook (${action}) failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /** AB6 (AX11): failure-isolated search-vector refresh hook —
+   *  the same posture as catalogSyncHook: maintaining the FTS
+   *  vector must never fail the merchant's own catalog write
+   *  (the write already succeeded and is audited). */
+  private async searchVectorHook(label: string, fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn();
+    } catch (e) {
+      this.logger.warn(
+        `search vector hook (${label}) failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -253,6 +449,9 @@ export class ProductsService {
   }
 
   async create(organizationId: string, actorId: string, dto: CreateProductDto) {
+    // GC22 (GB9): plan enforcement — paused / past-due-past-grace
+    // orgs and orgs at their plan's productLimit cannot create.
+    await checkProductCreate(this.prisma as any, organizationId);
     if (dto.sku) {
       const dup = await (this.prisma as any).product.findUnique({
         where: { organizationId_sku: { organizationId, sku: dto.sku } },
@@ -269,6 +468,9 @@ export class ProductsService {
     }
     // EC3: every tag id must exist in this org before we write.
     if (dto.tagIds?.length) await this.verifyTagsOr404(organizationId, dto.tagIds);
+    // GB2 (GC6): a brandId must exist in this org (same 404
+    // discipline as categoryId).
+    if (dto.brandId) await this.findBrandOr404(organizationId, dto.brandId);
 
     const baseSlug = slugify(dto.name) || `prod-${Date.now().toString(36)}`;
     const randomSuffix = Math.random().toString(36).substring(2, 6);
@@ -278,6 +480,9 @@ export class ProductsService {
       data: {
         organizationId,
         name: dto.name.trim(),
+        // AB6 (AX13): English alternates (blank ⇒ null).
+        nameEn: dto.nameEn?.trim() || null,
+        descriptionEn: dto.descriptionEn && dto.descriptionEn.trim() ? dto.descriptionEn : null,
         slug,
         description: dto.description, category: categoryName, sku: dto.sku || null,
         status: dto.status ?? "ACTIVE",
@@ -306,6 +511,9 @@ export class ProductsService {
           assertEc24Conditionals(fields as any);
           return fields;
         })(),
+        // GB2 (GC6): brand link + free-shipping flag.
+        brandId: dto.brandId ?? null,
+        freeShipping: dto.freeShipping ?? false,
         source: "manual",
       },
     });
@@ -321,11 +529,24 @@ export class ProductsService {
     // SU5: a new product may become a social DRAFT (never a
     // publish) when the org enabled the trigger. Fire-and-forget.
     this.events?.emit?.("social_draft.product_created", { organizationId, productId: product.id });
+    // AB3: a product created WITH a tracked quantity joins the
+    // per-bin invariant at its resolved default bin. Lazy
+    // seeding would also catch it at its first inventory
+    // mutation; this hook just makes it immediate. Fully
+    // failure-isolated — seeding never breaks a product write.
+    if (product.stockQuantity != null) {
+      try { await this.inventory?.seedBalanceIfMissing?.(organizationId, product.id, null); } catch { /* never breaks create */ }
+    }
     // EC3: full-manage stores get a DRAFT listing for the new
     // product (no push yet). Failure-isolated — see pushHook.
     await this.pushHook("createListingsForNewProduct", () =>
       this.catalogPush!.createListingsForNewProduct(organizationId, product.id),
     );
+    // AB5 (AX10): enqueue the Meta catalog create for autoSync
+    // catalogs. Failure-isolated — see catalogSyncHook.
+    await this.catalogSyncHook("create", organizationId, product.id);
+    // AB6 (AX11): build the new product's FTS vector.
+    await this.searchVectorHook("create", () => refreshProductSearchVector(this.prisma, product.id));
     return toPublicProduct(product, null);
   }
 
@@ -383,6 +604,32 @@ export class ProductsService {
     } catch {
       return empty;
     }
+  }
+
+  /** GB3 (GC8): terms trust for this org, read directly from
+   * the storefrontSetting + shopPage tables (this service does
+   * not inject StorefrontService). Failure-isolated. */
+  private async loadTermsTrust(
+    organizationId: string,
+  ): Promise<{ required: boolean; ref: string | null; url: string | null; setting: any; page: any }> {
+    let setting: any = null;
+    let page: any = null;
+    try {
+      const sTable = (this.prisma as any).storefrontSetting;
+      setting = sTable?.findFirst
+        ? await sTable.findFirst({ where: { organizationId } }).catch(() => null)
+        : null;
+    } catch { setting = null; }
+    try {
+      const pTable = (this.prisma as any).shopPage;
+      page = pTable?.findFirst
+        ? await pTable
+            .findFirst({ where: { organizationId, slug: "terms", published: true } })
+            .catch(() => null)
+        : null;
+    } catch { page = null; }
+    const t = termsRefFor(setting, page);
+    return { required: t.required, ref: t.ref, url: t.url, setting, page };
   }
 
   /** Validate a slot choice where the district is unknown
@@ -460,22 +707,34 @@ export class ProductsService {
     // EC29: top-level gift-wrap offer for the single checkout —
     // only when the shop enabled it AND set a fee, else null.
     let giftWrap: { enabled: true; feeMinor: string } | null = null;
+    // AB6 (AX13): the same storefrontSetting row also carries the
+    // shop locale for the display name/description below.
+    let s: any = null;
     try {
       const sTable = (this.prisma as any).storefrontSetting;
-      const s = sTable?.findFirst
+      s = sTable?.findFirst
         ? await sTable.findFirst({ where: { organizationId: p.organization.id } }).catch(() => null)
         : null;
       if (s?.giftWrapEnabled === true && s?.giftWrapFeeMinor != null) {
         giftWrap = { enabled: true, feeMinor: String(s.giftWrapFeeMinor) };
       }
-    } catch { giftWrap = null; }
+    } catch { giftWrap = null; s = null; }
+    // GB3 (GC8): shared checkout-trust payload (otpEnabled is
+    // false on this surface — the single checkout has no OTP).
+    const trustSetting = (await this.loadTermsTrust(p.organization.id)).setting;
+    const checkoutTrust = await buildCheckoutTrust(
+      this.prisma, this.checkoutGuard, p.organization.id, trustSetting, bp, { includeOtp: false },
+    );
     return {
       giftWrap,
+      checkoutTrust,
+      // GC10: real online-payment options beside checkoutTrust.
+      paymentOptions: await this.paymentOptionsFor(p.organization.id),
       product: {
         id: p.id,
-        name: p.name,
+        name: displayProductName(p, s?.locale),
         slug: p.slug,
-        description: p.description,
+        description: displayProductDescription(p, s?.locale),
         category: p.category,
         imageUrl: p.imageUrl,
         priceMinor: p.priceMinor.toString(),
@@ -485,6 +744,11 @@ export class ProductsService {
         preorder: preorderInfo(p),
         // EC24b: ONLY the flag — the file URL is never public.
         digital: !!p.digital,
+        // AB2 (AX3): gift-card flag + its face-value config (the
+        // config is merchant-authored pricing, safe to show — the
+        // shopper picks an amount from it on the product page).
+        isGiftCard: !!p.isGiftCard,
+        giftCardConfig: (p as any).giftCardConfig ?? null,
         bumpTitle: p.bumpTitle || null,
         bumpPriceMinor: p.bumpPriceMinor ? p.bumpPriceMinor.toString() : null,
         bumpImageUrl: p.bumpImageUrl || null,
@@ -519,7 +783,7 @@ export class ProductsService {
   /**
    * Public checkout: customers place order with 1-click COD/Bkash without login
    */
-  async placePublicOrder(slug: string, dto: PublicCheckoutOrderDto) {
+  async placePublicOrder(slug: string, dto: PublicCheckoutOrderDto, ctx?: { ip?: string | null }) {
     const p = await (this.prisma as any).product.findFirst({
       where: { slug, status: "ACTIVE" },
       include: {
@@ -535,24 +799,106 @@ export class ProductsService {
     });
     if (!p) throw new NotFoundException("Product is unavailable or out of stock");
 
+    // GB3 (GC8): idempotency replay (scope "single") — a retry
+    // with a known key returns the first placement's response.
+    if (dto.idempotencyKey && this.idempotency) {
+      const replay = await this.idempotency.findReplay(p.organization.id, dto.idempotencyKey);
+      if (replay) return replay;
+    }
+    // GB3 (GC8): terms consent (read directly from the tables).
+    const termsTrust = await this.loadTermsTrust(p.organization.id);
+    if (termsTrust.required && dto.termsAccepted !== true) {
+      throw new BadRequestException("অর্ডার সম্পূর্ণ করতে শর্তাবলি পড়ে সম্মতি দেওয়া বাধ্যতামূলক");
+    }
+    // AB8 (AX27): normalized device hash (invalid/absent = null).
+    const deviceHash = normalizeDeviceHash((dto as any).deviceHash);
+    // GB3 (GC9): the checkout gate (channel "single").
+    if (this.checkoutGuard) {
+      await this.checkoutGuard.evaluateGate(p.organization.id, "single", {
+        phone: dto.customerPhone,
+        email: null,
+        ip: ctx?.ip ?? null,
+        deviceHash,
+        captchaToken: dto.captchaToken ?? null,
+        surface: "checkout",
+      });
+    }
+    // GC10: re-validate an online selection server-side (400
+    // when the pair is not really offered).
+    const onlinePayment = await this.resolveOnlineSelection(p.organization.id, dto);
+
     const qty = Math.max(1, dto.quantity ?? 1);
     // EC24a: a preorder-enabled product passes at zero/negative
     // stock (this path's gate is product existence, as before);
     // only its open-unit limit can refuse the order.
     await assertPreorderLimit(this.prisma, p.organization.id, p, qty);
-    const unitPriceMinor = BigInt(p.priceMinor);
+    // GB2 (GC7): stock enforcement — this checkout previously
+    // had NO stock check at all (product existence was the only
+    // gate) and could oversell tracked stock without bound.
+    // Product-level availability through the ONE checker
+    // (preorder bypass + allowBackorder + reservations inside);
+    // the path resolves no variant, so the check is
+    // product-level. Absent checker (older spec fakes) keeps the
+    // legacy gate, exactly as the shop guard does.
+    if (this.inventory?.checkAvailability) {
+      const verdict = await this.inventory.checkAvailability(p.organization.id, p, null, qty);
+      if (!verdict.ok) {
+        throw new BadRequestException(
+          `দুঃখিত, "${p.name}"-এর স্টকে মাত্র ${Math.max(0, verdict.available)}টি আছে — এর বেশি অর্ডার করা যাবে না`,
+        );
+      }
+    }
+    // AB5 (AX7) PRICE SOURCE precedence: gift-card lines keep
+    // face value → an explicit price-list price REPLACES the
+    // catalog price AND beats wholesale-tier math (this path
+    // has no tier; the rule is stated for parity) → catalog
+    // price otherwise. The buyer is resolved by phone (the same
+    // promotions.customerIdForPhone the GB7 block below uses);
+    // this path resolves no variant, so the product-level row
+    // is the only candidate. Failure-isolated: no map ⇒ the
+    // catalog price, exactly as before AB5.
+    let priceListBreakdown: Array<{ productId: string; variantId: string | null; priceMinor: string }> = [];
+    let ax7UnitPrice: bigint | null = null;
+    if (this.priceLists && !(p as any).isGiftCard && this.promotions && typeof (this.promotions as any).customerIdForPhone === "function") {
+      const ax7CustomerId = await (this.promotions as any)
+        .customerIdForPhone(p.organization.id, dto.customerPhone)
+        .catch(() => null);
+      if (ax7CustomerId) {
+        const map = await this.priceLists.priceMapForCustomer(p.organization.id, ax7CustomerId).catch(() => null);
+        ax7UnitPrice = pickGroupPrice(map, p.id, null);
+        if (ax7UnitPrice != null) {
+          priceListBreakdown = [{ productId: p.id, variantId: null, priceMinor: ax7UnitPrice.toString() }];
+        }
+      }
+    }
+    const unitPriceMinor = ax7UnitPrice ?? BigInt(p.priceMinor);
     let subtotal = unitPriceMinor * BigInt(qty);
 
     const bp = p.organization?.businessProfile;
     const isOutside = dto.deliveryZone === "outside_dhaka";
-    const shippingMinor = isOutside
+    let shippingMinor = isOutside
       ? (bp?.deliveryChargeOutsideMinor ?? 12000n)
       : (bp?.deliveryChargeInsideMinor ?? 6000n);
+    // GB2 (GC6): a free-shipping product zeroes this path's flat
+    // BusinessProfile shipping fee (its only line is the product
+    // itself, so "every line free" holds trivially).
+    if ((p as any).freeShipping) shippingMinor = 0n;
+
+    // AB6 (AX13): the shop locale for the order line's display
+    // name (failure-isolated like the giftWrap load above).
+    let singleLocale: string | null = null;
+    try {
+      const sTable = (this.prisma as any).storefrontSetting;
+      const sRow = sTable?.findFirst
+        ? await sTable.findFirst({ where: { organizationId: p.organization.id } }).catch(() => null)
+        : null;
+      singleLocale = sRow?.locale ?? null;
+    } catch { singleLocale = null; }
 
     // Check if customer accepted 1-Click Order Bump Upsell
     const items: any[] = [
       {
-        name: p.name,
+        name: displayProductName(p, singleLocale),
         sku: p.sku || undefined,
         quantity: qty,
         priceMinor: unitPriceMinor,
@@ -586,6 +932,44 @@ export class ProductsService {
     let ec16Evaluation: CheckoutEvaluation | null = null;
     const bumpMinorForEval =
       dto.includeBump && p.bumpPriceMinor && p.bumpTitle ? BigInt(p.bumpPriceMinor) : 0n;
+    // GB7: resolve the buyer's customer + prior-order count ONCE
+    // before the evaluation. When the promotions service is absent
+    // there is no such helper (DiscountsService has none), so the
+    // values stay undefined and customer-conditioned coupons then
+    // refuse conservatively in the pure validator.
+    let buyerCustomerId: string | null | undefined;
+    let buyerPriorOrderCount: number | null | undefined;
+    if (this.promotions) {
+      buyerCustomerId =
+        typeof (this.promotions as any).customerIdForPhone === "function"
+          ? await this.promotions.customerIdForPhone(p.organization.id, dto.customerPhone)
+          : null;
+      buyerPriorOrderCount =
+        typeof (this.promotions as any).priorOrderCountFor === "function"
+          ? await this.promotions.priorOrderCountFor(p.organization.id, buyerCustomerId)
+          : null;
+    }
+    // AB1 (AX1): loyalty snapshot for the phone-resolved
+    // customer (the evaluator prices from the snapshot only).
+    let loyaltyInput: LoyaltyRedeemInput | null = null;
+    if (this.loyalty && dto.loyaltyPoints != null && dto.loyaltyPoints > 0 && buyerCustomerId) {
+      const snap = await this.loyalty
+        .checkoutSnapshot(p.organization.id, buyerCustomerId)
+        .catch(() => null);
+      if (snap) loyaltyInput = { pointsToRedeem: dto.loyaltyPoints, ...snap };
+    }
+    // AB2 (AX3): gift-card redemption snapshot. resolveForCheckout
+    // throws a Bengali BadRequest on ANY refusal — BEFORE placement,
+    // like coupons. The cart here is the single product itself, so
+    // cartHasGiftCardProduct is exactly its isGiftCard flag (a gift
+    // card can never buy a gift card).
+    let giftCardInput: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null = null;
+    if (this.giftCards && dto.giftCardCode?.trim()) {
+      const snap = await this.giftCards.resolveForCheckout(p.organization.id, dto.giftCardCode, {
+        cartHasGiftCardProduct: !!(p as any).isGiftCard,
+      });
+      giftCardInput = { giftCardId: snap.giftCardId, balanceMinor: snap.balanceMinor, codeLast4: snap.codeLast4 };
+    }
     if (this.promotions) {
       ec16Evaluation = await this.promotions.evaluateCheckout(p.organization.id, {
         lines: [
@@ -601,6 +985,10 @@ export class ProductsService {
         couponCode: dto.couponCode ?? null,
         referralCode: dto.referralCode ?? null,
         buyerPhone: dto.customerPhone,
+        customerId: buyerCustomerId,
+        priorOrderCount: buyerPriorOrderCount,
+        loyalty: loyaltyInput,
+        giftCard: giftCardInput,
       });
       discountMinor = ec16Evaluation.totalDiscountMinor;
       freeShippingApplied = ec16Evaluation.couponFreeShipping;
@@ -618,6 +1006,10 @@ export class ProductsService {
             totalMinor: unitPriceMinor * BigInt(qty),
           },
         ],
+        // GB7: values computed above; undefined when the promotions
+        // service (the helper's owner) is absent in this deployment.
+        priorOrderCount: buyerPriorOrderCount,
+        customerId: buyerCustomerId,
       });
       if (!v.valid) {
         throw new BadRequestException(
@@ -692,12 +1084,63 @@ export class ProductsService {
     const total = subtotal - discountMinor + effectiveShippingMinor + (ec16Evaluation?.taxAddedMinor ?? 0n) + giftWrapMinor;
     const externalId = `checkout-${randomUUID()}`;
     const cleanPhone = dto.customerPhone.trim();
+    const isCod = dto.paymentMethod !== "bkash" && dto.paymentMethod !== "nagad";
+
+    // GB3 (GC8): COD trust rules — no structured district on
+    // this path; the parsed address supplies the candidate.
+    let codAdvanceRequired = false;
+    if (isCod && !onlinePayment) {
+      const parsed = parseBdAddress(dto.customerAddress);
+      const codEval = evaluateCodRules(bp, {
+        totalMinor: total,
+        district: null,
+        parsedDistrict: parsed.district,
+        parsedConfidence: parsed.confidence,
+      });
+      if (codEval.refused) {
+        throw new BadRequestException("দুঃখিত, এই অর্ডারের জন্য ক্যাশ অন ডেলিভারি প্রযোজ্য নয়");
+      }
+      codAdvanceRequired = codEval.advanceRequired;
+    }
+
+    // AB4 (AX5a/AX5b): custom field answers for the "single"
+    // surface — validated BEFORE any order write — and the
+    // deposit slice for this placement's kind (NOTICE + stamp
+    // only on this surface; no initiation exists here).
+    const fieldValidation = validateFieldAnswers(
+      await this.loadCheckoutFieldDefs(p.organization.id), "single", dto.fieldAnswers,
+    );
+    if (!fieldValidation.ok) throw new BadRequestException(fieldValidation.error);
+    const deposit = depositFor(bp, {
+      totalMinor: total,
+      kind: onlinePayment ? "online" : isCod ? "cod" : "manual",
+    });
 
     if (!this.integrations) {
       throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
     }
     // ON4: blocklist refusal — generic message, never reveals the blocklist.
     if (this.blockedPhones && (await this.blockedPhones.isBlocked(p.organization.id, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    // GB3 (GC9): block_checkout fraud rules (guard writes the
+    // hit + attempt rows itself; the caller only refuses).
+    if (this.checkoutGuard) {
+      const stats = await this.checkoutGuard
+        .phoneOrderStats(p.organization.id, bdPhoneMatchKey(cleanPhone) ?? "")
+        .catch(() => null);
+      const { blockedBy } = await this.checkoutGuard.evaluateFraudRulesAtCheckout(p.organization.id, {
+        totalMinor: total,
+        isCod: onlinePayment ? false : isCod,
+        district: null,
+        openOrderCount: stats?.openCount ?? 0,
+        phone: cleanPhone,
+        channel: "single",
+      });
+      if (blockedBy) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    }
+    // GC22: a plan/order block on this PUBLIC checkout surface
+    // surfaces ONLY the generic shopper message — never the
+    // staff-facing plan/limit text.
+    try {
     await this.integrations.upsertOrder(
       p.organization.id,
       null,
@@ -715,19 +1158,36 @@ export class ProductsService {
         totalMinor: total,
         refundedMinor: 0n,
         placedAt: new Date(),
+        // AB7 (AX19): order-level attribution stamps — only
+        // the keys the client actually presented (absent =
+        // no keys = the Order columns stay null).
+        ...normalizeAttribution(dto.attribution),
+        // AB8 (AX27): device fingerprint stamp (valid hash only).
+        ...(deviceHash ? { deviceHash } : {}),
         customer: {
           externalId: cleanPhone,
           firstName: dto.customerName.trim(),
           phone: cleanPhone,
           address: {
             address_1: dto.customerAddress.trim(),
-            note: dto.note || undefined,
+            // GC10: marker-only distinction — paymentMethod is
+            // passed through EXACTLY as today, so an online
+            // bkash selection is told apart from a manual bkash
+            // claim by this note + the response's
+            // paymentClaimStatus, never by the method column.
+            note: onlinePayment
+              ? [dto.note?.trim(), `[অনলাইন পেমেন্ট (${onlinePayment.provider}) — যাচাই বাকি]`].filter(Boolean).join(" | ")
+              : dto.note || undefined,
           },
         },
         items,
       },
       "manual"
     );
+    } catch (e) {
+      if (isOrderLimitBlocked(e)) throw new BadRequestException((e as OrderLimitBlockedError).shopperMessage ?? SHOPPER_ORDER_BLOCK_MESSAGE);
+      throw e;
+    }
 
     // EC18: stamp the validated slot choice onto the created
     // order (the landings attribution pattern). The order itself
@@ -780,6 +1240,69 @@ export class ProductsService {
       }
     }
 
+    // AB5 (AX7): stamp the group price-list snapshot onto the
+    // created order (failure-isolated, mirroring the slot stamp
+    // style above — the order itself is already placed).
+    if (priceListBreakdown.length > 0) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          await orderTable.update({
+            where: { id: order.id },
+            data: { priceListBreakdown },
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `price list stamp failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    // GB3 (GC8): terms-consent + COD-advance stamps onto the
+    // created order (failure-isolated, mirroring the slot stamp
+    // style above); the order id captured here also feeds the
+    // idempotency record below.
+    let createdOrderId: string | null = null;
+    if (
+      dto.termsAccepted === true || codAdvanceRequired || dto.idempotencyKey || onlinePayment
+      || deposit.active || Object.keys(fieldValidation.values).length > 0
+    ) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          createdOrderId = order.id ?? null;
+          const data: Record<string, any> = {};
+          if (dto.termsAccepted === true && (termsTrust.required || termsTrust.ref)) {
+            data.termsConsentedAt = new Date();
+            data.termsRef = termsTrust.ref;
+          }
+          if (codAdvanceRequired) data.codAdvanceRequired = true;
+          // AB4 (AX5a/AX5b): deposit due + validated field
+          // answers ride the same stamp update.
+          if (deposit.active) data.depositDueMinor = deposit.amountMinor;
+          if (Object.keys(fieldValidation.values).length > 0) data.checkoutFields = fieldValidation.values;
+          if (Object.keys(data).length > 0) {
+            await orderTable.update({ where: { id: order.id }, data });
+          }
+        }
+      } catch (e) {
+        this.logger.warn(
+          `GB3 trust stamp failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
     // EC16: stamp the promotion/referral split onto the created
     // order (failure-isolated inside PromotionsService).
     if (ec16Evaluation && this.promotions) {
@@ -790,6 +1313,56 @@ export class ProductsService {
     // inside AffiliatesService.stampAttribution).
     if (this.affiliates) {
       await this.affiliates.stampAttribution(p.organization.id, "manual", externalId, dto.affiliateCode, cleanPhone);
+    }
+
+    // AB1 (AX1): spend the redeemed points now that the order
+    // exists (failure-isolated inside LoyaltyService; the order
+    // re-read follows the slot-stamp pattern above).
+    if (ec16Evaluation && (ec16Evaluation.loyaltyPointsApplied ?? 0) > 0 && this.loyalty) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          await this.loyalty.postPlacementRedeem(p.organization.id, {
+            orderId: order.id,
+            customerId: order.customerId ?? null,
+            points: ec16Evaluation.loyaltyPointsApplied ?? 0,
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `loyalty redeem posting failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    // AB2 (AX3): spend the redeemed gift-card balance now that
+    // the order exists (failure-isolated inside GiftCardsService;
+    // same order re-read pattern as the loyalty block above).
+    if (ec16Evaluation && (ec16Evaluation.giftCardDiscountMinor ?? 0n) > 0n && ec16Evaluation.giftCardId && this.giftCards) {
+      try {
+        const orderTable = (this.prisma as any).order;
+        const order = orderTable?.findFirst
+          ? await orderTable.findFirst({
+              where: { organizationId: p.organization.id, source: "manual", externalId },
+            })
+          : null;
+        if (order) {
+          await this.giftCards.postPlacementRedeem(p.organization.id, {
+            orderId: order.id,
+            giftCardId: ec16Evaluation.giftCardId,
+            amountMinor: ec16Evaluation.giftCardDiscountMinor ?? 0n,
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `gift card redeem posting failed for ${externalId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
 
     // Stock: NO manual decrement here (merge integration fix).
@@ -815,7 +1388,7 @@ export class ProductsService {
       ? await this.promotions.yourReferralCodeForPhone(p.organization.id, cleanPhone)
       : null;
 
-    return {
+    const response = {
       success: true,
       orderNumber: externalId,
       productName: p.name,
@@ -836,6 +1409,18 @@ export class ProductsService {
         ? { code: ec16Evaluation.referral.code }
         : null,
       yourReferralCode,
+      // AB1 (AX1): the loyalty line of the placed order.
+      loyaltyDiscountMinor: (ec16Evaluation?.loyaltyDiscountMinor ?? 0n).toString(),
+      loyaltyPointsUsed: ec16Evaluation?.loyaltyPointsApplied ?? 0,
+      // AB2 (AX3): the gift-card line of the placed order.
+      giftCardDiscountMinor: (ec16Evaluation?.giftCardDiscountMinor ?? 0n).toString(),
+      giftCardCodeLast4: ec16Evaluation?.giftCardCodeLast4 ?? null,
+      // AB4 (AX5a): deposit NOTICE for this placement (no
+      // initiation exists on this surface — collection runs
+      // through the shop / resend / public payment paths).
+      deposit: deposit.active
+        ? { amountMinor: deposit.amountMinor.toString(), note: deposit.note }
+        : null,
       // EC29: gift outcome + wrap charge (additive).
       gift: giftInfo,
       giftSkipped: ec16Evaluation?.giftOutcome === "skipped",
@@ -850,16 +1435,29 @@ export class ProductsService {
       deliveryAddress: dto.customerAddress,
       // EC24b: success screen shows the digital-delivery note.
       hasDigitalItems: !!p.digital,
+      // GC10: online marker outcome (additive, online only).
+      ...(onlinePayment
+        ? { paymentClaimStatus: "online_pending", onlinePayment, orderId: createdOrderId }
+        : {}),
     };
+    // GB3 (GC8): record the placement under the idempotency key.
+    if (dto.idempotencyKey && this.idempotency) {
+      return await this.idempotency.record(
+        p.organization.id, dto.idempotencyKey, "single", createdOrderId, response,
+      );
+    }
+    return response;
   }
 
-  async list(organizationId: string, query: { search?: string; category?: string; status?: string; page?: number; pageSize?: number }) {
+  async list(organizationId: string, query: { search?: string; category?: string; status?: string; brandId?: string; page?: number; pageSize?: number }) {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
     const where: any = {
       organizationId,
       ...(query.status ? { status: query.status } : {}),
       ...(query.category ? { category: query.category } : {}),
+      // GB2 (GC6): brand filter (exact brand id).
+      ...(query.brandId ? { brandId: query.brandId } : {}),
       ...(query.search ? { name: { contains: query.search, mode: "insensitive" } } : {}),
     };
     const [total, items] = await Promise.all([
@@ -870,7 +1468,32 @@ export class ProductsService {
         include: { costs: { orderBy: { effectiveFrom: "desc" }, take: 1 } },
       }),
     ]);
-    return { total, page, pageSize, items: items.map((p: any) => toPublicProduct(p, p.costs?.[0]?.costMinor ?? null)) };
+    const mapped = items.map((p: any) => toPublicProduct(p, p.costs?.[0]?.costMinor ?? null));
+    // GB2 (GC7): availability decoration for product-tracked
+    // rows only (no variants + tracked stock): reservedQuantity
+    // / availableQuantity; every other row carries nulls.
+    // Failure-isolated decoration.
+    try {
+      if (this.inventory?.activeReservationTotals && items.length > 0) {
+        const totals = await this.inventory.activeReservationTotals(organizationId);
+        const variantRows: any[] = ((await (this.prisma as any).productVariant
+          .findMany({ where: { productId: { in: items.map((p: any) => p.id) } } })
+          .catch(() => [])) ?? []) as any[];
+        const withVariants = new Set(variantRows.map((v: any) => String(v.productId)));
+        items.forEach((p: any, i: number) => {
+          const pub: any = mapped[i];
+          if (!withVariants.has(String(p.id)) && p.stockQuantity != null) {
+            const reserved = totals.get(`${p.id}::`) ?? 0;
+            pub.reservedQuantity = reserved;
+            pub.availableQuantity = Number(p.stockQuantity) - reserved;
+          } else {
+            pub.reservedQuantity = null;
+            pub.availableQuantity = null;
+          }
+        });
+      }
+    } catch { /* decoration only */ }
+    return { total, page, pageSize, items: mapped };
   }
 
   async getOne(organizationId: string, productId: string) {
@@ -921,6 +1544,36 @@ export class ProductsService {
     }
     pub.tags = tags.map((t: any) => ({ id: t.id, name: t.name, slug: t.slug }));
     pub.tagAssignments = undefined;
+    // GB2 (GC6): brand object next to the brandId column (same
+    // defensive-load style as tags: the include graph above has
+    // no brand relation in older fakes).
+    pub.brand = null;
+    if ((p as any).brandId) {
+      const brandTable = (this.prisma as any).brand;
+      if (brandTable?.findFirst) {
+        const brand = await brandTable
+          .findFirst({ where: { id: (p as any).brandId, organizationId } })
+          .catch(() => null);
+        if (brand) pub.brand = this.serializeBrand(brand);
+      }
+    }
+    // GB2 (GC7): product-level availability for product-tracked
+    // rows (variant-tracked products read per-variant numbers
+    // from the inventory availability endpoint instead).
+    (pub as any).reservedQuantity = null;
+    (pub as any).availableQuantity = null;
+    if (
+      this.inventory?.activeReservationTotals &&
+      (!Array.isArray(p.variants) || p.variants.length === 0) &&
+      p.stockQuantity != null
+    ) {
+      try {
+        const totals = await this.inventory.activeReservationTotals(organizationId);
+        const reserved = totals.get(`${p.id}::`) ?? 0;
+        (pub as any).reservedQuantity = reserved;
+        (pub as any).availableQuantity = Number(p.stockQuantity) - reserved;
+      } catch { /* decoration only */ }
+    }
     // categoryId + the EC3 enrichment fields passthrough via the
     // spread in toPublicProduct (they are plain columns on p).
     return pub;
@@ -1079,6 +1732,11 @@ export class ProductsService {
     // below carries it (including an explicit null = clear to default).
     if ((dto as any).taxRateBps !== undefined) validateTaxRateBps((dto as any).taxRateBps);
     const data: any = { ...dto };
+    // AB6 (AX13): normalize the English alternates when present —
+    // the dashboard form sends "" for a cleared field, which must
+    // become null (never an empty string stored as an alternate).
+    if (dto.nameEn !== undefined) data.nameEn = dto.nameEn?.trim() || null;
+    if (dto.descriptionEn !== undefined) data.descriptionEn = dto.descriptionEn && dto.descriptionEn.trim() ? dto.descriptionEn : null;
     // EC24: normalize the expansion fields present in this update
     // (tiers validated; release date parsed) and assert the
     // digital/subscription conditionals against the MERGED state.
@@ -1104,6 +1762,16 @@ export class ProductsService {
         const category = await this.findCategoryOr404(organizationId, (dto as any).categoryId);
         data.categoryId = category.id;
         data.category = category.name;
+      }
+    }
+    // GB2 (GC6): brandId follows the categoryId discipline —
+    // null clears the link; an id must exist in THIS org.
+    if ((dto as any).brandId !== undefined) {
+      if ((dto as any).brandId === null) {
+        data.brandId = null;
+      } else {
+        const brand = await this.findBrandOr404(organizationId, (dto as any).brandId);
+        data.brandId = brand.id;
       }
     }
     if (dto.price !== undefined) { data.priceMinor = parseMoney(dto.price, "price"); delete data.price; }
@@ -1165,6 +1833,11 @@ export class ProductsService {
         this.catalogPush!.enqueueInventoryPush(organizationId, productId, null, dto.stockQuantity!),
       );
     }
+    // AB5 (AX10): enqueue the Meta catalog update for autoSync
+    // catalogs. Failure-isolated — see catalogSyncHook.
+    await this.catalogSyncHook("update", organizationId, productId);
+    // AB6 (AX11): refresh the product's FTS vector.
+    await this.searchVectorHook("update", () => refreshProductSearchVector(this.prisma, productId));
     return toPublicProduct(updated, null);
   }
 
@@ -1175,6 +1848,9 @@ export class ProductsService {
     await this.pushHook("enqueueArchive", () =>
       this.catalogPush!.enqueueArchive(organizationId, productId),
     );
+    // AB5 (AX10): archiving removes the product from autoSync
+    // Meta catalogs (a delete supersedes any pending update).
+    await this.catalogSyncHook("delete", organizationId, productId);
     return toPublicProduct(updated, null);
   }
 
@@ -1188,9 +1864,20 @@ export class ProductsService {
       },
     });
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.create", entityType: "ProductVariant", entityId: variant.id });
+    // AB3: a variant created WITH a tracked quantity seeds its
+    // default-bin balance (failure-isolated, like the product
+    // create hook).
+    if (variant.stockQuantity != null) {
+      try { await this.inventory?.seedBalanceIfMissing?.(organizationId, productId, variant.id); } catch { /* never breaks create */ }
+    }
     await this.pushHook("enqueueForProductChange", () =>
       this.catalogPush!.enqueueForProductChange(organizationId, productId),
     );
+    // AB5 (AX10): a variant change is a product UPDATE for Meta
+    // catalog purposes (the item set is rebuilt per variant).
+    await this.catalogSyncHook("update", organizationId, productId);
+    // AB6 (AX11): variant SKUs ride the parent product's vector.
+    await this.searchVectorHook("createVariant", () => refreshProductSearchVector(this.prisma, productId));
     return { ...variant, priceMinor: variant.priceMinor?.toString() ?? null };
   }
 
@@ -1237,6 +1924,13 @@ export class ProductsService {
       updated.stockQuantity = result.stockQuantity;
     }
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.update", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
+    // AB3: an update that ESTABLISHES a tracked quantity on the
+    // variant (baseline plain write above) seeds its default-bin
+    // balance. When inventory owned the stock write, adjust()
+    // already seeded — this is then an idempotent no-op.
+    if (updated.stockQuantity != null) {
+      try { await this.inventory?.seedBalanceIfMissing?.(organizationId, productId, variantId); } catch { /* never breaks update */ }
+    }
     await this.pushHook("enqueueForProductChange", () =>
       this.catalogPush!.enqueueForProductChange(organizationId, productId),
     );
@@ -1245,6 +1939,10 @@ export class ProductsService {
         this.catalogPush!.enqueueInventoryPush(organizationId, productId, variantId, dto.stockQuantity!),
       );
     }
+    // AB5 (AX10): variant change → product UPDATE (see createVariant).
+    await this.catalogSyncHook("update", organizationId, productId);
+    // AB6 (AX11): variant SKUs ride the parent product's vector.
+    await this.searchVectorHook("updateVariant", () => refreshProductSearchVector(this.prisma, productId));
     return { ...updated, priceMinor: updated.priceMinor?.toString() ?? null };
   }
 
@@ -1259,6 +1957,13 @@ export class ProductsService {
     await this.pushHook("enqueueForProductChange", () =>
       this.catalogPush!.enqueueForProductChange(organizationId, productId),
     );
+    // AB5 (AX10): variant change → product UPDATE (see createVariant).
+    // Honest limit: the removed variant's own retailer item is
+    // not separately deleted — variant deletions of
+    // already-removed variants are not tracked.
+    await this.catalogSyncHook("update", organizationId, productId);
+    // AB6 (AX11): variant SKUs ride the parent product's vector.
+    await this.searchVectorHook("deleteVariant", () => refreshProductSearchVector(this.prisma, productId));
     return { deleted: true, productId, variantId };
   }
 
@@ -1356,6 +2061,19 @@ export class ProductsService {
     const before = await this.loadImages(productId);
     const wasFirst = before.length > 0 && before[0].id === imageId;
     await table.delete({ where: { id: imageId } });
+    // RM4: when the deleted row pointed at OUR CDN, flip its
+    // StoredFile registry row to trashed so storage accounting
+    // stops counting it. The object itself is deliberately NOT
+    // deleted here — object deletion + the trash-retention window
+    // belong to RM11's lifecycle job (another surface may still
+    // hold the same URL until then). External URLs have no
+    // registry row; the org-guarded update is then a plain no-op.
+    const deletedCdnKey = mediaKeyFromCdnUrl(image.url);
+    if (deletedCdnKey && this.storageRegistry) {
+      await this.storageRegistry
+        .markTrashed(organizationId, deletedCdnKey)
+        .catch(() => undefined);
+    }
     const remaining = await this.loadImages(productId);
     // Re-index positions contiguously after a removal.
     for (let idx = 0; idx < remaining.length; idx++) {
@@ -1374,6 +2092,323 @@ export class ProductsService {
       this.catalogPush!.enqueueForProductChange(organizationId, productId),
     );
     return { deleted: true, productId, imageId };
+  }
+
+  // ---------- RM4: direct-to-R2 product image upload ----------
+  //
+  // The plan §1.3 flow, product surface: presign (this service
+  // validates + hands out a quarantine PUT URL) -> the browser PUTs
+  // the bytes straight to R2 -> complete (HEAD size check, magic-
+  // byte sniff, copy to the immutable final key, StoredFile
+  // registration, gallery row through the SAME addImage path as
+  // URL-added images so the position-0 cover mirror rule is
+  // identical). Any failure after the bytes landed removes the
+  // objects it created and creates no row — never a partial state.
+
+  private productImageStorageOr400(): StorageService {
+    if (!this.storage || this.storage.mode !== "s3") {
+      throw new BadRequestException(
+        "সরাসরি ছবি আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি। আপাতত URL দিয়ে ছবি যোগ করুন।",
+      );
+    }
+    return this.storage;
+  }
+
+  private normalizeUploadType(contentType: unknown): string {
+    const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
+    if (!(PRODUCT_IMAGE_UPLOAD_CONTENT_TYPES as readonly string[]).includes(ct)) {
+      throw new BadRequestException("শুধু PNG, JPEG অথবা WebP ছবি আপলোড করা যাবে।");
+    }
+    return ct;
+  }
+
+  private normalizeUploadSize(sizeBytes: unknown): number {
+    const size = Number(sizeBytes);
+    if (!Number.isInteger(size) || size < 1) {
+      throw new BadRequestException("ছবির আকার (sizeBytes) সঠিক নয়।");
+    }
+    if (size > PRODUCT_IMAGE_UPLOAD_MAX_BYTES) {
+      throw new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ১০ MB পর্যন্ত আপলোড করা যাবে।");
+    }
+    return size;
+  }
+
+  async presignProductImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { fileName?: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const contentType = this.normalizeUploadType(dto?.contentType);
+    const sizeBytes = this.normalizeUploadSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    // Plan §1.2: uploads land in quarantine first; nothing under a
+    // final key exists until complete() has sniffed the real bytes.
+    const key = `_quarantine/${organizationId}/product/${randomUUID()}`;
+    const uploadUrl = storage.presignedPutUrl("public", key);
+    if (!uploadUrl) {
+      // mode was s3 at the check above, so this should not happen —
+      // but a null URL must never be dressed up as a real one.
+      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+    }
+    void actorId;
+    return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
+  }
+
+  async completeProductImage(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { key: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const contentType = this.normalizeUploadType(dto?.contentType);
+    const sizeBytes = this.normalizeUploadSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = String(dto?.key ?? "");
+    const quarantinePrefix = `_quarantine/${organizationId}/product/`;
+    if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
+      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+    }
+    const dropQuarantine = () => storage.delete("public", key).catch(() => undefined);
+
+    const head = await storage.head("public", key).catch(() => null);
+    if (!head) {
+      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+    }
+    if (head.sizeBytes !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+    }
+    const bytes = await storage.get("public", key).catch(() => null);
+    if (!bytes || bytes.length !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+    }
+    // Magic bytes decide, never the declaration (media-sniff
+    // discipline, same as inbox uploads and the PP3 import).
+    const detected = detectMediaKind(bytes);
+    if (!detected || detected.kind !== "image" || detected.contentType !== contentType) {
+      await dropQuarantine();
+      const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
+      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+    }
+
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const finalKey = `${organizationId}/product/${productId}/${randomUUID()}.${imageExtForContentType(detected.contentType)}`;
+    let registered = false;
+    try {
+      await storage.copy({ visibility: "public", key }, { visibility: "public", key: finalKey });
+      if (this.storageRegistry) {
+        await this.storageRegistry.register({
+          organizationId,
+          bucket: storage.bucketFor("public"),
+          key: finalKey,
+          visibility: "public",
+          surface: "product",
+          contentType: detected.contentType,
+          sizeBytes: bytes.length,
+          sha256,
+          status: "active",
+          createdById: actorId,
+          sourceRef: `product:${productId}`,
+        });
+        registered = true;
+      }
+      // The gallery row goes through addImage unchanged: same
+      // position rule (appended last) and the same position-0
+      // cover mirror into Product.imageUrl as URL-added images.
+      const image = await this.addImage(organizationId, actorId, productId, {
+        url: publicMediaUrl(finalKey),
+      });
+      await dropQuarantine();
+      return image;
+    } catch (e) {
+      // No partial state: whatever this completion created (final
+      // object, registry row) is undone before the error surfaces.
+      await storage.delete("public", finalKey).catch(() => undefined);
+      if (registered && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, finalKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      throw e;
+    }
+  }
+
+  // ---------- RB6/RM9: digital product file (private R2) -------
+  //
+  // The plan §1.3 flow on the PRIVATE bucket: presign a quarantine
+  // PUT -> the browser uploads straight to R2 -> complete HEAD-
+  // verifies the size, hashes small files, copies to the final
+  // key {orgId}/digital/{productId}/{uuid}.{ext} and points
+  // Product.digitalStorageKey at it (flipping `digital` on: a
+  // hosted file IS the digital product). The merchant-hosted
+  // digitalFileUrl stays untouched as the alternative; at reveal
+  // time (storefront digitalAccess) the R2 file wins and the
+  // buyer receives a 300-second presigned GET — the object is
+  // never public and no byte ever passes through this API.
+  // Replacing a file trashes the previous registry row (the
+  // object itself is RM11's lifecycle delete) but never deletes
+  // it inline, so a buyer mid-download is never cut off.
+
+  private normalizeDigitalFileName(fileName: unknown): { fileName: string; ext: string } {
+    const name = String(fileName ?? "").trim();
+    const base = name.split(/[\\/]/).pop() ?? "";
+    const dot = base.lastIndexOf(".");
+    const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+    if (!base || !ext) {
+      throw new BadRequestException("ফাইলের নামে এক্সটেনশন থাকতে হবে (যেমন .pdf, .zip)।");
+    }
+    if ((DIGITAL_FILE_BLOCKED_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new BadRequestException(`.${ext} ফাইল আপলোড করা যাবে না — নিরাপত্তার কারণে executable ফাইল (exe/bat/sh/js/html) নিষিদ্ধ।`);
+    }
+    return { fileName: base, ext };
+  }
+
+  private normalizeDigitalSize(sizeBytes: unknown): number {
+    const size = Number(sizeBytes);
+    if (!Number.isInteger(size) || size < 1) {
+      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+    }
+    if (size > DIGITAL_FILE_MAX_BYTES) {
+      throw new BadRequestException("ফাইলটি অনেক বড় — সর্বোচ্চ ১০০ MB পর্যন্ত আপলোড করা যাবে।");
+    }
+    return size;
+  }
+
+  async presignDigitalFile(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { fileName?: string; contentType: string; sizeBytes: number },
+  ) {
+    await this.getProductOr404(organizationId, productId);
+    const { fileName } = this.normalizeDigitalFileName(dto?.fileName);
+    const sizeBytes = this.normalizeDigitalSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = `_quarantine/${organizationId}/digital/${randomUUID()}`;
+    const uploadUrl = storage.presignedPutUrl("private", key);
+    if (!uploadUrl) {
+      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+    }
+    void actorId;
+    return { uploadUrl, key, fileName, sizeBytes, expiresInSeconds: 600 };
+  }
+
+  async completeDigitalFile(
+    organizationId: string,
+    actorId: string,
+    productId: string,
+    dto: { key: string; fileName?: string; sizeBytes: number },
+  ) {
+    const product = await this.getProductOr404(organizationId, productId);
+    const { ext } = this.normalizeDigitalFileName(dto?.fileName);
+    const sizeBytes = this.normalizeDigitalSize(dto?.sizeBytes);
+    const storage = this.productImageStorageOr400();
+    const key = String(dto?.key ?? "");
+    const quarantinePrefix = `_quarantine/${organizationId}/digital/`;
+    if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
+      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+    }
+    const dropQuarantine = () => storage.delete("private", key).catch(() => undefined);
+
+    const head = await storage.head("private", key).catch(() => null);
+    if (!head) {
+      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+    }
+    if (head.sizeBytes !== sizeBytes) {
+      await dropQuarantine();
+      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+    }
+    // Small files are read back for a REAL sha256 (the registry
+    // must be able to prove what was hosted); large files skip
+    // the read — sha256 stays null, documented in RM9's limits.
+    let sha256: string | null = null;
+    if (sizeBytes <= DIGITAL_FILE_SHA_MAX_BYTES) {
+      const bytes = await storage.get("private", key).catch(() => null);
+      if (!bytes || bytes.length !== sizeBytes) {
+        await dropQuarantine();
+        throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+      }
+      sha256 = createHash("sha256").update(bytes).digest("hex");
+    }
+    const contentType = head.contentType || "application/octet-stream";
+    const finalKey = `${organizationId}/digital/${productId}/${randomUUID()}.${ext}`;
+    let registered = false;
+    try {
+      await storage.copy({ visibility: "private", key }, { visibility: "private", key: finalKey });
+      if (this.storageRegistry) {
+        await this.storageRegistry.register({
+          organizationId,
+          bucket: storage.bucketFor("private"),
+          key: finalKey,
+          visibility: "private",
+          surface: "digital",
+          contentType,
+          sizeBytes,
+          sha256,
+          status: "active",
+          createdById: actorId,
+          sourceRef: `product:${productId}`,
+        });
+        registered = true;
+      }
+      const previousKey = (product as any).digitalStorageKey as string | null | undefined;
+      const updated = await (this.prisma as any).product.update({
+        where: { id: productId },
+        data: { digitalStorageKey: finalKey, digital: true },
+      });
+      if (previousKey && previousKey !== finalKey && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, previousKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      await this.audit.log({
+        organizationId, userId: actorId, action: "product.digital_file.upload",
+        entityType: "Product", entityId: productId,
+        metadata: { key: finalKey, sizeBytes, sha256 },
+      });
+      return {
+        productId, digital: true, digitalStorageKey: finalKey, sizeBytes, sha256,
+        product: updated,
+      };
+    } catch (e) {
+      await storage.delete("private", finalKey).catch(() => undefined);
+      if (registered && this.storageRegistry) {
+        await this.storageRegistry.markTrashed(organizationId, finalKey).catch(() => undefined);
+      }
+      await dropQuarantine();
+      throw e;
+    }
+  }
+
+  /** RM4 facade for the external-URL mirror (the work lives in
+   * ProductImageMirrorService; this keeps the controller's single
+   * service dependency, matching the rest of the controller). */
+  async mirrorExternalProductImages(organizationId: string, actorId: string) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return this.imageMirror.mirrorExternalImages(organizationId, actorId);
+  }
+
+  /** RB6b (plan D3): the auto-mirror opt-out — read side. The
+   * scheduled sweep honours it; the manual endpoint above does
+   * not (an explicit owner click is not "automatic"). */
+  async getProductImageAutoMirror(organizationId: string) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return { productImageAutoMirror: await this.imageMirror.autoMirrorEnabled(organizationId) };
+  }
+
+  /** RB6b (plan D3): the auto-mirror opt-out — write side
+   * (OWNER/ADMIN at the controller). */
+  async setProductImageAutoMirror(organizationId: string, actorId: string, enabled: boolean) {
+    if (!this.imageMirror) {
+      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+    }
+    return this.imageMirror.setAutoMirrorEnabled(organizationId, enabled, actorId);
   }
 
   // ---------- EC3: categories & tags ----------
@@ -1475,6 +2510,11 @@ export class ProductsService {
       }
     }
     await this.audit.log({ organizationId, userId: actorId, action: "product.category.update", entityType: "Category", entityId: categoryId });
+    // AB6 (AX11): a category rename changes the weight-B text of
+    // every product linked to it — refresh their vectors.
+    if (newName !== undefined && newName !== oldName) {
+      await this.searchVectorHook("updateCategory", () => refreshCategorySearchVectors(this.prisma, categoryId));
+    }
     return updated;
   }
 
@@ -1962,5 +3002,341 @@ export class ProductsService {
     });
     await this.audit.log({ organizationId, userId: actorId, action: "product.cost.set", entityType: "ProductCost", entityId: cost.id, metadata: { productId } });
     return { ...cost, costMinor: cost.costMinor.toString() };
+  }
+
+  // ================= GB2 (GC6): brands =================
+
+  private serializeBrand(b: any) {
+    return {
+      id: b.id,
+      organizationId: b.organizationId,
+      name: b.name,
+      slug: b.slug,
+      logoUrl: b.logoUrl ?? null,
+      description: b.description ?? null,
+      createdAt: b.createdAt ?? null,
+      updatedAt: b.updatedAt ?? null,
+    };
+  }
+
+  /** Org-scoped brand row or 404 (used by product create/update
+   * + the brand endpoints). */
+  private async findBrandOr404(organizationId: string, brandId: string) {
+    const table = (this.prisma as any).brand;
+    const brand = table?.findFirst
+      ? await table.findFirst({ where: { id: brandId, organizationId } })
+      : null;
+    if (!brand) throw new NotFoundException("Brand not found in this organization");
+    return brand;
+  }
+
+  /** Unique-per-org slug for a brand name. Bengali-only names
+   * slugify to "" (the codebase slugify is \w-based) and fall
+   * back to a timestamped base, exactly like product slugs. */
+  private async uniqueBrandSlug(organizationId: string, name: string): Promise<string> {
+    const base = slugify(name) || `brand-${Date.now().toString(36)}`;
+    const table = (this.prisma as any).brand;
+    const rows: any[] = table?.findMany
+      ? ((await table.findMany({ where: { organizationId } }).catch(() => [])) ?? [])
+      : [];
+    const taken = new Set(rows.map((r: any) => String(r.slug)));
+    if (!taken.has(base)) return base;
+    let n = 2;
+    while (taken.has(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  }
+
+  async listBrands(organizationId: string) {
+    const table = (this.prisma as any).brand;
+    const rows: any[] = table?.findMany
+      ? ((await table.findMany({ where: { organizationId }, orderBy: { name: "asc" } }).catch(() => [])) ?? [])
+      : [];
+    // Product counts per brand (one grouped load, never N+1).
+    const counts = new Map<string, number>();
+    const products: any[] = ((await (this.prisma as any).product
+      .findMany({ where: { organizationId } })
+      .catch(() => [])) ?? []) as any[];
+    for (const p of products) {
+      if (p.brandId) counts.set(String(p.brandId), (counts.get(String(p.brandId)) ?? 0) + 1);
+    }
+    return rows.map((b: any) => ({ ...this.serializeBrand(b), productCount: counts.get(String(b.id)) ?? 0 }));
+  }
+
+  async createBrand(organizationId: string, actorId: string, dto: { name: string; logoUrl?: string | null; description?: string | null }) {
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException("ব্র্যান্ডের নাম দিতে হবে");
+    const slug = await this.uniqueBrandSlug(organizationId, name);
+    const brand = await (this.prisma as any).brand.create({
+      data: {
+        organizationId, name, slug,
+        logoUrl: dto.logoUrl?.trim() || null,
+        description: dto.description?.trim() || null,
+      },
+    });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.brand.create", entityType: "Brand", entityId: brand.id, metadata: { slug } });
+    return this.serializeBrand(brand);
+  }
+
+  async updateBrand(organizationId: string, actorId: string, brandId: string, dto: { name?: string; logoUrl?: string | null; description?: string | null }) {
+    const existing = await this.findBrandOr404(organizationId, brandId);
+    const data: any = {};
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException("ব্র্যান্ডের নাম খালি হতে পারবে না");
+      data.name = name;
+      // A rename re-slugs ONLY when the name actually changed,
+      // so existing shop brand URLs stay stable on other edits.
+      if (name !== existing.name) data.slug = await this.uniqueBrandSlug(organizationId, name);
+    }
+    if (dto.logoUrl !== undefined) data.logoUrl = dto.logoUrl?.trim() || null;
+    if (dto.description !== undefined) data.description = dto.description?.trim() || null;
+    const brand = await (this.prisma as any).brand.update({ where: { id: brandId }, data });
+    await this.audit.log({ organizationId, userId: actorId, action: "product.brand.update", entityType: "Brand", entityId: brandId });
+    // AB6 (AX11): a brand rename changes the weight-B text of
+    // every product linked to it — refresh their vectors.
+    if (data.name !== undefined && data.name !== existing.name) {
+      await this.searchVectorHook("updateBrand", () => refreshBrandSearchVectors(this.prisma, brandId));
+    }
+    return this.serializeBrand(brand);
+  }
+
+  /** Brand delete NULLS the product links (products are never
+   * deleted with their brand); the nulled count lands in the
+   * audit metadata. */
+  async deleteBrand(organizationId: string, actorId: string, brandId: string) {
+    await this.findBrandOr404(organizationId, brandId);
+    const linked: any[] = ((await (this.prisma as any).product
+      .findMany({ where: { organizationId, brandId } })
+      .catch(() => [])) ?? []) as any[];
+    for (const p of linked) {
+      await (this.prisma as any).product.update({ where: { id: p.id }, data: { brandId: null } });
+    }
+    await (this.prisma as any).brand.delete({ where: { id: brandId } });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "product.brand.delete", entityType: "Brand", entityId: brandId,
+      metadata: { unlinkedProducts: linked.length },
+    });
+    return { ok: true, unlinkedProducts: linked.length };
+  }
+
+  // ================= GB2 (GC6): product export (CSV) =================
+
+  /**
+   * Export in the EXACT column shape the product importer
+   * accepts (imports/csv.ts HEADER_ALIASES), money in major
+   * units, so an export re-imports through the same pipeline.
+   * One row per variant (a variant-less product gets one row
+   * with empty variant columns); the product columns repeat on
+   * each variant row, and the importer groups rows sharing a
+   * sku (or name) back into one product with variants.
+   * Columns: name, sku, price, compare_at_price, currency, cost,
+   * stock, category, description, name_en, description_en,
+   * image_url, brand, status,
+   * variant_name, variant_sku, variant_price, variant_stock,
+   * variant_cost. `cost` is the CURRENT product-level cost;
+   * `variant_cost` is the variant's own current cost when one is
+   * recorded (the importer's variant grouping reads both back).
+   */
+  async exportProductsCsv(organizationId: string, actorId: string): Promise<string> {
+    const products: any[] = ((await (this.prisma as any).product.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: "asc" },
+      include: {
+        variants: { orderBy: { createdAt: "asc" } },
+        costs: { orderBy: { effectiveFrom: "desc" } },
+      },
+    }).catch(() => [])) ?? []) as any[];
+    const brandNames = new Map<string, string>();
+    const brandTable = (this.prisma as any).brand;
+    if (brandTable?.findMany) {
+      const brands: any[] = ((await brandTable.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+      for (const b of brands) brandNames.set(String(b.id), String(b.name));
+    }
+    const headers = [
+      "name", "sku", "price", "compare_at_price", "currency", "cost", "stock",
+      "category", "description", "name_en", "description_en", "image_url", "brand", "status",
+      "variant_name", "variant_sku", "variant_price", "variant_stock", "variant_cost",
+    ];
+    const rows: unknown[][] = [];
+    for (const p of products) {
+      const productCost = (p.costs ?? []).find((c: any) => !c.variantId) ?? null;
+      const base: unknown[] = [
+        p.name ?? "",
+        p.sku ?? "",
+        minorToMajor(BigInt(p.priceMinor ?? 0)),
+        p.compareAtMinor != null ? minorToMajor(BigInt(p.compareAtMinor)) : "",
+        p.currency ?? "BDT",
+        productCost ? minorToMajor(BigInt(productCost.costMinor)) : "",
+        p.stockQuantity ?? "",
+        p.category ?? "",
+        p.description ?? "",
+        p.nameEn ?? "",
+        p.descriptionEn ?? "",
+        p.imageUrl ?? "",
+        p.brandId ? (brandNames.get(String(p.brandId)) ?? "") : "",
+        String(p.status ?? "ACTIVE").toLowerCase(),
+      ];
+      const variants: any[] = Array.isArray(p.variants) ? p.variants : [];
+      if (variants.length === 0) {
+        rows.push([...base, "", "", "", "", ""]);
+      } else {
+        for (const v of variants) {
+          const vCost = (p.costs ?? []).find((c: any) => c.variantId === v.id) ?? null;
+          rows.push([
+            ...base,
+            v.name ?? "",
+            v.sku ?? "",
+            v.priceMinor != null ? minorToMajor(BigInt(v.priceMinor)) : "",
+            v.stockQuantity ?? "",
+            vCost ? minorToMajor(BigInt(vCost.costMinor)) : "",
+          ]);
+        }
+      }
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "product.export",
+      entityType: "Product", metadata: { productCount: products.length, rowCount: rows.length },
+    });
+    return toCsv(headers, rows);
+  }
+
+  // ================= GB2 (GC6): bulk delete =================
+
+  /**
+   * Per-product outcomes: a product referenced by ANY OrderItem
+   * is ARCHIVED (order history keeps pointing at a real row);
+   * a never-ordered product is HARD-DELETED — every child
+   * relation on Product is onDelete: Cascade (variants, costs,
+   * images, tags, listings, cart items, PO items, bins, stock
+   * counts, subscriptions, bundle items), and StockMovement /
+   * StockReservation / OrderItem carry plain ids so the ledger
+   * and order history survive as records. Foreign/missing ids
+   * answer not_found per row — never a whole-batch 404.
+   */
+  async bulkDelete(organizationId: string, actorId: string, ids: string[]) {
+    const uniqueIds = [...new Set((ids ?? []).map((x) => String(x)).filter(Boolean))];
+    const results: Array<{ id: string; outcome: "deleted" | "archived" | "not_found" }> = [];
+    let deleted = 0, archived = 0, notFound = 0;
+    for (const id of uniqueIds) {
+      const product = await (this.prisma as any).product
+        .findFirst({ where: { id, organizationId } })
+        .catch(() => null);
+      if (!product) { results.push({ id, outcome: "not_found" }); notFound++; continue; }
+      const orderRefs = await (this.prisma as any).orderItem
+        .count({ where: { productId: id } })
+        .catch(() => 0);
+      if (orderRefs > 0) {
+        await this.archive(organizationId, actorId, id);
+        results.push({ id, outcome: "archived" });
+        archived++;
+      } else {
+        await (this.prisma as any).product.delete({ where: { id } });
+        await this.audit.log({ organizationId, userId: actorId, action: "product.delete", entityType: "Product", entityId: id });
+        await this.pushHook("enqueueArchive", () =>
+          this.catalogPush!.enqueueArchive(organizationId, id),
+        );
+        results.push({ id, outcome: "deleted" });
+        deleted++;
+      }
+    }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "product.bulk_delete", entityType: "Product",
+      metadata: { requested: uniqueIds.length, deleted, archived, notFound },
+    });
+    return { results, deleted, archived, notFound };
+  }
+
+  // ================= GB2 (GC6): product change history =================
+
+  /**
+   * The product's AuditLog trail: rows whose entityId is the
+   * product itself (product.*, inventory.adjusted and the stock
+   * alerts — those audit with entityType "Product" + the product
+   * id), its variants' rows, and cost rows (product.cost.set
+   * audits the COST row with metadata.productId — matched via a
+   * Json path query, failure-isolated). Titles are Bengali
+   * labels; details carry ONLY safe numbers (stock delta /
+   * balance) — never note bodies or payloads. Newest first,
+   * capped at 200 with a truncated flag. Coverage honesty: org-
+   * level audits without an entityId (product.bulk_edit) cannot
+   * be attributed to a product and do not appear here.
+   */
+  async productHistory(organizationId: string, productId: string) {
+    await this.getProductOr404(organizationId, productId);
+    const auditTable = (this.prisma as any).auditLog;
+    if (!auditTable?.findMany) return { items: [], truncated: false };
+    const variantRows: any[] = ((await (this.prisma as any).productVariant
+      .findMany({ where: { productId } })
+      .catch(() => [])) ?? []) as any[];
+    const entityIds = [productId, ...variantRows.map((v: any) => String(v.id))];
+    const byId = new Map<string, any>();
+    const direct: any[] = ((await auditTable.findMany({
+      where: { organizationId, entityId: { in: entityIds } },
+      orderBy: { createdAt: "desc" },
+      take: 400,
+    }).catch(() => [])) ?? []) as any[];
+    for (const r of direct) byId.set(String(r.id), r);
+    // Cost rows (entityId = the ProductCost id, product linked
+    // through metadata). Real Prisma supports the Json path
+    // filter; spec fakes may not — failure just skips this source.
+    try {
+      const costRows: any[] = ((await auditTable.findMany({
+        where: { organizationId, action: "product.cost.set", metadata: { path: ["productId"], equals: productId } },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      }).catch(() => [])) ?? []) as any[];
+      for (const r of costRows) byId.set(String(r.id), r);
+    } catch { /* metadata matching is a bonus source, never a failure */ }
+    const rows = [...byId.values()].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    const truncated = rows.length > 200;
+    const page = rows.slice(0, 200);
+    // Actor display names (failure-isolated decoration, ON2 style).
+    const names = new Map<string, string>();
+    const userIds = [...new Set(page.map((r: any) => r.userId).filter(Boolean))] as string[];
+    if (userIds.length) {
+      try {
+        const users: any[] = ((await (this.prisma as any).user
+          .findMany({ where: { id: { in: userIds } } })
+          .catch(() => [])) ?? []) as any[];
+        for (const u of users) names.set(String(u.id), u.name ?? u.email ?? String(u.id));
+      } catch { /* names are decoration */ }
+    }
+    const TITLES: Record<string, string> = {
+      "product.create": "পণ্য তৈরি হয়েছে",
+      "product.update": "পণ্যের তথ্য হালনাগাদ হয়েছে",
+      "product.archive": "পণ্য আর্কাইভ হয়েছে",
+      "product.delete": "পণ্য স্থায়ীভাবে মুছে ফেলা হয়েছে",
+      "product.variant.create": "নতুন ভ্যারিয়েন্ট যোগ হয়েছে",
+      "product.variant.update": "ভ্যারিয়েন্ট হালনাগাদ হয়েছে",
+      "product.variant.delete": "ভ্যারিয়েন্ট মুছে ফেলা হয়েছে",
+      "product.cost.set": "পণ্যের খরচ নির্ধারণ হয়েছে",
+      "product.image.create": "ছবি যোগ হয়েছে",
+      "product.image.delete": "ছবি মুছে ফেলা হয়েছে",
+      "product.image.reorder": "ছবির ক্রম বদলানো হয়েছে",
+      "product.bundle.add": "বান্ডল আইটেম যোগ হয়েছে",
+      "product.bundle.delete": "বান্ডল আইটেম সরানো হয়েছে",
+      "inventory.adjusted": "স্টক সমন্বয় হয়েছে",
+      "inventory.low_stock_alert": "কম স্টকের সতর্কতা পাঠানো হয়েছে",
+      "inventory.out_of_stock_alert": "স্টক শেষের সতর্কতা পাঠানো হয়েছে",
+    };
+    const items = page.map((r: any) => {
+      const action = String(r.action ?? "");
+      const meta = (r.metadata ?? {}) as any;
+      let detail: string | null = null;
+      if (action === "inventory.adjusted" && meta.delta !== undefined && meta.balanceAfter !== undefined) {
+        const d = Number(meta.delta);
+        detail = `স্টক পরিবর্তন: ${d > 0 ? "+" : ""}${d} · বর্তমান ব্যালান্স: ${meta.balanceAfter}`;
+      }
+      return {
+        at: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+        action,
+        title: TITLES[action] ?? action,
+        detail,
+        actorName: r.userId ? (names.get(String(r.userId)) ?? null) : null,
+      };
+    });
+    return { items, truncated };
   }
 }

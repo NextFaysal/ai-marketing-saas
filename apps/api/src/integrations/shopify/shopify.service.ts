@@ -15,6 +15,7 @@ import { normalizeShopifyCustomerNode, upsertSyncedCustomer } from "../customer-
 import { ErasureService } from "../../customers/erasure.service";
 import { upsertAbandonedStoreCheckout } from "./shopify-checkouts";
 import { cadenceSkip } from "../sync-cadence";
+import { isOrderLimitBlocked } from "../../common/plan-limit-checks";
 
 const EC_CUSTOMERS_QUERY = `query ecCustomers($first: Int!, $after: String) { customers(first: $first, after: $after) { edges { node { id firstName lastName email phone defaultAddress { address1 address2 city zip country phone } } } pageInfo { hasNextPage endCursor } } }`;
 
@@ -506,7 +507,16 @@ export class ShopifyService {
       let maxModified: Date | null = cursor;
       for (const raw of raws) {
         stats.fetched++;
-        const result = await this.integrations.upsertOrder(organizationId, integration.storeId, normalizeShopifyOrder(raw), "shopify");
+        // GC22: a plan/order-limit block skips THIS order; the
+        // sync continues and the cursor does not advance past
+        // the skipped order (retryable once the block lifts).
+        let result: "created" | "updated";
+        try {
+          result = await this.integrations.upsertOrder(organizationId, integration.storeId, normalizeShopifyOrder(raw), "shopify");
+        } catch (e) {
+          if (isOrderLimitBlocked(e)) { stats.skipped++; continue; }
+          throw e;
+        }
         stats[result]++;
         const modified = raw.updated_at ? new Date(raw.updated_at) : null;
         if (modified && (!maxModified || modified > maxModified)) maxModified = modified;
@@ -599,7 +609,15 @@ export class ShopifyService {
       return { processed: "product" };
     }
     if (topic === "orders/create" || topic === "orders/update" || topic === "orders/paid") {
-      await this.integrations.upsertOrder(orgId, integration.storeId, normalizeShopifyOrder(payload), "shopify");
+      // GC22: a plan/order-limit block is NOT a webhook failure —
+      // the event row above is the record; ack the delivery so
+      // Shopify does not retry-storm a merchant-side limit.
+      try {
+        await this.integrations.upsertOrder(orgId, integration.storeId, normalizeShopifyOrder(payload), "shopify");
+      } catch (e) {
+        if (isOrderLimitBlocked(e)) return { processed: "order_skipped_plan_limit" };
+        throw e;
+      }
       return { processed: "order" };
     }
     if (topic === "checkouts/create" || topic === "checkouts/update") {

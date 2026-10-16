@@ -147,11 +147,16 @@ export default function CommerceHubPage() {
           <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧾 ক্রয় / Purchasing</Link>
           <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏭 গুদাম / Warehouse</Link>
           <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧮 কর ও হিসাব / Accounting</Link>
+          <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📑 রিপোর্ট / Reports</Link>
+          <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 ফাইন্যান্স / Finance</Link>
           <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💵 COD মিলকরণ</Link>
           <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">📊 ইনভেন্টরি বুদ্ধিমত্তা</Link>
           <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔁 সাবস্ক্রিপশন / Subscriptions</Link>
           <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">💰 কিস্তি / Installments</Link>
           <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🤝 অ্যাফিলিয়েট</Link>
+          <Link href="/dashboard/commerce/loyalty" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">⭐ লয়্যালটি পয়েন্ট</Link>
+          <Link href="/dashboard/commerce/gift-cards" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🎁 গিফট কার্ড</Link>
+          <Link href="/dashboard/commerce/quotes" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🧾 কোট / Quotes</Link>
           <Link href="/dashboard/integrations" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🔌 Integrations</Link>
         </div>
       </div>
@@ -249,6 +254,20 @@ export default function CommerceHubPage() {
           <p className="text-sm text-slate-500">
             এক পণ্যের ফানেল পেজ তৈরি করুন — সেকশন সাজানো, A/B ভ্যারিয়েন্ট, পোস্ট-অর্ডার আপসেল আর
             ভিউ→অর্ডার কনভার্সন পরিসংখ্যানসহ।
+          </p>
+        </StatCard>
+
+        <StatCard href="/dashboard/commerce/loyalty" title="লয়্যালটি পয়েন্ট ও রেফারেল পুরস্কার">
+          <p className="text-sm text-slate-500">
+            কেনাকাটায় পয়েন্ট অর্জন, চেকআউটে ছাড় হিসেবে পয়েন্ট খরচ, আর রেফারেল পুরস্কারের
+            (পয়েন্ট/কুপন) নিয়ম — সব এখান থেকে ঠিক করুন।
+          </p>
+        </StatCard>
+
+        <StatCard href="/dashboard/commerce/gift-cards" title="গিফট কার্ড">
+          <p className="text-sm text-slate-500">
+            গিফট কার্ডের দায় (liability), ম্যানুয়াল ইস্যু, কার্ডের তালিকা ও লেজার, বাতিল ও
+            ব্যালেন্স সংশোধন — সব এখান থেকে করুন।
           </p>
         </StatCard>
 

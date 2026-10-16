@@ -1,6 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
@@ -21,16 +21,61 @@ interface ProductDetailExtra {
   taxRateBps?: number | null;
   tags?: EcTag[];
   // EC24: product-model expansion fields (detail = full product row).
+  // AB6 (AX13): English content (detail = full product row).
+  nameEn?: string | null;
+  descriptionEn?: string | null;
   preorderEnabled?: boolean;
   preorderReleaseDate?: string | null;
   preorderLimit?: number | null;
   digital?: boolean;
   digitalFileUrl?: string | null;
   digitalAccessLimit?: number | null;
+  // AB5 (AX9): delivery type + signed-link lifetime.
+  digitalDeliveryType?: string | null;
+  digitalLinkExpiryHours?: number | null;
   subscriptionEnabled?: boolean;
   subscriptionIntervalDays?: number | null;
   subscriptionDiscountPercent?: number | null;
   wholesaleTiers?: { minQty: number; priceMinor: string }[] | null;
+  // AB2 (AX3): gift-card product flag + face-value config (minor
+  // units as NUMBERS in the Json, per the API validator).
+  isGiftCard?: boolean;
+  giftCardConfig?: {
+    presetAmountsMinor: number[];
+    allowCustomAmount: boolean;
+    minAmountMinor?: number | null;
+    maxAmountMinor?: number | null;
+  } | null;
+  // GC1: product video (link only — no upload).
+  videoUrl?: string | null;
+  videoPosterUrl?: string | null;
+  // GC6: brand + free shipping.
+  brandId?: string | null;
+  freeShipping?: boolean;
+}
+
+interface BrandItem {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl?: string | null;
+  description?: string | null;
+  productCount: number;
+}
+
+interface HistoryItem {
+  at: string;
+  action: string;
+  title: string;
+  detail: string | null;
+  actorName: string | null;
+}
+
+interface BulkDeleteResult {
+  results: { id: string; outcome: "deleted" | "archived" | "not_found" }[];
+  deleted: number;
+  archived: number;
+  notFound: number;
 }
 
 type BulkAction = "price_percent" | "price_fixed" | "stock_set" | "category_set";
@@ -57,6 +102,12 @@ interface ProductItem {
   bumpPriceMinor?: string | null;
   bumpImageUrl?: string | null;
   taxRateBps?: number | null;
+  // GC6: brand + free shipping on the list payload.
+  brandId?: string | null;
+  freeShipping?: boolean;
+  // AB6 (AX13): English content on the list payload.
+  nameEn?: string | null;
+  descriptionEn?: string | null;
 }
 
 interface VariantItem { id: string; name: string; sku?: string | null; stockQuantity?: number | null; priceMinor?: string | null }
@@ -99,6 +150,22 @@ export default function ProductsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  // GC6: brands + brand filter + bulk delete + export + history.
+  const [brands, setBrands] = useState<BrandItem[]>([]);
+  const [selectedBrandId, setSelectedBrandId] = useState("all");
+  const [brandMgrOpen, setBrandMgrOpen] = useState(false);
+  const [brandForm, setBrandForm] = useState({ name: "", logoUrl: "", description: "" });
+  const [editingBrandId, setEditingBrandId] = useState<string | null>(null);
+  const [brandBusy, setBrandBusy] = useState(false);
+  const [brandMsg, setBrandMsg] = useState("");
+  const [bulkDeleteResult, setBulkDeleteResult] = useState<BulkDeleteResult | null>(null);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [historyFor, setHistoryFor] = useState<ProductItem | null>(null);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyMsg, setHistoryMsg] = useState("");
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -130,14 +197,37 @@ export default function ProductsPage() {
     seoDescription: "",
     taxRatePercent: "",
     tagIds: [] as string[],
+    brandId: "",
+    freeShipping: false,
+    nameEn: "",
+    descriptionEn: "",
   });
   const [saving, setSaving] = useState(false);
   // EC24: compact product-model expansion section state.
   const [ec24, setEc24] = useState({
     preorderEnabled: false, preorderReleaseDate: "", preorderLimit: "",
     digital: false, digitalFileUrl: "", digitalAccessLimit: "",
+    // AB5 (AX9): delivery type + link expiry (empty = default 72h).
+    digitalDeliveryType: "file", digitalLinkExpiryHours: "",
     subscriptionEnabled: false, subscriptionIntervalDays: "", subscriptionDiscountPercent: "",
     tiers: [] as { minQty: string; price: string }[],
+    videoUrl: "", videoPosterUrl: "",
+  });
+  // AB5 (AX9): license-key pool panel (edit view, digital
+  // products whose delivery type includes license keys).
+  interface LicenseKeyRow { id: string; keyLast4: string; status: string; importBatch?: string | null; assignedAt?: string | null }
+  const [lkSummary, setLkSummary] = useState<{ available: number; assigned: number; revoked: number } | null>(null);
+  const [lkKeys, setLkKeys] = useState<LicenseKeyRow[]>([]);
+  const [lkText, setLkText] = useState("");
+  const [lkBatch, setLkBatch] = useState("");
+  const [lkReport, setLkReport] = useState("");
+  const [lkError, setLkError] = useState("");
+  const [lkBusy, setLkBusy] = useState(false);
+  // AB2 (AX3): gift-card form state — presets are entered as
+  // comma-separated TAKA amounts and converted to minor numbers
+  // on save (the form's taka↔minor convention, like bumpPrice).
+  const [giftCard, setGiftCard] = useState({
+    enabled: false, presetsTaka: "", allowCustomAmount: false, minTaka: "", maxTaka: "",
   });
   // EC3: categories / tags for the form + manager dialog.
   const [ecCategories, setEcCategories] = useState<EcCategory[]>([]);
@@ -164,6 +254,11 @@ export default function ProductsPage() {
   const [pushBatchResult, setPushBatchResult] = useState<{ results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[]; enqueued: number } | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
+  // RM4: external product-image mirror run state.
+  const [mirrorBusy, setMirrorBusy] = useState(false);
+  // RB6b (plan D3): auto-mirror opt-out toggle (null = not loaded yet).
+  const [autoMirror, setAutoMirror] = useState<boolean | null>(null);
+  const [autoMirrorBusy, setAutoMirrorBusy] = useState(false);
   // Sales & Data S1: stock adjustment dialog (adjustment form + movement history).
   const [stockFor, setStockFor] = useState<ProductItem | null>(null);
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -189,7 +284,7 @@ export default function ProductsPage() {
   const [vBusy, setVBusy] = useState(false);
   const [vMsg, setVMsg] = useState("");
 
-  const load = useCallback(async (q = "") => {
+  const load = useCallback(async (q = "", brandId: string = selectedBrandId) => {
     const orgId = getOrganizationId();
     if (!orgId) {
       setError("কোনো Organization নির্বাচিত নেই। আবার লগইন করে Onboarding শেষ করুন।");
@@ -198,8 +293,12 @@ export default function ProductsPage() {
     }
     setLoading(true);
     try {
+      const params = new URLSearchParams();
+      params.set("pageSize", "100");
+      if (q) params.set("search", q);
+      if (brandId && brandId !== "all") params.set("brandId", brandId);
       const data = await apiFetch<{ total: number; items: ProductItem[] }>(
-        `/organizations/${orgId}/products?pageSize=100${q ? `&search=${encodeURIComponent(q)}` : ""}`
+        `/organizations/${orgId}/products?${params.toString()}`
       );
       setItems(data.items);
       setTotal(data.total);
@@ -209,11 +308,125 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedBrandId]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadBrands = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const rows = await apiFetch<BrandItem[]>(`/organizations/${orgId}/products/brands`);
+      setBrands(Array.isArray(rows) ? rows : []);
+    } catch { setBrands([]); }
+  }, []);
+
+  useEffect(() => { loadBrands(); }, [loadBrands]);
+
+  async function onSaveBrand(e: React.FormEvent) {
+    e.preventDefault();
+    const orgId = getOrganizationId();
+    if (!orgId || !brandForm.name.trim()) return;
+    setBrandBusy(true); setBrandMsg("");
+    try {
+      const body = {
+        name: brandForm.name.trim(),
+        logoUrl: brandForm.logoUrl.trim() || undefined,
+        description: brandForm.description.trim() || undefined,
+      };
+      if (editingBrandId) {
+        await apiFetch(`/organizations/${orgId}/products/brands/${editingBrandId}`, {
+          method: "PATCH", body: JSON.stringify(body),
+        });
+        setBrandMsg("ব্র্যান্ড আপডেট হয়েছে।");
+      } else {
+        await apiFetch(`/organizations/${orgId}/products/brands`, {
+          method: "POST", body: JSON.stringify(body),
+        });
+        setBrandMsg("ব্র্যান্ড তৈরি হয়েছে।");
+      }
+      setBrandForm({ name: "", logoUrl: "", description: "" });
+      setEditingBrandId(null);
+      await loadBrands();
+    } catch (e) { setBrandMsg(e instanceof Error ? e.message : "ব্র্যান্ড সংরক্ষণ ব্যর্থ হয়েছে"); }
+    finally { setBrandBusy(false); }
+  }
+
+  async function onDeleteBrand(b: BrandItem) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    if (!window.confirm(`ব্র্যান্ড "${b.name}" মুছে ফেলবেন? এই ব্র্যান্ডের ${b.productCount}টি পণ্য ব্র্যান্ডবিহীন হয়ে যাবে — পণ্যগুলো মোছা হবে না, শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হবে।`)) return;
+    setBrandBusy(true); setBrandMsg("");
+    try {
+      const res = await apiFetch<{ ok: true; unlinkedProducts: number }>(
+        `/organizations/${orgId}/products/brands/${b.id}`, { method: "DELETE" });
+      setBrandMsg(`ব্র্যান্ড মোছা হয়েছে — ${res.unlinkedProducts}টি পণ্য থেকে ব্র্যান্ড সরিয়ে দেওয়া হয়েছে (পণ্যগুলো মোছা হয়নি)।`);
+      if (editingBrandId === b.id) { setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }
+      await loadBrands();
+      await load(search);
+    } catch (e) { setBrandMsg(e instanceof Error ? e.message : "ব্র্যান্ড মুছতে ব্যর্থ হয়েছে"); }
+    finally { setBrandBusy(false); }
+  }
+
+  async function onBulkDelete() {
+    const orgId = getOrganizationId();
+    if (!orgId || selectedIds.size === 0) return;
+    if (!window.confirm(
+      `${selectedIds.size}টি পণ্য মুছতে/আর্কাইভ করতে চান?\n\n• যেসব পণ্যে অর্ডার আছে — সেগুলো আর্কাইভ হবে (স্থায়ীভাবে মোছা হবে না)।\n• যেসব পণ্যে কখনো অর্ডার হয়নি — সেগুলো স্থায়ীভাবে মুছে যাবে।\n\nএই কাজটি ফেরত নেওয়া যাবে না।`
+    )) return;
+    setBulkDeleteBusy(true); setBulkDeleteResult(null); setError(""); setNotice("");
+    try {
+      const res = await apiFetch<BulkDeleteResult>(`/organizations/${orgId}/products/bulk-delete`, {
+        method: "POST", body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      setBulkDeleteResult(res);
+      setSelectedIds(new Set());
+      await load(search);
+      await loadBrands();
+    } catch (e) { setError(e instanceof Error ? e.message : "বাল্ক মুছতে ব্যর্থ হয়েছে"); }
+    finally { setBulkDeleteBusy(false); }
+  }
+
+  async function onExportCsv() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setExportBusy(true); setError("");
+    try {
+      // CSV download mirrors the inventory page: raw fetch + blob (apiFetch parses JSON).
+      const res = await fetch(`${API_URL}/organizations/${orgId}/products/export`, {
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { message?: string }).message ?? `এক্সপোর্ট ব্যর্থ (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "products-export.csv";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setNotice("✅ পণ্যের CSV এক্সপোর্ট ডাউনলোড হয়েছে।");
+    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট ব্যর্থ হয়েছে"); }
+    finally { setExportBusy(false); }
+  }
+
+  async function openHistory(p: ProductItem) {
+    setHistoryFor(p); setHistoryItems([]); setHistoryTruncated(false); setHistoryMsg("");
+    setHistoryBusy(true);
+    const orgId = getOrganizationId();
+    if (!orgId) { setHistoryBusy(false); return; }
+    try {
+      const data = await apiFetch<{ items: HistoryItem[]; truncated: boolean }>(
+        `/organizations/${orgId}/products/${p.id}/history`);
+      setHistoryItems(data.items ?? []);
+      setHistoryTruncated(!!data.truncated);
+    } catch (e) { setHistoryMsg(e instanceof Error ? e.message : "ইতিহাস লোড ব্যর্থ হয়েছে"); }
+    finally { setHistoryBusy(false); }
+  }
 
   const loadEcMeta = useCallback(async () => {
     const orgId = getOrganizationId();
@@ -227,6 +440,18 @@ export default function ProductsPage() {
   }, []);
 
   useEffect(() => { loadEcMeta(); }, [loadEcMeta]);
+
+  // RB6b: read the auto-mirror opt-out (default ON server-side).
+  const loadMirrorSetting = useCallback(async () => {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    try {
+      const s = await apiFetch<{ productImageAutoMirror: boolean }>(`/organizations/${orgId}/products/images/mirror-setting`);
+      setAutoMirror(s.productImageAutoMirror);
+    } catch { /* the toggle simply stays hidden if the read fails */ }
+  }, []);
+
+  useEffect(() => { loadMirrorSetting(); }, [loadMirrorSetting]);
 
   async function onDuplicate(p: ProductItem) {
     const orgId = getOrganizationId();
@@ -310,6 +535,48 @@ export default function ProductsPage() {
       setPushBatchResult(result);
     } catch (e) { setPushMsg(e instanceof Error ? e.message : "স্টোরে পাঠানো ব্যর্থ হয়েছে"); }
     finally { setPushBusy(false); }
+  }
+
+  // RM4: copy external product-image URLs into the org's own
+  // storage. The summary (incl. failed hosts) goes through the
+  // page's existing notice/error banners.
+  async function onMirrorExternalImages() {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setMirrorBusy(true); setError(""); setNotice("বাইরের ছবি নিজের স্টোরেজে কপি করা হচ্ছে…");
+    try {
+      const r = await apiFetch<{ scanned: number; mirrored: number; deduped: number; failed: { productId: string; host: string; reason: string }[]; reviews?: { scanned: number; mirrored: number; failed: number } }>(
+        `/organizations/${orgId}/products/images/mirror-external`,
+        { method: "POST" },
+      );
+      const hosts = Array.from(new Set(r.failed.map((f) => f.host).filter(Boolean)));
+      setNotice(
+        `ছবি মিরর শেষ: ${r.scanned}টি যাচাই, ${r.mirrored}টি নতুন কপি, ${r.deduped}টি আগের কপিই পুনঃব্যবহৃত` +
+        (r.failed.length ? `, ${r.failed.length}টি ব্যর্থ${hosts.length ? ` (host: ${hosts.join(", ")})` : ""} — কারণ: ${r.failed[0].reason}` : "") +
+        (r.reviews && r.reviews.scanned ? ` রিভিউ ছবি: ${r.reviews.scanned}টি যাচাই, ${r.reviews.mirrored}টি কপি, ${r.reviews.failed}টি ব্যর্থ।` : "।"),
+      );
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "ছবি মিরর ব্যর্থ হয়েছে"); }
+    finally { setMirrorBusy(false); }
+  }
+
+  // RB6b (plan D3): flip the auto-mirror opt-out. The scheduled
+  // sweep honours this; the manual button above does not.
+  async function onToggleAutoMirror(next: boolean) {
+    const orgId = getOrganizationId();
+    if (!orgId) return;
+    setAutoMirrorBusy(true); setError("");
+    try {
+      const s = await apiFetch<{ productImageAutoMirror: boolean }>(
+        `/organizations/${orgId}/products/images/mirror-setting`,
+        { method: "PATCH", body: JSON.stringify({ productImageAutoMirror: next }) },
+      );
+      setAutoMirror(s.productImageAutoMirror);
+      setNotice(s.productImageAutoMirror
+        ? "অটো-মিরর চালু করা হয়েছে — শিডিউল করা Job চললে বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি হবে।"
+        : "অটো-মিরর বন্ধ করা হয়েছে — শিডিউল করা Job আর ছবি কপি করবে না (হাতে চালানো মিরর বোতাম আগের মতোই কাজ করবে)।");
+    } catch (e) { setError(e instanceof Error ? e.message : "অটো-মিরর সেটিং বদলানো যায়নি"); }
+    finally { setAutoMirrorBusy(false); }
   }
 
   const loadReport = useCallback(async () => {
@@ -489,13 +756,20 @@ export default function ProductsPage() {
       seoDescription: "",
       taxRatePercent: "",
       tagIds: [],
+      brandId: "",
+      freeShipping: false,
+      nameEn: "",
+      descriptionEn: "",
     });
     setEc24({
       preorderEnabled: false, preorderReleaseDate: "", preorderLimit: "",
       digital: false, digitalFileUrl: "", digitalAccessLimit: "",
+      digitalDeliveryType: "file", digitalLinkExpiryHours: "",
       subscriptionEnabled: false, subscriptionIntervalDays: "", subscriptionDiscountPercent: "",
       tiers: [],
+      videoUrl: "", videoPosterUrl: "",
     });
+    setGiftCard({ enabled: false, presetsTaka: "", allowCustomAmount: false, minTaka: "", maxTaka: "" });
     setIsModalOpen(true);
   }
 
@@ -546,6 +820,10 @@ export default function ProductsPage() {
         return bps == null ? "" : String(bps / 100);
       })(),
       tagIds: (extra.tags ?? []).map((t) => t.id),
+      brandId: extra.brandId ?? p.brandId ?? "",
+      freeShipping: !!(extra.freeShipping ?? p.freeShipping ?? false),
+      nameEn: extra.nameEn ?? p.nameEn ?? "",
+      descriptionEn: extra.descriptionEn ?? p.descriptionEn ?? "",
     });
     setEc24({
       preorderEnabled: !!extra.preorderEnabled,
@@ -554,6 +832,8 @@ export default function ProductsPage() {
       digital: !!extra.digital,
       digitalFileUrl: extra.digitalFileUrl ?? "",
       digitalAccessLimit: extra.digitalAccessLimit != null ? String(extra.digitalAccessLimit) : "",
+      digitalDeliveryType: extra.digitalDeliveryType ?? "file",
+      digitalLinkExpiryHours: extra.digitalLinkExpiryHours != null ? String(extra.digitalLinkExpiryHours) : "",
       subscriptionEnabled: !!extra.subscriptionEnabled,
       subscriptionIntervalDays: extra.subscriptionIntervalDays != null ? String(extra.subscriptionIntervalDays) : "",
       subscriptionDiscountPercent: extra.subscriptionDiscountPercent != null ? String(extra.subscriptionDiscountPercent) : "",
@@ -561,8 +841,65 @@ export default function ProductsPage() {
         minQty: String(t.minQty),
         price: (() => { try { return minorToDecimal(String(t.priceMinor)); } catch { return ""; } })(),
       })),
+      videoUrl: extra.videoUrl ?? "",
+      videoPosterUrl: extra.videoPosterUrl ?? "",
     });
+    setGiftCard({
+      enabled: !!extra.isGiftCard,
+      presetsTaka: (extra.giftCardConfig?.presetAmountsMinor ?? []).map((m) => String(m / 100)).join(", "),
+      allowCustomAmount: !!extra.giftCardConfig?.allowCustomAmount,
+      minTaka: extra.giftCardConfig?.minAmountMinor != null ? String(extra.giftCardConfig.minAmountMinor / 100) : "",
+      maxTaka: extra.giftCardConfig?.maxAmountMinor != null ? String(extra.giftCardConfig.maxAmountMinor / 100) : "",
+    });
+    // AB5 (AX9): license pool for digital products (masked list).
+    setLkSummary(null); setLkKeys([]); setLkText(""); setLkBatch(""); setLkReport(""); setLkError("");
+    if (extra.digital) void loadLicensePool(p.id);
     setIsModalOpen(true);
+  }
+
+  // AB5 (AX9): license pool — counts + masked list for the
+  // product being edited. Keys are NEVER shown in full here;
+  // staff see only the last 4 characters (the API masks them).
+  const loadLicensePool = useCallback(async (productId: string) => {
+    const orgId = getOrganizationId(); if (!orgId) return;
+    try {
+      const [summary, list] = await Promise.all([
+        apiFetch<{ available: number; assigned: number; revoked: number }>(
+          `/organizations/${orgId}/commerce/license-keys/pool-summary?productId=${encodeURIComponent(productId)}`),
+        apiFetch<{ keys: LicenseKeyRow[] }>(
+          `/organizations/${orgId}/commerce/license-keys?productId=${encodeURIComponent(productId)}`),
+      ]);
+      setLkSummary(summary);
+      setLkKeys(list.keys ?? []);
+    } catch { setLkSummary(null); setLkKeys([]); }
+  }, []);
+
+  async function importLicenseKeys() {
+    const orgId = getOrganizationId(); if (!orgId || !editingProduct) return;
+    if (!lkText.trim()) { setLkError("ইমপোর্ট করতে কী লিখুন — এক লাইনে একটি কী।"); return; }
+    setLkBusy(true); setLkError(""); setLkReport("");
+    try {
+      const out = await apiFetch<{ imported: number; duplicateCount: number; invalidCount: number; batch: string }>(
+        `/organizations/${orgId}/commerce/license-keys/import`, {
+          method: "POST",
+          body: JSON.stringify({ productId: editingProduct.id, text: lkText, batch: lkBatch.trim() || undefined }),
+        });
+      setLkReport(`ইমপোর্ট সম্পন্ন (ব্যাচ: ${out.batch}) — নতুন যোগ হয়েছে ${out.imported}টি · ডুপ্লিকেট ${out.duplicateCount}টি · অবৈধ লাইন ${out.invalidCount}টি।`);
+      setLkText(""); setLkBatch("");
+      await loadLicensePool(editingProduct.id);
+    } catch (e) { setLkError(e instanceof Error ? e.message : "ইমপোর্ট ব্যর্থ হয়েছে"); }
+    finally { setLkBusy(false); }
+  }
+
+  async function revokeLicenseKey(key: LicenseKeyRow) {
+    const orgId = getOrganizationId(); if (!orgId || !editingProduct) return;
+    if (!window.confirm(`শেষ ৪ অক্ষর “…${key.keyLast4}” — এই লাইসেন্স কীটি বাতিল (revoke) করবেন? বাতিল কী আর কোনো ক্রেতাকে দেওয়া হবে না।`)) return;
+    setLkBusy(true); setLkError("");
+    try {
+      await apiFetch(`/organizations/${orgId}/commerce/license-keys/${key.id}/revoke`, { method: "POST" });
+      await loadLicensePool(editingProduct.id);
+    } catch (e) { setLkError(e instanceof Error ? e.message : "বাতিল ব্যর্থ হয়েছে"); }
+    finally { setLkBusy(false); }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -599,12 +936,52 @@ export default function ProductsPage() {
       digital: ec24.digital,
       digitalFileUrl: ec24.digitalFileUrl.trim() || null,
       digitalAccessLimit: ec24.digitalAccessLimit.trim() ? Number(ec24.digitalAccessLimit) : null,
+      // AB5 (AX9): delivery type + link expiry (empty = null = default 72h).
+      digitalDeliveryType: ec24.digitalDeliveryType,
+      digitalLinkExpiryHours: ec24.digitalLinkExpiryHours.trim() ? Number(ec24.digitalLinkExpiryHours) : null,
       subscriptionEnabled: ec24.subscriptionEnabled,
       subscriptionIntervalDays: ec24.subscriptionIntervalDays.trim() ? Number(ec24.subscriptionIntervalDays) : null,
       subscriptionDiscountPercent: ec24.subscriptionDiscountPercent.trim() ? Number(ec24.subscriptionDiscountPercent) : null,
       wholesaleTiers: ec24.tiers
         .filter((t) => t.minQty.trim() && t.price.trim())
         .map((t) => ({ minQty: Number(t.minQty), priceMinor: String(Math.round(Number(t.price) * 100)) })),
+      // GC1: product video links (empty = null, i.e. explicitly cleared).
+      videoUrl: ec24.videoUrl.trim() || null,
+      videoPosterUrl: ec24.videoPosterUrl.trim() || null,
+    };
+
+    // GC6: brand (empty select = null, i.e. explicitly cleared) + free shipping.
+    const gc6Fields = {
+      brandId: form.brandId || null,
+      freeShipping: form.freeShipping,
+    };
+
+    // AB2 (AX3): gift-card fields — preset taka amounts become
+    // minor-unit NUMBERS; empty min/max become null. Toggling
+    // off clears the config (the API treats an explicit null as
+    // a clear). Deeper rules (at least one amount source, min ≤
+    // max, presets inside the range) are the API validator's —
+    // its Bengali message surfaces via the save error below.
+    const presetMinors = giftCard.presetsTaka
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => Math.round(Number(s) * 100));
+    if (giftCard.enabled && presetMinors.some((n) => !Number.isFinite(n) || n <= 0)) {
+      setError("গিফট কার্ডের preset পরিমাণগুলো সঠিক টাকার সংখ্যায় লিখুন (কমা দিয়ে আলাদা করে)।");
+      setSaving(false);
+      return;
+    }
+    const giftCardFields = {
+      isGiftCard: giftCard.enabled,
+      giftCardConfig: giftCard.enabled
+        ? {
+            presetAmountsMinor: presetMinors,
+            allowCustomAmount: giftCard.allowCustomAmount,
+            minAmountMinor: giftCard.minTaka.trim() ? Math.round(Number(giftCard.minTaka) * 100) : null,
+            maxAmountMinor: giftCard.maxTaka.trim() ? Math.round(Number(giftCard.maxTaka) * 100) : null,
+          }
+        : null,
     };
 
     const selectedEcCategory = ecCategories.find((c) => c.id === form.categoryId);
@@ -620,6 +997,10 @@ export default function ProductsPage() {
       seoTitle: form.seoTitle.trim() || undefined,
       seoDescription: form.seoDescription.trim() || undefined,
       tagIds: form.tagIds,
+      // AB6 (AX13): English content — sent trimmed (empty string
+      // clears back to falling back to the main name/description).
+      nameEn: form.nameEn.trim(),
+      descriptionEn: form.descriptionEn.trim(),
     };
 
     try {
@@ -640,6 +1021,8 @@ export default function ProductsPage() {
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
             ...ecFields,
             ...ec24Fields,
+            ...gc6Fields,
+            ...giftCardFields,
           }),
         });
 
@@ -669,6 +1052,8 @@ export default function ProductsPage() {
             bumpImageUrl: form.bumpImageUrl.trim() || undefined,
             ...ecFields,
             ...ec24Fields,
+            ...gc6Fields,
+            ...giftCardFields,
           }),
         });
 
@@ -797,6 +1182,42 @@ export default function ProductsPage() {
             🗂️ ক্যাটাগরি
           </button>
           <button
+            onClick={onMirrorExternalImages}
+            disabled={mirrorBusy}
+            title="বাইরের হোস্টে থাকা পণ্যের ছবি নিজের স্টোরেজে (R2) কপি করুন"
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+          >
+            {mirrorBusy ? "🪞 মিরর চলছে…" : "🪞 ছবি নিজের স্টোরেজে নিন"}
+          </button>
+          {autoMirror !== null ? (
+            <label
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
+              title="চালু থাকলে শিডিউল করা Job বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি করে"
+            >
+              <input
+                type="checkbox"
+                checked={autoMirror}
+                disabled={autoMirrorBusy}
+                onChange={(e) => onToggleAutoMirror(e.target.checked)}
+                className="h-3.5 w-3.5 accent-indigo-600"
+              />
+              অটো-মিরর
+            </label>
+          ) : null}
+          <button
+            onClick={() => { setBrandMgrOpen(true); setBrandMsg(""); setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }}
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+          >
+            🏷️ ব্র্যান্ড
+          </button>
+          <button
+            onClick={onExportCsv}
+            disabled={exportBusy}
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+          >
+            {exportBusy ? "তৈরি হচ্ছে…" : "⬇️ CSV Export"}
+          </button>
+          <button
             onClick={openCreateModal}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm transition-all"
           >
@@ -845,6 +1266,20 @@ export default function ProductsPage() {
               </option>
             ))}
           </select>
+
+          <select
+            value={selectedBrandId}
+            onChange={(e) => { setSelectedBrandId(e.target.value); load(search, e.target.value); }}
+            className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
+            aria-label="ব্র্যান্ড দিয়ে ফিল্টার"
+          >
+            <option value="all">সব ব্র্যান্ড</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} ({b.productCount})
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="text-xs text-slate-500 font-medium">
@@ -883,6 +1318,9 @@ export default function ProductsPage() {
           <button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={pushBusy} onClick={onPushBatch}>
             {pushBusy ? "পাঠানো হচ্ছে…" : "স্টোরে পাঠান"}
           </button>
+          <button className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={bulkDeleteBusy} onClick={onBulkDelete}>
+            {bulkDeleteBusy ? "মোছা হচ্ছে…" : "🗑️ নির্বাচিত মুছুন/আর্কাইভ"}
+          </button>
           {pushMsg ? <span className="text-xs text-rose-700">{pushMsg}</span> : null}
           <button className="rounded-lg border px-3 py-1.5 text-xs text-slate-600" onClick={() => { setSelectedIds(new Set()); setBulkPreview(null); setBulkResult(null); }}>
             নির্বাচন সরান
@@ -900,6 +1338,13 @@ export default function ProductsPage() {
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {bulkDeleteResult ? (
+        <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
+          <span className="font-bold">বাল্ক মুছার ফলাফল:</span>{" "}
+          স্থায়ীভাবে মোছা হয়েছে {bulkDeleteResult.deleted}টি · আর্কাইভ হয়েছে {bulkDeleteResult.archived}টি (অর্ডার থাকায়) · পাওয়া যায়নি {bulkDeleteResult.notFound}টি
+          <button className="ml-3 text-slate-500 underline" onClick={() => setBulkDeleteResult(null)}>বন্ধ করুন</button>
         </div>
       ) : null}
       {bulkResult ? (
@@ -996,6 +1441,14 @@ export default function ProductsPage() {
                           <div className="text-[11px] text-slate-400">
                             {p.category || "সাধারণ ক্যাটাগরি"}
                           </div>
+                          {p.brandId ? (
+                            <div className="text-[11px] text-indigo-500">
+                              🏷️ {brands.find((b) => b.id === p.brandId)?.name ?? "ব্র্যান্ড"}
+                              {p.freeShipping ? <span className="ml-1 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ফ্রি ডেলিভারি</span> : null}
+                            </div>
+                          ) : p.freeShipping ? (
+                            <div className="text-[11px]"><span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ফ্রি ডেলিভারি</span></div>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -1114,6 +1567,12 @@ export default function ProductsPage() {
                           className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
                         >
                           📄 কপি
+                        </button>
+                        <button
+                          onClick={() => openHistory(p)}
+                          className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+                        >
+                          📜 ইতিহাস
                         </button>
                         <button
                           onClick={() => openEditModal(p)}
@@ -1274,6 +1733,33 @@ export default function ProductsPage() {
                       className="w-full rounded-lg border px-3 py-1.5 text-xs"
                     />
                   )}
+                </div>
+              </div>
+
+              {/* GC6: brand picker + free shipping */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ব্র্যান্ড</label>
+                  <select
+                    value={form.brandId}
+                    onChange={(e) => setForm({ ...form, brandId: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                  >
+                    <option value="">কোনো ব্র্যান্ড নয়</option>
+                    {brands.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={form.freeShipping}
+                      onChange={(e) => setForm({ ...form, freeShipping: e.target.checked })}
+                    />
+                    ফ্রি ডেলিভারি (এই পণ্যে ডেলিভারি চার্জ প্রযোজ্য নয়)
+                  </label>
                 </div>
               </div>
 
@@ -1490,6 +1976,32 @@ export default function ProductsPage() {
                 />
               </div>
 
+              {/* AB6 (AX13): English content */}
+              <div className="rounded-xl border border-sky-300 bg-sky-50/40 p-3.5 space-y-3">
+                <div className="text-xs font-bold text-sky-950">ইংরেজি কনটেন্ট (English)</div>
+                <p className="text-[11px] text-slate-500">দোকানের ভাষা English হলে এই লেখা দেখাবে; খালি রাখলে মূল নাম/বিবরণই দেখাবে।</p>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি নাম (Name in English)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Premium Leather Wallet"
+                    value={form.nameEn}
+                    onChange={(e) => setForm({ ...form, nameEn: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ইংরেজি বিবরণ (Description in English)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Product features, warranty and quality in English..."
+                    value={form.descriptionEn}
+                    onChange={(e) => setForm({ ...form, descriptionEn: e.target.value })}
+                    className="w-full rounded-lg border px-3 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+
               {/* EC24: প্রি-অর্ডার / ডিজিটাল / সাবস্ক্রিপশন / পাইকারি স্তর */}
               <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3.5 space-y-3">
                 <div className="text-xs font-bold text-violet-950">🧩 পণ্যের ধরন সম্প্রসারণ (প্রি-অর্ডার · ডিজিটাল · সাবস্ক্রিপশন · পাইকারি)</div>
@@ -1515,12 +2027,69 @@ export default function ProductsPage() {
                 </label>
                 {ec24.digital ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] font-semibold text-slate-600">ফাইল URL (আবশ্যক)
+                    <label className="block text-[11px] font-semibold text-slate-600">ফাইল URL (ফাইল ডেলিভারিতে আবশ্যক)
                       <input type="url" value={ec24.digitalFileUrl} onChange={(e) => setEc24({ ...ec24, digitalFileUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
                     </label>
                     <label className="block text-[11px] font-semibold text-slate-600">অ্যাক্সেস সীমা (ঐচ্ছিক)
                       <input type="number" min="1" value={ec24.digitalAccessLimit} onChange={(e) => setEc24({ ...ec24, digitalAccessLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
+                    {/* AB5 (AX9): delivery type + signed-link expiry. */}
+                    <label className="block text-[11px] font-semibold text-slate-600">ডেলিভারির ধরন
+                      <select value={ec24.digitalDeliveryType} onChange={(e) => setEc24({ ...ec24, digitalDeliveryType: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs">
+                        <option value="file">শুধু ফাইল</option>
+                        <option value="license">শুধু লাইসেন্স কী</option>
+                        <option value="both">ফাইল + লাইসেন্স কী</option>
+                      </select>
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-600">লিংকের মেয়াদ (ঘণ্টা)
+                      <input type="number" min="1" max="720" value={ec24.digitalLinkExpiryHours} onChange={(e) => setEc24({ ...ec24, digitalLinkExpiryHours: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="খালি = ডিফল্ট ৭২ ঘণ্টা" />
+                    </label>
+                  </div>
+                ) : null}
+
+                {/* AB5 (AX9): license-key pool — edit view only, for
+                    digital products delivering license keys. Staff
+                    see masked keys (last 4) only. */}
+                {editingProduct && ec24.digital && (ec24.digitalDeliveryType === "license" || ec24.digitalDeliveryType === "both") ? (
+                  <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+                    <p className="text-[11px] font-bold text-sky-950">🔑 লাইসেন্স কী পুল — {editingProduct.name}</p>
+                    {lkSummary ? (
+                      <p className="text-[11px] text-slate-600">
+                        উপলব্ধ: <b>{lkSummary.available}</b>টি · বরাদ্দ হয়েছে: <b>{lkSummary.assigned}</b>টি · বাতিল: <b>{lkSummary.revoked}</b>টি
+                      </p>
+                    ) : <p className="text-[11px] text-slate-400">পুলের হিসাব লোড হচ্ছে…</p>}
+                    <label className="block text-[11px] font-semibold text-slate-600">কী ইমপোর্ট (এক লাইনে একটি কী, সর্বোচ্চ ৫০০টি)
+                      <textarea value={lkText} onChange={(e) => setLkText(e.target.value)} rows={4} className="mt-1 w-full rounded-lg border px-2 py-1.5 font-mono text-xs" placeholder={"XXXX-XXXX-XXXX-1111\nYYYY-YYYY-YYYY-2222"} />
+                    </label>
+                    <div className="flex flex-wrap items-end gap-2">
+                      <label className="block text-[11px] font-semibold text-slate-600">ব্যাচ লেবেল (ঐচ্ছিক)
+                        <input type="text" value={lkBatch} onChange={(e) => setLkBatch(e.target.value)} className="mt-1 w-44 rounded-lg border px-2 py-1.5 text-xs" placeholder="যেমন: অক্টোবর লট" />
+                      </label>
+                      <button type="button" disabled={lkBusy || !lkText.trim()} onClick={() => void importLicenseKeys()} className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                        {lkBusy ? "হচ্ছে…" : "ইমপোর্ট করুন"}
+                      </button>
+                    </div>
+                    {lkReport ? <p className="rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700">{lkReport}</p> : null}
+                    {lkError ? <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-medium text-rose-700">{lkError}</p> : null}
+                    {lkKeys.length === 0 ? (
+                      <p className="text-[11px] text-slate-400">পুলে এখনো কোনো কী নেই।</p>
+                    ) : (
+                      <ul className="max-h-44 space-y-1 overflow-y-auto">
+                        {lkKeys.map((k) => (
+                          <li key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-2 py-1 text-[11px]">
+                            <span className="font-mono font-bold text-slate-700">••••{k.keyLast4}</span>
+                            <span className={`rounded px-1.5 py-0.5 font-bold ${k.status === "available" ? "bg-emerald-100 text-emerald-700" : k.status === "assigned" ? "bg-sky-100 text-sky-700" : "bg-rose-100 text-rose-700"}`}>
+                              {k.status === "available" ? "উপলব্ধ" : k.status === "assigned" ? "বরাদ্দ হয়েছে" : k.status === "revoked" ? "বাতিল" : k.status}
+                            </span>
+                            {k.importBatch ? <span className="text-slate-400">{k.importBatch}</span> : null}
+                            {k.status !== "revoked" ? (
+                              <button type="button" disabled={lkBusy} onClick={() => void revokeLicenseKey(k)} className="font-bold text-rose-600 disabled:opacity-50">বাতিল করুন</button>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="text-[11px] text-slate-500">সম্পূর্ণ কী স্টাফ প্যানেলে কখনো দেখানো হয় না — শুধু শেষ ৪টি অক্ষর। ক্রেতা ডেলিভারির পর ট্র্যাকিং পেজে নিজের কী দেখতে পাবেন। পণ্যের ডেলিভারির ধরন বদলে সেভ করলে পুলটি ওই ধরন অনুযায়ী ব্যবহৃত হবে।</p>
                   </div>
                 ) : null}
 
@@ -1539,6 +2108,36 @@ export default function ProductsPage() {
                   </div>
                 ) : null}
 
+                {/* AB2 (AX3): gift-card product configuration */}
+                <div className="space-y-2 border-t border-violet-200 pt-3">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <input type="checkbox" checked={giftCard.enabled} onChange={(e) => setGiftCard({ ...giftCard, enabled: e.target.checked })} />
+                    🎁 গিফট কার্ড হিসেবে বিক্রি
+                  </label>
+                  {giftCard.enabled ? (
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-semibold text-slate-600">Preset পরিমাণ (টাকা, কমা দিয়ে আলাদা করুন)
+                        <input type="text" value={giftCard.presetsTaka} onChange={(e) => setGiftCard({ ...giftCard, presetsTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="৫০০, ১০০০, ২০০০" />
+                      </label>
+                      <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                        <input type="checkbox" checked={giftCard.allowCustomAmount} onChange={(e) => setGiftCard({ ...giftCard, allowCustomAmount: e.target.checked })} />
+                        ক্রেতা নিজের পছন্দমতো পরিমাণ দিতে পারবেন
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-[11px] font-semibold text-slate-600">সর্বনিম্ন পরিমাণ (৳, ঐচ্ছিক)
+                          <input type="number" min="0" step="0.01" value={giftCard.minTaka} onChange={(e) => setGiftCard({ ...giftCard, minTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                        </label>
+                        <label className="block text-[11px] font-semibold text-slate-600">সর্বোচ্চ পরিমাণ (৳, ঐচ্ছিক)
+                          <input type="number" min="0" step="0.01" value={giftCard.maxTaka} onChange={(e) => setGiftCard({ ...giftCard, maxTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                        </label>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-slate-500">
+                        গিফট কার্ড পণ্যের স্টক থাকে না এবং এটি কখনো স্টক-আউট হয় না। গিফট কার্ড দিয়ে গিফট কার্ড কেনা যায় না। কার্ডের কোড ক্রেতা অর্ডারের ট্র্যাকিং পেজে পাবেন।
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+
                 <div className="space-y-2">
                   <p className="text-[11px] font-semibold text-slate-600">পাইকারি স্তর (কমপক্ষে পরিমাণ → একক দাম ৳) — সর্বোচ্চ ১০টি, পরিমাণ বাড়তে হবে</p>
                   {ec24.tiers.map((t, i) => (
@@ -1551,6 +2150,20 @@ export default function ProductsPage() {
                   {ec24.tiers.length < 10 ? (
                     <button type="button" onClick={() => setEc24({ ...ec24, tiers: [...ec24.tiers, { minQty: "", price: "" }] })} className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800">+ স্তর যোগ করুন</button>
                   ) : null}
+                </div>
+
+                {/* GC1: product video (link only) */}
+                <div className="space-y-2 border-t border-violet-200 pt-3">
+                  <p className="text-[11px] font-bold text-violet-950">🎬 পণ্যের ভিডিও</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-600">ভিডিও URL
+                      <input type="url" value={ec24.videoUrl} onChange={(e) => setEc24({ ...ec24, videoUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    </label>
+                    <label className="block text-[11px] font-semibold text-slate-600">ভিডিও পোস্টার URL (ঐচ্ছিক)
+                      <input type="url" value={ec24.videoPosterUrl} onChange={(e) => setEc24({ ...ec24, videoPosterUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500">YouTube / Vimeo লিংক অথবা সরাসরি .mp4/.webm ফাইলের লিংক — ভিডিও আপলোডের সুবিধা নেই, লিংক দিতে হবে।</p>
                 </div>
               </div>
 
@@ -1793,6 +2406,98 @@ export default function ProductsPage() {
                 {bulkBusy ? "প্রয়োগ হচ্ছে…" : "প্রয়োগ করুন"}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* GC6: brand manager */}
+      {brandMgrOpen ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setBrandMgrOpen(false)}>
+          <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">🏷️ ব্র্যান্ড ব্যবস্থাপনা</h2>
+              <button className="text-slate-500" onClick={() => setBrandMgrOpen(false)}>✕</button>
+            </div>
+            <p className="text-xs text-slate-500">ব্র্যান্ড মুছলে তার পণ্যগুলো মোছা হয় না — শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হয়।</p>
+            <form onSubmit={onSaveBrand} className="space-y-3 border-b pb-4">
+              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="ব্র্যান্ডের নাম *" value={brandForm.name} onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })} required />
+              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="লোগো URL (ঐচ্ছিক)" value={brandForm.logoUrl} onChange={(e) => setBrandForm({ ...brandForm, logoUrl: e.target.value })} />
+              <textarea className="w-full rounded-lg border px-3 py-2 text-sm" rows={2} placeholder="বিবরণ (ঐচ্ছিক)" value={brandForm.description} onChange={(e) => setBrandForm({ ...brandForm, description: e.target.value })} />
+              <div className="flex gap-2">
+                <button className="btn-primary disabled:opacity-50" disabled={brandBusy || !brandForm.name.trim()}>
+                  {brandBusy ? "সেভ হচ্ছে..." : editingBrandId ? "ব্র্যান্ড আপডেট করুন" : "ব্র্যান্ড যোগ করুন"}
+                </button>
+                {editingBrandId ? (
+                  <button type="button" className="rounded-lg border bg-white px-4 py-2 text-sm" onClick={() => { setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }}>
+                    বাতিল
+                  </button>
+                ) : null}
+              </div>
+            </form>
+            {brands.length === 0 ? (
+              <p className="text-sm text-slate-400">এখনো কোনো ব্র্যান্ড নেই।</p>
+            ) : (
+              <ul className="space-y-3">
+                {brands.map((b) => (
+                  <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-3 last:border-b-0">
+                    <div className="flex items-center gap-3 text-sm">
+                      {b.logoUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={b.logoUrl} alt={b.name} className="h-9 w-9 rounded-lg border border-slate-200 object-contain" />
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-sm">🏷️</div>
+                      )}
+                      <div>
+                        <span className="font-medium">{b.name}</span>
+                        <span className="block text-xs text-slate-400">{b.productCount}টি পণ্য · /{b.slug}</span>
+                      </div>
+                    </div>
+                    <div className="whitespace-nowrap">
+                      <button className="mr-3 text-sm text-sky-700" disabled={brandBusy} onClick={() => { setEditingBrandId(b.id); setBrandForm({ name: b.name, logoUrl: b.logoUrl ?? "", description: b.description ?? "" }); setBrandMsg(""); }}>
+                        সম্পাদনা
+                      </button>
+                      <button className="text-sm text-red-600" disabled={brandBusy} onClick={() => onDeleteBrand(b)}>মুছুন</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {brandMsg ? <p className="text-sm text-slate-600">{brandMsg}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* GC6: product history */}
+      {historyFor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setHistoryFor(null)}>
+          <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">📜 ইতিহাস — {historyFor.name}</h2>
+              <button className="text-slate-500" onClick={() => setHistoryFor(null)}>✕</button>
+            </div>
+            {historyTruncated ? (
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">সাম্প্রতিক ২০০টি ঘটনা দেখানো হচ্ছে</p>
+            ) : null}
+            {historyBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+            {historyMsg ? <p className="text-sm text-red-600">{historyMsg}</p> : null}
+            {!historyBusy && !historyMsg && historyItems.length === 0 ? (
+              <p className="text-sm text-slate-400">এখনো কোনো ইতিহাস রেকর্ড নেই।</p>
+            ) : (
+              <ul className="space-y-3">
+                {historyItems.map((h, i) => (
+                  <li key={`${h.at}-${i}`} className="border-b pb-3 last:border-b-0">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-800">{h.title}</span>
+                      <span className="text-xs text-slate-400">{new Date(h.at).toLocaleString("bn-BD")}</span>
+                    </div>
+                    {h.detail ? <p className="mt-0.5 text-sm text-slate-600">{h.detail}</p> : null}
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {h.action}{h.actorName ? ` · ${h.actorName}` : ""}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       ) : null}

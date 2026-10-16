@@ -1,0 +1,583 @@
+import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import {
+  NON_COUNTING_STATUSES,
+  addDaysToKey,
+  buildFileFromSections,
+  dhakaDateKey,
+  inRange,
+  isSoldOrderShape,
+  orderEffectiveDate,
+  parseFinanceRange,
+  takaCell,
+  takaText,
+  toBig,
+  type BuiltFile,
+  type FinanceRange,
+  type ReportSection,
+} from "./finance-common";
+
+/**
+ * GB8 (GC19) — the five completion reports. Every figure is
+ * defined by its source records (stated per report below and in
+ * the acceptance doc); nothing is reconstructed. All reports take
+ * a Dhaka date range (default last 30 days, max 366) and share
+ * ONE row set between the JSON view, the CSV export and the XLSX
+ * export (sections are built FROM the JSON payload).
+ */
+
+export const GC19_REPORT_TYPES = ["discounts", "refunds", "payment_sales", "category_sales", "shipping_cost"] as const;
+export type Gc19ReportType = (typeof GC19_REPORT_TYPES)[number];
+
+export const REPORT_LABELS_BN: Record<string, string> = {
+  discounts: "ছাড়ের রিপোর্ট",
+  refunds: "রিফান্ডের রিপোর্ট",
+  payment_sales: "পেমেন্ট অনুযায়ী বিক্রি",
+  category_sales: "শ্রেণি অনুযায়ী বিক্রি",
+  shipping_cost: "ডেলিভারি খরচের রিপোর্ট",
+  profit: "লাভের রিপোর্ট",
+};
+
+const TAKE = 5001;
+
+@Injectable()
+export class FinanceReportsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private t(name: string): any {
+    return (this.prisma as any)[name];
+  }
+
+  async getReport(organizationId: string, type: string, from?: string, to?: string): Promise<any> {
+    const range = parseFinanceRange(from, to);
+    switch (type) {
+      case "discounts": return this.discountsReport(organizationId, range);
+      case "refunds": return this.refundsReport(organizationId, range);
+      case "payment_sales": return this.paymentSalesReport(organizationId, range);
+      case "category_sales": return this.categorySalesReport(organizationId, range);
+      case "shipping_cost": return this.shippingCostReport(organizationId, range);
+      default: throw new Error("রিপোর্টের ধরনটি পাওয়া যায়নি");
+    }
+  }
+
+  /** Export file built from the SAME payload as the JSON view. */
+  async buildReportFile(organizationId: string, type: string, from: string | undefined, to: string | undefined, format: "csv" | "xlsx"): Promise<BuiltFile> {
+    const range = parseFinanceRange(from, to);
+    const payload = await this.getReport(organizationId, type, range.from, range.to);
+    const sections = this.sectionsFor(type, payload);
+    const notes = [
+      `${REPORT_LABELS_BN[type] ?? type} · সময়সীমা: ${range.from} থেকে ${range.to} (ঢাকা)`,
+      ...(payload.coverage?.note ? [String(payload.coverage.note)] : []),
+    ];
+    return buildFileFromSections(`${type}-${range.from}-to-${range.to}`, sections, format, this.summaryFor(type, payload), notes);
+  }
+
+  // ---------------- shared loaders ----------------
+
+  /** Orders that count toward sales figures: not practice, not
+   * cancelled/failed/refunded, effective date (placedAt ??
+   * createdAt — the EC23 convention) inside the range. Items are
+   * a real Order relation (include); shipments are NOT — they
+   * are loaded separately and attached as `_shipments` when
+   * `withShipments` is set. */
+  private async loadCountedOrders(organizationId: string, range: FinanceRange, opts: { withItems?: boolean; withShipments?: boolean } = {}): Promise<{ orders: any[]; truncated: boolean }> {
+    const rows = await this.t("order").findMany({
+      where: { organizationId, isPractice: false },
+      include: opts.withItems ? { items: { select: { productId: true, quantity: true, totalMinor: true } } } : undefined,
+      take: TAKE,
+    });
+    const orders = rows.filter((o: any) =>
+      !NON_COUNTING_STATUSES.includes(String(o.status)) && inRange(orderEffectiveDate(o), range));
+    if (opts.withShipments && orders.length) {
+      const byOrder = await this.loadShipmentsByOrder(organizationId, orders.map((o: any) => String(o.id)));
+      for (const o of orders) o._shipments = byOrder.get(String(o.id)) ?? [];
+    }
+    return { orders, truncated: rows.length >= TAKE };
+  }
+
+  /** Shipments grouped by orderId, each list createdAt-ascending
+   * (the earliest shipment is index 0). */
+  async loadShipmentsByOrder(organizationId: string, orderIds: string[]): Promise<Map<string, any[]>> {
+    const map = new Map<string, any[]>();
+    if (!orderIds.length) return map;
+    const rows = await this.t("courierShipment").findMany({
+      where: { organizationId, orderId: { in: orderIds } },
+      orderBy: { createdAt: "asc" },
+      take: 20001,
+    });
+    for (const s of rows) {
+      const key = String(s.orderId);
+      const arr = map.get(key) ?? [];
+      arr.push(s);
+      map.set(key, arr);
+    }
+    for (const arr of map.values()) arr.sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    return map;
+  }
+
+  /** ReturnRequests judged on a chosen date field (the report
+   * judges on createdAt; the refund ledger on updatedAt — one
+   * loader, two presentations, stated in both). */
+  async loadReturns(organizationId: string, range: FinanceRange, dateField: "createdAt" | "updatedAt"): Promise<any[]> {
+    const rows = await this.t("returnRequest").findMany({
+      where: { organizationId, [dateField]: { gte: range.fromDate, lte: range.toDate } },
+      orderBy: { [dateField]: "desc" },
+      take: TAKE,
+    });
+    return rows;
+  }
+
+  private async orderLookup(organizationId: string, ids: string[]): Promise<Map<string, any>> {
+    const map = new Map<string, any>();
+    if (!ids.length) return map;
+    const rows = await this.t("order").findMany({
+      where: { organizationId, id: { in: [...new Set(ids)] } },
+      select: { id: true, externalNumber: true, totalMinor: true, isCod: true },
+    });
+    for (const o of rows) map.set(String(o.id), o);
+    return map;
+  }
+
+  /** partial/full derivation for one completed refund-resolution
+   * return: full when the recorded refund amount reaches the
+   * order's total; unknown when no amount was recorded. */
+  static partialFullOf(ret: any, order: any): "full" | "partial" | "unknown" | null {
+    if (String(ret.resolution ?? "") !== "refund") return null;
+    if (ret.refundAmountMinor === null || ret.refundAmountMinor === undefined) return "unknown";
+    if (!order) return "unknown";
+    return toBig(ret.refundAmountMinor) >= toBig(order.totalMinor) ? "full" : "partial";
+  }
+
+  // ---------------- GC19.1 discounts ----------------
+  /**
+   * TWO layers, kept distinct on purpose:
+   *  - order-level: Σ Order.discountMinor over counted orders —
+   *    covers ALL orders in the period.
+   *  - stamp layer: Σ over Order.appliedDiscounts entries (the
+   *    GB7 evaluator stamps) — exists ONLY for orders placed
+   *    after stamping shipped; coverage counts state exactly how
+   *    many of the period's orders carry stamps.
+   */
+  async discountsReport(organizationId: string, range: FinanceRange) {
+    const { orders, truncated } = await this.loadCountedOrders(organizationId, range);
+    let orderDiscount = 0n;
+    let stampedDiscount = 0n;
+    let stampedOrders = 0;
+    const daily = new Map<string, { orderDiscount: bigint; stampedDiscount: bigint; orders: number }>();
+    const bySource = new Map<string, { kind: string; key: string; name: string; discount: bigint; orderIds: Set<string>; entries: number }>();
+    for (const o of orders) {
+      const key = dhakaDateKey(orderEffectiveDate(o));
+      const day = daily.get(key) ?? { orderDiscount: 0n, stampedDiscount: 0n, orders: 0 };
+      day.orders += 1;
+      day.orderDiscount += toBig(o.discountMinor);
+      orderDiscount += toBig(o.discountMinor);
+      const stamps = Array.isArray(o.appliedDiscounts) ? o.appliedDiscounts : [];
+      if (stamps.length) stampedOrders += 1;
+      for (const e of stamps) {
+        const kind = String(e?.kind ?? "promotion");
+        const srcKey = kind === "coupon" ? String(e?.couponCode ?? "—") : kind === "referral" ? "referral" : String(e?.promotionId ?? e?.name ?? "—");
+        const s = bySource.get(`${kind}|${srcKey}`) ?? { kind, key: srcKey, name: String(e?.name ?? srcKey), discount: 0n, orderIds: new Set<string>(), entries: 0 };
+        const d = toBig(e?.discountMinor);
+        s.discount += d; s.entries += 1; s.orderIds.add(String(o.id));
+        bySource.set(`${kind}|${srcKey}`, s);
+        stampedDiscount += d;
+        day.stampedDiscount += d;
+      }
+      daily.set(key, day);
+    }
+    return {
+      type: "discounts",
+      range: { from: range.from, to: range.to },
+      totals: {
+        orderDiscountMinor: orderDiscount.toString(),
+        stampedDiscountMinor: stampedDiscount.toString(),
+        ordersInPeriod: orders.length,
+        stampedOrders,
+      },
+      coverage: {
+        stampedOrders,
+        ordersInPeriod: orders.length,
+        truncated,
+        note: "স্ট্যাম্প-ভিত্তিক উৎস বিশ্লেষণ কেবল সেই অর্ডারগুলোতে আছে যেগুলো ছাড়-স্ট্যাম্প (GB7) চালু হওয়ার পর দেওয়া হয়েছে; অর্ডার-স্তরের মোট ছাড় সময়সীমার সব গণনাযোগ্য অর্ডার কভার করে। দুটি স্তর আলাদা রাখা হয়েছে — একীভূত ভুয়া ইতিহাস বানানো হয়নি।",
+      },
+      daily: [...daily.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, d]) => ({
+        date, orderDiscountMinor: d.orderDiscount.toString(), stampedDiscountMinor: d.stampedDiscount.toString(), orders: d.orders,
+      })),
+      bySource: [...bySource.values()].sort((a, b) => (b.discount > a.discount ? 1 : -1)).map((s) => ({
+        kind: s.kind,
+        key: s.key,
+        name: s.name,
+        // GB7 convention: coupon/referral counted per distinct
+        // order, promotions per stamped entry.
+        applications: s.kind === "promotion" ? s.entries : s.orderIds.size,
+        discountMinor: s.discount.toString(),
+      })),
+    };
+  }
+
+  // ---------------- GC19.2 refunds ----------------
+  /**
+   * From ReturnRequest rows as they actually exist. Counts by
+   * status; amounts by resolution over COMPLETED requests (the
+   * recorded refundAmountMinor — never reconstructed); partial vs
+   * full derived against the order's totalMinor. A second,
+   * clearly-labelled order-level lens: orders touched in the
+   * period (updatedAt) whose recorded cumulative refundedMinor
+   * is > 0 — this overlaps the return-recorded refunds and says
+   * so.
+   */
+  async refundsReport(organizationId: string, range: FinanceRange) {
+    const requests = await this.loadReturns(organizationId, range, "createdAt");
+    const byStatus = new Map<string, number>();
+    for (const r of requests) byStatus.set(String(r.status), (byStatus.get(String(r.status)) ?? 0) + 1);
+    const completed = requests.filter((r: any) => String(r.status) === "completed");
+    const ordersById = await this.orderLookup(organizationId, completed.map((r: any) => String(r.orderId)));
+    const byResolution = new Map<string, { count: number; amount: bigint; amountsKnown: number }>();
+    let partialCount = 0, fullCount = 0, amountUnknownCount = 0;
+    for (const r of completed) {
+      const res = String(r.resolution ?? "unknown");
+      const g = byResolution.get(res) ?? { count: 0, amount: 0n, amountsKnown: 0 };
+      g.count += 1;
+      if (r.refundAmountMinor !== null && r.refundAmountMinor !== undefined) { g.amount += toBig(r.refundAmountMinor); g.amountsKnown += 1; }
+      byResolution.set(res, g);
+      const pf = FinanceReportsService.partialFullOf(r, ordersById.get(String(r.orderId)));
+      if (pf === "full") fullCount += 1;
+      else if (pf === "partial") partialCount += 1;
+      else if (pf === "unknown") amountUnknownCount += 1;
+    }
+    const touched = await this.t("order").findMany({
+      where: { organizationId, isPractice: false, updatedAt: { gte: range.fromDate, lte: range.toDate } },
+      select: { refundedMinor: true },
+      take: TAKE,
+    });
+    const withRefunds = touched.filter((o: any) => toBig(o.refundedMinor) > 0n);
+    const recordedRefund = withRefunds.reduce((s: bigint, o: any) => s + toBig(o.refundedMinor), 0n);
+    return {
+      type: "refunds",
+      range: { from: range.from, to: range.to },
+      requests: {
+        total: requests.length,
+        byStatus: [...byStatus.entries()].map(([status, count]) => ({ status, count })),
+        byResolution: [...byResolution.entries()].map(([resolution, g]) => ({
+          resolution, count: g.count, amountMinor: g.amount.toString(), amountsKnown: g.amountsKnown,
+        })),
+        partialCount, fullCount, amountUnknownCount,
+      },
+      orderLevel: {
+        ordersWithRefunds: withRefunds.length,
+        recordedRefundMinor: recordedRefund.toString(),
+      },
+      coverage: {
+        note: "রিটার্ন-ভিত্তিক হিসাব ReturnRequest রেকর্ড থেকে (তৈরির তারিখ অনুযায়ী)। অর্ডার-স্তরের হিসাবটি একই সময়ে হালনাগাদ হওয়া অর্ডারের সঞ্চিত refundedMinor — রিটার্নে রেকর্ড করা রিফান্ডের সঙ্গে এটি আংশিকভাবে মিলে যায় (overlap), দুটি যোগ করবেন না। স্টোরে রিফান্ড push সফল হয়েছে কিনা ReturnRequest-এ আলাদা করে রেকর্ড থাকে না — এখানে দাবি করা হয়নি।",
+      },
+    };
+  }
+
+  /** GC20 refund ledger rows — the SAME loader + derivation as
+   * the refunds report, judged on updatedAt (completion time). */
+  async refundLedgerRows(organizationId: string, range: FinanceRange) {
+    const rows = (await this.loadReturns(organizationId, range, "updatedAt"))
+      .filter((r: any) => String(r.status) === "completed");
+    const ordersById = await this.orderLookup(organizationId, rows.map((r: any) => String(r.orderId)));
+    let refundTotal = 0n;
+    const out = rows.map((r: any) => {
+      const order = ordersById.get(String(r.orderId));
+      const known = r.refundAmountMinor !== null && r.refundAmountMinor !== undefined;
+      if (known && String(r.resolution ?? "") === "refund") refundTotal += toBig(r.refundAmountMinor);
+      return {
+        date: dhakaDateKey(new Date(r.updatedAt)),
+        returnId: String(r.id),
+        orderId: String(r.orderId),
+        orderNumber: order?.externalNumber ?? null,
+        resolution: String(r.resolution ?? "unknown"),
+        status: String(r.status),
+        amountMinor: known ? toBig(r.refundAmountMinor).toString() : null,
+        amountKnown: known,
+        partialFull: FinanceReportsService.partialFullOf(r, order),
+      };
+    });
+    return { rows: out, totals: { count: out.length, refundAmountMinor: refundTotal.toString() } };
+  }
+
+  // ---------------- GC19.3 payment-wise sales ----------------
+  /**
+   * Two sources, two questions — never blended:
+   *  - byMethod: counted ORDERS grouped by Order.paymentMethod
+   *    (blank method falls back to isCod → "cod", else the
+   *    "unknown" bucket — never a guess).
+   *  - onlineVerified: TenantPaymentTransaction rows in
+   *    verified_paid (GB4's definition, judged on updatedAt)
+   *    grouped by provider × source — money the gateway itself
+   *    confirmed.
+   */
+  async paymentSalesReport(organizationId: string, range: FinanceRange) {
+    const { orders, truncated } = await this.loadCountedOrders(organizationId, range);
+    const byMethod = new Map<string, { orders: number; total: bigint }>();
+    let totalAll = 0n;
+    for (const o of orders) {
+      const raw = String(o.paymentMethod ?? "").trim();
+      const method = raw || (o.isCod ? "cod" : "unknown");
+      const g = byMethod.get(method) ?? { orders: 0, total: 0n };
+      g.orders += 1; g.total += toBig(o.totalMinor);
+      byMethod.set(method, g);
+      totalAll += toBig(o.totalMinor);
+    }
+    const txns = await this.t("tenantPaymentTransaction").findMany({
+      where: { organizationId, status: "verified_paid", updatedAt: { gte: range.fromDate, lte: range.toDate } },
+      take: TAKE,
+    });
+    const verified = new Map<string, { provider: string; source: string; count: number; gross: bigint }>();
+    let vCount = 0; let vGross = 0n;
+    for (const tx of txns) {
+      const provider = String(tx.provider ?? "unknown");
+      const source = String(tx.source ?? "unknown");
+      const g = verified.get(`${provider}|${source}`) ?? { provider, source, count: 0, gross: 0n };
+      g.count += 1; g.gross += toBig(tx.amountMinor);
+      verified.set(`${provider}|${source}`, g);
+      vCount += 1; vGross += toBig(tx.amountMinor);
+    }
+    return {
+      type: "payment_sales",
+      range: { from: range.from, to: range.to },
+      byMethod: [...byMethod.entries()].map(([method, g]) => ({ method, orders: g.orders, totalMinor: g.total.toString() })),
+      totals: { orders: orders.length, totalMinor: totalAll.toString() },
+      onlineVerified: [...verified.values()].map((g) => ({ provider: g.provider, source: g.source, count: g.count, grossMinor: g.gross.toString() })),
+      onlineVerifiedTotals: { count: vCount, grossMinor: vGross.toString() },
+      coverage: {
+        truncated,
+        note: "অর্ডার-ভিত্তিক অংশটি Order.paymentMethod অনুযায়ী — পদ্ধতি ফাঁকা থাকলে COD অর্ডার 'cod' আর বাকিগুলো 'unknown' (অন্যান্য/অজানা) বাকেটে যায়, অনুমান করা হয় না। যাচাইকৃত অংশটি শুধু গেটওয়ে-নিশ্চিত verified_paid লেনদেন থেকে (updatedAt অনুযায়ী) — দুটি অংশের যোগফল মেলানোর চেষ্টা করবেন না, প্রশ্নই আলাদা।",
+      },
+    };
+  }
+
+  // ---------------- GC19.4 category-wise sales ----------------
+  /**
+   * Sold-bucket orders only (the ON7/EC33 predicate). Items join
+   * to the product's CURRENT category: Product.categoryId →
+   * Category.name, else the product's legacy free-text category,
+   * else the "শ্রেণিবিহীন" bucket (also used for items with no
+   * linked product). Revenue = Σ OrderItem.totalMinor as stamped
+   * at placement. CAVEAT (stated in coverage): recategorizing a
+   * product moves its whole history to the new category.
+   */
+  async categorySalesReport(organizationId: string, range: FinanceRange) {
+    const { orders, truncated } = await this.loadCountedOrders(organizationId, range, { withItems: true, withShipments: true });
+    const sold = orders.filter((o: any) => isSoldOrderShape(String(o.status), (o._shipments ?? []).map((s: any) => String(s.status))));
+    const productIds = [...new Set(sold.flatMap((o: any) => (o.items ?? []).map((i: any) => i.productId).filter(Boolean).map(String)))];
+    const products = new Map<string, any>();
+    if (productIds.length) {
+      const rows = await this.t("product").findMany({
+        where: { organizationId, id: { in: productIds } },
+        select: { id: true, categoryId: true, category: true },
+      });
+      for (const p of rows) products.set(String(p.id), p);
+    }
+    const categoryIds = [...new Set([...products.values()].map((p) => p.categoryId).filter(Boolean).map(String))];
+    const categoryNames = new Map<string, string>();
+    if (categoryIds.length) {
+      const rows = await this.t("category").findMany({ where: { organizationId, id: { in: categoryIds } }, select: { id: true, name: true } });
+      for (const c of rows) categoryNames.set(String(c.id), String(c.name));
+    }
+    const UNCATEGORIZED = "শ্রেণিবিহীন";
+    const groups = new Map<string, { orders: Set<string>; quantity: number; revenue: bigint }>();
+    for (const o of sold) {
+      for (const item of o.items ?? []) {
+        const p = item.productId ? products.get(String(item.productId)) : undefined;
+        const name = (p?.categoryId && categoryNames.get(String(p.categoryId))) || (typeof p?.category === "string" && p.category.trim() ? p.category.trim() : UNCATEGORIZED);
+        const g = groups.get(name) ?? { orders: new Set<string>(), quantity: 0, revenue: 0n };
+        g.orders.add(String(o.id));
+        g.quantity += Number(item.quantity ?? 0);
+        g.revenue += toBig(item.totalMinor);
+        groups.set(name, g);
+      }
+    }
+    const rows = [...groups.entries()].map(([category, g]) => ({
+      category, orders: g.orders.size, quantity: g.quantity, revenueMinor: g.revenue.toString(),
+    })).sort((a, b) => (toBig(b.revenueMinor) > toBig(a.revenueMinor) ? 1 : -1));
+    return {
+      type: "category_sales",
+      range: { from: range.from, to: range.to },
+      rows,
+      totals: {
+        orders: sold.length,
+        quantity: rows.reduce((s, r) => s + r.quantity, 0),
+        revenueMinor: rows.reduce((s, r) => s + toBig(r.revenueMinor), 0n).toString(),
+      },
+      coverage: {
+        soldOrders: sold.length,
+        truncated,
+        note: "শ্রেণি = পণ্যের বর্তমান শ্রেণি (categoryId → Category, না থাকলে পণ্যের পুরনো ফ্রি-টেক্সট category)। সতর্কতা: কোনো পণ্যের শ্রেণি বদলালে তার পুরনো বিক্রির ইতিহাসও নতুন শ্রেণিতে চলে যায় — অর্ডারের সময়ের শ্রেণির snapshot সংরক্ষিত থাকে না। আয় = আইটেমের লাইন-মোট (OrderItem.totalMinor) যা অর্ডার দেওয়ার সময় stamp হয়েছিল।",
+      },
+    };
+  }
+
+  // ---------------- GC19.5 shipping cost ----------------
+  /**
+   * Per courier provider + totals:
+   *  - chargedMinor: Σ Order.shippingMinor, each order attributed
+   *    to the provider of its EARLIEST shipment; orders without
+   *    any shipment land in the "unshipped" bucket.
+   *  - actualMinor: per shipment, the ON7/GB5 precedence —
+   *    ReconciliationLine.sheetChargeMinor (matched /
+   *    amount_mismatch / already_collected lines) first, else
+   *    CourierShipment.chargeMinor (the booking charge, only
+   *    when the provider returned one). A provider row's
+   *    actualMinor is null when NONE of its shipments has an
+   *    actual — never a fabricated 0.
+   *  - coverage.actualCoveragePct = orders with ≥1 actual ÷
+   *    orders with ≥1 shipment (orders in period, all
+   *    non-practice — shipping exists independent of the sales
+   *    counting rules, stated here).
+   */
+  async shippingCostReport(organizationId: string, range: FinanceRange) {
+    const rows = await this.t("order").findMany({
+      where: { organizationId, isPractice: false },
+      take: TAKE,
+    });
+    const orders = rows.filter((o: any) => inRange(orderEffectiveDate(o), range));
+    const shipmentsByOrder = await this.loadShipmentsByOrder(organizationId, orders.map((o: any) => String(o.id)));
+    for (const o of orders) o._shipments = shipmentsByOrder.get(String(o.id)) ?? [];
+    const shipmentIds = orders.flatMap((o: any) => (o._shipments ?? []).map((s: any) => String(s.id)));
+    const sheetCharge = new Map<string, bigint>();
+    if (shipmentIds.length) {
+      const lines = await this.t("reconciliationLine").findMany({
+        where: { organizationId, matchedShipmentId: { in: shipmentIds }, outcome: { in: ["matched", "amount_mismatch", "already_collected"] } },
+        select: { matchedShipmentId: true, sheetChargeMinor: true },
+        take: 20001,
+      });
+      for (const l of lines) if (l.matchedShipmentId) sheetCharge.set(String(l.matchedShipmentId), toBig(l.sheetChargeMinor));
+    }
+    const actualOf = (s: any): bigint | null => {
+      const sheet = sheetCharge.get(String(s.id));
+      if (sheet !== undefined) return sheet;
+      if (s.chargeMinor !== null && s.chargeMinor !== undefined) return toBig(s.chargeMinor);
+      return null;
+    };
+    interface Prov { shipments: number; orderIds: Set<string>; charged: bigint; actual: bigint; withActual: number }
+    const byProvider = new Map<string, Prov>();
+    const get = (k: string): Prov => byProvider.get(k) ?? { shipments: 0, orderIds: new Set(), charged: 0n, actual: 0n, withActual: 0 };
+    let ordersWithShipments = 0, ordersWithAnyActual = 0;
+    for (const o of orders) {
+      const shipments = o._shipments ?? [];
+      if (!shipments.length) {
+        const g = get("unshipped");
+        g.orderIds.add(String(o.id)); g.charged += toBig(o.shippingMinor);
+        byProvider.set("unshipped", g);
+        continue;
+      }
+      ordersWithShipments += 1;
+      let anyActual = false;
+      const first = get(String(shipments[0].provider ?? "unknown"));
+      first.orderIds.add(String(o.id)); first.charged += toBig(o.shippingMinor);
+      byProvider.set(String(shipments[0].provider ?? "unknown"), first);
+      for (const s of shipments) {
+        const g = get(String(s.provider ?? "unknown"));
+        g.shipments += 1;
+        const a = actualOf(s);
+        if (a !== null) { g.actual += a; g.withActual += 1; anyActual = true; }
+        byProvider.set(String(s.provider ?? "unknown"), g);
+      }
+      if (anyActual) ordersWithAnyActual += 1;
+    }
+    const out = [...byProvider.entries()].map(([provider, g]) => ({
+      provider,
+      shipments: g.shipments,
+      orders: g.orderIds.size,
+      chargedMinor: g.charged.toString(),
+      actualMinor: g.withActual > 0 ? g.actual.toString() : null,
+      shipmentsWithActual: g.withActual,
+    })).sort((a, b) => b.shipments - a.shipments);
+    const totShipments = out.reduce((s, r) => s + r.shipments, 0);
+    const totWithActual = out.reduce((s, r) => s + r.shipmentsWithActual, 0);
+    return {
+      type: "shipping_cost",
+      range: { from: range.from, to: range.to },
+      rows: out,
+      totals: {
+        shipments: totShipments,
+        orders: orders.length,
+        chargedMinor: out.reduce((s, r) => s + toBig(r.chargedMinor), 0n).toString(),
+        actualMinor: totWithActual > 0 ? out.reduce((s, r) => s + (r.actualMinor ? toBig(r.actualMinor) : 0n), 0n).toString() : null,
+        shipmentsWithActual: totWithActual,
+      },
+      coverage: {
+        ordersWithShipments,
+        ordersWithAnyActual,
+        actualCoveragePct: ordersWithShipments > 0 ? Math.round((ordersWithAnyActual / ordersWithShipments) * 1000) / 10 : null,
+        truncated: rows.length >= TAKE,
+        note: "আদায়কৃত চার্জ = Order.shippingMinor, অর্ডারটি তার প্রথম (সবচেয়ে পুরনো) শিপমেন্টের কুরিয়ারে attributed। প্রকৃত খরচ = ON7/GB5 precedence: প্রথমে reconciliation sheet-এর sheetChargeMinor, না থাকলে বুকিংয়ের সময় কুরিয়ারের ফেরত দেওয়া chargeMinor। কোনো শিপমেন্টেই প্রকৃত খরচ না থাকলে actualMinor null (শূন্য বানানো হয়নি)।",
+      },
+    };
+  }
+
+  // ---------------- sections + summaries (one row set) ----------------
+
+  sectionsFor(type: string, p: any): ReportSection[] {
+    switch (type) {
+      case "discounts": return [
+        { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
+          ["মোট গণনাযোগ্য অর্ডার", p.totals.ordersInPeriod],
+          ["অর্ডার-স্তরের মোট ছাড় (টাকা)", takaCell(toBig(p.totals.orderDiscountMinor))],
+          ["স্ট্যাম্প-ভিত্তিক মোট ছাড় (টাকা)", takaCell(toBig(p.totals.stampedDiscountMinor))],
+          ["স্ট্যাম্পযুক্ত অর্ডার", p.totals.stampedOrders],
+        ] },
+        { title: "দৈনিক ছাড়", headers: ["তারিখ", "অর্ডার", "অর্ডার-স্তরের ছাড় (টাকা)", "স্ট্যাম্প-ভিত্তিক ছাড় (টাকা)"], rows: p.daily.map((d: any) => [d.date, d.orders, takaCell(toBig(d.orderDiscountMinor)), takaCell(toBig(d.stampedDiscountMinor))]) },
+        { title: "উৎস অনুযায়ী ছাড়", headers: ["ধরন", "কোড/নাম", "প্রয়োগ", "ছাড় (টাকা)"], rows: p.bySource.map((s: any) => [s.kind, s.name, s.applications, takaCell(toBig(s.discountMinor))]) },
+      ];
+      case "refunds": return [
+        { title: "স্ট্যাটাস অনুযায়ী রিটার্ন", headers: ["স্ট্যাটাস", "সংখ্যা"], rows: p.requests.byStatus.map((s: any) => [s.status, s.count]) },
+        { title: "সমাধান অনুযায়ী (সম্পন্ন)", headers: ["সমাধান", "সংখ্যা", "পরিমাণ (টাকা)", "পরিমাণ-জানা সংখ্যা"], rows: p.requests.byResolution.map((s: any) => [s.resolution, s.count, takaCell(toBig(s.amountMinor)), s.amountsKnown]) },
+        { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
+          ["মোট রিটার্ন অনুরোধ", p.requests.total],
+          ["পূর্ণ রিফান্ড (সম্পন্ন)", p.requests.fullCount],
+          ["আংশিক রিফান্ড (সম্পন্ন)", p.requests.partialCount],
+          ["পরিমাণ অজানা (সম্পন্ন রিফান্ড)", p.requests.amountUnknownCount],
+          ["রিফান্ডযুক্ত অর্ডার (অর্ডার-স্তর)", p.orderLevel.ordersWithRefunds],
+          ["অর্ডারে রেকর্ডকৃত সঞ্চিত রিফান্ড (টাকা)", takaCell(toBig(p.orderLevel.recordedRefundMinor))],
+        ] },
+      ];
+      case "payment_sales": return [
+        { title: "পেমেন্ট পদ্ধতি অনুযায়ী অর্ডার", headers: ["পদ্ধতি", "অর্ডার", "মোট (টাকা)"], rows: [...p.byMethod.map((m: any) => [m.method, m.orders, takaCell(toBig(m.totalMinor))]), ["মোট", p.totals.orders, takaCell(toBig(p.totals.totalMinor))]] },
+        { title: "যাচাইকৃত অনলাইন পেমেন্ট (verified_paid)", headers: ["প্রোভাইডার", "উৎস", "সংখ্যা", "মোট (টাকা)"], rows: [...p.onlineVerified.map((v: any) => [v.provider, v.source, v.count, takaCell(toBig(v.grossMinor))]), ["মোট", "", p.onlineVerifiedTotals.count, takaCell(toBig(p.onlineVerifiedTotals.grossMinor))]] },
+      ];
+      case "category_sales": return [
+        { title: "শ্রেণি অনুযায়ী বিক্রি", headers: ["শ্রেণি", "অর্ডার", "পরিমাণ", "আয় (টাকা)"], rows: [...p.rows.map((r: any) => [r.category, r.orders, r.quantity, takaCell(toBig(r.revenueMinor))]), ["মোট", p.totals.orders, p.totals.quantity, takaCell(toBig(p.totals.revenueMinor))]] },
+      ];
+      case "shipping_cost": return [
+        { title: "কুরিয়ার অনুযায়ী ডেলিভারি খরচ", headers: ["কুরিয়ার", "শিপমেন্ট", "অর্ডার", "আদায়কৃত চার্জ (টাকা)", "প্রকৃত খরচ (টাকা)", "প্রকৃত-খরচযুক্ত শিপমেন্ট"], rows: [...p.rows.map((r: any) => [r.provider, r.shipments, r.orders, takaCell(toBig(r.chargedMinor)), r.actualMinor === null ? "" : takaCell(toBig(r.actualMinor)), r.shipmentsWithActual]),
+          ["মোট", p.totals.shipments, p.totals.orders, takaCell(toBig(p.totals.chargedMinor)), p.totals.actualMinor === null ? "" : takaCell(toBig(p.totals.actualMinor)), p.totals.shipmentsWithActual]] },
+        { title: "কভারেজ", headers: ["বিবরণ", "পরিমাণ"], rows: [
+          ["শিপমেন্টযুক্ত অর্ডার", p.coverage.ordersWithShipments],
+          ["প্রকৃত খরচ পাওয়া অর্ডার", p.coverage.ordersWithAnyActual],
+          ["প্রকৃত খরচের কভারেজ (%)", p.coverage.actualCoveragePct ?? ""],
+        ] },
+      ];
+      default: return [];
+    }
+  }
+
+  summaryFor(type: string, p: any): string {
+    const head = `${REPORT_LABELS_BN[type] ?? type} · ${p.range.from} — ${p.range.to}`;
+    switch (type) {
+      case "discounts": return [head, `অর্ডার: ${p.totals.ordersInPeriod}টি · অর্ডার-স্তরের ছাড়: ${takaText(toBig(p.totals.orderDiscountMinor))} · স্ট্যাম্প-ভিত্তিক ছাড়: ${takaText(toBig(p.totals.stampedDiscountMinor))} (${p.totals.stampedOrders}টি অর্ডারে স্ট্যাম্প আছে)`].join("\n");
+      case "refunds": return [head, `রিটার্ন অনুরোধ: ${p.requests.total}টি · পূর্ণ রিফান্ড: ${p.requests.fullCount}টি · আংশিক: ${p.requests.partialCount}টি`].join("\n");
+      case "payment_sales": return [head, `অর্ডার: ${p.totals.orders}টি · মোট: ${takaText(toBig(p.totals.totalMinor))} · যাচাইকৃত অনলাইন: ${p.onlineVerifiedTotals.count}টি · ${takaText(toBig(p.onlineVerifiedTotals.grossMinor))}`].join("\n");
+      case "category_sales": return [head, `বিক্রীত অর্ডার: ${p.totals.orders}টি · মোট আয়: ${takaText(toBig(p.totals.revenueMinor))} · শ্রেণি: ${p.rows.length}টি`].join("\n");
+      case "shipping_cost": return [head, `শিপমেন্ট: ${p.totals.shipments}টি · আদায়কৃত চার্জ: ${takaText(toBig(p.totals.chargedMinor))} · প্রকৃত খরচ: ${p.totals.actualMinor === null ? "রেকর্ড নেই" : takaText(toBig(p.totals.actualMinor))} (কভারেজ ${p.coverage.actualCoveragePct ?? "—"}%)`].join("\n");
+      default: return head;
+    }
+  }
+
+  /** Yesterday (Dhaka) — the daily cadence period. */
+  static yesterdayRange(now: Date = new Date()): FinanceRange {
+    const y = addDaysToKey(dhakaDateKey(now), -1);
+    return parseFinanceRange(y, y, now);
+  }
+
+  /** The 7 Dhaka days ending yesterday — the weekly period. */
+  static lastWeekRange(now: Date = new Date()): FinanceRange {
+    const end = addDaysToKey(dhakaDateKey(now), -1);
+    const start = addDaysToKey(end, -6);
+    return parseFinanceRange(start, end, now);
+  }
+}

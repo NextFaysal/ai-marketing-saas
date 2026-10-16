@@ -7,7 +7,21 @@ import { EmptyState } from "@repo/ui";
 interface Account { id: string; name: string; platform: string; integrationId?: string | null }
 interface Audience { id: string; name: string; kind: string; source: string; sourceDetail?: string | null; externalAudienceId?: string | null; approximateCount?: number | null; status: string; error?: string | null; lastMembershipSyncAt?: string | null; lastMembershipCount?: number | null }
 interface Saved { id: string; name: string; targeting: Record<string, unknown> }
-interface Catalog { id: string; name: string; externalCatalogId: string; status: string; lastSyncAt?: string | null; lastSyncSummary?: { pushed: number; errors: number; total: number } | null }
+interface Catalog {
+  id: string; name: string; externalCatalogId: string; status: string; lastSyncAt?: string | null;
+  lastSyncSummary?: { pushed: number; errors: number; total: number } | null;
+  // AB5 (AX10): auto-sync opt-in + staff-entered Page / IG link.
+  autoSync?: boolean;
+  pageId?: string | null; pageName?: string | null;
+  instagramId?: string | null; instagramName?: string | null;
+}
+/** AB5 (AX10): GET catalogs/:id/sync-status shape. */
+interface CatalogSyncStatus {
+  autoSync: boolean;
+  counts: { pending: number; failed: number; done: number };
+  lastSyncAt: string | null;
+  lastSyncSummary: unknown;
+}
 
 const SEGMENTS = ["champions", "loyal", "big_spenders", "at_risk", "lost", "new", "regular"];
 
@@ -18,6 +32,35 @@ export default function AudiencesPage() {
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   interface ProductSetRow { id: string; name: string; category?: string | null; memberCount: number; maxPriceMinor?: string | null; status?: string; externalSetId?: string | null; error?: string | null }
   const [setsByCatalog, setSetsByCatalog] = useState<Record<string, ProductSetRow[]>>({});
+  // AB5 (AX10): per-catalog auto-sync status (queue counts +
+  // last-sync stamp), fetched from the sync-status endpoint.
+  const [syncByCatalog, setSyncByCatalog] = useState<Record<string, CatalogSyncStatus>>({});
+  const [syncBusy, setSyncBusy] = useState("");
+  async function loadSyncStatus(catalogId: string) {
+    if (!orgId) return;
+    setSyncBusy(catalogId);
+    try {
+      const s = await apiFetch<CatalogSyncStatus>(`/organizations/${orgId}/catalogs/${catalogId}/sync-status`);
+      setSyncByCatalog((prev) => ({ ...prev, [catalogId]: s }));
+    } catch { /* the card keeps its last known status */ }
+    finally { setSyncBusy(""); }
+  }
+  async function toggleAutoSync(c: Catalog, next: boolean) {
+    if (!orgId) return;
+    // Optimistic: flip locally first, revert on error.
+    setCatalogs((prev) => prev.map((x) => (x.id === c.id ? { ...x, autoSync: next } : x)));
+    setSyncByCatalog((prev) => (prev[c.id] ? { ...prev, [c.id]: { ...prev[c.id], autoSync: next } } : prev));
+    try {
+      await apiFetch(`/organizations/${orgId}/catalogs/${c.id}`, {
+        method: "PATCH", body: JSON.stringify({ autoSync: next }),
+      });
+      setNotice(next ? "অটো-সিঙ্ক চালু হয়েছে — পণ্য বদলালে ক্যাটালগে স্বয়ংক্রিয় আপডেট যাবে।" : "অটো-সিঙ্ক বন্ধ হয়েছে।");
+    } catch (err) {
+      setCatalogs((prev) => prev.map((x) => (x.id === c.id ? { ...x, autoSync: !next } : x)));
+      setSyncByCatalog((prev) => (prev[c.id] ? { ...prev, [c.id]: { ...prev[c.id], autoSync: !next } } : prev));
+      setError(err instanceof Error ? err.message : "অটো-সিঙ্ক বদল ব্যর্থ");
+    }
+  }
   const [setForm, setSetForm] = useState({ name: "", category: "", maxPrice: "" });
   async function loadSets(catalogId: string) {
     if (!orgId) return;
@@ -41,7 +84,14 @@ export default function AudiencesPage() {
     if (meta[0]) { setCustom((f) => ({ ...f, adAccountId: f.adAccountId || meta[0].id })); setLook((f) => ({ ...f, adAccountId: f.adAccountId || meta[0].id })); }
     setAudiences(await apiFetch<Audience[]>(`/organizations/${orgId}/audiences`).catch(() => []));
     setSaved(await apiFetch<Saved[]>(`/organizations/${orgId}/audiences/saved/list`).catch(() => []));
-    setCatalogs(await apiFetch<Catalog[]>(`/organizations/${orgId}/catalogs`).catch(() => []));
+    const cats = await apiFetch<Catalog[]>(`/organizations/${orgId}/catalogs`).catch(() => []);
+    setCatalogs(cats);
+    // AB5 (AX10): each catalog's sync status rides its own endpoint.
+    for (const c of cats) {
+      apiFetch<CatalogSyncStatus>(`/organizations/${orgId}/catalogs/${c.id}/sync-status`)
+        .then((s) => setSyncByCatalog((prev) => ({ ...prev, [c.id]: s })))
+        .catch(() => undefined);
+    }
   }, [orgId]);
   useEffect(() => { load(); }, [load]);
 
@@ -173,6 +223,30 @@ export default function AudiencesPage() {
                   </form>
                 </div>
                 <p className="text-xs text-slate-400">ID: {c.externalCatalogId}{c.lastSyncSummary ? ` · শেষ Push: ${c.lastSyncSummary.pushed}/${c.lastSyncSummary.total} সফল, ${c.lastSyncSummary.errors} এরর` : ""}</p>
+                {/* AB5 (AX10): Page / IG linkage + auto-sync + sync status. */}
+                <p className="text-xs text-slate-500">
+                  {c.pageName || c.instagramName
+                    ? <>🔗 {c.pageName ? `Facebook Page: ${c.pageName}` : ""}{c.pageName && c.instagramName ? " · " : ""}{c.instagramName ? `Instagram: ${c.instagramName}` : ""}</>
+                    : "সংযুক্ত পেজের তথ্য নেই"}
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <label className="flex items-center gap-2 text-xs font-medium">
+                    <input type="checkbox" checked={!!(syncByCatalog[c.id]?.autoSync ?? c.autoSync)}
+                      onChange={(e) => void toggleAutoSync(c, e.target.checked)} />
+                    অটো-সিঙ্ক (পণ্য বদলালে ক্যাটালগ আপডেট)
+                  </label>
+                  <button className="btn-secondary btn-sm" disabled={syncBusy === c.id} onClick={() => void loadSyncStatus(c.id)}>
+                    {syncBusy === c.id ? "…" : "↻ সিঙ্ক অবস্থা"}
+                  </button>
+                  {syncByCatalog[c.id] ? (
+                    <span className="text-xs text-slate-500">
+                      অপেক্ষমাণ: <b>{syncByCatalog[c.id].counts.pending}</b> · ব্যর্থ: <b className={syncByCatalog[c.id].counts.failed > 0 ? "text-red-600" : ""}>{syncByCatalog[c.id].counts.failed}</b> · সম্পন্ন: <b>{syncByCatalog[c.id].counts.done}</b>
+                      {syncByCatalog[c.id].lastSyncAt ? ` · শেষ সিঙ্ক: ${new Date(syncByCatalog[c.id].lastSyncAt as string).toLocaleString("bn-BD")}` : " · এখনো সিঙ্ক হয়নি"}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400">সিঙ্ক অবস্থা লোড হয়নি — ↻ চাপুন</span>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

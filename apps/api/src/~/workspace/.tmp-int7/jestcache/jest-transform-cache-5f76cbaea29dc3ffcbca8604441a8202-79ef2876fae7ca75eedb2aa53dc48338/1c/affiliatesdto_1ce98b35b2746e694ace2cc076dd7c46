@@ -1,0 +1,162 @@
+da9563ab8acc7c1ddff78761dc7af167
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RecordAffiliatePayoutDto = exports.UpdateAffiliatePartnerDto = exports.CreateAffiliatePartnerDto = void 0;
+const class_validator_1 = require("class-validator");
+/**
+ * EC32 — affiliate program staff DTOs.
+ *
+ * A partner's `code` is stored NORMALIZED (trim + uppercase) —
+ * the same normalization is applied to a presented code at
+ * checkout before lookup, so staff never have to guess the case.
+ * `commissionPercent` is validated again in the service (0..50)
+ * because the service is also called directly from specs.
+ */
+class CreateAffiliatePartnerDto {
+    name;
+    phone;
+    email;
+    /** Optional — when omitted the service generates AFF + 6 chars. */
+    code;
+    commissionPercent;
+    status;
+    note;
+}
+exports.CreateAffiliatePartnerDto = CreateAffiliatePartnerDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateAffiliatePartnerDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(6),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], CreateAffiliatePartnerDto.prototype, "phone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], CreateAffiliatePartnerDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateAffiliatePartnerDto.prototype, "code", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateAffiliatePartnerDto.prototype, "commissionPercent", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["active", "paused"]),
+    __metadata("design:type", String)
+], CreateAffiliatePartnerDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", Object)
+], CreateAffiliatePartnerDto.prototype, "note", void 0);
+class UpdateAffiliatePartnerDto {
+    name;
+    phone;
+    email;
+    code;
+    commissionPercent;
+    status;
+    note;
+}
+exports.UpdateAffiliatePartnerDto = UpdateAffiliatePartnerDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], UpdateAffiliatePartnerDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(6),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], UpdateAffiliatePartnerDto.prototype, "phone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", Object)
+], UpdateAffiliatePartnerDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], UpdateAffiliatePartnerDto.prototype, "code", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], UpdateAffiliatePartnerDto.prototype, "commissionPercent", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["active", "paused"]),
+    __metadata("design:type", String)
+], UpdateAffiliatePartnerDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", Object)
+], UpdateAffiliatePartnerDto.prototype, "note", void 0);
+/**
+ * EC32: record a payout the merchant made OUTSIDE the system
+ * (bKash/Nagad/bank/cash by hand). This is a bookkeeping record
+ * only — the system never sends money. amountMinor is a
+ * minor-unit integer carried as a string (BigInt-safe), exactly
+ * like the EC31 CollectInstallmentDto.
+ */
+class RecordAffiliatePayoutDto {
+    amountMinor;
+    method;
+    reference;
+    note;
+}
+exports.RecordAffiliatePayoutDto = RecordAffiliatePayoutDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(30),
+    __metadata("design:type", String)
+], RecordAffiliatePayoutDto.prototype, "amountMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsIn)(["bkash", "nagad", "bank", "cash", "other"]),
+    __metadata("design:type", String)
+], RecordAffiliatePayoutDto.prototype, "method", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], RecordAffiliatePayoutDto.prototype, "reference", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], RecordAffiliatePayoutDto.prototype, "note", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FmZmlsaWF0ZXMvYWZmaWxpYXRlcy5kdG8udHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7O0FBQUEscURBQTBGO0FBRTFGOzs7Ozs7OztHQVFHO0FBQ0gsTUFBYSx5QkFBeUI7SUFDTSxJQUFJLENBQVU7SUFDZixLQUFLLENBQVU7SUFDZCxLQUFLLENBQWlCO0lBQ2hFLG1FQUFtRTtJQUMxQixJQUFJLENBQVU7SUFDaEMsaUJBQWlCLENBQVU7SUFDUixNQUFNLENBQVU7SUFDaEIsSUFBSSxDQUFpQjtDQUNoRTtBQVRELDhEQVNDO0FBUjJDO0lBQXpDLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzt1REFBZTtBQUNmO0lBQXhDLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOzt3REFBZ0I7QUFDZDtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzt3REFBdUI7QUFFdkI7SUFBeEMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7dURBQWU7QUFDaEM7SUFBdEIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSx1QkFBSyxHQUFFOztvRUFBNEI7QUFDUjtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxRQUFRLEVBQUUsUUFBUSxDQUFDLENBQUM7O3lEQUFpQjtBQUNoQjtJQUF6QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzt1REFBc0I7QUFHakUsTUFBYSx5QkFBeUI7SUFDb0IsSUFBSSxDQUFVO0lBQ2YsS0FBSyxDQUFVO0lBQzVCLEtBQUssQ0FBaUI7SUFDdkIsSUFBSSxDQUFVO0lBQ2hDLGlCQUFpQixDQUFVO0lBQ1IsTUFBTSxDQUFVO0lBQ2hCLElBQUksQ0FBaUI7Q0FDaEU7QUFSRCw4REFRQztBQVB5RDtJQUF2RCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7dURBQWU7QUFDZjtJQUF0RCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7d0RBQWdCO0FBQzVCO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3dEQUF1QjtBQUN2QjtJQUF4QyxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOzt1REFBZTtBQUNoQztJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O29FQUE0QjtBQUNSO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsc0JBQUksRUFBQyxDQUFDLFFBQVEsRUFBRSxRQUFRLENBQUMsQ0FBQzs7eURBQWlCO0FBQ2hCO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3VEQUFzQjtBQUdqRTs7Ozs7O0dBTUc7QUFDSCxNQUFhLHdCQUF3QjtJQUNSLFdBQVcsQ0FBVTtJQUNHLE1BQU0sQ0FBVTtJQUN6QixTQUFTLENBQVU7SUFDbkIsSUFBSSxDQUFVO0NBQ3pEO0FBTEQsNERBS0M7QUFKNEI7SUFBMUIsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7NkRBQXNCO0FBQ0c7SUFBbEQsSUFBQSxzQkFBSSxFQUFDLENBQUMsT0FBTyxFQUFFLE9BQU8sRUFBRSxNQUFNLEVBQUUsTUFBTSxFQUFFLE9BQU8sQ0FBQyxDQUFDOzt3REFBaUI7QUFDekI7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7MkRBQW9CO0FBQ25CO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3NEQUFlIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9hZmZpbGlhdGVzL2FmZmlsaWF0ZXMuZHRvLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IElzSW4sIElzSW50LCBJc09wdGlvbmFsLCBJc1N0cmluZywgTWF4TGVuZ3RoLCBNaW5MZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5cbi8qKlxuICogRUMzMiDigJQgYWZmaWxpYXRlIHByb2dyYW0gc3RhZmYgRFRPcy5cbiAqXG4gKiBBIHBhcnRuZXIncyBgY29kZWAgaXMgc3RvcmVkIE5PUk1BTElaRUQgKHRyaW0gKyB1cHBlcmNhc2UpIOKAlFxuICogdGhlIHNhbWUgbm9ybWFsaXphdGlvbiBpcyBhcHBsaWVkIHRvIGEgcHJlc2VudGVkIGNvZGUgYXRcbiAqIGNoZWNrb3V0IGJlZm9yZSBsb29rdXAsIHNvIHN0YWZmIG5ldmVyIGhhdmUgdG8gZ3Vlc3MgdGhlIGNhc2UuXG4gKiBgY29tbWlzc2lvblBlcmNlbnRgIGlzIHZhbGlkYXRlZCBhZ2FpbiBpbiB0aGUgc2VydmljZSAoMC4uNTApXG4gKiBiZWNhdXNlIHRoZSBzZXJ2aWNlIGlzIGFsc28gY2FsbGVkIGRpcmVjdGx5IGZyb20gc3BlY3MuXG4gKi9cbmV4cG9ydCBjbGFzcyBDcmVhdGVBZmZpbGlhdGVQYXJ0bmVyRHRvIHtcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxKSBATWF4TGVuZ3RoKDEyMCkgbmFtZSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCg2KSBATWF4TGVuZ3RoKDMwKSBwaG9uZSE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgZW1haWw/OiBzdHJpbmcgfCBudWxsO1xuICAvKiogT3B0aW9uYWwg4oCUIHdoZW4gb21pdHRlZCB0aGUgc2VydmljZSBnZW5lcmF0ZXMgQUZGICsgNiBjaGFycy4gKi9cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSBjb2RlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0ludCgpIGNvbW1pc3Npb25QZXJjZW50PzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0luKFtcImFjdGl2ZVwiLCBcInBhdXNlZFwiXSkgc3RhdHVzPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTAwKSBub3RlPzogc3RyaW5nIHwgbnVsbDtcbn1cblxuZXhwb3J0IGNsYXNzIFVwZGF0ZUFmZmlsaWF0ZVBhcnRuZXJEdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMSkgQE1heExlbmd0aCgxMjApIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCg2KSBATWF4TGVuZ3RoKDMwKSBwaG9uZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwMCkgZW1haWw/OiBzdHJpbmcgfCBudWxsO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNDApIGNvZGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgY29tbWlzc2lvblBlcmNlbnQ/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW4oW1wiYWN0aXZlXCIsIFwicGF1c2VkXCJdKSBzdGF0dXM/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg1MDApIG5vdGU/OiBzdHJpbmcgfCBudWxsO1xufVxuXG4vKipcbiAqIEVDMzI6IHJlY29yZCBhIHBheW91dCB0aGUgbWVyY2hhbnQgbWFkZSBPVVRTSURFIHRoZSBzeXN0ZW1cbiAqIChiS2FzaC9OYWdhZC9iYW5rL2Nhc2ggYnkgaGFuZCkuIFRoaXMgaXMgYSBib29ra2VlcGluZyByZWNvcmRcbiAqIG9ubHkg4oCUIHRoZSBzeXN0ZW0gbmV2ZXIgc2VuZHMgbW9uZXkuIGFtb3VudE1pbm9yIGlzIGFcbiAqIG1pbm9yLXVuaXQgaW50ZWdlciBjYXJyaWVkIGFzIGEgc3RyaW5nIChCaWdJbnQtc2FmZSksIGV4YWN0bHlcbiAqIGxpa2UgdGhlIEVDMzEgQ29sbGVjdEluc3RhbGxtZW50RHRvLlxuICovXG5leHBvcnQgY2xhc3MgUmVjb3JkQWZmaWxpYXRlUGF5b3V0RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgzMCkgYW1vdW50TWlub3IhOiBzdHJpbmc7XG4gIEBJc0luKFtcImJrYXNoXCIsIFwibmFnYWRcIiwgXCJiYW5rXCIsIFwiY2FzaFwiLCBcIm90aGVyXCJdKSBtZXRob2QhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxMjApIHJlZmVyZW5jZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgbm90ZT86IHN0cmluZztcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

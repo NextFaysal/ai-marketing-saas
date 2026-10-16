@@ -16,6 +16,7 @@ interface SpendWatchView { todaySpendFormatted: string; avgDailySpendFormatted: 
 
 export default function AdAccountsPage() {
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
+  const [loading, setLoading] = useState(true);
   // AD6: client-side search/filter state + bulk sync-all result +
   // per-card label drafts.
   const [filterQuery, setFilterQuery] = useState("");
@@ -57,7 +58,7 @@ export default function AdAccountsPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
     try {
       const list = await apiFetch<AdAccount[]>(`/organizations/${orgId}/ad-accounts`);
       setAccounts(list);
@@ -91,6 +92,7 @@ export default function AdAccountsPage() {
       apiFetch(`/organizations/${orgId}/offline-conversions/logs`).then((rows: any) => setOcLogs(rows)).catch(() => undefined);
     }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -311,6 +313,16 @@ export default function AdAccountsPage() {
     if (firstInput) window.setTimeout(() => (firstInput as HTMLElement).focus(), 350);
   }
 
+  // DX2 state-pattern helper: smooth-scroll to a form/card on this
+  // page and focus its first field (used by the honest-state notices).
+  function scrollToSection(id: string) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    const firstInput = el.querySelector("input, select, textarea");
+    if (firstInput) window.setTimeout(() => (firstInput as HTMLElement).focus(), 350);
+  }
+
   const healthMeta: Record<string, { label: string; cls: string }> = {
     connected: { label: "সংযুক্ত", cls: "bg-green-100 text-green-700" },
     stale: { label: "Sync পুরনো", cls: "bg-amber-100 text-amber-700" },
@@ -372,16 +384,81 @@ export default function AdAccountsPage() {
   const inputCls = "input mt-1";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 [&_button]:min-h-[40px]">
       <div>
         <h1 className="page-title">Advertising Accounts</h1>
-        <p className="text-sm text-slate-500">তিনভাবে Spend আসতে পারে: Meta API (Token থাকলে), CSV Import (Ads Manager Export), Manual Entry। প্ল্যাটফর্মের Reported Conversion আর আমাদের Tracked Conversion আলাদা রাখা হয়।</p>
+        <p className="text-sm leading-[1.7] text-slate-500">তিনভাবে Spend আসতে পারে: Meta API (Token থাকলে), CSV Import (Ads Manager Export), Manual Entry। প্ল্যাটফর্মের Reported Conversion আর আমাদের Tracked Conversion আলাদা রাখা হয়।</p>
       </div>
-      {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
+      {error ? <div role="alert" className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm"><span>⛔</span><span>{error}</span></div> : null}
+      {notice ? (
+        <div role="status" className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span>✓</span>
+            <span>{notice}</span>
+          </div>
+          <button type="button" onClick={() => setNotice("")} className="text-xs text-emerald-600 hover:text-emerald-800">✕ বন্ধ</button>
+        </div>
+      ) : null}
 
-      {accounts.length === 0 ? (
-        <EmptyState title="এখনো কোনো Ad Account নেই" description="নিচে CSV/Manual এর জন্য Account তৈরি করুন অথবা Meta Token দিয়ে সরাসরি কানেক্ট করুন।" />
+      <form id="connect-meta" onSubmit={discoverMeta} className="space-y-3 card p-5">
+        <div className="font-semibold">Meta API দিয়ে কানেক্ট (যদি Token থাকে)</div>
+        <p className="text-sm leading-[1.7] text-slate-500">
+          Meta App (Marketing API, ads_read) থেকে পাওয়া User/System-User Access Token লাগবে। অন্যের Account এর জন্য
+          Advanced Access ও App Review দরকার হতে পারে, সেটি Meta এর প্রক্রিয়া, আমরা বাইপাস করি না।
+          প্রথম ধাপে Token যাচাই করে এর অধীনের Accountগুলো দেখানো হয় — কোনো কিছু সেভ হয় না; তারপর যেগুলো বেছে দেবেন
+          শুধু সেগুলোই কানেক্ট হবে। Token সার্ভারে এনক্রিপ্ট করে রাখা হয়, যাচাই ব্যর্থ হলে সেভ হয় না।
+        </p>
+        <label className="block text-sm">Access Token
+          <input className={inputCls} type="password" value={metaToken} onChange={(e) => { setMetaToken(e.target.value); setMetaDiscovered(null); setMetaSelected({}); }} required placeholder="EAA..." />
+        </label>
+        <label className="block text-sm">এই Tokenটি কোন অ্যাপের?
+          <select className={inputCls} value={metaAppSource} onChange={(e) => setMetaAppSource(e.target.value as "platform" | "own")}>
+            <option value="platform">প্ল্যাটফর্মের Meta অ্যাপের Token</option>
+            <option value="own">আমার নিজের Meta অ্যাপের Token (Connect Center-এ আগে সেভ করা)</option>
+          </select>
+        </label>
+        <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
+          {busy === "meta-discover" ? "যাচাই হচ্ছে..." : "🔍 অ্যাকাউন্ট খুঁজুন"}
+        </button>
+        {metaDiscovered !== null ? (
+          <div className="space-y-2 border-t border-slate-100 pt-3">
+            {metaDiscovered.length === 0 ? (
+              <div className="flex flex-wrap items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <span aria-hidden="true" className="text-lg leading-none">🔍</span>
+                <p className="min-w-0 flex-1 text-sm leading-[1.7] text-slate-500">এই Token-এর অধীনে কোনো Ad Account পাওয়া যায়নি।</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm font-medium">কোন Accountগুলো কানেক্ট করবেন? ({Object.values(metaSelected).filter(Boolean).length}টি বেছে নেওয়া)</p>
+                <div className="space-y-1">
+                  {metaDiscovered.map((d) => (
+                    <label key={d.externalId} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                      <input type="checkbox" checked={metaSelected[d.externalId] ?? false} disabled={busy !== ""} onChange={(e) => setMetaSelected((p) => ({ ...p, [d.externalId]: e.target.checked }))} />
+                      <span className="font-medium">{d.name}</span>
+                      <span className="break-all text-xs text-slate-400">{d.externalId} · {d.currency}{d.timezone ? ` · ${d.timezone}` : ""}</span>
+                      {d.platformStatusBucket ? <span className={`rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[d.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`}>{platformStatusMeta[d.platformStatusBucket]?.label ?? d.platformStatusBucket}</span> : <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>}
+                      {d.alreadyConnected ? <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">আগে থেকেই কানেক্টেড</span> : null}
+                    </label>
+                  ))}
+                </div>
+                <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== "" || Object.values(metaSelected).filter(Boolean).length === 0} onClick={connectMetaSelected}>
+                  {busy === "meta-connect" ? "কানেক্ট হচ্ছে..." : "নির্বাচিতগুলো কানেক্ট করুন"}
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
+      </form>
+
+      {loading ? (
+        <div className="card space-y-3 p-5" aria-busy="true">
+          <div className="skeleton h-5 w-48 max-w-full" />
+          <div className="skeleton h-4 w-full" />
+          <div className="skeleton h-4 w-2/3" />
+          <p className="text-sm leading-[1.7] text-slate-500">⏳ Ad Account লোড হচ্ছে…</p>
+        </div>
+      ) : accounts.length === 0 ? (
+        <EmptyState title="এখনো কোনো Ad Account নেই" description="নিচে CSV/Manual এর জন্য Account তৈরি করুন অথবা Meta Token দিয়ে সরাসরি কানেক্ট করুন।" actionLabel="Meta Token দিয়ে কানেক্ট করুন" onAction={() => scrollToSection("connect-meta")} />
       ) : (
         <div className="space-y-3">
           <div className="card space-y-3 p-4">
@@ -389,7 +466,7 @@ export default function AdAccountsPage() {
               <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={syncAll}>
                 {busy === "sync-all" ? "সব Sync হচ্ছে..." : "🔄 সব Sync করুন"}
               </button>
-              <span className="text-xs text-slate-500">প্রতিটি API Account-এর প্রধান Insights Sync একে একে (Sequential) চলবে — Sync বন্ধ বা API ছাড়া Account বাদ যাবে।</span>
+              <span className="text-xs leading-[1.7] text-slate-500">প্রতিটি API Account-এর প্রধান Insights Sync একে একে (Sequential) চলবে — Sync বন্ধ বা API ছাড়া Account বাদ যাবে।</span>
             </div>
             {syncAllResult ? (
               <div className="rounded-lg bg-slate-50 p-3 text-sm">
@@ -407,8 +484,8 @@ export default function AdAccountsPage() {
               </div>
             ) : null}
             <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
-              <label className="text-xs text-slate-500">খুঁজুন (নাম / লেবেল / ID)
-                <input className="input mt-1 w-52" placeholder="যেমন: মেইন পেজ" value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} />
+              <label className="w-full text-xs text-slate-500 sm:w-auto">খুঁজুন (নাম / লেবেল / ID)
+                <input className="input mt-1 w-full sm:w-52" placeholder="যেমন: মেইন পেজ" value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} />
               </label>
               <label className="text-xs text-slate-500">প্ল্যাটফর্ম
                 <select className="input mt-1" value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)}>
@@ -431,20 +508,26 @@ export default function AdAccountsPage() {
             </div>
           </div>
           {filteredAccounts.length === 0 ? (
-            <p className="card p-5 text-sm text-slate-500">এই ফিল্টারে কোনো Ad Account মিলছে না — ফিল্টার বদলে আবার চেষ্টা করুন। (Account মুছে যায়নি; মোট {accounts.length}টি Account-ই আছে।)</p>
+            <div className="card flex flex-wrap items-start gap-3 p-5">
+              <span aria-hidden="true" className="text-lg leading-none">🔍</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm leading-[1.7] text-slate-500">এই ফিল্টারে কোনো Ad Account মিলছে না — ফিল্টার বদলে আবার চেষ্টা করুন। (Account মুছে যায়নি; মোট {accounts.length}টি Account-ই আছে।)</p>
+                <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => { setFilterQuery(""); setFilterPlatform(""); setFilterHealth(""); setFilterStatus(""); }}>সব ফিল্টার মুছুন</button>
+              </div>
+            </div>
           ) : null}
           {filteredAccounts.map((a) => (
             <div key={a.id} className="card p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-semibold">{a.label || a.name}{a.label ? <span className="ml-1 text-xs font-normal text-slate-400">({a.name})</span> : null} <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs capitalize">{a.platform}</span> <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{a.sourceType}</span>{a.health ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${healthMeta[a.health]?.cls ?? "bg-slate-100 text-slate-600"}`}>{healthMeta[a.health]?.label ?? a.health}</span> : null}{a.sourceType === "api" ? (a.platformStatusBucket ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[a.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`} title={a.platformStatusRaw ? `প্ল্যাটফর্মের মান: ${a.platformStatusRaw}` : undefined}>{platformStatusMeta[a.platformStatusBucket]?.label ?? a.platformStatusBucket}</span> : <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>) : null}</div>
+                <div className="min-w-0 break-words font-semibold">{a.label || a.name}{a.label ? <span className="ml-1 text-xs font-normal text-slate-400">({a.name})</span> : null} <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs capitalize">{a.platform}</span> <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{a.sourceType}</span>{a.health ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${healthMeta[a.health]?.cls ?? "bg-slate-100 text-slate-600"}`}>{healthMeta[a.health]?.label ?? a.health}</span> : null}{a.sourceType === "api" ? (a.platformStatusBucket ? <span className={`ml-1 rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[a.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`} title={a.platformStatusRaw ? `প্ল্যাটফর্মের মান: ${a.platformStatusRaw}` : undefined}>{platformStatusMeta[a.platformStatusBucket]?.label ?? a.platformStatusBucket}</span> : <span className="ml-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>) : null}</div>
                 <div className="text-xs text-slate-400">{a.externalId ?? ""} · {a.currency}{a.timezone ? ` · ${a.timezone}` : ""}</div>
               </div>
               {a.platformStatusCheckedAt ? <p className="mt-1 text-xs text-slate-500">প্ল্যাটফর্ম স্ট্যাটাস সর্বশেষ যাচাই: {new Date(a.platformStatusCheckedAt).toLocaleString("bn-BD")}</p> : null}
               {a.connection?.lastSyncAt ? <p className="mt-1 text-xs text-slate-500">শেষ Sync: {new Date(a.connection.lastSyncAt).toLocaleString("bn-BD")}</p> : null}
-              {a.connection?.lastError ? <p className="mt-1 text-xs text-red-600">{a.connection.lastError}</p> : null}
+              {a.connection?.lastError ? <p className="mt-1 break-words text-xs leading-[1.7] text-red-600">{a.connection.lastError}</p> : null}
               <div className="mt-2 flex flex-wrap items-end gap-2">
-                <label className="text-xs text-slate-500">লেবেল (নিজের দেওয়া নাম — সর্বোচ্চ ৬০ অক্ষর; ফাঁকা রাখলে প্ল্যাটফর্মের নামই দেখাবে)
-                  <input className="input mt-1 w-60" maxLength={200} placeholder={a.name} value={labelForm[a.id] ?? a.label ?? ""} onChange={(e) => setLabelForm((p) => ({ ...p, [a.id]: e.target.value }))} />
+                <label className="w-full text-xs text-slate-500 sm:w-auto">লেবেল (নিজের দেওয়া নাম — সর্বোচ্চ ৬০ অক্ষর; ফাঁকা রাখলে প্ল্যাটফর্মের নামই দেখাবে)
+                  <input className="input mt-1 w-full sm:w-60" maxLength={200} placeholder={a.name} value={labelForm[a.id] ?? a.label ?? ""} onChange={(e) => setLabelForm((p) => ({ ...p, [a.id]: e.target.value }))} />
                 </label>
                 <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => saveLabel(a)}>
                   {busy === `label-${a.id}` ? "সংরক্ষণ হচ্ছে..." : "লেবেল সংরক্ষণ"}
@@ -454,7 +537,7 @@ export default function AdAccountsPage() {
                 <label className="flex flex-wrap items-center gap-2 text-sm font-medium">
                   <input type="checkbox" checked={a.spendWatchEnabled ?? false} disabled={busy !== ""} onChange={(e) => saveWatch(a, e.target.checked)} />
                   🔔 Spend Watch — দৈনিক ক্যাপ ও অস্বাভাবিক খরচের সতর্কতা
-                  <span className="text-xs font-normal text-slate-500">(শুধু Alert — Campaign স্বয়ংক্রিয়ভাবে বন্ধ হয় না; সতর্কতা Automations-এর “Ad Spend Watchdog” Job চালালে যাবে)</span>
+                  <span className="text-xs font-normal leading-[1.7] text-slate-500">(শুধু Alert — Campaign স্বয়ংক্রিয়ভাবে বন্ধ হয় না; সতর্কতা Automations-এর “Ad Spend Watchdog” Job চালালে যাবে)</span>
                 </label>
                 {watch[a.id] ? (
                   <p className="mt-1 text-xs text-slate-500">
@@ -466,10 +549,10 @@ export default function AdAccountsPage() {
                 ) : null}
                 <div className="mt-2 flex flex-wrap items-end gap-2">
                   <label className="text-xs text-slate-500">দৈনিক ক্যাপ (টাকা — ফাঁকা = বন্ধ)
-                    <input className="input mt-1 w-36" inputMode="decimal" placeholder="যেমন 5000" value={watchForm[a.id]?.capTaka ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: e.target.value, pct: p[a.id]?.pct ?? "" } }))} />
+                    <input className="input mt-1 w-36 max-w-full" inputMode="decimal" placeholder="যেমন 5000" value={watchForm[a.id]?.capTaka ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: e.target.value, pct: p[a.id]?.pct ?? "" } }))} />
                   </label>
                   <label className="text-xs text-slate-500">Anomaly % (গড়ের তুলনায় বেশি — ফাঁকা = বন্ধ)
-                    <input className="input mt-1 w-28" inputMode="numeric" placeholder="যেমন 50" value={watchForm[a.id]?.pct ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: p[a.id]?.capTaka ?? "", pct: e.target.value } }))} />
+                    <input className="input mt-1 w-28 max-w-full" inputMode="numeric" placeholder="যেমন 50" value={watchForm[a.id]?.pct ?? ""} onChange={(e) => setWatchForm((p) => ({ ...p, [a.id]: { capTaka: p[a.id]?.capTaka ?? "", pct: e.target.value } }))} />
                   </label>
                   <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => saveWatch(a)}>
                     {busy === `watch-${a.id}` ? "সংরক্ষণ হচ্ছে..." : "Watch সেটিংস সংরক্ষণ করুন"}
@@ -486,7 +569,7 @@ export default function AdAccountsPage() {
                   <label className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     <input type="checkbox" checked={!a.syncDisabled} disabled={busy !== ""} onChange={(e) => setSyncDisabled(a, !e.target.checked)} />
                     🔄 Sync {a.syncDisabled ? "বন্ধ আছে" : "চালু আছে"}
-                    <span className="text-xs font-normal text-slate-500">(বন্ধ থাকলে হাতে করা ও নির্ধারিত Insights Sync হবে না — Publish-এ কোনো প্রভাব নেই)</span>
+                    <span className="text-xs font-normal leading-[1.7] text-slate-500">(বন্ধ থাকলে হাতে করা ও নির্ধারিত Insights Sync হবে না — Publish-এ কোনো প্রভাব নেই)</span>
                   </label>
                 </div>
               ) : null}
@@ -531,7 +614,7 @@ export default function AdAccountsPage() {
                 ) : null}
                 <label className="text-sm">
                   <span className="block text-xs text-slate-500">Ad Spend CSV</span>
-                  <input type="file" accept=".csv,text/csv" className="text-sm" onChange={(e) => { const f = e.target.files?.[0]; if (f) importCsv(a.id, f); }} />
+                  <input type="file" accept=".csv,text/csv" className="max-w-full text-sm" onChange={(e) => { const f = e.target.files?.[0]; if (f) importCsv(a.id, f); }} />
                 </label>
                 <label className="text-sm">তারিখ
                   <input type="date" className="ml-1 rounded-lg border px-2 py-1.5" value={manual[a.id]?.date ?? ""} onChange={(e) => setManual({ ...manual, [a.id]: { date: e.target.value, spend: manual[a.id]?.spend ?? "" } })} />
@@ -541,7 +624,7 @@ export default function AdAccountsPage() {
                 </label>
                 <button className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => manualEntry(a.id)}>Manual Entry সেভ</button>
               </div>
-              <p className="mt-2 text-xs text-slate-400">CSV কলাম: date, spend (আবশ্যক), campaign_id, campaign_name, impressions, clicks, conversions, conversion_value, currency। একই দিন ও ক্যাম্পেইন আবার Import হলে মান আপডেট (Restate) হয়।</p>
+              <p className="mt-2 text-xs leading-[1.7] text-slate-400">CSV কলাম: date, spend (আবশ্যক), campaign_id, campaign_name, impressions, clicks, conversions, conversion_value, currency। একই দিন ও ক্যাম্পেইন আবার Import হলে মান আপডেট (Restate) হয়।</p>
             </div>
           ))}
         </div>
@@ -549,8 +632,17 @@ export default function AdAccountsPage() {
 
       <div className="card space-y-3 p-5">
         <div className="font-semibold">🔁 Server Conversions — Google Offline, TikTok Events ও Meta Dataset (Phase L + CN14)</div>
-        <p className="text-sm text-slate-500">অর্ডারের ফলাফল প্ল্যাটফর্মে ফেরত যায়, যাতে বিজ্ঞাপনের Optimization আসল বিক্রি শেখে। Google/TikTok: Tracker এর ধরা gclid/ttclid দিয়ে মিলিয়ে — Click ID না থাকলে পাঠানো হয় না (লগে skipped দেখাবে)। Meta (CN14): Dataset (Pixel) এ Conversions API দিয়ে, ক্রেতার Hash করা Email/Phone দিয়ে মিলিয়ে; Tracker আগেই একই Purchase একই Dataset এ পাঠিয়ে থাকলে Double পাঠানো হয় না (একই event_id — লগে skipped দেখাবে)। Trigger: {ocSettings.map((s) => `${s.platform}=${s.trigger}${s.enabled ? "" : " (বন্ধ)"}`).join(", ") || "এখনো সেট করা হয়নি"}।</p>
-        <div className="grid gap-2 md:grid-cols-2">
+        <p className="text-sm leading-[1.7] text-slate-500">অর্ডারের ফলাফল প্ল্যাটফর্মে ফেরত যায়, যাতে বিজ্ঞাপনের Optimization আসল বিক্রি শেখে। Google/TikTok: Tracker এর ধরা gclid/ttclid দিয়ে মিলিয়ে — Click ID না থাকলে পাঠানো হয় না (লগে skipped দেখাবে)। Meta (CN14): Dataset (Pixel) এ Conversions API দিয়ে, ক্রেতার Hash করা Email/Phone দিয়ে মিলিয়ে; Tracker আগেই একই Purchase একই Dataset এ পাঠিয়ে থাকলে Double পাঠানো হয় না (একই event_id — লগে skipped দেখাবে)। Trigger: {ocSettings.map((s) => `${s.platform}=${s.trigger}${s.enabled ? "" : " (বন্ধ)"}`).join(", ") || "এখনো সেট করা হয়নি"}।</p>
+        {ocSettings.length === 0 ? (
+          <div className="flex flex-wrap items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <span aria-hidden="true" className="text-lg leading-none">⚠️</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm leading-[1.7] text-amber-800">Server Conversions এখনো সেট করা হয়নি — Google / TikTok / Meta-র যেকোনো একটি Account বেছে নিচে সেটিং সেভ করুন।</p>
+              <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => scrollToSection("oc-settings")}>সেটিংসে যান</button>
+            </div>
+          </div>
+        ) : null}
+        <div id="oc-settings" className="grid gap-2 md:grid-cols-2">
           <div className="space-y-2 rounded-xl bg-slate-50 p-3">
             <div className="text-sm font-medium">Google Ads</div>
             <select className="input" value={ocForm.googleAccount} onChange={(e) => setOcForm({ ...ocForm, googleAccount: e.target.value })}>
@@ -593,7 +685,7 @@ export default function AdAccountsPage() {
           </div>
         </div>
         <label className="block text-sm">কখন পাঠানো হবে
-          <select className="input mt-1 w-56" value={ocForm.trigger} onChange={(e) => setOcForm({ ...ocForm, trigger: e.target.value })}>
+          <select className="input mt-1 w-full sm:w-56" value={ocForm.trigger} onChange={(e) => setOcForm({ ...ocForm, trigger: e.target.value })}>
             <option value="placed">অর্ডার হওয়ার সাথে সাথে</option>
             <option value="cod_confirmed">COD নিশ্চিত হলে (সুপারিশ)</option>
             <option value="delivered">ডেলিভারি সম্পূর্ণ হলে</option>
@@ -610,16 +702,24 @@ export default function AdAccountsPage() {
             const orgId = getOrganizationId(); if (!orgId) { setError("Organization নেই"); return; } try { const res = await apiFetch<{ examined: number; sent: number; skipped: number; failed: number }>(`/organizations/${orgId}/offline-conversions/upload-recent`, { method: "POST", body: JSON.stringify({ platform: "meta", days: 30 }) }); setNotice(`Meta Backfill: ${res.examined}টি অর্ডারের মধ্যে পাঠানো ${res.sent}, skipped ${res.skipped}, failed ${res.failed}।`); await load(); } catch (e) { setError(e instanceof Error ? e.message : "Backfill ব্যর্থ"); }
           }}>⬆ Meta Dataset এ গত ৩০ দিনের অর্ডার পাঠান</button>
         </div>
-        {ocLogs.length > 0 && (
-          <ul className="space-y-1 text-xs text-slate-500">
-            {ocLogs.slice(0, 8).map((l) => <li key={l.id}>{l.platform} · {l.eventId} · <b>{l.status}</b>{l.detail ? ` — ${l.detail}` : ""} · {new Date(l.createdAt).toLocaleString("bn-BD")}</li>)}
+        {ocLogs.length > 0 ? (
+          <ul className="space-y-1 text-xs leading-[1.7] text-slate-500">
+            {ocLogs.slice(0, 8).map((l) => <li key={l.id} className="break-words">{l.platform} · {l.eventId} · <b>{l.status}</b>{l.detail ? ` — ${l.detail}` : ""} · {new Date(l.createdAt).toLocaleString("bn-BD")}</li>)}
           </ul>
+        ) : (
+          <div className="flex flex-wrap items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <span aria-hidden="true" className="text-lg leading-none">📭</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm leading-[1.7] text-slate-600">এখনো কোনো Conversion পাঠানোর লগ নেই — সেটিং সেভ থাকলে Trigger ঘটলেই পাঠানোর ফলাফল (sent / skipped / failed) এখানে দেখা যাবে।</p>
+              <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => scrollToSection("oc-settings")}>সেটিংসে যান</button>
+            </div>
+          </div>
         )}
       </div>
 
       <div className="card space-y-4 p-5">
         <h2 className="font-semibold">🚀 Google / TikTok এ সরাসরি Publish</h2>
-        <p className="text-sm text-slate-500">সবকিছু PAUSED/DISABLED অবস্থায় তৈরি হয়। Campaign সক্রিয় করা প্ল্যাটফর্মের নিজের ইন্টারফেস থেকে যাচাই করে করবেন। প্রতিটি ধাপের ফলাফল নিচের তালিকায় থাকে — কোনো ধাপ ব্যর্থ হলে Publication "failed" দেখাবে, সফল সাজানো হবে না।</p>
+        <p className="text-sm leading-[1.7] text-slate-500">সবকিছু PAUSED/DISABLED অবস্থায় তৈরি হয়। Campaign সক্রিয় করা প্ল্যাটফর্মের নিজের ইন্টারফেস থেকে যাচাই করে করবেন। প্রতিটি ধাপের ফলাফল নিচের তালিকায় থাকে — কোনো ধাপ ব্যর্থ হলে Publication "failed" দেখাবে, সফল সাজানো হবে না।</p>
         <div className="grid gap-4 lg:grid-cols-2">
           <form className="space-y-2 rounded-xl bg-slate-50 p-4" onSubmit={async (e) => {
             e.preventDefault();
@@ -646,7 +746,7 @@ export default function AdAccountsPage() {
           }}>
             <div className="font-medium">Google Search Campaign</div>
             <input className="input" placeholder="Campaign এর নাম" value={gForm.name} onChange={(e) => setGForm({ ...gForm, name: e.target.value })} required />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <input className="input" placeholder="দৈনিক বাজেট" value={gForm.dailyBudget} onChange={(e) => setGForm({ ...gForm, dailyBudget: e.target.value })} required />
               <input className="input" placeholder="দেশ (BD, IN)" value={gForm.countries} onChange={(e) => setGForm({ ...gForm, countries: e.target.value })} required />
             </div>
@@ -678,7 +778,7 @@ export default function AdAccountsPage() {
           }}>
             <div className="font-medium">TikTok Traffic Campaign</div>
             <input className="input" placeholder="Campaign এর নাম" value={tForm.name} onChange={(e) => setTForm({ ...tForm, name: e.target.value })} required />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <input className="input" placeholder="দৈনিক বাজেট" value={tForm.dailyBudget} onChange={(e) => setTForm({ ...tForm, dailyBudget: e.target.value })} required />
               <input className="input" placeholder="দেশ (BD)" value={tForm.countries} onChange={(e) => setTForm({ ...tForm, countries: e.target.value })} required />
             </div>
@@ -710,7 +810,7 @@ export default function AdAccountsPage() {
           finally { setBusy(""); }
         }}>
           <div className="font-medium">Google Performance Max (Asset Group)</div>
-          <p className="text-xs text-slate-500">PMax এ Keyword থাকে না — Google সব প্লেসমেন্টে Asset মিলিয়ে দেখায়। Campaign ও Asset Group দুটোই PAUSED থাকে। ছবি URL থেকে সার্ভার নিজে ডাউনলোড করে Asset হিসেবে আপলোড করে।</p>
+          <p className="text-xs leading-[1.7] text-slate-500">PMax এ Keyword থাকে না — Google সব প্লেসমেন্টে Asset মিলিয়ে দেখায়। Campaign ও Asset Group দুটোই PAUSED থাকে। ছবি URL থেকে সার্ভার নিজে ডাউনলোড করে Asset হিসেবে আপলোড করে।</p>
           <div className="grid gap-2 md:grid-cols-2">
             <input className="input" placeholder="Campaign এর নাম" value={pForm.name} onChange={(e) => setPForm({ ...pForm, name: e.target.value })} required />
             <input className="input" placeholder="ব্যবসার নাম (সর্বোচ্চ ২৫ অক্ষর)" value={pForm.businessName} onChange={(e) => setPForm({ ...pForm, businessName: e.target.value })} required />
@@ -728,7 +828,7 @@ export default function AdAccountsPage() {
         {pubs.length > 0 ? (
           <ul className="space-y-1 text-sm">
             {pubs.slice(0, 8).map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+              <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 [&>*]:min-w-0 [&>*]:break-words">
                 <span className="capitalize">{p.platform} · {p.name}</span>
                 <span className={p.status === "created_paused" ? "text-green-600" : p.status === "failed" ? "text-red-600" : "text-slate-500"}>{p.status}{p.externalCampaignId ? ` · ${p.externalCampaignId}` : ""}{p.error ? ` · ${p.error}` : ""}</span>
               </li>
@@ -741,8 +841,17 @@ export default function AdAccountsPage() {
           <h2 className="font-semibold">📡 Meta Conversions API (CAPI)</h2>
           <span className={capi?.configured && capi.enabled ? "badge-green" : "badge-slate"}>{capi?.configured ? (capi.enabled ? "চালু" : "বন্ধ") : "সেটআপ হয়নি"}</span>
         </div>
-        <p className="text-sm text-slate-500">আসল অর্ডার ও Lead সার্ভার থেকে সরাসরি Meta কে পাঠান — ব্রাউজার Pixel এর হারানো সিগন্যাল ফিরে আসে। Event শুধু তখনই "Sent" ধরা হয় যখন Meta <code>events_received</code> দিয়ে নিশ্চিত করে। Browser Pixel এর সাথে একই Event ID (<code>purchase-অর্ডারনম্বর</code>) ব্যবহার হয়, তাই Duplicate গণনা হয় না।</p>
-        <form className="grid gap-2 sm:grid-cols-3" onSubmit={async (e) => {
+        <p className="text-sm leading-[1.7] text-slate-500">আসল অর্ডার ও Lead সার্ভার থেকে সরাসরি Meta কে পাঠান — ব্রাউজার Pixel এর হারানো সিগন্যাল ফিরে আসে। Event শুধু তখনই "Sent" ধরা হয় যখন Meta <code>events_received</code> দিয়ে নিশ্চিত করে। Browser Pixel এর সাথে একই Event ID (<code>purchase-অর্ডারনম্বর</code>) ব্যবহার হয়, তাই Duplicate গণনা হয় না।</p>
+        {capi !== null && !capi.configured ? (
+          <div className="flex flex-wrap items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <span aria-hidden="true" className="text-lg leading-none">⚠️</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm leading-[1.7] text-amber-800">CAPI এখনো সেটআপ হয়নি — Event পাঠাতে Dataset / Pixel ID দিয়ে নিচের ফর্মটি পূরণ করে সংরক্ষণ করুন।</p>
+              <button type="button" className="btn-secondary btn-sm mt-2" onClick={() => scrollToSection("capi-settings")}>সেটিংস ফর্মে যান</button>
+            </div>
+          </div>
+        ) : null}
+        <form id="capi-settings" className="grid gap-2 sm:grid-cols-3" onSubmit={async (e) => {
           e.preventDefault();
           const orgId = getOrganizationId(); if (!orgId) return;
           setBusy("capi"); setError("");
@@ -764,7 +873,7 @@ export default function AdAccountsPage() {
           </label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={capiForm.enabled} onChange={(e) => setCapiForm({ ...capiForm, enabled: e.target.checked })} /> CAPI চালু</label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={capiForm.sendLeadEvents} onChange={(e) => setCapiForm({ ...capiForm, sendLeadEvents: e.target.checked })} /> Lead Event পাঠান</label>
-          <span className="flex gap-2">
+          <span className="flex flex-wrap gap-2">
             <button className="btn-primary" disabled={busy !== ""}>{busy === "capi" ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ"}</button>
             <button type="button" className="btn-secondary" disabled={busy !== ""} onClick={async () => {
               const orgId = getOrganizationId(); if (!orgId) return;
@@ -776,11 +885,11 @@ export default function AdAccountsPage() {
           </span>
         </form>
         {capiEvents.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border">
-            <table className="w-full text-left text-xs">
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full min-w-[620px] text-left text-xs">
               <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Event</th><th className="px-3 py-2">সূত্র</th><th className="px-3 py-2">Event ID</th><th className="px-3 py-2">অবস্থা</th><th className="px-3 py-2">সময়</th></tr></thead>
               <tbody>{capiEvents.slice(0, 10).map((ev) => (
-                <tr key={ev.id} className="border-t"><td className="px-3 py-2 font-medium">{ev.eventName}</td><td className="px-3 py-2">{ev.sourceType}</td><td className="px-3 py-2">{ev.eventId}</td><td className="px-3 py-2">{ev.status === "sent" ? <span className="text-green-600">✓ sent ({ev.eventsReceived})</span> : <span className="text-red-600" title={ev.error ?? ""}>✗ failed</span>}</td><td className="px-3 py-2">{new Date(ev.createdAt).toLocaleString()}</td></tr>
+                <tr key={ev.id} className="border-t"><td className="px-3 py-2 font-medium">{ev.eventName}</td><td className="px-3 py-2">{ev.sourceType}</td><td className="px-3 py-2">{ev.eventId}</td><td className="px-3 py-2">{ev.status === "sent" ? <span className="text-green-600">✓ sent ({ev.eventsReceived})</span> : <span className="text-red-600" title={ev.error ?? ""}>✗ failed</span>}</td><td className="px-3 py-2">{new Date(ev.createdAt).toLocaleString("bn-BD")}</td></tr>
               ))}</tbody>
             </table>
           </div>
@@ -789,7 +898,7 @@ export default function AdAccountsPage() {
 
       <form onSubmit={createAccount} className="space-y-3 card p-5">
         <div className="font-semibold">CSV / Manual এর জন্য Account তৈরি</div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block text-sm">প্ল্যাটফর্ম
             <select className={inputCls} value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
               <option value="meta">Meta</option><option value="google">Google</option><option value="tiktok">TikTok</option><option value="manual">Manual / Other</option>
@@ -802,61 +911,14 @@ export default function AdAccountsPage() {
         <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>Account তৈরি করুন</button>
       </form>
 
-      <form id="connect-meta" onSubmit={discoverMeta} className="space-y-3 card p-5">
-        <div className="font-semibold">Meta API দিয়ে কানেক্ট (যদি Token থাকে)</div>
-        <p className="text-sm text-slate-500">
-          Meta App (Marketing API, ads_read) থেকে পাওয়া User/System-User Access Token লাগবে। অন্যের Account এর জন্য
-          Advanced Access ও App Review দরকার হতে পারে, সেটি Meta এর প্রক্রিয়া, আমরা বাইপাস করি না।
-          প্রথম ধাপে Token যাচাই করে এর অধীনের Accountগুলো দেখানো হয় — কোনো কিছু সেভ হয় না; তারপর যেগুলো বেছে দেবেন
-          শুধু সেগুলোই কানেক্ট হবে। Token সার্ভারে এনক্রিপ্ট করে রাখা হয়, যাচাই ব্যর্থ হলে সেভ হয় না।
-        </p>
-        <label className="block text-sm">Access Token
-          <input className={inputCls} type="password" value={metaToken} onChange={(e) => { setMetaToken(e.target.value); setMetaDiscovered(null); setMetaSelected({}); }} required placeholder="EAA..." />
-        </label>
-        <label className="block text-sm">এই Tokenটি কোন অ্যাপের?
-          <select className={inputCls} value={metaAppSource} onChange={(e) => setMetaAppSource(e.target.value as "platform" | "own")}>
-            <option value="platform">প্ল্যাটফর্মের Meta অ্যাপের Token</option>
-            <option value="own">আমার নিজের Meta অ্যাপের Token (Connect Center-এ আগে সেভ করা)</option>
-          </select>
-        </label>
-        <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
-          {busy === "meta-discover" ? "যাচাই হচ্ছে..." : "🔍 অ্যাকাউন্ট খুঁজুন"}
-        </button>
-        {metaDiscovered !== null ? (
-          <div className="space-y-2 border-t border-slate-100 pt-3">
-            {metaDiscovered.length === 0 ? (
-              <p className="text-sm text-slate-500">এই Token-এর অধীনে কোনো Ad Account পাওয়া যায়নি।</p>
-            ) : (
-              <>
-                <p className="text-sm font-medium">কোন Accountগুলো কানেক্ট করবেন? ({Object.values(metaSelected).filter(Boolean).length}টি বেছে নেওয়া)</p>
-                <div className="space-y-1">
-                  {metaDiscovered.map((d) => (
-                    <label key={d.externalId} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <input type="checkbox" checked={metaSelected[d.externalId] ?? false} disabled={busy !== ""} onChange={(e) => setMetaSelected((p) => ({ ...p, [d.externalId]: e.target.checked }))} />
-                      <span className="font-medium">{d.name}</span>
-                      <span className="text-xs text-slate-400">{d.externalId} · {d.currency}{d.timezone ? ` · ${d.timezone}` : ""}</span>
-                      {d.platformStatusBucket ? <span className={`rounded px-2 py-0.5 text-xs font-medium ${platformStatusMeta[d.platformStatusBucket]?.cls ?? "bg-slate-100 text-slate-600"}`}>{platformStatusMeta[d.platformStatusBucket]?.label ?? d.platformStatusBucket}</span> : <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">প্ল্যাটফর্ম জানায়নি</span>}
-                      {d.alreadyConnected ? <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">আগে থেকেই কানেক্টেড</span> : null}
-                    </label>
-                  ))}
-                </div>
-                <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== "" || Object.values(metaSelected).filter(Boolean).length === 0} onClick={connectMetaSelected}>
-                  {busy === "meta-connect" ? "কানেক্ট হচ্ছে..." : "নির্বাচিতগুলো কানেক্ট করুন"}
-                </button>
-              </>
-            )}
-          </div>
-        ) : null}
-      </form>
-
       <form id="connect-google" onSubmit={connectGoogle} className="space-y-3 card p-5">
         <div className="font-semibold">Google Ads API দিয়ে কানেক্ট</div>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm leading-[1.7] text-slate-500">
           Google Ads API এর জন্য লাগবে: Developer Token (Google Ads API Center থেকে, Approval Level অনুযায়ী Access),
           OAuth Client ID/Secret ও একটি Refresh Token। সবগুলো যাচাই করে তারপর এনক্রিপ্ট করে সেভ হয়।
           Developer Token অনুমোদিত না হলে Google নিজেই Error ফেরত দেবে, সেটি এখানে দেখা যাবে।
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block text-sm">Customer ID<input className={inputCls} value={googleForm.customerId} onChange={(e) => setGoogleForm({ ...googleForm, customerId: e.target.value })} required placeholder="123-456-7890" /></label>
           <label className="block text-sm">Developer Token<input className={inputCls} type="password" value={googleForm.developerToken} onChange={(e) => setGoogleForm({ ...googleForm, developerToken: e.target.value })} required /></label>
           <label className="block text-sm">OAuth Client ID<input className={inputCls} value={googleForm.clientId} onChange={(e) => setGoogleForm({ ...googleForm, clientId: e.target.value })} required /></label>
@@ -871,8 +933,8 @@ export default function AdAccountsPage() {
 
       <form id="connect-tiktok" onSubmit={connectTikTok} className="space-y-3 card p-5">
         <div className="font-semibold">TikTok Ads API দিয়ে কানেক্ট</div>
-        <p className="text-sm text-slate-500">TikTok Marketing API App থেকে পাওয়া Advertiser ID ও দীর্ঘমেয়াদি Access Token লাগবে। Token যাচাই ব্যর্থ হলে সেভ হবে না।</p>
-        <div className="grid grid-cols-2 gap-3">
+        <p className="text-sm leading-[1.7] text-slate-500">TikTok Marketing API App থেকে পাওয়া Advertiser ID ও দীর্ঘমেয়াদি Access Token লাগবে। Token যাচাই ব্যর্থ হলে সেভ হবে না।</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block text-sm">Advertiser ID<input className={inputCls} value={tiktokForm.advertiserId} onChange={(e) => setTiktokForm({ ...tiktokForm, advertiserId: e.target.value })} required /></label>
           <label className="block text-sm">Access Token<input className={inputCls} type="password" value={tiktokForm.accessToken} onChange={(e) => setTiktokForm({ ...tiktokForm, accessToken: e.target.value })} required /></label>
         </div>

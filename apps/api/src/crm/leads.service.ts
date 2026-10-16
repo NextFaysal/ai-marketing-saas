@@ -1,6 +1,7 @@
 import { normalizeTags } from "../inbox/inbox.service";
 import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { EventsService } from "../common/events.service";
 import { AuditService } from "../audit/audit.service";
@@ -386,9 +387,7 @@ export class LeadsService {
       if (!due) continue;
       const { title, body } = followUpNotificationText(lead, due);
       for (const userId of recipients) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId, userId, type: "lead_followup", title, body, conversationId: null },
-        });
+        await createAgentNotification(this.prisma as any, { organizationId, userId, type: "lead_followup", title, body, conversationId: null });
         notifications++;
       }
       await this.log(lead.id, null, "followup_reminded",

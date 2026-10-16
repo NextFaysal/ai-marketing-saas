@@ -1,0 +1,204 @@
+f0f58b4e7cb09e7755c906e1e6f1bd25
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CheckoutFieldsController = exports.UpdateCheckoutFieldDto = exports.CreateCheckoutFieldDto = void 0;
+const common_1 = require("@nestjs/common");
+const class_validator_1 = require("class-validator");
+const checkout_fields_service_1 = require("./checkout-fields.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+/**
+ * AB4 (AX5b) DTOs. Shape-only validation lives here (the global
+ * ValidationPipe is whitelist + forbidNonWhitelisted); the
+ * semantic rules (key format/uniqueness, label length, select
+ * options, key immutability) live in CheckoutFieldsService,
+ * which answers with Bengali-first errors.
+ */
+class CreateCheckoutFieldDto {
+    key;
+    label;
+    type;
+    options;
+    required;
+    appliesTo;
+    sortOrder;
+}
+exports.CreateCheckoutFieldDto = CreateCheckoutFieldDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateCheckoutFieldDto.prototype, "key", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateCheckoutFieldDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], CreateCheckoutFieldDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], CreateCheckoutFieldDto.prototype, "options", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateCheckoutFieldDto.prototype, "required", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], CreateCheckoutFieldDto.prototype, "appliesTo", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateCheckoutFieldDto.prototype, "sortOrder", void 0);
+class UpdateCheckoutFieldDto {
+    // Declared so the service can REFUSE a key change explicitly
+    // (whitelist would otherwise strip it silently).
+    key;
+    label;
+    type;
+    options;
+    required;
+    appliesTo;
+    sortOrder;
+    active;
+}
+exports.UpdateCheckoutFieldDto = UpdateCheckoutFieldDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], UpdateCheckoutFieldDto.prototype, "key", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], UpdateCheckoutFieldDto.prototype, "label", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], UpdateCheckoutFieldDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], UpdateCheckoutFieldDto.prototype, "options", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateCheckoutFieldDto.prototype, "required", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(20),
+    __metadata("design:type", String)
+], UpdateCheckoutFieldDto.prototype, "appliesTo", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], UpdateCheckoutFieldDto.prototype, "sortOrder", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateCheckoutFieldDto.prototype, "active", void 0);
+const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
+/** AB4 (AX5b) — staff CRUD for custom checkout fields. Mirrors
+ * StorefrontStaffController's guard stack exactly (same
+ * controller prefix, PermissionArea, guards and WRITE roles);
+ * it is a separate controller only because the coordinator split
+ * this batch by file. */
+let CheckoutFieldsController = class CheckoutFieldsController {
+    fields;
+    constructor(fields) {
+        this.fields = fields;
+    }
+    list(orgId) {
+        return this.fields.list(orgId);
+    }
+    create(user, orgId, dto) {
+        return this.fields.create(orgId, user.userId, dto);
+    }
+    update(user, orgId, fieldId, dto) {
+        return this.fields.update(orgId, user.userId, fieldId, dto);
+    }
+    remove(user, orgId, fieldId) {
+        return this.fields.remove(orgId, user.userId, fieldId);
+    }
+};
+exports.CheckoutFieldsController = CheckoutFieldsController;
+__decorate([
+    (0, common_1.Get)("checkout-fields"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], CheckoutFieldsController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)("checkout-fields"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, CreateCheckoutFieldDto]),
+    __metadata("design:returntype", void 0)
+], CheckoutFieldsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Patch)("checkout-fields/:fieldId"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("fieldId")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, UpdateCheckoutFieldDto]),
+    __metadata("design:returntype", void 0)
+], CheckoutFieldsController.prototype, "update", null);
+__decorate([
+    (0, common_1.Delete)("checkout-fields/:fieldId"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("fieldId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], CheckoutFieldsController.prototype, "remove", null);
+exports.CheckoutFieldsController = CheckoutFieldsController = __decorate([
+    (0, decorators_1.PermissionArea)("integrations"),
+    (0, common_1.Controller)("organizations/:organizationId/storefront"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [checkout_fields_service_1.CheckoutFieldsService])
+], CheckoutFieldsController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL3N0b3JlZnJvbnQvY2hlY2tvdXQtZmllbGRzLmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBQThGO0FBQzlGLHFEQUE2RjtBQUM3Rix1RUFBa0U7QUFDbEUscURBQW9GO0FBQ3BGLHlEQUFxRDtBQUNyRCx1REFBbUQ7QUFFbkQ7Ozs7OztHQU1HO0FBQ0gsTUFBYSxzQkFBc0I7SUFDTixHQUFHLENBQVU7SUFDYixLQUFLLENBQVU7SUFDZixJQUFJLENBQVU7SUFDVSxPQUFPLENBQVk7SUFDM0MsUUFBUSxDQUFXO0lBQ0wsU0FBUyxDQUFVO0lBQ3JDLFNBQVMsQ0FBVTtDQUMzQztBQVJELHdEQVFDO0FBUDRCO0lBQTFCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7O21EQUFjO0FBQ2I7SUFBMUIsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7cURBQWdCO0FBQ2Y7SUFBMUIsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7b0RBQWU7QUFDVTtJQUFsRCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHlCQUFPLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEVBQUMsRUFBRSxJQUFJLEVBQUUsSUFBSSxFQUFFLENBQUM7O3VEQUFvQjtBQUMzQztJQUExQixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEdBQUU7O3dEQUFvQjtBQUNMO0lBQXhDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7O3lEQUFvQjtBQUNyQztJQUF0QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHVCQUFLLEdBQUU7O3lEQUFvQjtBQUc1QyxNQUFhLHNCQUFzQjtJQUNqQyw2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SUQ7SUFGQyxJQUFBLGNBQUssRUFBQywwQkFBMEIsQ0FBQztJQUNqQyxJQUFBLGtCQUFLLEVBQUMsR0FBRyxXQUFXLENBQUM7SUFFbkIsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUNiLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUN2QixXQUFBLElBQUEsY0FBSyxFQUFDLFNBQVMsQ0FBQyxDQUFBO0lBQ2hCLFdBQUEsSUFBQSxhQUFJLEdBQUUsQ0FBQTs7NkRBQU0sc0JBQXNCOztzREFHcEM7QUFJRDtJQUZDLElBQUEsZUFBTSxFQUFDLDBCQUEwQixDQUFDO0lBQ2xDLElBQUEsa0JBQUssRUFBQyxHQUFHLFdBQVcsQ0FBQztJQUVuQixXQUFBLElBQUEsd0JBQVcsR0FBRSxDQUFBO0lBQ2IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQ3ZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsU0FBUyxDQUFDLENBQUE7Ozs7c0RBR2xCO21DQXJDVSx3QkFBd0I7SUFIcEMsSUFBQSwyQkFBYyxFQUFDLGNBQWMsQ0FBQztJQUM5QixJQUFBLG1CQUFVLEVBQUMsMENBQTBDLENBQUM7SUFDdEQsSUFBQSxrQkFBUyxFQUFDLDBCQUFXLEVBQUUsd0JBQVUsQ0FBQztxQ0FFSSwrQ0FBcUI7R0FEL0Msd0JBQXdCLENBc0NwQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvc3RvcmVmcm9udC9jaGVja291dC1maWVsZHMuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBCb2R5LCBDb250cm9sbGVyLCBEZWxldGUsIEdldCwgUGFyYW0sIFBhdGNoLCBQb3N0LCBVc2VHdWFyZHMgfSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IElzQXJyYXksIElzQm9vbGVhbiwgSXNJbnQsIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXhMZW5ndGggfSBmcm9tIFwiY2xhc3MtdmFsaWRhdG9yXCI7XG5pbXBvcnQgeyBDaGVja291dEZpZWxkc1NlcnZpY2UgfSBmcm9tIFwiLi9jaGVja291dC1maWVsZHMuc2VydmljZVwiO1xuaW1wb3J0IHsgQ3VycmVudFVzZXIsIEF1dGhVc2VyLCBSb2xlcywgUGVybWlzc2lvbkFyZWEgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IFRlbmFudEd1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi90ZW5hbnQuZ3VhcmRcIjtcbmltcG9ydCB7IFJvbGVzR3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3JvbGVzLmd1YXJkXCI7XG5cbi8qKlxuICogQUI0IChBWDViKSBEVE9zLiBTaGFwZS1vbmx5IHZhbGlkYXRpb24gbGl2ZXMgaGVyZSAodGhlIGdsb2JhbFxuICogVmFsaWRhdGlvblBpcGUgaXMgd2hpdGVsaXN0ICsgZm9yYmlkTm9uV2hpdGVsaXN0ZWQpOyB0aGVcbiAqIHNlbWFudGljIHJ1bGVzIChrZXkgZm9ybWF0L3VuaXF1ZW5lc3MsIGxhYmVsIGxlbmd0aCwgc2VsZWN0XG4gKiBvcHRpb25zLCBrZXkgaW1tdXRhYmlsaXR5KSBsaXZlIGluIENoZWNrb3V0RmllbGRzU2VydmljZSxcbiAqIHdoaWNoIGFuc3dlcnMgd2l0aCBCZW5nYWxpLWZpcnN0IGVycm9ycy5cbiAqL1xuZXhwb3J0IGNsYXNzIENyZWF0ZUNoZWNrb3V0RmllbGREdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSBrZXkhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoODApIGxhYmVsITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwKSB0eXBlITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBvcHRpb25zPzogc3RyaW5nW107XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHJlcXVpcmVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwKSBhcHBsaWVzVG8/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgc29ydE9yZGVyPzogbnVtYmVyO1xufVxuXG5leHBvcnQgY2xhc3MgVXBkYXRlQ2hlY2tvdXRGaWVsZER0byB7XG4gIC8vIERlY2xhcmVkIHNvIHRoZSBzZXJ2aWNlIGNhbiBSRUZVU0UgYSBrZXkgY2hhbmdlIGV4cGxpY2l0bHlcbiAgLy8gKHdoaXRlbGlzdCB3b3VsZCBvdGhlcndpc2Ugc3RyaXAgaXQgc2lsZW50bHkpLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNDApIGtleT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDgwKSBsYWJlbD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwKSB0eXBlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc0FycmF5KCkgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KSBvcHRpb25zPzogc3RyaW5nW107XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHJlcXVpcmVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDIwKSBhcHBsaWVzVG8/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgc29ydE9yZGVyPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc0Jvb2xlYW4oKSBhY3RpdmU/OiBib29sZWFuO1xufVxuXG5jb25zdCBXUklURV9ST0xFUyA9IFtcIk9XTkVSXCIsIFwiQURNSU5cIiwgXCJNQVJLRVRJTkdfTUFOQUdFUlwiXSBhcyBjb25zdDtcblxuLyoqIEFCNCAoQVg1Yikg4oCUIHN0YWZmIENSVUQgZm9yIGN1c3RvbSBjaGVja291dCBmaWVsZHMuIE1pcnJvcnNcbiAqIFN0b3JlZnJvbnRTdGFmZkNvbnRyb2xsZXIncyBndWFyZCBzdGFjayBleGFjdGx5IChzYW1lXG4gKiBjb250cm9sbGVyIHByZWZpeCwgUGVybWlzc2lvbkFyZWEsIGd1YXJkcyBhbmQgV1JJVEUgcm9sZXMpO1xuICogaXQgaXMgYSBzZXBhcmF0ZSBjb250cm9sbGVyIG9ubHkgYmVjYXVzZSB0aGUgY29vcmRpbmF0b3Igc3BsaXRcbiAqIHRoaXMgYmF0Y2ggYnkgZmlsZS4gKi9cbkBQZXJtaXNzaW9uQXJlYShcImludGVncmF0aW9uc1wiKVxuQENvbnRyb2xsZXIoXCJvcmdhbml6YXRpb25zLzpvcmdhbml6YXRpb25JZC9zdG9yZWZyb250XCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIENoZWNrb3V0RmllbGRzQ29udHJvbGxlciB7XG4gIGNvbnN0cnVjdG9yKHByaXZhdGUgcmVhZG9ubHkgZmllbGRzOiBDaGVja291dEZpZWxkc1NlcnZpY2UpIHt9XG5cbiAgQEdldChcImNoZWNrb3V0LWZpZWxkc1wiKVxuICBsaXN0KEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5maWVsZHMubGlzdChvcmdJZCk7XG4gIH1cblxuICBAUG9zdChcImNoZWNrb3V0LWZpZWxkc1wiKVxuICBAUm9sZXMoLi4uV1JJVEVfUk9MRVMpXG4gIGNyZWF0ZShcbiAgICBAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlcixcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBCb2R5KCkgZHRvOiBDcmVhdGVDaGVja291dEZpZWxkRHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5maWVsZHMuY3JlYXRlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIEBQYXRjaChcImNoZWNrb3V0LWZpZWxkcy86ZmllbGRJZFwiKVxuICBAUm9sZXMoLi4uV1JJVEVfUk9MRVMpXG4gIHVwZGF0ZShcbiAgICBAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlcixcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcImZpZWxkSWRcIikgZmllbGRJZDogc3RyaW5nLFxuICAgIEBCb2R5KCkgZHRvOiBVcGRhdGVDaGVja291dEZpZWxkRHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5maWVsZHMudXBkYXRlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZmllbGRJZCwgZHRvKTtcbiAgfVxuXG4gIEBEZWxldGUoXCJjaGVja291dC1maWVsZHMvOmZpZWxkSWRcIilcbiAgQFJvbGVzKC4uLldSSVRFX1JPTEVTKVxuICByZW1vdmUoXG4gICAgQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJmaWVsZElkXCIpIGZpZWxkSWQ6IHN0cmluZyxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMuZmllbGRzLnJlbW92ZShvcmdJZCwgdXNlci51c2VySWQsIGZpZWxkSWQpO1xuICB9XG59XG4iXSwidmVyc2lvbiI6M30=

@@ -66,6 +66,17 @@ export class LandingEventDto {
  * for ShippingZone matching and the variant that was actually
  * served to this visitor (attribution only — pricing never trusts
  * anything from the client).
+ *
+ * AB7 (AX19): the order-level attribution block
+ * (`attribution?: AttributionDto`) is INHERITED from
+ * PublicCheckoutOrderDto — the landing checkout stamps the
+ * Order row through the same normalizeAttribution path as the
+ * single-product checkout.
+ *
+ * AB8 (AX27): `deviceHash?: string` is likewise INHERITED from
+ * PublicCheckoutOrderDto — the landing checkout normalizes
+ * and stamps it through the same path as the single-product
+ * checkout.
  */
 export class LandingOrderDto extends PublicCheckoutOrderDto {
   @IsOptional() @IsString() @MaxLength(100) district?: string;

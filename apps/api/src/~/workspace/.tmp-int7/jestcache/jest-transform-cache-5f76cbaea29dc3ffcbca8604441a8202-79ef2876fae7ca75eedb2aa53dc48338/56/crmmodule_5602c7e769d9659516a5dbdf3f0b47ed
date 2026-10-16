@@ -1,0 +1,34 @@
+77131fd3c73592c2b6b5c55083605835
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CrmModule = void 0;
+const common_1 = require("@nestjs/common");
+const leads_controller_1 = require("./leads.controller");
+const leads_service_1 = require("./leads.service");
+const custom_fields_controller_1 = require("./custom-fields.controller");
+const custom_fields_service_1 = require("./custom-fields.service");
+const lead_assignment_service_1 = require("./lead-assignment.service");
+const crm_report_controller_1 = require("./crm-report.controller");
+// CRM C4: CustomFieldsService is exported so CustomersModule can
+// validate customer values through the same gate.
+// CRM C5: LeadAssignmentService is exported so InboxModule can
+// run the same auto-assignment for the leads its ingestion
+// paths create directly (Meta leadgen, first message, webchat).
+// CRM C6: CrmReportController serves the lead funnel report.
+let CrmModule = class CrmModule {
+};
+exports.CrmModule = CrmModule;
+exports.CrmModule = CrmModule = __decorate([
+    (0, common_1.Module)({
+        controllers: [leads_controller_1.LeadsController, custom_fields_controller_1.CustomFieldsController, crm_report_controller_1.CrmReportController],
+        providers: [leads_service_1.LeadsService, custom_fields_service_1.CustomFieldsService, lead_assignment_service_1.LeadAssignmentService],
+        exports: [leads_service_1.LeadsService, custom_fields_service_1.CustomFieldsService, lead_assignment_service_1.LeadAssignmentService],
+    })
+], CrmModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NybS9jcm0ubW9kdWxlLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7OztBQUFBLDJDQUF3QztBQUN4Qyx5REFBcUQ7QUFDckQsbURBQStDO0FBQy9DLHlFQUFvRTtBQUNwRSxtRUFBOEQ7QUFDOUQsdUVBQWtFO0FBQ2xFLG1FQUE4RDtBQUU5RCxpRUFBaUU7QUFDakUsa0RBQWtEO0FBQ2xELCtEQUErRDtBQUMvRCwyREFBMkQ7QUFDM0QsZ0VBQWdFO0FBQ2hFLDZEQUE2RDtBQU10RCxJQUFNLFNBQVMsR0FBZixNQUFNLFNBQVM7Q0FBRyxDQUFBO0FBQVosOEJBQVM7b0JBQVQsU0FBUztJQUxyQixJQUFBLGVBQU0sRUFBQztRQUNOLFdBQVcsRUFBRSxDQUFDLGtDQUFlLEVBQUUsaURBQXNCLEVBQUUsMkNBQW1CLENBQUM7UUFDM0UsU0FBUyxFQUFFLENBQUMsNEJBQVksRUFBRSwyQ0FBbUIsRUFBRSwrQ0FBcUIsQ0FBQztRQUNyRSxPQUFPLEVBQUUsQ0FBQyw0QkFBWSxFQUFFLDJDQUFtQixFQUFFLCtDQUFxQixDQUFDO0tBQ3BFLENBQUM7R0FDVyxTQUFTLENBQUciLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NybS9jcm0ubW9kdWxlLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IE1vZHVsZSB9IGZyb20gXCJAbmVzdGpzL2NvbW1vblwiO1xuaW1wb3J0IHsgTGVhZHNDb250cm9sbGVyIH0gZnJvbSBcIi4vbGVhZHMuY29udHJvbGxlclwiO1xuaW1wb3J0IHsgTGVhZHNTZXJ2aWNlIH0gZnJvbSBcIi4vbGVhZHMuc2VydmljZVwiO1xuaW1wb3J0IHsgQ3VzdG9tRmllbGRzQ29udHJvbGxlciB9IGZyb20gXCIuL2N1c3RvbS1maWVsZHMuY29udHJvbGxlclwiO1xuaW1wb3J0IHsgQ3VzdG9tRmllbGRzU2VydmljZSB9IGZyb20gXCIuL2N1c3RvbS1maWVsZHMuc2VydmljZVwiO1xuaW1wb3J0IHsgTGVhZEFzc2lnbm1lbnRTZXJ2aWNlIH0gZnJvbSBcIi4vbGVhZC1hc3NpZ25tZW50LnNlcnZpY2VcIjtcbmltcG9ydCB7IENybVJlcG9ydENvbnRyb2xsZXIgfSBmcm9tIFwiLi9jcm0tcmVwb3J0LmNvbnRyb2xsZXJcIjtcblxuLy8gQ1JNIEM0OiBDdXN0b21GaWVsZHNTZXJ2aWNlIGlzIGV4cG9ydGVkIHNvIEN1c3RvbWVyc01vZHVsZSBjYW5cbi8vIHZhbGlkYXRlIGN1c3RvbWVyIHZhbHVlcyB0aHJvdWdoIHRoZSBzYW1lIGdhdGUuXG4vLyBDUk0gQzU6IExlYWRBc3NpZ25tZW50U2VydmljZSBpcyBleHBvcnRlZCBzbyBJbmJveE1vZHVsZSBjYW5cbi8vIHJ1biB0aGUgc2FtZSBhdXRvLWFzc2lnbm1lbnQgZm9yIHRoZSBsZWFkcyBpdHMgaW5nZXN0aW9uXG4vLyBwYXRocyBjcmVhdGUgZGlyZWN0bHkgKE1ldGEgbGVhZGdlbiwgZmlyc3QgbWVzc2FnZSwgd2ViY2hhdCkuXG4vLyBDUk0gQzY6IENybVJlcG9ydENvbnRyb2xsZXIgc2VydmVzIHRoZSBsZWFkIGZ1bm5lbCByZXBvcnQuXG5ATW9kdWxlKHtcbiAgY29udHJvbGxlcnM6IFtMZWFkc0NvbnRyb2xsZXIsIEN1c3RvbUZpZWxkc0NvbnRyb2xsZXIsIENybVJlcG9ydENvbnRyb2xsZXJdLFxuICBwcm92aWRlcnM6IFtMZWFkc1NlcnZpY2UsIEN1c3RvbUZpZWxkc1NlcnZpY2UsIExlYWRBc3NpZ25tZW50U2VydmljZV0sXG4gIGV4cG9ydHM6IFtMZWFkc1NlcnZpY2UsIEN1c3RvbUZpZWxkc1NlcnZpY2UsIExlYWRBc3NpZ25tZW50U2VydmljZV0sXG59KVxuZXhwb3J0IGNsYXNzIENybU1vZHVsZSB7fVxuIl0sInZlcnNpb24iOjN9

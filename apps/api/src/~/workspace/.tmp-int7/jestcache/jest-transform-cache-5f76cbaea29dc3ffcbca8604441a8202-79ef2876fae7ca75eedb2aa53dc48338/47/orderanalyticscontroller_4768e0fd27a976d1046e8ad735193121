@@ -1,0 +1,80 @@
+fc103f27550b546d14dffad3165ab762
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OrderAnalyticsController = void 0;
+const common_1 = require("@nestjs/common");
+const order_analytics_service_1 = require("./order-analytics.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
+/**
+ * ON9 — Orders Analytics v2 + Owner Digest endpoints. Same
+ * prefix as OrdersController; this controller is registered
+ * BEFORE OrdersController in OrdersModule so the literal
+ * "analytics" / "digest" segments win over its ":orderId" route.
+ * Reads ride the class-level TenantGuard + @PermissionArea
+ * ("orders") read permission; send-now is a write (audited in
+ * the service as the run's AuditLog row).
+ */
+let OrderAnalyticsController = class OrderAnalyticsController {
+    analytics;
+    constructor(analytics) {
+        this.analytics = analytics;
+    }
+    getAnalytics(orgId, from, to) {
+        return this.analytics.getAnalytics(orgId, from, to);
+    }
+    digestStatus(orgId) {
+        return this.analytics.digestStatus(orgId);
+    }
+    sendNow(user, orgId) {
+        return this.analytics.sendDigest(orgId, "today", user.userId);
+    }
+};
+exports.OrderAnalyticsController = OrderAnalyticsController;
+__decorate([
+    (0, common_1.Get)("analytics"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Query)("from")),
+    __param(2, (0, common_1.Query)("to")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], OrderAnalyticsController.prototype, "getAnalytics", null);
+__decorate([
+    (0, common_1.Get)("digest/status"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], OrderAnalyticsController.prototype, "digestStatus", null);
+__decorate([
+    (0, common_1.Post)("digest/send-now"),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], OrderAnalyticsController.prototype, "sendNow", null);
+exports.OrderAnalyticsController = OrderAnalyticsController = __decorate([
+    (0, decorators_1.PermissionArea)("orders"),
+    (0, common_1.Controller)("organizations/:organizationId/orders"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [order_analytics_service_1.OrderAnalyticsService])
+], OrderAnalyticsController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVycy9vcmRlci1hbmFseXRpY3MuY29udHJvbGxlci50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7QUFBQSwyQ0FBZ0Y7QUFDaEYsdUVBQWtFO0FBQ2xFLHFEQUFvRjtBQUNwRix5REFBcUQ7QUFDckQsdURBQW1EO0FBRW5ELE1BQU0sV0FBVyxHQUFHLENBQUMsT0FBTyxFQUFFLE9BQU8sRUFBRSxtQkFBbUIsRUFBRSxlQUFlLENBQVUsQ0FBQztBQUV0Rjs7Ozs7Ozs7R0FRRztBQUlJLElBQU0sd0JBQXdCLEdBQTlCLE1BQU0sd0JBQXdCO0lBQ047SUFBN0IsWUFBNkIsU0FBZ0M7UUFBaEMsY0FBUyxHQUFULFNBQVMsQ0FBdUI7SUFBRyxDQUFDO0lBR2pFLFlBQVksQ0FBMEIsS0FBYSxFQUFpQixJQUFhLEVBQWUsRUFBVztRQUN6RyxPQUFPLElBQUksQ0FBQyxTQUFTLENBQUMsWUFBWSxDQUFDLEtBQUssRUFBRSxJQUFJLEVBQUUsRUFBRSxDQUFDLENBQUM7SUFDdEQsQ0FBQztJQUdELFlBQVksQ0FBMEIsS0FBYTtRQUNqRCxPQUFPLElBQUksQ0FBQyxTQUFTLENBQUMsWUFBWSxDQUFDLEtBQUssQ0FBQyxDQUFDO0lBQzVDLENBQUM7SUFHRCxPQUFPLENBQWdCLElBQWMsRUFBMkIsS0FBYTtRQUMzRSxPQUFPLElBQUksQ0FBQyxTQUFTLENBQUMsVUFBVSxDQUFDLEtBQUssRUFBRSxPQUFPLEVBQUUsSUFBSSxDQUFDLE1BQU0sQ0FBQyxDQUFDO0lBQ2hFLENBQUM7Q0FDRixDQUFBO0FBakJZLDREQUF3QjtBQUluQztJQURDLElBQUEsWUFBRyxFQUFDLFdBQVcsQ0FBQztJQUNILFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsY0FBSyxFQUFDLE1BQU0sQ0FBQyxDQUFBO0lBQWlCLFdBQUEsSUFBQSxjQUFLLEVBQUMsSUFBSSxDQUFDLENBQUE7Ozs7NERBRTlGO0FBR0Q7SUFEQyxJQUFBLFlBQUcsRUFBQyxlQUFlLENBQUM7SUFDUCxXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7Ozs7NERBRXBDO0FBR0Q7SUFEQyxJQUFBLGFBQUksRUFBQyxpQkFBaUIsQ0FBQztJQUFFLElBQUEsa0JBQVMsRUFBQyx3QkFBVSxDQUFDO0lBQUUsSUFBQSxrQkFBSyxFQUFDLEdBQUcsV0FBVyxDQUFDO0lBQzdELFdBQUEsSUFBQSx3QkFBVyxHQUFFLENBQUE7SUFBa0IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBOzs7O3VEQUU5RDttQ0FoQlUsd0JBQXdCO0lBSHBDLElBQUEsMkJBQWMsRUFBQyxRQUFRLENBQUM7SUFDeEIsSUFBQSxtQkFBVSxFQUFDLHNDQUFzQyxDQUFDO0lBQ2xELElBQUEsa0JBQVMsRUFBQywwQkFBVyxFQUFFLHdCQUFVLENBQUM7cUNBRU8sK0NBQXFCO0dBRGxELHdCQUF3QixDQWlCcEMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL29yZGVycy9vcmRlci1hbmFseXRpY3MuY29udHJvbGxlci50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBDb250cm9sbGVyLCBHZXQsIFBhcmFtLCBQb3N0LCBRdWVyeSwgVXNlR3VhcmRzIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBPcmRlckFuYWx5dGljc1NlcnZpY2UgfSBmcm9tIFwiLi9vcmRlci1hbmFseXRpY3Muc2VydmljZVwiO1xuaW1wb3J0IHsgQ3VycmVudFVzZXIsIEF1dGhVc2VyLCBSb2xlcywgUGVybWlzc2lvbkFyZWEgfSBmcm9tIFwiLi4vY29tbW9uL2RlY29yYXRvcnNcIjtcbmltcG9ydCB7IFRlbmFudEd1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi90ZW5hbnQuZ3VhcmRcIjtcbmltcG9ydCB7IFJvbGVzR3VhcmQgfSBmcm9tIFwiLi4vY29tbW9uL3JvbGVzLmd1YXJkXCI7XG5cbmNvbnN0IFdSSVRFX1JPTEVTID0gW1wiT1dORVJcIiwgXCJBRE1JTlwiLCBcIk1BUktFVElOR19NQU5BR0VSXCIsIFwiU1VQUE9SVF9BR0VOVFwiXSBhcyBjb25zdDtcblxuLyoqXG4gKiBPTjkg4oCUIE9yZGVycyBBbmFseXRpY3MgdjIgKyBPd25lciBEaWdlc3QgZW5kcG9pbnRzLiBTYW1lXG4gKiBwcmVmaXggYXMgT3JkZXJzQ29udHJvbGxlcjsgdGhpcyBjb250cm9sbGVyIGlzIHJlZ2lzdGVyZWRcbiAqIEJFRk9SRSBPcmRlcnNDb250cm9sbGVyIGluIE9yZGVyc01vZHVsZSBzbyB0aGUgbGl0ZXJhbFxuICogXCJhbmFseXRpY3NcIiAvIFwiZGlnZXN0XCIgc2VnbWVudHMgd2luIG92ZXIgaXRzIFwiOm9yZGVySWRcIiByb3V0ZS5cbiAqIFJlYWRzIHJpZGUgdGhlIGNsYXNzLWxldmVsIFRlbmFudEd1YXJkICsgQFBlcm1pc3Npb25BcmVhXG4gKiAoXCJvcmRlcnNcIikgcmVhZCBwZXJtaXNzaW9uOyBzZW5kLW5vdyBpcyBhIHdyaXRlIChhdWRpdGVkIGluXG4gKiB0aGUgc2VydmljZSBhcyB0aGUgcnVuJ3MgQXVkaXRMb2cgcm93KS5cbiAqL1xuQFBlcm1pc3Npb25BcmVhKFwib3JkZXJzXCIpXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL29yZGVyc1wiKVxuQFVzZUd1YXJkcyhUZW5hbnRHdWFyZCwgUm9sZXNHdWFyZClcbmV4cG9ydCBjbGFzcyBPcmRlckFuYWx5dGljc0NvbnRyb2xsZXIge1xuICBjb25zdHJ1Y3Rvcihwcml2YXRlIHJlYWRvbmx5IGFuYWx5dGljczogT3JkZXJBbmFseXRpY3NTZXJ2aWNlKSB7fVxuXG4gIEBHZXQoXCJhbmFseXRpY3NcIilcbiAgZ2V0QW5hbHl0aWNzKEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsIEBRdWVyeShcImZyb21cIikgZnJvbT86IHN0cmluZywgQFF1ZXJ5KFwidG9cIikgdG8/OiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5hbmFseXRpY3MuZ2V0QW5hbHl0aWNzKG9yZ0lkLCBmcm9tLCB0byk7XG4gIH1cblxuICBAR2V0KFwiZGlnZXN0L3N0YXR1c1wiKVxuICBkaWdlc3RTdGF0dXMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLmFuYWx5dGljcy5kaWdlc3RTdGF0dXMob3JnSWQpO1xuICB9XG5cbiAgQFBvc3QoXCJkaWdlc3Qvc2VuZC1ub3dcIikgQFVzZUd1YXJkcyhSb2xlc0d1YXJkKSBAUm9sZXMoLi4uV1JJVEVfUk9MRVMpXG4gIHNlbmROb3coQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5hbmFseXRpY3Muc2VuZERpZ2VzdChvcmdJZCwgXCJ0b2RheVwiLCB1c2VyLnVzZXJJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { BD_DISTRICT_ENTRIES } from "../orders/bd-address-data";
+import { toCsv } from "../imports/csv";
 import type {
   CreateBinAssignmentDto, CreateBinDto, CreateStockCountDto,
   CreateWarehouseDto, UpdateBinDto, UpdateWarehouseDto,
@@ -65,6 +67,45 @@ export class WarehouseService {
     return { items };
   }
 
+  /** AB3: validate a priority value (optional int, Min(0)). */
+  private validatePriority(priority: unknown): number {
+    if (!Number.isInteger(priority) || (priority as number) < 0) {
+      throw new BadRequestException("গুদামের অগ্রাধিকার (priority) অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+    }
+    return priority as number;
+  }
+
+  /**
+   * AB3: validate serviceDistricts against the BD district
+   * vocabulary (orders/bd-address-data — a pure data module, so
+   * importing it here creates no module cycle). Entries may be
+   * the canonical English name, the Bengali spelling, or a known
+   * English variant; the CANONICAL name is what gets stored, so
+   * the §4.2 district matching (which compares against the
+   * canonical district derived from an order address) works.
+   * Unknown district → Bengali BadRequest. Returns the canonical
+   * list (deduped, order preserved), or null for null input.
+   */
+  private validateServiceDistricts(input: string[] | null | undefined): string[] | null {
+    if (input == null) return null;
+    if (!Array.isArray(input)) {
+      throw new BadRequestException("সার্ভিস জেলার তালিকা অবশ্যই একটি তালিকা (array) হতে হবে");
+    }
+    const out: string[] = [];
+    for (const raw of input) {
+      const entry = String(raw ?? "").trim();
+      if (!entry) throw new BadRequestException("সার্ভিস জেলার নাম খালি হতে পারে না");
+      const wanted = entry.toLowerCase();
+      const match = BD_DISTRICT_ENTRIES.find((d) =>
+        d.canonical.toLowerCase() === wanted
+        || d.bn.some((b) => b === entry)
+        || d.variants.some((v) => v.toLowerCase() === wanted));
+      if (!match) throw new BadRequestException(`অজানা জেলা: ${entry} — সঠিক জেলার নাম দিন`);
+      if (!out.includes(match.canonical)) out.push(match.canonical);
+    }
+    return out;
+  }
+
   async createWarehouse(organizationId: string, actorId: string, dto: CreateWarehouseDto) {
     const name = (dto.name ?? "").trim();
     if (!name) throw new BadRequestException("গুদামের নাম দরকার");
@@ -72,6 +113,10 @@ export class WarehouseService {
       data: {
         organizationId, name, address: dto.address ?? null,
         isDefault: dto.isDefault === true, active: true,
+        priority: dto.priority !== undefined ? this.validatePriority(dto.priority) : 0,
+        serviceDistricts: dto.serviceDistricts !== undefined
+          ? this.validateServiceDistricts(dto.serviceDistricts)
+          : null,
       },
     });
     if (row.isDefault) await this.unsetOtherDefaults(organizationId, row.id);
@@ -93,6 +138,10 @@ export class WarehouseService {
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault === true;
     if (dto.active !== undefined) data.active = dto.active === true;
+    if (dto.priority !== undefined) data.priority = this.validatePriority(dto.priority);
+    if (dto.serviceDistricts !== undefined) {
+      data.serviceDistricts = this.validateServiceDistricts(dto.serviceDistricts);
+    }
     const updated = await (this.prisma as any).warehouse.update({ where: { id: existing.id }, data });
     if (data.isDefault === true) await this.unsetOtherDefaults(organizationId, existing.id);
     await this.log({
@@ -303,20 +352,52 @@ export class WarehouseService {
     let skippedUntracked = 0;
 
     if (bin) {
+      // AB3 (design §6): with the bin layer present, a bin-scoped
+      // session is TRULY bin-scoped — its line set is the UNION of
+      // (tracked rows with a StockBalance in this bin) and
+      // (tracked rows with a ProductBinAssignment in this bin),
+      // and systemQty snapshots the BIN's onHand (a balance row's
+      // onHand, else 0 for assignment-only rows). When the
+      // StockBalance table is absent (pre-migration deploy / older
+      // fakes) the layer is inactive and the legacy EC21 behaviour
+      // below applies byte-identically (assignment lines only,
+      // GLOBAL snapshot) — the design §3 missing-table tolerance.
+      const balanceTable = (this.prisma as any).stockBalance;
+      const binLayer = Boolean(balanceTable?.findMany);
+      const seen = new Set<string>();
+      const trackedStockOf = async (productId: string, variantId: string | null): Promise<number | null> => {
+        if (variantId) {
+          const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: variantId } }).catch(() => null);
+          return variant?.stockQuantity ?? null;
+        }
+        const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } }).catch(() => null);
+        return product?.stockQuantity ?? null;
+      };
+      if (binLayer) {
+        const balances: any[] = ((await balanceTable.findMany({
+          where: { organizationId, binId: bin.id },
+        }).catch(() => [])) ?? []);
+        for (const b of balances) {
+          const key = `${b.productId}::${b.variantId ?? ""}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const stock = await trackedStockOf(b.productId, b.variantId ?? null);
+          if (stock == null) { skippedUntracked++; continue; }
+          candidates.push({ productId: b.productId, variantId: b.variantId ?? null, systemQty: b.onHand as number });
+        }
+      }
       const assignments: any[] = ((await (this.prisma as any).productBinAssignment.findMany({
         where: { organizationId, warehouseId: warehouse.id, binLocationId: bin.id },
       })) ?? []);
       for (const a of assignments) {
-        let stock: number | null = null;
-        if (a.variantId) {
-          const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: a.variantId } }).catch(() => null);
-          stock = variant?.stockQuantity ?? null;
-        } else {
-          const product = await (this.prisma as any).product.findFirst({ where: { id: a.productId, organizationId } }).catch(() => null);
-          stock = product?.stockQuantity ?? null;
-        }
+        const key = `${a.productId}::${a.variantId ?? ""}`;
+        if (binLayer && seen.has(key)) continue;
+        seen.add(key);
+        const stock = await trackedStockOf(a.productId, a.variantId ?? null);
         if (stock == null) { skippedUntracked++; continue; }
-        candidates.push({ productId: a.productId, variantId: a.variantId ?? null, systemQty: stock });
+        // Bin layer: an assignment-only row holds 0 in this bin.
+        // Legacy (no bin layer): the global counter, as EC21 did.
+        candidates.push({ productId: a.productId, variantId: a.variantId ?? null, systemQty: binLayer ? 0 : stock });
       }
     } else {
       const products: any[] = ((await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? []);
@@ -393,8 +474,17 @@ export class WarehouseService {
         variance,
       });
     }
+    // AB3: label the session's scope so the web can say whether
+    // this count was bin-scoped (systemQty = the bin's onHand) or
+    // warehouse-scoped (systemQty = the global counter).
+    const bin = session.binLocationId
+      ? await (this.prisma as any).binLocation.findFirst({ where: { id: session.binLocationId, organizationId } }).catch(() => null)
+      : null;
     return {
       ...session,
+      binId: session.binLocationId ?? null,
+      binCode: bin?.code ?? null,
+      scope: session.binLocationId ? "bin" as const : "warehouse" as const,
       lines: enriched,
       totals: {
         lineCount: enriched.length,
@@ -441,11 +531,19 @@ export class WarehouseService {
       const delta = line.countedQty - line.systemQty;
       if (delta === 0) continue;
       try {
+        // AB3 (design §6): a BIN-scoped session posts its variance
+        // as a DELTA addressed at that bin (adjust's binId form) —
+        // never setTo, whose semantics are global; the addressed
+        // bin absorbs the variance so Σ balances == global keeps
+        // holding. A warehouse-scoped session keeps the legacy
+        // form byte-identically (no binId — the delta lands on
+        // the resolved default bin inside adjust).
         await this.inventory.adjust(organizationId, actorId, line.productId, {
           variantId: line.variantId ?? null,
           delta,
           reason: "stock_count",
           note: `স্টক গণনা ${sessionId}`,
+          ...(session.binLocationId ? { binId: session.binLocationId } : {}),
         });
         applied.push({ lineId: line.id, delta });
       } catch (e) {
@@ -466,5 +564,305 @@ export class WarehouseService {
     });
     const view = await this.getStockCount(organizationId, session.id);
     return { session: view, applied, skipped };
+  }
+
+  // ---------- AB3: stock balances + stock-by-location reads ----------
+
+  private byCreatedThenId(a: any, b: any): number {
+    const dt = new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
+    return dt !== 0 ? dt : String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  }
+
+  /**
+   * Read-only §4.1-style default-bin resolution for READ paths:
+   * assignment bin (default-warehouse assignment preferred, else
+   * earliest) → default warehouse's earliest bin. NEVER creates
+   * a warehouse or bin — the lazy Main creation belongs to the
+   * write paths (InventoryService.resolveDefaultBin); a balance
+   * read must not write (design brief for this surface: the only
+   * write a read may make is the §3 reserved correction).
+   */
+  private async resolveDefaultBinReadOnly(
+    organizationId: string, productId: string, variantId: string | null,
+    warehouses: any[], binsByWarehouse: Map<string, any[]>, assignments: any[],
+  ): Promise<any | null> {
+    const mine = assignments.filter((a: any) =>
+      a.productId === productId && (a.variantId ?? null) === variantId);
+    const defaultIds = new Set(warehouses.filter((w: any) => w.isDefault).map((w: any) => w.id));
+    const sorted = [...mine].sort((a, b) => this.byCreatedThenId(a, b));
+    const chosen = sorted.find((a: any) => defaultIds.has(a.warehouseId)) ?? sorted[0];
+    if (chosen) {
+      for (const bins of binsByWarehouse.values()) {
+        const bin = bins.find((b: any) => b.id === chosen.binLocationId);
+        if (bin) return bin;
+      }
+    }
+    const sortedWarehouses = [...warehouses].sort((a, b) => {
+      const dd = Number(b.isDefault === true) - Number(a.isDefault === true);
+      return dd !== 0 ? dd : this.byCreatedThenId(a, b);
+    });
+    const warehouse = sortedWarehouses[0];
+    if (!warehouse) return null;
+    const bins = [...(binsByWarehouse.get(warehouse.id) ?? [])].sort((a, b) => this.byCreatedThenId(a, b));
+    return bins[0] ?? null;
+  }
+
+  /**
+   * The shared computation behind GET commerce/stock-balances
+   * and the stock-by-location report:
+   * - every StockBalance row, enriched with product/variant/bin/
+   *   warehouse labels, its `reserved` shown as the LIVE Σ of
+   *   active unexpired StockReservation rows for that
+   *   (product, variant, bin) — with the stored counter lazily
+   *   corrected (persisted, failure-isolated per row) when it
+   *   differs (design §3);
+   * - PLUS, for every TRACKED product/variant row with NO balance
+   *   rows, one synthesized row at its resolved default bin with
+   *   onHand = the global counter (display truth pre-backfill),
+   *   marked seeded:false (real rows seeded:true).
+   */
+  private async computeBalanceRows(organizationId: string): Promise<any[]> {
+    const p: any = this.prisma as any;
+    const warehouses: any[] = ((await p.warehouse?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    const warehouseById = new Map(warehouses.map((w: any) => [w.id, w]));
+    const bins: any[] = ((await p.binLocation?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    const binById = new Map(bins.map((b: any) => [b.id, b]));
+    const binsByWarehouse = new Map<string, any[]>();
+    for (const b of bins) {
+      const list = binsByWarehouse.get(b.warehouseId) ?? [];
+      list.push(b);
+      binsByWarehouse.set(b.warehouseId, list);
+    }
+    const products: any[] = ((await p.product?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    const productById = new Map(products.map((x: any) => [x.id, x]));
+    const variantsByProduct = new Map<string, any[]>();
+    const variantById = new Map<string, any>();
+    for (const product of products) {
+      const variants: any[] = ((await p.productVariant?.findMany({ where: { productId: product.id } }).catch(() => [])) ?? []) as any[];
+      variantsByProduct.set(product.id, variants);
+      for (const v of variants) variantById.set(v.id, v);
+    }
+    const assignments: any[] = ((await p.productBinAssignment?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+
+    // Live reserved per (product, variant, bin): active +
+    // unexpired reservation rows only (lazy expiry — §3).
+    const liveReserved = new Map<string, number>();
+    const reservationTable = p.stockReservation;
+    if (reservationTable?.findMany) {
+      const rows: any[] = ((await reservationTable.findMany({
+        where: { organizationId, state: "active", expiresAt: { gt: new Date() } },
+      }).catch(() => [])) ?? []) as any[];
+      for (const r of rows) {
+        if (!r.binId) continue; // pre-AB3 rows count org-globally, never per-bin
+        const key = `${r.productId}::${r.variantId ?? ""}::${r.binId}`;
+        liveReserved.set(key, (liveReserved.get(key) ?? 0) + (Number(r.quantity) || 0));
+      }
+    }
+
+    const label = (productId: string, variantId: string | null, bin: any) => {
+      const product = productById.get(productId);
+      const variant = variantId ? variantById.get(variantId) : null;
+      const warehouse = bin ? warehouseById.get(bin.warehouseId) : null;
+      return {
+        productId,
+        productName: product?.name ?? null,
+        sku: variant ? (variant.sku ?? null) : (product?.sku ?? null),
+        variantId: variantId ?? null,
+        variantName: variant?.name ?? null,
+        warehouseId: bin?.warehouseId ?? null,
+        warehouseName: warehouse?.name ?? null,
+        binId: bin?.id ?? null,
+        binCode: bin?.code ?? null,
+      };
+    };
+
+    const out: any[] = [];
+    const balances: any[] = ((await p.stockBalance?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    const keysWithBalances = new Set<string>();
+    for (const bal of balances) {
+      const variantId = bal.variantId ?? null;
+      keysWithBalances.add(`${bal.productId}::${variantId ?? ""}`);
+      const live = liveReserved.get(`${bal.productId}::${variantId ?? ""}::${bal.binId}`) ?? 0;
+      if ((bal.reserved ?? 0) !== live) {
+        // §3 lazy correction — the ONLY write a read may make,
+        // failure-isolated per row.
+        try {
+          await p.stockBalance.update({ where: { id: bal.id }, data: { reserved: live } });
+          bal.reserved = live;
+        } catch { /* the displayed live value stands regardless */ }
+      }
+      out.push({
+        ...label(bal.productId, variantId, binById.get(bal.binId)),
+        onHand: bal.onHand as number,
+        reserved: live,
+        seeded: true,
+      });
+    }
+
+    // Synthesized rows for tracked rows with NO balance rows.
+    const trackedKeys: { productId: string; variantId: string | null; global: number }[] = [];
+    for (const product of products) {
+      if (product.stockQuantity != null) {
+        trackedKeys.push({ productId: product.id, variantId: null, global: product.stockQuantity as number });
+      }
+      for (const variant of variantsByProduct.get(product.id) ?? []) {
+        if (variant.stockQuantity != null) {
+          trackedKeys.push({ productId: product.id, variantId: variant.id, global: variant.stockQuantity as number });
+        }
+      }
+    }
+    for (const key of trackedKeys) {
+      if (keysWithBalances.has(`${key.productId}::${key.variantId ?? ""}`)) continue;
+      const bin = await this.resolveDefaultBinReadOnly(
+        organizationId, key.productId, key.variantId, warehouses, binsByWarehouse, assignments,
+      );
+      out.push({
+        ...label(key.productId, key.variantId, bin),
+        onHand: key.global,
+        reserved: bin ? (liveReserved.get(`${key.productId}::${key.variantId ?? ""}::${bin.id}`) ?? 0) : 0,
+        seeded: false,
+      });
+    }
+
+    out.sort((a, b) =>
+      String(a.productName ?? "").localeCompare(String(b.productName ?? ""))
+      || String(a.variantName ?? "").localeCompare(String(b.variantName ?? ""))
+      || String(a.warehouseName ?? "").localeCompare(String(b.warehouseName ?? ""))
+      || String(a.binCode ?? "").localeCompare(String(b.binCode ?? "")));
+    return out;
+  }
+
+  /** GET commerce/stock-balances payload. */
+  /** AB3 coordinator polish: label raw StockAllocation rows with
+   * warehouseName/binCode so the reallocate endpoint's response
+   * matches the labelled allocations[] on the staff order detail
+   * (OrdersService.allocationsForOrder). Failure-isolated: any
+   * lookup problem returns the rows unchanged. */
+  async labelAllocationRows(organizationId: string, rows: any[]): Promise<any[]> {
+    try {
+      if (!Array.isArray(rows) || rows.length === 0) return rows ?? [];
+      const p: any = this.prisma as any;
+      const warehouseIds = [...new Set(rows.map((r) => r.warehouseId).filter(Boolean))];
+      const binIds = [...new Set(rows.map((r) => r.binId).filter(Boolean))];
+      const warehouses: any[] = warehouseIds.length
+        ? ((await p.warehouse?.findMany({ where: { organizationId, id: { in: warehouseIds } } }).catch(() => [])) ?? [])
+        : [];
+      const bins: any[] = binIds.length
+        ? ((await p.binLocation?.findMany({ where: { organizationId, id: { in: binIds } } }).catch(() => [])) ?? [])
+        : [];
+      const warehouseNameById = new Map<string, string>(warehouses.map((w: any) => [w.id, w.name]));
+      const binCodeById = new Map<string, string>(bins.map((b: any) => [b.id, b.code]));
+      return rows.map((r) => ({
+        ...r,
+        warehouseName: warehouseNameById.get(r.warehouseId) ?? null,
+        binCode: binCodeById.get(r.binId) ?? null,
+      }));
+    } catch {
+      return rows;
+    }
+  }
+
+  async listStockBalances(organizationId: string) {
+    const items = await this.computeBalanceRows(organizationId);
+    const totalOnHand = items.reduce((s, r) => s + (Number(r.onHand) || 0), 0);
+    const totalReserved = items.reduce((s, r) => s + (Number(r.reserved) || 0), 0);
+    return { items, orgTotals: { totalOnHand, totalReserved } };
+  }
+
+  /** GET commerce/stock-by-location payload: per
+   * (product, variant, warehouse) onHand/reserved (Σ over that
+   * warehouse's bins, reserved live-computed as in the balances
+   * read) + inTransitOut from in_transit transfer lines whose
+   * fromBin belongs to that warehouse. */
+  async stockByLocation(organizationId: string) {
+    const p: any = this.prisma as any;
+    const balanceRows = await this.computeBalanceRows(organizationId);
+    const groups = new Map<string, any>();
+    const ensure = (r: any) => {
+      const key = `${r.productId}::${r.variantId ?? ""}::${r.warehouseId ?? ""}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          productId: r.productId, productName: r.productName,
+          variantId: r.variantId ?? null, variantName: r.variantName ?? null,
+          warehouseId: r.warehouseId ?? null, warehouseName: r.warehouseName ?? null,
+          onHand: 0, reserved: 0, inTransitOut: 0,
+        };
+        groups.set(key, g);
+      }
+      return g;
+    };
+    for (const r of balanceRows) {
+      if (!r.warehouseId) continue; // unresolvable default bin — nowhere to attribute
+      const g = ensure(r);
+      g.onHand += Number(r.onHand) || 0;
+      g.reserved += Number(r.reserved) || 0;
+    }
+
+    // In-transit: transfers still in_transit, grouped by the
+    // FROM bin's warehouse.
+    const binWarehouse = new Map<string, string>();
+    const bins: any[] = ((await p.binLocation?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    for (const b of bins) binWarehouse.set(b.id, b.warehouseId);
+    const warehouseNameById = new Map<string, string>();
+    const warehouses: any[] = ((await p.warehouse?.findMany({ where: { organizationId } }).catch(() => [])) ?? []) as any[];
+    for (const w of warehouses) warehouseNameById.set(w.id, w.name);
+    const productNameById = new Map<string, string>();
+    const variantNameById = new Map<string, string>();
+    const transfers: any[] = ((await p.stockTransfer?.findMany({
+      where: { organizationId, status: "in_transit" },
+    }).catch(() => [])) ?? []) as any[];
+    for (const t of transfers) {
+      const fromWarehouseId = binWarehouse.get(t.fromBinId);
+      if (!fromWarehouseId) continue;
+      const lines: any[] = ((await p.stockTransferLine?.findMany({ where: { transferId: t.id } }).catch(() => [])) ?? []) as any[];
+      for (const line of lines) {
+        const outstanding = (Number(line.qtySent) || 0) - (Number(line.qtyReceived) || 0);
+        if (outstanding <= 0) continue;
+        if (!productNameById.has(line.productId)) {
+          const product = await p.product?.findFirst({ where: { id: line.productId, organizationId } }).catch(() => null);
+          productNameById.set(line.productId, product?.name ?? null);
+          if (line.variantId) {
+            const variant = await p.productVariant?.findFirst({ where: { id: line.variantId } }).catch(() => null);
+            variantNameById.set(line.variantId, variant?.name ?? null);
+          }
+        }
+        const g = ensure({
+          productId: line.productId,
+          productName: productNameById.get(line.productId) ?? null,
+          variantId: line.variantId ?? null,
+          variantName: line.variantId ? (variantNameById.get(line.variantId) ?? null) : null,
+          warehouseId: fromWarehouseId,
+          warehouseName: warehouseNameById.get(fromWarehouseId) ?? null,
+        });
+        g.inTransitOut += outstanding;
+      }
+    }
+
+    const items = [...groups.values()].sort((a, b) =>
+      String(a.productName ?? "").localeCompare(String(b.productName ?? ""))
+      || String(a.variantName ?? "").localeCompare(String(b.variantName ?? ""))
+      || String(a.warehouseName ?? "").localeCompare(String(b.warehouseName ?? "")));
+    return {
+      items,
+      orgTotals: {
+        totalOnHand: items.reduce((s, r) => s + r.onHand, 0),
+        totalReserved: items.reduce((s, r) => s + r.reserved, 0),
+        totalInTransit: items.reduce((s, r) => s + r.inTransitOut, 0),
+      },
+    };
+  }
+
+  /** The .csv twin of stockByLocation (plain CSV download, the
+   * orders-export header pattern on the controller). */
+  async stockByLocationCsv(organizationId: string): Promise<string> {
+    const { items } = await this.stockByLocation(organizationId);
+    return toCsv(
+      ["product", "variant", "warehouse", "on_hand", "reserved", "in_transit_out"],
+      items.map((r: any) => [
+        r.productName ?? "", r.variantName ?? "", r.warehouseName ?? "",
+        r.onHand, r.reserved, r.inTransitOut,
+      ]),
+    );
   }
 }

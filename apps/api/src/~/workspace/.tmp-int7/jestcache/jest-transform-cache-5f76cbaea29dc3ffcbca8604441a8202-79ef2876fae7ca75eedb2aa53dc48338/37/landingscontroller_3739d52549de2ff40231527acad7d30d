@@ -1,0 +1,154 @@
+9ee937b5510bea91a4b42c1597bf990e
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LandingsStaffController = void 0;
+const common_1 = require("@nestjs/common");
+const landings_service_1 = require("./landings.service");
+const decorators_1 = require("../common/decorators");
+const tenant_guard_1 = require("../common/tenant.guard");
+const roles_guard_1 = require("../common/roles.guard");
+const landings_dto_1 = require("./landings.dto");
+const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
+/** EC13 staff landing administration. DELETE archives (see the
+ *  service) — attributed orders keep their funnel history. */
+let LandingsStaffController = class LandingsStaffController {
+    landings;
+    constructor(landings) {
+        this.landings = landings;
+    }
+    create(user, orgId, dto) {
+        return this.landings.create(orgId, user.userId, dto);
+    }
+    list(orgId) {
+        return this.landings.list(orgId);
+    }
+    stats(orgId, id) {
+        return this.landings.stats(orgId, id);
+    }
+    getOne(orgId, id) {
+        return this.landings.getOne(orgId, id);
+    }
+    update(user, orgId, id, dto) {
+        return this.landings.update(orgId, user.userId, id, dto);
+    }
+    archive(user, orgId, id) {
+        return this.landings.archive(orgId, user.userId, id);
+    }
+    createVariant(user, orgId, id, dto) {
+        return this.landings.createVariant(orgId, user.userId, id, dto);
+    }
+    updateVariant(user, orgId, id, variantId, dto) {
+        return this.landings.updateVariant(orgId, user.userId, id, variantId, dto);
+    }
+    deleteVariant(user, orgId, id, variantId) {
+        return this.landings.deleteVariant(orgId, user.userId, id, variantId);
+    }
+};
+exports.LandingsStaffController = LandingsStaffController;
+__decorate([
+    (0, common_1.Post)(),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, landings_dto_1.CreateLandingDto]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "create", null);
+__decorate([
+    (0, common_1.Get)(),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "list", null);
+__decorate([
+    (0, common_1.Get)(":id/stats"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "stats", null);
+__decorate([
+    (0, common_1.Get)(":id"),
+    __param(0, (0, common_1.Param)("organizationId")),
+    __param(1, (0, common_1.Param)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "getOne", null);
+__decorate([
+    (0, common_1.Patch)(":id"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("id")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, landings_dto_1.UpdateLandingDto]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "update", null);
+__decorate([
+    (0, common_1.Delete)(":id"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("id")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "archive", null);
+__decorate([
+    (0, common_1.Post)(":id/variants"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("id")),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, landings_dto_1.CreateLandingVariantDto]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "createVariant", null);
+__decorate([
+    (0, common_1.Patch)(":id/variants/:variantId"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("id")),
+    __param(3, (0, common_1.Param)("variantId")),
+    __param(4, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String, landings_dto_1.UpdateLandingVariantDto]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "updateVariant", null);
+__decorate([
+    (0, common_1.Delete)(":id/variants/:variantId"),
+    (0, decorators_1.Roles)(...WRITE_ROLES),
+    __param(0, (0, decorators_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("organizationId")),
+    __param(2, (0, common_1.Param)("id")),
+    __param(3, (0, common_1.Param)("variantId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String]),
+    __metadata("design:returntype", void 0)
+], LandingsStaffController.prototype, "deleteVariant", null);
+exports.LandingsStaffController = LandingsStaffController = __decorate([
+    (0, decorators_1.PermissionArea)("integrations"),
+    (0, common_1.Controller)("organizations/:organizationId/landings"),
+    (0, common_1.UseGuards)(tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    __metadata("design:paramtypes", [landings_service_1.LandingsService])
+], LandingsStaffController);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2xhbmRpbmdzL2xhbmRpbmdzLmNvbnRyb2xsZXIudHMiLCJtYXBwaW5ncyI6Ijs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsMkNBU3dCO0FBQ3hCLHlEQUFxRDtBQUNyRCxxREFBb0Y7QUFDcEYseURBQXFEO0FBQ3JELHVEQUFtRDtBQUNuRCxpREFLd0I7QUFFeEIsTUFBTSxXQUFXLEdBQUcsQ0FBQyxPQUFPLEVBQUUsT0FBTyxFQUFFLG1CQUFtQixDQUFVLENBQUM7QUFFckU7OERBQzhEO0FBSXZELElBQU0sdUJBQXVCLEdBQTdCLE1BQU0sdUJBQXVCO0lBQ0w7SUFBN0IsWUFBNkIsUUFBeUI7UUFBekIsYUFBUSxHQUFSLFFBQVEsQ0FBaUI7SUFBRyxDQUFDO0lBSTFELE1BQU0sQ0FDVyxJQUFjLEVBQ0osS0FBYSxFQUM5QixHQUFxQjtRQUU3QixPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsTUFBTSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEdBQUcsQ0FBQyxDQUFDO0lBQ3ZELENBQUM7SUFHRCxJQUFJLENBQTBCLEtBQWE7UUFDekMsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQztJQUNuQyxDQUFDO0lBR0QsS0FBSyxDQUEwQixLQUFhLEVBQWUsRUFBVTtRQUNuRSxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsS0FBSyxDQUFDLEtBQUssRUFBRSxFQUFFLENBQUMsQ0FBQztJQUN4QyxDQUFDO0lBR0QsTUFBTSxDQUEwQixLQUFhLEVBQWUsRUFBVTtRQUNwRSxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsTUFBTSxDQUFDLEtBQUssRUFBRSxFQUFFLENBQUMsQ0FBQztJQUN6QyxDQUFDO0lBSUQsTUFBTSxDQUNXLElBQWMsRUFDSixLQUFhLEVBQ3pCLEVBQVUsRUFDZixHQUFxQjtRQUU3QixPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsTUFBTSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEVBQUUsRUFBRSxHQUFHLENBQUMsQ0FBQztJQUMzRCxDQUFDO0lBSUQsT0FBTyxDQUNVLElBQWMsRUFDSixLQUFhLEVBQ3pCLEVBQVU7UUFFdkIsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLE9BQU8sQ0FBQyxLQUFLLEVBQUUsSUFBSSxDQUFDLE1BQU0sRUFBRSxFQUFFLENBQUMsQ0FBQztJQUN2RCxDQUFDO0lBSUQsYUFBYSxDQUNJLElBQWMsRUFDSixLQUFhLEVBQ3pCLEVBQVUsRUFDZixHQUE0QjtRQUVwQyxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsYUFBYSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEVBQUUsRUFBRSxHQUFHLENBQUMsQ0FBQztJQUNsRSxDQUFDO0lBSUQsYUFBYSxDQUNJLElBQWMsRUFDSixLQUFhLEVBQ3pCLEVBQVUsRUFDSCxTQUFpQixFQUM3QixHQUE0QjtRQUVwQyxPQUFPLElBQUksQ0FBQyxRQUFRLENBQUMsYUFBYSxDQUFDLEtBQUssRUFBRSxJQUFJLENBQUMsTUFBTSxFQUFFLEVBQUUsRUFBRSxTQUFTLEVBQUUsR0FBRyxDQUFDLENBQUM7SUFDN0UsQ0FBQztJQUlELGFBQWEsQ0FDSSxJQUFjLEVBQ0osS0FBYSxFQUN6QixFQUFVLEVBQ0gsU0FBaUI7UUFFckMsT0FBTyxJQUFJLENBQUMsUUFBUSxDQUFDLGFBQWEsQ0FBQyxLQUFLLEVBQUUsSUFBSSxDQUFDLE1BQU0sRUFBRSxFQUFFLEVBQUUsU0FBUyxDQUFDLENBQUM7SUFDeEUsQ0FBQztDQUNGLENBQUE7QUFsRlksMERBQXVCO0FBS2xDO0lBRkMsSUFBQSxhQUFJLEdBQUU7SUFDTixJQUFBLGtCQUFLLEVBQUMsR0FBRyxXQUFXLENBQUM7SUFFbkIsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUNiLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUN2QixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7O3FEQUFNLCtCQUFnQjs7cURBRzlCO0FBR0Q7SUFEQyxJQUFBLFlBQUcsR0FBRTtJQUNBLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTs7OzttREFFNUI7QUFHRDtJQURDLElBQUEsWUFBRyxFQUFDLFdBQVcsQ0FBQztJQUNWLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUFpQixXQUFBLElBQUEsY0FBSyxFQUFDLElBQUksQ0FBQyxDQUFBOzs7O29EQUV6RDtBQUdEO0lBREMsSUFBQSxZQUFHLEVBQUMsS0FBSyxDQUFDO0lBQ0gsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQWlCLFdBQUEsSUFBQSxjQUFLLEVBQUMsSUFBSSxDQUFDLENBQUE7Ozs7cURBRTFEO0FBSUQ7SUFGQyxJQUFBLGNBQUssRUFBQyxLQUFLLENBQUM7SUFDWixJQUFBLGtCQUFLLEVBQUMsR0FBRyxXQUFXLENBQUM7SUFFbkIsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUNiLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUN2QixXQUFBLElBQUEsY0FBSyxFQUFDLElBQUksQ0FBQyxDQUFBO0lBQ1gsV0FBQSxJQUFBLGFBQUksR0FBRSxDQUFBOzs2REFBTSwrQkFBZ0I7O3FEQUc5QjtBQUlEO0lBRkMsSUFBQSxlQUFNLEVBQUMsS0FBSyxDQUFDO0lBQ2IsSUFBQSxrQkFBSyxFQUFDLEdBQUcsV0FBVyxDQUFDO0lBRW5CLFdBQUEsSUFBQSx3QkFBVyxHQUFFLENBQUE7SUFDYixXQUFBLElBQUEsY0FBSyxFQUFDLGdCQUFnQixDQUFDLENBQUE7SUFDdkIsV0FBQSxJQUFBLGNBQUssRUFBQyxJQUFJLENBQUMsQ0FBQTs7OztzREFHYjtBQUlEO0lBRkMsSUFBQSxhQUFJLEVBQUMsY0FBYyxDQUFDO0lBQ3BCLElBQUEsa0JBQUssRUFBQyxHQUFHLFdBQVcsQ0FBQztJQUVuQixXQUFBLElBQUEsd0JBQVcsR0FBRSxDQUFBO0lBQ2IsV0FBQSxJQUFBLGNBQUssRUFBQyxnQkFBZ0IsQ0FBQyxDQUFBO0lBQ3ZCLFdBQUEsSUFBQSxjQUFLLEVBQUMsSUFBSSxDQUFDLENBQUE7SUFDWCxXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7OzZEQUFNLHNDQUF1Qjs7NERBR3JDO0FBSUQ7SUFGQyxJQUFBLGNBQUssRUFBQyx5QkFBeUIsQ0FBQztJQUNoQyxJQUFBLGtCQUFLLEVBQUMsR0FBRyxXQUFXLENBQUM7SUFFbkIsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUNiLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUN2QixXQUFBLElBQUEsY0FBSyxFQUFDLElBQUksQ0FBQyxDQUFBO0lBQ1gsV0FBQSxJQUFBLGNBQUssRUFBQyxXQUFXLENBQUMsQ0FBQTtJQUNsQixXQUFBLElBQUEsYUFBSSxHQUFFLENBQUE7O3FFQUFNLHNDQUF1Qjs7NERBR3JDO0FBSUQ7SUFGQyxJQUFBLGVBQU0sRUFBQyx5QkFBeUIsQ0FBQztJQUNqQyxJQUFBLGtCQUFLLEVBQUMsR0FBRyxXQUFXLENBQUM7SUFFbkIsV0FBQSxJQUFBLHdCQUFXLEdBQUUsQ0FBQTtJQUNiLFdBQUEsSUFBQSxjQUFLLEVBQUMsZ0JBQWdCLENBQUMsQ0FBQTtJQUN2QixXQUFBLElBQUEsY0FBSyxFQUFDLElBQUksQ0FBQyxDQUFBO0lBQ1gsV0FBQSxJQUFBLGNBQUssRUFBQyxXQUFXLENBQUMsQ0FBQTs7Ozs0REFHcEI7a0NBakZVLHVCQUF1QjtJQUhuQyxJQUFBLDJCQUFjLEVBQUMsY0FBYyxDQUFDO0lBQzlCLElBQUEsbUJBQVUsRUFBQyx3Q0FBd0MsQ0FBQztJQUNwRCxJQUFBLGtCQUFTLEVBQUMsMEJBQVcsRUFBRSx3QkFBVSxDQUFDO3FDQUVNLGtDQUFlO0dBRDNDLHVCQUF1QixDQWtGbkMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2xhbmRpbmdzL2xhbmRpbmdzLmNvbnRyb2xsZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHtcbiAgQm9keSxcbiAgQ29udHJvbGxlcixcbiAgRGVsZXRlLFxuICBHZXQsXG4gIFBhcmFtLFxuICBQYXRjaCxcbiAgUG9zdCxcbiAgVXNlR3VhcmRzLFxufSBmcm9tIFwiQG5lc3Rqcy9jb21tb25cIjtcbmltcG9ydCB7IExhbmRpbmdzU2VydmljZSB9IGZyb20gXCIuL2xhbmRpbmdzLnNlcnZpY2VcIjtcbmltcG9ydCB7IEN1cnJlbnRVc2VyLCBBdXRoVXNlciwgUm9sZXMsIFBlcm1pc3Npb25BcmVhIH0gZnJvbSBcIi4uL2NvbW1vbi9kZWNvcmF0b3JzXCI7XG5pbXBvcnQgeyBUZW5hbnRHdWFyZCB9IGZyb20gXCIuLi9jb21tb24vdGVuYW50Lmd1YXJkXCI7XG5pbXBvcnQgeyBSb2xlc0d1YXJkIH0gZnJvbSBcIi4uL2NvbW1vbi9yb2xlcy5ndWFyZFwiO1xuaW1wb3J0IHtcbiAgQ3JlYXRlTGFuZGluZ0R0byxcbiAgQ3JlYXRlTGFuZGluZ1ZhcmlhbnREdG8sXG4gIFVwZGF0ZUxhbmRpbmdEdG8sXG4gIFVwZGF0ZUxhbmRpbmdWYXJpYW50RHRvLFxufSBmcm9tIFwiLi9sYW5kaW5ncy5kdG9cIjtcblxuY29uc3QgV1JJVEVfUk9MRVMgPSBbXCJPV05FUlwiLCBcIkFETUlOXCIsIFwiTUFSS0VUSU5HX01BTkFHRVJcIl0gYXMgY29uc3Q7XG5cbi8qKiBFQzEzIHN0YWZmIGxhbmRpbmcgYWRtaW5pc3RyYXRpb24uIERFTEVURSBhcmNoaXZlcyAoc2VlIHRoZVxuICogIHNlcnZpY2UpIOKAlCBhdHRyaWJ1dGVkIG9yZGVycyBrZWVwIHRoZWlyIGZ1bm5lbCBoaXN0b3J5LiAqL1xuQFBlcm1pc3Npb25BcmVhKFwiaW50ZWdyYXRpb25zXCIpXG5AQ29udHJvbGxlcihcIm9yZ2FuaXphdGlvbnMvOm9yZ2FuaXphdGlvbklkL2xhbmRpbmdzXCIpXG5AVXNlR3VhcmRzKFRlbmFudEd1YXJkLCBSb2xlc0d1YXJkKVxuZXhwb3J0IGNsYXNzIExhbmRpbmdzU3RhZmZDb250cm9sbGVyIHtcbiAgY29uc3RydWN0b3IocHJpdmF0ZSByZWFkb25seSBsYW5kaW5nczogTGFuZGluZ3NTZXJ2aWNlKSB7fVxuXG4gIEBQb3N0KClcbiAgQFJvbGVzKC4uLldSSVRFX1JPTEVTKVxuICBjcmVhdGUoXG4gICAgQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAQm9keSgpIGR0bzogQ3JlYXRlTGFuZGluZ0R0byxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMubGFuZGluZ3MuY3JlYXRlKG9yZ0lkLCB1c2VyLnVzZXJJZCwgZHRvKTtcbiAgfVxuXG4gIEBHZXQoKVxuICBsaXN0KEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcpIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5saXN0KG9yZ0lkKTtcbiAgfVxuXG4gIEBHZXQoXCI6aWQvc3RhdHNcIilcbiAgc3RhdHMoQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZywgQFBhcmFtKFwiaWRcIikgaWQ6IHN0cmluZykge1xuICAgIHJldHVybiB0aGlzLmxhbmRpbmdzLnN0YXRzKG9yZ0lkLCBpZCk7XG4gIH1cblxuICBAR2V0KFwiOmlkXCIpXG4gIGdldE9uZShAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLCBAUGFyYW0oXCJpZFwiKSBpZDogc3RyaW5nKSB7XG4gICAgcmV0dXJuIHRoaXMubGFuZGluZ3MuZ2V0T25lKG9yZ0lkLCBpZCk7XG4gIH1cblxuICBAUGF0Y2goXCI6aWRcIilcbiAgQFJvbGVzKC4uLldSSVRFX1JPTEVTKVxuICB1cGRhdGUoXG4gICAgQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJpZFwiKSBpZDogc3RyaW5nLFxuICAgIEBCb2R5KCkgZHRvOiBVcGRhdGVMYW5kaW5nRHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy51cGRhdGUob3JnSWQsIHVzZXIudXNlcklkLCBpZCwgZHRvKTtcbiAgfVxuXG4gIEBEZWxldGUoXCI6aWRcIilcbiAgQFJvbGVzKC4uLldSSVRFX1JPTEVTKVxuICBhcmNoaXZlKFxuICAgIEBDdXJyZW50VXNlcigpIHVzZXI6IEF1dGhVc2VyLFxuICAgIEBQYXJhbShcIm9yZ2FuaXphdGlvbklkXCIpIG9yZ0lkOiBzdHJpbmcsXG4gICAgQFBhcmFtKFwiaWRcIikgaWQ6IHN0cmluZyxcbiAgKSB7XG4gICAgcmV0dXJuIHRoaXMubGFuZGluZ3MuYXJjaGl2ZShvcmdJZCwgdXNlci51c2VySWQsIGlkKTtcbiAgfVxuXG4gIEBQb3N0KFwiOmlkL3ZhcmlhbnRzXCIpXG4gIEBSb2xlcyguLi5XUklURV9ST0xFUylcbiAgY3JlYXRlVmFyaWFudChcbiAgICBAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlcixcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcImlkXCIpIGlkOiBzdHJpbmcsXG4gICAgQEJvZHkoKSBkdG86IENyZWF0ZUxhbmRpbmdWYXJpYW50RHRvLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5jcmVhdGVWYXJpYW50KG9yZ0lkLCB1c2VyLnVzZXJJZCwgaWQsIGR0byk7XG4gIH1cblxuICBAUGF0Y2goXCI6aWQvdmFyaWFudHMvOnZhcmlhbnRJZFwiKVxuICBAUm9sZXMoLi4uV1JJVEVfUk9MRVMpXG4gIHVwZGF0ZVZhcmlhbnQoXG4gICAgQEN1cnJlbnRVc2VyKCkgdXNlcjogQXV0aFVzZXIsXG4gICAgQFBhcmFtKFwib3JnYW5pemF0aW9uSWRcIikgb3JnSWQ6IHN0cmluZyxcbiAgICBAUGFyYW0oXCJpZFwiKSBpZDogc3RyaW5nLFxuICAgIEBQYXJhbShcInZhcmlhbnRJZFwiKSB2YXJpYW50SWQ6IHN0cmluZyxcbiAgICBAQm9keSgpIGR0bzogVXBkYXRlTGFuZGluZ1ZhcmlhbnREdG8sXG4gICkge1xuICAgIHJldHVybiB0aGlzLmxhbmRpbmdzLnVwZGF0ZVZhcmlhbnQob3JnSWQsIHVzZXIudXNlcklkLCBpZCwgdmFyaWFudElkLCBkdG8pO1xuICB9XG5cbiAgQERlbGV0ZShcIjppZC92YXJpYW50cy86dmFyaWFudElkXCIpXG4gIEBSb2xlcyguLi5XUklURV9ST0xFUylcbiAgZGVsZXRlVmFyaWFudChcbiAgICBAQ3VycmVudFVzZXIoKSB1c2VyOiBBdXRoVXNlcixcbiAgICBAUGFyYW0oXCJvcmdhbml6YXRpb25JZFwiKSBvcmdJZDogc3RyaW5nLFxuICAgIEBQYXJhbShcImlkXCIpIGlkOiBzdHJpbmcsXG4gICAgQFBhcmFtKFwidmFyaWFudElkXCIpIHZhcmlhbnRJZDogc3RyaW5nLFxuICApIHtcbiAgICByZXR1cm4gdGhpcy5sYW5kaW5ncy5kZWxldGVWYXJpYW50KG9yZ0lkLCB1c2VyLnVzZXJJZCwgaWQsIHZhcmlhbnRJZCk7XG4gIH1cbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

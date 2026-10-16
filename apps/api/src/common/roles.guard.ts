@@ -27,6 +27,25 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException("This area has been closed for your account by a custom access rule");
     }
 
+    // GB6 (GC16): a member assigned a CustomRole reaches exactly
+    // the areas that role lists (plus per-member grants) on
+    // area-tagged endpoints — their base role rank no longer
+    // decides those surfaces. TenantGuard attaches the role's
+    // areas as req.membership.customRoleAreas; when that field
+    // is absent (no custom role, non-tenant route, lookup
+    // failure) ALL behaviour below is unchanged. Owner-only
+    // gates are never opened by a custom role: they fall
+    // through to the ordinary role logic. The OWNER's own
+    // membership is never custom-gated.
+    const customAreas = (req.membership as any)?.customRoleAreas;
+    if (area && role && role !== "OWNER" && Array.isArray(customAreas)) {
+      const ownerOnlyGate = required?.length === 1 && required[0] === "OWNER";
+      if (!ownerOnlyGate) {
+        if (customAreas.includes(area) || overrides?.grants.includes(area)) return true;
+        throw new ForbiddenException("Your custom role does not include this area");
+      }
+    }
+
     if (!required?.length) return true;
     if (!role) throw new ForbiddenException("Organization membership required");
     const rolePass = required.some((r) => hasRoleAtLeast(role, r as Role));

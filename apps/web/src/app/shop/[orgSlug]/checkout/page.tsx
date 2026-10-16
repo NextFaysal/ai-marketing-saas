@@ -14,12 +14,35 @@ import {
   setCartContact,
   slotDateString,
   type Cart,
+  type CheckoutResult,
   type PickupPoint,
   type Quote,
 } from "@/lib/storefront-cart";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { captchaSiteKeyFor, termsHrefFor, type CheckoutTrust } from "@/lib/orders-gb3";
+import {
+  depositKindForPaymentMethod,
+  depositSummaryLines,
+  initiatePayment,
+  onlineOptionLabel,
+  onlineSelectionValue,
+  parseOnlineSelection,
+  saveOnlinePaymentChoice,
+  type OnlinePaymentOption,
+} from "@/lib/checkout-gc10";
+import {
+  buildFieldAnswers,
+  missingRequiredFields,
+  normalizeCheckoutFields,
+  type FieldAnswers,
+} from "@/lib/checkout-fields";
+import { CheckoutFieldsSection } from "@/components/CheckoutFieldsSection";
+import { TurnstileWidget, useIdempotencyKey } from "@/components/TurnstileWidget";
 import { fetchMe, getShopSession } from "@/lib/storefront-account";
+import { CrossSellRail } from "../CrossSellRail";
 import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
+import { getAttributionForCheckout } from "@/lib/shop-tracking";
+import { getDeviceHashForCheckout } from "@/lib/device-hash";
 
 interface ShopPublic {
   businessProfile: { codAvailable: boolean; bkashNumber: string | null; nagadNumber: string | null; paymentNote: string | null };
@@ -33,6 +56,12 @@ interface ShopPublic {
     giftWrapEnabled?: boolean;
     giftWrapFeeMinor?: string | null;
   };
+  // GB3 (GC8): checkout trust block (settings-level sibling).
+  checkoutTrust?: CheckoutTrust;
+  // GC10: real online-payment options (top level of shopHome).
+  paymentOptions?: { online: OnlinePaymentOption[] };
+  // AB4 (AX5): the org's custom checkout fields for this surface.
+  checkoutFields?: unknown;
 }
 
 function money(minor: string): string {
@@ -60,7 +89,7 @@ export default function ShopCheckoutPage() {
   const [district, setDistrict] = useState<string>("ঢাকা");
   const [couponCode, setCouponCode] = useState("");
   const [referralCode, setReferralCode] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cod" | "bkash" | "nagad">("cod");
+  const [paymentMethod, setPaymentMethod] = useState<string>("cod");
   const [advanceNote, setAdvanceNote] = useState("");
   const [note, setNote] = useState("");
   // EC29: gift wrap + message.
@@ -70,13 +99,43 @@ export default function ShopCheckoutPage() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
+  // AB1: loyalty points redemption. `loyaltyApplied` is the
+  // points count sent with quote/checkout requests (0 = none).
+  // `loyaltyBalance` is learned from a quote response — the API
+  // only carries the loyalty object on a quote that asked for
+  // points, so a separate 1-point probe quote (below) discovers
+  // the balance for the entered phone without changing the
+  // totals of the quote actually shown.
+  const [loyaltyInput, setLoyaltyInput] = useState("");
+  const [loyaltyApplied, setLoyaltyApplied] = useState(0);
+  const [loyaltyBalance, setLoyaltyBalance] = useState<number | null>(null);
+  const loyaltyProbedPhone = useRef("");
+  // AB2: gift-card code redemption — mirrors the loyalty pattern:
+  // `giftCardApplied` is the code sent with quote/checkout
+  // requests ("" = none); the priced result comes back on the
+  // quote itself as `giftCard`.
+  const [giftCardInput, setGiftCardInput] = useState("");
+  const [giftCardApplied, setGiftCardApplied] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const quoteSeq = useRef(0);
+  // GB3 (GC8): terms consent + Turnstile token + idempotency key.
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const idempotency = useIdempotencyKey();
 
   // EC18: delivery slot picker (slots arrive on the quote).
   const [slotId, setSlotId] = useState("");
   const [slotDate, setSlotDate] = useState("");
+
+  // AB4 (AX5): custom checkout-field answers + the placed order
+  // when it carries a deposit (the deposit offer panel replaces
+  // the instant navigation for COD/manual placements).
+  const [fieldAnswers, setFieldAnswers] = useState<FieldAnswers>({});
+  const [placedDeposit, setPlacedDeposit] = useState<CheckoutResult | null>(null);
+  const [depositOption, setDepositOption] = useState("");
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositError, setDepositError] = useState("");
 
   // EC30: delivery method + pickup points (public list, active only).
   const [deliveryMethod, setDeliveryMethod] = useState<"home" | "pickup">("home");
@@ -187,6 +246,8 @@ export default function ShopCheckoutPage() {
         giftWrap: giftWrap || undefined,
         deliveryMethod,
         ...(deliveryMethod === "pickup" && pickupPointId ? { pickupPointId } : {}),
+        ...(loyaltyApplied > 0 ? { loyaltyPoints: loyaltyApplied } : {}),
+        ...(giftCardApplied ? { giftCardCode: giftCardApplied } : {}),
       });
       if (seq !== quoteSeq.current) return;
       setQuote(q);
@@ -198,13 +259,80 @@ export default function ShopCheckoutPage() {
     } finally {
       if (seq === quoteSeq.current) setQuoteLoading(false);
     }
-  }, [orgSlug, district, couponCode, referralCode, phone, locale, giftWrap, deliveryMethod, pickupPointId]);
+  }, [orgSlug, district, couponCode, referralCode, phone, locale, giftWrap, deliveryMethod, pickupPointId, loyaltyApplied, giftCardApplied]);
 
   useEffect(() => {
     if (loading || !cart || (cart.items.length === 0 && (cart.bundleItems ?? []).length === 0)) return;
     const t = setTimeout(refreshQuote, 350);
     return () => clearTimeout(t);
   }, [refreshQuote, loading, cart]);
+
+  // AB1: keep the known balance in sync with any quote that
+  // carries the loyalty object (i.e. once points are applied).
+  useEffect(() => {
+    if (quote?.loyalty) {
+      setLoyaltyBalance(quote.loyalty.balance);
+      loyaltyProbedPhone.current = phone.trim();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote]);
+
+  // AB1: balance discovery probe. The quote only carries the
+  // loyalty object when points were requested, so before the
+  // shopper applies anything we ask once per phone with a
+  // 1-point quote and read ONLY its balance — the displayed
+  // quote is never replaced by the probe's totals. A null
+  // loyalty object (program off / unknown phone) records 0 so
+  // the probe does not repeat and no control is shown.
+  useEffect(() => {
+    const buyerPhone = phone.trim();
+    if (loading || !cart || loyaltyApplied > 0) return;
+    if (buyerPhone.length < 11 || loyaltyProbedPhone.current === buyerPhone) return;
+    const token = getCartToken(orgSlug);
+    if (!token || !district) return;
+    loyaltyProbedPhone.current = buyerPhone;
+    (async () => {
+      try {
+        const q = await requestQuote(orgSlug, {
+          cartToken: token,
+          district,
+          buyerPhone,
+          loyaltyPoints: 1,
+        });
+        setLoyaltyBalance(q.loyalty?.balance ?? 0);
+        if (q.loyalty && q.loyalty.balance > 0) {
+          setLoyaltyInput((prev) => prev || String(q.loyalty!.balance));
+        }
+      } catch {
+        setLoyaltyBalance(0);
+      }
+    })();
+  }, [orgSlug, phone, loading, cart, district, loyaltyApplied]);
+
+  function applyLoyalty() {
+    const balance = quote?.loyalty?.balance ?? loyaltyBalance ?? 0;
+    const parsed = Number.parseInt(loyaltyInput, 10);
+    if (!Number.isFinite(parsed)) return;
+    setLoyaltyApplied(Math.max(0, Math.min(balance, parsed)));
+  }
+
+  function removeLoyalty() {
+    setLoyaltyApplied(0);
+  }
+
+  // AB2: applying a code just re-runs the quote with it — a
+  // refusal comes back through the same quoteError path coupon
+  // errors use, carrying the API's Bengali message verbatim.
+  function applyGiftCard() {
+    const code = giftCardInput.trim();
+    if (!code) return;
+    setGiftCardApplied(code);
+  }
+
+  function removeGiftCard() {
+    setGiftCardApplied("");
+    setGiftCardInput("");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -221,13 +349,39 @@ export default function ShopCheckoutPage() {
       setError(t.checkout.pickupRequired);
       return;
     }
+    const trust = shop?.checkoutTrust;
+    if (trust?.termsRequired && !termsAccepted) {
+      setError(t.checkout.termsRequiredError);
+      return;
+    }
+    if (captchaSiteKeyFor(trust, "checkout") && !captchaToken) {
+      setError(t.checkout.captchaRequiredError);
+      return;
+    }
+    if (quote?.codRules?.unavailableForTotal && paymentMethod === "cod") {
+      setError(t.checkout.codUnavailableNote);
+      return;
+    }
+    // AB4: required custom fields must be answered.
+    const checkoutFieldDefs = normalizeCheckoutFields(shop?.checkoutFields);
+    const missingFields = missingRequiredFields(checkoutFieldDefs, fieldAnswers);
+    if (missingFields.length > 0) {
+      setError(`এই তথ্যগুলো আবশ্যক: ${missingFields.join(", ")}`);
+      return;
+    }
     setSubmitting(true);
     setError("");
+    // GC10: an `online:{source}:{provider}` radio value means a
+    // real gateway payment follows placement.
+    const onlineSel = parseOnlineSelection(paymentMethod);
     try {
       // Contact first (abandonment + order email), then the order.
       const contact: { phone: string; email?: string } = { phone: phone.trim() };
       if (email.trim()) contact.email = email.trim();
       await setCartContact(orgSlug, contact).catch(() => undefined);
+      // AB8 (AX27): weak device signal for the fraud guard —
+      // omitted entirely when the hash cannot be computed.
+      const deviceHash = await getDeviceHashForCheckout();
       const out = await placeCheckout(orgSlug, {
         cartToken: token,
         name: name.trim(),
@@ -236,26 +390,107 @@ export default function ShopCheckoutPage() {
         district,
         couponCode: couponCode.trim() || undefined,
         referralCode: referralCode.trim() || undefined,
+        // AB1: the same points the last quote priced — the
+        // server re-prices and clamps at placement.
+        ...(loyaltyApplied > 0 ? { loyaltyPoints: loyaltyApplied } : {}),
+        // AB2: the same gift-card code the last quote priced.
+        ...(giftCardApplied ? { giftCardCode: giftCardApplied } : {}),
         // EC32: a stored partner ref (the window governs; the
         // server re-validates) — not cleared after purchase.
         affiliateCode: currentAffiliateCode(orgSlug) || undefined,
-        paymentMethod,
+        paymentMethod: onlineSel ? undefined : (paymentMethod as "cod" | "bkash" | "nagad"),
+        ...(onlineSel ? { onlinePayment: onlineSel } : {}),
         note: note.trim() || undefined,
-        advanceNote: paymentMethod === "cod" ? undefined : advanceNote.trim() || undefined,
+        advanceNote: !onlineSel && paymentMethod !== "cod" ? advanceNote.trim() || undefined : undefined,
         ...(slotId && slotDate && deliveryMethod !== "pickup" ? { deliverySlotId: slotId, deliveryDate: slotDate } : {}),
         ...(giftWrap ? { giftWrap: true, giftMessage: giftMessage.trim() || undefined } : {}),
         deliveryMethod,
         ...(deliveryMethod === "pickup" ? { pickupPointId } : {}),
+        // GB3 (GC8): consent + idempotency on every submit; the
+        // captcha token only when one was produced.
+        termsAccepted,
+        idempotencyKey: idempotency.key,
+        ...(captchaToken ? { captchaToken } : {}),
+        // AB4: custom-field answers (omitted entirely when the
+        // org defines none or nothing was answered).
+        ...(buildFieldAnswers(checkoutFieldDefs, fieldAnswers)
+          ? { fieldAnswers: buildFieldAnswers(checkoutFieldDefs, fieldAnswers) }
+          : {}),
+        // AB7 (AX19): first-touch attribution from the tracking
+        // storage — the key is omitted entirely when empty.
+        ...(getAttributionForCheckout()
+          ? { attribution: getAttributionForCheckout() }
+          : {}),
+        // AB8 (AX27): device hash (omitted when unavailable).
+        ...(deviceHash ? { deviceHash } : {}),
       });
+      idempotency.reset();
       try {
         sessionStorage.setItem(lastOrderKey(orgSlug), JSON.stringify(out));
       } catch { /* session storage unavailable — success page falls back to the query param */ }
       clearCartToken(orgSlug);
+      if (onlineSel) {
+        // GC10: the result is stored BEFORE navigating (the
+        // success page polls from it), the chosen pair is kept
+        // for its retry button, and only then initiation runs.
+        // An initiate failure still lands on the success page —
+        // the order exists and is honestly unpaid.
+        // AB4: with a deposit on the order, the FIRST initiation
+        // collects the deposit only (purpose "deposit").
+        saveOnlinePaymentChoice(orgSlug, onlineSel);
+        try {
+          const redirectUrl = await initiatePayment(orgSlug, {
+            orderId: out.orderId!,
+            orderNumber: out.orderNumber,
+            provider: onlineSel.provider,
+            source: onlineSel.source,
+            ...(out.deposit ? { purpose: "deposit" as const } : {}),
+          });
+          window.location.assign(redirectUrl);
+          return;
+        } catch {
+          router.push(`/shop/${orgSlug}/success?order=${encodeURIComponent(out.orderNumber)}&payment=initiate_failed`);
+          return;
+        }
+      }
+      // AB4: a non-online placement with a deposit stays here for
+      // the deposit offer / manual instructions panel instead of
+      // navigating straight to the success page.
+      if (out.deposit) {
+        const firstOnline = shop?.paymentOptions?.online?.[0];
+        if (firstOnline) setDepositOption(onlineSelectionValue(firstOnline));
+        setPlacedDeposit(out);
+        return;
+      }
       router.push(`/shop/${orgSlug}/success?order=${encodeURIComponent(out.orderNumber)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.checkout.orderErrorFallback);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // AB4: pay the placed order's deposit now via a chosen online
+  // option (purpose "deposit"); failure lands on the success page
+  // honestly unpaid, exactly like a GC10 initiate failure.
+  async function payDepositNow() {
+    if (!placedDeposit?.orderId) return;
+    const sel = parseOnlineSelection(depositOption);
+    if (!sel) return;
+    setDepositBusy(true);
+    setDepositError("");
+    saveOnlinePaymentChoice(orgSlug, sel);
+    try {
+      const redirectUrl = await initiatePayment(orgSlug, {
+        orderId: placedDeposit.orderId,
+        orderNumber: placedDeposit.orderNumber,
+        provider: sel.provider,
+        source: sel.source,
+        purpose: "deposit",
+      });
+      window.location.assign(redirectUrl);
+    } catch {
+      router.push(`/shop/${orgSlug}/success?order=${encodeURIComponent(placedDeposit.orderNumber)}&payment=initiate_failed`);
     }
   }
 
@@ -293,10 +528,76 @@ export default function ShopCheckoutPage() {
     );
   }
 
+  // AB4: the order is placed and carries a deposit — show the
+  // deposit step (online pay-now when a gateway exists, truthful
+  // manual instructions otherwise) instead of the checkout form.
+  if (placedDeposit?.deposit) {
+    const dep = placedDeposit.deposit;
+    const onlineOptions = shop?.paymentOptions?.online ?? [];
+    return (
+      <div className="mx-auto max-w-md px-4 py-16">
+        <div className="space-y-4 rounded-2xl border bg-white p-8 shadow-sm">
+          <div className="text-center">
+            <p className="text-4xl">✅</p>
+            <h1 className="mt-2 text-lg font-black text-slate-900">অর্ডার গ্রহণ করা হয়েছে</h1>
+            <p className="mt-1 text-sm text-slate-500">অর্ডার নম্বর: <b className="font-mono">{placedDeposit.orderNumber}</b></p>
+          </div>
+          <div className="space-y-1.5 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="flex justify-between"><span>মোট</span><span className="font-bold">{money(placedDeposit.totalMinor)}</span></div>
+            <div className="flex justify-between"><span>এখন পরিশোধ (ডিপোজিট)</span><span className="font-black">{money(dep.amountMinor)}</span></div>
+            <div className="flex justify-between"><span>ডেলিভারিতে বাকি</span><span className="font-bold">{money(dep.dueAfterMinor)}</span></div>
+            {dep.note ? <p className="pt-1 text-xs leading-relaxed">{dep.note}</p> : null}
+          </div>
+          {placedDeposit.paymentMethod === "cod" && onlineOptions.length > 0 ? (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">অনলাইন পেমেন্টের মাধ্যম</label>
+              <select value={depositOption} onChange={(e) => setDepositOption(e.target.value)} className="w-full rounded-xl border border-slate-300 p-2.5 text-sm focus:border-indigo-600 focus:outline-none">
+                {onlineOptions.map((option) => (
+                  <option key={onlineSelectionValue(option)} value={onlineSelectionValue(option)}>{onlineOptionLabel(option)}</option>
+                ))}
+              </select>
+              <button type="button" onClick={payDepositNow} disabled={depositBusy} className="w-full rounded-2xl bg-emerald-600 py-3 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {depositBusy ? "পেমেন্ট শুরু হচ্ছে…" : "ডিপোজিট এখনই পরিশোধ করুন"}
+              </button>
+              {depositError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{depositError}</p> : null}
+            </div>
+          ) : (
+            <div className="space-y-1.5 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="font-bold text-slate-900">ডিপোজিট পাঠানোর মাধ্যম</p>
+              {dep.note ? <p className="text-xs leading-relaxed">{dep.note}</p> : null}
+              {shop?.businessProfile?.bkashNumber ? (
+                <p className="text-xs">বিকাশ: <span className="font-mono font-bold">{shop.businessProfile.bkashNumber}</span></p>
+              ) : null}
+              {shop?.businessProfile?.nagadNumber ? (
+                <p className="text-xs">নগদ: <span className="font-mono font-bold">{shop.businessProfile.nagadNumber}</span></p>
+              ) : null}
+              {shop?.businessProfile?.paymentNote ? (
+                <p className="text-xs leading-relaxed">{shop.businessProfile.paymentNote}</p>
+              ) : null}
+              {!shop?.businessProfile?.bkashNumber && !shop?.businessProfile?.nagadNumber && !shop?.businessProfile?.paymentNote && !dep.note ? (
+                <p className="text-xs">ডিপোজিট পাঠানোর মাধ্যম জানতে দোকান আপনার সাথে যোগাযোগ করবে।</p>
+              ) : null}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => router.push(`/shop/${orgSlug}/success?order=${encodeURIComponent(placedDeposit.orderNumber)}`)}
+            className="block w-full rounded-xl bg-slate-900 py-3 text-center text-xs font-semibold text-white hover:bg-black"
+          >
+            অর্ডারের বিবরণ দেখুন
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const bp = shop?.businessProfile;
   const showBkash = !!bp?.bkashNumber;
   const showNagad = !!bp?.nagadNumber;
   const freeDelivery = quote ? BigInt(quote.deliveryMinor) === 0n : false;
+  // AB1: the redeem control shows only with a known positive
+  // balance (from the probe quote or an applied-points quote).
+  const loyaltyBal = quote?.loyalty?.balance ?? loyaltyBalance;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -366,6 +667,13 @@ export default function ShopCheckoutPage() {
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t.checkout.notePlaceholder} className="w-full rounded-lg border border-slate-200 p-2 text-sm" />
           </div>
 
+          {/* AB4 (AX5): the org's custom checkout fields. */}
+          <CheckoutFieldsSection
+            defs={normalizeCheckoutFields(shop?.checkoutFields)}
+            answers={fieldAnswers}
+            onChange={(k, v) => setFieldAnswers((prev) => ({ ...prev, [k]: v }))}
+          />
+
           {/* EC29: gift wrap (only when the shop enables it with a fee) */}
           {shop?.settings?.giftWrapEnabled && shop.settings.giftWrapFeeMinor ? (
             <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
@@ -392,10 +700,13 @@ export default function ShopCheckoutPage() {
 
           <div className="space-y-2 border-t pt-4">
             <label className="block text-xs font-bold text-slate-700">{t.checkout.paymentMethodLabel}</label>
-            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50/60 p-3 text-sm font-bold text-emerald-950">
-              <input type="radio" name="pay" checked={paymentMethod === "cod"} onChange={() => setPaymentMethod("cod")} />
+            <label className={`flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50/60 p-3 text-sm font-bold text-emerald-950 ${quote?.codRules?.unavailableForTotal ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+              <input type="radio" name="pay" checked={paymentMethod === "cod"} disabled={!!quote?.codRules?.unavailableForTotal} onChange={() => setPaymentMethod("cod")} />
               {t.checkout.codLabel}
             </label>
+            {quote?.codRules?.unavailableForTotal ? (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{t.checkout.codUnavailableNote}</p>
+            ) : null}
             {showBkash ? (
               <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-pink-300 bg-pink-50/60 p-3 text-sm font-bold text-pink-950">
                 <input type="radio" name="pay" checked={paymentMethod === "bkash"} onChange={() => setPaymentMethod("bkash")} />
@@ -408,7 +719,21 @@ export default function ShopCheckoutPage() {
                 {t.checkout.nagadAdvancePrefix} <span className="font-mono">{bp?.nagadNumber}</span>
               </label>
             ) : null}
-            {paymentMethod !== "cod" ? (
+            {/* GC10: real online gateway options (own/platform),
+                from the shop payload's real gates — never Nagad. */}
+            {(shop?.paymentOptions?.online ?? []).map((option) => {
+              const value = onlineSelectionValue(option);
+              return (
+                <label key={value} className="flex cursor-pointer items-center gap-2 rounded-xl border border-sky-300 bg-sky-50/60 p-3 text-sm font-bold text-sky-950">
+                  <input type="radio" name="pay" checked={paymentMethod === value} onChange={() => setPaymentMethod(value)} />
+                  {onlineOptionLabel(option)}
+                  {option.sandbox ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">স্যান্ডবক্স</span>
+                  ) : null}
+                </label>
+              );
+            })}
+            {paymentMethod !== "cod" && !parseOnlineSelection(paymentMethod) ? (
               <div className="space-y-1 rounded-xl bg-amber-50 p-3">
                 <label className="block text-xs font-bold text-amber-900">
                   {t.checkout.advanceNoteLabel}
@@ -449,6 +774,86 @@ export default function ShopCheckoutPage() {
               <input value={referralCode} onChange={(e) => setReferralCode(e.target.value)} placeholder={t.checkout.referralPlaceholder} className="w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none" />
             </div>
 
+            {/* AB1: loyalty points redeem — only with a positive
+                balance; applying re-quotes with loyaltyPoints and
+                the discount comes back on the quote itself. */}
+            {loyaltyBal != null && loyaltyBal > 0 ? (
+              <div className="space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+                <p className="text-xs font-bold text-violet-900">⭐ লয়্যালটি পয়েন্ট</p>
+                <p className="text-xs text-slate-600">
+                  আপনার ব্যালেন্স: <b className="text-slate-900">{loyaltyBal} পয়েন্ট</b>
+                  {quote?.loyalty && quote.loyalty.pointsApplied > 0 ? (
+                    <> · ছাড় পেয়েছেন: <b className="text-emerald-700">− {money(quote.loyalty.discountMinor)}</b></>
+                  ) : null}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={loyaltyBal}
+                    value={loyaltyInput}
+                    onChange={(e) => setLoyaltyInput(e.target.value)}
+                    placeholder="কত পয়েন্ট ব্যবহার করবেন"
+                    className="w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyLoyalty}
+                    className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white hover:bg-violet-700"
+                  >
+                    প্রয়োগ করুন
+                  </button>
+                </div>
+                {loyaltyApplied > 0 ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-emerald-700">
+                      {quote?.loyalty
+                        ? `${quote.loyalty.pointsApplied} পয়েন্ট প্রয়োগ হয়েছে — ছাড় ${money(quote.loyalty.discountMinor)}`
+                        : `${loyaltyApplied} পয়েন্ট প্রয়োগ করা হয়েছে — হিসাব আসছে…`}
+                    </p>
+                    <button type="button" onClick={removeLoyalty} className="shrink-0 text-xs font-bold text-rose-600 hover:underline">
+                      সরিয়ে দিন
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* AB2: gift-card code — applying re-quotes with the
+                code; the priced discount comes back on the quote
+                itself and a refusal surfaces via quoteError. */}
+            <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
+              <p className="text-xs font-bold text-pink-900">🎁 গিফট কার্ড</p>
+              <div className="flex gap-2">
+                <input
+                  value={giftCardInput}
+                  onChange={(e) => setGiftCardInput(e.target.value)}
+                  placeholder="গিফট কার্ডের কোড লিখুন"
+                  className="w-full rounded-xl border border-pink-300 bg-white px-3 py-2 font-mono text-sm uppercase focus:border-pink-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={applyGiftCard}
+                  disabled={!giftCardInput.trim()}
+                  className="shrink-0 rounded-xl bg-pink-600 px-4 py-2 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
+                >
+                  প্রয়োগ করুন
+                </button>
+              </div>
+              {giftCardApplied ? (
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-emerald-700">
+                    {quote?.giftCard
+                      ? `কার্ড ••••${quote.giftCard.codeLast4} প্রয়োগ হয়েছে — ছাড় ${money(quote.giftCard.discountMinor)} (কার্ডে অবশিষ্ট ${money(quote.giftCard.balanceMinor)})`
+                      : "কোড প্রয়োগ করা হয়েছে — হিসাব আসছে…"}
+                  </p>
+                  <button type="button" onClick={removeGiftCard} className="shrink-0 text-xs font-bold text-rose-600 hover:underline">
+                    সরিয়ে দিন
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             {quoteLoading && !quote ? <p className="text-xs font-semibold text-slate-500">{t.checkout.quoteLoading}</p> : null}
             {quoteError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{quoteError}</p> : null}
             {!quote && !quoteError && !quoteLoading ? (
@@ -472,6 +877,12 @@ export default function ShopCheckoutPage() {
                 ) : quote.referralDiscountMinor && BigInt(quote.referralDiscountMinor) > 0n ? (
                   <div className="flex justify-between text-emerald-700"><span>{t.checkout.referralApplied}:</span><span className="font-semibold">− {money(quote.referralDiscountMinor)}</span></div>
                 ) : null}
+                {quote.loyalty && quote.loyalty.pointsApplied > 0 ? (
+                  <div className="flex justify-between text-emerald-700"><span>লয়্যালটি পয়েন্ট ছাড় ({quote.loyalty.pointsApplied} পয়েন্ট):</span><span className="font-semibold">− {money(quote.loyalty.discountMinor)}</span></div>
+                ) : null}
+                {quote.giftCard && BigInt(quote.giftCard.discountMinor) > 0n ? (
+                  <div className="flex justify-between text-emerald-700"><span>গিফট কার্ড ছাড় (••••{quote.giftCard.codeLast4}):</span><span className="font-semibold">− {money(quote.giftCard.discountMinor)}</span></div>
+                ) : null}
                 {quote.gift ? (
                   <div className="flex justify-between text-pink-700">
                     <span>🎁 {t.checkout.giftLinePrefix}: {quote.gift.productName} × {quote.gift.quantity} ({quote.gift.promotionName})</span>
@@ -492,6 +903,25 @@ export default function ShopCheckoutPage() {
                   <span>{paymentMethod === "cod" ? t.checkout.codDueCod : t.checkout.codDueAdvance}</span>
                   <span>{money(quote.codDueMinor)}</span>
                 </div>
+                {/* AB4 (AX5): deposit split for the SELECTED payment
+                    kind — amounts are the server's, picked from the
+                    quote deposit map on every method change. */}
+                {(() => {
+                  const lines = depositSummaryLines({
+                    totalMinor: quote.totalMinor,
+                    deposit: quote.deposit,
+                    kind: depositKindForPaymentMethod(paymentMethod),
+                  });
+                  if (!lines) return null;
+                  return (
+                    <div className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                      <div className="flex justify-between"><span>মোট</span><span className="font-bold">{money(lines.totalMinor)}</span></div>
+                      <div className="flex justify-between"><span>এখন পরিশোধ (ডিপোজিট)</span><span className="font-bold">{money(lines.depositMinor)}</span></div>
+                      <div className="flex justify-between"><span>ডেলিভারিতে বাকি</span><span className="font-bold">{money(lines.dueAfterMinor)}</span></div>
+                      {lines.note ? <p className="pt-0.5 leading-relaxed">{lines.note}</p> : null}
+                    </div>
+                  );
+                })()}
               </div>
             ) : null}
 
@@ -533,6 +963,25 @@ export default function ShopCheckoutPage() {
               </div>
             ) : null}
 
+            {/* GB3 (GC8): terms consent + Turnstile, when the shop requires them. */}
+            {shop?.checkoutTrust?.termsRequired ? (
+              <label className="flex cursor-pointer items-start gap-2 text-sm font-semibold text-slate-800">
+                <input type="checkbox" className="mt-0.5" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />
+                <span>
+                  {t.checkout.termsConsentLabel}
+                  {termsHrefFor(shop.checkoutTrust, orgSlug) ? (
+                    <> — <a href={termsHrefFor(shop.checkoutTrust, orgSlug) ?? undefined} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline" onClick={(e) => e.stopPropagation()}>{t.checkout.termsLinkText}</a></>
+                  ) : null}
+                </span>
+              </label>
+            ) : null}
+            {captchaSiteKeyFor(shop?.checkoutTrust, "checkout") ? (
+              <TurnstileWidget siteKey={captchaSiteKeyFor(shop?.checkoutTrust, "checkout") ?? ""} onToken={setCaptchaToken} />
+            ) : null}
+            {quote?.codRules?.advanceRequiredForTotal ? (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{t.checkout.codAdvanceNotice}</p>
+            ) : null}
+
             {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{error}</p> : null}
 
             {/* EC18 trust copy near the place-order button — hidden when empty. */}
@@ -561,6 +1010,11 @@ export default function ShopCheckoutPage() {
           </div>
         </div>
       </form>
+
+      {/* AB6 (AX14): cross-sell for the products in this cart. */}
+      <div className="mt-8">
+        <CrossSellRail orgSlug={orgSlug} productIds={cart.items.map((i) => i.productId)} locale={locale} />
+      </div>
     </div>
   );
 }

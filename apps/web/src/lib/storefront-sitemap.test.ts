@@ -52,6 +52,33 @@ describe("buildShopSitemapEntries (EC27 lastmod)", () => {
   it("no products ⇒ home only with null lastmod", () => {
     expect(buildShopSitemapEntries("", "s", [])).toEqual([{ url: "/shop/s", lastModified: null }]);
   });
+
+  it("AB6: blog index + post entries only when ≥1 post, with real lastmod", () => {
+    const entries = buildShopSitemapEntries("https://x.com", "s", [], [
+      { slug: "hello", updatedAt: "2026-10-02T00:00:00.000Z" },
+      { slug: "world", updatedAt: "2026-10-09T00:00:00.000Z" },
+      { slug: "hello", updatedAt: "2026-10-05T00:00:00.000Z" }, // duplicate skipped
+      { slug: null, updatedAt: "2026-10-11T00:00:00.000Z" }, // slugless skipped
+    ]);
+    expect(entries.map((e) => e.url)).toEqual([
+      "https://x.com/shop/s",
+      "https://x.com/shop/s/blog",
+      "https://x.com/shop/s/blog/hello",
+      "https://x.com/shop/s/blog/world",
+    ]);
+    // Blog index lastmod = newest post date.
+    expect(entries[1].lastModified?.toISOString()).toBe("2026-10-09T00:00:00.000Z");
+    expect(entries[2].lastModified?.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+  });
+
+  it("AB6: no blog posts ⇒ no /blog entries at all", () => {
+    expect(buildShopSitemapEntries("", "s", [{ slug: "a", updatedAt: null }], []).map((e) => e.url)).toEqual([
+      "/shop/s",
+      "/shop/s/products/a",
+    ]);
+    // Default (4th arg omitted) behaves the same.
+    expect(buildShopSitemapEntries("", "s", []).map((e) => e.url)).toEqual(["/shop/s"]);
+  });
 });
 
 describe("sitemapPagePlan", () => {

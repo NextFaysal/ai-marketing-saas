@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
-import { fetchCart, patchBundleLine, patchCartLine, setCartContact, type Cart } from "@/lib/storefront-cart";
+import { ensureCartToken, fetchCart, patchBundleLine, patchCartLine, setCartContact, type Cart } from "@/lib/storefront-cart";
+import { ExpressCheckout } from "../ExpressCheckout";
+import { CrossSellRail } from "../CrossSellRail";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
 
 function money(minor: string): string {
@@ -79,7 +81,14 @@ export default function CartPage() {
     setBusy(`bundle-${bundleId}`);
     setError("");
     try {
-      const updated = await patchBundleLine(orgSlug, { bundleId, quantity });
+      // AB5 (AX8): a slotted line's stored picks must ride along
+      // on quantity changes — the server re-validates them and
+      // refuses a slotted bundle without picks.
+      const line = (cart?.bundleItems ?? []).find((b) => b.bundleId === bundleId);
+      const updated = await patchBundleLine(orgSlug, {
+        bundleId, quantity,
+        ...(line?.picks?.length ? { picks: line.picks } : {}),
+      });
       setCart(updated);
     } catch (e) {
       setError(e instanceof Error ? e.message : t.cart.updateError);
@@ -233,7 +242,7 @@ export default function CartPage() {
                   <summary className="cursor-pointer font-semibold text-slate-700">{t.cart.bundleContents}</summary>
                   <ul className="mt-1 list-disc space-y-0.5 pl-4">
                     {b.components.map((c) => (
-                      <li key={`${c.productId}-${c.variantSku ?? ""}`}>{c.name}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}</li>
+                      <li key={`${c.productId}-${c.variantSku ?? ""}`}>{c.name}{c.variantSku ? ` (${c.variantSku})` : ""} × {c.qty}{c.viaSlot ? <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">{c.viaSlot}</span> : null}</li>
                     ))}
                   </ul>
                 </details>
@@ -291,8 +300,14 @@ export default function CartPage() {
         <Link href={`/shop/${orgSlug}/checkout`} className="block rounded-2xl bg-indigo-600 py-3.5 text-center text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700">
           {t.cart.goCheckout}
         </Link>
+        {/* AB4 (AX5c): express checkout — renders only for a
+            logged-in shopper with a live shop session. */}
+        <ExpressCheckout orgSlug={orgSlug} ensureCart={() => ensureCartToken(orgSlug)} />
         <Link href={`/shop/${orgSlug}`} className="block text-center text-xs font-bold text-indigo-700 hover:underline">{t.cart.continueShopping}</Link>
       </div>
+
+      {/* AB6 (AX14): cross-sell for the products in this cart. */}
+      <CrossSellRail orgSlug={orgSlug} productIds={cart.items.map((i) => i.productId)} locale={locale} />
     </div>
   );
 }

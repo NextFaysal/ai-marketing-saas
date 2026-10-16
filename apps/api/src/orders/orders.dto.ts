@@ -1,6 +1,6 @@
 import { Type } from "class-transformer";
 import {
-  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches,
+  IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Matches,
   Max, MaxLength, Min, ValidateNested,
 } from "class-validator";
 
@@ -37,6 +37,11 @@ export class CreateManualOrderDto {
    * (stored as Customer.address.district, the listV2 district
    * filter's canonical field). */
   @IsOptional() @IsString() @MaxLength(60) district?: string;
+  /** AB5 (AX7): set ONLY by quote conversion
+   * (OrdersService.convertQuote) — when present, the manual
+   * order's audit metadata gains { quoteId, source:
+   * "quote_conversion" }. Non-quote calls are byte-identical. */
+  @IsOptional() @IsString() @MaxLength(80) quoteId?: string;
 }
 
 /** ON4: fraud shield settings update (all optional; highValueMinor
@@ -48,6 +53,45 @@ export class UpdateFraudSettingsDto {
   @IsOptional() @IsString() @Matches(/^\d+$/, { message: "highValueMinor সঠিক সংখ্যায় পাঠান (পয়সায়)" }) highValueMinor?: string;
   @IsOptional() @IsInt() @Min(1) @Max(50) burstCount?: number;
   @IsOptional() @IsInt() @Min(1) @Max(720) burstWindowHours?: number;
+  /** GB3 (GC9): checkout-gate policy + Turnstile CAPTCHA.
+   * turnstileSecret is write-only: stored sealed, never read
+   * back (the settings payload reports turnstileSecretSet). */
+  @IsOptional() @IsIn(["off", "warn", "block"]) openOrderPolicy?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(720) openOrderWindowHours?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(10080) waitingPeriodMinutes?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(100) maxOrdersPerPhonePerDay?: number;
+  @IsOptional() @IsBoolean() captchaEnabled?: boolean;
+  @IsOptional() @IsBoolean() captchaOnCheckout?: boolean;
+  @IsOptional() @IsBoolean() captchaOnOtp?: boolean;
+  @IsOptional() @IsString() @MaxLength(200) turnstileSiteKey?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) turnstileSecret?: string;
+}
+
+/** GB3 (GC9): add a blocked/trusted identifier (phone | email |
+ * ip). Normalization + duplicate checks live in the service. */
+export class CreateIdentifierDto {
+  @IsIn(["phone", "email", "ip"]) kind!: string;
+  @IsString() @MaxLength(320) value!: string;
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+
+/** GB3 (GC9): create a fraud rule. conditions is a Json object
+ * with known keys only (validated in FraudRulesService). */
+export class CreateFraudRuleDto {
+  @IsString() @MaxLength(120) name!: string;
+  @IsIn(["hold", "tag", "block_checkout"]) action!: string;
+  @IsOptional() @IsString() @MaxLength(30) tagValue?: string;
+  @IsObject() conditions!: Record<string, unknown>;
+  @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
+/** GB3 (GC9): patch a fraud rule (enabled toggle + fields). */
+export class UpdateFraudRuleDto {
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsOptional() @IsIn(["hold", "tag", "block_checkout"]) action?: string;
+  @IsOptional() @IsString() @MaxLength(30) tagValue?: string;
+  @IsOptional() @IsObject() conditions?: Record<string, unknown>;
+  @IsOptional() @IsBoolean() enabled?: boolean;
 }
 
 /** ON4: add a phone to the org blocklist. */
@@ -261,3 +305,15 @@ export class StaffScoreboardQueryDto {
 }
 
 
+/** GC12: resend an order's online-payment link. Both fields are
+ * optional — omitted values fall back to the order's LATEST
+ * payment attempt; the pair is always re-validated server-side
+ * (TenantPaymentsService.assertPublicPaymentOption), so the
+ * values here are a request, never the authority. */
+export class PaymentLinkResendDto {
+  @IsOptional() @IsString() @MaxLength(40) provider?: string;
+  @IsOptional() @IsString() @MaxLength(20) source?: string;
+  /** AB4 (AX5a): resend for the outstanding deposit slice or
+   * the remaining balance only (validated in the service). */
+  @IsOptional() @IsString() @IsIn(["deposit", "balance"]) purpose?: string;
+}

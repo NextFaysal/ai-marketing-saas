@@ -25,6 +25,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "ইনফ্লুয়েন্সার ও পার্টনার", href: "/dashboard/influencers", icon: "🌟", ready: true },
   { label: "Social Posts", href: "/dashboard/social-posts", icon: "📣", ready: true },
   { label: "Creatives", href: "/dashboard/creatives", icon: "🎨", ready: true },
+  { label: "Media Library", href: "/dashboard/media-library", icon: "🗂️", ready: true },
   { label: "Audiences", href: "/dashboard/audiences", icon: "👥", ready: true },
   { label: "Campaign Builder", href: "/dashboard/campaign-builder", icon: "⚡", ready: true },
   { label: "AI Creative Studio", href: "/dashboard/creative-studio", icon: "🪄", ready: true },
@@ -50,4 +51,5 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Setup Guide", href: "/dashboard/setup", icon: "🧭", ready: true },
   { label: "Team Settings", href: "/dashboard/team", icon: "👥", ready: true },
   { label: "Organization Settings", href: "/dashboard/settings", icon: "⚙️", ready: true },
+  { label: "Webhooks", href: "/dashboard/settings/webhooks", icon: "🔗", ready: true },
 ] as const;

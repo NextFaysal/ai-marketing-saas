@@ -131,4 +131,33 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
       { type: "send_email", templateId },
     ],
   },
+  {
+    // AX18: the multi-step version of cart_recovery. Step 2 is
+    // the engine's issue_recovery_coupon action: it issues a
+    // REAL coupon (only when the org's abandoned-coupon setting
+    // is enabled — otherwise the step logs "skipped" and the
+    // sequence continues) and sends THIS template with the
+    // coupon lines appended by the engine. The template body
+    // therefore deliberately carries NO coupon code / no
+    // {{couponCode}} placeholder — the coupon step composes
+    // its own message from template + issued code.
+    key: "cart_recovery_3step",
+    name: "কার্ট রিকভারি ৩ ধাপ (SMS)",
+    descriptionBn: "কার্ট ফেলে যাওয়ার ১ ঘণ্টা পর একটি রিকভারি SMS, ২৪ ঘণ্টায় কুপনসহ আরেকটি বার্তা (কুপন সেটিং চালু থাকলে), এবং ৭২ ঘণ্টায় শেষ মনে করিয়ে দেওয়া SMS পাঠায়।",
+    flow: "কার্ট পরিত্যক্ত → ১ ঘণ্টা অপেক্ষা → SMS → ২৩ ঘণ্টা অপেক্ষা → কুপনসহ SMS → ৪৮ ঘণ্টা অপেক্ষা → শেষ SMS",
+    trigger: "cart_abandoned",
+    channel: "sms",
+    template: {
+      name: "Journey: কার্ট রিকভারি ৩ ধাপ (SMS)",
+      body: "{{name}}, আপনি কার্টে কিছু পণ্য রেখে গেছেন ({{itemsSummary}})। স্টক শেষ হওয়ার আগেই অর্ডারটি সম্পন্ন করুন!",
+    },
+    steps: (templateId) => [
+      { type: "wait", minutes: 60 },
+      { type: "send_sms", templateId },
+      { type: "wait", minutes: 1380 },
+      { type: "issue_recovery_coupon", templateId },
+      { type: "wait", minutes: 2880 },
+      { type: "send_sms", templateId },
+    ],
+  },
 ];

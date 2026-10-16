@@ -1,0 +1,55 @@
+a5901ef3083036869eadc6f6bce83c6d
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.InboxModule = void 0;
+const common_1 = require("@nestjs/common");
+const inbox_controller_1 = require("./inbox.controller");
+const meta_webhook_controller_1 = require("./meta-webhook.controller");
+const webchat_controller_1 = require("./webchat.controller");
+const inbox_service_1 = require("./inbox.service");
+const webchat_service_1 = require("./webchat.service");
+const realtime_service_1 = require("./realtime.service");
+const llm_factory_1 = require("../ai/llm/llm.factory");
+const telegram_service_1 = require("./channels/telegram.service");
+const email_service_1 = require("./channels/email.service");
+const telegram_webhook_controller_1 = require("./channels/telegram-webhook.controller");
+const social_comments_controller_1 = require("./social-comments.controller");
+const social_comments_service_1 = require("./social-comments.service");
+const ai_instructions_controller_1 = require("./ai-instructions.controller");
+const ai_instructions_service_1 = require("./ai-instructions.service");
+const practice_controller_1 = require("./practice.controller");
+const practice_service_1 = require("./practice.service");
+const orders_module_1 = require("../orders/orders.module");
+const crm_module_1 = require("../crm/crm.module");
+const inventory_module_1 = require("../inventory/inventory.module");
+const messaging_module_1 = require("../messaging/messaging.module");
+const practice_mode_controller_1 = require("./practice-mode.controller");
+const practice_mode_service_1 = require("./practice-mode.service");
+const customers_module_1 = require("../customers/customers.module");
+const fraud_module_1 = require("../fraud/fraud.module");
+let InboxModule = class InboxModule {
+};
+exports.InboxModule = InboxModule;
+exports.InboxModule = InboxModule = __decorate([
+    (0, common_1.Module)({
+        // CRM C5: CrmModule provides LeadAssignmentService for the
+        // leads the inbox ingestion paths create (CrmModule imports
+        // nothing itself, so this adds no module cycle).
+        // MS2: MessagingModule provides MessagingService for the
+        // WhatsApp STOP/START preference hook (no cycle).
+        // IN2: CustomersModule provides CustomersService (the canonical
+        // customer merge/unmerge) for the inbox merge endpoints. It
+        // imports Orders + Crm only — no cycle back into Inbox.
+        imports: [orders_module_1.OrdersModule, crm_module_1.CrmModule, inventory_module_1.InventoryModule, messaging_module_1.MessagingModule, customers_module_1.CustomersModule, fraud_module_1.FraudModule],
+        controllers: [inbox_controller_1.InboxController, meta_webhook_controller_1.MetaWebhookController, webchat_controller_1.WebchatAdminController, webchat_controller_1.PublicChatController, telegram_webhook_controller_1.TelegramWebhookController, social_comments_controller_1.SocialCommentsController, ai_instructions_controller_1.AiInstructionsController, practice_controller_1.PracticeController, practice_mode_controller_1.PracticeModeController],
+        providers: [inbox_service_1.InboxService, webchat_service_1.WebchatService, realtime_service_1.RealtimeService, llm_factory_1.LlmFactory, telegram_service_1.TelegramService, email_service_1.EmailChannelService, social_comments_service_1.SocialCommentsService, ai_instructions_service_1.AiInstructionsService, practice_service_1.PracticeService, practice_mode_service_1.PracticeModeService],
+        exports: [inbox_service_1.InboxService, realtime_service_1.RealtimeService, telegram_service_1.TelegramService, email_service_1.EmailChannelService, social_comments_service_1.SocialCommentsService, practice_mode_service_1.PracticeModeService],
+    })
+], InboxModule);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2luYm94L2luYm94Lm1vZHVsZS50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7QUFBQSwyQ0FBd0M7QUFDeEMseURBQXFEO0FBQ3JELHVFQUFrRTtBQUNsRSw2REFBb0Y7QUFDcEYsbURBQStDO0FBQy9DLHVEQUFtRDtBQUNuRCx5REFBcUQ7QUFDckQsdURBQW1EO0FBQ25ELGtFQUE4RDtBQUM5RCw0REFBK0Q7QUFDL0Qsd0ZBQW1GO0FBQ25GLDZFQUF3RTtBQUN4RSx1RUFBa0U7QUFDbEUsNkVBQXdFO0FBQ3hFLHVFQUFrRTtBQUNsRSwrREFBMkQ7QUFDM0QseURBQXFEO0FBQ3JELDJEQUF1RDtBQUN2RCxrREFBOEM7QUFDOUMsb0VBQWdFO0FBQ2hFLG9FQUFnRTtBQUVoRSx5RUFBb0U7QUFDcEUsbUVBQThEO0FBQzlELG9FQUFnRTtBQUNoRSx3REFBb0Q7QUFnQjdDLElBQU0sV0FBVyxHQUFqQixNQUFNLFdBQVc7Q0FBRyxDQUFBO0FBQWQsa0NBQVc7c0JBQVgsV0FBVztJQWR2QixJQUFBLGVBQU0sRUFBQztRQUNOLDJEQUEyRDtRQUMzRCw0REFBNEQ7UUFDNUQsaURBQWlEO1FBQ2pELHlEQUF5RDtRQUN6RCxrREFBa0Q7UUFDbEQsZ0VBQWdFO1FBQ2hFLDREQUE0RDtRQUM1RCx3REFBd0Q7UUFDeEQsT0FBTyxFQUFFLENBQUMsNEJBQVksRUFBRSxzQkFBUyxFQUFFLGtDQUFlLEVBQUUsa0NBQWUsRUFBRSxrQ0FBZSxFQUFFLDBCQUFXLENBQUM7UUFDbEcsV0FBVyxFQUFFLENBQUMsa0NBQWUsRUFBRSwrQ0FBcUIsRUFBRSwyQ0FBc0IsRUFBRSx5Q0FBb0IsRUFBRSx1REFBeUIsRUFBRSxxREFBd0IsRUFBRSxxREFBd0IsRUFBRSx3Q0FBa0IsRUFBRSxpREFBc0IsQ0FBQztRQUM5TixTQUFTLEVBQUUsQ0FBQyw0QkFBWSxFQUFFLGdDQUFjLEVBQUUsa0NBQWUsRUFBRSx3QkFBVSxFQUFFLGtDQUFlLEVBQUUsbUNBQW1CLEVBQUUsK0NBQXFCLEVBQUUsK0NBQXFCLEVBQUUsa0NBQWUsRUFBRSwyQ0FBbUIsQ0FBQztRQUNoTSxPQUFPLEVBQUUsQ0FBQyw0QkFBWSxFQUFFLGtDQUFlLEVBQUUsa0NBQWUsRUFBRSxtQ0FBbUIsRUFBRSwrQ0FBcUIsRUFBRSwyQ0FBbUIsQ0FBQztLQUMzSCxDQUFDO0dBQ1csV0FBVyxDQUFHIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9pbmJveC9pbmJveC5tb2R1bGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgTW9kdWxlIH0gZnJvbSBcIkBuZXN0anMvY29tbW9uXCI7XG5pbXBvcnQgeyBJbmJveENvbnRyb2xsZXIgfSBmcm9tIFwiLi9pbmJveC5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBNZXRhV2ViaG9va0NvbnRyb2xsZXIgfSBmcm9tIFwiLi9tZXRhLXdlYmhvb2suY29udHJvbGxlclwiO1xuaW1wb3J0IHsgV2ViY2hhdEFkbWluQ29udHJvbGxlciwgUHVibGljQ2hhdENvbnRyb2xsZXIgfSBmcm9tIFwiLi93ZWJjaGF0LmNvbnRyb2xsZXJcIjtcbmltcG9ydCB7IEluYm94U2VydmljZSB9IGZyb20gXCIuL2luYm94LnNlcnZpY2VcIjtcbmltcG9ydCB7IFdlYmNoYXRTZXJ2aWNlIH0gZnJvbSBcIi4vd2ViY2hhdC5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBSZWFsdGltZVNlcnZpY2UgfSBmcm9tIFwiLi9yZWFsdGltZS5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBMbG1GYWN0b3J5IH0gZnJvbSBcIi4uL2FpL2xsbS9sbG0uZmFjdG9yeVwiO1xuaW1wb3J0IHsgVGVsZWdyYW1TZXJ2aWNlIH0gZnJvbSBcIi4vY2hhbm5lbHMvdGVsZWdyYW0uc2VydmljZVwiO1xuaW1wb3J0IHsgRW1haWxDaGFubmVsU2VydmljZSB9IGZyb20gXCIuL2NoYW5uZWxzL2VtYWlsLnNlcnZpY2VcIjtcbmltcG9ydCB7IFRlbGVncmFtV2ViaG9va0NvbnRyb2xsZXIgfSBmcm9tIFwiLi9jaGFubmVscy90ZWxlZ3JhbS13ZWJob29rLmNvbnRyb2xsZXJcIjtcbmltcG9ydCB7IFNvY2lhbENvbW1lbnRzQ29udHJvbGxlciB9IGZyb20gXCIuL3NvY2lhbC1jb21tZW50cy5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBTb2NpYWxDb21tZW50c1NlcnZpY2UgfSBmcm9tIFwiLi9zb2NpYWwtY29tbWVudHMuc2VydmljZVwiO1xuaW1wb3J0IHsgQWlJbnN0cnVjdGlvbnNDb250cm9sbGVyIH0gZnJvbSBcIi4vYWktaW5zdHJ1Y3Rpb25zLmNvbnRyb2xsZXJcIjtcbmltcG9ydCB7IEFpSW5zdHJ1Y3Rpb25zU2VydmljZSB9IGZyb20gXCIuL2FpLWluc3RydWN0aW9ucy5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBQcmFjdGljZUNvbnRyb2xsZXIgfSBmcm9tIFwiLi9wcmFjdGljZS5jb250cm9sbGVyXCI7XG5pbXBvcnQgeyBQcmFjdGljZVNlcnZpY2UgfSBmcm9tIFwiLi9wcmFjdGljZS5zZXJ2aWNlXCI7XG5pbXBvcnQgeyBPcmRlcnNNb2R1bGUgfSBmcm9tIFwiLi4vb3JkZXJzL29yZGVycy5tb2R1bGVcIjtcbmltcG9ydCB7IENybU1vZHVsZSB9IGZyb20gXCIuLi9jcm0vY3JtLm1vZHVsZVwiO1xuaW1wb3J0IHsgSW52ZW50b3J5TW9kdWxlIH0gZnJvbSBcIi4uL2ludmVudG9yeS9pbnZlbnRvcnkubW9kdWxlXCI7XG5pbXBvcnQgeyBNZXNzYWdpbmdNb2R1bGUgfSBmcm9tIFwiLi4vbWVzc2FnaW5nL21lc3NhZ2luZy5tb2R1bGVcIjtcblxuaW1wb3J0IHsgUHJhY3RpY2VNb2RlQ29udHJvbGxlciB9IGZyb20gXCIuL3ByYWN0aWNlLW1vZGUuY29udHJvbGxlclwiO1xuaW1wb3J0IHsgUHJhY3RpY2VNb2RlU2VydmljZSB9IGZyb20gXCIuL3ByYWN0aWNlLW1vZGUuc2VydmljZVwiO1xuaW1wb3J0IHsgQ3VzdG9tZXJzTW9kdWxlIH0gZnJvbSBcIi4uL2N1c3RvbWVycy9jdXN0b21lcnMubW9kdWxlXCI7XG5pbXBvcnQgeyBGcmF1ZE1vZHVsZSB9IGZyb20gXCIuLi9mcmF1ZC9mcmF1ZC5tb2R1bGVcIjtcblxuQE1vZHVsZSh7XG4gIC8vIENSTSBDNTogQ3JtTW9kdWxlIHByb3ZpZGVzIExlYWRBc3NpZ25tZW50U2VydmljZSBmb3IgdGhlXG4gIC8vIGxlYWRzIHRoZSBpbmJveCBpbmdlc3Rpb24gcGF0aHMgY3JlYXRlIChDcm1Nb2R1bGUgaW1wb3J0c1xuICAvLyBub3RoaW5nIGl0c2VsZiwgc28gdGhpcyBhZGRzIG5vIG1vZHVsZSBjeWNsZSkuXG4gIC8vIE1TMjogTWVzc2FnaW5nTW9kdWxlIHByb3ZpZGVzIE1lc3NhZ2luZ1NlcnZpY2UgZm9yIHRoZVxuICAvLyBXaGF0c0FwcCBTVE9QL1NUQVJUIHByZWZlcmVuY2UgaG9vayAobm8gY3ljbGUpLlxuICAvLyBJTjI6IEN1c3RvbWVyc01vZHVsZSBwcm92aWRlcyBDdXN0b21lcnNTZXJ2aWNlICh0aGUgY2Fub25pY2FsXG4gIC8vIGN1c3RvbWVyIG1lcmdlL3VubWVyZ2UpIGZvciB0aGUgaW5ib3ggbWVyZ2UgZW5kcG9pbnRzLiBJdFxuICAvLyBpbXBvcnRzIE9yZGVycyArIENybSBvbmx5IOKAlCBubyBjeWNsZSBiYWNrIGludG8gSW5ib3guXG4gIGltcG9ydHM6IFtPcmRlcnNNb2R1bGUsIENybU1vZHVsZSwgSW52ZW50b3J5TW9kdWxlLCBNZXNzYWdpbmdNb2R1bGUsIEN1c3RvbWVyc01vZHVsZSwgRnJhdWRNb2R1bGVdLFxuICBjb250cm9sbGVyczogW0luYm94Q29udHJvbGxlciwgTWV0YVdlYmhvb2tDb250cm9sbGVyLCBXZWJjaGF0QWRtaW5Db250cm9sbGVyLCBQdWJsaWNDaGF0Q29udHJvbGxlciwgVGVsZWdyYW1XZWJob29rQ29udHJvbGxlciwgU29jaWFsQ29tbWVudHNDb250cm9sbGVyLCBBaUluc3RydWN0aW9uc0NvbnRyb2xsZXIsIFByYWN0aWNlQ29udHJvbGxlciwgUHJhY3RpY2VNb2RlQ29udHJvbGxlcl0sXG4gIHByb3ZpZGVyczogW0luYm94U2VydmljZSwgV2ViY2hhdFNlcnZpY2UsIFJlYWx0aW1lU2VydmljZSwgTGxtRmFjdG9yeSwgVGVsZWdyYW1TZXJ2aWNlLCBFbWFpbENoYW5uZWxTZXJ2aWNlLCBTb2NpYWxDb21tZW50c1NlcnZpY2UsIEFpSW5zdHJ1Y3Rpb25zU2VydmljZSwgUHJhY3RpY2VTZXJ2aWNlLCBQcmFjdGljZU1vZGVTZXJ2aWNlXSxcbiAgZXhwb3J0czogW0luYm94U2VydmljZSwgUmVhbHRpbWVTZXJ2aWNlLCBUZWxlZ3JhbVNlcnZpY2UsIEVtYWlsQ2hhbm5lbFNlcnZpY2UsIFNvY2lhbENvbW1lbnRzU2VydmljZSwgUHJhY3RpY2VNb2RlU2VydmljZV0sXG59KVxuZXhwb3J0IGNsYXNzIEluYm94TW9kdWxlIHt9XG5cbiJdLCJ2ZXJzaW9uIjozfQ==

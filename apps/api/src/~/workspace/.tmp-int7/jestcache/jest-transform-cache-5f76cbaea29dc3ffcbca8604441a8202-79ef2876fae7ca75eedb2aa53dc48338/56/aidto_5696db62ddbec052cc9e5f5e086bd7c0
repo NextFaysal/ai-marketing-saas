@@ -1,0 +1,528 @@
+e2ecf45a6489b61bcd7114e3ac3dbd70
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AssistantApiChatDto = exports.CreateAssistantApiKeyDto = exports.UpdateSavedPromptDto = exports.CreateSavedPromptDto = exports.BulkApproveDto = exports.CreateProposalDto = exports.CreateCreativeDraftDto = exports.GenerateCreativeDto = exports.UpdateProactiveSettingsDto = exports.UpdateConversationDto = exports.UpdateRecommendationDto = exports.SendMessageDto = exports.ChatAttachmentDto = exports.EntityContextDto = exports.CreateConversationDto = exports.GenerateReportDto = void 0;
+const class_validator_1 = require("class-validator");
+const class_transformer_1 = require("class-transformer");
+class GenerateReportDto {
+    type; // daily | weekly | monthly
+    date; // anchor date YYYY-MM-DD (period ends this day)
+    language; // bn | en
+}
+exports.GenerateReportDto = GenerateReportDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateReportDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateReportDto.prototype, "date", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateReportDto.prototype, "language", void 0);
+class CreateConversationDto {
+    title;
+    // AP7: specialist persona for the new conversation.
+    persona;
+}
+exports.CreateConversationDto = CreateConversationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateConversationDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["general", "ads_analyst", "inbox_coach", "finance_analyst"]),
+    __metadata("design:type", String)
+], CreateConversationDto.prototype, "persona", void 0);
+/** G6: the record the user attached via the @-mention picker.
+ *  Carries only a type + opaque id; the server loads the facts
+ *  itself, org-scoped — entity facts never round-trip from the
+ *  client (security-first, per the v2 plan). */
+class EntityContextDto {
+    type;
+    id;
+}
+exports.EntityContextDto = EntityContextDto;
+__decorate([
+    (0, class_validator_1.IsIn)(["order", "customer", "product", "campaign"]),
+    __metadata("design:type", String)
+], EntityContextDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], EntityContextDto.prototype, "id", void 0);
+/** AP2: a file/image the user attached to this message, already
+ *  processed by POST ai/chat/attachments — documents carry their
+ *  extracted text, images carry the vision description. Stored on
+ *  the user message so the citation stays honest after reload. */
+class ChatAttachmentDto {
+    name;
+    kind;
+    text;
+}
+exports.ChatAttachmentDto = ChatAttachmentDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], ChatAttachmentDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsIn)(["file", "image"]),
+    __metadata("design:type", String)
+], ChatAttachmentDto.prototype, "kind", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(12000),
+    __metadata("design:type", String)
+], ChatAttachmentDto.prototype, "text", void 0);
+class SendMessageDto {
+    content;
+    // Global Assistant (2026-10-12): the dashboard section the user is
+    // viewing, sent as a route path only (never free text). Used solely
+    // as a compose-time interpretation hint — never stored on the
+    // message. The service re-validates the shape (defense in depth).
+    pageContext;
+    entity;
+    attachment;
+}
+exports.SendMessageDto = SendMessageDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(8000),
+    __metadata("design:type", String)
+], SendMessageDto.prototype, "content", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    (0, class_validator_1.Matches)(/^\/dashboard(\/[a-z0-9-]+)*$/),
+    __metadata("design:type", String)
+], SendMessageDto.prototype, "pageContext", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => EntityContextDto),
+    __metadata("design:type", EntityContextDto)
+], SendMessageDto.prototype, "entity", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => ChatAttachmentDto),
+    __metadata("design:type", ChatAttachmentDto)
+], SendMessageDto.prototype, "attachment", void 0);
+class UpdateRecommendationDto {
+    status; // open | done | dismissed
+}
+exports.UpdateRecommendationDto = UpdateRecommendationDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateRecommendationDto.prototype, "status", void 0);
+class UpdateConversationDto {
+    title;
+    pinned;
+    persona;
+}
+exports.UpdateConversationDto = UpdateConversationDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], UpdateConversationDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateConversationDto.prototype, "pinned", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["general", "ads_analyst", "inbox_coach", "finance_analyst"]),
+    __metadata("design:type", String)
+], UpdateConversationDto.prototype, "persona", void 0);
+class UpdateProactiveSettingsDto {
+    // @IsBoolean is load-bearing: with forbidNonWhitelisted the M40
+    // FlagDto incident showed a missing decorator silently 400s.
+    briefingEnabled;
+    anomalyAlertsEnabled;
+    // CX12b (12e): email copy of the daily briefing (default OFF).
+    dailyReportEmailEnabled;
+    // AP6: Telegram copy of the daily briefing (default OFF).
+    telegramBriefEnabled;
+    telegramBriefChatId;
+    // AP7: autonomy level (0|2) + per-tenant assistant name.
+    autonomyLevel;
+    assistantName;
+}
+exports.UpdateProactiveSettingsDto = UpdateProactiveSettingsDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateProactiveSettingsDto.prototype, "briefingEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateProactiveSettingsDto.prototype, "anomalyAlertsEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateProactiveSettingsDto.prototype, "dailyReportEmailEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateProactiveSettingsDto.prototype, "telegramBriefEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], UpdateProactiveSettingsDto.prototype, "telegramBriefChatId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(0),
+    (0, class_validator_1.Max)(2),
+    __metadata("design:type", Number)
+], UpdateProactiveSettingsDto.prototype, "autonomyLevel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], UpdateProactiveSettingsDto.prototype, "assistantName", void 0);
+class GenerateCreativeDto {
+    productId;
+    goal;
+    tone;
+    language;
+}
+exports.GenerateCreativeDto = GenerateCreativeDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateCreativeDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], GenerateCreativeDto.prototype, "goal", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(60),
+    __metadata("design:type", String)
+], GenerateCreativeDto.prototype, "tone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GenerateCreativeDto.prototype, "language", void 0);
+class CreateCreativeDraftDto {
+    productId;
+    adAccountId;
+    headline;
+    primaryText;
+    callToAction;
+    linkUrl;
+}
+exports.CreateCreativeDraftDto = CreateCreativeDraftDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "adAccountId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "headline", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(5000),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "primaryText", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "callToAction", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(1000),
+    __metadata("design:type", String)
+], CreateCreativeDraftDto.prototype, "linkUrl", void 0);
+class CreateProposalDto {
+    type; // pause_campaign | pause_ad_set | create_broadcast_draft
+    planId;
+    adSetId;
+    recommendationId;
+    // broadcast draft fields
+    name;
+    channel;
+    subject;
+    body;
+    audienceType;
+    audienceStage;
+    audienceSegment;
+    whatsappTemplateId;
+    // AP5 fields
+    leadId;
+    dueAt;
+    note;
+    title;
+    content;
+    // EC11 commerce proposal fields
+    productId;
+    listingId;
+    newPrice;
+    newQuantity;
+    delta;
+    discountCode;
+    discountKind;
+    discountValue;
+    discountMinOrderMinor;
+    discountUsageLimit;
+}
+exports.CreateProposalDto = CreateProposalDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "planId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "adSetId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "recommendationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(160),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "channel", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(300),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "subject", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(8000),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "body", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "audienceType", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "audienceStage", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "audienceSegment", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "whatsappTemplateId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "leadId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "dueAt", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4000),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "content", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "listingId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "newPrice", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateProposalDto.prototype, "newQuantity", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateProposalDto.prototype, "delta", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "discountCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "discountKind", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateProposalDto.prototype, "discountValue", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateProposalDto.prototype, "discountMinOrderMinor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], CreateProposalDto.prototype, "discountUsageLimit", void 0);
+class BulkApproveDto {
+    ids;
+}
+exports.BulkApproveDto = BulkApproveDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayMaxSize)(20),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], BulkApproveDto.prototype, "ids", void 0);
+class CreateSavedPromptDto {
+    title;
+    body;
+}
+exports.CreateSavedPromptDto = CreateSavedPromptDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateSavedPromptDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], CreateSavedPromptDto.prototype, "body", void 0);
+class UpdateSavedPromptDto {
+    title;
+    body;
+}
+exports.UpdateSavedPromptDto = UpdateSavedPromptDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], UpdateSavedPromptDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], UpdateSavedPromptDto.prototype, "body", void 0);
+class CreateAssistantApiKeyDto {
+    name;
+}
+exports.CreateAssistantApiKeyDto = CreateAssistantApiKeyDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateAssistantApiKeyDto.prototype, "name", void 0);
+class AssistantApiChatDto {
+    content;
+    conversationId;
+    persona;
+}
+exports.AssistantApiChatDto = AssistantApiChatDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(4000),
+    __metadata("design:type", String)
+], AssistantApiChatDto.prototype, "content", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], AssistantApiChatDto.prototype, "conversationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(["general", "ads_analyst", "inbox_coach", "finance_analyst"]),
+    __metadata("design:type", String)
+], AssistantApiChatDto.prototype, "persona", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FpL2FpLmR0by50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7QUFBQSxxREFBb0o7QUFDcEoseURBQXlDO0FBQ3pDLE1BQWEsaUJBQWlCO0lBQ0YsSUFBSSxDQUFVLENBQUMsMkJBQTJCO0lBQzFDLElBQUksQ0FBVSxDQUFDLGdEQUFnRDtJQUMvRCxRQUFRLENBQVUsQ0FBQyxVQUFVO0NBQ3hEO0FBSkQsOENBSUM7QUFIMkI7SUFBekIsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFOzsrQ0FBZTtBQUNkO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7K0NBQWU7QUFDZDtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O21EQUFtQjtBQUU5QyxNQUFhLHFCQUFxQjtJQUNVLEtBQUssQ0FBVTtJQUN6RCxvREFBb0Q7SUFDOEIsT0FBTyxDQUFVO0NBQ3BHO0FBSkQsc0RBSUM7QUFIMkM7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7b0RBQWdCO0FBRXlCO0lBQWpGLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsc0JBQUksRUFBQyxDQUFDLFNBQVMsRUFBRSxhQUFhLEVBQUUsYUFBYSxFQUFFLGlCQUFpQixDQUFDLENBQUM7O3NEQUFrQjtBQUVyRzs7O2dEQUdnRDtBQUNoRCxNQUFhLGdCQUFnQjtJQUUzQixJQUFJLENBQWlEO0lBSXJELEVBQUUsQ0FBVTtDQUNiO0FBUEQsNENBT0M7QUFMQztJQURDLElBQUEsc0JBQUksRUFBQyxDQUFDLE9BQU8sRUFBRSxVQUFVLEVBQUUsU0FBUyxFQUFFLFVBQVUsQ0FBQyxDQUFDOzs4Q0FDRTtBQUlyRDtJQUZDLElBQUEsMEJBQVEsR0FBRTtJQUNWLElBQUEsMkJBQVMsRUFB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QjtJQUExQixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDOzttREFBZ0I7QUFDYjtJQUE1QixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsSUFBSSxDQUFDOztrREFBZTtBQUU3QyxNQUFhLG9CQUFvQjtJQUNVLEtBQUssQ0FBVTtJQUNiLElBQUksQ0FBVTtDQUMxRDtBQUhELG9EQUdDO0FBRjBDO0lBQXhDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxFQUFFLENBQUM7O21EQUFnQjtBQUNiO0lBQTFDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7O2tEQUFlO0FBRzNELE1BQWEsd0JBQXdCO0lBQ1IsSUFBSSxDQUFVO0NBQzFDO0FBRkQsNERBRUM7QUFENEI7SUFBMUIsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEVBQUUsQ0FBQzs7c0RBQWU7QUFHM0MsTUFBYSxtQkFBbUI7SUFDRCxPQUFPLENBQVU7SUFDcEIsY0FBYyxDQUFVO0lBQ2dDLE9BQU8sQ0FBVTtDQUNwRztBQUpELGtEQUlDO0FBSDhCO0lBQTVCLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxJQUFJLENBQUM7O29EQUFrQjtBQUNwQjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7OzJEQUF5QjtBQUNnQztJQUFqRixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLHNCQUFJLEVBQUMsQ0FBQyxTQUFTLEVBQUUsYUFBYSxFQUFFLGFBQWEsRUFBRSxpQkFBaUIsQ0FBQyxDQUFDOztvREFBa0IiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2FpL2FpLmR0by50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBBcnJheU1heFNpemUsIElzQXJyYXksIElzQm9vbGVhbiwgSXNJbiwgSXNJbnQsIElzT3B0aW9uYWwsIElzU3RyaW5nLCBNYXRjaGVzLCBNYXgsIE1heExlbmd0aCwgTWluLCBWYWxpZGF0ZU5lc3RlZCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcbmltcG9ydCB7IFR5cGUgfSBmcm9tIFwiY2xhc3MtdHJhbnNmb3JtZXJcIjtcbmV4cG9ydCBjbGFzcyBHZW5lcmF0ZVJlcG9ydER0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgdHlwZT86IHN0cmluZzsgLy8gZGFpbHkgfCB3ZWVrbHkgfCBtb250aGx5XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgZGF0ZT86IHN0cmluZzsgLy8gYW5jaG9yIGRhdGUgWVlZWS1NTS1ERCAocGVyaW9kIGVuZHMgdGhpcyBkYXkpXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgbGFuZ3VhZ2U/OiBzdHJpbmc7IC8vIGJuIHwgZW5cbn1cbmV4cG9ydCBjbGFzcyBDcmVhdGVDb252ZXJzYXRpb25EdG8ge1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMTIwKSB0aXRsZT86IHN0cmluZztcbiAgLy8gQVA3OiBzcGVjaWFsaXN0IHBlcnNvbmEgZm9yIHRoZSBuZXcgY29udmVyc2F0aW9uLlxuICBASXNPcHRpb25hbCgpIEBJc0luKFtcImdlbmVyYWxcIiwgXCJhZHNfYW5hbHlzdFwiLCBcImluYm94X2NvYWNoXCIsIFwiZmluYW5jZV9hbmFseXN0XCJdKSBwZXJzb25hPzogc3RyaW5nO1xufVxuLyoqIEc2OiB0aGUgcmVjb3JkIHRoZSB1c2VyIGF0dGFjaGVkIHZpYSB0aGUgQC1tZW50aW9uIHBpY2tlci5cbiAqICBDYXJyaWVzIG9ubHkgYSB0eXBlICsgb3BhcXVlIGlkOyB0aGUgc2VydmVyIGxvYWRzIHRoZSBmYWN0c1xuICogIGl0c2VsZiwgb3JnLXNjb3BlZCDigJQgZW50aXR5IGZhY3RzIG5ldmVyIHJvdW5kLXRyaXAgZnJvbSB0aGVcbiAqICBjbGllbnQgKHNlY3VyaXR5LWZpcnN0LCBwZXIgdGhlIHYyIHBsYW4pLiAqL1xuZXhwb3J0IGNsYXNzIEVudGl0eUNvbnRleHREdG8ge1xuICBASXNJbihbXCJvcmRlclwiLCBcImN1c3RvbWVyXCIsIFwicHJvZHVjdFwiLCBcImNhbXBhaWduXCJdKVxuICB0eXBlITogXCJvcmRlclwiIHwgXCJjdXN0b21lclwiIHwgXCJwcm9kdWN0XCIgfCBcImNhbXBhaWduXCI7XG5cbiAgQElzU3RyaW5nKClcbiAgQE1heExlbmd0aCg2NClcbiAgaWQhOiBzdHJpbmc7XG59XG5cbi8qKiBBUDI6IGEgZmlsZS9pbWFnZSB0aGUgdXNlciBhdHRhY2hlZCB0byB0aGlzIG1lc3NhZ2UsIGFscmVhZHlcbiAqICBwcm9jZXNzZWQgYnkgUE9TVCBhaS9jaGF0L2F0dGFjaG1lbnRzIOKAlCBkb2N1bWVudHMgY2FycnkgdGhlaXJcbiAqICBleHRyYWN0ZWQgdGV4dCwgaW1hZ2VzIGNhcnJ5IHRoZSB2aXNpb24gZGVzY3JpcHRpb24uIFN0b3JlZCBvblxuICogIHRoZSB1c2VyIG1lc3NhZ2Ugc28gdGhlIGNpdGF0aW9uIHN0YXlzIGhvbmVzdCBhZnRlciByZWxvYWQuICovXG5leHBvcnQgY2xhc3MgQ2hhdEF0dGFjaG1lbnREdG8ge1xuICBASXNTdHJpbmcoKVxuICBATWF4TGVuZ3RoKDEyMClcbiAgbmFtZSE6IHN0cmluZztcblxuICBASXNJbihbXCJmaWxlXCIsIFwiaW1hZ2VcIl0pXG4gIGtpbmQhOiBcImZpbGVcIiB8IFwiaW1hZ2VcIjtcblxuICBASXNTdHJpbmcoKVxuICBATWF4TGVuZ3RoKDEyMDAwKVxuICB0ZXh0ITogc3RyaW5nO1xufVxuXG5leHBvcnQgY2xhc3MgU2VuZE1lc3NhZ2VEdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDgwMDApIGNvbnRlbnQhOiBzdHJpbmc7XG4gIC8vIEdsb2JhbCBBc3Npc3RhbnQgKDIwMjYtMTAtMTIpOiB0aGUgZGFzaGJvYXJkIHNlY3Rpb24gdGhlIHVzZXIgaXNcbiAgLy8gdmlld2luZywgc2VudCBhcyBhIHJvdXRlIHBhdGggb25seSAobmV2ZXIgZnJlZSB0ZXh0KS4gVXNlZCBzb2xlbHlcbiAgLy8gYXMgYSBjb21wb3NlLXRpbWUgaW50ZXJwcmV0YXRpb24gaGludCDigJQgbmV2ZXIgc3RvcmVkIG9uIHRoZVxuICAvLyBtZXNzYWdlLiBUaGUgc2VydmljZSByZS12YWxpZGF0ZXMgdGhlIHNoYXBlIChkZWZlbnNlIGluIGRlcHRoKS5cbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMClcbiAgQE1hdGNoZXMoL15cXC9kYXNoYm9hcmQoXFwvW2EtejAtOS1dKykqJC8pXG4gIHBhZ2VDb250ZXh0Pzogc3RyaW5nO1xuXG4gIEBJc09wdGlvbmFsKClcbiAgQFZhbGlkYXRlTmVzdGVkKClcbiAgQFR5cGUoKCkgPT4gRW50aXR5Q29udGV4dER0bylcbiAgZW50aXR5PzogRW50aXR5Q29udGV4dER0bztcblxuICBASXNPcHRpb25hbCgpXG4gIEBWYWxpZGF0ZU5lc3RlZCgpXG4gIEBUeXBlKCgpID0+IENoYXRBdHRhY2htZW50RHRvKVxuICBhdHRhY2htZW50PzogQ2hhdEF0dGFjaG1lbnREdG87XG59XG5leHBvcnQgY2xhc3MgVXBkYXRlUmVjb21tZW5kYXRpb25EdG8ge1xuICBASXNTdHJpbmcoKSBzdGF0dXMhOiBzdHJpbmc7IC8vIG9wZW4gfCBkb25lIHwgZGlzbWlzc2VkXG59XG5leHBvcnQgY2xhc3MgVXBkYXRlQ29udmVyc2F0aW9uRHRvIHtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgdGl0bGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHBpbm5lZD86IGJvb2xlYW47XG4gIEBJc09wdGlvbmFsKCkgQElzSW4oW1wiZ2VuZXJhbFwiLCBcImFkc19hbmFseXN0XCIsIFwiaW5ib3hfY29hY2hcIiwgXCJmaW5hbmNlX2FuYWx5c3RcIl0pIHBlcnNvbmE/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgVXBkYXRlUHJvYWN0aXZlU2V0dGluZ3NEdG8ge1xuICAvLyBASXNCb29sZWFuIGlzIGxvYWQtYmVhcmluZzogd2l0aCBmb3JiaWROb25XaGl0ZWxpc3RlZCB0aGUgTTQwXG4gIC8vIEZsYWdEdG8gaW5jaWRlbnQgc2hvd2VkIGEgbWlzc2luZyBkZWNvcmF0b3Igc2lsZW50bHkgNDAwcy5cbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgYnJpZWZpbmdFbmFibGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgYW5vbWFseUFsZXJ0c0VuYWJsZWQ/OiBib29sZWFuO1xuICAvLyBDWDEyYiAoMTJlKTogZW1haWwgY29weSBvZiB0aGUgZGFpbHkgYnJpZWZpbmcgKGRlZmF1bHQgT0ZGKS5cbiAgQElzT3B0aW9uYWwoKSBASXNCb29sZWFuKCkgZGFpbHlSZXBvcnRFbWFpbEVuYWJsZWQ/OiBib29sZWFuO1xuICAvLyBBUDY6IFRlbGVncmFtIGNvcHkgb2YgdGhlIGRhaWx5IGJyaWVmaW5nIChkZWZhdWx0IE9GRikuXG4gIEBJc09wdGlvbmFsKCkgQElzQm9vbGVhbigpIHRlbGVncmFtQnJpZWZFbmFibGVkPzogYm9vbGVhbjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwKSB0ZWxlZ3JhbUJyaWVmQ2hhdElkPzogc3RyaW5nO1xuICAvLyBBUDc6IGF1dG9ub215IGxldmVsICgwfDIpICsgcGVyLXRlbmFudCBhc3Npc3RhbnQgbmFtZS5cbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBATWluKDApIEBNYXgoMikgYXV0b25vbXlMZXZlbD86IG51bWJlcjtcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDYwKSBhc3Npc3RhbnROYW1lPzogc3RyaW5nO1xufVxuZXhwb3J0IGNsYXNzIEdlbmVyYXRlQ3JlYXRpdmVEdG8ge1xuICBASXNTdHJpbmcoKSBwcm9kdWN0SWQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIGdvYWw/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg2MCkgdG9uZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBsYW5ndWFnZT86IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBDcmVhdGVDcmVhdGl2ZURyYWZ0RHRvIHtcbiAgQElzU3RyaW5nKCkgcHJvZHVjdElkITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBhZEFjY291bnRJZCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDApIGhlYWRsaW5lITogc3RyaW5nO1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMDApIHByaW1hcnlUZXh0ITogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNDApIGNhbGxUb0FjdGlvbj86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEwMDApIGxpbmtVcmw/OiBzdHJpbmc7XG59XG5leHBvcnQgY2xhc3MgQ3JlYXRlUHJvcG9zYWxEdG8ge1xuICBASXNTdHJpbmcoKSB0eXBlITogc3RyaW5nOyAvLyBwYXVzZV9jYW1wYWlnbiB8IHBhdXNlX2FkX3NldCB8IGNyZWF0ZV9icm9hZGNhc3RfZHJhZnRcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBwbGFuSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYWRTZXRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSByZWNvbW1lbmRhdGlvbklkPzogc3RyaW5nO1xuICAvLyBicm9hZGNhc3QgZHJhZnQgZmllbGRzXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgxNjApIG5hbWU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgY2hhbm5lbD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDMwMCkgc3ViamVjdD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDgwMDApIGJvZHk/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYXVkaWVuY2VUeXBlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGF1ZGllbmNlU3RhZ2U/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgYXVkaWVuY2VTZWdtZW50Pzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHdoYXRzYXBwVGVtcGxhdGVJZD86IHN0cmluZztcbiAgLy8gQVA1IGZpZWxkc1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGxlYWRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBkdWVBdD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgbm90ZT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDEyMCkgdGl0bGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg0MDAwKSBjb250ZW50Pzogc3RyaW5nO1xuICAvLyBFQzExIGNvbW1lcmNlIHByb3Bvc2FsIGZpZWxkc1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIHByb2R1Y3RJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBsaXN0aW5nSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgbmV3UHJpY2U/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgbmV3UXVhbnRpdHk/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzSW50KCkgZGVsdGE/OiBudW1iZXI7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg4MCkgZGlzY291bnRDb2RlPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGRpc2NvdW50S2luZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBkaXNjb3VudFZhbHVlPzogbnVtYmVyO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIGRpc2NvdW50TWluT3JkZXJNaW5vcj86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNJbnQoKSBkaXNjb3VudFVzYWdlTGltaXQ/OiBudW1iZXI7XG59XG5cbmV4cG9ydCBjbGFzcyBCdWxrQXBwcm92ZUR0byB7XG4gIEBJc0FycmF5KClcbiAgQEFycmF5TWF4U2l6ZSgyMClcbiAgQElzU3RyaW5nKHsgZWFjaDogdHJ1ZSB9KVxuICBpZHMhOiBzdHJpbmdbXTtcbn1cblxuZXhwb3J0IGNsYXNzIENyZWF0ZVNhdmVkUHJvbXB0RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg4MCkgdGl0bGUhOiBzdHJpbmc7XG4gIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoMjAwMCkgYm9keSE6IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBVcGRhdGVTYXZlZFByb21wdER0byB7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCg4MCkgdGl0bGU/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1heExlbmd0aCgyMDAwKSBib2R5Pzogc3RyaW5nO1xufVxuXG5leHBvcnQgY2xhc3MgQ3JlYXRlQXNzaXN0YW50QXBpS2V5RHRvIHtcbiAgQElzU3RyaW5nKCkgQE1heExlbmd0aCg4MCkgbmFtZSE6IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIEFzc2lzdGFudEFwaUNoYXREdG8ge1xuICBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDQwMDApIGNvbnRlbnQhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgY29udmVyc2F0aW9uSWQ/OiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzSW4oW1wiZ2VuZXJhbFwiLCBcImFkc19hbmFseXN0XCIsIFwiaW5ib3hfY29hY2hcIiwgXCJmaW5hbmNlX2FuYWx5c3RcIl0pIHBlcnNvbmE/OiBzdHJpbmc7XG59XG4iXSwidmVyc2lvbiI6M30=

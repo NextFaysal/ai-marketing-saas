@@ -62,18 +62,22 @@ export interface BogoConfig {
   getCategoryId?: string | null;
   getQty: number;
   getDiscountPercent: number;
+  /** GB7: skip unless the buyer has at least this many prior orders. */
+  minPriorOrders?: number;
 }
 
 export interface TieredConfig {
   scope: "subtotal" | "category";
   categoryId?: string | null;
   tiers: Array<{ minAmountMinor?: string | null; minQty?: number | null; percentOff: number }>;
+  minPriorOrders?: number;
 }
 
 export interface FlashConfig {
   percentOff: number;
   productIds?: string[];
   categoryIds?: string[];
+  minPriorOrders?: number;
 }
 
 /** EC29: free-gift promotion — when the cart's pre-discount
@@ -85,6 +89,19 @@ export interface GiftConfig {
   giftProductId: string;
   giftVariantSku?: string | null;
   giftQty: number;
+  minPriorOrders?: number;
+}
+
+/** GB7: the normalized promotion config returned by
+ * validatePromotionConfig (any type, with the shared
+ * minPriorOrders condition when configured). */
+export type NormalizedPromotionConfig = BogoConfig | TieredConfig | FlashConfig | GiftConfig;
+
+function normalizeMinPriorOrders(cfg: any): number | undefined {
+  const raw = cfg?.minPriorOrders;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) return raw;
+  throw new Error("min_prior_orders");
 }
 
 function isIntIn(v: unknown, min: number, max: number): v is number {
@@ -114,6 +131,8 @@ export function validatePromotionConfig(
   raw: any,
 ): BogoConfig | TieredConfig | FlashConfig | GiftConfig {
   const cfg = raw && typeof raw === "object" ? raw : {};
+  const minPriorOrders = normalizeMinPriorOrders(cfg);
+  const minPriorPart = minPriorOrders !== undefined ? { minPriorOrders } : {};
   if (type === "bogo") {
     const buyProductId = optId(cfg.buyProductId);
     const buyCategoryId = optId(cfg.buyCategoryId);
@@ -132,6 +151,7 @@ export function validatePromotionConfig(
       getCategoryId,
       getQty: cfg.getQty,
       getDiscountPercent: cfg.getDiscountPercent,
+      ...minPriorPart,
     };
   }
   if (type === "tiered") {
@@ -159,7 +179,7 @@ export function validatePromotionConfig(
       }
       return { minAmountMinor, minQty, percentOff: t.percentOff };
     });
-    return { scope, categoryId, tiers };
+    return { scope, categoryId, tiers, ...minPriorPart };
   }
   if (type === "flash") {
     if (!isIntIn(cfg.percentOff, 1, 90)) throw new Error("flash_percent");
@@ -167,6 +187,7 @@ export function validatePromotionConfig(
       percentOff: cfg.percentOff,
       productIds: optIdList(cfg.productIds),
       categoryIds: optIdList(cfg.categoryIds),
+      ...minPriorPart,
     };
   }
   if (type === "gift") {
@@ -190,7 +211,7 @@ export function validatePromotionConfig(
     }
     const giftQty = cfg.giftQty === null || cfg.giftQty === undefined ? 1 : cfg.giftQty;
     if (!isIntIn(giftQty, 1, 3)) throw new Error("gift_qty");
-    return { minSubtotalMinor, giftProductId, giftVariantSku, giftQty };
+    return { minSubtotalMinor, giftProductId, giftVariantSku, giftQty, ...minPriorPart };
   }
   throw new Error("unknown_type");
 }
@@ -215,6 +236,7 @@ export const PROMOTION_CONFIG_MESSAGES: Record<string, string> = {
   gift_product_required: "উপহারের পণ্য দিতে হবে",
   gift_variant_sku: "উপহারের ভ্যারিয়েন্ট SKU সঠিক নয়",
   gift_qty: "উপহারের পরিমাণ ১–৩ হতে হবে",
+  min_prior_orders: "সর্বনিম্ন আগের অর্ডার সংখ্যা ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে",
   unknown_type: "অজানা প্রমোশন ধরন",
 };
 
@@ -248,8 +270,21 @@ function isOnProductSale(line: PromotionLine): boolean {
 export function evaluatePromotions(
   promotions: any[],
   lines: PromotionLine[],
-  now: Date = new Date(),
+  now: Date | { priorOrderCount?: number | null } = new Date(),
+  ctx?: { priorOrderCount?: number | null },
 ): PromotionEvaluation {
+  // GB7: ctx may be passed as the 4th argument (canonical, with
+  // `now` as the 3rd) or — for convenience — as the 3rd argument
+  // in place of `now`. Existing 2/3-arg callers keep working.
+  let effectiveCtx = ctx;
+  let effectiveNow: Date;
+  if (now instanceof Date) {
+    effectiveNow = now;
+  } else {
+    effectiveCtx = effectiveCtx ?? (now as { priorOrderCount?: number | null });
+    effectiveNow = new Date();
+  }
+  now = effectiveNow;
   const lineTotalsMinor = lines.map((l) => l.unitPriceMinor * BigInt(Math.max(0, l.quantity)));
   const remainingUnits = lines.map((l) => Math.max(0, l.quantity));
   const breakdown: PromotionBreakdownEntry[] = [];
@@ -282,6 +317,15 @@ export function evaluatePromotions(
       cfg = validatePromotionConfig(String(p.type), p.config);
     } catch {
       continue; // malformed stored config ⇒ no discount, never a guess
+    }
+    // GB7: a minPriorOrders promotion is skipped when the buyer's
+    // prior-order count is unknown (null) or below the minimum.
+    const minPrior = (cfg as any).minPriorOrders as number | undefined;
+    if (
+      minPrior != null &&
+      (effectiveCtx?.priorOrderCount == null || effectiveCtx.priorOrderCount < minPrior)
+    ) {
+      continue;
     }
     // EC29: "gift" promotions validate above and intentionally have
     // NO branch here — a gift is not a discount and must never

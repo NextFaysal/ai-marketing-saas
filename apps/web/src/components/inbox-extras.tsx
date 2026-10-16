@@ -193,7 +193,14 @@ export function ConvAvatar({ name, phone, channel }: { name?: string | null; pho
   );
 }
 
-/** Fetches protected media bytes through the API proxy and renders them. */
+/**
+ * Renders protected inbox media. RB4/RM5 item 3: when object
+ * storage is on, the API's media-url endpoint returns a presigned
+ * URL and the browser loads the bytes straight from storage —
+ * the API byte-proxy below stays as the fallback for local mode
+ * (endpoint answers url: null) and for any failure of the signed
+ * path, so pre-R2 behaviour is preserved exactly.
+ */
 export function MediaView({ convId, message }: { convId: string; message: { id: string; type: string; content?: string | null } }) {
   const orgId = getOrganizationId();
   const [url, setUrl] = useState<string | null>(null);
@@ -203,6 +210,16 @@ export function MediaView({ convId, message }: { convId: string; message: { id: 
     let cancelled = false;
     (async () => {
       try {
+        const signed = await fetch(`${API_URL}/organizations/${orgId}/inbox/conversations/${convId}/messages/${message.id}/media-url`, {
+          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+        }).catch(() => null);
+        if (signed?.ok) {
+          const data: any = await signed.json().catch(() => null);
+          if (data?.url) {
+            if (!cancelled) setUrl(data.url);
+            return;
+          }
+        }
         const res = await fetch(`${API_URL}/organizations/${orgId}/inbox/conversations/${convId}/messages/${message.id}/media`, {
           headers: { Authorization: `Bearer ${getToken() ?? ""}` },
         });

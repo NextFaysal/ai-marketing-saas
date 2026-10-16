@@ -49,6 +49,33 @@ services:
       WORKER_HEALTH_URL: http://worker:4100/health
       API_PORT: "4000"
       WEB_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in the Dokploy Environment tab}
+      # RM1 (Cloudflare R2 media): values come from the Dokploy
+      # Environment tab. An empty bucket keeps media on the api
+      # container's local disk, which is NOT durable across redeploys.
+      MEDIA_S3_BUCKET: ${MEDIA_S3_BUCKET:-}
+      MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
+      MEDIA_S3_REGION: ${MEDIA_S3_REGION:-auto}
+      MEDIA_S3_ACCESS_KEY_ID: ${MEDIA_S3_ACCESS_KEY_ID:-}
+      MEDIA_S3_SECRET_ACCESS_KEY: ${MEDIA_S3_SECRET_ACCESS_KEY:-}
+      # RM2: dedicated R2 buckets. When set, MEDIA_R2_PRIVATE_BUCKET
+      # replaces MEDIA_S3_BUCKET as the private/default bucket and
+      # public-intent media goes to MEDIA_R2_PUBLIC_BUCKET; when
+      # unset, the single MEDIA_S3_BUCKET serves both (RB1 behaviour).
+      MEDIA_R2_PUBLIC_BUCKET: ${MEDIA_R2_PUBLIC_BUCKET:-}
+      MEDIA_R2_PRIVATE_BUCKET: ${MEDIA_R2_PRIVATE_BUCKET:-}
+      # RB6/RM11: optional backup bucket — the media_lifecycle_sweep
+      # job writes a daily StoredFile registry snapshot plus copies
+      # of the last 24h of private objects into it. Empty = backups
+      # off (the sweep reports "not-configured", never a fake run).
+      MEDIA_R2_BACKUP_BUCKET: ${MEDIA_R2_BACKUP_BUCKET:-}
+      # RB6/RM11: lifecycle retention windows (code defaults apply
+      # when empty: trash 30 days, quarantine 24 hours).
+      MEDIA_TRASH_RETENTION_DAYS: ${MEDIA_TRASH_RETENTION_DAYS:-}
+      MEDIA_QUARANTINE_RETENTION_HOURS: ${MEDIA_QUARANTINE_RETENTION_HOURS:-}
+      # RM4: public CDN base for stored media URLs (the public
+      # bucket's custom domain). Empty = the code default
+      # https://media.qosprey.com.
+      MEDIA_CDN_BASE_URL: ${MEDIA_CDN_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { SocialService, videoOnlyViolation } from "./social.service";
@@ -10,6 +11,7 @@ import { SocialOAuthService } from "./social-oauth.service";
 import { TikTokClient, TikTokPublisher } from "./tiktok.client";
 import { YouTubeClient, YouTubePublisher } from "./youtube.client";
 import { LinkedInClient } from "./linkedin.client";
+import { PublicMediaService } from "../storage/public-media.service";
 import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
@@ -81,6 +83,7 @@ export class SocialPublishService {
   private readonly linkedinClient: LinkedInClient;
   private readonly raster: SocialRasterService;
   private readonly links?: SocialLinkService;
+  private readonly publicMedia?: PublicMediaService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -98,8 +101,12 @@ export class SocialPublishService {
     // SU6: tracked-link builder. LAST param + Optional so every
     // existing positional spec construction keeps working.
     @Optional() links?: SocialLinkService,
+    // RB4/RM5: public-bucket ensure + CDN URL for publish.
+    // LAST param + Optional, same discipline as links.
+    @Optional() publicMedia?: PublicMediaService,
   ) {
     this.links = links;
+    this.publicMedia = publicMedia;
     // SocialModule does not provide MetaSocialPublisher (it needs
     // no DI of its own), so it is optional here and defaults to a
     // real instance; specs inject one built on a stub fetch.
@@ -382,6 +389,28 @@ export class SocialPublishService {
     }
     if (!token) {
       throw new PermanentPublishError("মিডিয়ার Public লিংক তৈরি করা যায়নি — মিডিয়াটি আবার বেছে নিয়ে প্রকাশ করুন।");
+    }
+    // RB4/RM5 (+ item 4 — video delivery rides the same helper):
+    // with object storage on, platforms fetch the asset from the
+    // CDN URL; the helper ensures the bytes are in the public
+    // bucket first and returns null on any doubt, in which case
+    // the SP1 API-stream URL below stands exactly as before.
+    // Range requests for video are served by Cloudflare/R2 on
+    // the CDN path.
+    if (this.publicMedia && asset.storageKey) {
+      const cdnUrl = await this.publicMedia
+        .resolvePublicMediaUrl(
+          {
+            organizationId: post.organizationId,
+            storageKey: asset.storageKey,
+            contentType: asset.contentType,
+            sizeBytes: asset.sizeBytes,
+            createdById: asset.createdById ?? null,
+          },
+          "social",
+        )
+        .catch(() => null);
+      if (cdnUrl) return cdnUrl;
     }
     return `${this.apiBase()}/public/media/${token}`;
   }
@@ -855,9 +884,7 @@ export class SocialPublishService {
       const title = `Social পোস্ট প্রকাশ ব্যর্থ হয়েছে: ${accountName}`;
       const body = `${excerpt}\nত্রুটি: ${errorMessage}\nSocial Posts পেজে পোস্টটি Failed অবস্থায় আছে — সমস্যা ঠিক করে আবার শিডিউল বা প্রকাশ করুন। Token-এর মেয়াদ শেষ হলে অ্যাকাউন্টটি আবার কানেক্ট করুন।`;
       for (const userId of recipients) {
-        await (this.prisma as any).agentNotification.create({
-          data: { organizationId: post.organizationId, userId, type: "social_post_failed", title, body, conversationId: null },
-        }).catch(() => undefined);
+        await createAgentNotification(this.prisma as any, { organizationId: post.organizationId, userId, type: "social_post_failed", title, body, conversationId: null }).catch(() => undefined);
       }
     } catch (e) {
       this.logger.warn(`social post failure notification failed for post ${post?.id}: ${e instanceof Error ? e.message : "unknown"}`);

@@ -16,7 +16,12 @@ interface CreateWarning {
   key: string;
   label: string;
 }
-
+/**
+ * Milestone 65: manual order entry + orders CSV import.
+ * Orders recorded here enter through the same pipeline as
+ * store orders — automation, COD risk and attribution see
+ * them identically.
+ */
 interface ImportResult {
   id: string;
   totalRows: number;
@@ -43,7 +48,12 @@ export default function ManualOrderPage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
-  // ON11: address -> district suggestion
+  // ON11: address -> district suggestion. A suggestion is NEVER
+  // sent with the order — only a district the staff explicitly
+  // confirmed (confirmedDistrict) goes into the create body.
+  // createWarnings/createAddrSuggestion are the intake warnings +
+  // address suggestion returned BY the create call itself (shown
+  // on the success area, not lost).
   const [addrSuggestion, setAddrSuggestion] = useState<AddressSuggestion | null>(null);
   const [confirmedDistrict, setConfirmedDistrict] = useState("");
   const [parseBusy, setParseBusy] = useState(false);
@@ -59,24 +69,28 @@ export default function ManualOrderPage() {
   const subtotal = lines.reduce((a, l) => a + (Number(l.unitPrice) || 0) * (l.quantity || 0), 0);
   const total = Math.max(0, subtotal + (Number(shipping) || 0) - (Number(discount) || 0));
 
+  /** ON11: ask the server to guess the district from the free
+   * text address. Only high/medium-confidence guesses are shown
+   * as a confirm chip; anything weaker is ignored silently (the
+   * staff can still type the order normally). */
   async function parseAddress() {
-    const raw = customer.address.trim();
-    if (raw.length < 4 || raw === lastParsedRef.current) return;
+    const text = customer.address.trim();
+    if (text.length < 4 || text === lastParsedRef.current) return;
     const orgId = getOrganizationId();
     if (!orgId) return;
-    lastParsedRef.current = raw;
+    lastParsedRef.current = text;
     setParseBusy(true);
     try {
       const out = await apiFetch<AddressSuggestion>(`/organizations/${orgId}/orders/parse-address`, {
-        method: "POST",
-        body: JSON.stringify({ address: raw }),
+        method: "POST", body: JSON.stringify({ text }),
       });
-      setAddrSuggestion(out?.district ? out : null);
-    } catch {
-      setAddrSuggestion(null);
-    } finally {
-      setParseBusy(false);
-    }
+      if (out && out.district && (out.confidence === "high" || out.confidence === "medium")) {
+        setAddrSuggestion(out);
+      } else {
+        setAddrSuggestion(null);
+      }
+    } catch { setAddrSuggestion(null); /* suggestion is advisory — never block entry */ }
+    finally { setParseBusy(false); }
   }
 
   async function submit(e: React.FormEvent) {
@@ -117,14 +131,13 @@ export default function ManualOrderPage() {
       setNotice(
         out.upsertResult === "updated"
           ? "একই রেফারেন্সের অর্ডার আপডেট হয়েছে (ডুপ্লিকেট হয়নি)।"
-          : `অর্ডার সফলভাবে তৈরি হয়েছে — মোট ৳${(Number(out.totalMinor) / 100).toLocaleString("en-IN")}। এটি এখন অর্ডার তালিকা ও অটোমেশনে দেখা যাবে।`
+          : `অর্ডার সফলভাবে তৈরি হয়েছে — মোট ৳${(Number(out.totalMinor) / 100).toLocaleString("en-IN")}। এটি এখন অর্ডার তালিকা, অটোমেশন, রিস্ক স্কোর ও রিপোর্টে দেখা যাবে।`
       );
-      if (Array.isArray(out.warnings) && out.warnings.length > 0) {
-        setCreateWarnings(out.warnings);
-      }
-      if (out.addressSuggestion?.district) {
-        setCreateAddrSuggestion(out.addressSuggestion);
-      }
+      // ON11: intake warnings + a create-time address suggestion
+      // stay visible on this success area. The suggestion is info
+      // only — nothing was auto-applied to the order.
+      setCreateWarnings(Array.isArray(out.warnings) ? out.warnings : []);
+      setCreateAddrSuggestion(!confirmedDistrict && out.addressSuggestion ? out.addressSuggestion : null);
       setCustomer({ phone: "", name: "", email: "", address: "", externalRef: "" });
       setConfirmedDistrict("");
       setAddrSuggestion(null);

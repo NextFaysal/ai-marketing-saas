@@ -22,13 +22,17 @@ import { toCsv } from "../imports/csv";
  * real cost of the order even though its revenue is 0. Bundle
  * component lines are real lines and are costed like any line.
  *
- * Delivery actual: there is NO courier-charge field on
- * CourierShipment. The only real actual charge is
+ * Delivery actual: the strongest real actual charge is
  * ReconciliationLine.sheetChargeMinor from the merchant's imported
- * settlement sheet, so an order's delivery actual is reported only
- * when EVERY shipment of the order has a matching sheet line —
- * partial truth is shown through deliveryActualCoverage instead
- * of a made-up total.
+ * settlement sheet. GB5 (GC14) added a second, weaker source:
+ * CourierShipment.chargeMinor — the charge the provider itself
+ * returned at BOOKING time (Pathao's delivery_fee). Per shipment
+ * the sheet line wins where present; the booking charge is the
+ * labelled fallback (deliveryActualSource says which). An order's
+ * delivery actual is reported only when EVERY shipment of the
+ * order has a charge from one of the two — partial truth is
+ * shown through deliveryActualCoverage instead of a made-up
+ * total. Quotes are never an actual.
  */
 
 const DAY_MS = 86400000;
@@ -210,13 +214,15 @@ export class OrderProfitService {
       }
     }
 
-    // Delivery actual (see class doc for the only real source).
+    // Delivery actual (see class doc for the two real sources
+    // and their precedence: settlement sheet > booking charge).
     const shipmentTable = (this.prisma as any).courierShipment;
     const shipments: any[] = shipmentTable?.findMany
       ? ((await shipmentTable.findMany({ where: { organizationId: orgId, orderId: order.id } }).catch(() => [])) ?? [])
       : [];
     let withCharge = 0;
     let chargeSum = 0n;
+    const chargeSources = new Set<string>();
     if (shipments.length) {
       const lineTable = (this.prisma as any).reconciliationLine;
       const recon: any[] = lineTable?.findMany
@@ -232,11 +238,20 @@ export class OrderProfitService {
         if (candidates.length) {
           withCharge += 1;
           chargeSum += big(candidates[0].sheetChargeMinor);
+          chargeSources.add("reconciliation_sheet");
+        } else if ((s as any).chargeMinor != null) {
+          // GB5 fallback: the provider-returned booking charge.
+          withCharge += 1;
+          chargeSum += big((s as any).chargeMinor);
+          chargeSources.add("booking");
         }
       }
     }
     const deliveryActual: bigint | null =
       shipments.length > 0 && withCharge === shipments.length ? chargeSum : null;
+    const deliveryActualSource: string | null = deliveryActual == null
+      ? null
+      : chargeSources.size > 1 ? "mixed" : [...chargeSources][0] ?? null;
 
     const revenue = big(order.totalMinor ?? 0);
     const grossMargin: bigint | null = productCost != null ? revenue - productCost : null;
@@ -255,6 +270,7 @@ export class OrderProfitService {
       uncostedRevenueMinor: String(uncostedRevenue),
       grossMarginMinor: grossMargin != null ? String(grossMargin) : null,
       deliveryActualMinor: deliveryActual != null ? String(deliveryActual) : null,
+      deliveryActualSource,
       deliveryActualCoverage: { shipments: shipments.length, withCharge },
       netMarginMinor: netMargin != null ? String(netMargin) : null,
     };
@@ -404,6 +420,19 @@ export class OrderProfitService {
       ? Math.round((Number(costedLineRevenue) / Number(totalLineRevenue)) * 1000) / 10
       : null;
 
+    // GB8 (GC20.4): additive finance section — period expenses
+    // (GC20 Expense rows, spentAt in range) and gateway fees (GB4
+    // fee stamps on verified_paid transactions, judged on
+    // updatedAt like the fee report). estimatedNetMinor is the
+    // "আনুমানিক নিট লাভ": present ONLY when the gross margin is
+    // fully costed (coverage exactly 100%) AND fees are known
+    // for the period (zero verified transactions, or EVERY one
+    // carries a feeMinor stamp); otherwise null + reasons. The
+    // expense table read is defensive in this service's own
+    // style (see getCodBoard) so older fakes without the table
+    // degrade to a stated reason, never a fabricated number.
+    const finance = await this.financeSection(orgId, from, to, grossMargin, costCoveragePercent);
+
     return {
       range: { from, to },
       perProductBasis: "pre_discount_line_totals",
@@ -419,6 +448,61 @@ export class OrderProfitService {
       perProduct,
       truncated,
       perProductTruncated: truncated,
+      finance,
+    };
+  }
+
+  /** GB8 (GC20.4) — see the call site for the full contract. */
+  private async financeSection(
+    orgId: string,
+    from: string,
+    to: string,
+    grossMargin: bigint | null,
+    costCoveragePercent: number | null,
+  ): Promise<{
+    periodExpensesMinor: string;
+    gatewayFeesMinor: string | null;
+    estimatedNetMinor: string | null;
+    reasons: string[];
+  }> {
+    const reasons: string[] = [];
+    const start = new Date(`${from}T00:00:00+06:00`);
+    const end = new Date(`${to}T23:59:59.999+06:00`);
+    let expenses: bigint | null = null;
+    const expenseTable = (this.prisma as any).expense;
+    if (expenseTable?.findMany) {
+      const rows = await expenseTable.findMany({
+        where: { organizationId: orgId, spentAt: { gte: start, lte: end } },
+        select: { amountMinor: true },
+        take: 5001,
+      }).catch(() => null);
+      if (rows) expenses = rows.reduce((s: bigint, e: any) => s + big(e.amountMinor ?? 0), 0n);
+    }
+    if (expenses == null) reasons.push("খরচের (Expense) তথ্য পড়া যায়নি — আনুমানিক নিট লাভ দেখানো হচ্ছে না");
+    let fees: bigint | null = 0n;
+    const txnTable = (this.prisma as any).tenantPaymentTransaction;
+    if (txnTable?.findMany) {
+      const txns = await txnTable.findMany({
+        where: { organizationId: orgId, status: "verified_paid", updatedAt: { gte: start, lte: end } },
+        select: { feeMinor: true },
+        take: 5001,
+      }).catch(() => null);
+      if (!txns) { fees = null; }
+      else if (txns.some((tx: any) => tx.feeMinor === null || tx.feeMinor === undefined)) { fees = null; }
+      else fees = txns.reduce((s: bigint, tx: any) => s + big(tx.feeMinor ?? 0), 0n);
+    }
+    if (fees == null) reasons.push("কিছু যাচাইকৃত পেমেন্টের গেটওয়ে ফি জানা নেই (ফি হার সেট করা হয়নি) — আনুমানিক নিট লাভ দেখানো হচ্ছে না");
+    if (grossMargin == null || costCoveragePercent !== 100) {
+      reasons.push(`পণ্যের খরচের কভারেজ ১০০% নয় (বর্তমান: ${costCoveragePercent == null ? "—" : costCoveragePercent}%) — সব অর্ডারের খরচ জানা না থাকলে আনুমানিক নিট লাভ দেখানো হয় না`);
+    }
+    const estimatedNet = grossMargin != null && costCoveragePercent === 100 && expenses != null && fees != null
+      ? grossMargin - expenses - fees
+      : null;
+    return {
+      periodExpensesMinor: String(expenses ?? 0n),
+      gatewayFeesMinor: fees != null ? String(fees) : null,
+      estimatedNetMinor: estimatedNet != null ? String(estimatedNet) : null,
+      reasons,
     };
   }
 
@@ -449,6 +533,21 @@ export class OrderProfitService {
         ["uncosted_orders", t.uncostedOrders],
       ],
     ));
+    // GB8 (GC20.4): the finance section rides the CSV too, so the
+    // scheduled/manual exports carry the same net-profit stance.
+    if ((report as any).finance) {
+      const f = (report as any).finance;
+      sections.push(toCsv(
+        ["finance_metric", "value"],
+        [
+          ["# GB8 আনুমানিক নিট লাভ (estimated net profit)", ""],
+          ["period_expenses_minor", f.periodExpensesMinor],
+          ["gateway_fees_minor", f.gatewayFeesMinor ?? ""],
+          ["estimated_net_minor", f.estimatedNetMinor ?? ""],
+          ["reasons", (f.reasons ?? []).join(" · ")],
+        ],
+      ));
+    }
     sections.push(toCsv(
       ["product_id", "name", "sku", "quantity", "revenue_minor", "cost_minor", "margin_minor"],
       report.perProduct.map((p: any) => [

@@ -400,7 +400,25 @@ export class OrderNotificationService {
           }
           try {
             const subject = `অর্ডার ${vars.orderNumber} — ${vars.shopName}`;
-            const res: any = await this.emailProvider.send({ to: email!, subject, text });
+            // AB8 (AX24): a white-label org's order email carries
+            // the org's own brand as the sender display name.
+            // Failure-isolated: any load error ⇒ no fromName,
+            // exactly today's behaviour; whiteLabel off/absent
+            // ⇒ no fromName key at all.
+            let fromName: string | undefined;
+            try {
+              const orgRow: any = await this.t("organization").findFirst({ where: { id: orgId } }).catch(() => null);
+              if (orgRow?.whiteLabel === true) {
+                let settingShopName: string | null = null;
+                try {
+                  const settingRow: any = await this.t("storefrontSetting").findFirst({ where: { organizationId: orgId } }).catch(() => null);
+                  if (settingRow?.shopName) settingShopName = String(settingRow.shopName);
+                } catch { settingShopName = null; }
+                const candidate = orgRow.brandName ?? settingShopName ?? orgRow.name ?? null;
+                if (candidate && String(candidate).trim()) fromName = String(candidate);
+              }
+            } catch { fromName = undefined; }
+            const res: any = await this.emailProvider.send({ to: email!, subject, text, ...(fromName ? { fromName } : {}) });
             await this.writeLog(orgId, orderId, event, "email", "sent", { providerMessageId: res?.providerMessageId ?? null });
             return { event, sent: true, channel: "email", statuses: [...statuses, "sent"] };
           } catch (e) {

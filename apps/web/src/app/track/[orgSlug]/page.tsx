@@ -67,6 +67,11 @@ interface TrackResult {
   // EC24b: digital items summary — names + availability, never URLs.
   digitalItems?: { name: string; available: boolean }[];
   digitalNote?: string | null;
+  // AB2 (AX3): gift-card items summary — names + issuance ONLY.
+  // This payload NEVER carries a code; codes come exclusively
+  // from the digital-access reveal response below.
+  giftCardItems?: { name: string; issued: boolean }[];
+  giftCardNote?: string | null;
   fulfillment: { status: string } | null;
   shipment: { provider: string; trackingCode: string | null; trackingUrl?: string | null; status: string; bookedAt: string } | null;
   shop: {
@@ -120,9 +125,20 @@ export default function TrackOrderPage() {
   const [returnError, setReturnError] = useState("");
   const [returnDone, setReturnDone] = useState(false);
   // EC24b: revealed download links (fetched only on button click).
-  const [digitalLinks, setDigitalLinks] = useState<{ productName: string; url: string }[] | null>(null);
+  // AB5 (AX9): links are now signed downloadPaths (no raw URL),
+  // and the same reveal carries assigned license keys + shortages.
+  const [digitalLinks, setDigitalLinks] = useState<{ productName: string; itemId: string; downloadPath: string; expiresAt: string }[] | null>(null);
+  const [revealedLicenseKeys, setRevealedLicenseKeys] = useState<{ itemId: string; productName: string; keys: { key: string; keyLast4: string }[] }[] | null>(null);
+  const [licenseShortages, setLicenseShortages] = useState<{ productName: string; needed: number; assigned: number }[] | null>(null);
+  const [lkCopied, setLkCopied] = useState("");
   const [digitalBusy, setDigitalBusy] = useState(false);
   const [digitalError, setDigitalError] = useState("");
+  // AB2: gift cards revealed by the SAME digital-access call —
+  // the only response that ever carries a full code.
+  const [revealedGiftCards, setRevealedGiftCards] = useState<{
+    code: string; codeLast4: string; initialAmountMinor: string; balanceMinor: string; status: string; expiresAt: string | null;
+  }[] | null>(null);
+  const [gcCopied, setGcCopied] = useState("");
 
   // NDR Delivery Recovery Bot state
   const [ndrOpen, setNdrOpen] = useState(false);
@@ -204,13 +220,37 @@ export default function TrackOrderPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error((body as { message?: string }).message ?? "লিংক পাওয়া যায়নি");
       }
-      const json = (await res.json()) as { links: { productName: string; url: string }[] };
+      const json = (await res.json()) as {
+        links: { productName: string; itemId: string; downloadPath: string; expiresAt: string }[];
+        licenseKeys?: { itemId: string; productName: string; keys: { key: string; keyLast4: string }[] }[];
+        licenseShortages?: { productName: string; needed: number; assigned: number }[];
+        giftCards?: { code: string; codeLast4: string; initialAmountMinor: string; balanceMinor: string; status: string; expiresAt: string | null }[];
+      };
       setDigitalLinks(json.links ?? []);
+      setRevealedLicenseKeys(json.licenseKeys ?? []);
+      setLicenseShortages(json.licenseShortages ?? []);
+      setRevealedGiftCards(json.giftCards ?? []);
     } catch (err) {
       setDigitalError(err instanceof Error ? err.message : "লিংক পাওয়া যায়নি");
     } finally {
       setDigitalBusy(false);
     }
+  }
+
+  async function copyGiftCardCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setGcCopied(code);
+      setTimeout(() => setGcCopied(""), 2000);
+    } catch { /* clipboard unavailable — the code stays visible to copy manually */ }
+  }
+
+  async function copyLicenseKey(key: string) {
+    try {
+      await navigator.clipboard.writeText(key);
+      setLkCopied(key);
+      setTimeout(() => setLkCopied(""), 2000);
+    } catch { /* clipboard unavailable — the key stays visible to copy manually */ }
   }
 
   async function submitReturn(e: React.FormEvent) {
@@ -259,6 +299,9 @@ export default function TrackOrderPage() {
     setError("");
     setResult(null);
     setDigitalLinks(null);
+    setRevealedLicenseKeys(null);
+    setLicenseShortages(null);
+    setRevealedGiftCards(null);
     setDigitalError("");
     setReturnOpen(false);
     setReturnDone(false);
@@ -571,12 +614,109 @@ export default function TrackOrderPage() {
                     {digitalLinks.map((l, i) => (
                       <li key={`${l.productName}-${i}`} className="text-sm">
                         {l.productName}:{" "}
-                        <a href={l.url} target="_blank" rel="noreferrer" className="font-semibold text-sky-700 underline">
-                          ডাউনলোড করুন
+                        <a href={`${API_URL}/${l.downloadPath}`} target="_blank" rel="noreferrer" className="font-semibold text-sky-700 underline">
+                          ডাউনলোড
                         </a>
+                        {l.expiresAt ? (
+                          <span className="block text-xs text-slate-400">এই লিংকের মেয়াদ: {new Date(l.expiresAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")} পর্যন্ত</span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
+                ) : null}
+              </section>
+            ) : null}
+
+            {/* AB5 (AX9): license keys revealed by the same
+                digital-access call (full key — this surface only)
+                + an honest shortage notice when the pool ran dry. */}
+            {revealedLicenseKeys && revealedLicenseKeys.some((e) => e.keys.length > 0) ? (
+              <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-900">🔑 লাইসেন্স কী</h3>
+                <p className="text-xs font-semibold text-amber-700">আপনার লাইসেন্স কীগুলো শুধুমাত্র এখানেই দেখানো হয় — নিরাপদে সংরক্ষণ করে রাখুন।</p>
+                {revealedLicenseKeys.filter((e) => e.keys.length > 0).map((entry) => (
+                  <div key={entry.itemId} className="space-y-1.5">
+                    <p className="text-sm font-semibold text-slate-800">{entry.productName}</p>
+                    {entry.keys.map((k) => (
+                      <div key={k.key} className="flex items-center gap-2">
+                        <code className="min-w-0 flex-1 break-all rounded-lg bg-slate-50 px-3 py-2 font-mono text-sm font-bold tracking-wide text-slate-900">{k.key}</code>
+                        <button
+                          type="button"
+                          onClick={() => copyLicenseKey(k.key)}
+                          className="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700"
+                        >
+                          {lkCopied === k.key ? "কপি হয়েছে ✅" : "কপি করুন"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </section>
+            ) : null}
+            {licenseShortages && licenseShortages.length > 0 ? (
+              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+                <p className="text-sm font-semibold text-amber-800">কিছু লাইসেন্স কী এখনো দেওয়া যায়নি — বিক্রেতার সঙ্গে যোগাযোগ করুন।</p>
+                <ul className="mt-1 space-y-0.5 text-xs text-amber-700">
+                  {licenseShortages.map((s, i) => (
+                    <li key={`${s.productName}-${i}`}>{s.productName}: প্রয়োজন {s.needed}টি, দেওয়া হয়েছে {s.assigned}টি</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {/* AB2 (AX3): gift-card summary (names + issuance from
+                the track payload — never a code) + the reveal,
+                which rides the EC24b digital-access flow. */}
+            {(result.giftCardItems ?? []).length > 0 ? (
+              <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-900">🎁 গিফট কার্ড</h3>
+                <ul className="space-y-1 text-sm text-slate-700">
+                  {(result.giftCardItems ?? []).map((g, i) => (
+                    <li key={`${g.name}-${i}`} className="flex flex-wrap items-center gap-2">
+                      <span>{g.name}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${g.issued ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                        {g.issued ? "ইস্যু হয়েছে" : "এখনো ইস্যু হয়নি"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {result.giftCardNote ? <p className="text-xs font-semibold text-slate-600">{result.giftCardNote}</p> : null}
+                {(result.giftCardItems ?? []).some((g) => g.issued) ? (
+                  <button
+                    type="button"
+                    onClick={revealDigital}
+                    disabled={digitalBusy}
+                    className="rounded-xl bg-pink-600 px-4 py-2 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
+                  >
+                    {digitalBusy ? "অপেক্ষা করুন…" : "লিংক দেখুন"}
+                  </button>
+                ) : null}
+                {digitalError && (result.giftCardItems ?? []).some((g) => g.issued) && (result.digitalItems ?? []).length === 0 ? (
+                  <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{digitalError}</p>
+                ) : null}
+                {revealedGiftCards ? (
+                  <div className="space-y-2">
+                    {revealedGiftCards.map((c) => (
+                      <div key={c.code} className="space-y-1.5 rounded-2xl border border-pink-200 bg-pink-50/60 p-4">
+                        <div className="flex items-center gap-2">
+                          <code className="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 font-mono text-sm font-bold tracking-wider text-slate-900">{c.code}</code>
+                          <button
+                            type="button"
+                            onClick={() => copyGiftCardCode(c.code)}
+                            className="shrink-0 rounded-lg bg-pink-600 px-3 py-2 text-xs font-bold text-white hover:bg-pink-700"
+                          >
+                            {gcCopied === c.code ? "কপি হয়েছে ✅" : "কপি করুন"}
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-600">
+                          মূল্য: <b className="text-slate-900">{money(c.initialAmountMinor)}</b>
+                          {" · "}অবশিষ্ট ব্যালেন্স: <b className="text-slate-900">{money(c.balanceMinor)}</b>
+                          {" · "}অবস্থা: <b className="text-slate-900">{{ active: "সক্রিয়", depleted: "ব্যালেন্স শেষ", expired: "মেয়াদোত্তীর্ণ", void: "বাতিল" }[c.status] ?? c.status}</b>
+                          {c.expiresAt ? <>{" · "}মেয়াদ: <b className="text-slate-900">{new Date(c.expiresAt).toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD")}</b></> : null}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 ) : null}
               </section>
             ) : null}

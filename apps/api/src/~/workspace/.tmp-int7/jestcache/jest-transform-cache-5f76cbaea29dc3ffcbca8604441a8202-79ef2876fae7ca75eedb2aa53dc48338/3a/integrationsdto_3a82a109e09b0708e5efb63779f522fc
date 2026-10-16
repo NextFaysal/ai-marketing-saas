@@ -1,0 +1,128 @@
+7b7ff9466b8c0dc9b562cb22f3291a11
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ConnectShopifyDto = exports.StartWcAuthDto = exports.ConnectWooDto = exports.CreateStoreDto = void 0;
+const class_validator_1 = require("class-validator");
+class CreateStoreDto {
+    name;
+    platform; // WOOCOMMERCE | SHOPIFY | CUSTOM
+    url;
+    currency;
+    timezone;
+}
+exports.CreateStoreDto = CreateStoreDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(2),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateStoreDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateStoreDto.prototype, "platform", void 0);
+__decorate([
+    (0, class_validator_1.IsUrl)({ require_tld: false }),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], CreateStoreDto.prototype, "url", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateStoreDto.prototype, "currency", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateStoreDto.prototype, "timezone", void 0);
+class ConnectWooDto {
+    storeId;
+    consumerKey;
+    consumerSecret;
+    webhookSecret;
+}
+exports.ConnectWooDto = ConnectWooDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectWooDto.prototype, "storeId", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(5),
+    __metadata("design:type", String)
+], ConnectWooDto.prototype, "consumerKey", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(5),
+    __metadata("design:type", String)
+], ConnectWooDto.prototype, "consumerSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ConnectWooDto.prototype, "webhookSecret", void 0);
+// EC12: start of the WooCommerce wc-auth 1-click flow.
+class StartWcAuthDto {
+    storeId;
+}
+exports.StartWcAuthDto = StartWcAuthDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], StartWcAuthDto.prototype, "storeId", void 0);
+class ConnectShopifyDto {
+    storeId;
+    // Legacy path: shpat_... Admin API access token + app client secret
+    // (used for webhook HMAC). Optional since EC2 — either this pair
+    // or the clientId/clientSecret pair below must be supplied; the
+    // controller/service enforces that one complete pair is present.
+    accessToken;
+    apiSecret;
+    // EC2: Dev Dashboard client-credentials pair.
+    clientId;
+    clientSecret;
+}
+exports.ConnectShopifyDto = ConnectShopifyDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ConnectShopifyDto.prototype, "storeId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(10),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ConnectShopifyDto.prototype, "accessToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(5),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ConnectShopifyDto.prototype, "apiSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ConnectShopifyDto.prototype, "clientId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], ConnectShopifyDto.prototype, "clientSecret", void 0);
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2ludGVncmF0aW9ucy9pbnRlZ3JhdGlvbnMuZHRvLnRzIiwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7OztBQUFBLHFEQUFvRjtBQUNwRixNQUFhLGNBQWM7SUFDaUIsSUFBSSxDQUFVO0lBQzlCLFFBQVEsQ0FBVSxDQUFDLGlDQUFpQztJQUMvQixHQUFHLENBQVU7SUFDbEMsUUFBUSxDQUFVO0lBQ2xCLFFBQVEsQ0FBVTtDQUM3QztBQU5ELHdDQU1DO0FBTDJDO0lBQXpDLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOzs0Q0FBZTtBQUM5QjtJQUF6QixJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7O2dEQUFtQjtBQUNHO0lBQTlDLElBQUEsdUJBQUssRUFBQyxFQUFFLFdBQVcsRUFBRSxLQUFLLEVBQUUsQ0FBQztJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7OzJDQUFjO0FBQ2xDO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7Z0RBQW1CO0FBQ2xCO0lBQXpCLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTs7Z0RBQW1CO0FBRTlDLE1BQWEsYUFBYTtJQUNaLE9BQU8sQ0FBVTtJQUNILFdBQVcsQ0FBVTtJQUNyQixjQUFjLENBQVU7SUFDUixhQUFhLENBQVU7Q0FDbEU7QUFMRCxzQ0FLQztBQUphO0lBQVgsSUFBQSwwQkFBUSxHQUFFOzs4Q0FBa0I7QUFDSDtJQUF6QixJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsQ0FBQyxDQUFDOztrREFBc0I7QUFDckI7SUFBekIsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLENBQUMsQ0FBQzs7cURBQXlCO0FBQ1I7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7b0RBQXdCO0FBR25FLHVEQUF1RDtBQUN2RCxNQUFhLGNBQWM7SUFDYixPQUFPLENBQVU7Q0FDOUI7QUFGRCx3Q0FFQztBQURhO0lBQVgsSUFBQSwwQkFBUSxHQUFFOzsrQ0FBa0I7QUFHL0IsTUFBYSxpQkFBaUI7SUFDaEIsT0FBTyxDQUFVO0lBQzdCLG9FQUFvRTtJQUNwRSxpRUFBaUU7SUFDakUsZ0VBQWdFO0lBQ2hFLGlFQUFpRTtJQUNSLFdBQVcsQ0FBVTtJQUN0QixTQUFTLENBQVU7SUFDM0UsOENBQThDO0lBQ0osUUFBUSxDQUFVO0lBQ2xCLFlBQVksQ0FBVTtDQUNqRTtBQVhELDhDQVdDO0FBVmE7SUFBWCxJQUFBLDBCQUFRLEdBQUU7O2tEQUFrQjtBQUs0QjtJQUF4RCxJQUFBLDRCQUFVLEdBQUU7SUFBRSxJQUFBLDBCQUFRLEdBQUU7SUFBRSxJQUFBLDJCQUFTLEVBQUMsRUFBRSxDQUFDO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7c0RBQXNCO0FBQ3RCO0lBQXZELElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxDQUFDLENBQUM7SUFBRSxJQUFBLDJCQUFTLEVBQUMsR0FBRyxDQUFDOztvREFBb0I7QUFFakM7SUFBekMsSUFBQSw0QkFBVSxHQUFFO0lBQUUsSUFBQSwwQkFBUSxHQUFFO0lBQUUsSUFBQSwyQkFBUyxFQUFDLEdBQUcsQ0FBQzs7bURBQW1CO0FBQ2xCO0lBQXpDLElBQUEsNEJBQVUsR0FBRTtJQUFFLElBQUEsMEJBQVEsR0FBRTtJQUFFLElBQUEsMkJBQVMsRUFBQyxHQUFHLENBQUM7O3VEQUF1QiIsIm5hbWVzIjpbXSwic291cmNlcyI6WyIvaG9tZS9oYXRjaC93b3Jrc3BhY2UvYWktbWFya2V0aW5nLXNhYXMtaW50Ny9hcHBzL2FwaS9zcmMvaW50ZWdyYXRpb25zL2ludGVncmF0aW9ucy5kdG8udHMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHsgSXNPcHRpb25hbCwgSXNTdHJpbmcsIElzVXJsLCBNYXhMZW5ndGgsIE1pbkxlbmd0aCB9IGZyb20gXCJjbGFzcy12YWxpZGF0b3JcIjtcbmV4cG9ydCBjbGFzcyBDcmVhdGVTdG9yZUR0byB7XG4gIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoMikgQE1heExlbmd0aCgxMjApIG5hbWUhOiBzdHJpbmc7XG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgcGxhdGZvcm0/OiBzdHJpbmc7IC8vIFdPT0NPTU1FUkNFIHwgU0hPUElGWSB8IENVU1RPTVxuICBASXNVcmwoeyByZXF1aXJlX3RsZDogZmFsc2UgfSkgQE1heExlbmd0aCg1MDApIHVybCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBjdXJyZW5jeT86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSB0aW1lem9uZT86IHN0cmluZztcbn1cbmV4cG9ydCBjbGFzcyBDb25uZWN0V29vRHRvIHtcbiAgQElzU3RyaW5nKCkgc3RvcmVJZCE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCg1KSBjb25zdW1lcktleSE6IHN0cmluZztcbiAgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCg1KSBjb25zdW1lclNlY3JldCE6IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgd2ViaG9va1NlY3JldD86IHN0cmluZztcbn1cblxuLy8gRUMxMjogc3RhcnQgb2YgdGhlIFdvb0NvbW1lcmNlIHdjLWF1dGggMS1jbGljayBmbG93LlxuZXhwb3J0IGNsYXNzIFN0YXJ0V2NBdXRoRHRvIHtcbiAgQElzU3RyaW5nKCkgc3RvcmVJZCE6IHN0cmluZztcbn1cblxuZXhwb3J0IGNsYXNzIENvbm5lY3RTaG9waWZ5RHRvIHtcbiAgQElzU3RyaW5nKCkgc3RvcmVJZCE6IHN0cmluZztcbiAgLy8gTGVnYWN5IHBhdGg6IHNocGF0Xy4uLiBBZG1pbiBBUEkgYWNjZXNzIHRva2VuICsgYXBwIGNsaWVudCBzZWNyZXRcbiAgLy8gKHVzZWQgZm9yIHdlYmhvb2sgSE1BQykuIE9wdGlvbmFsIHNpbmNlIEVDMiDigJQgZWl0aGVyIHRoaXMgcGFpclxuICAvLyBvciB0aGUgY2xpZW50SWQvY2xpZW50U2VjcmV0IHBhaXIgYmVsb3cgbXVzdCBiZSBzdXBwbGllZDsgdGhlXG4gIC8vIGNvbnRyb2xsZXIvc2VydmljZSBlbmZvcmNlcyB0aGF0IG9uZSBjb21wbGV0ZSBwYWlyIGlzIHByZXNlbnQuXG4gIEBJc09wdGlvbmFsKCkgQElzU3RyaW5nKCkgQE1pbkxlbmd0aCgxMCkgQE1heExlbmd0aCg1MDApIGFjY2Vzc1Rva2VuPzogc3RyaW5nO1xuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNaW5MZW5ndGgoNSkgQE1heExlbmd0aCg1MDApIGFwaVNlY3JldD86IHN0cmluZztcbiAgLy8gRUMyOiBEZXYgRGFzaGJvYXJkIGNsaWVudC1jcmVkZW50aWFscyBwYWlyLlxuICBASXNPcHRpb25hbCgpIEBJc1N0cmluZygpIEBNYXhMZW5ndGgoNTAwKSBjbGllbnRJZD86IHN0cmluZztcbiAgQElzT3B0aW9uYWwoKSBASXNTdHJpbmcoKSBATWF4TGVuZ3RoKDUwMCkgY2xpZW50U2VjcmV0Pzogc3RyaW5nO1xufVxuIl0sInZlcnNpb24iOjN9

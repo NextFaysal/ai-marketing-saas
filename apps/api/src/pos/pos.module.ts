@@ -1,7 +1,9 @@
 import { Module } from "@nestjs/common";
 import { PosController } from "./pos.controller";
 import { PosService } from "./pos.service";
+import { PosOfflineService } from "./pos-offline.service";
 import { AuditModule } from "../audit/audit.module";
+import { FraudModule } from "../fraud/fraud.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { OrdersModule } from "../orders/orders.module";
 import { CommerceModule } from "../commerce/commerce.module";
@@ -16,9 +18,9 @@ import { CommerceModule } from "../commerce/commerce.module";
  * them imports this module, so the graph stays acyclic.
  */
 @Module({
-  imports: [IntegrationsModule, OrdersModule, CommerceModule, AuditModule],
+  imports: [IntegrationsModule, OrdersModule, CommerceModule, AuditModule, FraudModule],
   controllers: [PosController],
-  providers: [PosService],
-  exports: [PosService],
+  providers: [PosService, PosOfflineService],
+  exports: [PosService, PosOfflineService],
 })
 export class PosModule {}

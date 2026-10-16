@@ -16,6 +16,21 @@ import { bkashBase, sslcommerzBase, type BkashConfig, type SslcommerzConfig } fr
 export type TenantSslCreds = SslcommerzConfig; // { storeId, storePass, sandbox }
 export type TenantBkashCreds = BkashConfig; // { appKey, appSecret, username, password, sandbox }
 export interface TenantNagadCreds { merchantId: string; privateKey: string }
+/** GC11 — ShurjoPay v2.1 merchant credentials (docs/gb4-gateway-research.md). */
+export interface TenantShurjoCreds { username: string; password: string; prefix: string; storeId?: string; sandbox: boolean }
+/** GC11 — aamarPay credentials. The signature_key is a shared
+ * secret sent as a plain request field (there is no computed
+ * signing) — it stays sealed server-side and is NEVER logged:
+ * the Search Transaction call carries it in the query string,
+ * so request URLs for that call must never be logged either. */
+export interface TenantAamarCreds { storeId: string; signatureKey: string; sandbox: boolean }
+
+export function shurjoBase(creds: TenantShurjoCreds): string {
+  return creds.sandbox ? "https://sandbox.shurjopayment.com" : "https://engine.shurjopayment.com";
+}
+export function aamarBase(creds: TenantAamarCreds): string {
+  return creds.sandbox ? "https://sandbox.aamarpay.com" : "https://secure.aamarpay.com";
+}
 
 export class TenantGatewayClient {
   private readonly bkashTokens = new Map<string, { token: string; expiresAt: number }>();
@@ -176,6 +191,125 @@ export class TenantGatewayClient {
       return await res.json().catch(() => null);
     } catch {
       return null;
+    }
+  }
+
+  // ---------------- GC11: ShurjoPay (v2.1 only) ----------------
+  // Flow: get_token → secret-pay (hosted checkout_url) →
+  // verification. There is NO refund API in ShurjoPay's official
+  // docs (docs/gb4-gateway-research.md §1.5) — deliberately no
+  // refund method here; refunds stay a manual provider-dashboard
+  // process, honestly labelled as such.
+
+  /** The token call IS a true credential check: ShurjoPay only
+   * issues a token for a correct username/password pair. Used
+   * both by verify-before-save and by the checkout calls. */
+  async shurjoGetToken(creds: TenantShurjoCreds): Promise<string> {
+    let res: any = null;
+    try {
+      const r = await this.fetchFn(`${shurjoBase(creds)}/api/get_token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ username: creds.username, password: creds.password }),
+        signal: AbortSignal.timeout(20_000),
+      } as any);
+      res = await r.json().catch(() => null);
+    } catch (e) {
+      throw new Error(`Could not reach ShurjoPay: ${e instanceof Error ? e.message : "network error"}`);
+    }
+    const token = res?.token ?? res?.data?.token ?? res?.access_token ?? null;
+    if (!token) {
+      throw new Error(`ShurjoPay token request failed: ${res?.message ?? res?.msg ?? res?.error ?? "unknown error"}`);
+    }
+    return String(token);
+  }
+
+  private async shurjoCall(creds: TenantShurjoCreds, path: string, body: Record<string, unknown>): Promise<any> {
+    const token = await this.shurjoGetToken(creds);
+    try {
+      const r = await this.fetchFn(`${shurjoBase(creds)}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20_000),
+      } as any);
+      return await r.json().catch(() => null);
+    } catch (e) {
+      throw new Error(`Could not reach ShurjoPay: ${e instanceof Error ? e.message : "network error"}`);
+    }
+  }
+
+  /** Hosted-checkout creation — the caller requires
+   * checkout_url + sp_order_id on the returned body. */
+  shurjoCreatePayment(creds: TenantShurjoCreds, fields: {
+    prefix: string; store_id: string; amount: number; order_id: string; currency: string;
+    return_url: string; cancel_url: string; customer_name: string; customer_phone: string;
+    customer_address: string; customer_city: string; customer_postcode: string; client_ip: string;
+  }): Promise<any> {
+    return this.shurjoCall(creds, "/api/secret-pay", { ...fields });
+  }
+
+  /** The independent verification call — the ONLY ShurjoPay
+   * confirmation the return handler trusts. The documented
+   * response may be a single record or a one-element array;
+   * normalized here to the record. */
+  async shurjoVerify(creds: TenantShurjoCreds, spOrderId: string): Promise<any> {
+    const res = await this.shurjoCall(creds, "/api/verification", { sp_order_id: spOrderId });
+    return Array.isArray(res) ? (res[0] ?? null) : res;
+  }
+
+  // ---------------- GC11: aamarPay ----------------
+  // Flow: jsonpost.php initiation → success/fail/cancel POSTs
+  // and/or IPN as TRIGGERS only → Search Transaction
+  // (trxcheck) decides. There is NO refund API in aamarPay's
+  // official docs (docs/gb4-gateway-research.md §2.5) —
+  // deliberately no refund method here either.
+
+  /** Session init — returns the gateway's raw response; the
+   * caller requires result === "true" + payment_url. */
+  async aamarInit(creds: TenantAamarCreds, fields: {
+    tran_id: string; amount: string; currency: string; desc: string;
+    cus_name: string; cus_email: string; cus_phone: string; cus_add1: string; cus_city: string;
+    success_url: string; fail_url: string; cancel_url: string;
+  }): Promise<any> {
+    try {
+      const r = await this.fetchFn(`${aamarBase(creds)}/jsonpost.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          store_id: creds.storeId,
+          // The signature_key travels as a request field by
+          // aamarPay's design — never log this body or any URL
+          // containing the key.
+          signature_key: creds.signatureKey,
+          ...fields,
+          cus_country: "Bangladesh",
+          type: "json",
+        }),
+        signal: AbortSignal.timeout(20_000),
+      } as any);
+      return await r.json().catch(() => null);
+    } catch (e) {
+      throw new Error(`Could not reach aamarPay: ${e instanceof Error ? e.message : "network error"}`);
+    }
+  }
+
+  /** The Search Transaction API — the ONLY aamarPay
+   * confirmation the success/IPN handlers trust. The key rides
+   * in the query string per the provider's API shape: this URL
+   * must NEVER be logged. A transport failure throws (the
+   * caller treats "no confirmation" as "not paid"). */
+  async aamarTrxCheck(creds: TenantAamarCreds, tranId: string): Promise<any> {
+    const qs = new URLSearchParams({
+      request_id: tranId, store_id: creds.storeId, signature_key: creds.signatureKey, type: "json",
+    });
+    try {
+      const r = await this.fetchFn(`${aamarBase(creds)}/api/v1/trxcheck/request.php?${qs.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      } as any);
+      return await r.json().catch(() => null);
+    } catch (e) {
+      throw new Error(`Could not reach aamarPay: ${e instanceof Error ? e.message : "network error"}`);
     }
   }
 

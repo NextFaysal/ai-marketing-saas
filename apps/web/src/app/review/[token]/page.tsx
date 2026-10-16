@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { mediaSrc } from "@/lib/media-src";
 
 interface RewardCoupon {
   code: string;
@@ -135,7 +136,7 @@ export default function PublicReviewPage() {
       <header className="text-center">
         {data?.branding?.logoUrl ? (
           <img
-            src={`${API_URL}${data.branding.logoUrl}`}
+            src={mediaSrc(API_URL, data.branding.logoUrl) ?? ""}
             alt={storeName}
             className="mx-auto h-16 w-16 rounded-2xl border bg-white object-contain p-1 shadow-sm"
           />

@@ -9,10 +9,14 @@ import { randomBytes, randomUUID } from "crypto";
 import { WooClient, WooCredentials } from "./woocommerce/woo.client";
 import { WOO_WEBHOOK_TOPICS, registerWooWebhooks } from "./woocommerce/woo-webhooks";
 import { ListingsService } from "./commerce/listings.service";
+import { LoyaltyService } from "../commerce/loyalty.service";
+import { GiftCardsService } from "../commerce/gift-cards.service";
 import { normalizeWooProduct, normalizeWooVariation, normalizeWooOrder, NormalizedOrder, NormalizedProduct } from "./woocommerce/normalize";
 import { normalizeWooCustomer, upsertSyncedCustomer } from "./customer-sync";
 import { ShopifyGraphQLClient } from "./shopify/shopify-graphql.client";
 import { cadenceSkip } from "./sync-cadence";
+import { checkOrderCreate, isOrderLimitBlocked } from "../common/plan-limit-checks";
+import { refreshProductSearchVector } from "../products/search-vector";
 
 function stripReviewHtml(html: unknown): string | null {
   if (typeof html !== "string") return null;
@@ -48,7 +52,7 @@ export class IntegrationsService {
   // until Milestone 65 caught it live.
   private readonly logger = new Logger(IntegrationsService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService, @Optional() private readonly inventory?: InventoryService, @Optional() private readonly listings?: ListingsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, @Optional() private readonly events?: EventsService, @Optional() private readonly inventory?: InventoryService, @Optional() private readonly listings?: ListingsService, @Optional() private readonly loyalty?: LoyaltyService, @Optional() private readonly giftCards?: GiftCardsService) {}
 
   // ---------- EC1/EC2: per-store listing wiring (failure-isolated) ----------
   /**
@@ -509,6 +513,13 @@ export class IntegrationsService {
         await this.inventory?.recordSyncedStock(organizationId, existing.id, null, existing.stockQuantity ?? null, p.stockQuantity ?? null);
       } catch (e) { this.logger.warn(`inventory sync_correction failed: ${e instanceof Error ? e.message : "unknown"}`); }
       await (this.prisma as any).product.update({ where: { id: existing.id }, data });
+      // AB6 (AX11): refresh the synced product's FTS vector —
+      // failure-isolated, never blocks the inbound upsert.
+      try {
+        await refreshProductSearchVector(this.prisma as any, existing.id);
+      } catch (e) {
+        this.logger.warn(`search vector refresh failed (${source}/${p.externalId}): ${e instanceof Error ? e.message : "unknown"}`);
+      }
       return "updated";
     }
     // SKU collision with a different (e.g. manually created) product: create
@@ -518,9 +529,17 @@ export class IntegrationsService {
       const skuTaken = await (this.prisma as any).product.findFirst({ where: { organizationId, sku } });
       if (skuTaken) sku = null;
     }
-    await (this.prisma as any).product.create({
+    const created = await (this.prisma as any).product.create({
       data: { organizationId, source: source, externalId: p.externalId, sku, ...data },
     });
+    // AB6 (AX11): build the synced product's FTS vector —
+    // failure-isolated, never blocks the inbound upsert.
+    try {
+      const createdId = (created as any)?.id;
+      if (createdId) await refreshProductSearchVector(this.prisma as any, createdId);
+    } catch (e) {
+      this.logger.warn(`search vector refresh failed (${source}/${p.externalId}): ${e instanceof Error ? e.message : "unknown"}`);
+    }
     return "created";
   }
 
@@ -540,7 +559,19 @@ export class IntegrationsService {
         const res = await client.listOrders(page, PER_PAGE, cursor ? cursor.toISOString() : undefined);
         for (const raw of res.items) {
           stats.fetched++;
-          const result = await this.upsertOrder(organizationId, integration.storeId, normalizeWooOrder(raw));
+          // GC22: a plan/order-limit block skips THIS order and
+          // the sync continues (the audit + staff notification
+          // already fired inside the check). The cursor does NOT
+          // advance past a skipped order, so a later sync can
+          // retry it once the block lifts. Any other error keeps
+          // the existing fail-the-sync behaviour.
+          let result: "created" | "updated";
+          try {
+            result = await this.upsertOrder(organizationId, integration.storeId, normalizeWooOrder(raw));
+          } catch (e) {
+            if (isOrderLimitBlocked(e)) { stats.skipped++; continue; }
+            throw e;
+          }
           stats[result]++;
           const modified = raw.date_modified_gmt ? new Date(raw.date_modified_gmt + "Z") : null;
           if (modified && (!maxModified || modified > maxModified)) maxModified = modified;
@@ -619,10 +650,69 @@ export class IntegrationsService {
       const updated = await (this.prisma as any).order.update({ where: { id: existing.id }, data });
       orderId = updated.id; result = "updated";
     } else {
+      // GC22 (GB9): plan enforcement on the CREATE branch only —
+      // updates to existing orders always pass. A block throws
+      // OrderLimitBlockedError: shopper checkout callers convert
+      // it to the generic shopper message, sync callers skip the
+      // order and continue, staff callers see the Bengali reason.
+      await checkOrderCreate(this.prisma as any, organizationId);
       const created = await (this.prisma as any).order.create({
-        data: { organizationId, source: source, externalId: o.externalId, ...data },
+        data: {
+          organizationId, source: source, externalId: o.externalId, ...data,
+          // AB7 (AX19): order-level attribution stamps —
+          // CREATE branch ONLY (a re-upsert never rewrites the
+          // placement-time record), and only the keys the
+          // caller actually supplied: native checkouts pass the
+          // normalized block, every other caller (POS / manual
+          // / external sync) passes nothing and the columns
+          // stay null = untracked. These stamps are the
+          // order-level record; the attribution ENGINE
+          // (src/attribution/) is a separate system and is not
+          // touched by this.
+          ...((o as any).utmSource ? { utmSource: (o as any).utmSource } : {}),
+          ...((o as any).utmMedium ? { utmMedium: (o as any).utmMedium } : {}),
+          ...((o as any).utmCampaign ? { utmCampaign: (o as any).utmCampaign } : {}),
+          ...((o as any).utmContent ? { utmContent: (o as any).utmContent } : {}),
+          ...((o as any).utmTerm ? { utmTerm: (o as any).utmTerm } : {}),
+          ...((o as any).clickIdType ? { clickIdType: (o as any).clickIdType } : {}),
+          ...((o as any).clickId ? { clickId: (o as any).clickId } : {}),
+          // AB8 (AX27): device fingerprint stamp — CREATE
+          // branch ONLY, same discipline as attribution above.
+          ...((o as any).deviceHash ? { deviceHash: (o as any).deviceHash } : {}),
+        },
       });
       orderId = created.id; result = "created";
+    }
+
+    // AB5 (AX7): net-terms SNAPSHOT — CREATE branch only, and
+    // failure-isolated like every other placement hook here.
+    // When the resolved customer carries creditTermsDays > 0
+    // and the order has value and is not already dead, stamp
+    // creditDueDate = (placedAt ?? now) + terms days. It is a
+    // snapshot: later edits to the customer's terms NEVER
+    // rewrite an existing order's due date, and the UPDATE
+    // branch above never touches the field.
+    if (result === "created" && customerId) {
+      try {
+        const status = String(o.status ?? "");
+        const total = (() => { try { return BigInt(o.totalMinor as any); } catch { return 0n; } })();
+        if (total > 0n && !["cancelled", "failed", "refunded"].includes(status)) {
+          const cust = await (this.prisma as any).customer
+            .findFirst({ where: { id: customerId, organizationId }, select: { creditTermsDays: true } })
+            .catch(() => null);
+          const terms = Number(cust?.creditTermsDays ?? 0);
+          if (Number.isFinite(terms) && terms > 0) {
+            const base = o.placedAt ? new Date(o.placedAt as any) : new Date();
+            const creditDueDate = new Date(base.getTime() + terms * 24 * 3600 * 1000);
+            await (this.prisma as any).order.update({
+              where: { id: orderId },
+              data: { creditDueDate },
+            });
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`credit due date stamp failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`);
+      }
     }
 
     // Items are fully replaced from the source payload (source of truth).
@@ -699,6 +789,24 @@ export class IntegrationsService {
             await this.inventory.applyOrderRestore(organizationId, orderId, "order_returned");
           }
         } catch (e) { this.logger.warn(`inventory restore failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+        // AB1: external status changes emit NO order.status_changed
+        // bus event on this path (staff changes do), so the loyalty
+        // reconciler is invoked directly — failure-isolated like
+        // the inventory hook above. It re-derives everything from
+        // current DB state and every posting is claim-guarded, so
+        // this can never double-earn or double-claw.
+        try { await this.loyalty?.onOrderTransition(organizationId, orderId); }
+        catch (e) { this.logger.warn(`loyalty reconcile failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
+        // AB2: the identical direct hook for gift cards — external
+        // status changes emit no bus event on this path, so the
+        // gift-card reconciler (sold-gated issuance, redemption
+        // restores, purchase voids) is invoked directly,
+        // failure-isolated like the loyalty hook above. It
+        // re-derives everything from current DB state and every
+        // posting is claim-guarded, so this can never
+        // double-issue or double-restore.
+        try { await this.giftCards?.onOrderTransition(organizationId, orderId); }
+        catch (e) { this.logger.warn(`gift card reconcile failed for order ${orderId}: ${e instanceof Error ? e.message : "unknown"}`); }
       }
     }
     if (result === "created") {

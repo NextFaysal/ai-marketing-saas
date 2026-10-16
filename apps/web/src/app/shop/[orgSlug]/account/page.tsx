@@ -8,6 +8,7 @@ import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
 import {
   createAddress,
   deleteAddress,
+  fetchAccountLoyalty,
   fetchAddresses,
   fetchMe,
   fetchMyOrder,
@@ -21,13 +22,17 @@ import {
   updateAddress,
   updateProfile,
   verifyOtp,
+  type AccountLoyalty,
   type MyOrder,
   type MyOrderDetail,
+  type ReferralRewardCoupon,
   type ShopAddress,
   type ShopCustomer,
   type WishlistItem,
 } from "@/lib/storefront-account";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { captchaSiteKeyFor, type CheckoutTrust } from "@/lib/orders-gb3";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { priceText, stockBadge } from "../ProductCard";
 
 function money(minor: string): string {
@@ -36,6 +41,33 @@ function money(minor: string): string {
   } catch {
     return minor;
   }
+}
+
+// AB1: loyalty ledger presentation (Bengali-first, like the
+// rest of this surface's newer blocks).
+const LOYALTY_REASON_LABELS: Record<string, string> = {
+  earn: "পয়েন্ট অর্জন",
+  redeem: "পয়েন্ট খরচ",
+  expire: "মেয়াদ উত্তীর্ণ",
+  adjust: "সমন্বয়",
+  referral_reward: "রেফারেল পুরস্কার",
+};
+
+const LOYALTY_NOTE_LABELS: Record<string, string> = {
+  redeem_reversal: "অর্ডার বাতিলে ফেরত",
+  earn_clawback: "রিফান্ডে কর্তন",
+  referral_reward_clawback: "রেফারেল পুরস্কারে কর্তন",
+};
+
+function loyaltyNoteText(note: string | null): string | null {
+  if (!note) return null;
+  return LOYALTY_NOTE_LABELS[note] ?? note;
+}
+
+function referralCouponState(c: ReferralRewardCoupon): { label: string; cls: string } {
+  if (c.usedCount > 0) return { label: "ব্যবহৃত", cls: "bg-slate-100 text-slate-600" };
+  if (!c.active) return { label: "মেয়াদ শেষ", cls: "bg-rose-50 text-rose-600" };
+  return { label: "সক্রিয়", cls: "bg-emerald-100 text-emerald-700" };
 }
 
 type Tab = "orders" | "wishlist" | "addresses" | "profile";
@@ -60,6 +92,11 @@ function AccountInner() {
   const [resendIn, setResendIn] = useState(0);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  // GB3 (GC9): OTP CAPTCHA — trust block from the shop home payload;
+  // the epoch remounts the widget so a resend gets a fresh token.
+  const [checkoutTrust, setCheckoutTrust] = useState<CheckoutTrust | null>(null);
+  const [otpCaptchaToken, setOtpCaptchaToken] = useState<string | null>(null);
+  const [otpCaptchaEpoch, setOtpCaptchaEpoch] = useState(0);
 
   // orders
   const [orders, setOrders] = useState<MyOrder[]>([]);
@@ -86,6 +123,11 @@ function AccountInner() {
   const [profSaved, setProfSaved] = useState(false);
   const [profBusy, setProfBusy] = useState(false);
 
+  // AB1: loyalty + referral surface (null = not loaded / failed
+  // / signed out — the page then renders exactly as before).
+  const [loyalty, setLoyalty] = useState<AccountLoyalty | null>(null);
+  const [refCopied, setRefCopied] = useState(false);
+
   const [error, setError] = useState("");
 
   // Shop locale (default bn).
@@ -96,6 +138,7 @@ function AccountInner() {
         if (!res.ok) return;
         const json = await res.json();
         setLocale(shopLocaleOf(json?.settings?.locale));
+        setCheckoutTrust((json?.checkoutTrust as CheckoutTrust | undefined) ?? null);
       } catch { /* locale stays bn */ }
     })();
   }, [orgSlug]);
@@ -139,6 +182,16 @@ function AccountInner() {
     }
   }, [orgSlug, t.account.genericError]);
 
+  // AB1: loyalty is best-effort — a failed fetch must never
+  // break the account page, it just hides the loyalty surface.
+  const loadLoyalty = useCallback(async () => {
+    try {
+      setLoyalty(await fetchAccountLoyalty(orgSlug));
+    } catch {
+      setLoyalty(null);
+    }
+  }, [orgSlug]);
+
   const loadAccount = useCallback(async () => {
     if (!getShopSession(orgSlug)) {
       setCustomer(null);
@@ -150,21 +203,29 @@ function AccountInner() {
       setCustomer(me.customer);
       setProfName(me.customer.name ?? "");
       setProfEmail(me.customer.email ?? "");
-      await Promise.all([loadOrders(1), loadWishlist(), loadAddresses()]);
+      await Promise.all([loadOrders(1), loadWishlist(), loadAddresses(), loadLoyalty()]);
     } catch {
       setCustomer(null);
     } finally {
       setReady(true);
     }
-  }, [orgSlug, loadOrders, loadWishlist, loadAddresses]);
+  }, [orgSlug, loadOrders, loadWishlist, loadAddresses, loadLoyalty]);
 
   useEffect(() => { loadAccount(); }, [loadAccount]);
 
   async function sendCode() {
+    if (captchaSiteKeyFor(checkoutTrust, "otp") && !otpCaptchaToken) {
+      setAuthError(t.checkout.captchaRequiredError);
+      return;
+    }
     setAuthBusy(true);
     setAuthError("");
     try {
-      await requestOtp(orgSlug, phone.trim());
+      await requestOtp(orgSlug, phone.trim(), otpCaptchaToken ?? undefined);
+      // Turnstile tokens are single-use — drop it and remount the
+      // widget so a resend produces a fresh one.
+      setOtpCaptchaToken(null);
+      setOtpCaptchaEpoch((n) => n + 1);
       setCodeSent(true);
       setResendIn(60);
     } catch (e) {
@@ -200,6 +261,16 @@ function AccountInner() {
     setOrders([]);
     setWishItems([]);
     setAddresses([]);
+    setLoyalty(null);
+  }
+
+  async function copyReferralCode() {
+    if (!loyalty?.referralCode) return;
+    try {
+      await navigator.clipboard.writeText(loyalty.referralCode);
+      setRefCopied(true);
+      setTimeout(() => setRefCopied(false), 2000);
+    } catch { /* clipboard unavailable — the code stays visible to copy manually */ }
   }
 
   async function openDetail(orderId: string) {
@@ -370,6 +441,9 @@ function AccountInner() {
               className="w-full rounded-xl border border-slate-300 p-2.5 font-mono text-sm font-bold focus:border-indigo-600 focus:outline-none disabled:bg-slate-50"
             />
           </div>
+          {captchaSiteKeyFor(checkoutTrust, "otp") ? (
+            <TurnstileWidget key={otpCaptchaEpoch} siteKey={captchaSiteKeyFor(checkoutTrust, "otp") ?? ""} onToken={setOtpCaptchaToken} />
+          ) : null}
           {!codeSent ? (
             <button
               type="button"
@@ -416,6 +490,14 @@ function AccountInner() {
     );
   }
 
+  // AB1: the points card shows only for an enabled program or
+  // a non-zero balance; the referral block shows when there is
+  // a code or earned coupons to display.
+  const showLoyaltyCard = !!loyalty && (loyalty.enabled || loyalty.balance !== 0);
+  const referralCoupons = loyalty?.referralRewards?.coupons ?? [];
+  const showReferral = !!loyalty && (!!loyalty.referralCode || referralCoupons.length > 0);
+  const dateFmt = (iso: string) => new Date(iso).toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD");
+
   const tabs: { key: Tab; label: string }[] = [
     { key: "orders", label: t.account.tabsOrders },
     { key: "wishlist", label: t.account.tabsWishlist },
@@ -437,6 +519,101 @@ function AccountInner() {
 
       {mergeNote ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">❤️ {mergeNote}</p> : null}
       {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p> : null}
+
+      {/* --- AB1: loyalty points card + history --- */}
+      {showLoyaltyCard && loyalty ? (
+        <div className="space-y-4 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-black text-slate-900">⭐ লয়্যালটি পয়েন্ট</h2>
+              <p className="text-xs text-slate-500">কেনাকাটায় পয়েন্ট অর্জন করুন — পরের অর্ডারে ছাড় হিসেবে ব্যবহার করুন।</p>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-black text-violet-700">{loyalty.balance} <span className="text-sm font-bold text-slate-600">পয়েন্ট</span></p>
+              <p className="text-xs font-semibold text-slate-500">মূল্য: {money(String(loyalty.balanceValueMinor))}</p>
+            </div>
+          </div>
+          {loyalty.entries.length > 0 ? (
+            <ul className="divide-y border-t">
+              {loyalty.entries.map((e) => {
+                const noteText = loyaltyNoteText(e.note);
+                return (
+                  <li key={e.id} className="flex items-start justify-between gap-3 py-2.5 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-800">{LOYALTY_REASON_LABELS[e.reason] ?? e.reason}</p>
+                      <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-slate-500">
+                        <span>{dateFmt(e.createdAt)}</span>
+                        {e.orderNumber ? <span>অর্ডার: <span className="font-mono font-semibold">{e.orderNumber}</span></span> : null}
+                        <span>ব্যালেন্স: {e.balanceAfter}</span>
+                        {e.reason === "earn" && e.expiresAt ? <span>মেয়াদ: {dateFmt(e.expiresAt)}</span> : null}
+                        {e.reason === "earn" && e.remainingPoints != null ? <span>অবশিষ্ট: {e.remainingPoints}</span> : null}
+                      </p>
+                      {noteText ? <p className="mt-0.5 text-xs text-slate-500">{noteText}</p> : null}
+                    </div>
+                    <span className={`shrink-0 font-black ${e.deltaPoints >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                      {e.deltaPoints >= 0 ? `+${e.deltaPoints}` : `−${Math.abs(e.deltaPoints)}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="border-t pt-3 text-sm font-semibold text-slate-500">এখনো কোনো পয়েন্ট লেনদেন নেই।</p>
+          )}
+        </div>
+      ) : null}
+
+      {/* --- AB1: your referral (code + earned reward coupons) --- */}
+      {showReferral && loyalty ? (
+        <div className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5">
+          <h2 className="font-black text-slate-900">🎁 আপনার রেফারেল</h2>
+          {loyalty.referralCode ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-xl border border-indigo-200 bg-white px-4 py-2 font-mono text-sm font-black tracking-wider text-indigo-800">{loyalty.referralCode}</span>
+              <button
+                type="button"
+                onClick={copyReferralCode}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
+              >
+                {refCopied ? "কপি হয়েছে ✅" : "কোড কপি করুন"}
+              </button>
+              <p className="w-full text-xs text-slate-500">বন্ধুদের এই কোডটি দিন — তারা ছাড় পাবেন, আপনিও পুরস্কার পাবেন।</p>
+            </div>
+          ) : null}
+          {referralCoupons.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-slate-700">রেফারেল পুরস্কারের কুপন</p>
+              <ul className="space-y-2">
+                {referralCoupons.map((c) => {
+                  const state = referralCouponState(c);
+                  return (
+                    <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm">
+                      <span className="font-mono font-black text-indigo-800">{c.code}</span>
+                      <span className="font-bold text-emerald-700">{c.value}% ছাড়</span>
+                      {c.sourceOrderNumber ? <span className="text-xs text-slate-500">অর্ডার {c.sourceOrderNumber} থেকে</span> : null}
+                      <span className="text-xs text-slate-500">{c.endsAt ? `মেয়াদ: ${dateFmt(c.endsAt)}` : "মেয়াদ নেই"}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${state.cls}`}>{state.label}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* --- AB2: gift-card balance link (the public balance
+          page needs only the code — no login). --- */}
+      <Link
+        href={`/shop/${orgSlug}/gift-cards`}
+        className="flex items-center justify-between gap-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-5 transition hover:shadow-sm"
+      >
+        <span>
+          <span className="block font-black text-slate-900">🎁 গিফট কার্ড</span>
+          <span className="mt-0.5 block text-xs text-slate-500">আপনার গিফট কার্ডের ব্যালেন্স ও মেয়াদ দেখুন — শুধু কার্ডের কোডটি লাগবে।</span>
+        </span>
+        <span className="shrink-0 text-lg font-bold text-pink-600">→</span>
+      </Link>
 
       <div className="flex flex-wrap gap-2">
         {tabs.map((tb) => (

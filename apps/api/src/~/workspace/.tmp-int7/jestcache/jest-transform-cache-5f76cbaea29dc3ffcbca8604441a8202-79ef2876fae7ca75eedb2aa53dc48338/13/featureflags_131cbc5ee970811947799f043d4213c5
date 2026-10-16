@@ -1,0 +1,86 @@
+2af59c7cae5026487e7c001d7ac0beb4
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FLAG_DISABLED_MESSAGE = exports.KNOWN_FLAG_KEYS = void 0;
+exports.planFlagDefaults = planFlagDefaults;
+exports.orgFlagEnabled = orgFlagEnabled;
+const platform_settings_1 = require("./platform-settings");
+/**
+ * Milestone 40 (Admin Phase A4): feature-flag enforcement.
+ * Flags are per-org OPT-OUT switches set from the Admin Console:
+ * no row (or a row with enabled=true) means the feature is ON —
+ * exactly the behavior before flags were enforced. A row with
+ * enabled=false turns the feature OFF for that one org.
+ * Reads are defensive: any failure means "enabled", so a flag
+ * lookup can never take a production flow down.
+ *
+ * Admin Advanced AA7: a PLAN-DEFAULT layer now sits between the
+ * org row and the built-in ON. Resolution order:
+ *   1. explicit org row (OrgFeatureFlag) — always wins;
+ *   2. the operator-set plan default for the org's CURRENT
+ *      subscription tier (SystemSetting "planFlagDefaults",
+ *      sparse — only explicitly-set flag×tier entries exist);
+ *   3. ON.
+ * Because the tier is read live from the latest subscription,
+ * changing an org's plan changes its flag defaults too.
+ * Unknown flag keys are never plan-gated: the plan layer applies
+ * only to KNOWN_FLAG_KEYS (AdminService.KNOWN_FLAGS mirrors this
+ * list for the console's flag editor).
+ */
+exports.KNOWN_FLAG_KEYS = ["dayparting", "portfolio", "creative_library", "order_bot", "offline_conversions", "agency_portfolio"];
+/** AA7: the sanitized sparse plan-default map stored in
+ * SystemSetting "planFlagDefaults": { [flagKey]: { [tier]: boolean } }.
+ * Only known flags, known tiers and real booleans survive; anything
+ * else in the stored value is ignored (defensive — a hand-edited or
+ * legacy row can never break resolution). Never throws. */
+async function planFlagDefaults(prisma) {
+    try {
+        const raw = (await (0, platform_settings_1.platformSetting)(prisma, "planFlagDefaults"));
+        const out = {};
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
+            return out;
+        for (const key of exports.KNOWN_FLAG_KEYS) {
+            const perTier = raw[key];
+            if (!perTier || typeof perTier !== "object" || Array.isArray(perTier))
+                continue;
+            const tiers = {};
+            for (const tier of platform_settings_1.PLAN_TIERS) {
+                if (typeof perTier[tier] === "boolean")
+                    tiers[tier] = perTier[tier];
+            }
+            if (Object.keys(tiers).length)
+                out[key] = tiers;
+        }
+        return out;
+    }
+    catch {
+        return {};
+    }
+}
+async function orgFlagEnabled(prisma, organizationId, key) {
+    try {
+        const row = await prisma.orgFeatureFlag?.findUnique({
+            where: { organizationId_key: { organizationId, key } },
+        });
+        if (row)
+            return row.enabled !== false;
+        // AA7: plan-default layer (known flags only). The tier is read
+        // ONLY when a default for this flag exists at all, so flag
+        // checks without any operator defaults keep their old cost.
+        if (exports.KNOWN_FLAG_KEYS.includes(key)) {
+            const perTier = (await planFlagDefaults(prisma))[key];
+            if (perTier) {
+                const tier = await (0, platform_settings_1.orgPlan)(prisma, organizationId);
+                if (typeof perTier[tier] === "boolean")
+                    return perTier[tier];
+            }
+        }
+        return true;
+    }
+    catch {
+        return true;
+    }
+}
+const FLAG_DISABLED_MESSAGE = (feature) => `This feature (${feature}) is disabled for this organization by the platform team.`;
+exports.FLAG_DISABLED_MESSAGE = FLAG_DISABLED_MESSAGE;
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiL2hvbWUvaGF0Y2gvd29ya3NwYWNlL2FpLW1hcmtldGluZy1zYWFzLWludDcvYXBwcy9hcGkvc3JjL2NvbW1vbi9mZWF0dXJlLWZsYWdzLnRzIiwibWFwcGluZ3MiOiI7OztBQStCQSw0Q0FrQkM7QUFFRCx3Q0FvQkM7QUF2RUQsMkRBQTJFO0FBRTNFOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FxQkc7QUFDVSxRQUFBLGVBQWUsR0FBRyxDQUFDLFlBQVksRUFBRSxXQUFXLEVBQUUsa0JBQWtCLEVBQUUsV0FBVyxFQUFFLHFCQUFxQixFQUFFLGtCQUFrQixDQUFVLENBQUM7QUFFaEo7Ozs7MkRBSTJEO0FBQ3BELEtBQUssVUFBVSxnQkFBZ0IsQ0FBQyxNQUFXO0lBQ2hELElBQUksQ0FBQztRQUNILE1BQU0sR0FBRyxHQUFHLENBQUMsTUFBTSxJQUFBLG1DQUFlLEVBQUMsTUFBTSxFQUFFLGtCQUFrQixDQUFDLENBQVEsQ0FBQztRQUN2RSxNQUFNLEdBQUcsR0FBNEMsRUFBRSxDQUFDO1FBQ3hELElBQUksQ0FBQyxHQUFHLElBQUksT0FBTyxHQUFHLEtBQUssUUFBUSxJQUFJLEtBQUssQ0FBQyxPQUFPLENBQUMsR0FBRyxDQUFDO1lBQUUsT0FBTyxHQUFHLENBQUM7UUFDdEUsS0FBSyxNQUFNLEdBQUcsSUFBSSx1QkFBZSxFQUFFLENBQUM7WUFDbEMsTUFBTSxPQUFPLEdBQUcsR0FBRyxDQUFDLEdBQUcsQ0FBQyxDQUFDO1lBQ3pCLElBQUksQ0FBQyxPQUFPLElBQUksT0FBTyxPQUFPLEtBQUssUUFBUSxJQUFJLEtBQUssQ0FBQyxPQUFPLENBQUMsT0FBTyxDQUFDO2dCQUFFLFNBQVM7WUFDaEYsTUFBTSxLQUFLLEdBQTRCLEVBQUUsQ0FBQztZQUMxQyxLQUFLLE1BQU0sSUFBSSxJQUFJLDhCQUFVLEVBQUUsQ0FBQztnQkFDOUIsSUFBSSxPQUFPLE9BQU8sQ0FBQyxJQUFJLENBQUMsS0FBSyxTQUFTO29CQUFFLEtBQUssQ0FBQyxJQUFJLENBQUMsR0FBRyxPQUFPLENBQUMsSUFBSSxDQUFDLENBQUM7WUFDdEUsQ0FBQztZQUNELElBQUksTUFBTSxDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQyxNQUFNO2dCQUFFLEdBQUcsQ0FBQyxHQUFHLENBQUMsR0FBRyxLQUFLLENBQUM7UUFDbEQsQ0FBQztRQUNELE9BQU8sR0FBRyxDQUFDO0lBQ2IsQ0FBQztJQUFDLE1BQU0sQ0FBQztRQUNQLE9BQU8sRUFBRSxDQUFDO0lBQ1osQ0FBQztBQUNILENBQUM7QUFFTSxLQUFLLFVBQVUsY0FBYyxDQUFDLE1BQVcsRUFBRSxjQUFzQixFQUFFLEdBQVc7SUFDbkYsSUFBSSxDQUFDO1FBQ0gsTUFBTSxHQUFHLEdBQUcsTUFBTSxNQUFNLENBQUMsY0FBYyxFQUFFLFVBQVUsQ0FBQztZQUNsRCxLQUFLLEVBQUUsRUFBRSxrQkFBa0IsRUFBRSxFQUFFLGNBQWMsRUFBRSxHQUFHLEVBQUUsRUFBRTtTQUN2RCxDQUFDLENBQUM7UUFDSCxJQUFJLEdBQUc7WUFBRSxPQUFPLEdBQUcsQ0FBQyxPQUFPLEtBQUssS0FBSyxDQUFDO1FBQ3RDLCtEQUErRDtRQUMvRCwyREFBMkQ7UUFDM0QsNERBQTREO1FBQzVELElBQUssdUJBQXFDLENBQUMsUUFBUSxDQUFDLEdBQUcsQ0FBQyxFQUFFLENBQUM7WUFDekQsTUFBTSxPQUFPLEdBQUcsQ0FBQyxNQUFNLGdCQUFnQixDQUFDLE1BQU0sQ0FBQyxDQUFDLENBQUMsR0FBRyxDQUFDLENBQUM7WUFDdEQsSUFBSSxPQUFPLEVBQUUsQ0FBQztnQkFDWixNQUFNLElBQUksR0FBRyxNQUFNLElBQUEsMkJBQU8sRUFBQyxNQUFNLEVBQUUsY0FBYyxDQUFDLENBQUM7Z0JBQ25ELElBQUksT0FBTyxPQUFPLENBQUMsSUFBSSxDQUFDLEtBQUssU0FBUztvQkFBRSxPQUFPLE9BQU8sQ0FBQyxJQUFJLENBQUMsQ0FBQztZQUMvRCxDQUFDO1FBQ0gsQ0FBQztRQUNELE9BQU8sSUFBSSxDQUFDO0lBQ2QsQ0FBQztJQUFDLE1BQU0sQ0FBQztRQUNQLE9BQU8sSUFBSSxDQUFDO0lBQ2QsQ0FBQztBQUNILENBQUM7QUFFTSxNQUFNLHFCQUFxQixHQUFHLENBQUMsT0FBZSxFQUFFLEVBQUUsQ0FDdkQsaUJBQWlCLE9BQU8sMkRBQTJELENBQUM7QUFEekUsUUFBQSxxQkFBcUIseUJBQ29EIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIi9ob21lL2hhdGNoL3dvcmtzcGFjZS9haS1tYXJrZXRpbmctc2Fhcy1pbnQ3L2FwcHMvYXBpL3NyYy9jb21tb24vZmVhdHVyZS1mbGFncy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBvcmdQbGFuLCBwbGF0Zm9ybVNldHRpbmcsIFBMQU5fVElFUlMgfSBmcm9tIFwiLi9wbGF0Zm9ybS1zZXR0aW5nc1wiO1xuXG4vKipcbiAqIE1pbGVzdG9uZSA0MCAoQWRtaW4gUGhhc2UgQTQpOiBmZWF0dXJlLWZsYWcgZW5mb3JjZW1lbnQuXG4gKiBGbGFncyBhcmUgcGVyLW9yZyBPUFQtT1VUIHN3aXRjaGVzIHNldCBmcm9tIHRoZSBBZG1pbiBDb25zb2xlOlxuICogbm8gcm93IChvciBhIHJvdyB3aXRoIGVuYWJsZWQ9dHJ1ZSkgbWVhbnMgdGhlIGZlYXR1cmUgaXMgT04g4oCUXG4gKiBleGFjdGx5IHRoZSBiZWhhdmlvciBiZWZvcmUgZmxhZ3Mgd2VyZSBlbmZvcmNlZC4gQSByb3cgd2l0aFxuICogZW5hYmxlZD1mYWxzZSB0dXJucyB0aGUgZmVhdHVyZSBPRkYgZm9yIHRoYXQgb25lIG9yZy5cbiAqIFJlYWRzIGFyZSBkZWZlbnNpdmU6IGFueSBmYWlsdXJlIG1lYW5zIFwiZW5hYmxlZFwiLCBzbyBhIGZsYWdcbiAqIGxvb2t1cCBjYW4gbmV2ZXIgdGFrZSBhIHByb2R1Y3Rpb24gZmxvdyBkb3duLlxuICpcbiAqIEFkbWluIEFkdmFuY2VkIEFBNzogYSBQTEFOLURFRkFVTFQgbGF5ZXIgbm93IHNpdHMgYmV0d2VlbiB0aGVcbiAqIG9yZyByb3cgYW5kIHRoZSBidWlsdC1pbiBPTi4gUmVzb2x1dGlvbiBvcmRlcjpcbiAqICAgMS4gZXhwbGljaXQgb3JnIHJvdyAoT3JnRmVhdHVyZUZsYWcpIOKAlCBhbHdheXMgd2lucztcbiAqICAgMi4gdGhlIG9wZXJhdG9yLXNldCBwbGFuIGRlZmF1bHQgZm9yIHRoZSBvcmcncyBDVVJSRU5UXG4gKiAgICAgIHN1YnNjcmlwdGlvbiB0aWVyIChTeXN0ZW1TZXR0aW5nIFwicGxhbkZsYWdEZWZhdWx0c1wiLFxuICogICAgICBzcGFyc2Ug4oCUIG9ubHkgZXhwbGljaXRseS1zZXQgZmxhZ8OXdGllciBlbnRyaWVzIGV4aXN0KTtcbiAqICAgMy4gT04uXG4gKiBCZWNhdXNlIHRoZSB0aWVyIGlzIHJlYWQgbGl2ZSBmcm9tIHRoZSBsYXRlc3Qgc3Vic2NyaXB0aW9uLFxuICogY2hhbmdpbmcgYW4gb3JnJ3MgcGxhbiBjaGFuZ2VzIGl0cyBmbGFnIGRlZmF1bHRzIHRvby5cbiAqIFVua25vd24gZmxhZyBrZXlzIGFyZSBuZXZlciBwbGFuLWdhdGVkOiB0aGUgcGxhbiBsYXllciBhcHBsaWVzXG4gKiBvbmx5IHRvIEtOT1dOX0ZMQUdfS0VZUyAoQWRtaW5TZXJ2aWNlLktOT1dOX0ZMQUdTIG1pcnJvcnMgdGhpc1xuICogbGlzdCBmb3IgdGhlIGNvbnNvbGUncyBmbGFnIGVkaXRvcikuXG4gKi9cbmV4cG9ydCBjb25zdCBLTk9XTl9GTEFHX0tFWVMgPSBbXCJkYXlwYXJ0aW5nXCIsIFwicG9ydGZvbGlvXCIsIFwiY3JlYXRpdmVfbGlicmFyeVwiLCBcIm9yZGVyX2JvdFwiLCBcIm9mZmxpbmVfY29udmVyc2lvbnNcIiwgXCJhZ2VuY3lfcG9ydGZvbGlvXCJdIGFzIGNvbnN0O1xuXG4vKiogQUE3OiB0aGUgc2FuaXRpemVkIHNwYXJzZSBwbGFuLWRlZmF1bHQgbWFwIHN0b3JlZCBpblxuICogU3lzdGVtU2V0dGluZyBcInBsYW5GbGFnRGVmYXVsdHNcIjogeyBbZmxhZ0tleV06IHsgW3RpZXJdOiBib29sZWFuIH0gfS5cbiAqIE9ubHkga25vd24gZmxhZ3MsIGtub3duIHRpZXJzIGFuZCByZWFsIGJvb2xlYW5zIHN1cnZpdmU7IGFueXRoaW5nXG4gKiBlbHNlIGluIHRoZSBzdG9yZWQgdmFsdWUgaXMgaWdub3JlZCAoZGVmZW5zaXZlIOKAlCBhIGhhbmQtZWRpdGVkIG9yXG4gKiBsZWdhY3kgcm93IGNhbiBuZXZlciBicmVhayByZXNvbHV0aW9uKS4gTmV2ZXIgdGhyb3dzLiAqL1xuZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHBsYW5GbGFnRGVmYXVsdHMocHJpc21hOiBhbnkpOiBQcm9taXNlPFJlY29yZDxzdHJpbmcsIFJlY29yZDxzdHJpbmcsIGJvb2xlYW4+Pj4ge1xuICB0cnkge1xuICAgIGNvbnN0IHJhdyA9IChhd2FpdCBwbGF0Zm9ybVNldHRpbmcocHJpc21hLCBcInBsYW5GbGFnRGVmYXVsdHNcIikpIGFzIGFueTtcbiAgICBjb25zdCBvdXQ6IFJlY29yZDxzdHJpbmcsIFJlY29yZDxzdHJpbmcsIGJvb2xlYW4+PiA9IHt9O1xuICAgIGlmICghcmF3IHx8IHR5cGVvZiByYXcgIT09IFwib2JqZWN0XCIgfHwgQXJyYXkuaXNBcnJheShyYXcpKSByZXR1cm4gb3V0O1xuICAgIGZvciAoY29uc3Qga2V5IG9mIEtOT1dOX0ZMQUdfS0VZUykge1xuICAgICAgY29uc3QgcGVyVGllciA9IHJhd1trZXldO1xuICAgICAgaWYgKCFwZXJUaWVyIHx8IHR5cGVvZiBwZXJUaWVyICE9PSBcIm9iamVjdFwiIHx8IEFycmF5LmlzQXJyYXkocGVyVGllcikpIGNvbnRpbnVlO1xuICAgICAgY29uc3QgdGllcnM6IFJlY29yZDxzdHJpbmcsIGJvb2xlYW4+ID0ge307XG4gICAgICBmb3IgKGNvbnN0IHRpZXIgb2YgUExBTl9USUVSUykge1xuICAgICAgICBpZiAodHlwZW9mIHBlclRpZXJbdGllcl0gPT09IFwiYm9vbGVhblwiKSB0aWVyc1t0aWVyXSA9IHBlclRpZXJbdGllcl07XG4gICAgICB9XG4gICAgICBpZiAoT2JqZWN0LmtleXModGllcnMpLmxlbmd0aCkgb3V0W2tleV0gPSB0aWVycztcbiAgICB9XG4gICAgcmV0dXJuIG91dDtcbiAgfSBjYXRjaCB7XG4gICAgcmV0dXJuIHt9O1xuICB9XG59XG5cbmV4cG9ydCBhc3luYyBmdW5jdGlvbiBvcmdGbGFnRW5hYmxlZChwcmlzbWE6IGFueSwgb3JnYW5pemF0aW9uSWQ6IHN0cmluZywga2V5OiBzdHJpbmcpOiBQcm9taXNlPGJvb2xlYW4+IHtcbiAgdHJ5IHtcbiAgICBjb25zdCByb3cgPSBhd2FpdCBwcmlzbWEub3JnRmVhdHVyZUZsYWc/LmZpbmRVbmlxdWUoe1xuICAgICAgd2hlcmU6IHsgb3JnYW5pemF0aW9uSWRfa2V5OiB7IG9yZ2FuaXphdGlvbklkLCBrZXkgfSB9LFxuICAgIH0pO1xuICAgIGlmIChyb3cpIHJldHVybiByb3cuZW5hYmxlZCAhPT0gZmFsc2U7XG4gICAgLy8gQUE3OiBwbGFuLWRlZmF1bHQgbGF5ZXIgKGtub3duIGZsYWdzIG9ubHkpLiBUaGUgdGllciBpcyByZWFkXG4gICAgLy8gT05MWSB3aGVuIGEgZGVmYXVsdCBmb3IgdGhpcyBmbGFnIGV4aXN0cyBhdCBhbGwsIHNvIGZsYWdcbiAgICAvLyBjaGVja3Mgd2l0aG91dCBhbnkgb3BlcmF0b3IgZGVmYXVsdHMga2VlcCB0aGVpciBvbGQgY29zdC5cbiAgICBpZiAoKEtOT1dOX0ZMQUdfS0VZUyBhcyByZWFkb25seSBzdHJpbmdbXSkuaW5jbHVkZXMoa2V5KSkge1xuICAgICAgY29uc3QgcGVyVGllciA9IChhd2FpdCBwbGFuRmxhZ0RlZmF1bHRzKHByaXNtYSkpW2tleV07XG4gICAgICBpZiAocGVyVGllcikge1xuICAgICAgICBjb25zdCB0aWVyID0gYXdhaXQgb3JnUGxhbihwcmlzbWEsIG9yZ2FuaXphdGlvbklkKTtcbiAgICAgICAgaWYgKHR5cGVvZiBwZXJUaWVyW3RpZXJdID09PSBcImJvb2xlYW5cIikgcmV0dXJuIHBlclRpZXJbdGllcl07XG4gICAgICB9XG4gICAgfVxuICAgIHJldHVybiB0cnVlO1xuICB9IGNhdGNoIHtcbiAgICByZXR1cm4gdHJ1ZTtcbiAgfVxufVxuXG5leHBvcnQgY29uc3QgRkxBR19ESVNBQkxFRF9NRVNTQUdFID0gKGZlYXR1cmU6IHN0cmluZykgPT5cbiAgYFRoaXMgZmVhdHVyZSAoJHtmZWF0dXJlfSkgaXMgZGlzYWJsZWQgZm9yIHRoaXMgb3JnYW5pemF0aW9uIGJ5IHRoZSBwbGF0Zm9ybSB0ZWFtLmA7XG4iXSwidmVyc2lvbiI6M30=

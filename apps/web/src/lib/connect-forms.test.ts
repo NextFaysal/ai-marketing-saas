@@ -3,6 +3,7 @@ import {
   buildCourierConnectBody, buildEmailConnectBody, buildMessagingConnectBody, buildShopifyConnectBody,
   buildWooConnectBody, buildSenderEmailBody, buildSenderSmsBody, buildLlmConfigBody, buildGatewayBody, buildPayoutBody,
   emailResultText, initialAppSource, telegramResultText, PATHAO_SANDBOX_BASE,
+  feeBpsToPercentInput, feeMinorToTakaInput, parseFeePercentToBps, parseFeeTakaToMinor,
 } from "./connect-forms";
 
 /**
@@ -109,12 +110,66 @@ describe("CC10 payout bodies", () => {
 describe("CC9 gateway bodies", () => {
   const form = {
     storeId: "store1", storePass: "sp", username: "017", password: "pw", appKey: "ak", appSecret: "as",
-    merchantId: "M1", privateKey: "pk", sandbox: true,
+    merchantId: "M1", privateKey: "pk", prefix: "SPX", signatureKey: "sig-key", sandbox: true,
   };
 
   it("each provider sends ONLY its own field subset", () => {
     expect(buildGatewayBody("sslcommerz", form)).toEqual({ storeId: "store1", storePass: "sp", sandbox: true });
     expect(buildGatewayBody("bkash", form)).toEqual({ username: "017", password: "pw", appKey: "ak", appSecret: "as", sandbox: true });
     expect(buildGatewayBody("nagad", form)).toEqual({ merchantId: "M1", privateKey: "pk" });
+    expect(buildGatewayBody("shurjopay", form)).toEqual({ username: "017", password: "pw", prefix: "SPX", storeId: "store1", sandbox: true });
+    expect(buildGatewayBody("aamarpay", form)).toEqual({ storeId: "store1", signatureKey: "sig-key", sandbox: true });
+  });
+
+  it("shurjopay omits a blank optional store id", () => {
+    expect(buildGatewayBody("shurjopay", { ...form, storeId: "  " }))
+      .toEqual({ username: "017", password: "pw", prefix: "SPX", storeId: undefined, sandbox: true });
+  });
+
+  it("GC12: a form without fee fields sends NO fee keys (stored fees untouched by the API)", () => {
+    const body: any = buildGatewayBody("sslcommerz", form);
+    expect("feeBps" in body).toBe(false);
+    expect("feeFixedMinor" in body).toBe(false);
+  });
+});
+
+describe("GC12 gateway fee conversions + body round-trip", () => {
+  const form = {
+    storeId: "store1", storePass: "sp", username: "017", password: "pw", appKey: "ak", appSecret: "as",
+    merchantId: "M1", privateKey: "pk", prefix: "SPX", signatureKey: "sig-key", sandbox: true,
+  };
+
+  it("bps ↔ percent and minor ↔ taka conversions round-trip", () => {
+    expect(feeBpsToPercentInput(250)).toBe("2.5");
+    expect(feeBpsToPercentInput(200)).toBe("2");
+    expect(feeBpsToPercentInput(null)).toBe("");
+    expect(parseFeePercentToBps("2.5")).toEqual({ ok: true, bps: 250 });
+    expect(parseFeePercentToBps("")).toEqual({ ok: true, bps: null });
+    expect(parseFeePercentToBps("101")).toEqual({ ok: false });
+    expect(parseFeePercentToBps("-1")).toEqual({ ok: false });
+    expect(feeMinorToTakaInput("150")).toBe("1.5");
+    expect(feeMinorToTakaInput("155")).toBe("1.55");
+    expect(feeMinorToTakaInput("100")).toBe("1");
+    expect(feeMinorToTakaInput(null)).toBe("");
+    expect(parseFeeTakaToMinor("1.5")).toEqual({ ok: true, minor: "150" });
+    expect(parseFeeTakaToMinor("1.55")).toEqual({ ok: true, minor: "155" });
+    expect(parseFeeTakaToMinor("")).toEqual({ ok: true, minor: null });
+    expect(parseFeeTakaToMinor("1.234")).toEqual({ ok: false });
+    // full round-trip: stored values → inputs → body values
+    const pct = feeBpsToPercentInput(275);
+    const taka = feeMinorToTakaInput("275");
+    expect(parseFeePercentToBps(pct)).toEqual({ ok: true, bps: 275 });
+    expect(parseFeeTakaToMinor(taka)).toEqual({ ok: true, minor: "275" });
+  });
+
+  it("the panel flow always sends the displayed fee values; cleared inputs send explicit null", () => {
+    expect(buildGatewayBody("sslcommerz", { ...form, feePercent: "2.5", feeFixedTaka: "1.50" }))
+      .toEqual({ storeId: "store1", storePass: "sp", sandbox: true, feeBps: 250, feeFixedMinor: "150" });
+    // merchant cleared both inputs (they previously held values) → explicit nulls clear the columns
+    expect(buildGatewayBody("sslcommerz", { ...form, feePercent: "", feeFixedTaka: "" }))
+      .toEqual({ storeId: "store1", storePass: "sp", sandbox: true, feeBps: null, feeFixedMinor: null });
+    // untouched re-save: prefilled inputs re-send the SAME stored values — nothing is wiped
+    expect(buildGatewayBody("bkash", { ...form, feePercent: feeBpsToPercentInput(150), feeFixedTaka: feeMinorToTakaInput("30") }))
+      .toEqual({ username: "017", password: "pw", appKey: "ak", appSecret: "as", sandbox: true, feeBps: 150, feeFixedMinor: "30" });
   });
 });
