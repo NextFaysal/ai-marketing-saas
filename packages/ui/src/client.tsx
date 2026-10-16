@@ -6,12 +6,38 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 // access goes through globalThis with minimal structural types instead of
 // bare `document`/`setTimeout` globals, keeping `tsc --noEmit` green
 // without editing the out-of-scope tsconfig.
+type FocusableLike = {
+  focus: () => void;
+  disabled?: boolean;
+  getAttribute?: (name: string) => string | null;
+};
+
+type DialogContainerLike = FocusableLike & {
+  contains: (other: unknown) => boolean;
+  querySelectorAll: (selector: string) => ArrayLike<FocusableLike>;
+};
+
+type DialogKeyEvent = { key: string; shiftKey?: boolean; preventDefault?: () => void };
+
 type DialogDocument = {
   activeElement: { focus?: () => void } | null;
   body: { style: { overflow: string } };
-  addEventListener: (type: string, listener: (e: { key: string }) => void) => void;
-  removeEventListener: (type: string, listener: (e: { key: string }) => void) => void;
+  addEventListener: (type: string, listener: (e: DialogKeyEvent) => void) => void;
+  removeEventListener: (type: string, listener: (e: DialogKeyEvent) => void) => void;
 };
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getFocusables(container: DialogContainerLike): FocusableLike[] {
+  const nodes = container.querySelectorAll(FOCUSABLE_SELECTOR);
+  const list: FocusableLike[] = [];
+  for (let i = 0; i < nodes.length; i += 1) {
+    const el = nodes[i];
+    if (el && !el.disabled) list.push(el);
+  }
+  return list;
+}
 
 function getDocument(): DialogDocument {
   return (globalThis as unknown as { document: DialogDocument }).document;
@@ -21,15 +47,63 @@ function scheduleTimeout(fn: () => void, ms: number) {
   (globalThis as unknown as { setTimeout: (cb: () => void, delay: number) => unknown }).setTimeout(fn, ms);
 }
 
-function useDialogChrome(onClose: () => void, open: boolean) {
+function useDialogChrome(
+  onClose: () => void,
+  open: boolean,
+  getContainer?: () => DialogContainerLike | null,
+) {
   useEffect(() => {
     if (!open) return;
     const doc = getDocument();
     const previouslyFocused = doc.activeElement;
     const prevOverflow = doc.body.style.overflow;
     doc.body.style.overflow = "hidden";
-    const onKeyDown = (e: { key: string }) => {
-      if (e.key === "Escape") onClose();
+
+    // Focus-in (EB6/ED16): move focus into the dialog on open unless
+    // focus is already inside it (e.g. PromptProvider's autoFocus input).
+    const container = getContainer?.() ?? null;
+    if (container) {
+      const active = doc.activeElement as unknown;
+      const alreadyInside = active != null && container.contains(active);
+      if (!alreadyInside) {
+        const focusables = getFocusables(container);
+        const target: FocusableLike = focusables[0] ?? container;
+        if (typeof target.focus === "function") target.focus();
+      }
+    }
+
+    const onKeyDown = (e: DialogKeyEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      // Focus trap (EB6/ED16): keep Tab / Shift+Tab cycling inside the
+      // dialog for as long as it is open.
+      const current = getContainer?.() ?? null;
+      if (!current) return;
+      const focusables = getFocusables(current);
+      if (focusables.length === 0) {
+        e.preventDefault?.();
+        if (typeof current.focus === "function") current.focus();
+        return;
+      }
+      const active = doc.activeElement as unknown;
+      const activeEl = active as FocusableLike | null;
+      const index = activeEl ? focusables.indexOf(activeEl) : -1;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey) {
+        if (index <= 0) {
+          // On the first focusable, or focus is outside the trap.
+          e.preventDefault?.();
+          last.focus();
+        }
+      } else if (index === -1 || index === focusables.length - 1) {
+        // On the last focusable, or focus is outside the trap.
+        e.preventDefault?.();
+        first.focus();
+      }
     };
     doc.addEventListener("keydown", onKeyDown);
     return () => {
@@ -39,6 +113,8 @@ function useDialogChrome(onClose: () => void, open: boolean) {
         previouslyFocused.focus();
       }
     };
+    // getContainer is a stable useCallback in every caller (a ref getter).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, onClose]);
 }
 
@@ -57,14 +133,20 @@ export function Modal({
   footer?: React.ReactNode;
   size?: "sm" | "md" | "lg";
 }) {
-  useDialogChrome(onClose, open);
+  const dialogRef = useRef<DialogContainerLike | null>(null);
+  const getContainer = useCallback(() => dialogRef.current, []);
+  useDialogChrome(onClose, open, getContainer);
   if (!open) return null;
   const width = size === "sm" ? "max-w-sm" : size === "lg" ? "max-w-2xl" : "max-w-lg";
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4" onClick={onClose}>
       <div
+        ref={(el) => {
+          dialogRef.current = el as unknown as DialogContainerLike | null;
+        }}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         className={`max-h-[90dvh] w-full overflow-y-auto rounded-3xl bg-white p-5 shadow-pop ${width}`}
         onClick={(e) => e.stopPropagation()}
       >
@@ -101,14 +183,20 @@ export function Drawer({
   children: React.ReactNode;
   side?: "right" | "left";
 }) {
-  useDialogChrome(onClose, open);
+  const dialogRef = useRef<DialogContainerLike | null>(null);
+  const getContainer = useCallback(() => dialogRef.current, []);
+  useDialogChrome(onClose, open, getContainer);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[80]">
       <div className="absolute inset-0 bg-slate-950/50" onClick={onClose} />
       <div
+        ref={(el) => {
+          dialogRef.current = el as unknown as DialogContainerLike | null;
+        }}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         className={`absolute inset-y-0 ${side === "right" ? "right-0" : "left-0"} w-full max-w-md overflow-y-auto bg-white p-5 shadow-drawer`}
       >
         {title ? (
@@ -180,7 +268,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 type="button"
                 aria-label="বন্ধ করুন"
                 onClick={() => dismiss(id)}
-                className="shrink-0 text-slate-400"
+                className="shrink-0 text-slate-500"
               >
                 ✕
               </button>
@@ -234,7 +322,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     settle(false);
   }, [settle]);
 
-  useDialogChrome(handleClose, state !== null);
+  const dialogRef = useRef<DialogContainerLike | null>(null);
+  const getContainer = useCallback(() => dialogRef.current, []);
+  useDialogChrome(handleClose, state !== null, getContainer);
 
   return (
     <ConfirmContext.Provider value={confirm}>
@@ -242,8 +332,12 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {state ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4" onClick={() => settle(false)}>
           <div
+            ref={(el) => {
+              dialogRef.current = el as unknown as DialogContainerLike | null;
+            }}
             role="dialog"
             aria-modal="true"
+            tabIndex={-1}
             className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-pop"
             onClick={(e) => e.stopPropagation()}
           >
@@ -332,7 +426,9 @@ export function PromptProvider({ children }: { children: React.ReactNode }) {
 
   const handleClose = useCallback(() => settle(null), [settle]);
 
-  useDialogChrome(handleClose, state !== null);
+  const dialogRef = useRef<DialogContainerLike | null>(null);
+  const getContainer = useCallback(() => dialogRef.current, []);
+  useDialogChrome(handleClose, state !== null, getContainer);
 
   return (
     <PromptContext.Provider value={prompt}>
@@ -340,8 +436,12 @@ export function PromptProvider({ children }: { children: React.ReactNode }) {
       {state ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4" onClick={() => settle(null)}>
           <div
+            ref={(el) => {
+              dialogRef.current = el as unknown as DialogContainerLike | null;
+            }}
             role="dialog"
             aria-modal="true"
+            tabIndex={-1}
             className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-pop"
             onClick={(e) => e.stopPropagation()}
           >

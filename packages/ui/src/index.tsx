@@ -1,5 +1,18 @@
 import React from "react";
 
+/**
+ * SkipLink (EB6/ED16): keyboard/AT shortcut past repeated navigation to
+ * the main content. Server-safe plain anchor; the visually-hidden-until-
+ * focus styling lives in globals.css under the `skip-link` class.
+ */
+export function SkipLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} className="skip-link">
+      {children}
+    </a>
+  );
+}
+
 export function EmptyState({ title, description, actionLabel, onAction, action }: { title: string; description: string; actionLabel?: string; onAction?: () => void; action?: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-10 text-center">
@@ -18,7 +31,7 @@ export function KpiCard({ label, value, hint }: { label: string; value: string; 
       <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-indigo-500/70 via-violet-500/70 to-fuchsia-500/60 opacity-0 transition group-hover:opacity-100" />
       <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
       <div className="mt-1.5 text-[26px] font-bold leading-none tracking-tight text-slate-900">{value}</div>
-      {hint ? <div className="mt-2 text-xs text-slate-400">{hint}</div> : null}
+      {hint ? <div className="mt-2 text-xs text-slate-500">{hint}</div> : null}
     </div>
   );
 }
@@ -90,7 +103,7 @@ export function Input({ label, error, hint, wrapperClassName, className, ...rest
       {error ? (
         <p className="mt-1 text-xs font-medium text-red-600">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-xs text-slate-400">{hint}</p>
+        <p className="mt-1 text-xs text-slate-500">{hint}</p>
       ) : null}
     </label>
   );
@@ -113,7 +126,7 @@ export function Select({ label, error, hint, wrapperClassName, className, childr
       {error ? (
         <p className="mt-1 text-xs font-medium text-red-600">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-xs text-slate-400">{hint}</p>
+        <p className="mt-1 text-xs text-slate-500">{hint}</p>
       ) : null}
     </label>
   );
@@ -134,7 +147,7 @@ export function Textarea({ label, error, hint, wrapperClassName, className, rows
       {error ? (
         <p className="mt-1 text-xs font-medium text-red-600">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-xs text-slate-400">{hint}</p>
+        <p className="mt-1 text-xs text-slate-500">{hint}</p>
       ) : null}
     </label>
   );
@@ -210,7 +223,7 @@ export function StatChip({ label, value, hint, icon }: { label: string; value: R
       {icon}
       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</span>
       <span className="text-sm font-bold text-slate-900">{value}</span>
-      {hint ? <span className="text-[11px] text-slate-400">{hint}</span> : null}
+      {hint ? <span className="text-[11px] text-slate-500">{hint}</span> : null}
     </div>
   );
 }
