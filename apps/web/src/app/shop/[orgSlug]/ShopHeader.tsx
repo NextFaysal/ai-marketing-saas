@@ -21,6 +21,7 @@ import {
 } from "@/lib/shop-header-cache";
 import { MediaImage } from "@/components/MediaImage";
 import { Drawer } from "@repo/ui/client";
+import { ShopCartDrawer } from "./ShopCartDrawer";
 
 export function ShopHeader({
   orgSlug,
@@ -53,6 +54,8 @@ export function ShopHeader({
   // ED7 (v2 header only): expandable search row + mobile drawer nav.
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // ED9: v2-only cart drawer state.
+  const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
 
   // ED7: the v2 mobile bottom nav's Search item dispatches
   // "shop:open-search" — opening the row mounts the input with
@@ -206,14 +209,18 @@ export function ShopHeader({
               <Link href={`/shop/${orgSlug}/account`} className={iconBtnCls} aria-label={t.common.account}>
                 <SHOP_ICONS.account className="h-5 w-5" />
               </Link>
-              <Link href={`/shop/${orgSlug}/cart`} className="btn-brand relative flex h-11 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-3 text-sm font-bold" aria-label={t.common.cart}>
+              {/* ED9: in v2 the cart button opens the cart drawer
+                  instead of navigating; the badge is unchanged
+                  and the full cart page stays one tap away
+                  (drawer link + bottom nav). */}
+              <button type="button" onClick={() => setCartDrawerOpen(true)} className="btn-brand relative flex h-11 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-3 text-sm font-bold" aria-label={t.common.cart}>
                 <SHOP_ICONS.cart className="h-5 w-5" /> <span className="hidden sm:inline">{t.common.cart}</span>
                 {count > 0 ? (
                   <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white">
                     {count}
                   </span>
                 ) : null}
-              </Link>
+              </button>
             </div>
           </div>
           {searchOpen ? (
@@ -254,6 +261,7 @@ export function ShopHeader({
             </Link>
           </nav>
         </Drawer>
+        <ShopCartDrawer orgSlug={orgSlug} locale={locale} open={cartDrawerOpen} onClose={() => setCartDrawerOpen(false)} />
       </header>
     );
   }

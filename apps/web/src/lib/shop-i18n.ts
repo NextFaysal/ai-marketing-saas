@@ -177,6 +177,7 @@ const bnDict = {
     continueShopping: "← আরও কেনাকাটা করুন",
     bundleContents: "ভিতরে যা আছে",
     bundleBadge: "বান্ডল",
+    fullCartPage: "কার্ট পেজ",
   },
   checkout: {
     title: "চেকআউট",
@@ -570,6 +571,7 @@ const enDict: ShopDict = {
     continueShopping: "← Continue shopping",
     bundleContents: "What's inside",
     bundleBadge: "Bundle",
+    fullCartPage: "Cart page",
   },
   checkout: {
     title: "Checkout",
