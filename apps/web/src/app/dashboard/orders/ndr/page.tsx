@@ -204,7 +204,7 @@ export default function NdrRecoveryPage() {
               </span>
             </div>
             <div className="mt-2 text-2xl font-bold text-slate-900">{metrics.total}</div>
-            <p className="mt-0.5 text-[11px] text-slate-400">ডেলিভারি ব্যর্থ পার্সেল</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">ডেলিভারি ব্যর্থ পার্সেল</p>
           </div>
 
           <div className="rounded-2xl border border-rose-200/80 bg-rose-50/50 p-4 shadow-sm">
@@ -264,6 +264,7 @@ export default function NdrRecoveryPage() {
             </span>
             <input
               type="text"
+              aria-label="NDR কেস খুঁজুন (অর্ডার নম্বর, কাস্টমার নাম, ফোন বা ট্র্যাকিং কোড দিয়ে)"
               className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 transition hover:bg-white focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10"
               placeholder="অর্ডার নম্বর, কাস্টমার নাম, ফোন বা ট্র্যাকিং কোড দিয়ে খুঁজুন..."
               value={searchQuery}
@@ -273,7 +274,8 @@ export default function NdrRecoveryPage() {
               <button
                 type="button"
                 onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-xs text-slate-400 hover:text-slate-600"
+                className="absolute inset-y-0 right-0 flex min-w-[44px] items-center justify-center pr-3 text-xs text-slate-500 hover:text-slate-600"
+                aria-label="খোঁজ মুছুন"
               >
                 ✕
               </button>
@@ -297,7 +299,7 @@ export default function NdrRecoveryPage() {
                 key={tab.key}
                 type="button"
                 onClick={() => setFilterStatus(tab.key)}
-                className={`shrink-0 rounded-xl px-3 py-1.5 font-semibold transition ${
+                className={`inline-flex min-h-[44px] shrink-0 items-center rounded-xl px-3 py-1.5 font-semibold transition ${
                   isActive
                     ? "bg-slate-900 text-white shadow-sm"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
@@ -351,7 +353,7 @@ export default function NdrRecoveryPage() {
                         <td className="px-4 py-3.5">
                           <div className="font-bold text-slate-900">#{inc.orderNumber}</div>
                           <div className="font-semibold text-slate-700">{inc.customerName}</div>
-                          <div className="font-mono text-[11px] text-slate-400">
+                          <div className="font-mono text-[11px] text-slate-500">
                             {inc.customerPhone && (
                               <a
                                 href={`tel:${inc.customerPhone}`}
@@ -511,7 +513,7 @@ export default function NdrRecoveryPage() {
                         type="button"
                         onClick={() => void handleContactCustomer(inc.id)}
                         disabled={actionBusy === inc.id}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                        className="inline-flex min-h-[44px] items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
                       >
                         💬 মেসেজ
                       </button>
@@ -521,7 +523,7 @@ export default function NdrRecoveryPage() {
                           setSelectedIncident(inc);
                           setRescheduleNote(inc.notes || "");
                         }}
-                        className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700"
+                        className="inline-flex min-h-[44px] items-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700"
                       >
                         🗓️ রি-শিডিউল
                       </button>
@@ -530,7 +532,7 @@ export default function NdrRecoveryPage() {
                           type="button"
                           onClick={() => void handleResolve(inc.id, "RESOLVED")}
                           disabled={actionBusy === inc.id}
-                          className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white"
+                          className="inline-flex min-h-[44px] items-center rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white"
                         >
                           ✓ সমাধান
                         </button>
@@ -555,7 +557,8 @@ export default function NdrRecoveryPage() {
               <button
                 type="button"
                 onClick={() => setSelectedIncident(null)}
-                className="rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="বন্ধ করুন"
               >
                 ✕
               </button>
