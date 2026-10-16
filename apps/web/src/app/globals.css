@@ -115,6 +115,204 @@
   --motion-slow: 350ms;
 }
 
+/* ---------- Dark mode (ED17 / EB7) ----------
+   Two scopes, one value set (kept in sync by the pin spec in
+   lib/theme.test.ts, which enumerates DARK_TOKEN_LIST in BOTH
+   blocks):
+
+   1. Dashboard: the `.dark` class on the dashboard root element
+      (.dashboard-root, set by lib/theme.ts per the user's
+      light/dark/system preference). Token-driven surfaces (the
+      @repo/ui kit, the globals component classes, the var-backed
+      Tailwind utilities) flip from these re-declarations alone.
+   2. Shop v2: a visitor-OS media query scoped to the v2 shop root
+      ([data-shop-theme="v2"]) — no merchant setting, no class.
+      Legacy shop themes use literal classes that never read these
+      variables, so they are untouched by design.
+
+   The brand seam is NOT re-declared: --brand / --brand-from /
+   --brand-to keep whatever the white-label shell or the shop
+   layout set. --brand-soft / --brand-soft-strong ARE re-declared
+   because their light definitions color-mix the brand colour
+   toward WHITE, which would read as a pastel wash on dark
+   surfaces; the dark versions mix toward the dark surface.
+   --brand-ring (transparent mix) and the coloured glow shadows
+   are mode-agnostic and stay.
+
+   Contrast (WCAG ratios computed from these exact hex values,
+   recorded in docs/design-eb7-acceptance.md): on --surface
+   #0f172a — ink-strong 16.3:1, ink-body 12.0:1, ink-muted 7.0:1,
+   ink-faint 5.8:1, success 7.0:1, warning 10.7:1, danger 6.5:1,
+   info 8.3:1 — every text-bearing token clears 4.5:1 on the
+   surface, raised and muted steps too. */
+.dashboard-root.dark {
+  color-scheme: dark;
+  --surface: #0f172a;
+  --surface-muted: #17233d;
+  --surface-raised: #1e293b;
+  --surface-sunken: #0a0f1e;
+  --border-soft: rgba(148, 163, 184, 0.16);
+  --border: rgba(148, 163, 184, 0.28);
+  --border-strong: #475569;
+  --ink-strong: #f1f5f9;
+  --ink-body: #cbd5e1;
+  --ink-muted: #94a3b8;
+  --ink-faint: #8494ab;
+  --brand-soft: color-mix(in srgb, var(--brand-from) 16%, #0f172a);
+  --brand-soft-strong: color-mix(in srgb, var(--brand-from) 28%, #0f172a);
+  --success: #10b981;
+  --success-bright: #34d399;
+  --success-soft: rgba(16, 185, 129, 0.14);
+  --warning: #fbbf24;
+  --warning-bright: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(239, 68, 68, 0.15);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.14);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  --shadow-card-v2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 12px 40px -12px rgba(0, 0, 0, 0.65);
+  --shadow-drawer: 0 0 60px rgba(0, 0, 0, 0.65);
+  /* The root element itself: its markup carries the light literal
+     bg-[#f8fafc] / text-slate-900; the token values are the dark
+     page ground + default text. */
+  background-color: #0a0f1e;
+  color: var(--ink-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-shop-theme="v2"] {
+    color-scheme: dark;
+    --surface: #0f172a;
+    --surface-muted: #17233d;
+    --surface-raised: #1e293b;
+    --surface-sunken: #0a0f1e;
+    --border-soft: rgba(148, 163, 184, 0.16);
+    --border: rgba(148, 163, 184, 0.28);
+    --border-strong: #475569;
+    --ink-strong: #f1f5f9;
+    --ink-body: #cbd5e1;
+    --ink-muted: #94a3b8;
+    --ink-faint: #8494ab;
+    --brand-soft: color-mix(in srgb, var(--brand-from) 16%, #0f172a);
+    --brand-soft-strong: color-mix(in srgb, var(--brand-from) 28%, #0f172a);
+    --success: #10b981;
+    --success-bright: #34d399;
+    --success-soft: rgba(16, 185, 129, 0.14);
+    --warning: #fbbf24;
+    --warning-bright: #f59e0b;
+    --warning-soft: rgba(245, 158, 11, 0.14);
+    --danger: #f87171;
+    --danger-soft: rgba(239, 68, 68, 0.15);
+    --info: #38bdf8;
+    --info-soft: rgba(56, 189, 248, 0.14);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+    --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    --shadow-card-v2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+    --shadow-pop: 0 12px 40px -12px rgba(0, 0, 0, 0.65);
+    --shadow-drawer: 0 0 60px rgba(0, 0, 0, 0.65);
+  }
+}
+
+/* The light body gradient would peek around the dashboard during
+   overscroll; the page ground goes dark with the root. :has()
+   degrades gracefully (no match = light chrome, as today). */
+body:has(.dashboard-root.dark) {
+  background: #0a0f1e;
+}
+
+/* ---------- Dark override layer (ED17) — dashboard subtree only ----------
+   Token-driven surfaces flip via the variables above. The long
+   tail of dashboard pages still hand-rolls literal Tailwind
+   classes (bg-white ×722, text-slate-500 ×2016, … in
+   app/dashboard); this layer maps the HIGHEST-FREQUENCY literal
+   patterns onto the tokens, scoped strictly to descendants of
+   the dashboard root in dark mode. It is deliberately NOT a
+   per-file sweep: patterns not listed here keep their literal
+   colours in dark mode and are inventoried as stragglers in
+   docs/design-eb7-acceptance.md. These rules are unlayered, so
+   they win over the Tailwind utility layer without !important;
+   every selector is prefixed by .dashboard-root.dark, so light
+   mode and all non-dashboard surfaces are byte-unaffected.
+   Light-mode text steps map by ROLE, with the scale inverted:
+   slate-900/800 (strongest text) → --ink-strong, 700/600 →
+   --ink-body, 500 → --ink-muted, 400 → --ink-faint. slate-300 and
+   lighter are NOT mapped — the sidebar and other always-dark
+   chrome already use them as light-on-dark text. */
+.dashboard-root.dark .bg-white { background-color: var(--surface); }
+.dashboard-root.dark .bg-white\/80 { background-color: color-mix(in srgb, var(--surface) 80%, transparent); }
+.dashboard-root.dark .bg-white\/95 { background-color: color-mix(in srgb, var(--surface) 95%, transparent); }
+.dashboard-root.dark .bg-slate-50 { background-color: var(--surface-muted); }
+.dashboard-root.dark .bg-slate-50\/80 { background-color: color-mix(in srgb, var(--surface-muted) 80%, transparent); }
+.dashboard-root.dark .bg-slate-100 { background-color: var(--surface-raised); }
+.dashboard-root.dark .bg-slate-200 { background-color: var(--surface-raised); }
+.dashboard-root.dark .text-slate-900 { color: var(--ink-strong); }
+.dashboard-root.dark .text-slate-800 { color: var(--ink-strong); }
+.dashboard-root.dark .text-slate-700 { color: var(--ink-body); }
+.dashboard-root.dark .text-slate-600 { color: var(--ink-body); }
+.dashboard-root.dark .text-slate-500 { color: var(--ink-muted); }
+.dashboard-root.dark .text-slate-400 { color: var(--ink-faint); }
+.dashboard-root.dark .border-slate-100 { border-color: var(--border-soft); }
+.dashboard-root.dark .border-slate-200 { border-color: var(--border-soft); }
+.dashboard-root.dark .border-slate-200\/80 { border-color: rgba(148, 163, 184, 0.13); }
+.dashboard-root.dark .border-slate-200\/90 { border-color: rgba(148, 163, 184, 0.14); }
+.dashboard-root.dark .border-slate-300 { border-color: var(--border); }
+.dashboard-root.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-soft); }
+.dashboard-root.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-soft); }
+.dashboard-root.dark .ring-slate-100 { --tw-ring-color: var(--border-soft); }
+.dashboard-root.dark .ring-slate-200 { --tw-ring-color: var(--border); }
+.dashboard-root.dark .ring-slate-300 { --tw-ring-color: var(--border-strong); }
+.dashboard-root.dark .hover\:bg-slate-50:hover { background-color: var(--surface-muted); }
+.dashboard-root.dark .hover\:bg-slate-100:hover { background-color: var(--surface-raised); }
+.dashboard-root.dark .hover\:text-slate-800:hover { color: var(--ink-strong); }
+.dashboard-root.dark .hover\:text-slate-900:hover { color: var(--ink-strong); }
+.dashboard-root.dark .placeholder\:text-slate-400::placeholder { color: var(--ink-faint); }
+.dashboard-root.dark .placeholder\:text-slate-500::placeholder { color: var(--ink-faint); }
+
+/* Globals component classes whose literals the token layer cannot
+   reach (they were compiled from @apply literal utilities). */
+.dashboard-root.dark .input {
+  background-color: var(--surface);
+  color: var(--ink-strong);
+  border-color: var(--border);
+}
+.dashboard-root.dark .input::placeholder { color: var(--ink-faint); }
+.dashboard-root.dark .btn-secondary {
+  background-color: var(--surface);
+  color: var(--ink-body);
+}
+.dashboard-root.dark .btn-secondary:hover { background-color: var(--surface-muted); }
+.dashboard-root.dark .btn-dark { background-color: var(--surface-raised); }
+.dashboard-root.dark .btn-dark:hover { background-color: var(--border-strong); }
+/* The semantic gradient buttons keep their LIGHT gradient stops in
+   dark mode: white label text measures 3.8:1 / 3.2:1 on them
+   (identical to light mode's own values), while the flipped
+   --success/--warning tokens (chosen for text-on-surface contrast)
+   would drop the labels below 2.6:1. The tokens still drive
+   text-success / bg-success-soft and friends. */
+.dashboard-root.dark .btn-success { background-image: linear-gradient(135deg, #059669, #10b981); }
+.dashboard-root.dark .btn-warning { background-image: linear-gradient(135deg, #d97706, #f59e0b); }
+.dashboard-root.dark .table-wrap thead th {
+  background-color: color-mix(in srgb, var(--surface-muted) 80%, transparent);
+  border-color: var(--border-soft);
+  color: var(--ink-muted);
+}
+.dashboard-root.dark .table-wrap tbody td { border-color: var(--border-soft); }
+.dashboard-root.dark thead th { color: var(--ink-muted); }
+.dashboard-root.dark .skeleton { background-color: rgba(148, 163, 184, 0.18); }
+.dashboard-root.dark .skeleton::after {
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.08) 50%, transparent 80%);
+}
+/* Badge tints: the -50/-700/-200 literal triples become translucent
+   semantic washes with light text (same hue roles, dark values). */
+.dashboard-root.dark .badge-brand { background-color: var(--brand-soft); color: color-mix(in srgb, var(--brand-from) 55%, white); --tw-ring-color: var(--brand-ring); }
+.dashboard-root.dark .badge-green { background-color: var(--success-soft); color: var(--success-bright); --tw-ring-color: rgba(16, 185, 129, 0.35); }
+.dashboard-root.dark .badge-amber { background-color: var(--warning-soft); color: var(--warning); --tw-ring-color: rgba(245, 158, 11, 0.35); }
+.dashboard-root.dark .badge-red { background-color: var(--danger-soft); color: var(--danger); --tw-ring-color: rgba(239, 68, 68, 0.35); }
+.dashboard-root.dark .badge-slate { background-color: var(--surface-raised); color: var(--ink-muted); --tw-ring-color: var(--border); }
+
 @layer base {
   html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; -webkit-tap-highlight-color: transparent; }
   body {

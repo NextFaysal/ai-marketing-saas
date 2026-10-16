@@ -159,10 +159,35 @@ ED1 closes that gap:
   `.btn-secondary/success/warning`) plus the config-level shadow
   wiring that tokenises every `shadow-*` consumer transitively.
 
-## Dark-mode readiness (ED17 / EB7)
+## Dark mode (ED17 / EB7) — SHIPPED
 
-Every v3 value is a CSS variable declared in one `:root` block. Dark
-mode needs only a second declaration block (e.g. under
-`[data-theme="dark"]` or a `.dark` class) re-assigning the surface,
-ink, border and shadow tokens — no class or markup changes. Nothing
-in EB1 ships a dark palette; this is readiness, not dark mode.
+The readiness above is now realised. Two scopes re-declare the
+surface / ink / border / semantic / shadow tokens with dark values
+in `globals.css` (one value set, pinned identical by
+`lib/theme.test.tsx` against `DARK_TOKEN_LIST` in `lib/theme.ts`):
+
+1. **Dashboard** — `.dashboard-root.dark`: the `dark` class sits on
+   the dashboard root element only. Preference = light / dark /
+   system (default system), stored in localStorage
+   (`qosprey-theme`), applied pre-paint by a bootstrap script in
+   the dashboard layout and toggled from the topbar
+   (`components/theme-toggle.tsx`). A scoped override layer in
+   globals.css maps the highest-frequency literal classes
+   (bg-white, text-slate-400…900, border/divide/ring slate steps,
+   `.input`, `.btn-secondary`, badges…) onto the tokens inside the
+   dashboard subtree; the coverage inventory + straggler list lives
+   in `docs/design-eb7-acceptance.md`.
+2. **Shop v2** — `@media (prefers-color-scheme: dark)` scoped to
+   `[data-shop-theme="v2"]`: a v2 shop follows the visitor's OS
+   preference automatically. Legacy themes use literal classes and
+   do not flip (by design).
+
+Not re-declared, deliberately: `--brand`, `--brand-from`,
+`--brand-to` (the white-label seam — dark mode never restyles
+branding), `--brand-ring`, `--ink-inverse`, the coloured glow
+shadows, and the type/spacing/radius/motion scales.
+`--brand-soft` / `--brand-soft-strong` ARE re-declared because
+their light definitions mix the brand colour toward white.
+Dark contrast (on `--surface` #0f172a): ink-strong 16.3:1,
+ink-body 12.0:1, ink-muted 7.0:1, ink-faint 5.8:1, success 7.0:1,
+warning 10.7:1, danger 6.5:1, info 8.3:1.

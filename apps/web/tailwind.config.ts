@@ -1,5 +1,12 @@
 import type { Config } from "tailwindcss";
 export default {
+  // ED17 (EB7): class-strategy dark mode. Additive — nothing in the
+  // tree used dark: variants before this, so enabling the strategy
+  // alone changes no rendered output. The `dark` class itself is
+  // applied ONLY to the dashboard root (lib/theme.ts + the dashboard
+  // layout bootstrap); globals.css carries the token re-declarations
+  // and the scoped literal-class override layer.
+  darkMode: "class",
   content: ["./src/**/*.{ts,tsx}", "../../packages/ui/src/**/*.{ts,tsx}"],
   theme: {
     extend: {

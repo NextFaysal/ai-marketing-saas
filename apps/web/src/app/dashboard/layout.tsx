@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 import { InstallButton } from "@/components/pwa";
 import { RouteProgress } from "@/components/route-progress";
+import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  applyThemeClass,
+  DASHBOARD_THEME_INIT_SCRIPT,
+  dashboardRoot,
+  readStoredThemePref,
+} from "@/lib/theme";
 import { GlobalAssistant } from "@/components/global-assistant";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
@@ -567,6 +574,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
+  // ED17 (EB7): dark mode — re-assert the theme class after mount.
+  // The pre-paint bootstrap script inside the root element applies
+  // it during parse in the common case; this effect is the
+  // guarantee (hydration or a hoisted script can never leave a
+  // wrong final state). The ThemeToggle owns later changes.
+  useEffect(() => {
+    applyThemeClass(dashboardRoot(), readStoredThemePref());
+  }, []);
+
   if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
@@ -683,7 +699,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         dynamic rendering app-wide and breaking the shop's ISR.
         Subtree lang attributes are what screen readers apply to
         content, so this div is the correct place to declare it. */}
-    <div lang="bn" className="min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+    <div lang="bn" className="dashboard-root min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+      {/* ED17 (EB7): dark-mode bootstrap — applies the stored/system
+          theme class to this root before the subtree paints (see
+          lib/theme.ts for the placement contract + fallback). */}
+      <script dangerouslySetInnerHTML={{ __html: DASHBOARD_THEME_INIT_SCRIPT }} />
       {/* EB6/ED16: skip link — first focusable element in the layout. */}
       <SkipLink href="#main-content">মূল কন্টেন্টে যান</SkipLink>
       {/* ED11 (EB4): route progress bar (soft-nav feedback). */}
@@ -772,6 +792,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Topbar Right Utilities */}
             <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
               <InstallButton />
+              {/* ED17 (EB7): dark-mode toggle (সিস্টেম/লাইট/ডার্ক). */}
+              <ThemeToggle />
               <NotificationBell />
 
               {/* Workspace Badge */}
