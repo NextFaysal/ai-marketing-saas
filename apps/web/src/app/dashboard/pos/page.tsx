@@ -560,6 +560,7 @@ export default function PosPage() {
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              aria-label="পণ্য খুঁজুন (নাম, SKU বা বারকোড)"
               placeholder="পণ্যের নাম, SKU বা বারকোড লিখে Enter চাপুন…"
               className="w-full rounded-lg border px-3 py-2.5 text-sm"
             />
