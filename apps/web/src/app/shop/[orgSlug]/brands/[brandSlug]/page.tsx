@@ -6,6 +6,7 @@ import { fetchShopBrand, fetchShopHome } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { themeOf } from "@/lib/shop-theme";
 import { ProductCard } from "../../ProductCard";
+import { MediaImage } from "@/components/MediaImage";
 
 type Params = Promise<{ orgSlug: string; brandSlug: string }>;
 type Search = Promise<{ page?: string }>;
@@ -54,8 +55,7 @@ export default async function ShopBrandPage({ params, searchParams }: { params: 
       {/* Brand header */}
       <section className={theme.heroClass}>
         {brand.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={brand.logoUrl} alt={brand.name} className="mx-auto h-20 w-20 rounded-2xl border border-slate-200 bg-white object-contain" />
+          <MediaImage src={brand.logoUrl} alt={brand.name} width={160} height={160} sizes="80px" className="mx-auto h-20 w-20 rounded-2xl border border-slate-200 bg-white object-contain" />
         ) : null}
         <h1 className={theme.heroTitleClass}>{brand.name}</h1>
         <p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-400">{t.brand.brandLabel}</p>

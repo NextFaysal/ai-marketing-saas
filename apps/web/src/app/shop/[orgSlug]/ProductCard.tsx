@@ -1,7 +1,7 @@
 import React from "react";
 import Link from "next/link";
 import { formatMinor } from "@repo/contracts";
-import { MediaImage } from "@/components/media-image";
+import { MediaImage } from "@/components/MediaImage";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { FlashCountdown } from "./FlashCountdown";

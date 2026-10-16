@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { fetchShopBlogPost } from "@/lib/storefront-server";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { PageBlocks } from "../../PageBlocks";
+import { MediaImage } from "@/components/MediaImage";
 
 type Params = Promise<{ orgSlug: string; postSlug: string }>;
 
@@ -51,8 +52,7 @@ export default async function ShopBlogPostPage({ params }: { params: Params }) {
         </p>
       ) : null}
       {post.coverImageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={post.coverImageUrl} alt={post.title} className="w-full rounded-2xl border border-slate-200 object-cover" />
+        <MediaImage src={post.coverImageUrl} alt={post.title} width={1280} height={720} aspectRatio="16/9" priority sizes="(max-width: 768px) 100vw, 768px" className="w-full rounded-2xl border border-slate-200 object-cover" />
       ) : null}
       <PageBlocks blocks={post.blocks ?? []} orgSlug={orgSlug} locale={locale} />
       {(post.tags ?? []).length > 0 ? (

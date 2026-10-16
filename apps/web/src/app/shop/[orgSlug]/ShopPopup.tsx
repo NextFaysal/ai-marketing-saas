@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { MediaImage } from "@/components/MediaImage";
 
 interface PopupConfig {
   title: string;
@@ -185,8 +186,7 @@ export function ShopPopup({ orgSlug, locale = "bn" }: { orgSlug: string; locale?
             ×
           </button>
           {popup.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={popup.imageUrl} alt="" className="max-h-56 w-full object-cover" />
+            <MediaImage src={popup.imageUrl} alt="" width={960} height={480} aspectRatio="2/1" sizes="(max-width: 640px) 90vw, 448px" className="max-h-56 w-full object-cover" />
           ) : null}
           <div className="space-y-3 p-6 text-center">
             {popup.title ? <h2 className="text-xl font-black text-slate-900">{popup.title}</h2> : null}

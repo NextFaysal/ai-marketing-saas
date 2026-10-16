@@ -6,6 +6,7 @@ import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import type { ShopHome } from "@/lib/storefront-server";
+import { MediaImage } from "@/components/MediaImage";
 
 function priceText(minor: string): string {
   try {
@@ -48,8 +49,7 @@ export default function ShopNotFound() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 px-4 py-16 text-center sm:px-6">
       {home?.organization.logoUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={home.organization.logoUrl} alt={shopName} className="mx-auto h-14 w-14 rounded-2xl border border-slate-200 object-cover" />
+        <MediaImage src={home.organization.logoUrl} alt={shopName} width={160} height={160} sizes="56px" className="mx-auto h-14 w-14 rounded-2xl border border-slate-200 object-cover" />
       ) : null}
       {shopName ? <p className="text-sm font-bold text-slate-700">{shopName}</p> : null}
       <div>

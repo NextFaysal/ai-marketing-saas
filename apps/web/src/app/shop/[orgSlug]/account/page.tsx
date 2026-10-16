@@ -34,6 +34,7 @@ import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { captchaSiteKeyFor, type CheckoutTrust } from "@/lib/orders-gb3";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { priceText, stockBadge } from "../ProductCard";
+import { MediaImage } from "@/components/MediaImage";
 
 function money(minor: string): string {
   try {
@@ -743,8 +744,7 @@ function AccountInner() {
               const card = (
                 <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   {item.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.imageUrl} alt={item.name} className="aspect-square w-full object-cover" />
+                    <MediaImage src={item.imageUrl} alt={item.name} width={640} height={640} sizes="(max-width: 768px) 50vw, 320px" className="aspect-square w-full object-cover" />
                   ) : (
                     <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-4xl">📦</div>
                   )}

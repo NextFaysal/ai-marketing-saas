@@ -5,6 +5,7 @@ import type { ShopProduct } from "@/lib/storefront-server";
 import { fetchCart, patchCartLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "./ProductCard";
+import { MediaImage } from "@/components/MediaImage";
 
 export function QuickViewButton({
   orgSlug,
@@ -128,8 +129,7 @@ export function QuickView({
           <div className="space-y-3">
             <div className="overflow-hidden rounded-2xl border border-slate-200">
               {image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={image} alt={product.name} className="aspect-square w-full object-cover" />
+                <MediaImage src={image} alt={product.name} width={640} height={640} sizes="(max-width: 640px) 90vw, 400px" className="aspect-square w-full object-cover" />
               ) : (
                 <div className="flex aspect-square w-full items-center justify-center bg-indigo-50 text-6xl">📦</div>
               )}
@@ -143,8 +143,7 @@ export function QuickView({
                     onClick={() => setImage(src)}
                     className={`h-14 w-14 overflow-hidden rounded-lg border-2 ${src === image ? "border-indigo-600" : "border-slate-200"}`}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <MediaImage src={src} alt="" width={160} height={160} className="h-full w-full object-cover" />
                   </button>
                 ))}
               </div>

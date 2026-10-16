@@ -5,9 +5,18 @@ import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { ensureCartToken, fetchCart, patchBundleLine, patchCartLine, setCartContact, type Cart } from "@/lib/storefront-cart";
-import { ExpressCheckout } from "../ExpressCheckout";
+import dynamic from "next/dynamic";
+import { MediaImage } from "@/components/MediaImage";
 import { CrossSellRail } from "../CrossSellRail";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+
+// ED4: the express-checkout sheet is interactive and only matters
+// for signed-in shoppers — code-split it (SSR stays on by default)
+// with a light placeholder so the cart itself paints first.
+const ExpressCheckout = dynamic(
+  () => import("../ExpressCheckout").then((m) => ({ default: m.ExpressCheckout })),
+  { loading: () => <div className="h-11 w-full animate-pulse rounded-2xl bg-slate-100" aria-hidden="true" /> },
+);
 
 function money(minor: string): string {
   try {
@@ -167,8 +176,7 @@ export default function CartPage() {
         {cart.items.map((item) => (
           <div key={item.id} className="flex gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             {item.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.imageUrl} alt={item.productName ?? ""} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />
+              <MediaImage src={item.imageUrl} alt={item.productName ?? ""} width={160} height={160} sizes="80px" className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />
             ) : (
               <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-indigo-50 text-3xl">📦</div>
             )}
@@ -222,8 +230,7 @@ export default function CartPage() {
           {(cart.bundleItems ?? []).map((b) => (
             <div key={b.id} className="flex gap-4 rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
               {b.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={b.imageUrl} alt={b.name} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />
+                <MediaImage src={b.imageUrl} alt={b.name} width={160} height={160} sizes="80px" className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />
               ) : (
                 <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-amber-50 text-3xl">🎁</div>
               )}

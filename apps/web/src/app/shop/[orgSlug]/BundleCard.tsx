@@ -4,6 +4,7 @@ import type { ShopBundle } from "@/lib/storefront-server";
 import { fetchCart, patchBundleLine } from "@/lib/storefront-cart";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText } from "./ProductCard";
+import { MediaImage } from "@/components/MediaImage";
 
 /**
  * EC29 — bundle card for the shop home strip. One click adds ONE
@@ -86,8 +87,7 @@ export function BundleCard({
     <div className="flex flex-col overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-sm">
       <div className="relative">
         {bundle.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={bundle.imageUrl} alt={bundle.name} className="aspect-[4/3] w-full object-cover" />
+          <MediaImage src={bundle.imageUrl} alt={bundle.name} width={960} height={720} aspectRatio="4/3" sizes="(max-width: 768px) 100vw, 480px" className="aspect-[4/3] w-full object-cover" />
         ) : (
           <div className="flex aspect-[4/3] w-full items-center justify-center bg-amber-50 text-5xl">🎁</div>
         )}
@@ -136,8 +136,7 @@ export function BundleCard({
                           className={`overflow-hidden rounded-lg border text-left transition ${on ? "border-indigo-600 ring-2 ring-indigo-300" : "border-slate-200 hover:border-slate-300"}`}
                         >
                           {o.imageUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={o.imageUrl} alt={o.name ?? ""} className="aspect-square w-full object-cover" />
+                            <MediaImage src={o.imageUrl} alt={o.name ?? ""} width={320} height={320} sizes="(max-width: 768px) 33vw, 160px" className="aspect-square w-full object-cover" />
                           ) : (
                             <span className="flex aspect-square w-full items-center justify-center bg-slate-50 text-xl">📦</span>
                           )}
