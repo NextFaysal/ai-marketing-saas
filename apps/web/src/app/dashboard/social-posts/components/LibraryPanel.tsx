@@ -3,6 +3,7 @@ import React from "react";
 import type { SocialPageCtx } from "./shared";
 import { POST_STATUS_META, MediaThumb } from "./shared";
 import { ASPECT_OPTIONS, type MediaAspect } from "@/lib/social-media-library";
+import { OVERLAY_POSITIONS, formatStockDuration } from "@/lib/social-stock-coach";
 
 /**
  * SU11 — Media Library v2 section (SU3), extracted for the Library tab and the composer picker. Pure move from the former single-file page:
@@ -24,10 +25,84 @@ import { ASPECT_OPTIONS, type MediaAspect } from "@/lib/social-media-library";
  * folder/usage meta lines, the icon-only folder-delete button).
  */
 export function LibraryPanel({ c }: { c: SocialPageCtx }) {
-  const { applyMediaFilters, assetAspect, assets, attachMedia, bulkFolderId, bulkSelected, busy, captureAssetCover, changeAssetFolder, clearMediaFilters, createMediaFolder, cropAsset, deleteMediaFolder, inputCls, loadAssetUsage, mediaFolderFilter, mediaFolders, mediaSearchInput, mediaTagInput, posts, rasterizeMedia, runBulkAction, selectMediaFolder, selectedMedia, setAssetAspect, setBulkFolderId, setBulkSelected, setMediaSearchInput, setMediaTagInput, toggleBulkSelected, updateAssetTags, usageByAsset } = c;
+  const { applyMediaFilters, assetAspect, assets, attachMedia, brandOverlayFor, bulkFolderId, bulkSelected, busy, captureAssetCover, changeAssetFolder, clearMediaFilters, createMediaFolder, cropAsset, deleteMediaFolder, deleteStockKey, importStockItem, inputCls, loadAssetUsage, mediaFolderFilter, mediaFolders, mediaSearchInput, mediaTagInput, overlayPos, posts, rasterizeMedia, runBulkAction, saveStockKey, searchStock, selectMediaFolder, selectedMedia, setAssetAspect, setBulkFolderId, setBulkSelected, setMediaSearchInput, setMediaTagInput, setOverlayPos, setStockKeyInput, setStockKind, setStockQuery, stockKeyInput, stockKind, stockQuery, stockResults, stockSearched, stockStatus, toggleBulkSelected, updateAssetTags, usageByAsset } = c;
   return (
 <>
           <div className="space-y-3">
+            {/* SN5: Stock media (Pexels) — the org's OWN key. The key
+                is verified with a real Pexels call BEFORE it is saved
+                (the API does that); the key itself never comes back
+                here — only "configured + last 4". */}
+            <div className="space-y-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200/50">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-slate-800">🌆 Stock মিডিয়া (Pexels)</span>
+                {stockStatus?.configured ? (
+                  <span className="inline-flex items-center gap-2 text-xs text-slate-500">
+                    সংযুক্ত ✓ — key শেষের অক্ষর ••••{stockStatus.keyLast4 ?? "????"}
+                    <button type="button" className="btn-secondary btn-sm px-1.5 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={deleteStockKey}>
+                      {busy === "stock-key-delete" ? "মোছা হচ্ছে..." : "Key মুছুন"}
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+              {stockStatus && !stockStatus.configured ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="block min-w-[220px] flex-1 text-sm">নিজের Pexels API key
+                    <input type="password" className={inputCls} value={stockKeyInput} onChange={(e) => setStockKeyInput(e.target.value)}
+                      placeholder="Pexels থেকে নেওয়া API key" autoComplete="off" />
+                  </label>
+                  <button type="button" className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={saveStockKey}>
+                    {busy === "stock-key-save" ? "যাচাই হচ্ছে..." : "যাচাই করে সংরক্ষণ করুন"}
+                  </button>
+                  <p className="w-full text-xs text-slate-500">Key সংরক্ষণের আগে Pexels-এ আসল call দিয়ে যাচাই করা হয় — ভুল key সংরক্ষিত হবে না। Key কখনো কারো কাছে ফেরত দেখানো হয় না, শুধু শেষ ৪ অক্ষর।</p>
+                </div>
+              ) : null}
+              {stockStatus?.configured ? (
+                <>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="block min-w-[180px] flex-1 text-sm">Stock খুঁজুন
+                      <input className={inputCls} value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} placeholder="যেমন: eid sale, product photo — ফাঁকা রাখলে জনপ্রিয়গুলো" />
+                    </label>
+                    <label className="block text-sm">ধরন
+                      <select className={inputCls} value={stockKind} onChange={(e) => setStockKind(e.target.value as "photo" | "video")}>
+                        <option value="photo">ছবি</option>
+                        <option value="video">ভিডিও</option>
+                      </select>
+                    </label>
+                    <button type="button" className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={searchStock}>
+                      {busy === "stock-search" ? "খোঁজা হচ্ছে..." : "খুঁজুন"}
+                    </button>
+                  </div>
+                  {stockResults.length > 0 ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                        {stockResults.map((item) => (
+                          <div key={`${item.kind}-${item.stockId}`} className="space-y-1 rounded-xl border border-slate-200 bg-white p-1.5">
+                            {item.thumbUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={item.thumbUrl} alt={item.alt || item.photographer} className="h-20 w-full rounded-lg object-cover" loading="lazy" />
+                            ) : (
+                              <div className="flex h-20 w-full items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400">ছবি নেই</div>
+                            )}
+                            <span className="block truncate text-[11px] text-slate-500" title={item.photographer}>
+                              {item.kind === "video" ? `🎬 ${formatStockDuration(item.duration) ?? ""} · ` : ""}{item.photographer || "Pexels"}
+                            </span>
+                            <button type="button" className="btn-secondary btn-sm w-full px-1.5 text-xs disabled:opacity-50" disabled={busy !== ""}
+                              onClick={() => importStockItem(item)}>
+                              {busy === `stock-import-${item.stockId}` ? "আনা হচ্ছে..." : "⬇️ Library-তে আনুন"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-500">সব ছবি/ভিডিও Pexels-এর — import করলে photographer-এর credit asset-এ সংরক্ষিত থাকে এবং tile-এ দেখা যায়। বড় ভিডিও আকারের সীমার বাইরে হলে import হবে না।</p>
+                    </>
+                  ) : stockSearched ? (
+                    <p className="text-xs text-slate-500">এই খোঁজে কিছু পাওয়া যায়নি — অন্য শব্দ দিয়ে চেষ্টা করুন।</p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+
             {/* SU3: folder bar — SD5: scrollable chip rail, brand-gradient active chip */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               <button type="button" onClick={() => selectMediaFolder("")}
@@ -133,6 +208,12 @@ export function LibraryPanel({ c }: { c: SocialPageCtx }) {
                         ) : null}
                       </div>
                       <span className="block truncate text-xs font-medium text-slate-600" title={a.name}>{a.name}</span>
+                      {a.attribution ? (
+                        <span className="block text-[10px] text-slate-500">
+                          📷 {a.attribution}
+                          {a.sourceUrl ? <> · <a href={a.sourceUrl} target="_blank" rel="noreferrer" className="underline">Pexels-এ দেখুন</a></> : null}
+                        </span>
+                      ) : null}
                       <span className="block text-[10px] text-slate-400">ফোল্ডার: {folderName ?? "ফোল্ডারহীন"}</span>
                       {(a.tags ?? []).length > 0 ? (
                         <span className="flex flex-wrap gap-1">
@@ -165,6 +246,21 @@ export function LibraryPanel({ c }: { c: SocialPageCtx }) {
                           </button>
                         </span>
                       ) : null}
+                      {/* SN5: brand overlay — image only (video overlay is
+                          not available; that is stated, not hidden). */}
+                      {a.kind === "image" ? (
+                        <span className="flex flex-wrap items-center gap-1">
+                          <select className="input w-auto px-1 py-1 text-xs" value={overlayPos[a.id] ?? "bottom"}
+                            onChange={(e) => setOverlayPos((s) => ({ ...s, [a.id]: e.target.value }))} aria-label="Brand overlay অবস্থান">
+                            {OVERLAY_POSITIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                          <button type="button" disabled={busy !== ""} className="btn-secondary btn-sm px-1.5 text-xs disabled:opacity-50" onClick={() => brandOverlayFor(a)}>
+                            {busy === `overlay-${a.id}` ? "বসানো হচ্ছে..." : "🎨 Brand overlay"}
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="block text-[10px] text-slate-400">Brand overlay শুধু ছবির জন্য — ভিডিওতে overlay নেই।</span>
+                      )}
                       {a.kind === "video" ? (
                         <button type="button" disabled={busy !== ""} className="btn-secondary btn-sm px-1.5 text-xs disabled:opacity-50" onClick={() => captureAssetCover(a)}>
                           {busy === `cover-${a.id}` ? "তোলা হচ্ছে..." : "🖼️ Cover তুলুন"}

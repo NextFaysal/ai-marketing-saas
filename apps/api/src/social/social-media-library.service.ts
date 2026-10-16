@@ -11,7 +11,8 @@ import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { storedAssetPublicUrl } from "../storage/media-url";
-import type { BulkMediaDto, CreateMediaFolderDto, EditMediaAssetDto, UpdateMediaAssetDto, UpdateMediaFolderDto } from "./social.dto";
+import { escapeXml } from "./social-image.service";
+import type { BrandOverlayMediaDto, BulkMediaDto, CreateMediaFolderDto, EditMediaAssetDto, UpdateMediaAssetDto, UpdateMediaFolderDto } from "./social.dto";
 
 const execFileAsync = promisify(execFile);
 
@@ -150,6 +151,74 @@ export class SocialMediaLibraryService {
     }
   };
 
+  /**
+   * SN5 brand overlay composer (sharp): draws the brand bar as
+   * an SVG layer (the PP1 poster pattern — org name text in the
+   * org's brand colour bar) and composites the logo image on
+   * top. "bottom"/"top" place the bar; "corner" places ONLY the
+   * logo at the bottom-right (the caller guarantees a logo
+   * exists for corner). Output keeps the source format (SVG and
+   * anything else exotic become PNG, like the aspect editor).
+   */
+  overlayComposer: (
+    baseBytes: Buffer,
+    logoBytes: Buffer | null,
+    opts: { position: "bottom" | "top" | "corner"; barColor: string; brandName: string },
+  ) => Promise<Buffer> = async (baseBytes, logoBytes, opts) => {
+    const meta = await sharp(baseBytes).metadata();
+    const w = meta.width ?? 0;
+    const h = meta.height ?? 0;
+    if (!w || !h) throw new BadRequestException("ছবিটির আকার পড়া যাচ্ছে না — overlay করা গেল না।");
+
+    const composites: { input: Buffer; left?: number; top?: number }[] = [];
+    if (opts.position === "corner") {
+      // Logo-only watermark: ~18% of the width, padded from the
+      // bottom-right corner.
+      const logoW = Math.max(48, Math.round(w * 0.18));
+      const logoBuf = await sharp(logoBytes as Buffer)
+        .resize({ width: logoW, withoutEnlargement: true })
+        .png()
+        .toBuffer();
+      const logoMeta = await sharp(logoBuf).metadata();
+      const pad = Math.round(w * 0.03);
+      composites.push({
+        input: logoBuf,
+        left: Math.max(0, w - (logoMeta.width ?? logoW) - pad),
+        top: Math.max(0, h - (logoMeta.height ?? logoW) - pad),
+      });
+    } else {
+      const barH = Math.min(180, Math.max(56, Math.round(h * 0.1)));
+      const barY = opts.position === "top" ? 0 : h - barH;
+      const fontSize = Math.round(barH * 0.42);
+      const textX = logoBytes ? Math.round(barH * 1.05) : Math.round(w * 0.045);
+      const svg = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`,
+        `<rect x="0" y="${barY}" width="${w}" height="${barH}" fill="${escapeXml(opts.barColor)}" opacity="0.94"/>`,
+        opts.brandName
+          ? `<text x="${textX}" y="${barY + Math.round(barH * 0.66)}" font-size="${fontSize}" font-weight="bold" fill="#FFFFFF" font-family="sans-serif">${escapeXml(opts.brandName)}</text>`
+          : "",
+        `</svg>`,
+      ].join("");
+      composites.push({ input: Buffer.from(svg, "utf8"), left: 0, top: 0 });
+      if (logoBytes) {
+        const logoH = Math.round(barH * 0.64);
+        const logoBuf = await sharp(logoBytes)
+          .resize({ height: logoH, withoutEnlargement: true })
+          .png()
+          .toBuffer();
+        composites.push({
+          input: logoBuf,
+          left: Math.round(barH * 0.18),
+          top: barY + Math.round((barH - logoH) / 2),
+        });
+      }
+    }
+    let pipeline = sharp(baseBytes).composite(composites);
+    if (meta.format === "jpeg") return pipeline.jpeg().toBuffer();
+    if (meta.format === "webp") return pipeline.webp().toBuffer();
+    return pipeline.png().toBuffer();
+  };
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -167,6 +236,8 @@ export class SocialMediaLibraryService {
       publicUrl: storedAssetPublicUrl(row),
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
+      sourceUrl: row.sourceUrl ?? null,
+      attribution: row.attribution ?? null,
       folderId: row.folderId ?? null,
       tags: Array.isArray(row.tags) ? row.tags : [],
       derivedFromId: row.derivedFromId ?? null,
@@ -417,6 +488,9 @@ export class SocialMediaLibraryService {
         id, organizationId, kind: "image", name: input.name,
         contentType, sizeBytes: input.bytes.length, storageKey,
         origin: source.origin ?? "upload",
+        // SN5: a stock photo's credit follows its derived
+        // assets — an edit must never silently drop attribution.
+        attribution: source.attribution ?? null,
         derivedFromId: source.id,
         folderId: source.folderId ?? null,
         tags: Array.isArray(source.tags) ? [...source.tags] : [],
@@ -470,6 +544,71 @@ export class SocialMediaLibraryService {
       organizationId, userId: actorId, action: "social.media_cover_created",
       entityType: "MediaAsset", entityId: derived.id,
       metadata: { sourceAssetId: asset.id, atSeconds: atSeconds ?? 1 },
+    });
+    return this.serializeAsset(derived);
+  }
+
+  /**
+   * SN5 — brand overlay: a NEW derived image asset carrying the
+   * org's logo + brand bar (or a corner logo watermark). The
+   * source asset is never modified (the SU3 discipline). Image
+   * assets only — video overlay is not part of this batch and
+   * the UI says so.
+   *
+   * Defaults come from the org's own branding (the SP4 poster
+   * pattern): bar colour = dto.barColor → org.primaryColor →
+   * #111827; brand name = org.brandName → org.name; logo =
+   * dto.logoAssetId (an image asset of this org) → the uploaded
+   * branding logo (branding/<orgId>/logo when org.logoContentType
+   * is set). Corner position with NO logo anywhere is an honest
+   * Bengali 400 — a bar-less, logo-less "overlay" would be a
+   * silent no-op dressed as a feature.
+   */
+  async brandOverlay(organizationId: string, actorId: string, assetId: string, dto: BrandOverlayMediaDto) {
+    const asset = await this.getAssetRow(organizationId, assetId);
+    if (asset.kind !== "image") {
+      throw new BadRequestException("Brand overlay শুধু ছবিতে বসানো যায় — ভিডিওতে overlay এই মুহূর্তে নেই।");
+    }
+    const position = dto.position === "top" || dto.position === "corner" ? dto.position : "bottom";
+
+    const org = await (this.prisma as any).organization?.findFirst?.({
+      where: { id: organizationId },
+    }).catch(() => null);
+    const hex = (v: unknown) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v.toUpperCase() : null);
+    const barColor = hex(dto.barColor) ?? hex(org?.primaryColor) ?? "#111827";
+    const brandName = org?.brandName || org?.name || "";
+
+    let logoBytes: Buffer | null = null;
+    if (dto.logoAssetId) {
+      const logoAsset = await this.getAssetRow(organizationId, dto.logoAssetId);
+      if (logoAsset.kind !== "image") {
+        throw new BadRequestException("Logo হিসেবে একটি ছবি (image) asset বেছে নিন।");
+      }
+      logoBytes = await this.readBytes(logoAsset.storageKey);
+      if (!logoBytes) throw new NotFoundException("Logo ছবির bytes storage-এ পাওয়া যায়নি");
+    } else if (org?.logoContentType) {
+      logoBytes = await this.readBytes(`branding/${organizationId}/logo`).catch(() => null);
+    }
+    if (position === "corner" && !logoBytes) {
+      throw new BadRequestException("Corner overlay-এর জন্য একটি Logo লাগবে — Branding-এ logo আপলোড করুন অথবা Library থেকে একটি logo ছবি বেছে দিন, না হলে উপরে/নিচে bar বেছে নিন।");
+    }
+
+    const bytes = await this.readBytes(asset.storageKey);
+    if (!bytes) throw new NotFoundException("Media bytes not found in storage");
+    let composed: Buffer;
+    try {
+      composed = await this.overlayComposer(bytes, logoBytes, { position, barColor, brandName });
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      throw new BadRequestException(e instanceof Error ? e.message : String(e));
+    }
+    const derived = await this.createDerivedAsset(organizationId, actorId, asset, {
+      name: `${asset.name} (Brand)`, bytes: composed,
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "social.media_brand_overlay",
+      entityType: "MediaAsset", entityId: derived.id,
+      metadata: { sourceAssetId: asset.id, position, withLogo: Boolean(logoBytes), barColor },
     });
     return this.serializeAsset(derived);
   }

@@ -54,6 +54,20 @@ export interface YouTubeChannel {
   pictureUrl: string | null;
 }
 
+/** SN1: one playlist of the authorized user's own channel. */
+export interface YouTubePlaylist {
+  id: string;
+  title: string;
+}
+
+/** SN8: one recent upload from the authorized user's own
+ * uploads playlist (syndication reads these to auto-draft). */
+export interface YouTubeUpload {
+  videoId: string;
+  title: string;
+  publishedAt: string | null;
+}
+
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true";
 const UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";
@@ -184,6 +198,126 @@ export class YouTubeClient {
   }
 
   /**
+   * SN1 — the authorized user's own playlists (playlists.list,
+   * mine=true), following nextPageToken to the end. Only id +
+   * title are kept: that is all the composer picker shows.
+   */
+  async listPlaylists(accessToken: string): Promise<YouTubePlaylist[]> {
+    const out: YouTubePlaylist[] = [];
+    let pageToken: string | null = null;
+    do {
+      const qs = new URLSearchParams({ part: "snippet", mine: "true", maxResults: "50" });
+      if (pageToken) qs.set("pageToken", pageToken);
+      const res = await this.fetchFn(`https://www.googleapis.com/youtube/v3/playlists?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) await this.fail(res, "YouTube playlists list");
+      const body: any = await res.json().catch(() => null);
+      const items: any[] = Array.isArray(body?.items) ? body.items : [];
+      for (const it of items) {
+        out.push({ id: String(it.id), title: String(it.snippet?.title ?? it.id) });
+      }
+      pageToken = body?.nextPageToken ? String(body.nextPageToken) : null;
+    } while (pageToken);
+    return out;
+  }
+
+  /**
+   * SN8 — the authorized user's recent uploads: channels.list
+   * (part=contentDetails, mine=true) gives the channel's
+   * relatedPlaylists.uploads playlist, and one page of
+   * playlistItems.list on it is the recent-uploads list (no
+   * pageToken following — one page is enough for a sweep).
+   * No uploads playlist → an empty list, not an error.
+   * Google's errors propagate verbatim (fail()).
+   */
+  async listRecentUploads(accessToken: string, maxResults = 10): Promise<YouTubeUpload[]> {
+    const channelsRes = await this.fetchFn(
+      "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true",
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!channelsRes.ok) await this.fail(channelsRes, "YouTube channels list");
+    const channelsBody: any = await channelsRes.json().catch(() => null);
+    const channelItems: any[] = Array.isArray(channelsBody?.items) ? channelsBody.items : [];
+    const uploads = channelItems[0]?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploads || typeof uploads !== "string") return [];
+    const qs = new URLSearchParams({
+      part: "snippet,contentDetails",
+      playlistId: uploads,
+      maxResults: String(maxResults),
+    });
+    const res = await this.fetchFn(`https://www.googleapis.com/youtube/v3/playlistItems?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) await this.fail(res, "YouTube playlist items list");
+    const body: any = await res.json().catch(() => null);
+    const items: any[] = Array.isArray(body?.items) ? body.items : [];
+    const out: YouTubeUpload[] = [];
+    for (const it of items) {
+      const videoId = it?.contentDetails?.videoId ?? it?.snippet?.resourceId?.videoId;
+      if (!videoId) continue;
+      const published = it?.contentDetails?.videoPublishedAt ?? it?.snippet?.publishedAt ?? null;
+      out.push({
+        videoId: String(videoId),
+        title: String(it?.snippet?.title ?? videoId),
+        publishedAt: published ? String(published) : null,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * SN1 — add a video to a playlist (playlistItems.insert). The
+   * resource shape is YouTube's documented one: snippet.playlistId
+   * + snippet.resourceId { kind: "youtube#video", videoId }.
+   * Google's errors propagate verbatim (fail()).
+   */
+  async addToPlaylist(accessToken: string, playlistId: string, videoId: string): Promise<void> {
+    const res = await this.fetchFn("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({
+        snippet: {
+          playlistId,
+          resourceId: { kind: "youtube#video", videoId },
+        },
+      }),
+    });
+    if (!res.ok) await this.fail(res, "YouTube playlist add");
+  }
+
+  /**
+   * SN1 — post a top-level comment on a video (commentThreads.
+   * insert): the documented shape carries the text under
+   * snippet.topLevelComment.snippet.textOriginal, bound to the
+   * video via snippet.videoId. Returns the new comment's id.
+   * Google's errors propagate verbatim (fail()).
+   */
+  async postComment(accessToken: string, videoId: string, text: string): Promise<{ commentId: string }> {
+    const res = await this.fetchFn("https://www.googleapis.com/youtube/v3/commentThreads?part=snippet", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({
+        snippet: {
+          videoId,
+          topLevelComment: { snippet: { textOriginal: text } },
+        },
+      }),
+    });
+    if (!res.ok) await this.fail(res, "YouTube comment post");
+    const body: any = await res.json().catch(() => null);
+    const id = body?.id ?? body?.snippet?.topLevelComment?.id;
+    if (!id) throw new Error("YouTube comment post returned no comment id");
+    return { commentId: String(id) };
+  }
+
+  /**
    * SU8 — set a video's custom thumbnail (thumbnails.set): the
    * image BYTES are the raw request body with the image's own
    * Content-Type. Google's errors propagate verbatim (fail()).
@@ -285,6 +419,19 @@ export class YouTubePublisher {
   /** SU8: cover/thumbnail pass-through (client owns the HTTP). */
   async setThumbnail(accessToken: string, videoId: string, bytes: Buffer, contentType: string): Promise<void> {
     return this.client.setThumbnail(accessToken, videoId, bytes, contentType);
+  }
+
+  /** SN1 pass-throughs (client owns the HTTP). */
+  async listPlaylists(accessToken: string): Promise<YouTubePlaylist[]> {
+    return this.client.listPlaylists(accessToken);
+  }
+
+  async addToPlaylist(accessToken: string, playlistId: string, videoId: string): Promise<void> {
+    return this.client.addToPlaylist(accessToken, playlistId, videoId);
+  }
+
+  async postComment(accessToken: string, videoId: string, text: string): Promise<{ commentId: string }> {
+    return this.client.postComment(accessToken, videoId, text);
   }
 
   /** SP9's original Buffer entry point, kept for its callers and

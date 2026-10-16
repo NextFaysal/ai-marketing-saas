@@ -11,7 +11,7 @@ import { referralConfig, maybeRewardReferral } from "../common/referral";
 import {
   seal, unseal, refreshPlatformConfig, getPlatformConfigSync,
   effectiveLlmConfig, effectiveImageConfig,
-  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig,
+  effectiveSslcommerzConfig, effectiveBkashConfig, effectiveTiktokAppConfig, effectiveGoogleAppConfig, effectiveLinkedinAppConfig, effectiveThreadsAppConfig,
   sslcommerzBase, bkashBase, socialOAuthRedirectUri,
   type BkashConfig, type SslcommerzConfig,
 } from "../common/platform-config";
@@ -1907,13 +1907,14 @@ export class AdminService {
   /** Safe view: sources + non-secret fields + secretConfigured
    * booleans. Secret VALUES are never returned, by construction. */
   async getPlatformConfig() {
-    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth] = await Promise.all([
+    const [llm, meta, smtp, sms, ssl, bk, img, tt, gg, wal, li, goauth, th] = await Promise.all([
       this.rawConfigRow("llmConfig"), this.rawConfigRow("metaAppConfig"),
       this.rawConfigRow("smtpConfig"), this.rawConfigRow("smsConfig"),
       this.rawConfigRow("sslcommerzConfig"), this.rawConfigRow("bkashConfig"),
       this.rawConfigRow("imageConfig"),
       this.rawConfigRow("tiktokAppConfig"), this.rawConfigRow("googleAppConfig"),
       this.rawConfigRow("walletConfig"), this.rawConfigRow("linkedinAppConfig"), this.rawConfigRow("googleOAuthConfig"),
+      this.rawConfigRow("threadsAppConfig"),
     ]);
     return {
       llm: {
@@ -1994,6 +1995,12 @@ export class AdminService {
         enabled: goauth ? goauth.enabled === true : false,
         secretConfigured: Boolean(goauth?.clientSecretEncrypted),
       },
+      threadsApp: {
+        source: th?.clientId ? "admin" : (process.env.THREADS_APP_ID ? "env" : "none"),
+        clientId: th?.clientId ?? (process.env.THREADS_APP_ID || null),
+        redirectUri: th?.redirectUri ?? (process.env.THREADS_REDIRECT_URI || null),
+        secretConfigured: Boolean(th?.clientSecretEncrypted || process.env.THREADS_APP_SECRET),
+      },
       wallet: {
         // CC10: the platform fee on platform-gateway payments.
         // Unset ⇒ 0 — a fee is never invented.
@@ -2016,7 +2023,7 @@ export class AdminService {
    * deletes the whole row (revert to env). Audited with field
    * NAMES only — values never enter the audit log. */
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
-    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig" };
+    const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig", threads: "threadsAppConfig" };
     const key = keyByArea[area];
     if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
     if (patch.clear === true) {
@@ -2064,6 +2071,12 @@ export class AdminService {
       // switch — credentials alone never turn SSO on.
       setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
       if (patch.enabled !== undefined) setField("enabled", patch.enabled === true);
+      setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
+    } else if (area === "threads") {
+      // SN7: the Threads app (inside a Meta app) — same shape as
+      // LinkedIn: client id + optional redirect + sealed secret.
+      setField("clientId", patch.clientId === undefined ? undefined : String(patch.clientId));
+      setField("redirectUri", patch.redirectUri === undefined ? undefined : String(patch.redirectUri));
       setSecret("clientSecret", "clientSecretEncrypted", patch.clientSecret, patch.clearSecret);
     } else if (area === "meta") {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
@@ -2585,6 +2598,58 @@ export class AdminService {
     const cfg = effectiveLinkedinAppConfig();
     if (!cfg) return { ok: false, latencyMs: 0, detail: "LinkedIn App configure করা নেই — Client ID ও Client Secret দুটোই লাগবে। আগে সেভ করুন।" };
     const probe = await this.probeLinkedinApp(cfg);
+    return { ...probe, source: cfg.source };
+  }
+
+  /** SN7: Threads client-auth probe — the LinkedIn pattern: an
+   * authorization_code exchange with a deliberately bogus code.
+   * If Threads rejects the CLIENT (invalid client_id/secret)
+   * the credentials are wrong; a code-level refusal means the
+   * client itself authenticated. Proves client recognition
+   * only — NOT the App Review (Advanced Access) Meta gates
+   * production publishing behind, and never runs on save. */
+  private async probeThreadsApp(cfg: { clientId: string; clientSecret: string; redirectUri?: string }) {
+    const started = Date.now();
+    try {
+      const res = await fetch("https://graph.threads.net/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: (() => {
+          const form = new URLSearchParams();
+          form.set("client_id", cfg.clientId);
+          form.set("client_secret", cfg.clientSecret);
+          form.set("grant_type", "authorization_code");
+          form.set("redirect_uri", socialOAuthRedirectUri("threads", cfg.redirectUri));
+          form.set("code", "admin-verify-invalid-code");
+          return form.toString();
+        })(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const json: any = await res.json().catch(() => null);
+      const errMsg = String(json?.error?.message ?? json?.error_message ?? json?.error ?? "");
+      if (json?.access_token) {
+        return { ok: true, latencyMs: Date.now() - started, detail: "Threads access token দিয়েছে — App ID/Secret সঠিক।" };
+      }
+      if (/client/i.test(errMsg)) {
+        return this.probeFail(started, errMsg || "Threads client authentication ব্যর্থ — Threads App ID/Secret প্রত্যাখ্যান করা হয়েছে।");
+      }
+      if (errMsg) {
+        return {
+          ok: true, latencyMs: Date.now() - started,
+          detail: `Threads client credential গৃহীত হয়েছে — dummy code প্রত্যাখ্যান করা হয়েছে (প্রত্যাশিত; code-টি আসল নয়)। প্রমাণের সীমা: Threads App ID/Secret Meta চিনেছে — App Review (Advanced Access) বা Redirect URI নিবন্ধন এটি প্রমাণ করে না। Threads-এর উত্তর: ${errMsg}`,
+        };
+      }
+      return this.probeFail(started, `Threads-এর উত্তর বোঝা যায়নি (HTTP ${res.status}) — credential যাচাই করা গেল না।`);
+    } catch (e) {
+      return this.probeFail(started, AdminService.errText(e));
+    }
+  }
+
+  async testThreads() {
+    await refreshPlatformConfig(this.prisma as any);
+    const cfg = effectiveThreadsAppConfig();
+    if (!cfg) return { ok: false, latencyMs: 0, detail: "Threads App configure করা নেই — Threads App ID ও App Secret দুটোই লাগবে। আগে সেভ করুন।" };
+    const probe = await this.probeThreadsApp(cfg);
     return { ...probe, source: cfg.source };
   }
 

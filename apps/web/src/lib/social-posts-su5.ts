@@ -34,6 +34,10 @@ export interface AutoDraftSettings {
   saleEnabled: boolean;
   backInStockEnabled: boolean;
   reviewMilestoneEnabled: boolean;
+  // SN8: syndication sources (RSS feed + own YouTube channel).
+  rssEnabled: boolean;
+  youtubeEnabled: boolean;
+  rssFeedUrl: string | null;
   maxDraftsPerDay: number;
   socialAccountId: string | null;
 }
@@ -45,6 +49,11 @@ export interface AutoDraftSettingsForm {
   saleEnabled: boolean;
   backInStockEnabled: boolean;
   reviewMilestoneEnabled: boolean;
+  // SN8: syndication toggles + the feed URL as editable text
+  // ("" in the form = null in the settings shape).
+  rssEnabled: boolean;
+  youtubeEnabled: boolean;
+  rssFeedUrl: string;
   maxDraftsPerDay: number;
   socialAccountId: string;
 }
@@ -53,14 +62,18 @@ export type AutoDraftToggleKey =
   | "newProductEnabled"
   | "saleEnabled"
   | "backInStockEnabled"
-  | "reviewMilestoneEnabled";
+  | "reviewMilestoneEnabled"
+  | "rssEnabled"
+  | "youtubeEnabled";
 
-/** The four toggles, in panel order, with their Bengali labels. */
+/** The toggles, in panel order, with their Bengali labels. */
 export const AUTO_DRAFT_TOGGLES: { key: AutoDraftToggleKey; label: string }[] = [
   { key: "newProductEnabled", label: "নতুন product এলে" },
   { key: "saleEnabled", label: "সেল / প্রমোশন শুরু হলে" },
   { key: "backInStockEnabled", label: "Back-in-stock (স্টক ফিরলে)" },
   { key: "reviewMilestoneEnabled", label: "রিভিউ মাইলফলক হলে" },
+  { key: "rssEnabled", label: "RSS feed থেকে নতুন আইটেম" },
+  { key: "youtubeEnabled", label: "নিজের YouTube চ্যানেলের নতুন ভিডিও" },
 ];
 
 export const AUTO_DRAFT_CAP_MIN = 1;
@@ -81,6 +94,9 @@ export function autoDraftFormFromSettings(settings: AutoDraftSettings): AutoDraf
     saleEnabled: !!settings.saleEnabled,
     backInStockEnabled: !!settings.backInStockEnabled,
     reviewMilestoneEnabled: !!settings.reviewMilestoneEnabled,
+    rssEnabled: !!settings.rssEnabled,
+    youtubeEnabled: !!settings.youtubeEnabled,
+    rssFeedUrl: settings.rssFeedUrl ?? "",
     maxDraftsPerDay: clampAutoDraftCap(settings.maxDraftsPerDay),
     socialAccountId: settings.socialAccountId ?? "",
   };
@@ -89,15 +105,20 @@ export function autoDraftFormFromSettings(settings: AutoDraftSettings): AutoDraf
 /**
  * Form state → the PATCH payload in the API's exact shape: the cap
  * is clamped to 1–20 and an empty account selection becomes null
- * (the API then targets the first connected Facebook Page).
+ * (the API then targets the first connected Facebook Page). The
+ * RSS feed URL is trimmed; empty becomes null (clears it server-side).
  */
 export function buildAutoDraftSettingsPayload(form: AutoDraftSettingsForm): AutoDraftSettings {
   const accountId = (form.socialAccountId ?? "").trim();
+  const feedUrl = (form.rssFeedUrl ?? "").trim();
   return {
     newProductEnabled: !!form.newProductEnabled,
     saleEnabled: !!form.saleEnabled,
     backInStockEnabled: !!form.backInStockEnabled,
     reviewMilestoneEnabled: !!form.reviewMilestoneEnabled,
+    rssEnabled: !!form.rssEnabled,
+    youtubeEnabled: !!form.youtubeEnabled,
+    rssFeedUrl: feedUrl ? feedUrl : null,
     maxDraftsPerDay: clampAutoDraftCap(form.maxDraftsPerDay),
     socialAccountId: accountId ? accountId : null,
   };

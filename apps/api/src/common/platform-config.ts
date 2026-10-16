@@ -55,6 +55,13 @@ export interface LinkedinAppConfig { clientId: string; clientSecret: string; red
  * `enabled` switch — credentials existing is never enough to
  * turn staff SSO on. */
 export interface GoogleOAuthConfig { clientId: string; clientSecret: string; enabled: boolean }
+/** SN7: the OPERATOR's Threads app (a Threads use-case app
+ * inside a Meta app — its App ID/Secret are DISTINCT from the
+ * Facebook app's). Same one-app model as LinkedIn. Production
+ * publishing additionally requires Meta App Review (Advanced
+ * Access for threads_content_publish) — Meta's gate, surfaced
+ * verbatim when it refuses; the config cannot declare it away. */
+export interface ThreadsAppConfig { clientId: string; clientSecret: string; redirectUri?: string }
 /** CC10: platform-payment wallet settings. `feeBps` is the
  * platform fee on PLATFORM-gateway payments, in basis points
  * (200 = 2%). It is read at the moment a verified payment is
@@ -83,13 +90,14 @@ export interface PlatformConfigSnapshot {
   googleApp: GoogleAppConfig | null;
   linkedinApp: LinkedinAppConfig | null;
   googleOAuth: GoogleOAuthConfig | null;
+  threadsApp: ThreadsAppConfig | null;
   wallet: WalletConfig | null;
   loadedAt: number;
 }
 
-export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig", "googleOAuthConfig"] as const;
+export const PLATFORM_CONFIG_KEYS = ["llmConfig", "metaAppConfig", "smtpConfig", "smsConfig", "sslcommerzConfig", "bkashConfig", "imageConfig", "tiktokAppConfig", "googleAppConfig", "walletConfig", "linkedinAppConfig", "googleOAuthConfig", "threadsAppConfig"] as const;
 
-let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, googleOAuth: null, wallet: null, loadedAt: 0 };
+let snapshot: PlatformConfigSnapshot = { llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, linkedinApp: null, googleOAuth: null, threadsApp: null, wallet: null, loadedAt: 0 };
 
 export function getPlatformConfigSync(): PlatformConfigSnapshot {
   return snapshot;
@@ -98,8 +106,8 @@ export function getPlatformConfigSync(): PlatformConfigSnapshot {
 /** Test hook + admin-write hook: replace the snapshot directly.
  * Newer areas are optional for callers so older test setups keep
  * working when the snapshot grows (sslcommerz arrived in M36). */
-export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp" | "googleOAuth"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null; googleOAuth?: GoogleOAuthConfig | null }) {
-  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, googleOAuth: null, ...next };
+export function setPlatformConfigSnapshot(next: Omit<PlatformConfigSnapshot, "sslcommerz" | "bkash" | "image" | "tiktokApp" | "googleApp" | "wallet" | "linkedinApp" | "googleOAuth" | "threadsApp"> & { sslcommerz?: SslcommerzConfig | null; bkash?: BkashConfig | null; image?: ImageConfig | null; tiktokApp?: TiktokAppConfig | null; googleApp?: GoogleAppConfig | null; wallet?: WalletConfig | null; linkedinApp?: LinkedinAppConfig | null; googleOAuth?: GoogleOAuthConfig | null; threadsApp?: ThreadsAppConfig | null }) {
+  snapshot = { sslcommerz: null, bkash: null, image: null, tiktokApp: null, googleApp: null, wallet: null, linkedinApp: null, googleOAuth: null, threadsApp: null, ...next };
   setMetaGraphVersionOverride(next.metaApp?.graphVersion ?? null);
 }
 
@@ -128,13 +136,14 @@ async function readKey(prisma: any, key: string): Promise<any> {
 
 /** Load + decrypt all areas from the store into the snapshot. */
 export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfigSnapshot> {
-  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw, googleOAuthRaw] = await Promise.all([
+  const [llmRaw, metaRaw, smtpRaw, smsRaw, sslRaw, bkashRaw, imageRaw, tiktokRaw, googleRaw, walletRaw, linkedinRaw, googleOAuthRaw, threadsRaw] = await Promise.all([
     readKey(prisma, "llmConfig"), readKey(prisma, "metaAppConfig"),
     readKey(prisma, "smtpConfig"), readKey(prisma, "smsConfig"),
     readKey(prisma, "sslcommerzConfig"), readKey(prisma, "bkashConfig"),
     readKey(prisma, "imageConfig"),
     readKey(prisma, "tiktokAppConfig"), readKey(prisma, "googleAppConfig"),
     readKey(prisma, "walletConfig"), readKey(prisma, "linkedinAppConfig"), readKey(prisma, "googleOAuthConfig"),
+    readKey(prisma, "threadsAppConfig"),
   ]);
   const llm: LlmConfig | null = llmRaw?.provider
     ? { provider: String(llmRaw.provider), model: llmRaw.model ? String(llmRaw.model) : undefined, apiKey: unseal(llmRaw.apiKeyEncrypted) ?? "" }
@@ -216,7 +225,14 @@ export async function refreshPlatformConfig(prisma: any): Promise<PlatformConfig
         enabled: googleOAuthRaw.enabled === true,
       }
     : null;
-  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, googleOAuth, wallet, loadedAt: Date.now() };
+  const threadsApp: ThreadsAppConfig | null = threadsRaw?.clientId
+    ? {
+        clientId: String(threadsRaw.clientId),
+        clientSecret: unseal(threadsRaw.clientSecretEncrypted) ?? "",
+        redirectUri: threadsRaw.redirectUri ? String(threadsRaw.redirectUri) : undefined,
+      }
+    : null;
+  const next: PlatformConfigSnapshot = { llm, metaApp, smtp, sms, sslcommerz, bkash, image, tiktokApp, googleApp, linkedinApp, googleOAuth, threadsApp, wallet, loadedAt: Date.now() };
   setPlatformConfigSnapshot(next);
   return next;
 }
@@ -400,6 +416,18 @@ export function effectiveLinkedinAppConfig(): (LinkedinAppConfig & { source: "ad
 export function effectiveGoogleOAuthConfig(): (GoogleOAuthConfig & { source: "admin" }) | null {
   if (snapshot.googleOAuth?.clientId && snapshot.googleOAuth.clientSecret) {
     return { ...snapshot.googleOAuth, source: "admin" };
+/** SN7: the operator's Threads app — same resolution as LinkedIn. */
+export function effectiveThreadsAppConfig(): (ThreadsAppConfig & { source: "admin" | "env" }) | null {
+  if (snapshot.threadsApp?.clientId && snapshot.threadsApp.clientSecret) {
+    return { ...snapshot.threadsApp, source: "admin" };
+  }
+  if (process.env.THREADS_APP_ID && process.env.THREADS_APP_SECRET) {
+    return {
+      clientId: process.env.THREADS_APP_ID,
+      clientSecret: process.env.THREADS_APP_SECRET,
+      redirectUri: process.env.THREADS_REDIRECT_URI || undefined,
+      source: "env",
+    };
   }
   return null;
 }
@@ -411,7 +439,7 @@ export function effectiveGoogleOAuthConfig(): (GoogleOAuthConfig & { source: "ad
  * (payments.service apiBase convention). CC20 widens the segment
  * vocabulary for the Google pack + LinkedIn callback routes —
  * each flow's segment is its own registered redirect path. */
-export function socialOAuthRedirectUri(platform: "tiktok" | "youtube" | "google-ga4" | "google-merchant" | "google-business" | "linkedin", configured?: string): string {
+export function socialOAuthRedirectUri(platform: "tiktok" | "youtube" | "google-ga4" | "google-merchant" | "google-business" | "linkedin" | "threads", configured?: string): string {
   if (configured) return configured.replace(/\/$/, "");
   const apiBase = (process.env.API_PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, "");
   return `${apiBase}/social/oauth/${platform}/callback`;

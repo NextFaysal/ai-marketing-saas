@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { SocialService, type MediaFileStream } from "./social.service";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -13,9 +13,12 @@ import { SocialMediaLibraryService } from "./social-media-library.service";
 import { SocialCommerceDraftService } from "./social-commerce-draft.service";
 import { SocialLinkService } from "./social-link.service";
 import { SocialHealthService } from "./social-health.service";
+import { SocialShareService } from "./social-share.service";
+import { SocialStockService } from "./social-stock.service";
+import { SocialCoachService } from "./social-coach.service";
 import {
-  BulkMediaDto, BulkSocialPostsDto, CoverMediaDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto,
-  AssignSocialPostDto, CreateSocialPostNoteDto, RejectSocialPostDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
+  BulkMediaDto, BulkSocialPostsDto, ConnectTelegramDto, CoverMediaDto, CreateCaptionTestDto, CreateHashtagSetDto, CreateMediaFolderDto, CreateSocialPostDto, CreateSocialPostGroupDto, CreateSocialPostingSlotDto, CreateTemplateImageDto, DeriveSocialPostDto, EditMediaAssetDto, GenerateAiImageDto, GenerateCarouselOutlineDto, GenerateContentPlanDto, GenerateSocialCopyDto, GenerateSocialScriptDto, GenerateSocialVariantsDto, ImportSocialMediaDto, MaterializeContentPlanDto, MetaSocialConnectDto, MetaSocialDiscoverDto, TranslateSocialTextDto,
+  AssignSocialPostDto, BrandOverlayMediaDto, CreateShareLinkDto, CreateSocialPostNoteDto, ImportStockMediaDto, RejectSocialPostDto, SaveStockKeyDto, ScheduleSocialPostDto, SelectLinkedInOrganizationDto, SelectYouTubeChannelDto, SubmitClientReviewDto, UpdateAutoDraftSettingsDto, UpdateEvergreenDto, UpdateHashtagSetDto, UpdateMediaAssetDto, UpdateMediaFolderDto, UpdateSocialPostDto, UpdateSocialPostingSlotDto, UpdateSocialSettingsDto, UploadSocialMediaDto,
 } from "./social.dto";
 import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.service";
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
@@ -58,6 +61,14 @@ export class SocialController {
     private readonly commerceDrafts: SocialCommerceDraftService,
     private readonly links: SocialLinkService,
     private readonly health: SocialHealthService,
+    // SN2: client-approval share links. LAST param (the module
+    // provides it; no existing construction order changes).
+    private readonly shares: SocialShareService,
+    // SN5: stock media (Pexels). Appended after shares for the
+    // same reason — existing positional constructions stay put.
+    private readonly stock: SocialStockService,
+    // SN9: the performance coach (latest digest + live preview).
+    private readonly coach: SocialCoachService,
   ) {}
 
   // Picker step 1: verify + list Pages. Stores nothing.
@@ -122,6 +133,24 @@ export class SocialController {
     return this.oauth.selectLinkedInOrganization(orgId, user.userId, dto);
   }
 
+  // SN6: Telegram channel connect — NOT OAuth: the tenant pastes
+  // their own BotFather bot token + channel; the service verifies
+  // bot → channel → admin BEFORE saving anything, and a failed
+  // verification returns Telegram's verbatim message in a 400.
+  @Post("accounts/telegram/connect") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  telegramConnect(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectTelegramDto) {
+    return this.oauth.connectTelegramChannel(orgId, user.userId, dto);
+  }
+
+  // SN7: Threads OAuth connect — same shape as TikTok/YouTube.
+  // ?appSource=own connects through the tenant's OWN Threads app
+  // (Connect Center → নিজের অ্যাপ → Threads). One authorization
+  // yields one Threads profile, so there is no picker.
+  @Get("accounts/threads/connect-url") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  threadsConnectUrl(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Query("appSource") appSource?: string) {
+    return this.oauth.threadsConnectUrl(orgId, user.userId, appSource);
+  }
+
   // SP8/SP9: what the UI may honestly claim about the OAuth
   // platforms (configured? TikTok audited?) — booleans only.
   @Get("platform-modes")
@@ -145,6 +174,14 @@ export class SocialController {
   @Post("accounts/:id/check-health") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
   checkAccountHealth(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.health.checkAccountHealth(orgId, user.userId, id);
+  }
+
+  // SN1: the account channel's YouTube playlists (composer
+  // picker). A non-YouTube account gets the service's honest
+  // Bengali 400.
+  @Get("accounts/:id/youtube/playlists")
+  listYouTubePlaylists(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.publish.listYouTubePlaylists(orgId, id);
   }
 
   // SP4 image routes are declared BEFORE the media/:id routes so
@@ -199,6 +236,37 @@ export class SocialController {
 
   @Get("media/limits")
   mediaLimits() { return this.social.mediaLimits(); }
+
+  // SN5: stock media (Pexels, the org's OWN key) — the literal
+  // "stock" segments are declared with the other literal media
+  // segments, BEFORE every media/:id route. The key status shape
+  // carries configured + last-4 only; the key itself is never in
+  // any response.
+  @Get("media/stock/config")
+  stockConfig(@Param("organizationId") orgId: string) { return this.stock.getStockStatus(orgId); }
+
+  @Put("media/stock/config") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  saveStockConfig(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: SaveStockKeyDto) {
+    return this.stock.saveStockKey(orgId, user.userId, dto);
+  }
+
+  @Delete("media/stock/config") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN")
+  deleteStockConfig(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string) {
+    return this.stock.deleteStockKey(orgId, user.userId);
+  }
+
+  @Get("media/stock/search")
+  stockSearch(
+    @Param("organizationId") orgId: string,
+    @Query("q") q?: string,
+    @Query("kind") kind?: string,
+    @Query("page") page?: string,
+  ) { return this.stock.searchStock(orgId, { q, kind, page: page === undefined ? undefined : Number(page) }); }
+
+  @Post("media/stock/import") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  stockImport(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ImportStockMediaDto) {
+    return this.stock.importStock(orgId, user.userId, dto);
+  }
 
   // SU3: media library — the literal "folders" / "bulk" segments
   // are declared BEFORE every media/:id route below so they are
@@ -261,6 +329,13 @@ export class SocialController {
     return this.library.coverFromVideo(orgId, user.userId, id, dto.atSeconds);
   }
 
+  // SN5: brand overlay — derived image asset with the org's
+  // logo + brand bar (image assets only; the source untouched).
+  @Post("media/:id/brand-overlay") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  brandOverlayMedia(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: BrandOverlayMediaDto) {
+    return this.library.brandOverlay(orgId, user.userId, id, dto);
+  }
+
   @Get("media/:id/file")
   async mediaFile(
     @Param("organizationId") orgId: string,
@@ -307,6 +382,24 @@ export class SocialController {
   @Post("posts/ai-script") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   generateScript(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateSocialScriptDto) {
     return this.socialAi.generateScript(orgId, user.userId, dto);
+  }
+
+  // SN4: AI platform variants / translation / carousel outline —
+  // all literal segments under posts (beside ai-script), all
+  // RETURN ONLY from the service (nothing is saved).
+  @Post("posts/ai-variants") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateVariants(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateSocialVariantsDto) {
+    return this.socialAi.generateVariants(orgId, user.userId, dto);
+  }
+
+  @Post("posts/ai-translate") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  translateText(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: TranslateSocialTextDto) {
+    return this.socialAi.translateText(orgId, user.userId, dto);
+  }
+
+  @Post("posts/ai-carousel-outline") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  generateCarouselOutline(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: GenerateCarouselOutlineDto) {
+    return this.socialAi.generateCarouselOutline(orgId, user.userId, dto);
   }
 
   // SU4: saved content plans — "content-plans" is its own first
@@ -368,9 +461,18 @@ export class SocialController {
   @Get("insights/summary")
   insightsSummary(@Param("organizationId") orgId: string) { return this.insights.getInsightsSummary(orgId); }
 
+  // SN10: caption-test pairs for the Analytics comparison.
+  @Get("insights/caption-tests")
+  insightsCaptionTests(@Param("organizationId") orgId: string) { return this.insights.listCaptionTests(orgId); }
+
   // SU4: hashtag performance from the org's own published posts.
   @Get("insights/hashtags")
   insightsHashtags(@Param("organizationId") orgId: string) { return this.insights.hashtagPerformance(orgId); }
+
+  // SN9: the performance coach — latest weekly digest + a live
+  // compute preview (the preview never calls the LLM).
+  @Get("insights/coach")
+  insightsCoach(@Param("organizationId") orgId: string) { return this.coach.getCoach(orgId); }
 
   // SU7: analytics v2 — daily time series, per-account
   // comparison, content-type analysis, follower history.
@@ -560,6 +662,31 @@ export class SocialController {
     return this.social.assignPost(orgId, user.userId, id, dto?.assignedUserId ?? null);
   }
 
+  // SN2: client-approval share links — one link per post or per
+  // group ("post-groups" is its own first segment, like
+  // "groups", so it never collides with posts/:id). The create
+  // response is the ONLY time the full token is returned (inside
+  // `url`); the list returns masked tokens + derived status.
+  @Post("posts/:id/share-link") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createPostShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateShareLinkDto) {
+    return this.shares.createShareLink(orgId, user.userId, { postId: id }, dto);
+  }
+
+  @Post("post-groups/:id/share-link") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createGroupShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateShareLinkDto) {
+    return this.shares.createShareLink(orgId, user.userId, { groupId: id }, dto);
+  }
+
+  @Get("posts/:id/share-links")
+  listPostShareLinks(@Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.shares.listShareLinksForPost(orgId, id);
+  }
+
+  @Delete("share-links/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  revokeShareLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
+    return this.shares.revokeShareLink(orgId, user.userId, id);
+  }
+
   @Patch("posts/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   updatePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateSocialPostDto) {
     return this.social.updatePost(orgId, user.userId, id, dto);
@@ -600,6 +727,13 @@ export class SocialController {
   @Post("posts/:id/clone") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   clonePost(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
     return this.social.clonePost(orgId, user.userId, id);
+  }
+
+  // SN10: caption test — pair this draft with a fresh clone draft
+  // under one captionTestId (drafts only; see the service).
+  @Post("posts/:id/caption-test") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  createCaptionTest(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: CreateCaptionTestDto) {
+    return this.social.createCaptionTest(orgId, user.userId, id, dto);
   }
 
   // SU8: cross-post derive — fresh drafts for the target
@@ -683,7 +817,11 @@ export class PublicMediaController {
  */
 @Controller("public/social")
 export class PublicSocialLinkController {
-  constructor(private readonly links: SocialLinkService) {}
+  constructor(
+    private readonly links: SocialLinkService,
+    // SN2: client-approval share preview + review.
+    private readonly shares: SocialShareService,
+  ) {}
 
   @Public()
   @Get("r/:token")
@@ -695,6 +833,24 @@ export class PublicSocialLinkController {
     const result = await this.links.recordClick(token, userAgent ?? null);
     if (!result || !result.url) throw new NotFoundException("Link not found");
     return res.redirect(302, result.url);
+  }
+
+  // SN2 — PUBLIC client-approval share preview + review. No auth
+  // can apply (the client has no account) — the unguessable
+  // token IS the credential, exactly like the tracked-link
+  // redirect above. Unknown token → 404; revoked/expired → 410
+  // (the service's honest Gone messages). The GET payload is a
+  // strict whitelist built in SocialShareService.
+  @Public()
+  @Get("share/:token")
+  publicShare(@Param("token") token: string) {
+    return this.shares.getPublicShare(token);
+  }
+
+  @Public()
+  @Post("share/:token/review")
+  publicShareReview(@Param("token") token: string, @Body() dto: SubmitClientReviewDto) {
+    return this.shares.submitPublicReview(token, dto);
   }
 }
 
@@ -749,6 +905,21 @@ export class SocialOAuthCallbackController {
     @Res() res: Response,
   ) {
     const url = await this.oauth.handleLinkedInCallback({ code, state, error });
+    return res.redirect(302, url);
+  }
+
+  // SN7: Threads callbacks land back on the SOCIAL POSTS page
+  // (where the connect started), with social_connected=threads
+  // or a social_error explanation.
+  @Public()
+  @Get("threads/callback")
+  async threadsCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const url = await this.oauth.handleThreadsCallback({ code, state, error });
     return res.redirect(302, url);
   }
 }

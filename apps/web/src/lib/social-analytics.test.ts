@@ -148,9 +148,19 @@ describe("platformFieldsForSave (SU8)", () => {
       youtubeTags: [],
       youtubeCategoryId: null,
       youtubeIsShort: false,
+      youtubePlaylistId: null,
       coverAssetId: null,
     });
     expect(platformFieldsForSave({ ...emptyForm, isStoryApplicable: true }, "update"))
       .toMatchObject({ isStory: false });
+  });
+
+  it("SN1 playlist: create sends a chosen playlist, omits an empty one; update can clear it", () => {
+    expect(platformFieldsForSave({ ...emptyForm, youtubePlaylistId: " PLabc " }, "create"))
+      .toEqual({ youtubePlaylistId: "PLabc" });
+    expect(platformFieldsForSave({ ...emptyForm, youtubePlaylistId: "PLabc" }, "update"))
+      .toMatchObject({ youtubePlaylistId: "PLabc" });
+    expect(platformFieldsForSave(emptyForm, "update"))
+      .toMatchObject({ youtubePlaylistId: null });
   });
 });

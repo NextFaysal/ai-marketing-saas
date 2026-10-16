@@ -253,6 +253,8 @@ export interface PlatformFieldsForm {
   youtubeTags: string[];
   youtubeCategoryId: string;
   youtubeIsShort: boolean;
+  /** SN1: chosen YouTube playlist id ("" = none). */
+  youtubePlaylistId?: string;
   coverAssetId: string;
   isStory: boolean;
   /** Story শুধু meta_page-এর জন্য প্রযোজ্য — অন্য platform-এ isStory পাঠানো হয় না. */
@@ -264,6 +266,7 @@ export interface PlatformFieldsPayload {
   youtubeTags?: string[] | null;
   youtubeCategoryId?: string | null;
   youtubeIsShort?: boolean;
+  youtubePlaylistId?: string | null;
   coverAssetId?: string | null;
   isStory?: boolean;
 }
@@ -279,6 +282,7 @@ export function platformFieldsForSave(form: PlatformFieldsForm, mode: "create" |
   const title = (form.youtubeTitle ?? "").trim();
   const categoryId = (form.youtubeCategoryId ?? "").trim();
   const coverAssetId = (form.coverAssetId ?? "").trim();
+  const playlistId = (form.youtubePlaylistId ?? "").trim();
   const tags = Array.isArray(form.youtubeTags) ? form.youtubeTags : [];
   if (mode === "create") {
     const payload: PlatformFieldsPayload = {};
@@ -286,6 +290,7 @@ export function platformFieldsForSave(form: PlatformFieldsForm, mode: "create" |
     if (tags.length > 0) payload.youtubeTags = tags;
     if (categoryId) payload.youtubeCategoryId = categoryId;
     if (form.youtubeIsShort) payload.youtubeIsShort = true;
+    if (playlistId) payload.youtubePlaylistId = playlistId;
     if (coverAssetId) payload.coverAssetId = coverAssetId;
     if (form.isStoryApplicable && form.isStory) payload.isStory = true;
     return payload;
@@ -295,6 +300,7 @@ export function platformFieldsForSave(form: PlatformFieldsForm, mode: "create" |
     youtubeTags: tags,
     youtubeCategoryId: categoryId || null,
     youtubeIsShort: !!form.youtubeIsShort,
+    youtubePlaylistId: playlistId || null,
     coverAssetId: coverAssetId || null,
   };
   if (form.isStoryApplicable) payload.isStory = !!form.isStory;

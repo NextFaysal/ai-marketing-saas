@@ -38,7 +38,7 @@ function PlatformChip({ platform }: { platform?: string | null }) {
 const TOGGLE_CLS = "h-4 w-4 shrink-0 accent-[var(--brand-from)]";
 
 export function SettingsPanel({ c }: { c: SocialPageCtx }) {
-  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, } = c;
+  const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram, } = c;
   return (
 <>
       {/* Accounts strip — SD7: section card */}
@@ -59,12 +59,46 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
               onClick={() => connectOAuth("youtube")}>
               {busy === "connect-youtube" ? "Google-এ যাচ্ছে..." : "▶️ YouTube যুক্ত করুন"}
             </button>
+            <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => setShowTelegramConnect((s) => !s)}>
+              ✈️ Telegram Channel যুক্ত করুন
+            </button>
+            <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.threads?.configured === false}
+              title={platformModes && !platformModes.threads?.configured ? "Threads app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              onClick={() => connectOAuth("threads")}>
+              {busy === "connect-threads" ? "Threads-এ যাচ্ছে..." : "🧵 Threads যুক্ত করুন"}
+            </button>
           </div>
         </div>
-        {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured) ? (
+        {showTelegramConnect ? (
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            <div className="text-sm font-semibold">✈️ Telegram Channel যুক্ত করুন (নিজের Bot দিয়ে)</div>
+            <ol className="list-decimal space-y-1 pl-5 text-xs text-slate-500">
+              <li>Telegram-এ <strong>@BotFather</strong>-এ গিয়ে একটি Bot বানান — সেখান থেকে পাওয়া <strong>Bot Token</strong>টি নিচে দিন।</li>
+              <li>আপনার Channel-এর Settings → Administrators-এ এই Bot-টিকে <strong>Admin</strong> করুন (Post Messages অনুমতিসহ)।</li>
+              <li>Channel-এর Username (@সহ) দিন — Private Channel হলে numeric Chat ID দিন।</li>
+            </ol>
+            <p className="text-xs text-slate-400">যুক্ত করার আগে যাচাই করা হয়: Bot Token ঠিক আছে কিনা, Channel পাওয়া যাচ্ছে কিনা, আর Bot-টি Channel-এর Admin কিনা। যেকোনো ধাপ ব্যর্থ হলে Telegram-এর নিজের বার্তাসহ কারণ দেখানো হবে এবং কিছুই সেভ হবে না। Tokenটি encrypted অবস্থায় সেভ থাকে — কখনো দেখানো হয় না।</p>
+            <form
+              onSubmit={(e) => { e.preventDefault(); void connectTelegram(); }}
+              className="flex flex-wrap items-end gap-2"
+            >
+              <label className="block min-w-[220px] flex-1 text-sm">Bot Token (BotFather থেকে)
+                <input type="password" className={inputCls} value={telegramTokenInput} onChange={(e) => setTelegramTokenInput(e.target.value)} placeholder="123456789:AA…" autoComplete="off" />
+              </label>
+              <label className="block min-w-[180px] text-sm">Channel Username / Chat ID
+                <input type="text" className={inputCls} value={telegramChannelInput} onChange={(e) => setTelegramChannelInput(e.target.value)} placeholder="@mychannel" autoComplete="off" />
+              </label>
+              <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
+                {busy === "connect-telegram" ? "যাচাই করে যুক্ত হচ্ছে..." : "যাচাই করে যুক্ত করুন"}
+              </button>
+            </form>
+          </div>
+        ) : null}
+        {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured || !platformModes.threads?.configured) ? (
           <p className="text-xs text-slate-400">
             {!platformModes.tiktok.configured ? "TikTok: Operator এখনো TikTok app configure করেননি — Connect করা যাচ্ছে না। " : null}
             {!platformModes.youtube.configured ? "YouTube: Operator এখনো Google app configure করেননি — Connect করা যাচ্ছে না।" : null}
+            {!platformModes.threads?.configured ? "Threads: Operator এখনো Threads app configure করেননি — প্ল্যাটফর্ম app দিয়ে Connect করা যাচ্ছে না (নিজের Threads app দিয়ে করা যায়: কানেক্ট সেন্টার → নিজের অ্যাপ)।" : null}
           </p>
         ) : null}
         {youtubePick ? (
@@ -114,7 +148,7 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                     {health ? <HealthPill health={health.health} /> : null}
                   </div>
                   {health?.healthCheckedAt ? <div className="mt-0.5 text-[11px] text-slate-400">শেষ যাচাই: {new Date(health.healthCheckedAt).toLocaleString("bn-BD")}</div> : null}
-                  {a.platform === "instagram" && a.username ? <div className="text-xs text-slate-500">@{a.username}</div> : null}
+                  {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <div className="text-xs text-slate-500">@{a.username}</div> : null}
                   {a.platform === "tiktok" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       {platformModes?.tiktok.audited
@@ -125,6 +159,16 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                   {a.platform === "youtube" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       আপলোড YouTube-এ <strong>Private</strong> হিসেবে যায় — Google app যাচাই সম্পন্ন হলে Public করা যাবে। ভিডিও Channel-এর YouTube Studio-তে দেখা যাবে।
+                    </div>
+                  ) : null}
+                  {a.platform === "telegram" ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      পোস্ট Bot-এর মাধ্যমে Channel-এ যায় — Bot-টির Admin মর্যাদা তুলে নিলে প্রকাশ ব্যর্থ হবে (Telegram-এর বার্তাই দেখানো হবে)। সৎ সীমা: Telegram Bot API পোস্টের Views/Engagement দেয় না, তাই এই অ্যাকাউন্টের Insights পাওয়া যায় না।
+                    </div>
+                  ) : null}
+                  {a.platform === "threads" ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      পোস্ট Threads-এ সরাসরি প্রকাশিত হয় (Container flow)। সৎ সীমা: প্রোডাকশনে প্রকাশের জন্য Operator-এর Threads app-এ Meta-র App Review (Advanced Access) লাগতে পারে — না থাকলে Meta শুধু app-role থাকা অ্যাকাউন্টে অনুমতি দেয়, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই দেখা যাবে।
                     </div>
                   ) : null}
                   {a.lastError ? (
@@ -220,6 +264,14 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
           {busy === "approval-two-step" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
         </label>
         <p className="text-xs text-slate-500">চালু থাকলে অনুমোদন দুই ধাপে হয়: প্রথমে Manager ধাপের অনুমোদন, তারপর চূড়ান্ত অনুমোদন। বন্ধ থাকলে আগের এক-ধাপের নিয়মই থাকে।</p>
+        {/* SN2: optional third gate — the client's own sign-off via share link. */}
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" className={TOGGLE_CLS} checked={requireClientApproval} disabled={busy !== "" || !requireApprovalLoaded}
+            onChange={(e) => saveRequireClientApproval(e.target.checked)} />
+          <span>ক্লায়েন্ট অনুমোদন বাধ্যতামূলক (শেয়ার লিংক)</span>
+          {busy === "client-approval-requirement" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
+        </label>
+        <p className="text-xs text-slate-500">চালু থাকলে: শেয়ার লিংকে ক্লায়েন্টের সর্বশেষ সিদ্ধান্ত "অনুমোদিত" না হলে পোস্টটি publish/schedule হবে না — "ক্লায়েন্ট অনুমোদন বাকি" বলে আটকাবে। বন্ধ থাকলে ক্লায়েন্ট review শুধু রেকর্ড হিসেবে থাকে, কোনো gate নয়।</p>
       </div>
 
       {/* SU5: Commerce Auto-Draft settings — SD7: section card */}
@@ -235,6 +287,13 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             </label>
           ))}
         </div>
+        {/* SN8: the RSS/Atom feed the syndication sweep reads. */}
+        <label className="block text-sm">RSS Feed URL
+          <input type="text" className={inputCls} value={autoDraftForm.rssFeedUrl} disabled={busy !== "" || !autoDraftLoaded}
+            onChange={(e) => setAutoDraftForm((f) => ({ ...f, rssFeedUrl: e.target.value }))}
+            placeholder="https://example.com/feed.xml" />
+        </label>
+        <p className="text-xs text-slate-500">এই উৎসগুলো (RSS feed ও নিজের YouTube চ্যানেল) থেকে Draft তৈরি হতে Automations-এ “Social Syndication Sweep” job template-টি চালু থাকতে হবে। দৈনিক cap commerce auto-draft-এর সঙ্গে মিলিয়ে হিসাব হয় — এগুলো কখনো নিজে থেকে Publish হয় না, শুধু Draft তৈরি হয়।</p>
         <div className="flex flex-wrap items-end gap-3">
           <label className="block text-sm">প্রতিদিন সর্বোচ্চ draft সংখ্যা (১–২০)
             <input type="number" min={1} max={20} className="input mt-1 w-28" value={autoDraftForm.maxDraftsPerDay}

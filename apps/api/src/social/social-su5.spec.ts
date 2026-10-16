@@ -364,6 +364,8 @@ describe("SU5 settings", () => {
     expect(out).toEqual({
       newProductEnabled: false, saleEnabled: false, backInStockEnabled: false,
       reviewMilestoneEnabled: false, maxDraftsPerDay: 3, socialAccountId: null,
+      // SN8: syndication defaults joined the settings shape.
+      rssEnabled: false, youtubeEnabled: false, rssFeedUrl: null,
     });
     expect(tables.socialAutoDraftConfig.rows).toHaveLength(0);
   });

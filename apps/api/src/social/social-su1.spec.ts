@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { SocialService } from "./social.service";
-import { validateForPlatform } from "./social-preflight";
+import { validateForPlatform, TIKTOK_PHOTO_GATE_MSG } from "./social-preflight";
 
 /**
  * SU1 — Composer v2 (service + pre-flight):
@@ -162,10 +162,14 @@ describe("SU1 validateForPlatform", () => {
     expect(validateForPlatform({ caption: "ok title", mediaRefs: [vid] }, "youtube")).toBeNull();
   });
 
-  it("tiktok: two media and an image both hit the video-only verbatim message", () => {
+  it("tiktok: two videos hit the video-only verbatim message; an image is the SN1 photo gate", () => {
     const expected = "TikTok-এর পোস্টে ঠিক একটি Video লাগবে — ছবি বা একাধিক মিডিয়া দিয়ে TikTok-এ প্রকাশ করা যায় না। একটি Video বেছে নিন।";
     expect(validateForPlatform({ caption: "c", mediaRefs: [vid, vid] }, "tiktok")).toBe(expected);
-    expect(validateForPlatform({ caption: "c", mediaRefs: [img] }, "tiktok")).toBe(expected);
+    // SN1 supersedes the SU1-era wording for image posts: an
+    // image is now a PHOTO post behind the audit gate — gate off
+    // (no flag) refuses with the gate message, gate on accepts.
+    expect(validateForPlatform({ caption: "c", mediaRefs: [img] }, "tiktok")).toBe(TIKTOK_PHOTO_GATE_MSG);
+    expect(validateForPlatform({ caption: "c", mediaRefs: [img], tiktokAudited: true }, "tiktok")).toBeNull();
     expect(validateForPlatform({ caption: "c", mediaRefs: [vid] }, "tiktok")).toBeNull();
   });
 

@@ -6,7 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { storedAssetPublicUrl } from "../storage/media-url";
-import { SOCIAL_MEDIA_MAX_BYTES } from "./social.service";
+import { SOCIAL_MEDIA_MAX_BYTES, socialVideoMaxBytes } from "./social.service";
 
 /** One fetch call (the real implementation is the global fetch). */
 export type ImportFetchFn = (url: string, init?: any) => Promise<any>;
@@ -173,6 +173,7 @@ export class SocialImportService {
       origin: row.origin ?? "upload",
       prompt: row.prompt ?? null,
       sourceUrl: row.sourceUrl ?? null,
+      attribution: row.attribution ?? null,
     };
   }
 
@@ -282,10 +283,13 @@ export class SocialImportService {
    * Read a response body with the byte cap enforced DURING the
    * read: streamed chunks accumulate and the read aborts the
    * moment the cap is passed. Stub-shaped responses without a
-   * readable body fall back to arrayBuffer + a length check.
+   * readable body fall back to arrayBuffer + a length check. The
+   * over-cap message names WHAT was being fetched (image bytes
+   * vs a general media file) so SN5's video import does not
+   * claim a video is a "ছবি".
    */
-  private async readBodyCapped(res: any): Promise<Buffer> {
-    const overCap = () => new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ২.১ MB পর্যন্ত ছবি import করা যাবে।");
+  private async readBodyCapped(res: any, maxBytes: number, overCapMessage: string): Promise<Buffer> {
+    const overCap = () => new BadRequestException(overCapMessage);
     const body = res?.body;
     if (body && typeof body.getReader === "function") {
       const reader = body.getReader();
@@ -296,7 +300,7 @@ export class SocialImportService {
         if (done) break;
         if (value) {
           total += value.byteLength;
-          if (total > SOCIAL_MEDIA_MAX_BYTES) {
+          if (total > maxBytes) {
             try { await reader.cancel(); } catch { /* the refusal stands either way */ }
             throw overCap();
           }
@@ -306,16 +310,19 @@ export class SocialImportService {
       return Buffer.concat(chunks);
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > SOCIAL_MEDIA_MAX_BYTES) throw overCap();
+    if (buf.length > maxBytes) throw overCap();
     return buf;
   }
 
   /**
    * The guarded fetch itself: manual redirect following (≤ 3
    * hops), full re-validation per hop, one ~10s AbortController
-   * across the whole chain, cap enforced while reading.
+   * across the whole chain, cap enforced while reading. Shared
+   * by the PP3 image import (2.1 MB cap) and SN5's stock import
+   * (the video cap) — there is exactly ONE guarded URL→bytes
+   * path in this codebase.
    */
-  private async fetchGuardedImage(startUrl: string): Promise<Buffer> {
+  private async fetchGuardedBytes(startUrl: string, maxBytes: number, overCapMessage: string): Promise<Buffer> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
@@ -326,7 +333,7 @@ export class SocialImportService {
         try {
           res = await this.fetchFn(url.toString(), { redirect: "manual", signal: controller.signal });
         } catch (e) {
-          throw new BadRequestException(`ছবির URL থেকে ছবি আনা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+          throw new BadRequestException(`URL থেকে ফাইল আনা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
         }
         const status = Number(res?.status ?? 0);
         if (status >= 300 && status < 400) {
@@ -334,10 +341,10 @@ export class SocialImportService {
             ? res.headers.get("location")
             : (res?.headers?.location ?? res?.headers?.Location ?? null);
           if (!location) {
-            throw new BadRequestException(`ছবির URL redirect করেছে (HTTP ${status}) কিন্তু কোথায় যাবে তা জানায়নি — import করা গেল না।`);
+            throw new BadRequestException(`URL redirect করেছে (HTTP ${status}) কিন্তু কোথায় যাবে তা জানায়নি — import করা গেল না।`);
           }
           if (hop === MAX_REDIRECT_HOPS) {
-            throw new BadRequestException("ছবির URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
+            throw new BadRequestException("URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
           }
           // The next hop is validated from scratch at the top of
           // the loop — a redirect to a private target is refused
@@ -346,15 +353,105 @@ export class SocialImportService {
           continue;
         }
         if (status < 200 || status >= 300) {
-          throw new BadRequestException(`ছবির URL থেকে সাড়া পাওয়া যায়নি (HTTP ${status})।`);
+          throw new BadRequestException(`URL থেকে সাড়া পাওয়া যায়নি (HTTP ${status})।`);
         }
-        return await this.readBodyCapped(res);
+        return await this.readBodyCapped(res, maxBytes, overCapMessage);
       }
       // Unreachable (the loop returns or throws), but keeps the
       // compiler honest about the return path.
-      throw new BadRequestException("ছবির URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
+      throw new BadRequestException("URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * SN8 — the guarded fetch as TEXT (RSS/Atom syndication reads
+   * a feed through exactly the same SSRF-guarded path as every
+   * other URL→bytes fetch in this codebase; there is no second
+   * fetch path). The bytes are decoded as UTF-8.
+   */
+  async fetchGuardedText(startUrl: string, maxBytes = 1_000_000): Promise<string> {
+    const bytes = await this.fetchGuardedBytes(
+      startUrl, maxBytes,
+      "ফাইলটি অনেক বড় — নির্ধারিত সীমার মধ্যে থাকা ফাইলই আনা যাবে।",
+    );
+    return bytes.toString("utf-8");
+  }
+
+  private async fetchGuardedImage(startUrl: string): Promise<Buffer> {
+    return this.fetchGuardedBytes(
+      startUrl, SOCIAL_MEDIA_MAX_BYTES,
+      "ছবিটি অনেক বড় — সর্বোচ্চ ২.১ MB পর্যন্ত ছবি import করা যাবে।",
+    );
+  }
+
+  /**
+   * SN5 — import ONE external media file (a stock photo or
+   * video) into the org's Media Library through the SAME guarded
+   * fetch as PP3. The caller (SocialStockService) supplies the
+   * provider-canonical file URL — never a tenant-typed URL — and
+   * the dedupe identity (`sourceUrl`, the provider page URL):
+   * importing the same stock item twice returns the existing
+   * asset without a second fetch.
+   *
+   * The byte cap while reading is the VIDEO cap (a stock video
+   * may be large); after the sniff, an IMAGE over the image cap
+   * is still refused, and anything that does not sniff as an
+   * image or a video is refused with what was detected named.
+   */
+  async importExternalMedia(
+    organizationId: string,
+    actorId: string,
+    input: { fileUrl: string; name: string; origin: string; sourceUrl: string; attribution?: string | null },
+  ) {
+    const fileUrl = typeof input.fileUrl === "string" ? input.fileUrl.trim() : "";
+    if (!fileUrl) throw new BadRequestException("Import করার ফাইলের URL পাওয়া যায়নি।");
+    const sourceUrl = typeof input.sourceUrl === "string" ? input.sourceUrl.trim() : "";
+    if (sourceUrl) {
+      const existing = await (this.prisma as any).mediaAsset.findFirst({
+        where: { organizationId, sourceUrl },
+      });
+      if (existing) return this.serializeAsset(existing);
+    }
+
+    const bytes = await this.fetchGuardedBytes(
+      fileUrl, socialVideoMaxBytes(),
+      "ফাইলটি অনেক বড় — নির্ধারিত সীমার মধ্যে থাকা ফাইলই import করা যাবে।",
+    );
+    const detected = detectMediaKind(bytes);
+    if (!detected || (detected.kind !== "image" && detected.kind !== "video")) {
+      const what = detected ? `${detected.contentType}` : "অচেনা ফরম্যাটের ডেটা";
+      throw new BadRequestException(`এই URL থেকে ছবি/ভিডিও পাওয়া যায়নি — পাওয়া গেছে ${what}।`);
+    }
+    if (detected.kind === "image" && bytes.length > SOCIAL_MEDIA_MAX_BYTES) {
+      throw new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ২.১ MB পর্যন্ত ছবি import করা যাবে।");
+    }
+
+    const assetId = randomUUID();
+    const ext = detected.contentType.includes("mp4") ? "mp4"
+      : detected.contentType.includes("webm") ? "webm"
+      : extForImageContentType(detected.contentType);
+    const storageKey = `${organizationId}/social/${assetId}.${ext}`;
+    await MediaStore.fromEnv().put(storageKey, bytes, detected.contentType);
+    const asset = await (this.prisma as any).mediaAsset.create({
+      data: {
+        id: assetId, organizationId, kind: detected.kind,
+        name: (typeof input.name === "string" && input.name.trim()) ? input.name.trim().slice(0, 200) : "Stock মিডিয়া",
+        contentType: detected.contentType, sizeBytes: bytes.length,
+        storageKey, origin: input.origin || "stock", sourceUrl: sourceUrl || null,
+        attribution: input.attribution ?? null,
+        createdById: actorId,
+      },
+    });
+
+    let sourceHost = "";
+    try { sourceHost = new URL(fileUrl).hostname; } catch { sourceHost = ""; }
+    await this.audit.log({
+      organizationId, userId: actorId, action: "social.stock_media_imported",
+      entityType: "MediaAsset", entityId: asset.id,
+      metadata: { sourceHost, origin: asset.origin, contentType: detected.contentType, sizeBytes: bytes.length },
+    });
+    return this.serializeAsset(asset);
   }
 }

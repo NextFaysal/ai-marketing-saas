@@ -48,6 +48,7 @@ const TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 const ORG_ACLS_URL = "https://www.linkedin.com/v2/organizationAcls";
 const ORGANIZATIONS_URL = "https://www.linkedin.com/v2/organizations";
 const UGC_POSTS_URL = "https://www.linkedin.com/v2/ugcPosts";
+const SOCIAL_ACTIONS_URL = "https://www.linkedin.com/v2/socialActions";
 const MAX_ORGS = 25;
 
 export class LinkedInClient {
@@ -170,5 +171,35 @@ export class LinkedInClient {
     const id = body?.id ? String(body.id) : (res.headers?.get?.("x-restli-id") ?? "");
     if (!id) throw new Error("LinkedIn publish returned no post id");
     return { platformPostId: id };
+  }
+
+  /**
+   * SN1 — comment on a post (LinkedIn's documented socialActions
+   * comments path): POST /v2/socialActions/{postUrn}/comments
+   * with the organization as actor and the text under `message`.
+   * The post URN travels URL-encoded in the path (URNs contain
+   * ":" — LinkedIn's own docs show the encoded form). Returns the
+   * comment URN exactly as LinkedIn returns it (body `id`, or the
+   * X-RestLi-Id header). Errors propagate LinkedIn's verbatim
+   * message (fail()).
+   */
+  async createComment(accessToken: string, input: { organizationId: string; postUrn: string; text: string }): Promise<{ commentId: string }> {
+    const res = await this.fetchFn(`${SOCIAL_ACTIONS_URL}/${encodeURIComponent(input.postUrn)}/comments`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+      body: JSON.stringify({
+        actor: `urn:li:organization:${input.organizationId}`,
+        message: { text: input.text },
+      }),
+    });
+    if (!res.ok) await this.fail(res, "LinkedIn comment");
+    const body: any = await res.json().catch(() => null);
+    const id = body?.id ? String(body.id) : (res.headers?.get?.("x-restli-id") ?? "");
+    if (!id) throw new Error("LinkedIn comment returned no comment id");
+    return { commentId: id };
   }
 }

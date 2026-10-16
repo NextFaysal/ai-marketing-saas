@@ -236,6 +236,22 @@ export default function MessagingPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // SN4: Social Posts repurpose handoff — a ?prefill= link drops
+  // the post's caption into the composer body as a DRAFT (nothing
+  // is sent, no broadcast is created) and the param is scrubbed
+  // from the URL so a refresh never re-applies it over edits.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prefill = params.get("prefill");
+    if (!prefill) return;
+    setBcForm((f) => (f.body ? f : { ...f, body: prefill }));
+    params.delete("prefill");
+    const qs = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
+    setNotice("Social Posts থেকে ক্যাপশনটি খসড়া হিসেবে বসানো হয়েছে — পাঠানোর আগে দেখে নিন।");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function wrap<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
     setBusy(key); setError("");
     try { return await fn(); } catch (e) { setError(e instanceof Error ? e.message : "Failed"); return null; } finally { setBusy(""); }

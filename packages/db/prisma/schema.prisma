@@ -138,6 +138,8 @@ model Organization {
   integrations   Integration[]
   tenantAppConfigs TenantAppConfig[]
   orgLlmConfig   OrgLlmConfig?
+  orgStockConfig OrgStockConfig?
+  socialCoachDigests SocialCoachDigest[]
   tenantPaymentGateways TenantPaymentGateway[]
   tenantPaymentTransactions TenantPaymentTransaction[]
   platformPaymentEnablements PlatformPaymentEnablement[]
@@ -233,6 +235,8 @@ model Organization {
   socialAccounts SocialAccount[]
   socialAccountFollowerSnapshots SocialAccountFollowerSnapshot[]
   socialPosts    SocialPost[]
+  socialPostShareLinks SocialPostShareLink[]
+  socialPostClientReviews SocialPostClientReview[]
   socialPostNotes SocialPostNote[]
   socialPostVersions SocialPostVersion[]
   socialPostGroups SocialPostGroup[]
@@ -271,6 +275,11 @@ model Organization {
   // SP7: when true, social posts by non-OWNER/ADMIN members need
   // OWNER/ADMIN approval before they can be scheduled/published.
   socialRequireApproval Boolean @default(false)
+  // SN2: when true, a post additionally needs CLIENT approval
+  // through a SocialPostShareLink before it can be published —
+  // an optional third step beside the internal approval above.
+  // Default false = client approval never gates publishing.
+  socialRequireClientApproval Boolean @default(false)
   // SU9: when true, approval gains a second step — a first
   // OWNER/ADMIN approval moves a post to "manager_approved" and
   // only a second OWNER/ADMIN approval makes it "approved".
@@ -280,6 +289,7 @@ model Organization {
   // link clicks → orders. Association only, never attribution.
   socialLinkWindowDays Int       @default(7)
   socialAutoDraftConfig SocialAutoDraftConfig?
+  socialSyndicationSeen SocialSyndicationSeen[]
   socialLinkClicks SocialLinkClick[]
   // CX12a: Practice Mode — while true, the org can rehearse the
   // full AI reply + order flow on practice conversations/orders;
@@ -6744,6 +6754,7 @@ model SocialPostGroup {
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   posts          SocialPost[]
+  shareLinks     SocialPostShareLink[]
 
   @@index([organizationId])
 }
@@ -6825,6 +6836,10 @@ model SocialPost {
   // or "review:<reviewId>").
   autoDraftKind   String?
   autoDraftRef    String?
+  // SN10: caption test pairing — two posts (same account + media,
+  // different captions) share one captionTestId; the comparison in
+  // Analytics reads the pair. Null = not part of a caption test.
+  captionTestId   String?
   // SU8: YouTube-specific metadata (title override / tags /
   // category / Shorts marker), a cover/thumbnail asset, and the
   // FB Page photo-story flag. All optional; null/false = the
@@ -6833,6 +6848,12 @@ model SocialPost {
   youtubeTags      Json?
   youtubeCategoryId String?
   youtubeIsShort   Boolean       @default(false)
+  // SN1: the channel playlist this video joins after a successful
+  // upload (playlistItems.insert). Null = no playlist step, the
+  // pre-SN1 behaviour exactly. A failed insert never unpublishes
+  // the video — the verbatim reason joins the publish note (the
+  // SU8 cover semantics).
+  youtubePlaylistId String?
   coverAssetId     String?
   isStory          Boolean       @default(false)
   // SU6: unguessable tracked-link token (public redirect route);
@@ -6845,6 +6866,8 @@ model SocialPost {
   assignedUserId  String?
   notes           SocialPostNote[]
   versions        SocialPostVersion[]
+  shareLinks      SocialPostShareLink[]
+  clientReviews   SocialPostClientReview[]
   createdById     String
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -6855,6 +6878,24 @@ model SocialPost {
   @@index([organizationId, status])
   @@index([socialAccountId])
   @@index([organizationId, seriesId])
+  @@index([organizationId, captionTestId])
+}
+
+// SN8: one row per syndication item the sweep has already turned
+// into a draft (or definitively accounted for), so an RSS item or
+// a YouTube upload is never drafted twice. The sweep only writes
+// a row AFTER its draft exists — items skipped by the daily cap
+// stay unseen and are retried on a later run.
+model SocialSyndicationSeen {
+  id             String       @id @default(uuid())
+  organizationId String
+  source         String // rss | youtube
+  externalId     String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, source, externalId])
+  @@index([organizationId, source])
 }
 
 // SU9: an internal team note on a post. Notes are collaboration
@@ -6894,6 +6935,56 @@ model SocialPostVersion {
   @@index([organizationId, socialPostId])
 }
 
+// SN2: a client-approval share link — an unguessable token (the
+// SP1 public-media-token discipline: randomBytes base64url,
+// shown once at creation) that lets an agency client preview ONE
+// post (postId) or ONE variant group (groupId) without a login
+// and record an approve / request-changes decision. Exactly one
+// of postId / groupId is set. Expiry + revoke are honoured by the
+// public review path; a revoked or expired link answers 404.
+model SocialPostShareLink {
+  id             String       @id @default(uuid())
+  organizationId String
+  postId         String?
+  groupId        String?
+  token          String       @unique
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  post           SocialPost?  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  group          SocialPostGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  reviews        SocialPostClientReview[]
+
+  @@index([organizationId])
+  @@index([postId])
+  @@index([groupId])
+}
+
+// SN2: one client decision recorded through a share link. The
+// reviewer's name is what the client typed on the public page
+// (no account exists for them); decision is "approved" or
+// "changes_requested" (String, the SocialPost approvalStatus
+// convention). Reviews are append-only history — the latest one
+// is the client's current word on the post.
+model SocialPostClientReview {
+  id             String       @id @default(uuid())
+  organizationId String
+  postId         String
+  shareLinkId    String
+  reviewerName   String
+  decision       String // approved | changes_requested
+  comment        String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  post           SocialPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  shareLink      SocialPostShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, postId])
+  @@index([shareLinkId])
+}
+
 // SU5: per-org commerce auto-draft settings — one row per org.
 // Absence of a row means every trigger is OFF (all toggles
 // default false); drafts are created only for enabled kinds,
@@ -6905,6 +6996,12 @@ model SocialAutoDraftConfig {
   saleEnabled    Boolean       @default(false)
   backInStockEnabled Boolean  @default(false)
   reviewMilestoneEnabled Boolean @default(false)
+  // SN8: syndication sources feed the SAME engine (same cap,
+  // same target account) — drafts only, dedupe via
+  // SocialSyndicationSeen. Both default OFF.
+  rssEnabled     Boolean      @default(false)
+  rssFeedUrl     String?
+  youtubeEnabled Boolean      @default(false)
   maxDraftsPerDay Int          @default(3)
   // Preferred target account; null = the org's first connected
   // meta_page account. SetNull if the account row is deleted.
@@ -6989,6 +7086,11 @@ model MediaAsset {
   // organization: importing the same URL again returns the existing
   // asset instead of fetching it a second time. Null otherwise.
   sourceUrl      String?
+  // SN5: for a stock-imported asset, the photographer's credit
+  // line (e.g. "Photo by Jane Doe on Pexels") — shown on the
+  // library tile and copied onto derived assets so the credit is
+  // never silently dropped. Null for non-stock assets.
+  attribution    String?
   // SU3: library organization — an optional folder (deleting the
   // folder leaves the asset folderless, never deletes it) + free
   // tags for filtering.
@@ -7050,6 +7152,49 @@ model SocialHashtagSet {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  @@index([organizationId])
+}
+
+// SN5: the tenant's OWN stock-media (Pexels) API key — one per
+// organization, stored EXACTLY like OrgLlmConfig (CC8): the key
+// itself lives only inside the sealed JSON ({ apiKey }, AES-GCM
+// via integrations/crypto). Saved ONLY after a real Pexels call
+// verified it (status "verified"); the plaintext key is never
+// returned by any API — status endpoints expose configured +
+// last-4 only.
+model OrgStockConfig {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  provider        String       @default("pexels") // pexels
+  encryptedData   String // sealed JSON: { apiKey }
+  status          String       @default("configured") // verified | configured
+  lastVerifiedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// SN9: one AI performance-coach digest per organization per
+// week (weekStart = the week's Monday "YYYY-MM-DD" in the org
+// timezone). payload is the deterministic compute result PLUS
+// the final summary text — every number in it came from the
+// org's own SU7 analytics; the job is idempotent on
+// (organizationId, weekStart), so a week can never produce two
+// digests or two notification rounds.
+model SocialCoachDigest {
+  id              String       @id @default(uuid())
+  organizationId  String
+  weekStart       String       @db.VarChar(10)
+  payload         Json
+  narrationSource String // llm | deterministic
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, weekStart])
   @@index([organizationId])
 }
 // ==========================================

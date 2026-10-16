@@ -20,6 +20,8 @@ import { PaymentsService } from "../payments/payments.service";
 import { SocialPublishService } from "../social/social-publish.service";
 import { SocialQueueService } from "../social/social-queue.service";
 import { SocialInsightsService } from "../social/social-insights.service";
+import { SocialCoachService } from "../social/social-coach.service";
+import { SocialSyndicationService } from "../social/social-syndication.service";
 import { SocialCommentsService } from "../inbox/social-comments.service";
 import { CourierService } from "../courier/courier.service";
 import { ReviewsService } from "../orders/reviews.service";
@@ -71,6 +73,13 @@ export const JOB_TYPES = [
   "social_evergreen_sweep",
   // SU7: daily follower-count snapshot sweep.
   "social_follower_snapshot",
+  // SN9: weekly performance-coach digest (digest + notification
+  // only — never creates or publishes a post).
+  "social_coach_weekly",
+  // SN8: syndication sweep — new RSS feed items + new uploads on
+  // the org's own YouTube channel(s) become DRAFTS only, under
+  // the auto-draft settings' toggles + daily cap.
+  "social_syndication_sweep",
   // CC12 (Connect Center Advanced): per-org connection health
   // monitoring sweep — state-change alerts for broken/expiring
   // connections (see ConnectionMonitorService).
@@ -193,6 +202,10 @@ export const JOB_TEMPLATES: JobTemplate[] = [
     descriptionBn: "প্রতিদিন একবার: Evergreen চিহ্নিত Published পোস্টগুলোর মধ্যে যেগুলোর ন্যূনতম ব্যবধান (Gap) পেরিয়ে গেছে, সেগুলোর একটি করে নতুন Draft কপি তৈরি হবে — নিজে থেকে কিছুই Publish হবে না; Draftটি যাচাই করে মানুষ শিডিউল বা প্রকাশ করবেন। সর্বোচ্চ চক্রের সীমা পেরিয়ে গেলে আর কপি তৈরি হবে না।" },
   { key: "social_follower_snapshot", name: "Social Follower Snapshot (টেমপ্লেট)", type: "social_follower_snapshot", targetKind: "org", intervalMinutes: 1440,
     descriptionBn: "প্রতিদিন একবার: সংযুক্ত Facebook Page ও Instagram অ্যাকাউন্টের Follower সংখ্যা Platform যা দেয় তা-ই Snapshot হিসেবে রাখা হবে — Platform সংখ্যা না দিলে ওই দিনের Snapshot হবে না, কোনো সংখ্যা বানানো হবে না।" },
+  { key: "social_coach_weekly", name: "Social Coach Weekly (টেমপ্লেট)", type: "social_coach_weekly", targetKind: "org", intervalMinutes: 10080,
+    descriptionBn: "সপ্তাহে একবার: গত ৭ দিন বনাম আগের ৭ দিনের Social Post পারফরম্যান্সের সারসংক্ষেপ (Coach Digest) তৈরি হয়ে Owner/Admin-দের নোটিফিকেশন যাবে এবং Analytics ট্যাবে দেখা যাবে। এই Job নিজে থেকে কোনো পোস্ট তৈরি বা Publish করে না — শুধু সারসংক্ষেপ। একই সপ্তাহে দুইবার চললেও Digest একটাই থাকবে।" },
+  { key: "social_syndication_sweep", name: "Social Syndication Sweep (টেমপ্লেট)", type: "social_syndication_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: Auto-draft সেটিংসে চালু থাকলে RSS Feed-এর নতুন আইটেম এবং নিজের সংযুক্ত YouTube চ্যানেলের নতুন আপলোড থেকে শুধু Draft পোস্ট তৈরি হবে — কখনো নিজে থেকে Publish হবে না। কোন আইটেম থেকে Draft হয়েছে তা মনে রাখা হয়, তাই একই আইটেম দুইবার Draft হবে না; প্রতিদিনের সর্বোচ্চ Draft সীমা (Cap) Auto-draft সেটিংসের toggle ও Cap মেনে চলে।" },
   { key: "inbox_autoreply_sweep", name: "Inbox Auto-Reply Sweep (টেমপ্লেট)", type: "inbox_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
     descriptionBn: "প্রতি ১ মিনিটে: Inbox সেটিংসে উত্তরের আগে অপেক্ষা (AI Reply Delay) চালু থাকলে, সময় হয়ে যাওয়া অপেক্ষমাণ AI উত্তরগুলো পাঠানো হবে — পরপর আসা মেসেজ জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = সেটিংসের অপেক্ষা + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)।" },
   { key: "comment_autoreply_sweep", name: "Comment Auto-Reply Sweep (টেমপ্লেট)", type: "comment_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
@@ -393,6 +406,14 @@ export class AutomationService implements OnModuleInit {
     // AB8 (AX25): merchant data tools — DataToolsModule is a leaf
     // (global Prisma/Audit only); no cycle. Appended LAST.
     @Optional() private readonly dataExports?: DataExportsService,
+    // SN9: weekly coach digest — SocialModule exports
+    // SocialCoachService; appended LAST (the INT6 union tail
+    // discipline) so no existing positional construction moves.
+    @Optional() private readonly socialCoach?: SocialCoachService,
+    // SN8: syndication sweep — SocialModule exports
+    // SocialSyndicationService; appended after SN9, again LAST,
+    // for the same positional-construction discipline.
+    @Optional() private readonly socialSyndication?: SocialSyndicationService,
   ) {}
 
   // ---------- Milestone 57: BullMQ dispatch mode ----------
@@ -857,6 +878,14 @@ export class AutomationService implements OnModuleInit {
       case "social_follower_snapshot": {
         if (!this.socialInsights) throw new BadRequestException("Social insights service is not available in this deployment");
         return this.socialInsights.snapshotFollowers(orgId);
+      }
+      case "social_coach_weekly": {
+        if (!this.socialCoach) throw new BadRequestException("Social coach service is not available in this deployment");
+        return this.socialCoach.runWeeklyDigest(orgId);
+      }
+      case "social_syndication_sweep": {
+        if (!this.socialSyndication) throw new BadRequestException("Social syndication service is not available in this deployment");
+        return this.socialSyndication.runSyndicationSweep(orgId);
       }
       case "inbox_autoreply_sweep": {
         if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");

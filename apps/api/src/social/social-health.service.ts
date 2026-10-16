@@ -4,6 +4,8 @@ import { AuditService } from "../audit/audit.service";
 import { MAX_PUBLISH_ATTEMPTS, SocialPublishService } from "./social-publish.service";
 import { SocialOAuthService } from "./social-oauth.service";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
+import { TelegramClient } from "./telegram.client";
+import { ThreadsClient } from "./threads.client";
 
 /**
  * SU10 — Account Health + Failure Center (API only).
@@ -18,6 +20,8 @@ import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
  * - TikTok / YouTube: SocialOAuthService.ensureAccessToken IS
  *   the verification — it resolves (and refreshes, when due)
  *   the sealed OAuth token; its failure is the result, verbatim.
+ * - Telegram (SN6): the sealed bot token via the same publish
+ *   seam, then Bot API getMe — the identity-style probe.
  * - healthCheckedAt stamps EVERY attempt, success or failure —
  *   "when was this last checked" is the column's whole meaning.
  * - Success restores an "error" account to "connected" and
@@ -65,6 +69,8 @@ export function normalizeFailureSignature(error: unknown): string {
 @Injectable()
 export class SocialHealthService {
   private readonly publisher: MetaSocialPublisher;
+  private readonly telegram: TelegramClient;
+  private readonly threads: ThreadsClient;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -75,8 +81,15 @@ export class SocialHealthService {
     // MetaSocialPublisher, so it defaults to a real instance;
     // specs inject one built on a stub fetch.
     @Optional() publisher?: MetaSocialPublisher,
+    // SN6: Telegram identity probe (getMe). Appended LAST for
+    // the same positional-compat reason.
+    @Optional() telegramClient?: TelegramClient,
+    // SN7: Threads identity probe (profile GET).
+    @Optional() threadsClient?: ThreadsClient,
   ) {
     this.publisher = publisher ?? new MetaSocialPublisher();
+    this.telegram = telegramClient ?? new TelegramClient();
+    this.threads = threadsClient ?? new ThreadsClient();
   }
 
   // ---------- account health ----------
@@ -104,6 +117,25 @@ export class SocialHealthService {
           organizationId, account.id, { allowErrorStatus: true },
         );
         await this.publisher.getAccountIdentity(accessToken, account.externalId);
+      } else if (account.platform === "telegram") {
+        // SN6: the identity-style probe for a bot-token account —
+        // the sealed token via the publish seam (error-status
+        // accounts included, same recovery rule as Meta), then
+        // getMe proves the bot token still works. Telegram's
+        // verbatim error flows through the shared catch below.
+        const { accessToken } = await this.publish.resolveAccountToken(
+          organizationId, account.id, { allowErrorStatus: true },
+        );
+        await this.telegram.getMe(accessToken);
+      } else if (account.platform === "threads") {
+        // SN7: identity-style probe — the refresh-aware token
+        // (ensureAccessToken, like the other OAuth platforms),
+        // then the profile GET proves it still identifies the
+        // account. Meta's verbatim error flows through the
+        // shared catch below.
+        const accessToken = await this.oauth.ensureAccessToken(organizationId, account);
+        if (!accessToken) throw new Error("অ্যাকাউন্টের Token পাওয়া যায়নি — অ্যাকাউন্টটি আবার কানেক্ট করুন।");
+        await this.threads.getProfile(accessToken);
       } else if (isOAuth) {
         const accessToken = await this.oauth.ensureAccessToken(organizationId, account);
         if (!accessToken) throw new Error("অ্যাকাউন্টের Token পাওয়া যায়নি — অ্যাকাউন্টটি আবার কানেক্ট করুন।");

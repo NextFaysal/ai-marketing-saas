@@ -294,6 +294,150 @@ video asset-এর স্ক্রিনশট/URL, desktop + mobile স্ক�
 
 ---
 
+## S11. Telegram — আসল bot + channel-এ publish (SN6)
+
+**আনতে হবে:** একটি আসল Telegram bot (BotFather থেকে token)
+ও একটি আসল channel যেখানে bot-টি admin; token app-এর নিজের
+connect form-এ বসাবেন — chat-এ নয়।
+
+**করতে হবে:**
+- [ ] Settings → Telegram connect: token + channel দিয়ে
+      verify-before-save পেরিয়েছে (getMe/getChat যাচাই);
+      ভুল token দিলে verbatim error দেখিয়েছে, account তৈরি
+      হয়নি
+- [ ] Text post আসল channel-এ প্রকাশিত — channel-এ গিয়ে
+      নিজে দেখেছেন
+- [ ] Photo post ও video post আসল channel-এ গেছে; ২+ media-র
+      media-group ঠিকমতো এসেছে
+- [ ] দীর্ঘ caption (1024 অক্ষরের বেশি) spill হয়ে পুরো
+      লেখা channel-এ পৌঁছেছে, কাটা যায়নি
+- [ ] Schedule করা Telegram পোস্ট `social_publish_due`
+      job দিয়ে সময়মতো প্রকাশিত হয়েছে
+- [ ] Insights: Telegram পোস্টে insights "পাওয়া যায় না"
+      হিসেবেই দেখাচ্ছে — কোনো বানানো সংখ্যা নেই
+
+**Pass evidence:** channel-এর post link/স্ক্রিনশট,
+AuditLog-এর publish row।
+
+---
+
+## S12. Threads — আসল publish + insights (SN7)
+
+**আনতে হবে:** আসল Threads অ্যাকাউন্ট; platform app পথে
+গেলে Meta/Threads App Review পেরোনো app, নিজের app পথে
+গেলে নিজের Threads app-এর credential (Admin → Platform
+Config-এ বসাবেন)।
+
+**করতে হবে:**
+- [ ] Threads connect (OAuth) সম্পন্ন — account connected
+      অবস্থায় এসেছে; token refresh (long-lived) একবার
+      আসলভাবে ঘটেছে বা সময় পেরিয়ে যাচাই হয়েছে
+- [ ] Text post আসল Threads প্রোফাইলে প্রকাশিত (container →
+      publish দুই ধাপের শেষে আসল post id এসেছে)
+- [ ] Image/video post প্রকাশিত; carousel (যদি ব্যবহার
+      করেন) ঠিকমতো এসেছে
+- [ ] Insights আসল post থেকে ফিরেছে — views/likes/replies
+      যা platform দিয়েছে তা-ই; follower snapshot একবার
+      আসল সংখ্যা দিয়ে তৈরি হয়েছে
+- [ ] App Review বাকি থাকলে এই session **blocked** লিখে
+      কারণসহ রেখে দিন — stubbed spec প্রমাণকে live বলে
+      চালাবেন না
+
+**Pass evidence:** Threads post-এর URL/স্ক্রিনশট, insights
+panel-এর স্ক্রিনশট।
+
+---
+
+## S13. Pexels import + brand overlay + client share link (SN5/SN2)
+
+**আনতে হবে:** org-এর নিজের আসল Pexels API key (app-এর
+Media Library → Stock section-এর form-এ বসাবেন — chat-এ
+নয়) এবং একজন আসল ক্লায়েন্টের ভূমিকায় পরীক্ষা করার সুযোগ
+(নিজের অন্য browser/incognito-ই যথেষ্ট)।
+
+**করতে হবে:**
+- [ ] Pexels key verify-before-save পেরিয়েছে; ভুল key দিলে
+      verbatim error, config save হয়নি
+- [ ] Stock photo খুঁজে import — asset library-তে এসেছে,
+      attribution asset-এ সংরক্ষিত আছে; একই ছবি দ্বিতীয়বার
+      import করলে duplicate asset তৈরি হয়নি
+- [ ] Stock video import বড় ফাইলসহ কাজ করেছে
+- [ ] Brand overlay: একটি ছবিতে logo/brand bar বসিয়ে
+      derived asset তৈরি — মূল ছবি অপরিবর্তিত আছে
+- [ ] Client share link: একটি draft-এর share link তৈরি করে
+      incognito-তে খুলেছেন — ক্লায়েন্ট শুধু preview
+      (caption/media/platform) দেখেছে, কোনো internal তথ্য
+      (note/version/org তথ্য) দেখা যায়নি
+- [ ] ক্লায়েন্ট ভূমিকায় Approve ও (অন্য draft-এ) Request
+      changes দিয়েছেন — দুটোই post-এর timeline-এ আসল
+      record হিসেবে এসেছে; নতুন review আগেরটাকে supersede
+      করেছে
+- [ ] `socialRequireClientApproval` ON করে client approval
+      ছাড়া publish চেষ্টা — সৎ বাংলা কারণসহ আটকেছে;
+      approve-এর পর publish হয়েছে
+
+**Pass evidence:** imported asset-এর স্ক্রিনশট + attribution,
+share page-এর স্ক্রিনশট (incognito), timeline-এর স্ক্রিনশট।
+
+---
+
+## S14. Coach digest — এক সপ্তাহের আসল data-তে (SN9)
+
+**আনতে হবে:** অন্তত এক সপ্তাহের আসল published পোস্ট ও
+তাদের insights (S6 সম্পন্ন থাকলে ভালো); per-org
+`social_coach_weekly` job চালু।
+
+**করতে হবে:**
+- [ ] Job চালু করে এক সপ্তাহ অপেক্ষা (বা template চালু করে
+      প্রথম run) — digest তৈরি হয়েছে, Analytics → Coach
+      card-এ দেখা যাচ্ছে
+- [ ] Digest-এর সংখ্যাগুলো আসল পোস্ট/insights-এর সঙ্গে
+      হাতে মিলিয়ে দেখেছেন — কোনো সংখ্যা বানানো নয়
+- [ ] LLM narration চালু থাকলে narration শুধু ওই আসল
+      সংখ্যাগুলোই বলছে (invented সংখ্যা থাকলে সেটি
+      ব্যর্থতা হিসেবে লিখে রাখুন); narration না থাকলে
+      deterministic সারসংক্ষেপ এসেছে
+- [ ] Owner/Admin notification পৌঁছেছে; একই সপ্তাহে job
+      দুবার চললেও digest একটাই
+
+**Pass evidence:** Coach card-এর স্ক্রিনশট, digest row-এর
+তারিখ, notification-এর স্ক্রিনশট।
+
+---
+
+## S15. Syndication + Caption Test (SN8/SN10)
+
+**আনতে হবে:** একটি আসল RSS feed (নিজের blog/shop-এর feed
+হলে ভালো) এবং/অথবা S5-এ যুক্ত আসল YouTube channel;
+per-org `social_syndication_sweep` job চালু।
+
+**করতে হবে:**
+- [ ] Settings → Auto-Draft-এ RSS toggle ON + feed URL
+      বসিয়েছেন; ভুল URL দিলে সৎ error এসেছে
+- [ ] Sweep চলার পর feed-এর নতুন item থেকে Draft তৈরি
+      হয়েছে — caption = item-এর আসল title, linkUrl = আসল
+      item URL; কোনো লেখা বানানো নয়
+- [ ] একই item দ্বিতীয় sweep-এ আবার Draft হয়নি (dedupe);
+      Draft মুছে ফেললেও আবার তৈরি হয়নি (seen record)
+- [ ] YouTube toggle ON থাকলে নিজের channel-এর নতুন
+      ভিডিও থেকে Draft এসেছে — linkUrl আসল watch URL
+- [ ] দৈনিক cap: cap ভরে গেলে অতিরিক্ত item Draft হয়নি,
+      কিন্তু পরের দিনের sweep-এ সেগুলো এসেছে (cap-এ বাদ
+      পড়া item হারিয়ে যায়নি)
+- [ ] কোনো syndication Draft নিজে থেকে Publish হয়নি —
+      সব Draft অবস্থাতেই আছে
+- [ ] Caption Test: একটি Draft থেকে জোড়া তৈরি করেছেন,
+      দ্বিতীয়টির caption বদলে দুটোকে আলাদা সময়ে শিডিউল
+      করে publish করেছেন
+- [ ] দুটো published হওয়ার পর Analytics → "Caption Test
+      (জোড়া পোস্ট তুলনা)"-তে দুটোর আসল engagement পাশাপাশি
+      দেখা যাচ্ছে; কোনো winner ঘোষণা নেই
+
+**Pass evidence:** তৈরি Draft গুলোর স্ক্রিনশট, Automation
+run-এর result row, Caption Test section-এর স্ক্রিনশট।
+
+---
+
 ## প্রমাণ সংরক্ষণের নিয়ম
 
 - প্রতিটি proven আইটেমের জন্য অন্তত একটি: স্ক্রিনশট,

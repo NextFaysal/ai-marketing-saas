@@ -33,6 +33,9 @@ export const AUTO_DRAFT_DEFAULTS = {
   saleEnabled: false,
   backInStockEnabled: false,
   reviewMilestoneEnabled: false,
+  rssEnabled: false,
+  youtubeEnabled: false,
+  rssFeedUrl: null as string | null,
   maxDraftsPerDay: 3,
   socialAccountId: null as string | null,
 };
@@ -146,6 +149,9 @@ export class SocialCommerceDraftService {
       saleEnabled: row.saleEnabled === true,
       backInStockEnabled: row.backInStockEnabled === true,
       reviewMilestoneEnabled: row.reviewMilestoneEnabled === true,
+      rssEnabled: row.rssEnabled === true,
+      youtubeEnabled: row.youtubeEnabled === true,
+      rssFeedUrl: typeof row.rssFeedUrl === "string" ? row.rssFeedUrl : null,
       maxDraftsPerDay:
         Number.isInteger(row.maxDraftsPerDay) && row.maxDraftsPerDay > 0 ? row.maxDraftsPerDay : 3,
       socialAccountId: row.socialAccountId ?? null,
@@ -167,6 +173,9 @@ export class SocialCommerceDraftService {
       saleEnabled?: boolean;
       backInStockEnabled?: boolean;
       reviewMilestoneEnabled?: boolean;
+      rssEnabled?: boolean;
+      youtubeEnabled?: boolean;
+      rssFeedUrl?: string | null;
       maxDraftsPerDay?: number;
       socialAccountId?: string | null;
     },
@@ -177,8 +186,31 @@ export class SocialCommerceDraftService {
       "saleEnabled",
       "backInStockEnabled",
       "reviewMilestoneEnabled",
+      "rssEnabled",
+      "youtubeEnabled",
     ] as const) {
       if (dto[field] !== undefined) data[field] = dto[field] === true;
+    }
+    if (dto.rssFeedUrl !== undefined) {
+      if (dto.rssFeedUrl === null || dto.rssFeedUrl === "") {
+        data.rssFeedUrl = null;
+      } else {
+        const trimmed = String(dto.rssFeedUrl).trim();
+        if (!trimmed) {
+          data.rssFeedUrl = null;
+        } else {
+          let parsed: URL;
+          try {
+            parsed = new URL(trimmed);
+          } catch {
+            throw new BadRequestException("RSS Feed URL-টি সঠিক http/https ঠিকানা নয়।");
+          }
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new BadRequestException("RSS Feed URL-টি সঠিক http/https ঠিকানা নয়।");
+          }
+          data.rssFeedUrl = trimmed;
+        }
+      }
     }
     if (dto.maxDraftsPerDay !== undefined) {
       const cap = Number(dto.maxDraftsPerDay);

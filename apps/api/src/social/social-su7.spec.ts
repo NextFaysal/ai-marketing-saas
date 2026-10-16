@@ -353,15 +353,18 @@ describe("SU7 monthly report", () => {
     expect(lines[0]).toContain("reactions");
     expect(lines[0]).toContain("linkClicks");
     // "hello, world" is quoted (it contains a comma); mask it,
-    // then split cleanly: 5 lead cells + 9 metrics + engagement
-    // + clicks = 16 cells, with every absent metric EMPTY.
+    // then split cleanly: 5 lead cells + metrics + engagement
+    // + clicks, with every absent metric EMPTY. (SN7 widened
+    // INSIGHT_METRIC_KEYS with the Threads-native keys — 14
+    // metrics now, so 21 cells; the indices below follow the
+    // array, whose first entry is still reactions.)
     expect(lines[1]).toContain('"hello, world"');
     const cells = lines[1].replace('"hello, world"', "CAPTION").split(",");
-    expect(cells).toHaveLength(16);
+    expect(cells).toHaveLength(5 + INSIGHT_METRIC_KEYS.length + 2);
     expect(cells[5]).toBe("5"); // reactions
-    expect(cells.slice(6, 14)).toEqual(["", "", "", "", "", "", "", ""]);
-    expect(cells[14]).toBe("5"); // engagement
-    expect(cells[15]).toBe("3"); // linkClicks
+    expect(cells.slice(6, 5 + INSIGHT_METRIC_KEYS.length)).toEqual(INSIGHT_METRIC_KEYS.slice(1).map(() => ""));
+    expect(cells[5 + INSIGHT_METRIC_KEYS.length]).toBe("5"); // engagement
+    expect(cells[6 + INSIGHT_METRIC_KEYS.length]).toBe("3"); // linkClicks
   });
 
   it("PDF: real %PDF buffer with a totals row over present values only", () => {

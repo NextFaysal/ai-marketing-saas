@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import type { SocialApprovalStatus, SocialInsightsSummary, Sp7SocialPost } from "@/lib/social-post-insights";
+import type { CaptionTestGroup, SocialApprovalStatus, SocialInsightsSummary, Sp7SocialPost } from "@/lib/social-post-insights";
 import type { RecurrenceFrequency, VariantOverride } from "@/lib/social-composer";
 import type { MediaAspect } from "@/lib/social-media-library";
 import type { SocialAccountsInsights, SocialContentTypes, SocialFollowers, SocialTimeseries } from "@/lib/social-analytics";
@@ -11,6 +11,8 @@ import { healthPill, type CsvImportResponse } from "@/lib/social-posts-su11";
 import type { MediaQueryFilters } from "@/lib/social-media-library";
 import type { MonthCell } from "@/lib/social-calendar";
 import type { TimeseriesBar } from "@/lib/social-analytics";
+import type { SocialShareLink, SocialShareLinkCreated, YouTubePlaylistOption } from "@/lib/social-posts-sn";
+import type { CoachResponse, StockConfigStatus, StockSearchItem } from "@/lib/social-stock-coach";
 
 // ---------------------------------------------------------------------------
 // SP2 contract types (docs/social-posts-package-plan.md, SP1 API contract).
@@ -18,7 +20,7 @@ import type { TimeseriesBar } from "@/lib/social-analytics";
 
 export interface SocialAccount {
   id: string;
-  platform: "meta_page" | "instagram" | "tiktok" | "youtube";
+  platform: "meta_page" | "instagram" | "tiktok" | "youtube" | "linkedin_page" | "telegram" | "threads";
   externalId: string;
   name: string;
   username?: string | null;
@@ -50,6 +52,9 @@ export interface MediaAsset {
   prompt?: string | null;
   derivedFromId?: string | null;
   sourceUrl?: string | null;
+  // SN5: stock credit line (e.g. "Photo by X on Pexels") — shown
+  // on the library tile and preserved on derived assets.
+  attribution?: string | null;
   // SU3: Media Library v2 — folder + tags (folderId "none"-filtered
   // server-side; null here means folderless).
   folderId?: string | null;
@@ -132,6 +137,19 @@ export interface AiCopyResponse {
   notice?: string;
 }
 
+// SN4 contract types (AI platform variants + carousel outline —
+// both returned only; the composer applies them by hand).
+export interface AiPlatformVariant {
+  platform: string;
+  caption: string;
+  policy: { status: string; findings: AiPolicyFinding[] };
+}
+
+export interface CarouselOutline {
+  slides: string[];
+  droppedCount: number;
+}
+
 export interface HashtagSet {
   id: string;
   name: string;
@@ -156,6 +174,11 @@ export const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram",
   tiktok: "TikTok",
   youtube: "YouTube",
+  // CC20 shipped without its label (the chip fell back to the
+  // raw "linkedin_page" string) — fixed here alongside SN6/SN7.
+  linkedin_page: "LinkedIn Page",
+  telegram: "Telegram Channel",
+  threads: "Threads",
 };
 
 /** SP8/SP9: operator-app platform modes (booleans only, from
@@ -164,6 +187,9 @@ export const PLATFORM_LABELS: Record<string, string> = {
 export interface PlatformModes {
   tiktok: { configured: boolean; audited: boolean };
   youtube: { configured: boolean };
+  linkedin?: { configured: boolean };
+  // SN7: the operator's Threads app presence (button honesty).
+  threads?: { configured: boolean };
 }
 
 // SU2 contract: per-account weekly posting slots (org timezone).
@@ -430,6 +456,11 @@ export interface SocialPageCtx {
   setCoverAssetId: React.Dispatch<React.SetStateAction<string>>;
   isStory: boolean;
   setIsStory: React.Dispatch<React.SetStateAction<boolean>>;
+  ytPlaylistId: string;
+  setYtPlaylistId: React.Dispatch<React.SetStateAction<string>>;
+  ytPlaylists: YouTubePlaylistOption[];
+  ytPlaylistsAccountId: string;
+  loadYouTubePlaylists: (accountId: string) => Promise<void>;
   deriveOpenId: string | null;
   setDeriveOpenId: React.Dispatch<React.SetStateAction<string | null>>;
   deriveSelected: Record<string, Record<string, boolean>>;
@@ -514,6 +545,15 @@ export interface SocialPageCtx {
   setScriptProductId: React.Dispatch<React.SetStateAction<string>>;
   aiScript: AiScriptResult | null;
   setAiScript: React.Dispatch<React.SetStateAction<AiScriptResult | null>>;
+  // SN4: AI platform variants (returned only) + per-field
+  // translation results, keyed "caption" / `variant-${accountId}`
+  // in the composer and `post-${postId}` in the repurpose menu.
+  aiPlatformVariants: AiPlatformVariant[];
+  aiVariantDropped: number;
+  translations: Record<string, { text: string; targetLang: "bn" | "en" }>;
+  // SN4 repurpose results per post (script reuses AiScriptResult).
+  repurposeScriptByPost: Record<string, AiScriptResult>;
+  repurposeOutlineByPost: Record<string, CarouselOutline>;
   aiImagePrompt: string;
   setAiImagePrompt: React.Dispatch<React.SetStateAction<string>>;
   aiImageProductId: string;
@@ -536,8 +576,8 @@ export interface SocialPageCtx {
   setFilterAccountId: React.Dispatch<React.SetStateAction<string>>;
   orgTz: string;
   setOrgTz: React.Dispatch<React.SetStateAction<string>>;
-  viewMode: "list" | "calendar" | "queue";
-  setViewMode: React.Dispatch<React.SetStateAction<"list" | "calendar" | "queue">>;
+  viewMode: "list" | "calendar" | "queue" | "board";
+  setViewMode: React.Dispatch<React.SetStateAction<"list" | "calendar" | "queue" | "board">>;
   scheduleInputs: Record<string, string>;
   setScheduleInputs: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   selectedPostId: string | null;
@@ -604,6 +644,13 @@ export interface SocialPageCtx {
   memberLabel: any;
   approvalTwoStep: boolean;
   saveApprovalTwoStep: any;
+  shareLinksByPost: Record<string, SocialShareLink[]>;
+  shareCreatedByPost: Record<string, SocialShareLinkCreated>;
+  createShareLink: any;
+  createGroupShareLink: any;
+  revokeShareLink: any;
+  requireClientApproval: boolean;
+  saveRequireClientApproval: any;
   accountHealth: SocialAccountHealthRow[];
   failureGroups: SocialFailureGroup[];
   checkAccountHealth: any;
@@ -651,8 +698,10 @@ export interface SocialPageCtx {
   deletePostingSlot: any;
   fmtInTz: any;
   doSchedule: any;
+  doScheduleValue: any;
   doCancelSchedule: any;
   doPublishNow: any;
+  reschedulePostToDay: any;
   upsertPost: any;
   refreshPostInsights: any;
   refreshAllInsights: any;
@@ -669,6 +718,11 @@ export interface SocialPageCtx {
   materializeContentPlan: any;
   generateAiScript: any;
   generateAiCopy: any;
+  generatePlatformVariants: any;
+  applyPlatformVariant: any;
+  translateComposerText: any;
+  generateRepurposeScript: any;
+  generateCarouselOutline: any;
   toggleHashtag: any;
   applyHashtagSet: any;
   saveHashtagSet: any;
@@ -686,6 +740,43 @@ export interface SocialPageCtx {
   loadAssetUsage: any;
   cropAsset: any;
   captureAssetCover: any;
+  // SN5: stock media (Pexels) + brand overlay.
+  stockStatus: StockConfigStatus | null;
+  setStockStatus: React.Dispatch<React.SetStateAction<StockConfigStatus | null>>;
+  stockKeyInput: string;
+  setStockKeyInput: React.Dispatch<React.SetStateAction<string>>;
+  saveStockKey: any;
+  deleteStockKey: any;
+  stockQuery: string;
+  setStockQuery: React.Dispatch<React.SetStateAction<string>>;
+  stockKind: "photo" | "video";
+  setStockKind: React.Dispatch<React.SetStateAction<"photo" | "video">>;
+  stockResults: StockSearchItem[];
+  stockSearched: boolean;
+  searchStock: any;
+  importStockItem: any;
+  overlayPos: Record<string, string>;
+  setOverlayPos: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  brandOverlayFor: any;
+  loadStockStatus: any;
+  // SN9: performance coach.
+  coach: CoachResponse | null;
+  loadCoach: any;
+  // SN10: caption tests (pair list for Analytics + the create
+  // handler the Posts panel's draft action calls).
+  captionTests: CaptionTestGroup[];
+  createCaptionTest: any;
+  loadCaptionTests: any;
+  // SN6: Telegram connect form (bot token + channel; the token
+  // lives in page state only until the connect call returns —
+  // it is never persisted client-side).
+  telegramTokenInput: string;
+  setTelegramTokenInput: React.Dispatch<React.SetStateAction<string>>;
+  telegramChannelInput: string;
+  setTelegramChannelInput: React.Dispatch<React.SetStateAction<string>>;
+  showTelegramConnect: boolean;
+  setShowTelegramConnect: React.Dispatch<React.SetStateAction<boolean>>;
+  connectTelegram: any;
   toggleBulkSelected: any;
   runBulkAction: any;
   importProductImage: any;

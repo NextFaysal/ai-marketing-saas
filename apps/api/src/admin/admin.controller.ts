@@ -395,6 +395,8 @@ export class AdminController {
   testTiktok() { return this.admin.testTiktok(); }
   @Post("platform-config/test-linkedin") @AdminTier("SUPER")
   testLinkedin() { return this.admin.testLinkedin(); }
+  @Post("platform-config/test-threads") @AdminTier("SUPER")
+  testThreads() { return this.admin.testThreads(); }
   @Post("platform-config/test-google") @AdminTier("SUPER")
   testGoogle() { return this.admin.testGoogle(); }
   @Patch("settings") @AdminTier("SUPER")

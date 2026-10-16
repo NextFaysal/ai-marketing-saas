@@ -817,6 +817,9 @@ body:has(.dashboard-root.dark) {
   .soc-dot-instagram { background: #d62976; }
   .soc-dot-tiktok { background: #0f172a; }
   .soc-dot-youtube { background: #dc2626; }
+  .soc-dot-linkedin_page { background: #0a66c2; }
+  .soc-dot-telegram { background: #229ed9; }
+  .soc-dot-threads { background: #000000; }
 
   /* Skeleton block (same shimmer discipline as .skeleton). */
   .soc-skeleton { @apply relative overflow-hidden rounded-xl bg-slate-200/70; }

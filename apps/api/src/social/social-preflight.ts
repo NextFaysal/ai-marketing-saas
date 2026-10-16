@@ -15,18 +15,37 @@
  */
 export function videoOnlyViolation(platform: string, mediaRefs: { assetId: string; kind: string }[] | null | undefined): string | null {
   if (platform !== "tiktok" && platform !== "youtube") return null;
-  const label = platform === "tiktok" ? "TikTok" : "YouTube";
   const refs = Array.isArray(mediaRefs) ? mediaRefs : [];
+  // SN1: TikTok also takes PHOTO posts (image-only, one or more)
+  // — that path is gated on the operator's audit flag inside
+  // validateForPlatform; it is no longer a video-only violation.
+  // Mixed media is still impossible. YouTube stays video-only.
+  if (platform === "tiktok" && refs.length > 0 && refs.every((r) => r?.kind === "image")) {
+    return null;
+  }
+  const label = platform === "tiktok" ? "TikTok" : "YouTube";
   if (refs.length !== 1 || refs[0]?.kind !== "video") {
     return `${label}-এর পোস্টে ঠিক একটি Video লাগবে — ছবি বা একাধিক মিডিয়া দিয়ে ${label}-এ প্রকাশ করা যায় না। একটি Video বেছে নিন।`;
   }
   return null;
 }
 
+/**
+ * SN1 — TikTok PHOTO posts ride the direct-post AUDIT GATE (the
+ * platform config's `audited` flag — the same gate video direct
+ * posting uses). The Content Posting API has NO photo inbox
+ * flow, so while the gate is OFF a photo post can NEVER succeed:
+ * honest refusal here (pre-flight) instead of a doomed publish.
+ * `tiktokAudited` null/undefined = the caller did not resolve the
+ * gate (legacy callers) — treated as OFF (fail closed).
+ */
+export const TIKTOK_PHOTO_GATE_MSG =
+  "TikTok-এ ছবির পোস্ট শুধু Direct Post-এ হয়, আর Direct Post চালু হয় Platform Operator TikTok অ্যাপটির Audit সম্পন্ন ঘোষণা করলে। অ্যাপটি এখনো Audit-ঘোষিত নয় — ছবির পোস্ট TikTok-এর Inbox পথেও পাঠানো যায় না (ছবির জন্য কোনো Inbox Flow নেই), তাই এই পোস্টটি এখন প্রকাশ করা যাবে না। একটি Video পোস্ট করুন, অথবা Operator-এর Audit সম্পন্ন হওয়া পর্যন্ত অপেক্ষা করুন।";
+
 /** SU1: validate one post against its platform's rules. Returns
  * the Bengali violation message, or null when acceptable. */
 export function validateForPlatform(
-  input: { caption?: string | null; mediaRefs?: { assetId: string; kind: string }[] | null; isStory?: boolean | null },
+  input: { caption?: string | null; mediaRefs?: { assetId: string; kind: string }[] | null; isStory?: boolean | null; tiktokAudited?: boolean | null },
   platform: string,
 ): string | null {
   const caption = String(input?.caption ?? "");
@@ -41,6 +60,14 @@ export function validateForPlatform(
     if (refs.length !== 1 || refs[0]?.kind !== "image") {
       return "Facebook Page Story-তে ঠিক একটি ছবি লাগবে — একটি ছবি বেছে নিন।";
     }
+    return null;
+  }
+
+  // SN1: TikTok photo post (image-only media) — audit gate first:
+  // gate OFF refuses honestly; gate ON is acceptable as-is (the
+  // publish path runs the photo direct-post flow).
+  if (platform === "tiktok" && refs.length > 0 && refs.every((r) => r?.kind === "image")) {
+    if (input?.tiktokAudited !== true) return TIKTOK_PHOTO_GATE_MSG;
     return null;
   }
 
@@ -78,6 +105,35 @@ export function validateForPlatform(
     if (videos.length > 0 && refs.length > 1) {
       // SP6 publisher's verbatim message.
       return "একাধিক মিডিয়ার মধ্যে ভিডিও থাকলে Facebook Page-এ একসাথে প্রকাশ করা যায় না — শুধু ছবিগুলো একসাথে, অথবা শুধু একটি ভিডিও রাখুন।";
+    }
+    return null;
+  }
+
+  if (platform === "threads") {
+    // SN7: Threads' documented ceilings — a post's text is at
+    // most 500 characters, and a carousel holds at most 20
+    // items (2–20; a single item is a plain media post). Text-
+    // only and single-media posts are fine as-is.
+    if (caption.length > 500) {
+      return "Threads-এর পোস্ট সর্বোচ্চ ৫০০ অক্ষরের হতে পারবে — ক্যাপশন ছোট করুন।";
+    }
+    if (refs.length > 20) {
+      return "Threads Carousel-এ সর্বোচ্চ ২০টি মিডিয়া রাখা যায় — মিডিয়ার সংখ্যা কমিয়ে আবার চেষ্টা করুন।";
+    }
+    return null;
+  }
+
+  if (platform === "telegram") {
+    // SN6: Telegram takes text alone, ONE photo/video, or a
+    // media group of 2–10 photo/video (Bot API sendMediaGroup's
+    // documented bounds). An 11th item can never succeed, so it
+    // is refused here rather than failing in the worker. The
+    // 4096-char message ceiling is NOT a refusal: the publish
+    // path chunks long text (and spills an over-long media
+    // caption into a follow-up message) — Telegram's own rules,
+    // handled there instead of blocking the composer.
+    if (refs.length > 10) {
+      return "Telegram-এ এক পোস্টে সর্বোচ্চ ১০টি মিডিয়া পাঠানো যায় (Media Group) — মিডিয়ার সংখ্যা ১০ বা তার কম করুন।";
     }
     return null;
   }

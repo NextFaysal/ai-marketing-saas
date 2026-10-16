@@ -35,13 +35,13 @@ const SETTING_SECTIONS: { id: string; icon: string; label: string; sub: string }
 const SECTION_IDS = SETTING_SECTIONS.map((s) => s.id);
 const BLOCK_SECTION: Record<string, string> = {
   "config-llm": "ai", "config-image": "ai",
-  "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-google-sso": "apps", "config-linkedin": "apps",
+  "config-meta": "apps", "config-tiktok": "apps", "config-google": "apps", "config-google-sso": "apps", "config-linkedin": "apps", "config-threads": "apps",
   "config-smtp": "messaging", "config-sms": "messaging",
   "config-sslcommerz": "payment", "config-bkash": "payment", "config-wallet": "payment",
 };
 const HASH_ALIAS: Record<string, string> = {
   "ai-llm": "config-llm", "ai-image": "config-image",
-  "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-google-sso": "config-google-sso", "apps-linkedin": "config-linkedin",
+  "apps-meta": "config-meta", "apps-tiktok": "config-tiktok", "apps-google": "config-google", "apps-google-sso": "config-google-sso", "apps-linkedin": "config-linkedin", "apps-threads": "config-threads",
   "messaging-smtp": "config-smtp", "messaging-sms": "config-sms",
   "payment-sslcommerz": "config-sslcommerz", "payment-bkash": "config-bkash", "payment-wallet": "config-wallet",
 };
@@ -61,6 +61,7 @@ interface PlatformConfigView {
   // the YouTube googleApp above. Optional in the type only so this
   // page keeps rendering while the API section rolls out.
   googleOAuth?: { source?: string; clientId: string | null; secretConfigured: boolean; enabled: boolean };
+  threadsApp: { source: string; clientId: string | null; redirectUri: string | null; secretConfigured: boolean };
   wallet: { source: string; feeBps: number; payoutFourEyesThresholdMinor: number | null };
   note: string;
 }
@@ -156,7 +157,7 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
     } catch (e) { setMsg(`❌ ${e instanceof Error ? e.message : "Test ব্যর্থ"}`); }
     finally { setBusy(""); }
   }
-  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin") {
+  async function testConfig(kind: "test-meta" | "test-sslcommerz" | "test-bkash" | "test-tiktok" | "test-google" | "test-linkedin" | "test-threads") {
     setBusy(kind);
     try {
       const out = await apiFetch<any>(`/admin/platform-config/${kind}`, { method: "POST", body: "{}" });
@@ -281,6 +282,18 @@ function PlatformConfigSection({ setMsg, section, highlightId, reportDirty }: { 
             <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("linkedin", { clear: true }, "LinkedIn App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
           </div>
           <p className="text-xs text-slate-400">যাচাই = Client credential পরীক্ষা (dummy refresh token পাঠিয়ে LinkedIn-এর invalid_client বনাম token-error উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা Community Management API অনুমোদন প্রমাণ করে না। LinkedIn Developer Portal-এ App বানিয়ে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/linkedin/callback</code> (অথবা উপরে নিজে যা দিলেন)। সৎ সীমা: Page-এ লাইভ পোস্টিংয়ের জন্য এই App-এ LinkedIn-এর <b>Community Management API</b> অনুমোদন লাগবে — অনুমোদন ছাড়া কানেক্ট চললেও পোস্ট LinkedIn প্রত্যাখ্যান করবে, এবং সেই আসল বার্তাটাই tenant দেখবে।</p>
+        </div>
+        <div id="config-threads" className={"acard space-y-3 scroll-mt-24 " + (highlightId === "config-threads" ? "ring-2 ring-indigo-400" : "")}>
+          <div className="flex items-center justify-between"><span className="font-semibold">🧵 Threads App — Threads Connect + পোস্টিং (SN7)</span>{srcBadge(cfg.threadsApp.source)}</div>
+          <label className="block text-sm">Threads App ID<input id="pc-th-id" className="ainput mt-1" defaultValue={cfg.threadsApp.clientId ?? ""} placeholder="Threads App ID (Meta App-এর Threads use case থেকে)" /></label>
+          <label className="block text-sm">Threads App Secret<input id="pc-th-secret" type="password" className="ainput mt-1" placeholder={secretPh(cfg.threadsApp.secretConfigured)} /></label>
+          <label className="block text-sm">Redirect URI (ঐচ্ছিক — খালি রাখলে API_PUBLIC_URL থেকে তৈরি হয়)<input id="pc-th-redirect" className="ainput mt-1" defaultValue={cfg.threadsApp.redirectUri ?? ""} placeholder="https://api.qosprey.com/social/oauth/threads/callback" /></label>
+          <div className="flex flex-wrap gap-2">
+            <button className="abtn" disabled={busy !== ""} onClick={() => patch("threads", { clientId: val("pc-th-id"), clientSecret: val("pc-th-secret") || undefined, redirectUri: val("pc-th-redirect") }, "Threads App সেটিং সেভ হয়েছে।")}>সেভ করুন</button>
+            <button className="abtn-secondary" disabled={busy !== ""} onClick={() => testConfig("test-threads")}>{busy === "test-threads" ? "যাচাই হচ্ছে…" : "🧪 যাচাই করুন"}</button>
+            <button className="abtn-danger" disabled={busy !== ""} onClick={() => patch("threads", { clear: true }, "Threads App Admin সেটিং মোছা হয়েছে (Env fallback চলবে)।")}>মুছুন</button>
+          </div>
+          <p className="text-xs text-slate-500">যাচাই = Client credential পরীক্ষা (dummy code পাঠিয়ে Threads-এর client-প্রত্যাখ্যান বনাম code-প্রত্যাখ্যান উত্তরের পার্থক্য দেখা হয়) — এটি Redirect URI নিবন্ধন বা App Review অনুমোদন প্রমাণ করে না। Meta for Developers-এ App-এ Threads use case যোগ করে Threads সেটিংসে Redirect URI দিন: <code>https://api.qosprey.com/social/oauth/threads/callback</code> (অথবা উপরে নিজে যা দিলেন)। মনোযোগ: Threads App ID/Secret Facebook App-এর ID/Secret থেকে <b>আলাদা</b>। সৎ সীমা: প্রোডাকশন পোস্টিংয়ের জন্য এই App-এ Meta-র <b>App Review (Advanced Access — threads_content_publish)</b> লাগবে — অনুমোদন ছাড়া শুধু app-role থাকা Threads অ্যাকাউন্ট কানেক্ট হবে, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই tenant দেখবে।</p>
         </div>
       </div>
       <div className={`grid gap-4 lg:grid-cols-2 ${section === "messaging" ? "" : "hidden"}`}>
