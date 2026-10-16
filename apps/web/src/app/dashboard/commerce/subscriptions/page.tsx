@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka } from "@/lib/storefront-money";
+import { ResponsiveTable } from "@repo/ui";
 
 // EC24c — গ্রাহক সাবস্ক্রিপশন (শুধুমাত্র স্টাফ তৈরি করে; দোকানে
 // self-serve সাইনআপ নেই)। নবায়ন হলে sweep একটি COD অর্ডার তৈরি
@@ -110,6 +111,22 @@ export default function SubscriptionsPage() {
     } finally { setBusyId(""); }
   }
 
+  // EB6: row actions shared verbatim between the desktop table and
+  // the ResponsiveTable mobile card — same handlers, same order.
+  const renderSubActions = (s: SubscriptionRow) => (
+    <div className="flex gap-1.5">
+      {s.status === "active" ? (
+        <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "pause")} className="inline-flex min-h-[44px] items-center rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 disabled:opacity-50">বিরতি</button>
+      ) : null}
+      {s.status === "paused" ? (
+        <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "resume")} className="inline-flex min-h-[44px] items-center rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800 disabled:opacity-50">আবার চালু</button>
+      ) : null}
+      {s.status !== "cancelled" ? (
+        <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "cancel")} className="inline-flex min-h-[44px] items-center rounded-lg bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800 disabled:opacity-50">বাতিল</button>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
@@ -163,6 +180,8 @@ export default function SubscriptionsPage() {
         </button>
       </form>
 
+      <ResponsiveTable
+        table={
       <div className="overflow-x-auto rounded-2xl border bg-white">
         <table className="w-full text-left text-sm">
           <thead>
@@ -192,23 +211,35 @@ export default function SubscriptionsPage() {
                 <td className="p-3">{STATUS_LABEL[s.status] ?? s.status}</td>
                 <td className="p-3">{s.failureCount}</td>
                 <td className="p-3">
-                  <div className="flex gap-1.5">
-                    {s.status === "active" ? (
-                      <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "pause")} className="rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 disabled:opacity-50">বিরতি</button>
-                    ) : null}
-                    {s.status === "paused" ? (
-                      <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "resume")} className="rounded-lg bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800 disabled:opacity-50">আবার চালু</button>
-                    ) : null}
-                    {s.status !== "cancelled" ? (
-                      <button type="button" disabled={busyId === s.id} onClick={() => act(s.id, "cancel")} className="rounded-lg bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800 disabled:opacity-50">বাতিল</button>
-                    ) : null}
-                  </div>
+                  {renderSubActions(s)}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+        }
+        cards={
+          loading ? (
+            <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">লোড হচ্ছে…</p>
+          ) : items.length === 0 ? (
+            <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500">কোনো সাবস্ক্রিপশন নেই</p>
+          ) : items.map((s) => (
+            <div key={s.id} className="rounded-2xl border bg-white p-3 text-sm shadow-sm">
+              <dl className="space-y-1.5">
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গ্রাহক</dt><dd className="text-right">{s.customerName ?? s.customerId}{s.customerPhone ? <span className="block text-xs text-slate-500">{s.customerPhone}</span> : null}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পণ্য</dt><dd className="text-right">{s.productName ?? s.productId}{s.variantSku ? <span className="block text-xs text-slate-500">SKU: {s.variantSku}</span> : null}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{s.qty}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দাম (স্ন্যাপশট)</dt><dd className="text-right">{formatMinorTaka(s.unitPriceMinor)}{s.discountPercent ? <span className="block text-xs text-slate-500">ছাড় {s.discountPercent}%</span> : null}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরবর্তী নবায়ন</dt><dd className="text-right">{s.nextRunAt ? new Date(s.nextRunAt).toLocaleString("bn-BD") : "—"}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">অবস্থা</dt><dd className="text-right">{STATUS_LABEL[s.status] ?? s.status}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ব্যর্থতা</dt><dd className="text-right">{s.failureCount}</dd></div>
+              </dl>
+              <div className="mt-2">{renderSubActions(s)}</div>
+            </div>
+          ))
+        }
+      />
     </div>
   );
 }
