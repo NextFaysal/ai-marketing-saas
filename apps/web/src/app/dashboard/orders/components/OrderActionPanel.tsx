@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
+import { ResponsiveTable } from "@repo/ui";
 import { FRAUD_BAND_LABEL, codCallOutcomeLabel } from "@/lib/orders-on4";
 import { minorToTaka } from "@/lib/orders-on1";
 import { surgeryAvailability, surgeryMoneySummary, type DraftLine, type PreviewResult } from "@/lib/orders-on3";
@@ -127,6 +128,31 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
   const o = actOrder;
   const refunded = BigInt(o.refundedMinor ?? "0");
   const totalAmt = BigInt(o.totalMinor);
+  // EB6/ED15: the installment collect cell is shared verbatim by the
+  // desktop table and the ResponsiveTable mobile card — same handlers,
+  // same order (products-page row-action discipline).
+  const renderInstCollect = (item: InstallmentItemRow) => {
+    const remaining = (() => { try { return BigInt(item.remainingMinor); } catch { return 0n; } })();
+    const form = collectForms[item.id];
+    return remaining > 0n && form ? (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input className="input w-24" placeholder="টাকা" aria-label="সংগ্রহের পরিমাণ (টাকা)" inputMode="decimal" value={form.amount} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, amount: e.target.value } }))} />
+        <select className="input w-auto" aria-label="সংগ্রহের মাধ্যম" value={form.method} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, method: e.target.value } }))}>
+          <option value="bkash">বিকাশ</option>
+          <option value="nagad">নগদ</option>
+          <option value="rocket">রকেট</option>
+          <option value="cash">ক্যাশ</option>
+          <option value="bank">ব্যাংক</option>
+          <option value="other">অন্যান্য</option>
+        </select>
+        <input className="input w-32" placeholder="রেফারেন্স (ঐচ্ছিক)" aria-label="রেফারেন্স (ঐচ্ছিক)" value={form.reference} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, reference: e.target.value } }))} />
+        <input className="input w-32" placeholder="নোট (ঐচ্ছিক)" aria-label="নোট (ঐচ্ছিক)" value={form.note} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, note: e.target.value } }))} />
+        <button className="btn-primary btn-sm" disabled={instBusy !== "" || form.amount.trim() === ""} onClick={() => collectInstItem(item)}>
+          {instBusy === `collect-${item.id}` ? "হচ্ছে..." : "সংগ্রহ করুন"}
+        </button>
+      </div>
+    ) : <span className="text-slate-400">—</span>;
+  };
   return (
                 <tr className="border-t bg-slate-50"><td colSpan={13} className="px-4 py-3">
                   <div className="space-y-4">
@@ -144,7 +170,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             {surgery ? "সম্পাদনা বন্ধ করুন" : "✏️ সম্পাদনা"}
                           </button>
                         ) : (o.source === "woocommerce" || o.source === "shopify") && ["pending", "on-hold", "processing"].includes(o.status) ? (
-                          <span className="text-[11px] text-slate-400" title={av.note}>✏️ সম্পাদনা — {av.note}</span>
+                          <span className="text-[11px] text-slate-500" title={av.note}>✏️ সম্পাদনা — {av.note}</span>
                         ) : null; })()}
                         <button className="btn-ghost btn-sm" onClick={() => setActOrder(null)}>বন্ধ করুন</button>
                       </span>
@@ -178,9 +204,9 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                               title="জালিয়াতি ঝুঁকি (Fraud Shield)" onClick={() => openFraudDetail(o)}>
                               🛡️ {FRAUD_BAND_LABEL[o.riskBand]?.text ?? o.riskBand}{o.riskScore != null ? ` · ${o.riskScore}` : ""}
                             </button>
-                            <span className="text-xs text-slate-400">চিপে ক্লিক করলে কারণসহ বিস্তারিত ও আটকানো/ছাড়ের অ্যাকশন পাবেন।</span>
+                            <span className="text-xs text-slate-500">চিপে ক্লিক করলে কারণসহ বিস্তারিত ও আটকানো/ছাড়ের অ্যাকশন পাবেন।</span>
                           </p>
-                        ) : <p className="text-xs text-slate-400">এই অর্ডারের জালিয়াতি ঝুঁকি এখনো যাচাই হয়নি।</p>}
+                        ) : <p className="text-xs text-slate-500">এই অর্ডারের জালিয়াতি ঝুঁকি এখনো যাচাই হয়নি।</p>}
                         {o.isCod && o.codConfirmationStatus === "awaiting" ? (
                           <CodCallChips order={o} busy={codBusy === o.id} onCall={(ord, outcome) => void recordCodCall(ord, outcome)} />
                         ) : (o.codCallAttempts ?? 0) > 0 ? (
@@ -262,7 +288,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                           ))}
                         </select>
                         <button className="btn-primary btn-sm" disabled={actBusy !== "" || actStatus === o.status} onClick={saveStatus}>স্ট্যাটাস সংরক্ষণ</button>
-                        <p className="text-xs text-slate-400">Cancelled/Failed হলে স্টক ফেরত যোগ হয়, Returned হলেও তাই; Completed হলে order.delivered ইভেন্ট যায়। যেসব স্ট্যাটাসে যাওয়া যাবে না সেগুলো নিষ্ক্রিয় — সার্ভারই চূড়ান্ত authority।</p>
+                        <p className="text-xs text-slate-500">Cancelled/Failed হলে স্টক ফেরত যোগ হয়, Returned হলেও তাই; Completed হলে order.delivered ইভেন্ট যায়। যেসব স্ট্যাটাসে যাওয়া যাবে না সেগুলো নিষ্ক্রিয় — সার্ভারই চূড়ান্ত authority।</p>
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Refund রেকর্ড (টাকায়)</label>
@@ -270,7 +296,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                         <input className="input" placeholder="কারণ (ঐচ্ছিক)" value={actRefundReason} onChange={(e) => setActRefundReason(e.target.value)} />
                         <button className="btn-primary btn-sm" disabled={actBusy !== "" || actRefundTaka.trim() === ""} onClick={saveRefund}>Refund রেকর্ড করুন</button>
                         <p className="text-xs text-slate-500">মোট ফেরত: {formatMinor(refunded)} / {formatMinor(totalAmt)} · আরও ফেরতযোগ্য: {formatMinor(totalAmt - refunded)}</p>
-                        <p className="text-xs text-slate-400">Refund শুধু টাকার হিসাব রাখে — স্টক ফেরত চাইলে স্ট্যাটাস Cancelled/Returned করুন। পুরো টাকা ফেরত হলে খোলা অর্ডার নিজে থেকেই refunded হয়ে যায়।</p>
+                        <p className="text-xs text-slate-500">Refund শুধু টাকার হিসাব রাখে — স্টক ফেরত চাইলে স্ট্যাটাস Cancelled/Returned করুন। পুরো টাকা ফেরত হলে খোলা অর্ডার নিজে থেকেই refunded হয়ে যায়।</p>
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">অভ্যন্তরীণ নোট (শুধু টিমের জন্য)</label>
@@ -279,7 +305,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                           <button className="btn-primary btn-sm" disabled={actBusy !== ""} onClick={saveNote}>নোট সংরক্ষণ</button>
                           <button className="btn-ghost btn-sm text-red-600" disabled={actBusy !== ""} onClick={clearNote}>নোট মুছুন</button>
                         </div>
-                        <p className="text-xs text-slate-400">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
+                        <p className="text-xs text-slate-500">এই নোট কাস্টমার বা কোনো প্ল্যাটফর্মে যায় না।</p>
                       </div>
                     </div>
                     {/* EC18/EC19 (B8): delivery slot + payments / advances */}
@@ -288,7 +314,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                       {o.deliverySlot ? (
                         <p className="text-sm">🕐 ডেলিভারি স্লট: <b>{o.deliverySlot.label}</b>{o.deliverySlot.startTime && o.deliverySlot.endTime ? ` (${o.deliverySlot.startTime} – ${o.deliverySlot.endTime})` : ""} · তারিখ: <b>{o.deliverySlot.date}</b></p>
                       ) : (
-                        <p className="text-xs text-slate-400">এই অর্ডারে কোনো ডেলিভারি স্লট বেছে নেওয়া হয়নি।</p>
+                        <p className="text-xs text-slate-500">এই অর্ডারে কোনো ডেলিভারি স্লট বেছে নেওয়া হয়নি।</p>
                       )}
                       {o.deliveryMethod === "pickup" && o.pickupPoint ? (
                         <p className="text-sm">📍 পিকআপ: <b>{o.pickupPoint.name}</b> — {o.pickupPoint.address}, {o.pickupPoint.district}{o.pickupPoint.phone ? <> · ফোন: <span className="font-mono">{o.pickupPoint.phone}</span></> : null} · ফি: <b>{(() => { try { return formatMinor(BigInt(o.pickupPoint.feeMinor)); } catch { return o.pickupPoint.feeMinor; } })()}</b></p>
@@ -420,7 +446,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                                         <span>{r.negative ? "−" : ""}{fmtM(r.amountMinor)}</span>
                                       </div>
                                     ))}
-                                    {previewBusy ? <p className="text-[11px] text-slate-400">হিসাব হচ্ছে…</p> : null}
+                                    {previewBusy ? <p className="text-[11px] text-slate-500">হিসাব হচ্ছে…</p> : null}
                                     {(preview.warnings ?? []).length > 0 ? (
                                       <ul className="list-disc space-y-0.5 rounded-lg bg-amber-50 px-3 py-1.5 pl-6 text-[11px] text-amber-800">
                                         {preview.warnings.map((w, wi) => <li key={wi}>{w}</li>)}
@@ -430,7 +456,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                                 ) : previewBusy ? (
                                   <p className="text-xs text-slate-500">হিসাব হচ্ছে…</p>
                                 ) : !previewError ? (
-                                  <p className="text-[11px] text-slate-400">আইটেম বদলালেই সার্ভারের নতুন হিসাব এখানে দেখা যাবে।</p>
+                                  <p className="text-[11px] text-slate-500">আইটেম বদলালেই সার্ভারের নতুন হিসাব এখানে দেখা যাবে।</p>
                                 ) : null}
                               </div>
                               <label className="flex items-center gap-2 text-xs">
@@ -483,7 +509,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                               {pv.trxId ? <span className="font-mono">TrxID: {pv.trxId}</span> : null}
                               <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{pv.status}</span>
                               <span className="text-slate-500">{pv.source === "manual_advance" ? "স্টাফ রেকর্ড" : pv.source ?? ""}</span>
-                              <span className="text-slate-400">{new Date(pv.createdAt).toLocaleString("bn-BD")}</span>
+                              <span className="text-slate-500">{new Date(pv.createdAt).toLocaleString("bn-BD")}</span>
                               {pv.note ? <span className="text-slate-500">· {pv.note}</span> : null}
                             </div>
                           ))}
@@ -509,7 +535,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                         <button className="btn-primary btn-sm" disabled={advBusy || advAmount.trim() === ""} onClick={recordAdvance}>
                           {advBusy ? "রেকর্ড হচ্ছে..." : "অগ্রিম রেকর্ড করুন"}
                         </button>
-                        <p className="text-xs text-slate-400">স্টাফের রেকর্ড করা অগ্রিম যাচাইকৃত (approved) হিসেবেই ধরা হয় — রেকর্ডকারীই যাচাইকারী।</p>
+                        <p className="text-xs text-slate-500">স্টাফের রেকর্ড করা অগ্রিম যাচাইকৃত (approved) হিসেবেই ধরা হয় — রেকর্ডকারীই যাচাইকারী।</p>
                       </div>
                     </div>
                     {/* ON7: per-order profit card. Null money from
@@ -520,7 +546,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                       {profitError ? (
                         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{profitError}</p>
                       ) : !profit ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                        <p className="text-xs text-slate-500">লোড হচ্ছে…</p>
                       ) : (
                         <div className="space-y-1.5 text-sm">
                           <div className="flex flex-wrap justify-between gap-2"><span className="text-slate-500">আয়</span><b>{fmtM(profit.revenueMinor)}</b></div>
@@ -553,7 +579,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             {profit.deliveryActualMinor != null ? <b>{fmtM(profit.deliveryActualMinor)}</b> : <b className="text-slate-400">জানা নেই</b>}
                           </div>
                           {deliveryCoverageCaption(profit.deliveryActualCoverage) ? (
-                            <p className="text-[11px] text-slate-400">{deliveryCoverageCaption(profit.deliveryActualCoverage)}</p>
+                            <p className="text-[11px] text-slate-500">{deliveryCoverageCaption(profit.deliveryActualCoverage)}</p>
                           ) : null}
                           {profit.netMarginMinor != null ? (
                             <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5">
@@ -569,7 +595,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                       <h4 className="text-sm font-semibold">💰 কিস্তি প্ল্যান</h4>
                       {instError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{instError}</p> : null}
                       {!instLoaded ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                        <p className="text-xs text-slate-500">লোড হচ্ছে…</p>
                       ) : !instPlan ? (
                         (() => { let due = 0n; try { due = BigInt(o.amountDueMinor ?? "0"); } catch { due = 0n; } return due > 0n ? (
                           <div className="space-y-2">
@@ -593,7 +619,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             </button>
                           </div>
                         ) : (
-                          <p className="text-xs text-slate-400">এই অর্ডারে বকেয়া নেই — কিস্তি প্ল্যান দরকার নেই।</p>
+                          <p className="text-xs text-slate-500">এই অর্ডারে বকেয়া নেই — কিস্তি প্ল্যান দরকার নেই।</p>
                         ); })()
                       ) : (
                         <div className="space-y-3">
@@ -604,12 +630,13 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             <span className={`rounded px-2 py-0.5 text-xs font-semibold ${instPlan.status === "active" ? "bg-emerald-100 text-emerald-700" : instPlan.status === "completed" ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 text-slate-600"}`}>{instPlan.status === "active" ? "সক্রিয়" : instPlan.status === "completed" ? "সম্পূর্ণ" : instPlan.status === "cancelled" ? "বাতিল" : instPlan.status}</span>
                             {instPlan.note ? <span className="text-xs text-slate-500">নোট: {instPlan.note}</span> : null}
                           </div>
-                          <div className="overflow-x-auto">
+                          <ResponsiveTable
+                            table={
+                              <div className="overflow-x-auto">
                             <table className="w-full text-left text-xs">
                               <thead><tr className="border-b text-slate-500"><th className="py-1.5 pr-2">ক্রম</th><th className="py-1.5 pr-2">তারিখ</th><th className="py-1.5 pr-2">পরিমাণ</th><th className="py-1.5 pr-2">পরিশোধিত</th><th className="py-1.5 pr-2">অবস্থা</th>{instPlan.status === "active" ? <th className="py-1.5">সংগ্রহ</th> : null}</tr></thead>
                               <tbody>
                                 {instPlan.items.map((item) => {
-                                  const remaining = (() => { try { return BigInt(item.remainingMinor); } catch { return 0n; } })();
                                   const paid = (() => { try { return BigInt(item.paidMinor); } catch { return 0n; } })();
                                   const pill = item.fullyPaid
                                     ? { text: "সম্পূর্ণ পরিশোধিত", cls: "bg-emerald-100 text-emerald-700" }
@@ -618,7 +645,6 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                                       : paid > 0n
                                         ? { text: "আংশিক", cls: "bg-amber-100 text-amber-700" }
                                         : { text: "বাকি", cls: "bg-slate-100 text-slate-600" };
-                                  const form = collectForms[item.id];
                                   return (
                                     <tr key={item.id} className="border-b last:border-0 align-top">
                                       <td className="py-2 pr-2 font-medium">{item.seq}</td>
@@ -628,24 +654,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                                       <td className="py-2 pr-2"><span className={`rounded px-1.5 py-0.5 font-semibold ${pill.cls}`}>{pill.text}</span></td>
                                       {instPlan.status === "active" ? (
                                         <td className="py-2">
-                                          {remaining > 0n && form ? (
-                                            <div className="flex flex-wrap items-center gap-1.5">
-                                              <input className="input w-24" placeholder="টাকা" inputMode="decimal" value={form.amount} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, amount: e.target.value } }))} />
-                                              <select className="input w-auto" value={form.method} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, method: e.target.value } }))}>
-                                                <option value="bkash">বিকাশ</option>
-                                                <option value="nagad">নগদ</option>
-                                                <option value="rocket">রকেট</option>
-                                                <option value="cash">ক্যাশ</option>
-                                                <option value="bank">ব্যাংক</option>
-                                                <option value="other">অন্যান্য</option>
-                                              </select>
-                                              <input className="input w-32" placeholder="রেফারেন্স (ঐচ্ছিক)" value={form.reference} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, reference: e.target.value } }))} />
-                                              <input className="input w-32" placeholder="নোট (ঐচ্ছিক)" value={form.note} onChange={(e) => setCollectForms((prev) => ({ ...prev, [item.id]: { ...form, note: e.target.value } }))} />
-                                              <button className="btn-primary btn-sm" disabled={instBusy !== "" || form.amount.trim() === ""} onClick={() => collectInstItem(item)}>
-                                                {instBusy === `collect-${item.id}` ? "হচ্ছে..." : "সংগ্রহ করুন"}
-                                              </button>
-                                            </div>
-                                          ) : <span className="text-slate-400">—</span>}
+                                          {renderInstCollect(item)}
                                         </td>
                                       ) : null}
                                     </tr>
@@ -653,7 +662,38 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                                 })}
                               </tbody>
                             </table>
-                          </div>
+                              </div>
+                            }
+                            cards={instPlan.items.map((item) => {
+                              const paid = (() => { try { return BigInt(item.paidMinor); } catch { return 0n; } })();
+                              const pill = item.fullyPaid
+                                ? { text: "সম্পূর্ণ পরিশোধিত", cls: "bg-emerald-100 text-emerald-700" }
+                                : item.overdue
+                                  ? { text: "অতিবাহিত", cls: "bg-red-100 text-red-700" }
+                                  : paid > 0n
+                                    ? { text: "আংশিক", cls: "bg-amber-100 text-amber-700" }
+                                    : { text: "বাকি", cls: "bg-slate-100 text-slate-600" };
+                              return (
+                                <div key={item.id} className="rounded-xl border bg-white p-3 shadow-sm">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold text-slate-900">ক্রম {item.seq}</span>
+                                    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${pill.cls}`}>{pill.text}</span>
+                                  </div>
+                                  <dl className="mt-2 space-y-1 text-xs">
+                                    <div className="flex justify-between gap-2"><dt className="text-slate-500">তারিখ</dt><dd className="font-medium">{item.dueDay}</dd></div>
+                                    <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিমাণ</dt><dd className="font-medium">{(() => { try { return formatMinor(BigInt(item.amountMinor)); } catch { return item.amountMinor; } })()}</dd></div>
+                                    <div className="flex justify-between gap-2"><dt className="text-slate-500">পরিশোধিত</dt><dd className="font-medium">{(() => { try { return formatMinor(BigInt(item.paidMinor)); } catch { return item.paidMinor; } })()}</dd></div>
+                                  </dl>
+                                  {instPlan.status === "active" ? (
+                                    <div className="mt-2 border-t pt-2">
+                                      <div className="mb-1 text-xs font-semibold text-slate-500">সংগ্রহ</div>
+                                      {renderInstCollect(item)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          />
                           {instPlan.status === "active" ? (
                             <button className="btn-ghost btn-sm text-red-600" disabled={instBusy !== ""} onClick={cancelInstPlan}>
                               {instBusy === "cancel" ? "বাতিল হচ্ছে..." : "প্ল্যান বাতিল করুন"}
@@ -669,9 +709,9 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                       {pushStateError ? (
                         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">স্টোর সিঙ্কের তথ্য লোড করা যায়নি: {pushStateError}</p>
                       ) : !pushState ? (
-                        <p className="text-xs text-slate-400">লোড হচ্ছে…</p>
+                        <p className="text-xs text-slate-500">লোড হচ্ছে…</p>
                       ) : !pushState.store ? (
-                        <p className="text-xs text-slate-400">এই অর্ডারের কোনো স্টোর নেই</p>
+                        <p className="text-xs text-slate-500">এই অর্ডারের কোনো স্টোর নেই</p>
                       ) : (
                         <div className="space-y-3">
                           <p className="text-sm">
@@ -697,19 +737,19 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                           <div className="space-y-1">
                             <p className="text-xs font-semibold text-slate-600">সাম্প্রতিক Push</p>
                             {pushState.recentPushes.length === 0 ? (
-                              <p className="text-xs text-slate-400">এখনো কোনো Push হয়নি।</p>
+                              <p className="text-xs text-slate-500">এখনো কোনো Push হয়নি।</p>
                             ) : pushState.recentPushes.map((p) => (
                               <div key={p.id} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs">
                                 <span className="font-medium">{p.operation}</span>
                                 <span className="rounded bg-slate-200 px-1.5 py-0.5 font-medium">{p.status}</span>
-                                <span className="text-slate-400">{new Date(p.createdAt).toLocaleString("bn-BD")}</span>
+                                <span className="text-slate-500">{new Date(p.createdAt).toLocaleString("bn-BD")}</span>
                                 {p.lastError ? <span className="text-red-600">{p.lastError}</span> : null}
                               </div>
                             ))}
                           </div>
                           <div className="space-y-2 border-t pt-3">
                             <label className="text-sm font-medium">স্টোরে কাস্টমার-নোট</label>
-                            <p className="text-xs text-slate-400">এই নোটটি গ্রাহক স্টোরে দেখতে পাবেন — উপরের অভ্যন্তরীণ নোটের থেকে আলাদা, সেটি কখনো স্টোরে যায় না।</p>
+                            <p className="text-xs text-slate-500">এই নোটটি গ্রাহক স্টোরে দেখতে পাবেন — উপরের অভ্যন্তরীণ নোটের থেকে আলাদা, সেটি কখনো স্টোরে যায় না।</p>
                             <textarea className="input" rows={2} maxLength={2000} placeholder="যেমন: আপনার অর্ডারটি প্যাক করা হয়েছে…" value={storeNoteText} onChange={(e) => setStoreNoteText(e.target.value)} />
                             <button className="btn-primary btn-sm" disabled={syncBusy !== "" || !storeNoteText.trim()} onClick={sendStoreNote}>{syncBusy === "store-note" ? "পাঠানো হচ্ছে..." : "স্টোরে নোট পাঠান"}</button>
                           </div>
@@ -723,7 +763,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                           {!pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && (pushState.store !== null || !o.storeId) ? (
                             <div className="border-t pt-3">
                               <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
-                              <p className="mt-1 text-xs text-slate-400">এই অর্ডারটি এখনো স্টোরে তৈরি হয়নি — Draft হিসেবে স্টোরে তৈরি করা হবে।</p>
+                              <p className="mt-1 text-xs text-slate-500">এই অর্ডারটি এখনো স্টোরে তৈরি হয়নি — Draft হিসেবে স্টোরে তৈরি করা হবে।</p>
                             </div>
                           ) : null}
                         </div>
@@ -731,7 +771,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                       {pushState && !pushState.store && !pushState.storeDraftId && o.source !== "woocommerce" && o.source !== "shopify" && !o.storeId ? (
                         <div className="border-t pt-3">
                           <button className="btn-secondary btn-sm" disabled={syncBusy !== ""} onClick={createStoreDraft}>{syncBusy === "draft" ? "তৈরি হচ্ছে..." : "স্টোরে Draft Order তৈরি করুন"}</button>
-                          <p className="mt-1 text-xs text-slate-400">এই অর্ডারের নিজের কোনো স্টোর নেই — একটিমাত্র co-manage/full-manage স্টোর থাকলে সেখানেই Draft তৈরি হবে, না হলে সার্ভারের কারণটি দেখানো হবে।</p>
+                          <p className="mt-1 text-xs text-slate-500">এই অর্ডারের নিজের কোনো স্টোর নেই — একটিমাত্র co-manage/full-manage স্টোর থাকলে সেখানেই Draft তৈরি হবে, না হলে সার্ভারের কারণটি দেখানো হবে।</p>
                         </div>
                       ) : null}
                       <div className="flex flex-wrap items-center gap-2 border-t pt-3">
@@ -766,7 +806,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                             {riders.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                           </select>
                           <button type="button" className="btn-primary btn-sm" disabled={riderBusy !== "" || !assignRiderId} onClick={assignRider}>{riderBusy === "assign" ? "হচ্ছে…" : "রাইডার বরাদ্দ করুন"}</button>
-                          {riders.filter((r) => r.active).length === 0 ? <span className="text-xs text-slate-400">সক্রিয় রাইডার নেই — গুদাম পেজের রাইডার ট্যাব থেকে যোগ করুন।</span> : null}
+                          {riders.filter((r) => r.active).length === 0 ? <span className="text-xs text-slate-500">সক্রিয় রাইডার নেই — গুদাম পেজের রাইডার ট্যাব থেকে যোগ করুন।</span> : null}
                         </div>
                       ); })()}
                     </div>
@@ -775,7 +815,7 @@ export function OrderActionPanel({ actOrder, surgery, actNotice, surgeryNotice, 
                         <div className="text-sm font-semibold">⭐ গ্রাহক রিভিউ — {reviewStatusBn(rv)}</div>
                         {rv.rating != null ? <div className="mt-1 text-base text-amber-500">{stars(rv.rating)} <span className="text-sm text-slate-600">({rv.rating}/৫)</span></div> : null}
                         {rv.comment ? <p className="mt-1 text-sm text-slate-700">“{rv.comment}”</p> : null}
-                        <p className="mt-1 text-xs text-slate-400">{rv.receivedAt ? `পাওয়া গেছে: ${new Date(rv.receivedAt).toLocaleString("bn-BD")}` : rv.requestedAt ? `চাওয়া হয়েছে: ${new Date(rv.requestedAt).toLocaleString("bn-BD")}` : "কোনো চ্যানেল পাওয়া যায়নি বলে এখনো পাঠানো হয়নি"}{rv.source ? ` · মাধ্যম: ${rv.source === "chat" ? "চ্যাট" : "লিংক"}` : ""}</p>
+                        <p className="mt-1 text-xs text-slate-500">{rv.receivedAt ? `পাওয়া গেছে: ${new Date(rv.receivedAt).toLocaleString("bn-BD")}` : rv.requestedAt ? `চাওয়া হয়েছে: ${new Date(rv.requestedAt).toLocaleString("bn-BD")}` : "কোনো চ্যানেল পাওয়া যায়নি বলে এখনো পাঠানো হয়নি"}{rv.source ? ` · মাধ্যম: ${rv.source === "chat" ? "চ্যাট" : "লিংক"}` : ""}</p>
                       </div>
                     ) : null; })()}
                   </div>
