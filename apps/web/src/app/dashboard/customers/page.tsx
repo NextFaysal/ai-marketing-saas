@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { EmptyState } from "@repo/ui";
+import { EmptyState, ResponsiveTable } from "@repo/ui";
 import { useConfirm, useToast } from "@repo/ui/client";
 import {
   CustomFieldsEditor, buildCustomFieldsPayload, customFieldsToRaw, fetchCustomFieldDefs,
@@ -579,7 +579,7 @@ export default function CustomersPage() {
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" aria-label="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={hasDue} onChange={(e) => setHasDue(e.target.checked)} />
           শুধু বকেয়া আছে
@@ -594,7 +594,7 @@ export default function CustomersPage() {
             {CUSTOMER_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
-        <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+        <input className="input w-52" placeholder="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" aria-label="ট্যাগ দিয়ে ফিল্টার (হুবহু মিল)" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
         <label className="flex items-center gap-2 text-sm">সেগমেন্ট
           <select className="input w-56" value={segmentId} onChange={(e) => setSegmentId(e.target.value)}>
             <option value="">সব সেগমেন্ট</option>
@@ -615,7 +615,7 @@ export default function CustomersPage() {
                 <span className="font-medium">{c.name || "নাম নেই"}</span>
                 <span className="text-sm font-semibold">{money(c.totalSpentMinor)}</span>
               </div>
-              <div className="mt-0.5 text-xs text-slate-400">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
+              <div className="mt-0.5 text-xs text-slate-500">{c.phone ?? c.email ?? "—"} · {c.orderCount}টি অর্ডার · {c.source}</div>
               {/* GB6 (GC15): sold-bucket figures — sold orders,
                   lifetime value and AOV ("—" when no sold order). */}
               <div className="mt-0.5 text-xs text-slate-500">
@@ -631,11 +631,11 @@ export default function CustomersPage() {
               ) : null}
               {/* ON7: বকেয়া (open due) on the list row — "—" when nothing is due. */}
               <div className="mt-0.5 text-xs">
-                <span className="text-slate-400">বকেয়া: </span>
+                <span className="text-slate-500">বকেয়া: </span>
                 {(() => { let due = 0n; try { due = BigInt(c.dueMinor ?? "0"); } catch { due = 0n; } return due > 0n
                   ? <span className="font-bold text-red-600">{money(c.dueMinor)}</span>
-                  : <span className="text-slate-400">—</span>; })()}
-                {c.creditLimitMinor ? <span className="ml-2 text-slate-400">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
+                  : <span className="text-slate-500">—</span>; })()}
+                {c.creditLimitMinor ? <span className="ml-2 text-slate-500">· ক্রেডিট সীমা: {money(c.creditLimitMinor)}</span> : null}
               </div>
             </button>
           ))}
@@ -648,11 +648,11 @@ export default function CustomersPage() {
                   <div>
                     <h2 className="text-lg font-bold">{detail.customer.name || "নাম নেই"}</h2>
                     <p className="text-sm text-slate-500">{detail.customer.phone ?? "—"} · {detail.customer.email ?? "—"}</p>
-                    <p className="text-xs text-slate-400">সূত্র: {detail.customer.source} · যোগ দিয়েছেন {new Date(detail.customer.createdAt).toLocaleDateString()}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
+                    <p className="text-xs text-slate-500">সূত্র: {detail.customer.source} · যোগ দিয়েছেন {new Date(detail.customer.createdAt).toLocaleDateString()}{detail.lead ? ` · Lead: ${detail.lead.stage}` : ""}</p>
                   </div>
                   <div className="text-right">
                     <div className="text-xl font-black">{money(detail.lifetime.totalSpentMinor, detail.lifetime.currency)}</div>
-                    <div className="text-xs text-slate-400">মোট কেনাকাটা (বাতিল ছাড়া) · {detail.lifetime.orderCount}টি অর্ডার</div>
+                    <div className="text-xs text-slate-500">মোট কেনাকাটা (বাতিল ছাড়া) · {detail.lifetime.orderCount}টি অর্ডার</div>
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
@@ -702,7 +702,7 @@ export default function CustomersPage() {
                       <option value="">কোনো গ্রুপ নয়</option>
                       {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
-                    <span className="mt-1 block text-xs font-normal text-slate-400">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
+                    <span className="mt-1 block text-xs font-normal text-slate-500">গ্রুপের প্রাইস লিস্ট থাকলে চেকআউটে ওই দামই প্রযোজ্য হবে।</span>
                   </label>
                   <label className="block text-sm">ক্রেডিট শর্ত (বকেয়ার মেয়াদ)
                     <select className="input mt-1" value={editCreditTerms} onChange={(e) => setEditCreditTerms(e.target.value)}>
@@ -715,7 +715,7 @@ export default function CustomersPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button className="btn-primary" disabled={busy !== ""} onClick={saveEdit}>{busy === "edit" ? "সেভ হচ্ছে..." : "সেভ করুন"}</button>
-                  <span className="text-xs text-slate-400">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
+                  <span className="text-xs text-slate-500">কাস্টম ফিল্ডের সংজ্ঞা <a className="underline" href="/dashboard/leads">Leads & CRM পেজের</a> “কাস্টম ফিল্ড” অংশ থেকে ম্যানেজ করা হয়।</span>
                 </div>
               </div>
               {/* GB6 (GC15): CRM — tags / VIP / staff notes / block. */}
@@ -733,14 +733,14 @@ export default function CustomersPage() {
                     {crmTags.map((t) => (
                       <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                         #{t}
-                        <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                        <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
                           onClick={() => setCrmTags(crmTags.filter((x) => x !== t))}>×</button>
                       </span>
                     ))}
-                    {crmTags.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ নেই</span> : null}
+                    {crmTags.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ নেই</span> : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" value={crmTagInput}
+                    <input className="input w-56" placeholder="নতুন ট্যাগ লিখুন" aria-label="নতুন ট্যাগ লিখুন" value={crmTagInput}
                       onChange={(e) => setCrmTagInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCrmTag(); } }} />
                     <button type="button" className="btn-secondary btn-sm" onClick={addCrmTag}>ট্যাগ যোগ করুন</button>
@@ -780,7 +780,7 @@ export default function CustomersPage() {
                   <div key={si.storeId} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0">
                     <span><span className="font-medium">{si.storeName ?? "স্টোর"}</span> <span className="badge-slate ml-1">{si.platform ?? ""}</span>
                       <span className="ml-2 text-slate-500">ID: {si.externalId}</span>
-                      {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-400">{si.emailSnapshot}</span> : null}
+                      {si.emailSnapshot ? <span className="ml-2 text-xs text-slate-500">{si.emailSnapshot}</span> : null}
                     </span>
                   </div>
                 ))}
@@ -789,7 +789,7 @@ export default function CustomersPage() {
                     const mode = s.syncMode ?? "mirror";
                     const has = (detail.storeIdentities ?? []).some((si) => si.storeId === s.id);
                     return (
-                      <button key={s.id} className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      <button key={s.id} className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                         disabled={busy !== "" || mode === "mirror"}
                         title={mode === "mirror" ? "Mirror মোডে push হয় না — Sync Center থেকে মোড বদলান" : undefined}
                         onClick={() => pushToStore(s.id)}>
@@ -798,7 +798,7 @@ export default function CustomersPage() {
                       </button>
                     );
                   })}
-                  {stores.length === 0 ? <span className="text-xs text-slate-400">কোনো স্টোর সংযুক্ত নেই</span> : null}
+                  {stores.length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোর সংযুক্ত নেই</span> : null}
                 </div>
               </div>
               {detail.risk ? (
@@ -821,13 +821,15 @@ export default function CustomersPage() {
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="text-3xl font-bold text-emerald-700">{detail.courierRecord.successRatePct}%</span>
                         <span className="text-sm font-medium text-slate-600">ডেলিভারি সফলতার হার</span>
-                        <span className="text-xs text-slate-400">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
+                        <span className="text-xs text-slate-500">(সিদ্ধান্ত হয়েছে এমন {detail.courierRecord.decided}টি অর্ডারের মধ্যে ডেলিভারি {detail.courierRecord.delivered}টি — এই হারটি রিটার্ন ঝুঁকির স্কোরের উল্টো নয়, দুটি আলাদা হিসাব)</span>
                       </div>
                       <p className="text-sm text-slate-600">রিটার্ন {detail.courierRecord.returned}টি · বাতিল/ব্যর্থ {detail.courierRecord.cancelledOrFailed}টি · রিফান্ড {detail.courierRecord.refunded}টি · মোট শিপমেন্ট {detail.courierRecord.totalShipments}টি{detail.courierRecord.lastDeliveryAt ? ` · সর্বশেষ ডেলিভারি: ${new Date(detail.courierRecord.lastDeliveryAt).toLocaleDateString("bn-BD")}` : ""}</p>
                       {detail.courierRecord.perCourier.length > 0 ? (
-                        <table className="w-full text-sm">
+                        <ResponsiveTable
+                          table={
+                            <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b text-left text-xs text-slate-400"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
+                            <tr className="border-b text-left text-xs text-slate-500"><th className="py-1 font-medium">কুরিয়ার</th><th className="py-1 font-medium">সিদ্ধান্ত হয়েছে</th><th className="py-1 font-medium">ডেলিভারি</th><th className="py-1 font-medium">সফলতার হার</th></tr>
                           </thead>
                           <tbody>
                             {detail.courierRecord.perCourier.map((p) => (
@@ -839,7 +841,27 @@ export default function CustomersPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                            </table>
+                          }
+                          cards={detail.courierRecord.perCourier.map((p) => (
+                            <div key={p.provider} className="rounded-lg border p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-medium">{p.provider}</span>
+                                <span className="font-semibold">{p.successRatePct != null ? `${p.successRatePct}%` : "—"}</span>
+                              </div>
+                              <dl className="mt-2 space-y-1.5 text-sm">
+                                <div className="flex gap-2">
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">সিদ্ধান্ত হয়েছে</dt>
+                                  <dd>{p.decided}টি</dd>
+                                </div>
+                                <div className="flex gap-2">
+                                  <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ডেলিভারি</dt>
+                                  <dd>{p.delivered}টি</dd>
+                                </div>
+                              </dl>
+                            </div>
+                          ))}
+                        />
                       ) : null}
                     </>
                   )}
@@ -853,7 +875,7 @@ export default function CustomersPage() {
                       <span className="text-amber-500">{"★★★★★".slice(0, r.rating ?? 0)}{"☆☆☆☆☆".slice(0, 5 - (r.rating ?? 0))}</span>
                       <span className="ml-2 font-medium">#{r.orderNumber ?? r.orderId.slice(0, 8)}</span>
                       {r.comment ? <span className="ml-2 text-slate-700">“{r.comment}”</span> : null}
-                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-400">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
+                      {r.receivedAt ? <span className="ml-2 text-xs text-slate-500">{new Date(r.receivedAt).toLocaleDateString("bn-BD")}</span> : null}
                     </div>
                   ))}
                 </div>
@@ -889,7 +911,7 @@ export default function CustomersPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
                         <div className="text-2xl font-black text-red-600">{money(khata.totalDueMinor)}</div>
-                        <div className="text-xs text-slate-400">মোট বকেয়া</div>
+                        <div className="text-xs text-slate-500">মোট বকেয়া</div>
                       </div>
                       {isOverLimit(khata) ? (
                         <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white">⚠️ ক্রেডিট সীমা ছাড়িয়ে গেছে</span>
@@ -916,7 +938,7 @@ export default function CustomersPage() {
                           <button type="button" className="btn-primary btn-sm" disabled={creditBusy} onClick={() => void saveCreditLimit()}>
                             {creditBusy ? "সংরক্ষণ হচ্ছে…" : "সীমা সংরক্ষণ করুন"}
                           </button>
-                          <span className="text-xs text-slate-400">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
+                          <span className="text-xs text-slate-500">বর্তমান: {khata.creditLimitMinor ? money(khata.creditLimitMinor) : "সীমা নির্ধারণ করা নেই"}</span>
                         </span>
                       </label>
                       {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
@@ -924,8 +946,10 @@ export default function CustomersPage() {
                     {khata.orders.length === 0 ? (
                       <p className="text-sm text-slate-400">{khataOverdueOnly ? "মেয়াদোত্তীর্ণ কোনো বকেয়া অর্ডার নেই।" : "এই কাস্টমারের কোনো অর্ডার খাতায় নেই।"}</p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
+                      <ResponsiveTable
+                        table={
+                          <div>
+                            <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
                               <th className="py-1.5 pr-2 font-semibold">অর্ডার</th>
@@ -954,9 +978,46 @@ export default function CustomersPage() {
                                 </td>
                               </tr>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </tbody>
+                            </table>
+                          </div>
+                        }
+                        cards={khata.orders.map((o) => (
+                          <div key={o.id} className="rounded-lg border p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-medium">#{o.number ?? o.id.slice(0, 8)}</span>
+                              <span>
+                                <span className="badge-slate">{o.status}</span>
+                                {o.overdue ? <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">মেয়াদ উত্তীর্ণ</span> : null}
+                              </span>
+                            </div>
+                            <dl className="mt-2 space-y-1.5 text-sm">
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                                <dd>{o.placedAt ? new Date(o.placedAt).toLocaleDateString("bn-BD") : "—"}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">মোট</dt>
+                                <dd>{money(o.totalMinor)}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধিত</dt>
+                                <dd>{money(o.paidMinor)}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">বকেয়া</dt>
+                                <dd>{(() => { let d = 0n; try { d = BigInt(o.dueMinor); } catch { d = 0n; } return d > 0n
+                                  ? <span className="font-bold text-red-600">{money(o.dueMinor)}</span>
+                                  : <span className="text-slate-500">—</span>; })()}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-32 shrink-0 text-xs font-semibold text-slate-500">পরিশোধের শেষ তারিখ</dt>
+                                <dd>{o.creditDueDate ? new Date(o.creditDueDate).toLocaleDateString("bn-BD") : "—"}</dd>
+                              </div>
+                            </dl>
+                          </div>
+                        ))}
+                      />
                     )}
                     {khata.ordersTruncated ? (
                       <p className="text-xs text-amber-700">আরও অর্ডার আছে — খাতায় শুধু সাম্প্রতিকগুলো দেখানো হচ্ছে; মোট বকেয়া সব অর্ডার মিলিয়েই হিসাব করা।</p>
@@ -978,7 +1039,7 @@ export default function CustomersPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div>
                         <div className={`text-2xl font-black ${loyalty.balance < 0 ? "text-red-600" : ""}`}>{loyalty.balance} পয়েন্ট</div>
-                        <div className="text-xs text-slate-400">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
+                        <div className="text-xs text-slate-500">বর্তমান ব্যালেন্স · মূল্য {formatPaisaNumber(loyalty.balanceValueMinor)} (১ পয়েন্ট = {formatPaisaNumber(loyalty.redeemValueMinorPerPoint)})</div>
                       </div>
                       {!loyalty.enabled ? (
                         <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">লয়্যালটি প্রোগ্রাম বর্তমানে বন্ধ</span>
@@ -990,8 +1051,10 @@ export default function CustomersPage() {
                     {loyalty.entries.length === 0 ? (
                       <p className="text-sm text-slate-400">এখনো কোনো পয়েন্টের লেনদেন নেই।</p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
+                      <ResponsiveTable
+                        table={
+                          <div>
+                            <table className="w-full text-left text-sm">
                           <thead>
                             <tr className="border-b text-xs text-slate-500">
                               <th className="py-1.5 pr-2 font-semibold">ধরন</th>
@@ -1007,7 +1070,7 @@ export default function CustomersPage() {
                                 <td className="py-1.5 pr-2">
                                   <span className="font-medium">{loyaltyEntryLabel(en)}</span>
                                   {loyaltyEntryNote(en) ? <span className="block text-xs text-slate-500">{loyaltyEntryNote(en)}</span> : null}
-                                  {en.expiresAt ? <span className="block text-xs text-slate-400">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
+                                  {en.expiresAt ? <span className="block text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</span> : null}
                                 </td>
                                 <td className={`py-1.5 pr-2 font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</td>
                                 <td className="py-1.5 pr-2">{en.balanceAfter}</td>
@@ -1015,9 +1078,35 @@ export default function CustomersPage() {
                                 <td className="py-1.5 text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</td>
                               </tr>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </tbody>
+                            </table>
+                          </div>
+                        }
+                        cards={loyalty.entries.map((en) => (
+                          <div key={en.id} className="rounded-lg border p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-medium">{loyaltyEntryLabel(en)}</span>
+                              <span className={`font-semibold ${en.deltaPoints < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatPointsDelta(en.deltaPoints)}</span>
+                            </div>
+                            {loyaltyEntryNote(en) ? <div className="mt-0.5 text-xs text-slate-500">{loyaltyEntryNote(en)}</div> : null}
+                            {en.expiresAt ? <div className="mt-0.5 text-xs text-slate-500">মেয়াদ: {new Date(en.expiresAt).toLocaleDateString("bn-BD")}{en.remainingPoints != null ? ` · অবশিষ্ট ${en.remainingPoints}` : ""}</div> : null}
+                            <dl className="mt-2 space-y-1.5 text-sm">
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">ব্যালেন্স (পরে)</dt>
+                                <dd>{en.balanceAfter}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
+                                <dd>{en.orderNumber ? `#${en.orderNumber}` : en.orderId ? `#${en.orderId.slice(0, 8)}` : "—"}</dd>
+                              </div>
+                              <div className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">তারিখ</dt>
+                                <dd className="text-slate-500">{new Date(en.createdAt).toLocaleDateString("bn-BD")}</dd>
+                              </div>
+                            </dl>
+                          </div>
+                        ))}
+                      />
                     )}
                     {(loyalty.referralRewards?.coupons ?? []).length > 0 ? (
                       <div className="space-y-1 border-t pt-3">
@@ -1026,8 +1115,8 @@ export default function CustomersPage() {
                           <div key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
                             <span className="font-mono font-semibold">{c.code}</span>
                             <span>{c.kind === "percent" ? `${c.value}% ছাড়` : c.value}</span>
-                            {c.sourceOrderNumber ? <span className="text-xs text-slate-400">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
-                            {c.endsAt ? <span className="text-xs text-slate-400">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
+                            {c.sourceOrderNumber ? <span className="text-xs text-slate-500">রেফার করা অর্ডার #{c.sourceOrderNumber}</span> : null}
+                            {c.endsAt ? <span className="text-xs text-slate-500">মেয়াদ: {new Date(c.endsAt).toLocaleDateString("bn-BD")}</span> : null}
                             {!c.active ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">বাতিল/নিষ্ক্রিয়</span>
                               : c.usedCount > 0 ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">ব্যবহৃত ({c.usedCount}বার)</span>
                               : <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">সক্রিয়</span>}
@@ -1127,8 +1216,10 @@ export default function CustomersPage() {
             {plLoading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : plItems.length === 0 ? (
               <p className="text-sm text-slate-400">এই লিস্টে এখনো কোনো আইটেম নেই — নিচে পণ্য যোগ করুন অথবা বাল্ক ছাড় চালান।</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+              <ResponsiveTable
+                table={
+                  <div>
+                    <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b text-xs text-slate-500">
                       <th className="py-1.5 pr-2 font-semibold">পণ্য</th>
@@ -1144,13 +1235,32 @@ export default function CustomersPage() {
                         <td className="py-1.5 pr-2">{it.variantName ?? "সব ভ্যারিয়েন্ট"}</td>
                         <td className="py-1.5 pr-2 font-semibold">{money(it.priceMinor)}</td>
                         <td className="py-1.5 text-right">
-                          <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                          <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                    </tbody>
+                    </table>
+                  </div>
+                }
+                cards={plItems.map((it) => (
+                  <div key={it.id} className="rounded-lg border bg-white p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-medium">{it.productName ?? it.productId}</span>
+                      <span className="font-semibold">{money(it.priceMinor)}</span>
+                    </div>
+                    <dl className="mt-2 space-y-1.5 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="w-20 shrink-0 text-xs font-semibold text-slate-500">ভ্যারিয়েন্ট</dt>
+                        <dd>{it.variantName ?? "সব ভ্যারিয়েন্ট"}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-2 text-right">
+                      <button className="btn-secondary btn-sm min-h-[44px] text-red-600" disabled={groupBusy !== ""} onClick={() => removePlItem(it)}>সরান</button>
+                    </div>
+                  </div>
+                ))}
+              />
             )}
             <div className="flex flex-wrap items-end gap-2 border-t pt-3">
               <label className="block text-sm">পণ্য
@@ -1197,7 +1307,7 @@ export default function CustomersPage() {
             <span>
               <span className="font-medium">{s.name}</span>
               <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{s.memberCount} জন সদস্য</span>
-              <span className="block text-xs text-slate-400">{segmentCriteriaSummary(s.criteria)}</span>
+              <span className="block text-xs text-slate-500">{segmentCriteriaSummary(s.criteria)}</span>
             </span>
             <span className="flex gap-2">
               <button className="btn-secondary btn-sm" onClick={() => setSegmentId(s.id)}>তালিকায় দেখুন</button>
@@ -1217,14 +1327,14 @@ export default function CustomersPage() {
               {segDraft.tagsAny.map((t) => (
                 <span key={t} className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                   #{t}
-                  <button type="button" className="font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
+                  <button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center font-bold text-slate-400 hover:text-red-600" aria-label={`${t} ট্যাগ সরান`}
                     onClick={() => setSegDraft({ ...segDraft, tagsAny: segDraft.tagsAny.filter((x) => x !== t) })}>×</button>
                 </span>
               ))}
-              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-400">কোনো ট্যাগ শর্ত নেই</span> : null}
+              {segDraft.tagsAny.length === 0 ? <span className="text-xs text-slate-500">কোনো ট্যাগ শর্ত নেই</span> : null}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <input className="input w-56" placeholder="ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
+              <input className="input w-56" placeholder="ট্যাগ লিখুন" aria-label="সেগমেন্টের ট্যাগ লিখুন" value={segTagInput} onChange={(e) => setSegTagInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSegTag(); } }} />
               <button type="button" className="btn-secondary btn-sm" onClick={addSegTag}>যোগ করুন</button>
             </div>
