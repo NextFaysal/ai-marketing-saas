@@ -372,7 +372,7 @@ export function PromptProvider({ children }: { children: React.ReactNode }) {
                 className="input w-full"
                 value={value}
                 placeholder={state.options.placeholder}
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => setValue((e.target as unknown as { value: string }).value)}
                 autoFocus
               />
               <div className="mt-4 flex flex-wrap justify-end gap-2">
