@@ -5,6 +5,8 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
+import { EmptyState } from "@repo/ui";
+import { useToast } from "@repo/ui/client";
 
 interface NdrIncident {
   id: string;
@@ -55,6 +57,7 @@ const REASON_MAP: Record<string, string> = {
 };
 
 export default function NdrRecoveryPage() {
+  const { toast } = useToast();
   const [metrics, setMetrics] = useState<NdrMetrics | null>(null);
   const [incidents, setIncidents] = useState<NdrIncident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,7 +98,7 @@ export default function NdrRecoveryPage() {
       await apiFetch(`/organizations/${orgId}/courier/ndr/${id}/contact`, { method: "POST" });
       await loadData();
     } catch (e: any) {
-      alert(e.message || "মেসেজ পাঠানো ব্যর্থ হয়েছে");
+      toast({ title: e.message || "মেসেজ পাঠানো ব্যর্থ হয়েছে", tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -117,7 +120,7 @@ export default function NdrRecoveryPage() {
       setRescheduleNote("");
       await loadData();
     } catch (e: any) {
-      alert(e.message || "রি-শিডিউল সংরক্ষণ ব্যর্থ হয়েছে");
+      toast({ title: e.message || "রি-শিডিউল সংরক্ষণ ব্যর্থ হয়েছে", tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -133,7 +136,7 @@ export default function NdrRecoveryPage() {
       });
       await loadData();
     } catch (e: any) {
-      alert(e.message || "স্ট্যাটাস পরিবর্তন ব্যর্থ হয়েছে");
+      toast({ title: e.message || "স্ট্যাটাস পরিবর্তন ব্যর্থ হয়েছে", tone: "error" });
     } finally {
       setActionBusy("");
     }
@@ -312,17 +315,12 @@ export default function NdrRecoveryPage() {
         {loading ? (
           <div className="p-8 text-center text-xs text-slate-500">ডাটা লোড হচ্ছে...</div>
         ) : filteredIncidents.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="text-3xl">🎉</div>
-            <p className="mt-2 text-sm font-bold text-slate-800">
-              {searchQuery ? "কোনো মিল পাওয়া যায়নি" : "কোনো ঝুঁকিপূর্ণ NDR পার্সেল নেই!"}
-            </p>
-            <p className="text-xs text-slate-500">
-              {searchQuery
+          <EmptyState
+            title={searchQuery ? "কোনো মিল পাওয়া যায়নি" : "কোনো ঝুঁকিপূর্ণ NDR পার্সেল নেই!"}
+            description={searchQuery
                 ? `"${searchQuery}" এর সাথে কোনো কেস মেলেনি।`
                 : "সবগুলো পার্সেল ঠিক সময়ে ডেলিভারির পথে আছে।"}
-            </p>
-          </div>
+          />
         ) : (
           <>
             {/* Desktop View */}

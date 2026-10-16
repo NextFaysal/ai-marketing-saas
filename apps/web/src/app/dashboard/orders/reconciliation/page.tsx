@@ -5,6 +5,8 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
+import { EmptyState } from "@repo/ui";
+import { useToast } from "@repo/ui/client";
 
 interface DisbursementBatch {
   id: string;
@@ -58,12 +60,12 @@ interface MissingDisbursementsData {
 }
 
 export default function CourierReconciliationPage() {
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"batches" | "missing" | "upload">("batches");
   const [batches, setBatches] = useState<DisbursementBatch[]>([]);
   const [missingData, setMissingData] = useState<MissingDisbursementsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   // Selected batch for detail modal
   const [selectedBatch, setSelectedBatch] = useState<(DisbursementBatch & { items: DisbursementItem[] }) | null>(null);
@@ -114,7 +116,7 @@ export default function CourierReconciliationPage() {
       setSelectedBatch(res);
       setClaimSheet(null);
     } catch (err: any) {
-      alert(err?.message || "ব্যাচ বিস্তারিত লোড করতে ব্যর্থ।");
+      toast({ title: err?.message || "ব্যাচ বিস্তারিত লোড করতে ব্যর্থ।", tone: "error" });
     } finally {
       setDetailLoading(false);
     }
@@ -126,7 +128,7 @@ export default function CourierReconciliationPage() {
       const sheet = await apiFetch<any>(`/organizations/${orgId}/courier/reconciliation/batches/${batchId}/claim-sheet`);
       setClaimSheet(sheet);
     } catch (err: any) {
-      alert(err?.message || "ক্লেইম শিট লোড করতে ব্যর্থ।");
+      toast({ title: err?.message || "ক্লেইম শিট লোড করতে ব্যর্থ।", tone: "error" });
     }
   }
 
@@ -141,13 +143,13 @@ export default function CourierReconciliationPage() {
           notes: disputeNotes,
         }),
       });
-      setNotice(`ট্র্যাকিং ${disputeItem.trackingCode}-এর ডিসপিউট স্ট্যাটাস আপডেট হয়েছে।`);
+      toast({ title: `ট্র্যাকিং ${disputeItem.trackingCode}-এর ডিসপিউট স্ট্যাটাস আপডেট হয়েছে।`, tone: "success" });
       setDisputeItem(null);
       if (selectedBatch) {
         await openBatchDetail(selectedBatch.id);
       }
     } catch (err: any) {
-      alert(err?.message || "ডিসপিউট আপডেট ব্যর্থ।");
+      toast({ title: err?.message || "ডিসপিউট আপডেট ব্যর্থ।", tone: "error" });
     } finally {
       setDisputeBusy(false);
     }
@@ -157,11 +159,11 @@ export default function CourierReconciliationPage() {
     e.preventDefault();
     if (!orgId) return;
     if (!referenceNo.trim()) {
-      alert("অনুগ্রহ করে স্টেটমেন্ট রেফারেন্স বা ইনভয়েস নম্বর দিন।");
+      toast({ title: "অনুগ্রহ করে স্টেটমেন্ট রেফারেন্স বা ইনভয়েস নম্বর দিন।", tone: "error" });
       return;
     }
     if (!rawCsvText.trim()) {
-      alert("অনুগ্রহ করে CSV ডাটা পেস্ট করুন।");
+      toast({ title: "অনুগ্রহ করে CSV ডাটা পেস্ট করুন।", tone: "error" });
       return;
     }
 
@@ -194,7 +196,7 @@ export default function CourierReconciliationPage() {
       }
 
       if (items.length === 0) {
-        alert("কোনো সঠিক ট্র্যাকিং ও অ্যামাউন্ট রেকর্ড পাওয়া যায়নি। ফরম্যাট পরীক্ষা করুন।");
+        toast({ title: "কোনো সঠিক ট্র্যাকিং ও অ্যামাউন্ট রেকর্ড পাওয়া যায়নি। ফরম্যাট পরীক্ষা করুন।", tone: "error" });
         setUploadBusy(false);
         return;
       }
@@ -208,7 +210,7 @@ export default function CourierReconciliationPage() {
         }),
       });
 
-      setNotice(`স্টেটমেন্ট সফলভাবে রিকনসিল করা হয়েছে! মোট ${res.totalOrders}টি অর্ডার অডিট সম্পন্ন।`);
+      toast({ title: `স্টেটমেন্ট সফলভাবে রিকনসিল করা হয়েছে! মোট ${res.totalOrders}টি অর্ডার অডিট সম্পন্ন।`, tone: "success" });
       setReferenceNo("");
       setRawCsvText("");
       setActiveTab("batches");
@@ -284,15 +286,6 @@ export default function CourierReconciliationPage() {
         </div>
       </div>
 
-      {/* Notices */}
-      {notice && (
-        <div className="flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-xs font-semibold text-emerald-800">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="text-emerald-600 hover:text-emerald-900 font-bold">
-            ✕
-          </button>
-        </div>
-      )}
 
       {error && (
         <div className="flex items-center justify-between rounded-2xl bg-rose-50 border border-rose-200 p-4 text-xs font-semibold text-rose-800">
@@ -408,20 +401,19 @@ export default function CourierReconciliationPage() {
       {activeTab === "batches" && (
         <div className="space-y-4">
           {batches.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200/80 bg-white p-12 text-center shadow-sm">
-              <span className="text-4xl">🧾</span>
-              <h3 className="mt-3 text-base font-bold text-slate-800">কোনো রিকনসিলিয়েশন স্টেটমেন্ট নেই</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-                Steadfast বা Pathao থেকে পাওয়া সাপ্তাহিক পেমেন্ট এক্সেল বা CSV আপলোড করে স্বয়ংক্রিয়ভাবে টাকা মিলিয়ে নিন।
-              </p>
-              <button
-                type="button"
-                onClick={() => setActiveTab("upload")}
-                className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
-              >
-                + প্রথম স্টেটমেন্ট আপলোড করুন
-              </button>
-            </div>
+            <EmptyState
+              title="কোনো রিকনসিলিয়েশন স্টেটমেন্ট নেই"
+              description="Steadfast বা Pathao থেকে পাওয়া সাপ্তাহিক পেমেন্ট এক্সেল বা CSV আপলোড করে স্বয়ংক্রিয়ভাবে টাকা মিলিয়ে নিন।"
+              action={(
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("upload")}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+                >
+                  + প্রথম স্টেটমেন্ট আপলোড করুন
+                </button>
+              )}
+            />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
               <div className="overflow-x-auto">
@@ -506,13 +498,7 @@ export default function CourierReconciliationPage() {
           </div>
 
           {!missingData || missingData.parcels.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200/80 bg-white p-12 text-center shadow-sm">
-              <span className="text-4xl">🎉</span>
-              <h3 className="mt-3 text-base font-bold text-slate-800">কোনো মিসিং পেমেন্ট নেই!</h3>
-              <p className="mt-1 text-xs text-slate-500">
-                ডেলিভারি হওয়া সকল পার্সেলের টাকা সময়মতো কুরিয়ার স্টেটমেন্টে ক্রেডিট হয়েছে।
-              </p>
-            </div>
+            <EmptyState title="কোনো মিসিং পেমেন্ট নেই!" description="ডেলিভারি হওয়া সকল পার্সেলের টাকা সময়মতো কুরিয়ার স্টেটমেন্টে ক্রেডিট হয়েছে।" />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
               <div className="border-b bg-slate-50/75 px-4 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
@@ -565,7 +551,7 @@ export default function CourierReconciliationPage() {
                               navigator.clipboard.writeText(
                                 `Courier: ${p.provider}\nTracking: ${p.trackingCode}\nCOD Amount: ৳${p.codAmountMinor / 100}\nDelivered: ${new Date(p.deliveredAt).toLocaleDateString()}`
                               );
-                              setNotice(`ট্র্যাকিং ${p.trackingCode}-এর ক্লেইম টেক্সট ক্লিপবোর্ডে কপি হয়েছে।`);
+                              toast({ title: `ট্র্যাকিং ${p.trackingCode}-এর ক্লেইম টেক্সট ক্লিপবোর্ডে কপি হয়েছে।`, tone: "success" });
                             }}
                             className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 active:scale-95"
                           >

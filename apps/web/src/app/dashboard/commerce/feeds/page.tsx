@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC14 — product feeds (Meta catalog / Google Merchant / generic CSV).
 // Every number (itemCount / skippedCount / preview rows) comes from
@@ -42,6 +43,8 @@ const CHANNEL_LABEL: Record<string, string> = {
 };
 
 export default function FeedsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -104,7 +107,7 @@ export default function FeedsPage() {
 
   async function rotateToken(f: Feed) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("টোকেন রোটেট করলে পুরনো ফিড URL কাজ করবে না — চ্যানেলে নতুন URL বসাতে হবে। চালিয়ে যাবেন?")) return;
+    if (!(await confirm({ title: "টোকেন রোটেট করবেন?", body: "টোকেন রোটেট করলে পুরনো ফিড URL কাজ করবে না — চ্যানেলে নতুন URL বসাতে হবে।", danger: true, confirmLabel: "রোটেট করুন" }))) return;
     setBusy(`rotate-${f.id}`); setError(""); setNotice("");
     try {
       await apiFetch<{ feed: Feed }>(`/organizations/${orgId}/commerce/feeds/${f.id}/rotate-token`, { method: "POST" });
@@ -116,7 +119,7 @@ export default function FeedsPage() {
 
   async function remove(f: Feed) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই ফিডটি মুছে ফেলবেন? এর URL আর কাজ করবে না।")) return;
+    if (!(await confirm({ title: "এই ফিডটি মুছে ফেলবেন?", body: "এর URL আর কাজ করবে না।", danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setBusy(`del-${f.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/feeds/${f.id}`, { method: "DELETE" });
@@ -140,7 +143,7 @@ export default function FeedsPage() {
   async function copyUrl(url: string) {
     try {
       await navigator.clipboard.writeText(url);
-      setNotice("ফিড URL কপি হয়েছে।");
+      toast({ title: "ফিড URL কপি হয়েছে।", tone: "success" });
     } catch {
       setError("কপি করা যায়নি — URLটি হাতে কপি করুন।");
     }

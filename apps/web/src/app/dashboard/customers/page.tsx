@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
+import { useConfirm, useToast } from "@repo/ui/client";
 import {
   CustomFieldsEditor, buildCustomFieldsPayload, customFieldsToRaw, fetchCustomFieldDefs,
   type CustomFieldDef,
@@ -60,6 +61,8 @@ const money = (minor?: string | null, currency = "BDT") =>
   minor == null ? "—" : `${currency === "BDT" ? "৳" : currency + " "}${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 export default function CustomersPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [stores, setStores] = useState<{ id: string; name: string; platform?: string; syncMode?: string }[]>([]);
   const [q, setQ] = useState("");
@@ -75,7 +78,6 @@ export default function CustomersPage() {
   const [segTagInput, setSegTagInput] = useState("");
   const [editingSegmentId, setEditingSegmentId] = useState("");
   const [segError, setSegError] = useState("");
-  const [segNotice, setSegNotice] = useState("");
   const [segBusy, setSegBusy] = useState("");
   // GB6 (GC15): detail CRM editor state (tags / VIP / notes / block).
   const [crmTags, setCrmTags] = useState<string[]>([]);
@@ -86,7 +88,6 @@ export default function CustomersPage() {
   const [crmBlocked, setCrmBlocked] = useState(false);
   const [crmBlockedReason, setCrmBlockedReason] = useState("");
   const [crmError, setCrmError] = useState("");
-  const [crmNotice, setCrmNotice] = useState("");
   const [khata, setKhata] = useState<CustomerKhata | null>(null);
   const [khataError, setKhataError] = useState("");
   // AB5 (AX7): খাতা overdue-only filter (?overdue=1).
@@ -98,7 +99,6 @@ export default function CustomersPage() {
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState("");
   const [groupError, setGroupError] = useState("");
-  const [groupNotice, setGroupNotice] = useState("");
   const [groupBusy, setGroupBusy] = useState("");
   const [plGroupId, setPlGroupId] = useState("");
   const [plItems, setPlItems] = useState<PriceListItemRow[]>([]);
@@ -121,10 +121,8 @@ export default function CustomersPage() {
   const [adjustNote, setAdjustNote] = useState("");
   const [adjustBusy, setAdjustBusy] = useState(false);
   const [adjustError, setAdjustError] = useState("");
-  const [adjustNotice, setAdjustNotice] = useState("");
   const [creditTaka, setCreditTaka] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
-  const [creditNotice, setCreditNotice] = useState("");
   const [creditError, setCreditError] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   // CX12b: the open customer's reviews for the 360 view.
@@ -136,7 +134,6 @@ export default function CustomersPage() {
   const [editWholesale, setEditWholesale] = useState(false);
   const [editCf, setEditCf] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
   // CP6: GDPR erasure report for the last erased customer.
@@ -167,18 +164,18 @@ export default function CustomersPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const { payload, errors } = buildSegmentPayload(segName, segDraft);
     if (!payload) { setSegError(errors.join(" ")); return; }
-    setSegBusy("save"); setSegError(""); setSegNotice("");
+    setSegBusy("save"); setSegError("");
     try {
       if (editingSegmentId) {
         await apiFetch(`/organizations/${orgId}/customers/segments/${editingSegmentId}`, {
           method: "PATCH", body: JSON.stringify(payload),
         });
-        setSegNotice("সেগমেন্ট হালনাগাদ হয়েছে।");
+        toast({ title: "সেগমেন্ট হালনাগাদ হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/customers/segments`, {
           method: "POST", body: JSON.stringify(payload),
         });
-        setSegNotice("সেগমেন্ট তৈরি হয়েছে।");
+        toast({ title: "সেগমেন্ট তৈরি হয়েছে।", tone: "success" });
       }
       setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); setSegTagInput(""); setEditingSegmentId("");
       await loadSegments();
@@ -189,18 +186,18 @@ export default function CustomersPage() {
   function editSegment(s: CrmSegment) {
     setEditingSegmentId(s.id); setSegName(s.name);
     setSegDraft(segmentCriteriaToDraft(s.criteria)); setSegTagInput("");
-    setSegError(""); setSegNotice("");
+    setSegError("");
   }
 
   async function deleteSegment(s: CrmSegment) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!confirm(`“${s.name}” সেগমেন্টটি মুছে ফেলবেন? গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`)) return;
-    setSegBusy(`del-${s.id}`); setSegError(""); setSegNotice("");
+    if (!(await confirm({ title: `“${s.name}” সেগমেন্টটি মুছে ফেলবেন?`, body: `গ্রাহকদের কোনো তথ্য মুছবে না — শুধু এই সেগমেন্টের সংজ্ঞাটি যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setSegBusy(`del-${s.id}`); setSegError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/segments/${s.id}`, { method: "DELETE" });
       if (segmentId === s.id) setSegmentId("");
       if (editingSegmentId === s.id) { setEditingSegmentId(""); setSegName(""); setSegDraft(EMPTY_SEGMENT_DRAFT); }
-      setSegNotice("সেগমেন্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "সেগমেন্ট মুছে ফেলা হয়েছে।", tone: "success" });
       await loadSegments();
     } catch (e) { setSegError(e instanceof Error ? e.message : "সেগমেন্ট মোছা ব্যর্থ"); }
     finally { setSegBusy(""); }
@@ -221,7 +218,7 @@ export default function CustomersPage() {
     const tagError = validateTags(crmTags);
     if (tagError) { setCrmError(tagError); return; }
     if (crmBlockedReason.length > 300) { setCrmError("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে।"); return; }
-    setBusy("crm"); setCrmError(""); setCrmNotice("");
+    setBusy("crm"); setCrmError("");
     try {
       const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
         method: "PATCH",
@@ -239,7 +236,7 @@ export default function CustomersPage() {
       setCrmVip(!!out.customer.isVip);
       setCrmBlocked(!!out.customer.isBlocked);
       setCrmBlockedReason(out.customer.blockedReason ?? "");
-      setCrmNotice("CRM তথ্য সেভ হয়েছে।");
+      toast({ title: "CRM তথ্য সেভ হয়েছে।", tone: "success" });
       await load();
       await loadSegments();
     } catch (e) { setCrmError(e instanceof Error ? e.message : "CRM সেভ ব্যর্থ"); }
@@ -288,18 +285,18 @@ export default function CustomersPage() {
   async function saveGroup() {
     const orgId = getOrganizationId(); if (!orgId) return;
     if (!groupName.trim()) { setGroupError("গ্রুপের নাম দিন।"); return; }
-    setGroupBusy("save"); setGroupError(""); setGroupNotice("");
+    setGroupBusy("save"); setGroupError("");
     try {
       if (editingGroupId) {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${editingGroupId}`, {
           method: "PATCH", body: JSON.stringify({ name: groupName.trim() }),
         });
-        setGroupNotice("গ্রুপের নাম বদলানো হয়েছে।");
+        toast({ title: "গ্রুপের নাম বদলানো হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/customer-groups`, {
           method: "POST", body: JSON.stringify({ name: groupName.trim() }),
         });
-        setGroupNotice("গ্রুপ তৈরি হয়েছে।");
+        toast({ title: "গ্রুপ তৈরি হয়েছে।", tone: "success" });
       }
       setGroupName(""); setEditingGroupId("");
       await loadGroups();
@@ -309,13 +306,13 @@ export default function CustomersPage() {
 
   async function deleteGroup(g: CustomerGroup) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!confirm(`“${g.name}” গ্রুপটি মুছে ফেলবেন? এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`)) return;
-    setGroupBusy(`del-${g.id}`); setGroupError(""); setGroupNotice("");
+    if (!(await confirm({ title: `“${g.name}” গ্রুপটি মুছে ফেলবেন?`, body: `এই গ্রুপের ${g.memberCount} জন সদস্য গ্রুপছাড়া হয়ে যাবেন (কাস্টমার মোছা হবে না) এবং গ্রুপের প্রাইস লিস্টও মুছে যাবে।`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setGroupBusy(`del-${g.id}`); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${g.id}`, { method: "DELETE" });
       if (plGroupId === g.id) { setPlGroupId(""); setPlItems([]); }
       if (editingGroupId === g.id) { setEditingGroupId(""); setGroupName(""); }
-      setGroupNotice("গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।");
+      toast({ title: "গ্রুপ মুছে ফেলা হয়েছে — সদস্যরা গ্রুপছাড়া হয়েছেন।", tone: "success" });
       await loadGroups();
     } catch (e) { setGroupError(e instanceof Error ? e.message : "গ্রুপ মোছা ব্যর্থ"); }
     finally { setGroupBusy(""); }
@@ -345,7 +342,7 @@ export default function CustomersPage() {
     if (!plProductId) { setGroupError("আইটেম যোগ করতে পণ্য বেছে নিন।"); return; }
     const priceMinor = takaToMinor(plPriceTaka.trim());
     if (priceMinor === null) { setGroupError("দাম টাকায় ঠিকভাবে লিখুন (যেমন: 450 বা 450.50)।"); return; }
-    setGroupBusy("pl-add"); setGroupError(""); setGroupNotice("");
+    setGroupBusy("pl-add"); setGroupError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/customer-groups/${plGroupId}/price-list/items`, {
         method: "POST",
@@ -410,13 +407,13 @@ export default function CustomersPage() {
     const delta = Number(adjustDelta);
     if (!Number.isInteger(delta) || delta === 0) { setAdjustError("পয়েন্টের পরিমাণ শূন্য নয় এমন পূর্ণ সংখ্যা দিন (যোগ করতে ধনাত্মক, কাটতে ঋণাত্মক)।"); return; }
     if (!adjustNote.trim()) { setAdjustError("সমন্বয়ের নোট দেওয়া বাধ্যতামূলক।"); return; }
-    setAdjustBusy(true); setAdjustError(""); setAdjustNotice("");
+    setAdjustBusy(true); setAdjustError("");
     try {
       const out = await apiFetch<{ balance: number }>(`/organizations/${orgId}/commerce/loyalty/customers/${detail.customer.id}/adjust`, {
         method: "POST",
         body: JSON.stringify({ deltaPoints: delta, note: adjustNote.trim() }),
       });
-      setAdjustNotice(`সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`);
+      toast({ title: `সমন্বয় সম্পন্ন — নতুন ব্যালেন্স ${out.balance} পয়েন্ট।`, tone: "success" });
       setAdjustDelta(""); setAdjustNote("");
       await loadLoyalty(detail.customer.id);
     } catch (e) { setAdjustError(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ"); }
@@ -435,12 +432,12 @@ export default function CustomersPage() {
       if (m === null) { setCreditError("ক্রেডিট সীমা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।"); return; }
       creditLimitMinor = m;
     }
-    setCreditBusy(true); setCreditError(""); setCreditNotice("");
+    setCreditBusy(true); setCreditError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}`, {
         method: "PATCH", body: JSON.stringify({ creditLimitMinor }),
       });
-      setCreditNotice(creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।");
+      toast({ title: creditLimitMinor === null ? "ক্রেডিট সীমা তুলে নেওয়া হয়েছে।" : "ক্রেডিট সীমা সংরক্ষণ হয়েছে।", tone: "success" });
       await loadKhata(detail.customer.id);
       await load();
     } catch (e) { setCreditError(e instanceof Error ? e.message : "ক্রেডিট সীমা সংরক্ষণ ব্যর্থ"); }
@@ -458,10 +455,10 @@ export default function CustomersPage() {
   // reason, which is surfaced verbatim.
   async function pushToStore(storeId: string) {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    setBusy(`push-${storeId}`); setError(""); setNotice("");
+    setBusy(`push-${storeId}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/customers/${detail.customer.id}/push-to-store/${storeId}`, { method: "POST" });
-      setNotice("Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।");
+      toast({ title: "Push Outbox-এ জমা হয়েছে — Sync Center-এ ফলাফল দেখা যাবে।", tone: "success" });
     } catch (e) { setError(e instanceof Error ? e.message : "Push ব্যর্থ"); }
     finally { setBusy(""); }
   }
@@ -483,9 +480,9 @@ export default function CustomersPage() {
 
   async function open(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setKhata(null); setKhataError(""); setCreditNotice(""); setCreditError("");
+    setKhata(null); setKhataError(""); setCreditError("");
     void loadKhata(id);
-    setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError(""); setAdjustNotice("");
+    setLoyalty(null); setLoyaltyError(""); setAdjustDelta(""); setAdjustNote(""); setAdjustError("");
     void loadLoyalty(id);
     try {
       const d = await apiFetch<Detail>(`/organizations/${orgId}/customers/${id}`);
@@ -509,7 +506,7 @@ export default function CustomersPage() {
       setCrmVip(!!d.customer.isVip);
       setCrmBlocked(!!d.customer.isBlocked);
       setCrmBlockedReason(d.customer.blockedReason ?? "");
-      setCrmError(""); setCrmNotice("");
+      setCrmError("");
     }
     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -518,7 +515,7 @@ export default function CustomersPage() {
   // fields via PATCH /customers/:id (audited server-side).
   async function saveEdit() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    setBusy("edit"); setError(""); setNotice("");
+    setBusy("edit"); setError("");
     try {
       const customFields = buildCustomFieldsPayload(custDefs, editCf, detail.customer.customFields);
       const out = await apiFetch<Detail>(`/organizations/${orgId}/customers/${detail.customer.id}`, {
@@ -535,7 +532,7 @@ export default function CustomersPage() {
       });
       setDetail(out);
       setEditCf(customFieldsToRaw(custDefs, out.customer.customFields));
-      setNotice("কাস্টমারের তথ্য সেভ হয়েছে।");
+      toast({ title: "কাস্টমারের তথ্য সেভ হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
     finally { setBusy(""); }
@@ -545,14 +542,14 @@ export default function CustomersPage() {
   // financial records stay; the confirm dialog says so plainly.
   async function doErase() {
     const orgId = getOrganizationId(); if (!orgId || !detail) return;
-    if (!confirm("এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে। নিশ্চিত তো?")) return;
-    setBusy("erase"); setError(""); setNotice(""); setEraseReport(null);
+    if (!(await confirm({ title: "ব্যক্তিগত তথ্য স্থায়ীভাবে মুছে ফেলবেন?", body: "এই কাস্টমারের ব্যক্তিগত তথ্য (নাম, ফোন, ইমেইল, ঠিকানা) স্থায়ীভাবে মুছে ফেলা হবে — এটি ফেরত আনা যাবে না। অর্ডারের আর্থিক রেকর্ড (টাকার হিসাব) থেকে যাবে, কিন্তু অর্ডারের ঠিকানা মুছে যাবে।", danger: true, confirmLabel: "স্থায়ীভাবে মুছে ফেলুন" }))) return;
+    setBusy("erase"); setError(""); setEraseReport(null);
     try {
       const report = await apiFetch<{ customerId: string; ordersAnonymized: number; identitiesDeleted: number; reviewsRedacted: number; abandonedCheckoutsDeleted: number }>(
         `/organizations/${orgId}/customers/${detail.customer.id}/erase`, { method: "POST" },
       );
       setEraseReport(report);
-      setNotice("কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।");
+      toast({ title: "কাস্টমারের ব্যক্তিগত তথ্য মুছে ফেলা হয়েছে।", tone: "success" });
       await load();
       await open(report.customerId);
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
@@ -561,14 +558,14 @@ export default function CustomersPage() {
 
   async function doMerge() {
     const orgId = getOrganizationId(); if (!orgId || !detail || !mergeTarget) return;
-    if (!confirm("এই কাস্টমার রেকর্ডটি নির্বাচিত রেকর্ডে মার্জ হবে। অর্ডার ও কথোপকথন সরে যাবে; মূল রেকর্ডটি লুকানো থাকবে (মুছে যাবে না)। নিশ্চিত তো?")) return;
-    setBusy("merge"); setNotice("");
+    if (!(await confirm({ title: "কাস্টমার রেকর্ড মার্জ করবেন?", body: "এই কাস্টমার রেকর্ডটি নির্বাচিত রেকর্ডে মার্জ হবে। অর্ডার ও কথোপকথন সরে যাবে; মূল রেকর্ডটি লুকানো থাকবে (মুছে যাবে না)।", confirmLabel: "মার্জ করুন" }))) return;
+    setBusy("merge");
     try {
       const merged = await apiFetch<Detail>(`/organizations/${orgId}/customers/merge`, {
         method: "POST", body: JSON.stringify({ sourceId: detail.customer.id, targetId: mergeTarget }),
       });
       setDetail(merged);
-      setNotice("মার্জ সম্পন্ন হয়েছে।");
+      toast({ title: "মার্জ সম্পন্ন হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Merge ব্যর্থ"); }
     finally { setBusy(""); }
@@ -581,7 +578,6 @@ export default function CustomersPage() {
         <p className="text-slate-500">প্রতিটি গ্রাহকের সম্পূর্ণ ছবি: অর্ডার, কথোপকথন, পার্সেল ও মোট কেনাকাটা। ডুপ্লিকেট রেকর্ড মার্জও এখান থেকে।</p>
       </div>
       {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-xl bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         <input className="input w-72" placeholder="নাম, ফোন বা ইমেইল দিয়ে খুঁজুন" value={q} onChange={(e) => setQ(e.target.value)} />
         <label className="flex items-center gap-2 text-sm">
@@ -731,7 +727,6 @@ export default function CustomersPage() {
                   </div>
                 ) : null}
                 {crmError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{crmError}</p> : null}
-                {crmNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{crmNotice}</p> : null}
                 <div>
                   <div className="mb-1 text-sm font-medium">ট্যাগ (সর্বোচ্চ ১০টি, প্রতিটি ১–৩০ অক্ষর)</div>
                   <div className="flex flex-wrap gap-1.5">
@@ -925,7 +920,6 @@ export default function CustomersPage() {
                         </span>
                       </label>
                       {creditError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{creditError}</p> : null}
-                      {creditNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{creditNotice}</p> : null}
                     </div>
                     {khata.orders.length === 0 ? (
                       <p className="text-sm text-slate-400">{khataOverdueOnly ? "মেয়াদোত্তীর্ণ কোনো বকেয়া অর্ডার নেই।" : "এই কাস্টমারের কোনো অর্ডার খাতায় নেই।"}</p>
@@ -1045,7 +1039,6 @@ export default function CustomersPage() {
                       <div className="text-sm font-semibold">পয়েন্ট সমন্বয় (স্টাফ)</div>
                       <p className="text-xs text-slate-500">ধনাত্মক সংখ্যা = পয়েন্ট যোগ, ঋণাত্মক = পয়েন্ট কাটা। নোট দেওয়া বাধ্যতামূলক — নোটটি লেজারে থেকে যাবে।</p>
                       {adjustError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{adjustError}</p> : null}
-                      {adjustNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{adjustNotice}</p> : null}
                       <div className="flex flex-wrap items-end gap-2">
                         <label className="block text-sm">পয়েন্ট (+/−)
                           <input className="input mt-1 w-36" type="number" step="1" value={adjustDelta} onChange={(e) => setAdjustDelta(e.target.value)} placeholder="যেমন: ৫০ বা −২০" />
@@ -1097,7 +1090,6 @@ export default function CustomersPage() {
         <h2 className="font-semibold">👥 কাস্টমার গ্রুপ (B2B) ও প্রাইস লিস্ট</h2>
         <p className="text-xs text-slate-500">পাইকারি/B2B ক্রেতাদের গ্রুপে ভাগ করুন। প্রতিটি গ্রুপের নিজস্ব প্রাইস লিস্ট থাকতে পারে — গ্রুপের সদস্যের চেকআউটে ক্যাটালগ দামের বদলে প্রাইস লিস্টের দামই প্রযোজ্য হবে। গ্রুপ মুছলে সদস্যরা গ্রুপছাড়া হয়ে যান, কাস্টমার মোছা হয় না।</p>
         {groupError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{groupError}</p> : null}
-        {groupNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{groupNotice}</p> : null}
         {groups.length === 0 ? <p className="text-sm text-slate-400">কোনো গ্রুপ নেই — নিচে প্রথমটি বানান।</p> : groups.map((g) => (
           <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>
@@ -1109,7 +1101,7 @@ export default function CustomersPage() {
             </span>
             <span className="flex gap-2">
               <button className="btn-secondary btn-sm" onClick={() => { setPlGroupId(g.id); setBulkResult(""); void loadPriceList(g.id); }}>প্রাইস লিস্ট</button>
-              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); setGroupNotice(""); }}>নাম বদলান</button>
+              <button className="btn-secondary btn-sm" onClick={() => { setEditingGroupId(g.id); setGroupName(g.name); setGroupError(""); }}>নাম বদলান</button>
               <button className="btn-secondary btn-sm text-red-600" disabled={groupBusy !== ""} onClick={() => deleteGroup(g)}>মুছুন</button>
             </span>
           </div>
@@ -1200,7 +1192,6 @@ export default function CustomersPage() {
         <h2 className="font-semibold">🧩 গ্রাহক সেগমেন্ট</h2>
         <p className="text-xs text-slate-500">শর্ত মিলিয়ে গ্রাহকদের দল বানান। সব শর্ত একসাথে মিলতে হবে; কোনো শর্ত না দিলে সব গ্রাহকই এই সেগমেন্টে পড়বে। সদস্য সংখ্যা প্রতিবার লাইভ হিসাব হয়। শুধু Owner/Admin সেগমেন্ট তৈরি/বদল/মুছতে পারেন।</p>
         {segError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{segError}</p> : null}
-        {segNotice ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{segNotice}</p> : null}
         {segments.length === 0 ? <p className="text-sm text-slate-400">কোনো সেগমেন্ট নেই — নিচে প্রথমটি বানান।</p> : segments.map((s) => (
           <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
             <span>

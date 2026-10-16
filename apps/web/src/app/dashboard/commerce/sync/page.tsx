@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // GET /organizations/:id/stores returns the full Store rows
 // (IntegrationsService.listStores), so refundPushEnabled /
@@ -65,6 +66,8 @@ function listingBadge(status: string): string {
 }
 
 export default function SyncCenterPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [stores, setStores] = useState<Store[]>([]);
   const [storeId, setStoreId] = useState(""); // "" = সব স্টোর
   const [summary, setSummary] = useState<ListingSummary | null>(null);
@@ -76,7 +79,6 @@ export default function SyncCenterPage() {
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [conflictsError, setConflictsError] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   // EC4: conflict resolve confirm + store locations.
   const [confirmConflict, setConfirmConflict] = useState<{ id: string; choice: "keep_local" | "take_remote" } | null>(null);
@@ -93,7 +95,6 @@ export default function SyncCenterPage() {
   const [trackingKey, setTrackingKey] = useState("");
   const [trackingBusy, setTrackingBusy] = useState(false);
   const [trackingError, setTrackingError] = useState("");
-  const [trackingNotice, setTrackingNotice] = useState("");
   // CP3: manual weight-unit override.
   const [weightBusy, setWeightBusy] = useState(false);
   const [weightError, setWeightError] = useState("");
@@ -137,17 +138,17 @@ export default function SyncCenterPage() {
   const selectedTrackingKey = selectedStore?.courierTrackingMetaKey ?? "";
   useEffect(() => {
     setTrackingKey(selectedTrackingKey);
-    setRefundError(""); setTrackingError(""); setTrackingNotice("");
+    setRefundError(""); setTrackingError("");
   }, [storeId, selectedTrackingKey]);
 
   async function changeSyncMode(syncMode: string) {
     const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
-    setError(""); setNotice(""); setBusy("sync-mode");
+    setError(""); setBusy("sync-mode");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/sync-mode`, {
         method: "PATCH", body: JSON.stringify({ syncMode }),
       });
-      setNotice(`"${selectedStore.name}" স্টোরের Sync মোড এখন ${syncMode}।`);
+      toast({ title: `"${selectedStore.name}" স্টোরের Sync মোড এখন ${syncMode}।`, tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Sync মোড বদলানো ব্যর্থ"); }
     finally { setBusy(""); }
@@ -155,7 +156,7 @@ export default function SyncCenterPage() {
 
   async function toggleRefundPush(enabled: boolean) {
     const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
-    setRefundBusy(true); setRefundError(""); setNotice("");
+    setRefundBusy(true); setRefundError("");
     try {
       // The PATCH response is the full updated Store row — trust it
       // for the local state instead of refetching everything.
@@ -163,7 +164,7 @@ export default function SyncCenterPage() {
         method: "PATCH", body: JSON.stringify({ enabled }),
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
-      setNotice(updated.refundPushEnabled ? `"${selectedStore.name}" স্টোরে Refund Push চালু হয়েছে।` : `"${selectedStore.name}" স্টোরে Refund Push বন্ধ হয়েছে।`);
+      toast({ title: updated.refundPushEnabled ? `"${selectedStore.name}" স্টোরে Refund Push চালু হয়েছে।` : `"${selectedStore.name}" স্টোরে Refund Push বন্ধ হয়েছে।`, tone: "success" });
     } catch (e) {
       // Non-owners get the RolesGuard error here — show it verbatim,
       // honestly, rather than hiding the toggle's failure.
@@ -173,20 +174,20 @@ export default function SyncCenterPage() {
 
   async function saveWeightUnit(unit: string) {
     const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
-    setWeightBusy(true); setWeightError(""); setNotice("");
+    setWeightBusy(true); setWeightError("");
     try {
       const updated = await apiFetch<Store>(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/sync-mode`, {
         method: "PATCH", body: JSON.stringify({ weightUnit: unit === "" ? null : unit }),
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
-      setNotice(`"${selectedStore.name}" স্টোরের ওজনের একক এখন ${updated.weightUnit ?? "kg (ডিফল্ট)"}।`);
+      toast({ title: `"${selectedStore.name}" স্টোরের ওজনের একক এখন ${updated.weightUnit ?? "kg (ডিফল্ট)"}।`, tone: "success" });
     } catch (e) { setWeightError(e instanceof Error ? e.message : "ওজনের একক বদলানো ব্যর্থ"); }
     finally { setWeightBusy(false); }
   }
 
   async function saveTrackingMetaKey() {
     const orgId = getOrganizationId(); if (!orgId || !selectedStore) return;
-    setTrackingBusy(true); setTrackingError(""); setTrackingNotice("");
+    setTrackingBusy(true); setTrackingError("");
     try {
       const value = trackingKey.trim();
       const updated = await apiFetch<Store>(`/organizations/${orgId}/commerce/stores/${selectedStore.id}/tracking-meta-key`, {
@@ -194,7 +195,7 @@ export default function SyncCenterPage() {
       });
       setStores((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
       setTrackingKey(updated.courierTrackingMetaKey ?? "");
-      setTrackingNotice("Tracking Meta Key সংরক্ষণ হয়েছে।");
+      toast({ title: "Tracking Meta Key সংরক্ষণ হয়েছে।", tone: "success" });
     } catch (e) { setTrackingError(e instanceof Error ? e.message : "Tracking Meta Key সংরক্ষণ ব্যর্থ"); }
     finally { setTrackingBusy(false); }
   }
@@ -220,12 +221,12 @@ export default function SyncCenterPage() {
   async function resolveConflict() {
     const orgId = getOrganizationId(); if (!orgId || !confirmConflict) return;
     const { id, choice } = confirmConflict;
-    setError(""); setNotice(""); setBusy(`conflict-${id}`);
+    setError(""); setBusy(`conflict-${id}`);
     try {
       await apiFetch(`/organizations/${orgId}/commerce/conflicts/${id}/resolve`, {
         method: "POST", body: JSON.stringify({ choice }),
       });
-      setNotice(choice === "keep_local" ? "Conflict নিষ্পত্তি হয়েছে — লোকাল মান রাখা হয়েছে।" : "Conflict নিষ্পত্তি হয়েছে — স্টোরের মান নেওয়া হয়েছে।");
+      toast({ title: choice === "keep_local" ? "Conflict নিষ্পত্তি হয়েছে — লোকাল মান রাখা হয়েছে।" : "Conflict নিষ্পত্তি হয়েছে — স্টোরের মান নেওয়া হয়েছে।", tone: "success" });
       setConfirmConflict(null);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
@@ -235,12 +236,12 @@ export default function SyncCenterPage() {
   async function applyPerField(c: Conflict) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const choices = fieldChoices[c.id] ?? {};
-    setError(""); setNotice(""); setBusy(`conflict-${c.id}`);
+    setError(""); setBusy(`conflict-${c.id}`);
     try {
       await apiFetch(`/organizations/${orgId}/commerce/conflicts/${c.id}/resolve`, {
         method: "POST", body: JSON.stringify({ choice: "per_field", choices }),
       });
-      setNotice("Conflict নিষ্পত্তি হয়েছে — ফিল্ড অনুযায়ী বেছে নেওয়া মানগুলো প্রয়োগ হয়েছে।");
+      toast({ title: "Conflict নিষ্পত্তি হয়েছে — ফিল্ড অনুযায়ী বেছে নেওয়া মানগুলো প্রয়োগ হয়েছে।", tone: "success" });
       setExpandedConflictId("");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Conflict নিষ্পত্তি ব্যর্থ"); }
@@ -254,7 +255,7 @@ export default function SyncCenterPage() {
       const res = await apiFetch<{ locations: StoreLocation[]; imported: number }>(
         `/organizations/${orgId}/commerce/stores/${storeId}/locations/refresh`, { method: "POST" });
       setLocations(res.locations);
-      setNotice(`Shopify থেকে ${res.imported}টি নতুন Location আনা হয়েছে।`);
+      toast({ title: `Shopify থেকে ${res.imported}টি নতুন Location আনা হয়েছে।`, tone: "success" });
     } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location আনতে ব্যর্থ হয়েছে"); }
     finally { setLocationsBusy(""); }
   }
@@ -273,7 +274,7 @@ export default function SyncCenterPage() {
         }),
       });
       setLocForm({ name: "", externalLocationId: "", isDefault: false });
-      setNotice("Location যোগ হয়েছে।");
+      toast({ title: "Location যোগ হয়েছে।", tone: "success" });
       await loadLocations(storeId);
     } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location যোগ ব্যর্থ হয়েছে"); }
     finally { setLocationsBusy(""); }
@@ -286,7 +287,7 @@ export default function SyncCenterPage() {
       await apiFetch(`/organizations/${orgId}/commerce/locations/${loc.id}`, {
         method: "PATCH", body: JSON.stringify({ isDefault: true }),
       });
-      setNotice(`"${loc.name}" এখন ডিফল্ট Location।`);
+      toast({ title: `"${loc.name}" এখন ডিফল্ট Location।`, tone: "success" });
       if (storeId) await loadLocations(storeId);
     } catch (e) { setLocationsError(e instanceof Error ? e.message : "ডিফল্ট সেট ব্যর্থ হয়েছে"); }
     finally { setLocationsBusy(""); }
@@ -294,11 +295,11 @@ export default function SyncCenterPage() {
 
   async function deleteLocation(loc: StoreLocation) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`Location "${loc.name}" মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `Location "${loc.name}" মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setLocationsBusy(`delete-${loc.id}`); setLocationsError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/locations/${loc.id}`, { method: "DELETE" });
-      setNotice(`Location "${loc.name}" মোছা হয়েছে।`);
+      toast({ title: `Location "${loc.name}" মোছা হয়েছে।`, tone: "success" });
       if (storeId) await loadLocations(storeId);
     } catch (e) { setLocationsError(e instanceof Error ? e.message : "Location মোছা ব্যর্থ হয়েছে"); }
     finally { setLocationsBusy(""); }
@@ -306,10 +307,10 @@ export default function SyncCenterPage() {
 
   async function replay(item: OutboxItem) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    setError(""); setNotice(""); setBusy(`replay-${item.id}`);
+    setError(""); setBusy(`replay-${item.id}`);
     try {
       await apiFetch(`/organizations/${orgId}/commerce/outbox/${item.id}/replay`, { method: "POST" });
-      setNotice("আইটেমটি আবার চেষ্টার জন্য Outbox এ ফেরত দেওয়া হয়েছে।");
+      toast({ title: "আইটেমটি আবার চেষ্টার জন্য Outbox এ ফেরত দেওয়া হয়েছে।", tone: "success" });
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Replay ব্যর্থ"); }
     finally { setBusy(""); }
@@ -333,7 +334,6 @@ export default function SyncCenterPage() {
         </div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -426,7 +426,6 @@ export default function SyncCenterPage() {
                 </label>
                 <p className="text-xs text-slate-400">WooCommerce shipment plugin-এর tracking meta key (ঐচ্ছিক)। খালি রেখে সংরক্ষণ করলে মুছে যাবে।</p>
                 {trackingError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{trackingError}</p> : null}
-                {trackingNotice ? <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{trackingNotice}</p> : null}
               </div>
             </div>
           </div>

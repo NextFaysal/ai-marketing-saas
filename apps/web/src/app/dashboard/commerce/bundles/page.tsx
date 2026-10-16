@@ -4,6 +4,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC29 — bundle management. A bundle sells 2–10 component
 // products together at one bundle price. regularTotalMinor comes
@@ -50,6 +51,8 @@ interface ComponentRow { productId: string; variantSku: string; qty: string }
 interface SlotRow { label: string; chooseQty: string; sourceType: "category" | "products"; categoryId: string; productIds: string[] }
 
 export default function BundlesPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
@@ -57,7 +60,6 @@ export default function BundlesPage() {
   // bundle's FULL slot set — saving replaces them wholesale).
   const [slotRows, setSlotRows] = useState<SlotRow[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -165,7 +167,7 @@ export default function BundlesPage() {
         slots.push({ label, chooseQty, sourceType: "products", sourceRef: { productIds: s.productIds } });
       }
     }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const body = {
       name: name.trim(),
       description: description.trim() || null,
@@ -180,10 +182,10 @@ export default function BundlesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/bundles/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("বান্ডল আপডেট হয়েছে।");
+        toast({ title: "বান্ডল আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/bundles`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("বান্ডল তৈরি হয়েছে।");
+        toast({ title: "বান্ডল তৈরি হয়েছে।", tone: "success" });
       }
       resetForm();
       await load();
@@ -205,7 +207,7 @@ export default function BundlesPage() {
 
   async function remove(b: Bundle) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${b.name}" বান্ডলটি মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `"${b.name}" বান্ডলটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setBusy(`del-${b.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/bundles/${b.id}`, { method: "DELETE" });
@@ -230,7 +232,6 @@ export default function BundlesPage() {
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="font-semibold">{editingId ? "বান্ডল সম্পাদনা" : "নতুন বান্ডল"}</div>

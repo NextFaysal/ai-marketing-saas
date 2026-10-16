@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
 
 // AB5 (AX7) — staff quotes dashboard. A quote is an OFFER
@@ -55,6 +56,8 @@ const statusChip = (s: string) =>
   : "bg-slate-100 text-slate-600";
 
 export default function QuotesPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [customers, setCustomers] = useState<CustomerOpt[]>([]);
@@ -201,10 +204,10 @@ export default function QuotesPage() {
     try {
       if (editingId) {
         await apiFetch(`/organizations/${orgId}/commerce/quotes/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("কোট হালনাগাদ হয়েছে।");
+        toast({ title: "কোট হালনাগাদ হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/commerce/quotes`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("কোট তৈরি হয়েছে (খসড়া)।");
+        toast({ title: "কোট তৈরি হয়েছে (খসড়া)।", tone: "success" });
       }
       setFormOpen(false); resetForm();
       await load();
@@ -245,11 +248,11 @@ export default function QuotesPage() {
 
   async function cancelQuote(q: Quote) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`কোট ${q.number} বাতিল করবেন?`)) return;
-    setBusy(`cancel-${q.id}`); setError("");
+    if (!(await confirm({ title: `কোট ${q.number} বাতিল করবেন?`, danger: true, confirmLabel: "বাতিল করুন" }))) return;
+    setBusy(`cancel-${q.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/quotes/${q.id}/cancel`, { method: "POST" });
-      setNotice(`কোট ${q.number} বাতিল হয়েছে।`);
+      toast({ title: `কোট ${q.number} বাতিল হয়েছে।`, tone: "success" });
       if (detail?.id === q.id) await refreshDetail(q.id); else await load();
     } catch (e) { setError(e instanceof Error ? e.message : "বাতিল ব্যর্থ"); }
     finally { setBusy(""); }

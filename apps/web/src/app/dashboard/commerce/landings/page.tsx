@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 import { formatMinorTaka } from "@/lib/storefront-money";
 import {
   formatConversionRate, formatPValue, variantSignificance,
@@ -77,6 +78,8 @@ function statusPill(status: string) {
 }
 
 export default function LandingsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [landings, setLandings] = useState<LandingListItem[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,7 +158,7 @@ export default function LandingsPage() {
     return typeof window !== "undefined" ? `${window.location.origin}/l/${slug}` : `/l/${slug}`;
   }
   async function copyText(text: string) {
-    try { await navigator.clipboard.writeText(text); setNotice("লিংক কপি হয়েছে।"); }
+    try { await navigator.clipboard.writeText(text); toast({ title: "লিংক কপি হয়েছে।", tone: "success" }); }
     catch { setError("কপি করা যায়নি — লিংকটি হাতে কপি করুন।"); }
   }
 
@@ -196,7 +199,7 @@ export default function LandingsPage() {
           sections: ordered,
         }),
       });
-      setNotice("ল্যান্ডিং পেজ সংরক্ষণ হয়েছে।");
+      toast({ title: "ল্যান্ডিং পেজ সংরক্ষণ হয়েছে।", tone: "success" });
       await load();
       await loadDetail(selectedId);
     } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
@@ -205,11 +208,11 @@ export default function LandingsPage() {
 
   async function archive(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("ল্যান্ডিং পেজটি আর্কাইভ করবেন? পাবলিক লিংকটি বন্ধ হয়ে যাবে, তবে অর্ডারের ইতিহাস থেকে যাবে।")) return;
-    setBusy(`archive-${id}`); setError("");
+    if (!(await confirm({ title: "ল্যান্ডিং পেজটি আর্কাইভ করবেন?", body: "পাবলিক লিংকটি বন্ধ হয়ে যাবে, তবে অর্ডারের ইতিহাস থেকে যাবে।", danger: true, confirmLabel: "আর্কাইভ করুন" }))) return;
+    setBusy(`archive-${id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/landings/${id}`, { method: "DELETE" });
-      setNotice("ল্যান্ডিং পেজ আর্কাইভ হয়েছে।");
+      toast({ title: "ল্যান্ডিং পেজ আর্কাইভ হয়েছে।", tone: "success" });
       if (selectedId === id) { setSelectedId(null); setDetail(null); }
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "আর্কাইভ ব্যর্থ"); }
@@ -271,10 +274,10 @@ export default function LandingsPage() {
     try {
       if (editingVariantId) {
         await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants/${editingVariantId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("ভ্যারিয়েন্ট আপডেট হয়েছে।");
+        toast({ title: "ভ্যারিয়েন্ট আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("নতুন ভ্যারিয়েন্ট যোগ হয়েছে।");
+        toast({ title: "নতুন ভ্যারিয়েন্ট যোগ হয়েছে।", tone: "success" });
       }
       resetVariantForm();
       await loadDetail(selectedId);
@@ -283,11 +286,11 @@ export default function LandingsPage() {
   }
   async function deleteVariant(v: LandingVariant) {
     const orgId = getOrganizationId(); if (!orgId || !selectedId) return;
-    if (!window.confirm(`"${v.name}" ভ্যারিয়েন্টটি মুছে ফেলবেন?`)) return;
-    setBusy(`vdel-${v.id}`); setError("");
+    if (!(await confirm({ title: `"${v.name}" ভ্যারিয়েন্টটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
+    setBusy(`vdel-${v.id}`); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/landings/${selectedId}/variants/${v.id}`, { method: "DELETE" });
-      setNotice("ভ্যারিয়েন্ট মুছে ফেলা হয়েছে।");
+      toast({ title: "ভ্যারিয়েন্ট মুছে ফেলা হয়েছে।", tone: "success" });
       if (editingVariantId === v.id) resetVariantForm();
       await loadDetail(selectedId);
     } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }

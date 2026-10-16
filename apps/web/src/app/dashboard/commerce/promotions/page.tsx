@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useConfirm, useToast } from "@repo/ui/client";
 
 // EC16 — promotions engine UI: BOGO / tiered / flash-sale rules plus
 // referrals (referral settings live on the storefront page). The
@@ -83,11 +84,12 @@ function ChipPicker({ options, selected, onToggle }: {
 }
 
 export default function PromotionsPage() {
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -258,7 +260,7 @@ export default function PromotionsPage() {
       setError("উপহার প্রমোশনের জন্য উপহার পণ্য বেছে নিন।");
       return;
     }
-    setBusy("save"); setError(""); setNotice("");
+    setBusy("save"); setError("");
     const priorOrders = minPriorOrders.trim() ? Math.max(0, parseInt(minPriorOrders, 10) || 0) : null;
     const body = {
       name: name.trim(),
@@ -276,10 +278,10 @@ export default function PromotionsPage() {
     try {
       if (editingId) {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        setNotice("প্রমোশন আপডেট হয়েছে।");
+        toast({ title: "প্রমোশন আপডেট হয়েছে।", tone: "success" });
       } else {
         await apiFetch<{ promotion: Promotion }>(`/organizations/${orgId}/commerce/promotions`, { method: "POST", body: JSON.stringify(body) });
-        setNotice("প্রমোশন তৈরি হয়েছে।");
+        toast({ title: "প্রমোশন তৈরি হয়েছে।", tone: "success" });
       }
       resetForm();
       await load();
@@ -301,7 +303,7 @@ export default function PromotionsPage() {
 
   async function remove(p: Promotion) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${p.name}" প্রমোশনটি মুছে ফেলবেন?`)) return;
+    if (!(await confirm({ title: `"${p.name}" প্রমোশনটি মুছে ফেলবেন?`, danger: true, confirmLabel: "মুছে ফেলুন" }))) return;
     setBusy(`del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/promotions/${p.id}`, { method: "DELETE" });
@@ -361,7 +363,6 @@ export default function PromotionsPage() {
         <Link href="/dashboard/commerce" className="btn-primary">← Commerce Hub</Link>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
         <div className="font-semibold">{editingId ? "প্রমোশন সম্পাদনা" : "নতুন প্রমোশন"}</div>
