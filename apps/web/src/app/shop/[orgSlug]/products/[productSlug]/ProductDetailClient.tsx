@@ -1,15 +1,30 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { fetchCart, getCartToken, patchCartLine } from "@/lib/storefront-cart";
-import { ExpressCheckout } from "../../ExpressCheckout";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
 import { WishlistHeart } from "../../WishlistHeart";
 import { StockAlertForm } from "../../StockAlertForm";
+
+// ED6 (EB2) — deferred chunks. ExpressCheckout renders null until
+// its session check (an effect) resolves, so its SSR output is
+// already empty and ssr:false is behaviour-identical; the sheet
+// itself only opens on click. The lightbox renders only after the
+// gallery image is clicked. Both chunks leave the PDP first load;
+// props and behaviour are unchanged.
+const ExpressCheckout = dynamic(
+  () => import("../../ExpressCheckout").then((m) => m.ExpressCheckout),
+  { ssr: false, loading: () => null },
+);
+const ProductLightbox = dynamic(
+  () => import("./ProductLightbox").then((m) => m.ProductLightbox),
+  { ssr: false, loading: () => null },
+);
 
 export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSlug: string; product: ShopProduct; locale?: ShopLocale | string }) {
   const t = shopT(locale);
@@ -63,16 +78,9 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
     return Number.isFinite(price) && price > 0 ? price : null;
   }
 
-  useEffect(() => {
-    if (!lightbox) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLightbox(false);
-      if (e.key === "ArrowRight") setLightboxIdx((i) => (images.length ? (i + 1) % images.length : i));
-      if (e.key === "ArrowLeft") setLightboxIdx((i) => (images.length ? (i - 1 + images.length) % images.length : i));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [lightbox, images.length]);
+  // ED6: the lightbox keyboard listener (Escape / arrows) moved
+  // into ProductLightbox itself — it mounts exactly while the
+  // lightbox is open, the same window this effect subscribed for.
 
   const variant = product.variants.find((v) => v.id === variantId) ?? null;
   const unitMinor = variant?.priceMinor ?? product.priceMinor;
@@ -232,17 +240,14 @@ export function ProductDetailClient({ orgSlug, product, locale = "bn" }: { orgSl
           </div>
         ) : null}
         {lightbox && images.length > 0 ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setLightbox(false)}>
-            <button type="button" aria-label={t.popup.close} onClick={() => setLightbox(false)} className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-2xl text-white">×</button>
-            {images.length > 1 ? (
-              <>
-                <button type="button" aria-label="Previous" onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx - 1 + images.length) % images.length); }} className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white">‹</button>
-                <button type="button" aria-label="Next" onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx + 1) % images.length); }} className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white">›</button>
-              </>
-            ) : null}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={images[lightboxIdx]} alt={product.name} className="max-h-[90vh] max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
-          </div>
+          <ProductLightbox
+            images={images}
+            index={lightboxIdx}
+            productName={product.name}
+            closeLabel={t.popup.close}
+            onClose={() => setLightbox(false)}
+            onNavigate={setLightboxIdx}
+          />
         ) : null}
       </div>
 

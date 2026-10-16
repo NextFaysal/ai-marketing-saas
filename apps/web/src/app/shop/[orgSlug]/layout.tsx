@@ -10,12 +10,14 @@ import { shopLocaleOf, shopT } from "@/lib/shop-i18n";
 import { TrackingTags } from "./TrackingTags";
 import { themeIdOf } from "@/lib/shop-theme";
 import { ShopHeader } from "./ShopHeader";
-import { ShopPopup } from "./ShopPopup";
 import { ShopContactButtons } from "./ShopContactButtons";
 import { AttributionCapture } from "./AttributionCapture";
 import { ShopPushPrompt } from "./ShopPushPrompt";
 import { ShopInstallBar } from "./ShopInstallBar";
-import { ShopSocialProof } from "./ShopSocialProof";
+// ED6: ShopPopup + ShopSocialProof load via this client wrapper's
+// next/dynamic (ssr:false) — both render nothing until their
+// client-side triggers fire, so their chunks leave the first load.
+import { ShopPopupDeferred, ShopSocialProofDeferred } from "./ShopDeferredOverlays";
 
 export async function generateMetadata({
   params,
@@ -128,13 +130,15 @@ export default async function ShopLayout({
       <main>{children}</main>
       {/* AB7 (AX19): first-touch utm/click capture into tp_sess. */}
       <AttributionCapture />
-      <ShopPopup orgSlug={orgSlug} locale={locale} />
+      {/* ED6: popup deferred (renders nothing until its trigger). */}
+      <ShopPopupDeferred orgSlug={orgSlug} locale={locale} />
       {/* AB7 (AX16): push prompt (shop-scoped worker) + AX17 social proof. */}
       <ShopPushPrompt orgSlug={orgSlug} />
       {/* AB8 (AX22): per-shop install bar (rides the stashed
           beforeinstallprompt; iOS gets manual instructions). */}
       <ShopInstallBar orgSlug={orgSlug} />
-      <ShopSocialProof orgSlug={orgSlug} themeId={themeIdOf(home.settings.themeId)} />
+      {/* ED6: social proof deferred (renders nothing until its feed loads). */}
+      <ShopSocialProofDeferred orgSlug={orgSlug} themeId={themeIdOf(home.settings.themeId)} />
       <ShopContactButtons
         whatsappNumber={home.settings.whatsappNumber ?? null}
         messengerUrl={home.settings.messengerUrl ?? null}
