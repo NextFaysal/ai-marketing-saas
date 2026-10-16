@@ -23,7 +23,7 @@ Commits (oldest → newest):
 
 | Gate | Baseline (53d42fac) | Final (EB2) |
 |---|---|---|
-| Web vitest | 715 passed / 83 files | **733 passed / 85 files** (+10 MediaImage specs, +4 header-cache specs, +4 cdn-image width-step specs) |
+| Web vitest | 715 passed / 83 files | **733 passed / 85 files** (+13 MediaImage specs, +4 header-cache specs, +1 net cdn-image spec) |
 | Web tsc (`tsc --noEmit`) | 0 errors | **0 errors** |
 | `pnpm -r build` (7 projects, production `next build`) | exit 0 | **exit 0** |
 | API / prisma / migrations | — | untouched (0 files), zero migrations |
@@ -35,8 +35,8 @@ finding was gc-tree-only): `lib/cdn-image.ts` — `cdn-cgi/image`
 transformation URLs on the media CDN host (`media.qosprey.com`,
 `NEXT_PUBLIC_MEDIA_CDN_BASE_URL` override), widths [320, 640, 960,
 1280], non-CDN srcs passed through untouched. EB2 added
-`cdnWidthFor(request)` (largest preset step ≥ request, clamped to
-the largest step) with specs.
+`cdnWidthFor(request)` (largest preset step ≤ the request, 320
+floor / 1280 cap, 640 default for an unknown width) with specs.
 
 **MediaImage contract** (`components/MediaImage.tsx`, canonical;
 the R2-era `components/media-image.tsx` is now a re-export shim —
@@ -226,6 +226,17 @@ from builder reports.
 
 ## Honest limits
 
+- Two deliberate MediaImage behaviour notes: (a) the R2-era client
+  component's onError fallback to the original src was **dropped**
+  — it is incompatible with the server-safe contract, so a broken
+  CDN transform now shows the img's alt/broken state instead of
+  silently retrying the original; (b) dimension-less surfaces
+  (PageBlocks image blocks, blog covers, ShopPopup) previously
+  rendered at natural aspect and now get standardized aspect
+  boxes (16/9, 16/9, 2/1) per the CLS instruction — a source image
+  with a different ratio crops via the existing `object-cover`
+  instead of shifting layout. Both deserve a glance in EB3 /
+  screenshot QA.
 - **ISR staleness is product-visible**: with `revalidate: 60`, a
   merchant's price/stock/content edit can take up to ~60s to
   appear on the storefront. There is **no on-demand revalidation**
