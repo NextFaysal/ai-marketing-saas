@@ -148,10 +148,16 @@ legacy rendering unchanged.
   disables it exactly like the main button.
 - **Info panel v2**: token price block + trust rows with lucide
   icons in the client panel; no text added/removed.
-- Gift-card products: the buy bar reads the same unit-price
-  computation as the main panel; the GC face-value/recipient
-  form stays in the main panel only (the bar's buy actions reuse
-  the same handlers, which validate GC state as today).
+- Gift-card products: the buy bar IS shown; its price is the
+  selected face value (`gcAmountMinor()` — the same state the
+  main panel's addToCart validates; `unitMinor` while a custom
+  amount is unusable). The GC face-value/recipient form itself
+  stays in the main panel; the bar's buy actions reuse the same
+  handlers, which validate GC state as today. Buy-now = the
+  existing addToCart handler (now returning Promise<boolean>;
+  existing callers ignore it) + navigation to checkout only on
+  success — the PDP has no separate buy-now flow today, and
+  none was invented.
 
 **Listing v2**: home (`page.tsx`) and the brand page now resolve
 the **effective** theme (both already read searchParams, so
@@ -177,7 +183,8 @@ each overlay keeps its own trigger/frequency/dismissal logic and
 now renders only when the queue grants it. Pure core + React
 binding (`useOverlayGrant(id, wantsVisible)`,
 useSyncExternalStore). Rules, all unit-spec'd
-(`lib/shop-overlay-queue.test.ts`, 8 specs): at most ONE active;
+(`lib/shop-overlay-queue.test.ts`, 9 specs incl. the lift
+computation): at most ONE active;
 priority **popup 40 > install 30 > push 20 > social 10**;
 releasing the active id frees the next-highest waiter;
 re-request is idempotent; releasing a non-active id just
@@ -206,8 +213,10 @@ modal and takes no lift.
 **Cart drawer** (new `ShopCartDrawer.tsx`, v2 header only — the
 v2 cart button opens it instead of navigating; legacy header
 untouched): @repo/ui Drawer with line items (MediaImage thumbs,
-qty steppers, remove — via `fetchCart`/`patchCartLine`/
-`patchBundleLine` with the cart page's exact call shapes),
+qty steppers, remove — via `fetchCart`/`patchCartLine` with the
+cart page's exact call shapes; bundle lines render read-only,
+mirroring the cart page's treatment — `patchBundleLine` is NOT
+called from the drawer, bundle editing stays on the cart page),
 subtotal, checkout CTA (Link, `.btn-brand`) and a full-cart-page
 link. Refreshes on open + `CART_UPDATED_EVENT`; badge sync rides
 the existing event flow. **The full cart page is unchanged** and
