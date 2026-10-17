@@ -24,6 +24,9 @@ const FULL: ShopTracking = {
   googleAdsId: "AW-123",
   googleAdsConversionLabel: "label-1",
   searchConsoleVerification: "token-1",
+  metaPixelId: "123456789",
+  tikTokPixelId: "TT-123456",
+  clarityId: "clarity-123",
 };
 const NONE: ShopTracking = {
   ga4MeasurementId: null,
@@ -31,6 +34,9 @@ const NONE: ShopTracking = {
   googleAdsId: null,
   googleAdsConversionLabel: null,
   searchConsoleVerification: null,
+  metaPixelId: null,
+  tikTokPixelId: null,
+  clarityId: null,
 };
 
 describe("trackingFromSettings", () => {
@@ -265,3 +271,23 @@ describe("captureFirstTouchAttribution + getAttributionForCheckout (AX19)", () =
     expect(getAttributionForCheckout(null)).toBeUndefined();
   });
 });
+
+describe("parseTrackingIds multi-account parser", () => {
+  it("splits comma and whitespace separated IDs into clean array", () => {
+    const { parseTrackingIds } = require("./shop-tracking");
+    expect(parseTrackingIds("123456789, 987654321")).toEqual(["123456789", "987654321"]);
+    expect(parseTrackingIds("G-111  G-222,  G-333\n G-444")).toEqual(["G-111", "G-222", "G-333", "G-444"]);
+    expect(parseTrackingIds(null)).toEqual([]);
+    expect(parseTrackingIds("")).toEqual([]);
+    expect(parseTrackingIds("   ")).toEqual([]);
+  });
+});
+
+describe("trackShopEvent broadcast dispatcher", () => {
+  it("safely ignores calls when window is not defined or functions absent", () => {
+    const { trackShopEvent } = require("./shop-tracking");
+    expect(() => trackShopEvent("PageView")).not.toThrow();
+    expect(() => trackShopEvent("ViewContent", { content_name: "T-Shirt", value: 500 })).not.toThrow();
+  });
+});
+

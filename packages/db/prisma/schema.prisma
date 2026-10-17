@@ -7393,6 +7393,9 @@ model StorefrontSetting {
   googleAdsId               String?
   googleAdsConversionLabel  String?
   searchConsoleVerification String?
+  metaPixelId               String?
+  tikTokPixelId             String?
+  clarityId                 String?
   // EC32: affiliate program config. Enabled=false = presented
   // codes are ignored entirely (no stamp, no commission).
   // affiliateDefaultPercent pre-fills new partners (a partner's

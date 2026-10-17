@@ -41,7 +41,7 @@ import { TurnstileWidget, useIdempotencyKey } from "@/components/TurnstileWidget
 import { fetchMe, getShopSession } from "@/lib/storefront-account";
 import { CrossSellRail } from "../CrossSellRail";
 import { captureAffiliateRef, currentAffiliateCode } from "@/lib/affiliate-ref";
-import { getAttributionForCheckout } from "@/lib/shop-tracking";
+import { getAttributionForCheckout, trackShopEvent } from "@/lib/shop-tracking";
 import { getDeviceHashForCheckout } from "@/lib/device-hash";
 
 interface ShopPublic {
@@ -198,6 +198,20 @@ export default function ShopCheckoutPage() {
         ]);
         setCart(c);
         setShop(shopRes);
+        if (c && c.items && c.items.length > 0) {
+          const totalVal =
+            c.items.reduce(
+              (acc, it) => acc + Number(it.unitPriceMinor || 0) * (it.quantity || 1),
+              0,
+            ) / 100;
+          trackShopEvent("InitiateCheckout", {
+            content_name: c.items.map((i) => i.productName || "").filter(Boolean).join(", "),
+            content_ids: c.items.map((i) => i.productId),
+            value: totalVal,
+            num_items: c.items.reduce((acc, it) => acc + (it.quantity || 1), 0),
+            currency: "BDT",
+          });
+        }
         if (c) {
           if (c.phone) setPhone(c.phone);
           if (c.email) setEmail(c.email);

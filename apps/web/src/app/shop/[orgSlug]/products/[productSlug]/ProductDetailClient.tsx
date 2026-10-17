@@ -5,6 +5,7 @@ import { formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { fetchCart, getCartToken, patchCartLine } from "@/lib/storefront-cart";
+import { trackShopEvent } from "@/lib/shop-tracking";
 import { ExpressCheckout } from "../../ExpressCheckout";
 import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { priceText, stockBadge } from "../../ProductCard";
@@ -212,6 +213,16 @@ export function ProductDetailClient({
   const outOfStock = !product.isGiftCard && stockState === "out_of_stock" && !product.preorder;
   const badge = product.isGiftCard ? null : stockBadge(stockState, locale);
 
+  useEffect(() => {
+    const val = Number(unitMinor) / 100;
+    trackShopEvent("ViewContent", {
+      content_name: product.name,
+      content_ids: [product.id],
+      value: val,
+      currency: "BDT",
+    });
+  }, [product.id, product.name, unitMinor]);
+
   async function addToCart() {
     setBusy(true);
     setError("");
@@ -268,6 +279,14 @@ export function ProductDetailClient({
         ...gcFields,
       });
       setAdded(true);
+      const val = Number(unitMinor) / 100;
+      trackShopEvent("AddToCart", {
+        content_name: product.name,
+        content_ids: [product.id],
+        value: val * quantity,
+        num_items: quantity,
+        currency: "BDT",
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : t.product.addToCartError);
     } finally {

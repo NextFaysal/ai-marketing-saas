@@ -63,6 +63,9 @@ interface Setting {
   googleAdsId?: string | null;
   googleAdsConversionLabel?: string | null;
   searchConsoleVerification?: string | null;
+  metaPixelId?: string | null;
+  tikTokPixelId?: string | null;
+  clarityId?: string | null;
 }
 interface StorefrontPopup {
   enabled: boolean;
@@ -362,6 +365,9 @@ export default function StorefrontStaffPage() {
   const [googleAdsId, setGoogleAdsId] = useState("");
   const [googleAdsConversionLabel, setGoogleAdsConversionLabel] = useState("");
   const [searchConsoleVerification, setSearchConsoleVerification] = useState("");
+  const [metaPixelId, setMetaPixelId] = useState("");
+  const [tikTokPixelId, setTikTokPixelId] = useState("");
+  const [clarityId, setClarityId] = useState("");
   // AB8 (AX23): custom CSS/JS (same settings PATCH).
   const [customCss, setCustomCss] = useState("");
   const [customJs, setCustomJs] = useState("");
@@ -494,6 +500,9 @@ export default function StorefrontStaffPage() {
       setGoogleAdsId(st.googleAdsId ?? "");
       setGoogleAdsConversionLabel(st.googleAdsConversionLabel ?? "");
       setSearchConsoleVerification(st.searchConsoleVerification ?? "");
+      setMetaPixelId(st.metaPixelId ?? "");
+      setTikTokPixelId(st.tikTokPixelId ?? "");
+      setClarityId(st.clarityId ?? "");
       setCustomCss(st.customCss ?? "");
       setCustomJs(st.customJs ?? "");
       setCustomJsEnabled(st.customJsEnabled ?? false);
@@ -707,6 +716,9 @@ export default function StorefrontStaffPage() {
           googleAdsId: googleAdsId.trim() || null,
           googleAdsConversionLabel: googleAdsConversionLabel.trim() || null,
           searchConsoleVerification: searchConsoleVerification.trim() || null,
+          metaPixelId: metaPixelId.trim() || null,
+          tikTokPixelId: tikTokPixelId.trim() || null,
+          clarityId: clarityId.trim() || null,
           // AB8 (AX23): empty = null (feature off); the API
           // validates lengths + rejects closing-tag breakouts
           // with a 400 whose message this page shows verbatim.
@@ -1207,26 +1219,123 @@ export default function StorefrontStaffPage() {
               ⚠️ GTM দিয়ে GA4 চালালে এখানে আবার বসাবেন না — দ্বিগুণ গণনা হতে পারে।
             </p>
           ) : null}
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">GA4 Measurement ID
-              <input className="input mt-1" value={ga4MeasurementId} onChange={(e) => setGa4MeasurementId(e.target.value)} placeholder="G-XXXXXXXXXX" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Analytics &gt; Admin &gt; Data Streams — ওয়েব স্ট্রিমের Measurement ID।</span>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>📘 Facebook / Meta Pixel ID</span>
+                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">মাল্টি-পিক্সেল সাপোর্টেড</span>
+              </span>
+              <input
+                className="input mt-1 w-full"
+                value={metaPixelId}
+                onChange={(e) => setMetaPixelId(e.target.value)}
+                placeholder="যেমন: 123456789012, 987654321098"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                আপনার Meta Pixel ID বসান। একাধিক অ্যাকাউন্ট বা পিক্সেল থাকলে কমা (,) দিয়ে লিখুন — সবগুলোতেই স্বয়ংক্রিয়ভাবে PageView, ViewContent, AddToCart, InitiateCheckout ও Purchase যাবে।
+              </span>
             </label>
-            <label className="block text-sm">GTM কন্টেইনার ID
-              <input className="input mt-1" value={gtmContainerId} onChange={(e) => setGtmContainerId(e.target.value)} placeholder="GTM-XXXXXXX" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Tag Manager — ওয়ার্কস্পেসের কন্টেইনার ID।</span>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>🎵 TikTok Pixel ID</span>
+                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">মাল্টি-পিক্সেল সাপোর্টেড</span>
+              </span>
+              <input
+                className="input mt-1 w-full"
+                value={tikTokPixelId}
+                onChange={(e) => setTikTokPixelId(e.target.value)}
+                placeholder="যেমন: C123456789, C987654321"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                TikTok Ads Manager থেকে প্রাপ্ত Pixel ID। একাধিক থাকলে কমা (,) দিয়ে লিখুন।
+              </span>
             </label>
-            <label className="block text-sm">Google Ads ID
-              <input className="input mt-1" value={googleAdsId} onChange={(e) => setGoogleAdsId(e.target.value)} placeholder="AW-XXXXXXXXX" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Ads &gt; Conversions — কনভার্সন অ্যাকশনের ট্যাগ আইডি।</span>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>📊 GA4 Measurement ID</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">মাল্টি-প্রপার্টি</span>
+              </span>
+              <input
+                className="input mt-1 w-full"
+                value={ga4MeasurementId}
+                onChange={(e) => setGa4MeasurementId(e.target.value)}
+                placeholder="G-XXXXXXXXXX (একাধিক থাকলে কমা দিয়ে)"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                কোথায় পাবেন: Google Analytics &gt; Admin &gt; Data Streams — Measurement ID।
+              </span>
             </label>
-            <label className="block text-sm">Google Ads কনভার্সন লেবেল
-              <input className="input mt-1" value={googleAdsConversionLabel} onChange={(e) => setGoogleAdsConversionLabel(e.target.value)} placeholder="যেমন: AbC-D_efGhIjK" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Ads &gt; Conversions — একই কনভার্সন অ্যাকশনের লেবেল। ক্রয়ের কনভার্সন গুনতে আইডি ও লেবেল দুটোই লাগবে।</span>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>🏷️ GTM কন্টেইনার ID</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">মাল্টি-কন্টেইনার</span>
+              </span>
+              <input
+                className="input mt-1 w-full"
+                value={gtmContainerId}
+                onChange={(e) => setGtmContainerId(e.target.value)}
+                placeholder="GTM-XXXXXXX"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                কোথায় পাবেন: Google Tag Manager — কন্টেইনার ID। একাধিক থাকলে কমা দিয়ে লিখুন।
+              </span>
             </label>
-            <label className="block text-sm md:col-span-2">Search Console যাচাইকরণ টোকেন
-              <input className="input mt-1" value={searchConsoleVerification} onChange={(e) => setSearchConsoleVerification(e.target.value)} placeholder="শুধু টোকেন অংশটি বসান" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">কোথায় পাবেন: Google Search Console — HTML tag পদ্ধতিতে পাওয়া মেটা ট্যাগের content মানটি (শুধু টোকেন)।</span>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>👁️ Microsoft Clarity Project ID</span>
+              </span>
+              <input
+                className="input mt-1 w-full"
+                value={clarityId}
+                onChange={(e) => setClarityId(e.target.value)}
+                placeholder="যেমন: abcdefgh12"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                হিটম্যাপ, ক্লিকম্যাপ ও সেশন রেকর্ডিংয়ের জন্য Microsoft Clarity প্রজেক্ট আইডি।
+              </span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800">🎯 Google Ads ID</span>
+              <input
+                className="input mt-1 w-full"
+                value={googleAdsId}
+                onChange={(e) => setGoogleAdsId(e.target.value)}
+                placeholder="AW-XXXXXXXXX"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                কোথায় পাবেন: Google Ads &gt; Conversions — কনভার্সন অ্যাকশনের ট্যাগ আইডি।
+              </span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800">🎯 Google Ads কনভার্সন লেবেল</span>
+              <input
+                className="input mt-1 w-full"
+                value={googleAdsConversionLabel}
+                onChange={(e) => setGoogleAdsConversionLabel(e.target.value)}
+                placeholder="যেমন: AbC-D_efGhIjK"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                Google Ads কনভার্সন অ্যাকশনের লেবেল। ক্রয়ের কনভার্সন ট্র্যাক করতে আইডি ও লেবেল দুটোই লাগবে।
+              </span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="font-semibold text-slate-800">🔍 Search Console যাচাইকরণ টোকেন</span>
+              <input
+                className="input mt-1 w-full"
+                value={searchConsoleVerification}
+                onChange={(e) => setSearchConsoleVerification(e.target.value)}
+                placeholder="HTML tag এর content মানটি (শুধু টোকেন)"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                Google Search Console এর HTML tag ভেরিফিকেশন মেটা ট্যাগের শুধু content টোকেনটি।
+              </span>
             </label>
           </div>
         </div>

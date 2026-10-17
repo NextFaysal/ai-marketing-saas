@@ -14,6 +14,9 @@ export interface ShopTracking {
   googleAdsId: string | null;
   googleAdsConversionLabel: string | null;
   searchConsoleVerification: string | null;
+  metaPixelId: string | null;
+  tikTokPixelId: string | null;
+  clarityId: string | null;
 }
 
 export const EMPTY_TRACKING: ShopTracking = {
@@ -22,10 +25,22 @@ export const EMPTY_TRACKING: ShopTracking = {
   googleAdsId: null,
   googleAdsConversionLabel: null,
   searchConsoleVerification: null,
+  metaPixelId: null,
+  tikTokPixelId: null,
+  clarityId: null,
 };
 
 function clean(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Parse comma-separated or space-separated tracking IDs. */
+export function parseTrackingIds(raw: string | null | undefined): string[] {
+  if (!raw || typeof raw !== "string") return [];
+  return raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Read `settings.tracking` off a shop payload; all null when absent. */
@@ -42,7 +57,105 @@ export function trackingFromSettings(settings: unknown): ShopTracking {
     googleAdsId: clean(t.googleAdsId),
     googleAdsConversionLabel: clean(t.googleAdsConversionLabel),
     searchConsoleVerification: clean(t.searchConsoleVerification),
+    metaPixelId: clean(t.metaPixelId),
+    tikTokPixelId: clean(t.tikTokPixelId),
+    clarityId: clean(t.clarityId),
   };
+}
+
+export type ShopTrackingEventType =
+  | "PageView"
+  | "ViewContent"
+  | "AddToCart"
+  | "InitiateCheckout"
+  | "Purchase";
+
+export interface ShopEventData {
+  content_name?: string;
+  content_ids?: string[];
+  content_type?: string;
+  value?: number;
+  currency?: string;
+  num_items?: number;
+  order_id?: string;
+}
+
+/** Broadcast standard e-commerce events to all initialized pixels/tags */
+export function trackShopEvent(eventName: ShopTrackingEventType, params?: ShopEventData) {
+  if (typeof window === "undefined") return;
+  const w = window as any;
+
+  // 1. Meta / Facebook Pixel (broadcasts to all initialized pixels)
+  if (typeof w.fbq === "function") {
+    try {
+      if (eventName === "PageView") {
+        w.fbq("track", "PageView");
+      } else {
+        w.fbq("track", eventName, {
+          content_name: params?.content_name,
+          content_ids: params?.content_ids,
+          content_type: params?.content_type ?? "product",
+          value: params?.value,
+          currency: params?.currency ?? "BDT",
+          num_items: params?.num_items,
+        });
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 2. TikTok Pixel (broadcasts to all loaded pixels)
+  if (typeof w.ttq?.track === "function") {
+    try {
+      const ttEventMap: Record<string, string> = {
+        PageView: "Pageview",
+        ViewContent: "ViewContent",
+        AddToCart: "AddToCart",
+        InitiateCheckout: "InitiateCheckout",
+        Purchase: "CompletePayment",
+      };
+      const ttEvent = ttEventMap[eventName] ?? eventName;
+      w.ttq.track(ttEvent, {
+        content_name: params?.content_name,
+        content_id: params?.content_ids?.[0],
+        value: params?.value,
+        currency: params?.currency ?? "BDT",
+        quantity: params?.num_items,
+      });
+    } catch { /* ignore */ }
+  }
+
+  // 3. Google Analytics (gtag)
+  if (typeof w.gtag === "function") {
+    try {
+      const gaEventMap: Record<string, string> = {
+        ViewContent: "view_item",
+        AddToCart: "add_to_cart",
+        InitiateCheckout: "begin_checkout",
+        Purchase: "purchase",
+      };
+      const gaEvent = gaEventMap[eventName];
+      if (gaEvent) {
+        w.gtag("event", gaEvent, {
+          currency: params?.currency ?? "BDT",
+          value: params?.value,
+          transaction_id: params?.order_id,
+          items: params?.content_name
+            ? [{ item_name: params.content_name, id: params.content_ids?.[0] }]
+            : undefined,
+        });
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 4. Google Tag Manager dataLayer
+  if (Array.isArray(w.dataLayer)) {
+    try {
+      w.dataLayer.push({
+        event: eventName,
+        ecommerce: params,
+      });
+    } catch { /* ignore */ }
+  }
 }
 
 /* ------------------------------------------------------------------ */

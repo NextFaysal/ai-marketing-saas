@@ -1037,6 +1037,9 @@ export class StorefrontService {
           googleAdsId: setting.googleAdsId ?? null,
           googleAdsConversionLabel: setting.googleAdsConversionLabel ?? null,
           searchConsoleVerification: setting.searchConsoleVerification ?? null,
+          metaPixelId: setting.metaPixelId ?? bp?.metaPixelId ?? null,
+          tikTokPixelId: setting.tikTokPixelId ?? bp?.tikTokPixelId ?? null,
+          clarityId: setting.clarityId ?? null,
         },
         // GB3 (GC8/GC9): shared checkout-trust payload (terms /
         // CAPTCHA / COD) — failure-isolated inside the builder.
@@ -4170,6 +4173,9 @@ export class StorefrontService {
         googleAdsId: null,
         googleAdsConversionLabel: null,
         searchConsoleVerification: null,
+        metaPixelId: null,
+        tikTokPixelId: null,
+        clarityId: null,
         domainVerifiedAt: null,
         hasDomainVerifyToken: false,
         // AB8 (AX23): no setting row ⇒ no custom code.
@@ -4218,6 +4224,9 @@ export class StorefrontService {
       googleAdsId: setting.googleAdsId ?? null,
       googleAdsConversionLabel: setting.googleAdsConversionLabel ?? null,
       searchConsoleVerification: setting.searchConsoleVerification ?? null,
+      metaPixelId: setting.metaPixelId ?? null,
+      tikTokPixelId: setting.tikTokPixelId ?? null,
+      clarityId: setting.clarityId ?? null,
       domainVerifiedAt: setting.domainVerifiedAt
         ? new Date(setting.domainVerifiedAt).toISOString()
         : null,

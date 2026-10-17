@@ -21,7 +21,7 @@ import {
 } from "@/lib/checkout-gc10";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { payOnlineAvailable, payOptionLabel, type PayOption } from "@/lib/connections";
-import { shouldFireAdsConversion, trackingFromSettings } from "@/lib/shop-tracking";
+import { shouldFireAdsConversion, trackingFromSettings, trackShopEvent } from "@/lib/shop-tracking";
 
 function money(minor: string): string {
   try {
@@ -119,6 +119,26 @@ function SuccessInner() {
       setPayBusy("");
     }
   }
+
+  // Standard E-commerce Purchase tracking for Meta Pixel, TikTok, GA4
+  useEffect(() => {
+    if (!loaded || !order || !sessionOrderRef.current) return;
+    const flagKey = `shopPurchaseFired:${order.orderNumber}`;
+    let purchaseAlreadyFired = false;
+    try {
+      purchaseAlreadyFired = sessionStorage.getItem(flagKey) === "1";
+    } catch { /* ignore */ }
+    if (!purchaseAlreadyFired) {
+      try { sessionStorage.setItem(flagKey, "1"); } catch { /* ignore */ }
+      trackShopEvent("Purchase", {
+        order_id: order.orderNumber,
+        value: Number(order.totalMinor) / 100,
+        currency: "BDT",
+        content_name: order.shopName || `Order #${order.orderNumber}`,
+      });
+    }
+  }, [loaded, order]);
+
   // GB7 (GC18): Google Ads conversion — fires at most once per
   // order, only for the genuinely placed order held in this
   // browser's sessionStorage, and only when the merchant
